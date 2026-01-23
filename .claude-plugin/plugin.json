@@ -1,0 +1,73 @@
+{
+  "name": "ralph-hero",
+  "version": "1.0.0",
+  "description": "The naive hero picks tickets, does their best work, and moves on. Autonomous triage, research, planning, and implementation with Linear integration.",
+  "author": {
+    "name": "Chad Dubiel",
+    "url": "https://github.com/cdubiel08"
+  },
+  "homepage": "https://github.com/cdubiel08/ralph-hero",
+  "repository": "https://github.com/cdubiel08/ralph-hero",
+  "license": "MIT",
+  "keywords": [
+    "autonomous",
+    "development",
+    "workflow",
+    "linear",
+    "triage",
+    "planning",
+    "implementation",
+    "naive-hero"
+  ],
+  "commands": "./commands/",
+  "agents": "./agents/",
+  "hooks": "./hooks/hooks.json",
+  "requiredMcpServers": ["linear"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "linear": {
+        "type": "object",
+        "properties": {
+          "teamName": { "type": "string" },
+          "teamId": { "type": "string" },
+          "states": {
+            "type": "object",
+            "properties": {
+              "backlog": { "type": "string" },
+              "researchNeeded": { "type": "string" },
+              "researchInProgress": { "type": "string" },
+              "readyForPlan": { "type": "string" },
+              "planInProgress": { "type": "string" },
+              "planInReview": { "type": "string" },
+              "todo": { "type": "string" },
+              "inProgress": { "type": "string" },
+              "inReview": { "type": "string" },
+              "done": { "type": "string" },
+              "humanNeeded": { "type": "string" }
+            }
+          }
+        },
+        "required": ["teamName", "teamId"]
+      },
+      "github": {
+        "type": "object",
+        "properties": {
+          "repoUrl": { "type": "string" },
+          "defaultBranch": { "type": "string", "default": "main" }
+        },
+        "required": ["repoUrl"]
+      },
+      "paths": {
+        "type": "object",
+        "properties": {
+          "worktreeBase": { "type": "string", "default": "../worktrees" },
+          "plansDir": { "type": "string", "default": "docs/plans" },
+          "researchDir": { "type": "string", "default": "docs/research" },
+          "ticketsDir": { "type": "string", "default": "docs/tickets" }
+        }
+      }
+    },
+    "required": ["linear", "github"]
+  }
+}
