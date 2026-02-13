@@ -1,0 +1,25 @@
+{
+  "name": "ralph-hero-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for GitHub Projects V2 - Ralph workflow automation",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "postinstall": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@octokit/graphql": "^9.0.3",
+    "@octokit/plugin-paginate-graphql": "^6.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

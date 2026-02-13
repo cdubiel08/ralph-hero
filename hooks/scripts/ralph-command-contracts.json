@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Command contracts - preconditions, postconditions, and artifacts for each ralph-hero command",
+  "version": "1.0.0",
+
+  "commands": {
+    "ralph_triage": {
+      "preconditions": {
+        "git_branch": "main",
+        "ticket_states": ["Backlog"],
+        "ticket_estimates": null,
+        "required_attachments": []
+      },
+      "lock_state": null,
+      "postconditions": {
+        "ticket_state_changed": true,
+        "valid_end_states": ["Research Needed", "Ready for Plan", "Done", "Canceled", "Human Needed"],
+        "comment_added": true
+      },
+      "artifacts_created": [],
+      "artifacts_required": []
+    },
+
+    "ralph_split": {
+      "preconditions": {
+        "git_branch": "main",
+        "ticket_states": ["Backlog", "Research Needed"],
+        "ticket_estimates": ["M", "L", "XL"],
+        "required_attachments": []
+      },
+      "lock_state": null,
+      "postconditions": {
+        "ticket_state_changed": true,
+        "valid_end_states": ["Done", "Canceled"],
+        "sub_tickets_created": true,
+        "comment_added": true
+      },
+      "artifacts_created": [],
+      "artifacts_required": []
+    },
+
+    "ralph_research": {
+      "preconditions": {
+        "git_branch": "main",
+        "ticket_states": ["Research Needed"],
+        "ticket_estimates": ["XS", "S"],
+        "required_attachments": [],
+        "no_existing_artifact": "research"
+      },
+      "lock_state": "Research in Progress",
+      "postconditions": {
+        "ticket_state_changed": true,
+        "valid_end_states": ["Ready for Plan", "Human Needed"],
+        "artifact_created": "research",
+        "artifact_attached": true,
+        "artifact_committed": true,
+        "comment_added": true
+      },
+      "artifacts_created": ["thoughts/shared/research/YYYY-MM-DD-GH-{number}-*.md"],
+      "artifacts_required": []
+    },
+
+    "ralph_plan": {
+      "preconditions": {
+        "git_branch": "main",
+        "ticket_states": ["Ready for Plan"],
+        "ticket_estimates": ["XS", "S"],
+        "required_attachments": ["research"],
+        "no_existing_artifact": "plan"
+      },
+      "lock_state": "Plan in Progress",
+      "postconditions": {
+        "ticket_state_changed": true,
+        "valid_end_states": ["Plan in Review", "Human Needed"],
+        "artifact_created": "plan",
+        "artifact_attached": true,
+        "artifact_committed": true,
+        "comment_added": true
+      },
+      "artifacts_created": ["thoughts/shared/plans/YYYY-MM-DD-GH-{number}-*.md"],
+      "artifacts_required": ["thoughts/shared/research/YYYY-MM-DD-GH-{number}-*.md"]
+    },
+
+    "ralph_impl": {
+      "preconditions": {
+        "git_branch": null,
+        "ticket_states": ["Plan in Review", "In Progress"],
+        "ticket_estimates": ["XS", "S"],
+        "required_attachments": ["plan"],
+        "plan_approved": true
+      },
+      "lock_state": null,
+      "postconditions": {
+        "phase_completed": true,
+        "phase_committed": true,
+        "phase_pushed": true,
+        "plan_checkboxes_updated": true,
+        "if_final_phase": {
+          "pr_created": true,
+          "ticket_state": "In Review"
+        }
+      },
+      "artifacts_created": ["PR", "commits"],
+      "artifacts_required": ["thoughts/shared/plans/YYYY-MM-DD-GH-{number}-*.md"]
+    },
+
+    "ralph_hero": {
+      "preconditions": {
+        "git_branch": "main",
+        "ticket_id_provided": true,
+        "no_existing_hero_task": true
+      },
+      "lock_state": null,
+      "postconditions": {
+        "ticket_state": ["In Review", "Human Needed"],
+        "all_phases_complete": true
+      },
+      "artifacts_created": ["research", "plan", "PR"],
+      "artifacts_required": []
+    },
+
+    "ralph_review": {
+      "preconditions": {
+        "git_branch": "main",
+        "ticket_states": ["Plan in Review"],
+        "ticket_estimates": ["XS", "S"],
+        "required_attachments": ["plan"]
+      },
+      "lock_state": null,
+      "postconditions": {
+        "ticket_state_changed": true,
+        "valid_end_states": ["In Progress", "Ready for Plan", "Human Needed"],
+        "if_auto_mode": {
+          "artifact_created": "critique",
+          "artifact_committed": true
+        },
+        "if_rejected": {
+          "label_added": "needs-iteration"
+        }
+      },
+      "creates_artifacts": ["thoughts/shared/reviews/YYYY-MM-DD-GH-{number}-critique.md"],
+      "artifact_path_pattern": "thoughts/shared/reviews/YYYY-MM-DD-GH-{number}-*.md"
+    }
+  },
+
+  "artifact_types": {
+    "research": {
+      "path_pattern": "thoughts/shared/research/*-GH-{number}-*.md",
+      "attachment_title_pattern": "Research Document",
+      "validates": ["frontmatter.github_issue", "frontmatter.status"]
+    },
+    "plan": {
+      "path_pattern": "thoughts/shared/plans/*-GH-{number}-*.md",
+      "attachment_title_pattern": "Implementation Plan",
+      "validates": ["frontmatter.github_issue", "frontmatter.status", "phases_defined"]
+    },
+    "critique": {
+      "path_pattern": "thoughts/shared/reviews/*-GH-{number}-critique.md",
+      "attachment_title_pattern": "Plan Critique",
+      "validates": ["frontmatter.date", "frontmatter.github_issue", "frontmatter.status"]
+    }
+  },
+
+  "lock_transitions": {
+    "acquire": {
+      "Research in Progress": {"from": "Research Needed", "command": "ralph_research"},
+      "Plan in Progress": {"from": "Ready for Plan", "command": "ralph_plan"}
+    },
+    "release_on_success": {
+      "Research in Progress": "Ready for Plan",
+      "Plan in Progress": "Plan in Review"
+    },
+    "release_on_failure": {
+      "Research in Progress": "Research Needed",
+      "Plan in Progress": "Ready for Plan"
+    },
+    "release_on_escalation": {
+      "Research in Progress": "Human Needed",
+      "Plan in Progress": "Human Needed"
+    }
+  }
+}

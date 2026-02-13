@@ -2,170 +2,240 @@
 
 The naive hero picks tickets, does their best work, and moves on. No questions, no interruptions - just ship it.
 
-An autonomous development workflow plugin for Claude Code with Linear integration.
-
-## Features
-
-- **Autonomous Ticket Processing**: Triage, research, plan, and implement tickets without human intervention
-- **Linear Integration**: Full workflow state management and ticket lifecycle
-- **Git Worktree Isolation**: Safe, isolated development for each ticket
-- **Exploration Agents**: Bundled agents for codebase navigation
-- **Configurable Paths**: Customize where documents and worktrees live
+An autonomous development workflow plugin for Claude Code with GitHub Issues + Projects V2 integration. Ralph automates the full software development lifecycle: triage, research, planning, review, and implementation.
 
 ## Prerequisites
 
-1. **Claude Code** installed and configured
-2. **Linear MCP server** installed (`/plugin install linear`)
-3. **Git** with worktree support
-4. **jq** for JSON parsing in scripts (optional but recommended)
+- **Node.js 18+** (for the bundled MCP server)
+- **GitHub Personal Access Token** with scopes: `project`, `repo`, `read:org`
+- **Claude Code** (latest version)
 
 ## Installation
 
-```bash
-# Add the marketplace (if not already added)
-/plugin marketplace add cdubiel08/ralph-hero
+### From Git Repository
 
-# Install the plugin
-/plugin install ralph-hero
+```bash
+claude plugin install https://github.com/cdubiel08/ralph-hero
 ```
+
+### Local Development
+
+```bash
+claude --plugin-dir ./ralph-hero
+```
+
+### Manual Setup
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/cdubiel08/ralph-hero.git
+   ```
+
+2. Build the MCP server:
+   ```bash
+   cd ralph-hero/mcp-server
+   npm install
+   npm run build
+   ```
+
+3. Set environment variables:
+   ```bash
+   export GITHUB_TOKEN="ghp_your_token_here"
+   export RALPH_GH_OWNER="your-github-username-or-org"
+   export RALPH_GH_REPO="your-repository-name"
+   export RALPH_GH_PROJECT_NUMBER="1"  # Set after running setup
+   ```
 
 ## Setup
 
-Ralph automatically detects if it's configured when you start a session. If not configured, it will prompt you to run setup.
-
-Run the setup wizard to configure Ralph for your project:
+Run the setup skill to create a GitHub Project with all required configuration:
 
 ```bash
-/ralph:setup
+claude "/ralph-setup"
 ```
 
-This will:
-1. Discover your Linear teams and workflow states
-2. Configure your GitHub repository URL
-3. Set up document directories
-4. Verify all required Linear states exist
-
-Check your configuration status at any time:
-
-```bash
-/ralph:status           # Quick status check
-/ralph:status --verbose # Detailed check with Linear connection test
-```
+This creates:
+- A GitHub Projects V2 board with custom fields:
+  - **Workflow State** (11 states: Backlog through Done)
+  - **Priority** (P0 through P3)
+  - **Estimate** (XS, S, M, L, XL)
+- Four default views (Research Pipeline, Planning Pipeline, Active Development, All Items)
+- Local configuration file at `.claude/ralph-hero.local.md`
 
 ## Usage
 
-### Individual Commands
+### Individual Skills
+
+Each skill handles one phase of the workflow:
+
+| Skill | Description |
+|-------|-------------|
+| `/ralph-triage` | Assess backlog issues, close duplicates, route to research |
+| `/ralph-split` | Split large issues (M/L/XL) into smaller sub-issues |
+| `/ralph-research` | Research one XS/S issue, create findings document |
+| `/ralph-plan` | Create implementation plan from researched issue |
+| `/ralph-review` | Review implementation plan for quality |
+| `/ralph-impl` | Implement one planned issue in isolated worktree |
+
+### Orchestrators
+
+| Skill | Description |
+|-------|-------------|
+| `/ralph-hero` | Tree-expansion orchestrator with task blocking for sequential execution |
+| `/ralph-team` | Multi-agent coordinator that spawns specialists for each pipeline phase |
+
+### Loop Scripts
+
+For fully autonomous operation:
 
 ```bash
-# Triage one backlog ticket
-/ralph:triage
+# Full autonomous loop (sequential phases)
+./scripts/ralph-loop.sh
 
-# Triage a specific ticket
-/ralph:triage ENG-123
+# Individual phases only
+./scripts/ralph-loop.sh --triage-only
+./scripts/ralph-loop.sh --research-only
+./scripts/ralph-loop.sh --plan-only
+./scripts/ralph-loop.sh --impl-only
 
-# Research a ticket
-/ralph:research
+# Control split and review behavior
+./scripts/ralph-loop.sh --split=auto     # Auto-split large issues (default)
+./scripts/ralph-loop.sh --split=skip     # Skip splitting
+./scripts/ralph-loop.sh --review=auto    # Enable auto-review of plans
+./scripts/ralph-loop.sh --review=skip    # Skip review (default)
 
-# Create implementation plan
-/ralph:plan
-
-# Implement a ticket
-/ralph:impl
-```
-
-### Full Autonomous Loop
-
-```bash
-# Run all phases until queues empty
-./path/to/plugin/scripts/ralph-loop.sh
-
-# Specific phases only
-./path/to/plugin/scripts/ralph-loop.sh --triage-only
-./path/to/plugin/scripts/ralph-loop.sh --research-only
-./path/to/plugin/scripts/ralph-loop.sh --plan-only
-./path/to/plugin/scripts/ralph-loop.sh --impl-only
-
-# Custom iterations and timeout
-MAX_ITERATIONS=5 TIMEOUT=20m ./path/to/plugin/scripts/ralph-loop.sh
-```
-
-## Workflow
-
-Tickets flow through these Linear states:
-
-```
-Backlog → Research Needed → Research in Progress → Ready for Plan
-                                                        ↓
-                            Plan in Progress ← Ready for Plan
-                                    ↓
-                            Plan in Review → Todo
-                                                ↓
-                            In Progress ← Todo
-                                    ↓
-                            In Review → Done
+# Team orchestrator (parallel multi-agent)
+./scripts/ralph-team-loop.sh             # Auto-detect work
+./scripts/ralph-team-loop.sh 42          # Process issue #42
 ```
 
 ## Configuration
 
-Configuration is stored in `.ralph/config.json`:
+### Environment Variables
 
-```json
-{
-  "linear": {
-    "teamName": "Your-Team",
-    "teamId": "uuid",
-    "states": { ... }
-  },
-  "github": {
-    "repoUrl": "https://github.com/org/repo",
-    "defaultBranch": "main"
-  },
-  "paths": {
-    "worktreeBase": "../worktrees",
-    "plansDir": "docs/plans",
-    "researchDir": "docs/research",
-    "ticketsDir": "docs/tickets"
-  }
-}
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` or `GH_TOKEN` | Yes | GitHub Personal Access Token |
+| `RALPH_GH_OWNER` | Yes | Repository owner (user or org) |
+| `RALPH_GH_REPO` | Yes | Repository name |
+| `RALPH_GH_PROJECT_NUMBER` | Yes | Project number (from setup) |
+| `MAX_ITERATIONS` | No | Max loop iterations (default: 10) |
+| `TIMEOUT` | No | Per-task timeout (default: 15m) |
+
+### Token Scopes
+
+Your GitHub token needs these scopes:
+
+| Scope | Purpose |
+|-------|---------|
+| `project` | Create/modify Projects V2, fields, views |
+| `repo` | Create/modify issues, comments, PRs |
+| `read:org` | Access organization-level projects |
+
+Create a token at: https://github.com/settings/tokens/new
+
+## Architecture
+
+```
+ralph-hero/
+├── .claude-plugin/
+│   └── plugin.json           # Plugin manifest
+├── .mcp.json                 # Bundled MCP server configuration
+├── mcp-server/               # TypeScript MCP server
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── src/
+│       ├── index.ts          # Entry point + tool registration
+│       ├── github-client.ts  # GraphQL client with auth, rate limiting, caching
+│       ├── types.ts          # TypeScript types for Projects V2
+│       ├── tools/
+│       │   ├── project-tools.ts      # Project setup + query
+│       │   ├── view-tools.ts         # View management
+│       │   ├── issue-tools.ts        # Issue CRUD + state transitions
+│       │   └── relationship-tools.ts # Sub-issues, dependencies, group detection
+│       └── lib/
+│           ├── pagination.ts     # Cursor-based pagination
+│           ├── rate-limiter.ts   # Point-based rate limit tracker
+│           ├── cache.ts          # Session-scoped LRU cache
+│           └── group-detection.ts # Transitive closure + topological sort
+├── skills/                   # Workflow skills (SKILL.md files)
+│   ├── ralph-triage/
+│   ├── ralph-split/
+│   ├── ralph-research/
+│   ├── ralph-plan/
+│   ├── ralph-review/
+│   ├── ralph-impl/
+│   ├── ralph-hero/
+│   ├── ralph-team/
+│   └── ralph-setup/
+├── agents/                   # Specialized agent definitions
+│   ├── ralph-triager.md
+│   ├── ralph-researcher.md
+│   ├── ralph-planner.md
+│   ├── ralph-advocate.md
+│   └── ralph-implementer.md
+├── hooks/                    # State machine enforcement
+│   ├── hooks.json
+│   └── scripts/
+└── scripts/                  # Loop scripts for autonomous operation
+    ├── ralph-loop.sh
+    └── ralph-team-loop.sh
 ```
 
-## Safety Constraints
+### MCP Server Tools
 
-- **XS/Small tickets only**: Larger tickets are skipped
-- **PR only, no merge**: Human approves and merges
-- **Worktree isolation**: Changes don't affect main branch
-- **Timeout protection**: Tasks time out after configurable duration
-- **Max iterations**: Loop stops after configurable iterations
+The bundled MCP server provides these tools:
 
-## Commands Reference
+| Tool | Description |
+|------|-------------|
+| `ralph_hero__health_check` | Verify GitHub API connectivity |
+| `ralph_hero__setup_project` | Create project with custom fields |
+| `ralph_hero__get_project` | Query project details and fields |
+| `ralph_hero__list_project_items` | List items filtered by field values |
+| `ralph_hero__list_views` | List project views |
+| `ralph_hero__update_field_options` | Update single-select field options (colors, descriptions) |
+| `ralph_hero__list_issues` | Query issues with field-based filtering |
+| `ralph_hero__get_issue` | Get issue with full context |
+| `ralph_hero__create_issue` | Create issue and add to project |
+| `ralph_hero__update_issue` | Update issue properties |
+| `ralph_hero__update_workflow_state` | Change workflow state |
+| `ralph_hero__update_estimate` | Change estimate |
+| `ralph_hero__update_priority` | Change priority |
+| `ralph_hero__create_comment` | Add comment to issue |
+| `ralph_hero__add_sub_issue` | Create parent/child relationship |
+| `ralph_hero__list_sub_issues` | Get children of a parent issue |
+| `ralph_hero__add_dependency` | Create blocks/blocked-by relationship |
+| `ralph_hero__remove_dependency` | Remove a dependency |
+| `ralph_hero__list_dependencies` | Get dependencies for an issue |
+| `ralph_hero__detect_group` | Transitive closure + topological sort |
 
-| Command | Description |
-|---------|-------------|
-| `/ralph:setup` | Configure Ralph for your Linear workspace |
-| `/ralph:status` | Check configuration status and health |
-| `/ralph:triage` | Assess backlog tickets, close/split/keep |
-| `/ralph:research` | Research tickets, create findings documents |
-| `/ralph:plan` | Create implementation plans from research |
-| `/ralph:impl` | Implement tickets phase-by-phase |
-| `/ralph:linear` | Linear ticket management utilities |
+### Workflow States
 
-## Hooks
+The Ralph workflow uses an 11-state machine managed via a custom Projects V2 field:
 
-Ralph uses hooks for automatic configuration management:
+```
+Backlog -> Research Needed -> Research in Progress -> Ready for Plan
+-> Plan in Progress -> Plan in Review -> In Progress
+-> In Review -> Done
 
-- **SessionStart**: Checks if configured and informs you of status
-- **PreToolUse**: Validates configuration before Linear API operations
+Any state -> Human Needed (escalation)
+```
 
-## Bundled Agents
+## Differences from Linear-Based Ralph
 
-| Agent | Description |
-|-------|-------------|
-| `codebase-locator` | Find files by topic/feature |
-| `codebase-analyzer` | Analyze implementation details |
-| `codebase-pattern-finder` | Find similar patterns to model after |
-| `thoughts-locator` | Find documents in thoughts/ directory |
-| `thoughts-analyzer` | Extract insights from thought documents |
-| `web-search-researcher` | Web research for external information |
+This plugin replaces the Linear-based Ralph workflow. Key differences:
+
+| Aspect | Linear Ralph | GitHub Ralph |
+|--------|-------------|--------------|
+| Backend | Linear API | GitHub Issues + Projects V2 |
+| State Management | Linear workflow states | Custom Projects V2 field |
+| Ticket IDs | `PREFIX-NNN` | `#NNN` |
+| Estimates | Integer (1-5) | String ("XS"/"S"/"M"/"L"/"XL") |
+| Sub-issues | `parentId` parameter | `add_sub_issue` mutation |
+| Dependencies | Bulk `blocks: [...]` | Per-pair `add_dependency` |
+| Plan Discovery | Ticket attachments | Issue comments |
+| PR Linking | Explicit link attachment | `Closes #NNN` in PR body |
+| Tool Names | `mcp__plugin_linear_linear__*` | `ralph_hero__*` |
 
 ## License
 

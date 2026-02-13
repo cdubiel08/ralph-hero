@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Ralph GitHub workflow state machine - defines valid state transitions and validation rules",
+  "version": "1.0.0",
+
+  "states": {
+    "Backlog": {
+      "description": "Ticket awaiting triage",
+      "allowed_transitions": ["Research Needed", "Ready for Plan", "Done", "Canceled"],
+      "required_by_commands": [],
+      "produces_for_commands": ["ralph_triage", "ralph_split"]
+    },
+    "Research Needed": {
+      "description": "Ticket needs investigation before planning",
+      "allowed_transitions": ["Research in Progress", "Ready for Plan", "Human Needed"],
+      "required_by_commands": ["ralph_research", "ralph_split"],
+      "produces_for_commands": ["ralph_triage"]
+    },
+    "Research in Progress": {
+      "description": "Research actively being conducted (LOCKED)",
+      "allowed_transitions": ["Ready for Plan", "Human Needed"],
+      "required_by_commands": [],
+      "produces_for_commands": ["ralph_research"],
+      "is_lock_state": true
+    },
+    "Ready for Plan": {
+      "description": "Research complete, ready for implementation planning",
+      "allowed_transitions": ["Plan in Progress", "Human Needed"],
+      "required_by_commands": ["ralph_plan"],
+      "produces_for_commands": ["ralph_research"]
+    },
+    "Plan in Progress": {
+      "description": "Plan actively being created (LOCKED)",
+      "allowed_transitions": ["Plan in Review", "Human Needed"],
+      "required_by_commands": [],
+      "produces_for_commands": ["ralph_plan"],
+      "is_lock_state": true
+    },
+    "Plan in Review": {
+      "description": "Plan awaiting human approval",
+      "allowed_transitions": ["In Progress", "Ready for Plan", "Human Needed"],
+      "required_by_commands": ["ralph_review"],
+      "produces_for_commands": ["ralph_plan", "ralph_review"],
+      "requires_human_action": true
+    },
+    "In Progress": {
+      "description": "Implementation actively underway",
+      "allowed_transitions": ["In Review", "Human Needed"],
+      "required_by_commands": ["ralph_impl"],
+      "produces_for_commands": []
+    },
+    "In Review": {
+      "description": "PR created, awaiting code review",
+      "allowed_transitions": ["Done", "In Progress", "Human Needed"],
+      "required_by_commands": [],
+      "produces_for_commands": ["ralph_impl"],
+      "requires_human_action": true
+    },
+    "Human Needed": {
+      "description": "Escalated - requires human intervention",
+      "allowed_transitions": ["Backlog", "Research Needed", "Ready for Plan", "In Progress"],
+      "required_by_commands": [],
+      "produces_for_commands": ["*"],
+      "requires_human_action": true
+    },
+    "Done": {
+      "description": "Ticket completed",
+      "allowed_transitions": [],
+      "required_by_commands": [],
+      "produces_for_commands": ["ralph_triage", "ralph_impl"],
+      "is_terminal": true
+    },
+    "Canceled": {
+      "description": "Ticket canceled/superseded",
+      "allowed_transitions": [],
+      "required_by_commands": [],
+      "produces_for_commands": ["ralph_triage"],
+      "is_terminal": true
+    }
+  },
+
+  "lock_states": {
+    "description": "States that indicate exclusive ownership - another agent should not claim",
+    "states": ["Research in Progress", "Plan in Progress", "In Progress"]
+  },
+
+  "commands": {
+    "ralph_triage": {
+      "description": "Assess and route backlog tickets",
+      "valid_input_states": ["Backlog"],
+      "valid_output_states": ["Research Needed", "Ready for Plan", "Done", "Canceled", "Human Needed"],
+      "can_create_tickets": true,
+      "can_modify_blocks": true,
+      "preconditions": [
+        "Must be on main branch",
+        "Ticket must be in Backlog state"
+      ],
+      "postconditions": [
+        "Ticket state changed from Backlog",
+        "Comment added explaining action taken"
+      ]
+    },
+    "ralph_split": {
+      "description": "Decompose large tickets into XS/Small sub-tickets",
+      "valid_input_states": ["Backlog", "Research Needed"],
+      "valid_output_states": ["Backlog"],
+      "valid_input_estimates": ["M", "L", "XL"],
+      "can_create_tickets": true,
+      "can_modify_blocks": true,
+      "preconditions": [
+        "Must be on main branch",
+        "Ticket estimate must be M/L/XL",
+        "Ticket must be in Backlog or Research Needed"
+      ],
+      "postconditions": [
+        "Sub-tickets created with XS/S estimates",
+        "Parent ticket preserved in Backlog as epic",
+        "Blocking relationships established"
+      ]
+    },
+    "ralph_research": {
+      "description": "Investigate ticket scope and document findings",
+      "valid_input_states": ["Research Needed"],
+      "valid_output_states": ["Ready for Plan", "Human Needed"],
+      "valid_input_estimates": ["XS", "S"],
+      "lock_state": "Research in Progress",
+      "creates_artifacts": ["thoughts/shared/research/YYYY-MM-DD-GH-NNN-*.md"],
+      "preconditions": [
+        "Must be on main branch",
+        "Ticket must be in Research Needed state",
+        "Ticket estimate must be XS/S",
+        "No existing research document attached"
+      ],
+      "postconditions": [
+        "Research document created and committed",
+        "Document URL posted as comment on ticket",
+        "Ticket moved to Ready for Plan"
+      ]
+    },
+    "ralph_plan": {
+      "description": "Create implementation plan from research",
+      "valid_input_states": ["Ready for Plan"],
+      "valid_output_states": ["Plan in Review", "Human Needed"],
+      "valid_input_estimates": ["XS", "S"],
+      "lock_state": "Plan in Progress",
+      "requires_artifacts": ["Research document attached"],
+      "creates_artifacts": ["thoughts/shared/plans/YYYY-MM-DD-GH-NNN-*.md"],
+      "preconditions": [
+        "Must be on main branch",
+        "Ticket must be in Ready for Plan state",
+        "Ticket estimate must be XS/S",
+        "Research document must be attached",
+        "No existing plan document attached"
+      ],
+      "postconditions": [
+        "Plan document created and committed",
+        "Plan URL posted as comment on ticket",
+        "Ticket moved to Plan in Review"
+      ]
+    },
+    "ralph_impl": {
+      "description": "Execute implementation plan phases",
+      "valid_input_states": ["Plan in Review", "In Progress"],
+      "valid_output_states": ["In Progress", "In Review", "Human Needed"],
+      "valid_input_estimates": ["XS", "S"],
+      "requires_artifacts": ["Plan document attached"],
+      "creates_artifacts": ["Worktree", "Feature branch", "PR"],
+      "preconditions": [
+        "Plan document must be attached",
+        "For Plan in Review: human must have approved",
+        "Worktree must be available (create or reuse)"
+      ],
+      "postconditions": [
+        "At least one phase completed",
+        "Changes committed and pushed",
+        "If final phase: PR created, ticket In Review"
+      ]
+    },
+    "ralph_hero": {
+      "description": "Orchestrate full ticket lifecycle",
+      "valid_input_states": ["Backlog", "Research Needed", "Ready for Plan", "Plan in Review", "In Progress"],
+      "valid_output_states": ["In Review", "Human Needed"],
+      "delegates_to": ["ralph_split", "ralph_research", "ralph_plan", "ralph_review", "ralph_impl"],
+      "uses_task_system": true,
+      "preconditions": [
+        "Must be on main branch",
+        "Ticket number must be provided",
+        "No other ralph_hero running on same ticket (check tasks)"
+      ],
+      "postconditions": [
+        "Ticket reached In Review or escalated to Human Needed"
+      ]
+    },
+    "ralph_review": {
+      "description": "Review implementation plans before execution",
+      "valid_input_states": ["Plan in Review"],
+      "valid_output_states": ["In Progress", "Ready for Plan", "Human Needed"],
+      "valid_input_estimates": ["XS", "S"],
+      "creates_artifacts": ["thoughts/shared/reviews/YYYY-MM-DD-GH-NNN-critique.md"],
+      "optional": true,
+      "modes": ["interactive", "auto"],
+      "preconditions": [
+        "Must be on main branch",
+        "Ticket must be in Plan in Review state",
+        "Ticket estimate must be XS/S",
+        "Plan document must be attached"
+      ],
+      "postconditions": [
+        "Ticket state changed to In Progress (approved) or Ready for Plan (needs-iteration)",
+        "If AUTO mode: critique document created and committed",
+        "If rejected: needs-iteration label added"
+      ]
+    }
+  },
+
+  "artifact_patterns": {
+    "research_document": {
+      "path_pattern": "thoughts/shared/research/YYYY-MM-DD-GH-{issue_number}-*.md",
+      "uniqueness": "One per ticket per day",
+      "created_by": ["ralph_research", "ralph_hero"]
+    },
+    "plan_document": {
+      "path_pattern": "thoughts/shared/plans/YYYY-MM-DD-GH-{issue_number}-*.md",
+      "path_pattern_group": "thoughts/shared/plans/YYYY-MM-DD-group-GH-{issue_number}-*.md",
+      "uniqueness": "One per ticket/group per day",
+      "created_by": ["ralph_plan", "ralph_hero"]
+    },
+    "worktree": {
+      "path_pattern": "../worktrees/GH-{issue_number}",
+      "uniqueness": "One per ticket",
+      "created_by": ["ralph_impl", "ralph_hero"]
+    },
+    "critique_document": {
+      "path_pattern": "thoughts/shared/reviews/YYYY-MM-DD-GH-{issue_number}-critique.md",
+      "uniqueness": "One per ticket per day",
+      "created_by": ["ralph_review"]
+    }
+  },
+
+  "conflict_rules": {
+    "description": "Rules for detecting and preventing conflicts",
+    "same_ticket_different_commands": {
+      "allowed": false,
+      "detection": "Check if ticket is in a lock_state",
+      "resolution": "Skip ticket, report 'already being processed'"
+    },
+    "same_ticket_same_command": {
+      "allowed": false,
+      "detection": "Check if ticket is in lock_state matching command's lock_state",
+      "resolution": "Skip ticket"
+    },
+    "duplicate_artifacts": {
+      "allowed": false,
+      "detection": "Check if artifact already attached to ticket",
+      "resolution": "Skip creation, report 'artifact already exists'"
+    },
+    "worktree_collision": {
+      "allowed": false,
+      "detection": "Check if worktree directory exists",
+      "resolution": "Reuse existing worktree if on correct branch"
+    }
+  },
+
+  "semantic_states": {
+    "description": "Mappings from semantic intents to actual states per command",
+    "__LOCK__": {
+      "ralph_research": "Research in Progress",
+      "ralph_plan": "Plan in Progress",
+      "ralph_impl": "In Progress"
+    },
+    "__COMPLETE__": {
+      "ralph_triage": null,
+      "ralph_research": "Ready for Plan",
+      "ralph_plan": "Plan in Review",
+      "ralph_impl": "In Review",
+      "ralph_review": "In Progress",
+      "ralph_split": "Backlog"
+    },
+    "__ESCALATE__": {
+      "*": "Human Needed"
+    },
+    "__CLOSE__": {
+      "*": "Done"
+    },
+    "__CANCEL__": {
+      "*": "Canceled"
+    }
+  },
+
+  "triage_actions": {
+    "description": "Special mappings for triage which has multiple output paths",
+    "RESEARCH": "Research Needed",
+    "PLAN": "Ready for Plan",
+    "CLOSE": "Done",
+    "KEEP": null,
+    "SPLIT": null
+  }
+}
