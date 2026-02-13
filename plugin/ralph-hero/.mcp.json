@@ -4,12 +4,12 @@
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"],
       "env": {
+        "RALPH_GH_REPO_TOKEN": "${RALPH_GH_REPO_TOKEN}",
+        "RALPH_GH_PROJECT_TOKEN": "${RALPH_GH_PROJECT_TOKEN}",
         "RALPH_HERO_GITHUB_TOKEN": "${RALPH_HERO_GITHUB_TOKEN}",
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
-        "GITHUB_TOKEN": "${GITHUB_TOKEN}",
-        "GH_TOKEN": "${GH_TOKEN}",
-        "GITHUB_OWNER": "${RALPH_GH_OWNER}",
-        "GITHUB_REPO": "${RALPH_GH_REPO}",
+        "RALPH_GH_OWNER": "${RALPH_GH_OWNER}",
+        "RALPH_GH_REPO": "${RALPH_GH_REPO}",
+        "RALPH_GH_PROJECT_OWNER": "${RALPH_GH_PROJECT_OWNER}",
         "RALPH_GH_PROJECT_NUMBER": "${RALPH_GH_PROJECT_NUMBER}"
       }
     }

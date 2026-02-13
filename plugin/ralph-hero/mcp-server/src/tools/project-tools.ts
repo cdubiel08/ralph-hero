@@ -18,6 +18,7 @@ import type {
   ProjectV2FieldUnion,
   ProjectV2SingleSelectField,
 } from "../types.js";
+import { resolveProjectOwner } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -128,9 +129,9 @@ export function registerProjectTools(
     },
     async (args) => {
       try {
-        const owner = args.owner || client.config.owner;
+        const owner = args.owner || resolveProjectOwner(client.config);
         if (!owner) {
-          return toolError("owner is required (set GITHUB_OWNER env var or pass explicitly)");
+          return toolError("owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)");
         }
 
         // Step 1: Get owner node ID (try user first, then org)
@@ -172,8 +173,8 @@ export function registerProjectTools(
           return toolError(`Owner "${owner}" not found as user or organization`);
         }
 
-        // Step 2: Create project
-        const createResult = await client.mutate<{
+        // Step 2: Create project (project operation)
+        const createResult = await client.projectMutate<{
           createProjectV2: {
             projectV2: { id: string; number: number; url: string; title: string };
           };
@@ -254,11 +255,11 @@ export function registerProjectTools(
     },
     async (args) => {
       try {
-        const owner = args.owner || client.config.owner;
+        const owner = args.owner || resolveProjectOwner(client.config);
         const number = args.number || client.config.projectNumber;
 
         if (!owner) {
-          return toolError("owner is required (set GITHUB_OWNER env var or pass explicitly)");
+          return toolError("owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)");
         }
         if (!number) {
           return toolError("number is required (set RALPH_GH_PROJECT_NUMBER env var or pass explicitly)");
@@ -316,7 +317,7 @@ export function registerProjectTools(
     },
     async (args) => {
       try {
-        const owner = args.owner || client.config.owner;
+        const owner = args.owner || resolveProjectOwner(client.config);
         const projectNumber = args.number || client.config.projectNumber;
 
         if (!owner) {
@@ -336,7 +337,7 @@ export function registerProjectTools(
 
         // Fetch all project items with field values
         const itemsResult = await paginateConnection<RawProjectItem>(
-          (q, v) => client.query(q, v),
+          (q, v) => client.projectQuery(q, v),
           `query($projectId: ID!, $cursor: String, $first: Int!) {
             node(id: $projectId) {
               ... on ProjectV2 {
@@ -486,7 +487,7 @@ async function fetchProject(
 ): Promise<ProjectResponse | null> {
   // Try user query first
   try {
-    const result = await client.query<{
+    const result = await client.projectQuery<{
       user: { projectV2: ProjectResponse | null };
     }>(
       `query($owner: String!, $number: Int!) {
@@ -532,7 +533,7 @@ async function fetchProject(
 
   // Try organization query
   try {
-    const result = await client.query<{
+    const result = await client.projectQuery<{
       organization: { projectV2: ProjectResponse | null };
     }>(
       `query($owner: String!, $number: Int!) {
@@ -585,7 +586,7 @@ async function createSingleSelectField(
   fieldName: string,
   options: FieldOption[],
 ): Promise<{ id: string; options: string[] }> {
-  const result = await client.mutate<{
+  const result = await client.projectMutate<{
     createProjectV2Field: {
       projectV2Field: {
         id: string;

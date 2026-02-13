@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { paginateConnection } from "../lib/pagination.js";
-import { toolSuccess, toolError } from "../types.js";
+import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Helper: Ensure field option cache is populated
@@ -82,7 +82,7 @@ async function fetchProjectForCache(
 
   for (const ownerType of ["user", "organization"]) {
     try {
-      const result = await client.query<Record<string, { projectV2: ProjectCacheResponse | null }>>(
+      const result = await client.projectQuery<Record<string, { projectV2: ProjectCacheResponse | null }>>(
         QUERY.replace("OWNER_TYPE", ownerType),
         { owner, number },
         { cache: true, cacheTtlMs: 10 * 60 * 1000 },
@@ -222,7 +222,7 @@ async function updateProjectItemField(
     );
   }
 
-  await client.mutate(
+  await client.projectMutate(
     `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
       updateProjectV2ItemFieldValue(input: {
         projectId: $projectId,
@@ -294,6 +294,7 @@ interface ResolvedConfig {
   owner: string;
   repo: string;
   projectNumber: number;
+  projectOwner: string;
 }
 
 function resolveConfig(
@@ -302,8 +303,8 @@ function resolveConfig(
 ): { owner: string; repo: string } {
   const owner = args.owner || client.config.owner;
   const repo = args.repo || client.config.repo;
-  if (!owner) throw new Error("owner is required (set GITHUB_OWNER env var or pass explicitly)");
-  if (!repo) throw new Error("repo is required (set GITHUB_REPO env var or pass explicitly)");
+  if (!owner) throw new Error("owner is required (set RALPH_GH_OWNER env var or pass explicitly)");
+  if (!repo) throw new Error("repo is required (set RALPH_GH_REPO env var or pass explicitly)");
   return { owner, repo };
 }
 
@@ -316,7 +317,11 @@ function resolveFullConfig(
   if (!projectNumber) {
     throw new Error("projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)");
   }
-  return { owner, repo, projectNumber };
+  const projectOwner = resolveProjectOwner(client.config);
+  if (!projectOwner) {
+    throw new Error("projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)");
+  }
+  return { owner, repo, projectNumber, projectOwner };
 }
 
 // ---------------------------------------------------------------------------
@@ -349,10 +354,10 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
-        const { owner, repo, projectNumber } = resolveFullConfig(client, args);
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
         // Ensure field cache is populated
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
         const projectId = fieldCache.getProjectId();
         if (!projectId) {
@@ -361,7 +366,7 @@ export function registerIssueTools(
 
         // Fetch project items with issue content and field values
         const itemsResult = await paginateConnection<RawProjectItem>(
-          (q, v) => client.query(q, v),
+          (q, v) => client.projectQuery(q, v),
           `query($projectId: ID!, $cursor: String, $first: Int!) {
             node(id: $projectId) {
               ... on ProjectV2 {
@@ -738,10 +743,10 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
-        const { owner, repo, projectNumber } = resolveFullConfig(client, args);
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
         // Ensure field cache is populated
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
         // Step 1: Get repository ID
         const repoResult = await client.query<{
@@ -837,7 +842,7 @@ export function registerIssueTools(
           return toolError("Could not resolve project ID for adding issue to project");
         }
 
-        const addResult = await client.mutate<{
+        const addResult = await client.projectMutate<{
           addProjectV2ItemById: {
             item: { id: string };
           };
@@ -1001,10 +1006,10 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
-        const { owner, repo, projectNumber } = resolveFullConfig(client, args);
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
         // Ensure field cache is populated
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
         // Get current state for the response
         const previousState = await getCurrentFieldValue(
@@ -1043,9 +1048,9 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
-        const { owner, repo, projectNumber } = resolveFullConfig(client, args);
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
         const projectItemId = await resolveProjectItemId(client, fieldCache, owner, repo, args.number);
 
@@ -1076,9 +1081,9 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
-        const { owner, repo, projectNumber } = resolveFullConfig(client, args);
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
         const projectItemId = await resolveProjectItemId(client, fieldCache, owner, repo, args.number);
 

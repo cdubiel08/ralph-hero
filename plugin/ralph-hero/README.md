@@ -40,10 +40,16 @@ claude --plugin-dir ./ralph-hero
 
 3. Set environment variables:
    ```bash
-   export GITHUB_TOKEN="ghp_your_token_here"
+   # Single-token setup (simplest)
+   export RALPH_HERO_GITHUB_TOKEN="ghp_your_token_here"
    export RALPH_GH_OWNER="your-github-username-or-org"
    export RALPH_GH_REPO="your-repository-name"
    export RALPH_GH_PROJECT_NUMBER="1"  # Set after running setup
+
+   # For org repos where project is owned by a different user:
+   export RALPH_GH_REPO_TOKEN="ghp_org_repo_token"
+   export RALPH_GH_PROJECT_TOKEN="ghp_personal_project_token"
+   export RALPH_GH_PROJECT_OWNER="your-personal-username"
    ```
 
 ## Setup
@@ -115,24 +121,37 @@ For fully autonomous operation:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` or `GH_TOKEN` | Yes | GitHub Personal Access Token |
+| `RALPH_HERO_GITHUB_TOKEN` | Yes* | Single token with repo + project scopes |
+| `RALPH_GH_REPO_TOKEN` | No | Separate token for repo operations (issues, PRs, comments) |
+| `RALPH_GH_PROJECT_TOKEN` | No | Separate token for project operations (fields, workflow state) |
 | `RALPH_GH_OWNER` | Yes | Repository owner (user or org) |
 | `RALPH_GH_REPO` | Yes | Repository name |
-| `RALPH_GH_PROJECT_NUMBER` | Yes | Project number (from setup) |
+| `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
+| `RALPH_GH_PROJECT_NUMBER` | Yes | GitHub Project V2 number |
 | `MAX_ITERATIONS` | No | Max loop iterations (default: 10) |
 | `TIMEOUT` | No | Per-task timeout (default: 15m) |
 
+*Either `RALPH_HERO_GITHUB_TOKEN` or `RALPH_GH_REPO_TOKEN` must be set.
+
 ### Token Scopes
 
-Your GitHub token needs these scopes:
+Your GitHub token(s) need these scopes:
 
 | Scope | Purpose |
 |-------|---------|
-| `project` | Create/modify Projects V2, fields, views |
 | `repo` | Create/modify issues, comments, PRs |
+| `project` | Create/modify Projects V2, fields, views |
 | `read:org` | Access organization-level projects |
 
-Create a token at: https://github.com/settings/tokens/new
+For **single-token** setups, one token needs all scopes.
+
+For **dual-token** setups (org repo + personal project):
+- `RALPH_GH_REPO_TOKEN` needs `repo` + `read:org` scopes
+- `RALPH_GH_PROJECT_TOKEN` needs `project` scope
+
+Create tokens at: https://github.com/settings/tokens/new
+
+**Important**: After changing environment variables, restart Claude Code for the MCP server to pick up the new values.
 
 ## Architecture
 

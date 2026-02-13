@@ -1,7 +1,7 @@
 ---
 description: One-time setup for Ralph GitHub workflow - creates GitHub Project V2 with required custom fields, workflow states, priorities, estimates, and configuration. Use when setting up a new repository for Ralph, configuring GitHub Projects, or troubleshooting missing workflow states.
 argument-hint: "[project-number]"
-model: opus
+model: haiku
 env:
   RALPH_COMMAND: "setup"
 ---
@@ -12,53 +12,130 @@ One-time interactive setup skill for configuring a GitHub repository with the Ra
 
 ## Prerequisites
 
-Before running this skill, ensure:
+Before running this skill, ensure you have at minimum:
 
-1. **GitHub Token** with required scopes:
-   - `project` - For Projects V2 operations
-   - `repo` - For issue management
-   - `read:org` - For organization-level projects (if using org project)
+1. **A GitHub Personal Access Token** with `repo` and `project` scopes
+2. **`RALPH_GH_OWNER`** and **`RALPH_GH_REPO`** set to target your repository
 
-2. **Environment variables** set:
-   - `GITHUB_TOKEN` or `GH_TOKEN` - GitHub Personal Access Token
-   - `RALPH_GH_OWNER` - GitHub repository owner (user or org)
-   - `RALPH_GH_REPO` - GitHub repository name
+The setup will guide you through everything else, including token configuration for org repos with personal projects.
 
 ## Workflow
 
-### Step 1: Validate Environment
+### Step 1: Health Check & Diagnosis
 
-1. Check `GITHUB_TOKEN` or `GH_TOKEN` is set
-2. Verify token has required scopes by calling `ralph_hero__health_check`
-3. If health check fails, report the error and STOP
-
-### Step 2: Confirm Configuration
-
-Display the detected configuration:
+1. Call `ralph_hero__health_check`
+2. Display all check results clearly:
 
 ```
-Ralph GitHub Setup
-==================
+Health Check Results
+====================
+Auth:            [ok/fail] — [detail]
+Repo Access:     [ok/fail/skip] — [detail]
+Project Access:  [ok/fail/skip] — [detail]
+Required Fields: [ok/fail/skip] — [detail]
 
-GitHub User: [authenticated user from health_check]
-Owner: [RALPH_GH_OWNER]
-Repository: [RALPH_GH_REPO]
-Project Number: [RALPH_GH_PROJECT_NUMBER or "Will create new"]
-
-Proceeding with setup...
+Config:
+  Repo Owner:     [value]
+  Repository:     [value]
+  Project Owner:  [value]
+  Project Number: [value]
+  Token Mode:     [single-token/dual-token]
 ```
 
-If `RALPH_GH_OWNER` or `RALPH_GH_REPO` are not set, prompt the user for values.
+3. **If `auth` fails**: STOP. Display:
+   ```
+   Authentication failed. Your token may be expired or invalid.
+
+   Fix: Set a valid token:
+     export RALPH_HERO_GITHUB_TOKEN="ghp_your_token_here"
+
+   Generate one at: https://github.com/settings/tokens
+   Required scopes: repo, project
+
+   After setting the variable, restart Claude Code.
+   ```
+
+4. **If `repoAccess` fails**: STOP. Display:
+   ```
+   Cannot access repository [owner]/[repo].
+
+   Possible causes:
+   - RALPH_GH_OWNER or RALPH_GH_REPO is incorrect
+   - Token lacks 'repo' scope
+   - Token doesn't have access to this org
+
+   Fix: Verify your env vars and token scopes, then restart Claude Code.
+   ```
+
+5. **If `projectAccess` fails or is skipped**: This is expected for first-time setup or org repos without project access. **Do NOT stop** — continue to Step 2 which will handle project creation.
+
+6. **If all checks pass**: Great — skip to Step 3 (verify existing project).
+
+### Step 2: Determine Project Owner
+
+This step runs when there's no accessible project yet (projectAccess failed/skipped).
+
+Ask the user using AskUserQuestion:
+
+**Question**: "Where should the GitHub Project be created?"
+**Options**:
+- **"Under [RALPH_GH_OWNER] (org/user)"** — Use the repo owner. Works when your token has org-level project permissions.
+- **"Under my personal account"** — Use your personal GitHub username. Works when you don't have org project access but want to track org repo issues in a personal project.
+
+**If they choose personal account**, ask a follow-up:
+
+**Question**: "What is your GitHub username for the project?"
+- Pre-fill with the `authenticatedUser` from the health check if available
+
+Record the chosen project owner. If it differs from `RALPH_GH_OWNER`, note that we're in **split-owner mode**.
+
+### Step 2b: Check Token Scopes for Split-Owner Mode
+
+If project owner differs from repo owner:
+
+Ask using AskUserQuestion:
+
+**Question**: "Does your current token have both org repo access AND personal project access?"
+**Options**:
+- **"Yes, one token works for both"** — Single token mode. Continue.
+- **"No, I need separate tokens"** — Guide them through dual-token setup.
+
+**If they need separate tokens**, display:
+
+```
+Dual-Token Setup
+================
+
+You need two Personal Access Tokens:
+
+1. Repo token (for org issues/PRs):
+   - Go to: https://github.com/settings/tokens
+   - Create a token with scopes: repo, read:org
+   - Set: export RALPH_GH_REPO_TOKEN="ghp_..."
+
+2. Project token (for personal project):
+   - Go to: https://github.com/settings/tokens
+   - Create a token with scopes: project
+   - Set: export RALPH_GH_PROJECT_TOKEN="ghp_..."
+
+Also set:
+   export RALPH_GH_PROJECT_OWNER="[their-username]"
+
+After setting these variables, restart Claude Code and run /ralph-setup again.
+```
+
+**STOP here** if they need to create new tokens — they must restart Claude Code for the MCP server to pick up new env vars.
 
 ### Step 3: Create or Verify Project
 
-**If `RALPH_GH_PROJECT_NUMBER` is set:**
+**If `RALPH_GH_PROJECT_NUMBER` is set and project was accessible in Step 1:**
 1. Call `ralph_hero__get_project` to verify the project exists
 2. Verify it has the required custom fields (Workflow State, Priority, Estimate)
 3. If fields are missing, report what's missing and offer to create them
+4. Skip to Step 4
 
-**If `RALPH_GH_PROJECT_NUMBER` is NOT set:**
-1. Call `ralph_hero__setup_project` to create a new project
+**If `RALPH_GH_PROJECT_NUMBER` is NOT set (or project wasn't accessible):**
+1. Call `ralph_hero__setup_project` with `owner` set to the **project owner** determined in Step 2 (NOT the repo owner, unless they're the same)
 2. This creates:
    - **Workflow State** single-select field with 11 options:
      - Backlog, Research Needed, Research in Progress
@@ -99,7 +176,9 @@ This gives two complementary views:
 
 ### Step 5: Store Configuration
 
-Create a local configuration file at `.claude/ralph-hero.local.md` in the current project:
+Create a local configuration file at `.claude/ralph-hero.local.md` in the current project.
+
+**If repo owner == project owner (simple setup):**
 
 ```markdown
 ---
@@ -124,11 +203,58 @@ Create a local configuration file at `.claude/ralph-hero.local.md` in the curren
 Set these in your shell profile or `.env` file:
 
 ```bash
+export RALPH_HERO_GITHUB_TOKEN="[token]"  # or keep existing
 export RALPH_GH_OWNER="[owner]"
 export RALPH_GH_REPO="[repo]"
 export RALPH_GH_PROJECT_NUMBER="[number]"
 ```
+```
 
+**If repo owner != project owner (split-owner setup):**
+
+```markdown
+---
+# Ralph GitHub Plugin - Local Configuration
+# Generated by ralph-setup on [date]
+# Do not commit this file (add to .gitignore)
+---
+
+# Ralph GitHub Configuration
+
+## Project Settings
+
+| Setting | Value |
+|---------|-------|
+| Repo Owner | [repo-owner] |
+| Repository | [repo] |
+| Project Owner | [project-owner] |
+| Project Number | [number] |
+| Project URL | [url] |
+| Token Mode | [single-token or dual-token] |
+
+## Environment Variables
+
+Set these in your shell profile or `.env` file:
+
+```bash
+export RALPH_GH_OWNER="[repo-owner]"
+export RALPH_GH_REPO="[repo]"
+export RALPH_GH_PROJECT_OWNER="[project-owner]"
+export RALPH_GH_PROJECT_NUMBER="[number]"
+
+# Token configuration:
+# Option A: Single token with both org repo + personal project access
+export RALPH_HERO_GITHUB_TOKEN="ghp_..."
+
+# Option B: Separate tokens (if single token doesn't cover both)
+export RALPH_GH_REPO_TOKEN="ghp_..."      # org repo access
+export RALPH_GH_PROJECT_TOKEN="ghp_..."   # personal project access
+```
+```
+
+Also include the Workflow States table in both cases:
+
+```markdown
 ## Workflow States
 
 | State | Description |
@@ -147,12 +273,13 @@ export RALPH_GH_PROJECT_NUMBER="[number]"
 
 ### Step 6: Verify Setup
 
-1. Call `ralph_hero__health_check` to confirm MCP server connectivity
+1. Call `ralph_hero__health_check` to confirm all checks pass
 2. Call `ralph_hero__get_project` to confirm project is accessible
-3. Report setup status
+3. If verification fails, display what went wrong and remediation steps
 
 ### Step 7: Final Report
 
+**For simple setup (same owner):**
 ```
 Setup Complete
 ==============
@@ -174,13 +301,45 @@ Configuration saved to: .claude/ralph-hero.local.md
 
 Next steps:
 1. Set environment variables (see configuration file)
-2. Run /ralph-triage to start processing issues
-3. Run /ralph-hero for autonomous workflow
+2. Restart Claude Code for env changes to take effect
+3. Run /ralph-triage to start processing issues
+```
+
+**For split-owner setup:**
+```
+Setup Complete
+==============
+
+Repository: [repo-owner]/[repo]
+Project: [project title] (owned by [project-owner])
+URL: [project URL]
+Project Number: [number]
+Token Mode: [single-token/dual-token]
+
+Custom Fields:
+  - Workflow State: 11 options configured
+  - Priority: 4 options configured
+  - Estimate: 5 options configured
+
+Views (create manually in GitHub UI):
+  - Ralph Table (Table, grouped by Priority, sub-issue hierarchy, -has:parent-issue)
+  - Ralph Kanban (Board, Workflow State columns, hidden: Canceled/Done/locked states)
+
+Configuration saved to: .claude/ralph-hero.local.md
+
+IMPORTANT: Set these environment variables and restart Claude Code:
+  export RALPH_GH_PROJECT_OWNER="[project-owner]"
+  export RALPH_GH_PROJECT_NUMBER="[number]"
+  [+ any token exports needed]
+
+The MCP server reads env vars at startup — changes require a restart.
 ```
 
 ## Error Handling
 
 - If token validation fails: Report required scopes and how to create a new token
-- If project creation fails: Check if user has project creation permissions
+- If project creation fails on org: Suggest personal project as alternative
+- If project creation fails on personal: Check token has `project` scope
 - If view creation fails: Continue (views are optional, can be created manually)
 - If configuration file write fails: Print the configuration to stdout instead
+- If user needs new tokens: STOP with clear instructions, they must restart after setting vars

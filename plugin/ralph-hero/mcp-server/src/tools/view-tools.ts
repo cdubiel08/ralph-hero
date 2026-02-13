@@ -12,7 +12,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { toolSuccess, toolError } from "../types.js";
+import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Register view tools
@@ -35,7 +35,7 @@ export function registerViewTools(
     },
     async (args) => {
       try {
-        const owner = args.owner || client.config.owner;
+        const owner = args.owner || resolveProjectOwner(client.config);
         const projectNumber = args.number || client.config.projectNumber;
 
         if (!owner) {
@@ -85,7 +85,7 @@ export function registerViewTools(
     },
     async (args) => {
       try {
-        const owner = args.owner || client.config.owner;
+        const owner = args.owner || resolveProjectOwner(client.config);
         const projectNumber = args.number || client.config.projectNumber;
 
         if (!owner) {
@@ -103,7 +103,7 @@ export function registerViewTools(
           return toolError(`Field "${args.fieldName}" not found. Available fields: ${fieldCache.getFieldNames().join(", ")}`);
         }
 
-        const result = await client.mutate<{
+        const result = await client.projectMutate<{
           updateProjectV2Field: {
             projectV2Field: {
               name: string;
@@ -199,7 +199,7 @@ async function ensureFieldCache(
 
   for (const ownerType of ["user", "organization"]) {
     try {
-      const result = await client.query<Record<string, { projectV2: {
+      const result = await client.projectQuery<Record<string, { projectV2: {
         id: string;
         fields: { nodes: Array<{ id: string; name: string; options?: Array<{ id: string; name: string }> }> };
       } | null }>>(
@@ -248,7 +248,7 @@ async function fetchViews(
 
   // Try user
   try {
-    const result = await client.query<{
+    const result = await client.projectQuery<{
       user: { projectV2: { views: { nodes: ViewInfo[] } } | null };
     }>(
       VIEWS_QUERY.replace("OWNER_TYPE", "user"),
@@ -265,7 +265,7 @@ async function fetchViews(
 
   // Try org
   try {
-    const result = await client.query<{
+    const result = await client.projectQuery<{
       organization: { projectV2: { views: { nodes: ViewInfo[] } } | null };
     }>(
       VIEWS_QUERY.replace("OWNER_TYPE", "organization"),

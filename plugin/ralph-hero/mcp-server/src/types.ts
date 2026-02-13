@@ -247,9 +247,15 @@ export function toolError(message: string): ToolResult {
 
 export interface GitHubClientConfig {
   token: string;
+  projectToken?: string;  // Separate token for project operations. Falls back to token.
   owner?: string;
   repo?: string;
   projectNumber?: number;
+  projectOwner?: string;  // Defaults to owner if unset
+}
+
+export function resolveProjectOwner(config: GitHubClientConfig): string | undefined {
+  return config.projectOwner || config.owner;
 }
 
 export interface GraphQLResponse<T = unknown> {
