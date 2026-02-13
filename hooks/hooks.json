@@ -1,12 +1,73 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Ralph GitHub plugin hook registration",
+  "version": "1.0.0",
+  "note": "Most hooks are registered via skill frontmatter for granular scoping. This file provides plugin-level hooks that apply across all skills.",
+
   "hooks": {
-    "SessionStart": [
+    "PreToolUse": [
       {
-        "matcher": "startup",
+        "matcher": "ralph_hero__update_workflow_state",
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check-config.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-github-validator.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "ralph_hero__get_issue",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-ticket-lock-validator.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-artifact-validator.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-worktree-validator.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "ralph_hero__update_workflow_state",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/post-github-validator.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "ralph_hero__get_issue",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/post-blocker-reminder.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/post-git-validator.sh"
           }
         ]
       }
