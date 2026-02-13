@@ -1,15 +1,19 @@
 {
   "name": "ralph-hero",
-  "description": "Autonomous workflow plugins for GitHub Projects V2",
+  "metadata": {
+    "description": "Autonomous workflow plugins for GitHub Projects V2"
+  },
   "owner": {
-    "name": "Chad Dubiel",
-    "url": "https://github.com/cdubiel08"
+    "name": "Chad Dubiel"
   },
   "plugins": [
     {
       "name": "ralph-hero",
       "description": "The naive hero picks tickets, does their best work, and moves on. Autonomous triage, research, planning, and implementation with GitHub Projects V2.",
-      "source": "."
+      "source": {
+        "source": "github",
+        "repo": "cdubiel08/ralph-hero"
+      }
     }
   ]
 }
