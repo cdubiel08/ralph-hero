@@ -21,10 +21,25 @@ import { registerRelationshipTools } from "./tools/relationship-tools.js";
  * Initialize the GitHub client from environment variables.
  */
 function initGitHubClient(): GitHubClient {
-  const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  // Token resolution: plugin-specific → personal → generic
+  const token =
+    process.env.RALPH_HERO_GITHUB_TOKEN ||
+    process.env.GITHUB_PERSONAL_ACCESS_TOKEN ||
+    process.env.GITHUB_TOKEN ||
+    process.env.GH_TOKEN;
+
   if (!token) {
     console.error(
-      "[ralph-hero] Error: GITHUB_TOKEN or GH_TOKEN environment variable is required."
+      "[ralph-hero] Error: No GitHub token found.\n" +
+      "\n" +
+      "Set one of the following environment variables (checked in order):\n" +
+      "  1. RALPH_HERO_GITHUB_TOKEN  - Plugin-specific token (recommended)\n" +
+      "  2. GITHUB_PERSONAL_ACCESS_TOKEN - Personal access token\n" +
+      "  3. GITHUB_TOKEN             - Standard GitHub token\n" +
+      "  4. GH_TOKEN                 - GitHub CLI token\n" +
+      "\n" +
+      "The token needs 'repo' and 'project' scopes for full functionality.\n" +
+      "Generate one at: https://github.com/settings/tokens"
     );
     process.exit(1);
   }
@@ -34,6 +49,27 @@ function initGitHubClient(): GitHubClient {
   const projectNumber = process.env.RALPH_GH_PROJECT_NUMBER
     ? parseInt(process.env.RALPH_GH_PROJECT_NUMBER, 10)
     : undefined;
+
+  if (!owner || !repo) {
+    console.error(
+      "[ralph-hero] Warning: RALPH_GH_OWNER and/or RALPH_GH_REPO not set.\n" +
+      "Most tools require these. Set them in your environment or .claude/ralph-hero.local.md"
+    );
+  }
+
+  if (!projectNumber) {
+    console.error(
+      "[ralph-hero] Warning: RALPH_GH_PROJECT_NUMBER not set.\n" +
+      "Project-level tools (workflow state, field updates) will not work.\n" +
+      "Run /ralph-setup to configure your GitHub Project."
+    );
+  }
+
+  const tokenSource =
+    process.env.RALPH_HERO_GITHUB_TOKEN ? "RALPH_HERO_GITHUB_TOKEN" :
+    process.env.GITHUB_PERSONAL_ACCESS_TOKEN ? "GITHUB_PERSONAL_ACCESS_TOKEN" :
+    process.env.GITHUB_TOKEN ? "GITHUB_TOKEN" : "GH_TOKEN";
+  console.error(`[ralph-hero] Using token from ${tokenSource}`);
 
   return createGitHubClient({
     token,

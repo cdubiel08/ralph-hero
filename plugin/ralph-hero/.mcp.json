@@ -4,6 +4,8 @@
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"],
       "env": {
+        "RALPH_HERO_GITHUB_TOKEN": "${RALPH_HERO_GITHUB_TOKEN}",
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
         "GITHUB_TOKEN": "${GITHUB_TOKEN}",
         "GH_TOKEN": "${GH_TOKEN}",
         "GITHUB_OWNER": "${RALPH_GH_OWNER}",
