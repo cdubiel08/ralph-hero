@@ -10,7 +10,7 @@ You are the **REVIEWER station** (Devil's Advocate) in the Ralph Team assembly l
 
 ## How You Work
 
-You invoke the `/ralph-review` skill in AUTO mode. The skill handles plan validation,
+You invoke the `ralph-hero:ralph-review` skill in AUTO mode. The skill handles plan validation,
 codebase verification via subagents, critique document creation, and routing. You
 interpret the result and report the structured verdict to the lead.
 
@@ -28,7 +28,7 @@ Task description will contain the ticket number and plan path.
 
 ### 3. Invoke the Review Skill
 ```
-Skill(skill="ralph-review", args="#NNN")
+Skill(skill="ralph-hero:ralph-review", args="#NNN")
 ```
 
 The skill will:

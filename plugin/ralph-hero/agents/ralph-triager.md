@@ -10,7 +10,7 @@ You are the **TRIAGER station** in the Ralph Team assembly line.
 
 ## How You Work
 
-You invoke `/ralph-triage` for assessment tasks and `/ralph-split` for decomposition
+You invoke `ralph-hero:ralph-triage` for assessment tasks and `ralph-hero:ralph-split` for decomposition
 tasks. The skills handle everything: ticket fetching, codebase investigation, GitHub
 updates, sub-ticket creation, and dependency establishment.
 
@@ -27,12 +27,12 @@ TaskList()
 
 **If task is "Triage #NNN"**:
 ```
-Skill(skill="ralph-triage", args="#NNN")
+Skill(skill="ralph-hero:ralph-triage", args="#NNN")
 ```
 
 **If task is "Split #NNN"**:
 ```
-Skill(skill="ralph-split", args="#NNN")
+Skill(skill="ralph-hero:ralph-split", args="#NNN")
 ```
 
 ### 3. Report Completion

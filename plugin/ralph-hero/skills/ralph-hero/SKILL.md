@@ -185,14 +185,14 @@ For each M/L/XL issue found in tree analysis:
 
 Task(subagent_type="general-purpose",
      prompt="You are executing ralph-split for issue #AAA.
-             Use Skill(skill='ralph-split', args='AAA') to split this issue.
+             Use Skill(skill='ralph-hero:ralph-split', args='AAA') to split this issue.
              This is a [M/L/XL] issue that needs decomposition into XS/S sub-issues.",
      run_in_background=true,
      description="Split #AAA")
 
 Task(subagent_type="general-purpose",
      prompt="You are executing ralph-split for issue #BBB.
-             Use Skill(skill='ralph-split', args='BBB') to split this issue.
+             Use Skill(skill='ralph-hero:ralph-split', args='BBB') to split this issue.
              This is a [M/L/XL] issue that needs decomposition into XS/S sub-issues.",
      run_in_background=true,
      description="Split #BBB")
@@ -229,7 +229,7 @@ Task(subagent_type="general-purpose",
              Issue: [title]
              Current state: Research Needed
 
-             Use Skill(skill='ralph-research', args='AAA') to research this issue.
+             Use Skill(skill='ralph-hero:ralph-research', args='AAA') to research this issue.
              Complete the research and move the issue to 'Ready for Plan' state.",
      run_in_background=true,
      description="Research #AAA")
@@ -239,7 +239,7 @@ Task(subagent_type="general-purpose",
              Issue: [title]
              Current state: Research Needed
 
-             Use Skill(skill='ralph-research', args='BBB') to research this issue.
+             Use Skill(skill='ralph-hero:ralph-research', args='BBB') to research this issue.
              Complete the research and move the issue to 'Ready for Plan' state.",
      run_in_background=true,
      description="Research #BBB")
@@ -319,7 +319,7 @@ For a single-issue tree, the issue is its own group.
 For single-issue groups:
 Task(subagent_type="general-purpose",
      prompt="You are executing ralph-plan for issue #NNN.
-             Use Skill(skill='ralph-plan', args='NNN') to create an implementation plan.
+             Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create an implementation plan.
              Ensure the plan is committed and issue is moved to 'Plan in Review'.",
      description="Plan #NNN")
 
@@ -329,7 +329,7 @@ Task(subagent_type="general-purpose",
              Primary issue: #AAA (use this as the plan anchor)
              Group members: #AAA, #BBB, #CCC
 
-             Use Skill(skill='ralph-plan', args='AAA') to create a GROUP implementation plan.
+             Use Skill(skill='ralph-hero:ralph-plan', args='AAA') to create a GROUP implementation plan.
              The plan should cover all issues in the group with phases for each.
              Ensure all group issues are moved to 'Plan in Review'.",
      description="Plan group #AAA")
@@ -362,7 +362,7 @@ Task(subagent_type="general-purpose",
      prompt="You are executing ralph-review for issue #AAA.
              Review mode: [RALPH_REVIEW_MODE]
 
-             Use Skill(skill='ralph-review', args='AAA') to review this plan.
+             Use Skill(skill='ralph-hero:ralph-review', args='AAA') to review this plan.
              The review will:
              - AUTO mode: Generate critique document
              - INTERACTIVE mode: Present human wizard for approval
@@ -472,7 +472,7 @@ Example order:
 For FIRST issue in order:
 Task(subagent_type="general-purpose",
      prompt="You are executing ralph-impl for issue #AAA.
-             Use Skill(skill='ralph-impl', args='AAA') to implement this issue.
+             Use Skill(skill='ralph-hero:ralph-impl', args='AAA') to implement this issue.
              Follow the implementation plan exactly.
              Create PR and move issue to 'In Review' when complete.",
      description="Implement #AAA")
@@ -487,7 +487,7 @@ If implementation failed:
 For SECOND issue in order:
 Task(subagent_type="general-purpose",
      prompt="You are executing ralph-impl for issue #BBB.
-             Use Skill(skill='ralph-impl', args='BBB') to implement this issue.
+             Use Skill(skill='ralph-hero:ralph-impl', args='BBB') to implement this issue.
              Follow the implementation plan exactly.
              Create PR and move issue to 'In Review' when complete.",
      description="Implement #BBB")

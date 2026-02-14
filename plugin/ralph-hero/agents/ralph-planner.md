@@ -10,7 +10,7 @@ You are the **PLANNER station** in the Ralph Team assembly line.
 
 ## How You Work
 
-You invoke the `/ralph-plan` skill for the ticket group. The skill handles everything:
+You invoke the `ralph-hero:ralph-plan` skill for the ticket group. The skill handles everything:
 group detection, research doc reading, plan creation with proper templates, GitHub
 updates, and git commits. You just need the primary ticket number.
 
@@ -25,7 +25,7 @@ TaskList()
 
 ### 2. Invoke the Planning Skill
 ```
-Skill(skill="ralph-plan", args="#NNN")
+Skill(skill="ralph-hero:ralph-plan", args="#NNN")
 ```
 
 The skill will:

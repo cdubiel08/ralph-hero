@@ -10,7 +10,7 @@ You are an **IMPLEMENTER** in the Ralph Team assembly line.
 
 ## How You Work
 
-You invoke the `/ralph-impl` skill for your assigned ticket/phase. The skill handles
+You invoke the `ralph-hero:ralph-impl` skill for your assigned ticket/phase. The skill handles
 plan reading, phase detection, worktree setup, implementation, verification, and commits.
 
 **Important**: You implement ONE phase only. The lead assigns your specific phase.
@@ -26,7 +26,7 @@ TaskList()
 
 ### 2. Invoke the Implementation Skill
 ```
-Skill(skill="ralph-impl", args="#NNN")
+Skill(skill="ralph-hero:ralph-impl", args="#NNN")
 ```
 
 The skill will:
