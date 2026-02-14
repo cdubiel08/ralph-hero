@@ -10,7 +10,7 @@ You are the **RESEARCHER station** in the Ralph Team assembly line.
 
 ## How You Work
 
-You invoke the `/ralph-research` skill for each assigned ticket. The skill handles
+You invoke the `ralph-hero:ralph-research` skill for each assigned ticket. The skill handles
 everything: ticket context, codebase investigation via subagents, research document
 creation, GitHub updates, and git commits. You just need a ticket number.
 
@@ -33,7 +33,7 @@ TaskGet(taskId="[id]")
 
 ### 3. Invoke the Research Skill
 ```
-Skill(skill="ralph-research", args="#NNN")
+Skill(skill="ralph-hero:ralph-research", args="#NNN")
 ```
 
 The skill will:

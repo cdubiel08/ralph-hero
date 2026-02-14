@@ -450,7 +450,7 @@ Task(subagent_type="ralph-triager",
      prompt="Triage issue #NNN: [title].
              Description: [description]
              Current state: Backlog, Estimate: S
-             Invoke: Skill(skill='ralph-triage', args='NNN')
+             Invoke: Skill(skill='ralph-hero:ralph-triage', args='NNN')
              Report results via SendMessage(type='message', recipient='team-lead', ...).",
      description="Triage #NNN")
 ```
@@ -464,7 +464,7 @@ Task(subagent_type="ralph-triager",
              Description: [description]
              Current state: Backlog, Estimate: L
              This issue is too large for direct implementation.
-             Invoke: Skill(skill='ralph-split', args='NNN')
+             Invoke: Skill(skill='ralph-hero:ralph-split', args='NNN')
              After splitting, report the created sub-issues via SendMessage(type='message', recipient='team-lead', ...)
              so I can create tasks for the new issues.",
      description="Split #NNN")
@@ -478,7 +478,7 @@ Task(subagent_type="ralph-researcher",
      prompt="Research issue #NNN: [title].
              Description: [description]
              Current state: Research Needed
-             Invoke: Skill(skill='ralph-research', args='NNN')
+             Invoke: Skill(skill='ralph-hero:ralph-research', args='NNN')
              Report results via SendMessage(type='message', recipient='team-lead', ...).",
      description="Research #NNN")
 ```
@@ -491,7 +491,7 @@ Task(subagent_type="ralph-planner",
      prompt="Create implementation plan for #NNN: [title].
              Description: [description]
              Current state: Ready for Plan
-             Invoke: Skill(skill='ralph-plan', args='NNN')
+             Invoke: Skill(skill='ralph-hero:ralph-plan', args='NNN')
              Report results via SendMessage(type='message', recipient='team-lead', ...).",
      description="Plan #NNN")
 ```
@@ -504,7 +504,7 @@ Task(subagent_type="ralph-planner",
      prompt="Create group implementation plan for #[PRIMARY]: [title].
              This is the primary issue of a group: #[all issue numbers].
              All issues are in Ready for Plan state.
-             Invoke: Skill(skill='ralph-plan', args='[PRIMARY]')
+             Invoke: Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY]')
              ralph-plan will automatically discover the group and create a unified plan.
              Report results via SendMessage(type='message', recipient='team-lead', ...).",
      description="Plan group #[PRIMARY]")
@@ -518,7 +518,7 @@ Task(subagent_type="ralph-advocate",
      prompt="Review plan for #NNN: [title].
              Current state: Plan in Review
              Plan path: [path to plan document]
-             Invoke: Skill(skill='ralph-review', args='NNN')
+             Invoke: Skill(skill='ralph-hero:ralph-review', args='NNN')
              Report FULL verdict (APPROVED/NEEDS_ITERATION) via SendMessage(type='message', recipient='team-lead', ...).",
      description="Review #NNN")
 ```
@@ -532,7 +532,7 @@ Task(subagent_type="ralph-advocate",
              Group issues: #[all issue numbers]
              Current state: Plan in Review
              Plan path: [path to group plan document]
-             Invoke: Skill(skill='ralph-review', args='[PRIMARY]')
+             Invoke: Skill(skill='ralph-hero:ralph-review', args='[PRIMARY]')
              This is a unified plan covering [N] issues. Review all phases.
              Report FULL verdict (APPROVED/NEEDS_ITERATION) via SendMessage(type='message', recipient='team-lead', ...).",
      description="Review group #[PRIMARY]")
@@ -547,7 +547,7 @@ Task(subagent_type="ralph-implementer",
              Current state: In Progress
              Plan path: [path to plan document]
              Worktree: worktrees/GH-NNN
-             Invoke: Skill(skill='ralph-impl', args='NNN')
+             Invoke: Skill(skill='ralph-hero:ralph-impl', args='NNN')
              Report results via SendMessage(type='message', recipient='team-lead', ...).",
      description="Implement #NNN")
 ```
@@ -562,7 +562,7 @@ Task(subagent_type="ralph-implementer",
              Current state: All issues In Progress
              Plan path: [path to group plan document]
              Worktree: worktrees/GH-[PRIMARY]
-             Invoke: Skill(skill='ralph-impl', args='[PRIMARY]')
+             Invoke: Skill(skill='ralph-hero:ralph-impl', args='[PRIMARY]')
              ralph-impl will detect the group plan and execute all phases.
              Report results via SendMessage(type='message', recipient='team-lead', ...).",
      description="Implement group #[PRIMARY]")
@@ -579,7 +579,7 @@ SendMessage(
   content="New assignment: Research #NNN: [title].
            Description: [description]
            Current state: Research Needed
-           Invoke: Skill(skill='ralph-research', args='NNN')
+           Invoke: Skill(skill='ralph-hero:ralph-research', args='NNN')
            Report results via SendMessage(type='message', recipient='team-lead', ...).",
   summary="New assignment: #NNN"
 )
