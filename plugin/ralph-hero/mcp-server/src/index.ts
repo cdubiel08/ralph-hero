@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Ralph GitHub MCP Server - Entry Point
  *

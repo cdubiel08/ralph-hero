@@ -26,25 +26,17 @@ ralph-hero/
 │       │   │   ├── relationship-tools.ts
 │       │   │   └── view-tools.ts
 │       │   └── __tests__/          # Vitest tests
-│       ├── dist/                   # Compiled JS (COMMITTED — see below)
+│       ├── dist/                   # Compiled JS (gitignored, published to npm)
 │       ├── package.json
 │       └── tsconfig.json
 └── thoughts/                    # Research docs, plans, decisions
 ```
 
-## Critical: dist/ Must Be Committed
+## MCP Server Distribution
 
-Claude Code does **not** run `npm install` or build steps during plugin installation. It copies the plugin directory as-is. If `dist/` is missing, the MCP server silently fails to start and no tools are available.
+The MCP server is published to npm as `ralph-hero-mcp-server` and consumed via `npx` in `.mcp.json`. This follows the standard MCP ecosystem pattern used by official servers (`@modelcontextprotocol/server-*`) and plugins (Firebase, Context7).
 
-**After ANY change to MCP server source (`src/`), you MUST:**
-
-```bash
-cd plugin/ralph-hero/mcp-server
-npx tsc
-git add dist/
-```
-
-The `.gitignore` excludes `dist/__tests__/` and sourcemaps to keep the repo clean — only runtime `.js` and `.d.ts` files are tracked.
+The `dist/` directory is **not** committed to git. It is built and published via `npm publish` (the `prepublishOnly` script runs `tsc` automatically).
 
 ## Development
 
@@ -53,8 +45,15 @@ The `.gitignore` excludes `dist/__tests__/` and sourcemaps to keep the repo clea
 ```bash
 cd plugin/ralph-hero/mcp-server
 npm install          # Install dependencies
-npx tsc              # Build TypeScript -> dist/
-npx vitest run       # Run tests (21 tests)
+npm run build        # Build TypeScript -> dist/
+npm test             # Run tests (vitest)
+```
+
+### Publishing
+
+```bash
+cd plugin/ralph-hero/mcp-server
+npm publish          # Builds automatically via prepublishOnly, then publishes
 ```
 
 ### Environment Variables

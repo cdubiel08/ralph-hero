@@ -4,11 +4,17 @@
   "description": "MCP server for GitHub Projects V2 - Ralph workflow automation",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "ralph-hero-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist/**/*.js"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "start": "node dist/index.js",
-    "postinstall": "npm run build"
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -21,6 +27,19 @@
     "typescript": "^5.7.0",
     "vitest": "^4.0.18"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cdubiel08/ralph-hero.git",
+    "directory": "plugin/ralph-hero/mcp-server"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "github-projects",
+    "claude-code",
+    "ralph-hero"
+  ],
+  "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
   }
