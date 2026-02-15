@@ -198,18 +198,20 @@ export function createGitHubClient(clientConfig: GitHubClientConfig): GitHubClie
       mutation: string,
       variables?: Record<string, unknown>,
     ): Promise<T> {
-      // Invalidate related cache entries on mutations
-      // (conservative: clear all cache on any mutation)
-      cache.clear();
-      return executeGraphQL<T>(mutation, variables);
+      // Invalidate cached query results but preserve stable node ID lookups
+      // (issue-node-id and project-item-id entries remain valid across mutations)
+      cache.invalidatePrefix("query:");
+      const result = await executeGraphQL<T>(mutation, variables);
+      return result;
     },
 
     async projectMutate<T>(
       mutation: string,
       variables?: Record<string, unknown>,
     ): Promise<T> {
-      cache.clear();
-      return executeGraphQL<T>(mutation, variables, projectGraphqlWithAuth);
+      cache.invalidatePrefix("query:");
+      const result = await executeGraphQL<T>(mutation, variables, projectGraphqlWithAuth);
+      return result;
     },
 
     getRateLimitStatus() {
