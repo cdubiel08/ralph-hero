@@ -10,11 +10,11 @@ hooks:
   TaskCompleted:
     - hooks:
         - type: command
-          command: "echo 'A task just completed. Run the DISPATCH LOOP (Section 4.4) NOW: check TaskList, find new work for idle teammates, advance the pipeline.' >&2; exit 0"
+          command: "echo 'Task completed. Read its results via TaskGet, then advance the pipeline (Section 4.4 step 1-2).' >&2; exit 0"
   TeammateIdle:
     - hooks:
         - type: command
-          command: "echo 'A teammate went idle. Run the DISPATCH LOOP (Section 4.4) NOW: check if their task is done, find them new work or advance the pipeline.' >&2; exit 0"
+          command: "echo 'Teammate idle. Check if workers exist for all roles with available tasks (Section 4.4 step 3).' >&2; exit 0"
 ---
 
 # Ralph GitHub Team - Adaptive Team Coordinator
@@ -164,7 +164,34 @@ For issues with children or blocks/blockedBy relationships:
 - Independent branches (no shared parent, no blocking relationship) can proceed independently
 - **Child issue state advancement**: When a parent issue's implementation satisfies child issues, the lead MUST advance those children through the state machine too. During state detection, check for child issues and create tasks to advance them alongside the parent. The lead has GitHub MCP access for this -- teammates do not.
 
-After detecting pipeline position, proceed to Section 4 (Team Lifecycle).
+After detecting pipeline position, check for fast-track eligibility (Section 3.1), then proceed to Section 4 (Team Lifecycle).
+
+### 3.1 Effort Scaling: XS Issue Fast-Track
+
+For XS issues (estimate = 1) where the description is specific and actionable (e.g., "fix typo in X", "rename Y to Z", "add field F to model M"):
+
+**Skip research and planning.** Create tasks for implementation directly:
+
+```
+TaskCreate(subject="Implement #NNN (fast-track)", description="XS fast-track: [title]\nDescription: [full description]\nNo plan needed -- implement directly from issue description.", activeForm="Implementing #NNN")
+TaskCreate(subject="Create PR for #NNN", description="Lead creates PR", activeForm="Creating PR")
+TaskUpdate(taskId="[pr]", addBlockedBy=["[impl]"])
+```
+
+Move issue to "In Progress" (skip Research Needed -> Ready for Plan -> Plan in Review).
+
+**Criteria for fast-track**:
+- Estimate is XS (1 point)
+- Description includes specific file paths or clear, unambiguous changes
+- No architectural decisions needed
+- Single-file or 2-3 file change
+
+**When NOT to fast-track** (even if XS):
+- Issue description is vague ("improve performance", "fix bug")
+- Change touches shared infrastructure
+- Change requires understanding complex business logic
+
+The lead makes this judgment during state detection (Section 3).
 
 ## Section 4 - Team Lifecycle & Dispatch Loop
 
@@ -244,70 +271,94 @@ TaskUpdate(taskId="[pr]", addBlockedBy=["[impl]"])
 ```
 With sequential blocking dependencies.
 
-### 4.3 Spawn Teammate for First Phase
+### 4.3 Spawn Workers for Available Tasks
 
-Spawn a single teammate for the current phase (see Section 6 for spawning guidance).
+Check the task list for pending, unblocked tasks. Spawn one worker per role that has available work:
+
+- If research tasks exist -> spawn researcher (it will self-claim)
+- If plan tasks are unblocked -> spawn planner (it will self-claim)
+- If review tasks are unblocked -> spawn reviewer (it will self-claim)
+- If implementation tasks are unblocked -> spawn implementer (it will self-claim)
+- If triage/split tasks exist -> spawn triager (it will self-claim)
+
+**For group issues with multiple research tasks**: Spawn up to 3 researchers. Each will claim a different research task from the pool. Name them `researcher`, `researcher-2`, `researcher-3`.
+
+Workers do NOT need assignment messages -- they check TaskList on spawn and claim matching tasks.
 
 ### 4.4 THE DISPATCH LOOP (Core Control Flow)
 
-**This is the most important section.** After initial setup (4.1-4.3), your entire job is running this loop. The lifecycle hooks fire `TaskCompleted` and `TeammateIdle` events that trigger you back into this loop.
+**This is the most important section.** After initial setup (4.1-4.3), your entire job is running this loop.
 
-Every time a teammate sends a message, completes a task, or goes idle, execute this procedure:
+The lifecycle hooks fire `TaskCompleted` and `TeammateIdle` events that return you to this loop. But NOT every event requires full processing -- use the early-exit checks.
 
 ```
 DISPATCH LOOP:
-1. CHECK TASK LIST
-   - TaskList() to see current state of all tasks
-   - Mark any completed work (check artifacts if task status lags)
+
+0. EARLY-EXIT CHECK (saves tokens)
+   - If the triggering event is TeammateIdle with no task completion -> SKIP to step 3 only
+   - If the triggering event is TaskCompleted -> run full loop
+
+1. READ COMPLETED TASKS
+   - TaskList() to see current state
+   - For each newly completed task:
+     - TaskGet(taskId) to read the embedded results from the description
+     - The description contains everything: paths, verdicts, sub-ticket IDs, file lists
+     - NO need to process SendMessage -- results are in the task
 
 2. ADVANCE PIPELINE
-   - If a task just completed, check what's now unblocked
-   - For group tasks: when the last research task in a group completes,
-     the group plan task becomes unblocked. Similarly, when the group plan
-     completes, the group review task unblocks, and so on.
-     The task blocking system handles this automatically via addBlockedBy --
-     no special logic needed if dependencies were set up correctly in 4.2.
-   - If the next phase for an issue/group is unblocked, assign it
-   - Create worktrees for implementation phases as needed
-   - Create PRs when implementation completes (lead's direct work)
-   - **ADVANCE CHILD ISSUES**: When advancing a parent issue's state, query for children
-     and advance them too:
+   - Based on completed task results:
+     a. Research complete -> check if all group research done (blocking handles this automatically)
+     b. Plan complete -> read plan path from task description, plan task unblocks review
+     c. Review complete -> read verdict from task description:
+        - APPROVED: review task unblocks implementation
+        - NEEDS_ITERATION: create revision task with "Plan" in subject -- planner will self-claim
+     d. Implementation complete -> read commit/file info from task, create PR (lead's direct work)
+   - Advance GitHub workflow state for completed issues (and their children):
      ```
      children = ralph_hero__list_sub_issues(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[issue-number])
      for each child where child.workflowState is EARLIER than parent's new state:
        ralph_hero__update_workflow_state(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=child.number, state="[parent's new state]")
      ```
-     Only advance children in earlier states (e.g., if parent moves to "In Review", advance
-     children in "In Progress" to "In Review", but skip children already in "Done").
-     **Remember: the team's terminal state is "In Review", never "Done".**
+     Only advance children in earlier states. **The team's terminal state is "In Review", never "Done".**
+   - Create worktrees for implementation phases as needed
 
-3. FIND NEW WORK FOR IDLE TEAMMATES
-   This is MANDATORY before shutting down ANY teammate.
-   For each idle teammate with no assigned task:
+3. ENSURE WORKERS EXIST FOR AVAILABLE WORK
+   - TaskList() -- check for pending, unblocked, unowned tasks
+   - For each role with available tasks but no spawned worker:
+     - Spawn a worker of that role (see Section 6)
+     - Workers will self-claim tasks -- no assignment message needed
+   - For group research with multiple tasks: spawn up to 3 researchers
 
-   a. Check current task list for unassigned work matching their role
-   b. If nothing in task list, query GitHub for new issues:
+   ONLY IF no pending tasks exist for any role AND workers are idle:
+   a. Query GitHub for new issues matching idle workers' roles:
       - Researcher idle? -> Find workflowState="Research Needed" issues
       - Planner idle? -> Find workflowState="Ready for Plan" issues
       - Reviewer idle? -> Find workflowState="Plan in Review" issues
       - Implementer idle? -> Find workflowState="In Progress" issues with plans
       - Triager idle? -> Find workflowState="Backlog" issues
+   b. If new issue found:
+      - Fetch full issue details (ralph_hero__get_issue with number)
+      - Run group detection (Section 2 Mode A Step 3)
+      - Create tasks with dependencies (Section 4.2)
+      - Idle workers will self-claim the new tasks
+   c. If NO work found after checking GitHub -> proceed to step 5
 
-   c. If new issue found:
-      - Fetch full issue details: ralph_hero__get_issue(number=N)
-      - Create tasks for it (same as 4.2)
-      - Assign the matching task to the idle teammate via SendMessage
-      - Report to user: "Assigning #NNN to [teammate] -- [reason]"
+4. PROACTIVE LOOKAHEAD (when all workers are busy)
+   - Query GitHub for issues matching the NEXT pipeline stage:
+     - Researchers busy? -> Find workflowState="Ready for Plan" issues (next after research)
+     - Planner busy? -> Find workflowState="Plan in Review" issues OR "In Progress" issues
+     - Implementer busy? -> Find new workflowState="Research Needed" issues (start next cycle)
+   - Create tasks for found issues (with proper blocking dependencies)
+   - When current workers finish and claim their next task, work is already staged
+   - This eliminates the gap between "worker finishes" and "lead creates tasks"
 
-   d. If NO work found for this role after checking GitHub:
-      - Can this teammate do a DIFFERENT role? (e.g., researcher could plan)
-      - If yes, reassign. If no, THEN shut down.
-
-4. CHECK FOR STOP CONDITIONS
-   - All tasks completed AND no work found on GitHub -> shut down team
+5. CHECK FOR STOP CONDITIONS
+   - All tasks completed AND no pending/unblocked tasks AND no work on GitHub -> shut down team
    - User requests stop -> shut down team
-   - Otherwise -> wait for next teammate message (loop continues)
+   - Otherwise -> wait for next event (loop continues)
 ```
+
+**KEY CHANGE**: Workers self-claim tasks. The lead's job in step 3 is to ensure a worker EXISTS for each role that has available work -- not to assign specific tasks. If a researcher is already spawned and there are research tasks available, the researcher will claim them on its own.
 
 **CRITICAL RULES**:
 - You MUST run step 3 before EVERY shutdown. No exceptions.
@@ -404,20 +455,21 @@ The lead cannot be nudged externally (no IPC to running sessions). These princip
 
 ```
 BEHAVIORAL PRINCIPLES:
-- Your default state is DISPATCHING, not waiting. After every teammate
-  message, run the dispatch loop (Section 4.4).
-- Never sit idle when tasks exist. Check TaskList constantly.
-- If a task shows no progress for ~3 minutes, check work product directly
-  (Glob for artifacts, git log for commits in worktree).
+- Workers drive their own flow -- your job is to ensure workers EXIST, not to assign tasks.
+- Read results from completed tasks (TaskGet), not from incoming messages.
+- After every TaskCompleted event, read the completed task's description for results.
+- Spawn workers when a role has available tasks but no active worker.
+- For group research: spawn up to 3 researchers -- they self-balance across tasks.
+- Between phases, create tasks for the next phase IMMEDIATELY. Workers claim them.
+- When ALL workers are busy, proactively query GitHub for next issues and pre-create tasks.
+- LOOKAHEAD: When all workers are actively processing, use the idle time to query
+  GitHub for the NEXT batch of work. Create tasks now so they're ready when workers
+  finish. The goal is zero gap between task completion and next task claim.
+- SendMessage is for exceptions only: revision feedback, conflict resolution, escalations.
+- If a task shows no progress for ~3 minutes, check work product directly (Glob, git log).
 - If work product exists but task isn't marked complete, mark it yourself.
-- Between phases, spawn or reassign the next teammate IMMEDIATELY.
-- If reviewer rejects a plan, create revision + re-review tasks and assign
-  them without delay.
-- When ALL teammates are busy, proactively query GitHub for the NEXT issue
-  to pipeline -- have tasks ready before a teammate finishes.
-- Think ahead: if a researcher is about to finish, start checking for
-  "Ready for Plan" issues so a planner can be assigned immediately.
-- Prefer action over deliberation. When in doubt, check TaskList and GitHub.
+- If reviewer rejects a plan, create revision + re-review tasks. Planner will self-claim.
+- Prefer action over deliberation. When in doubt, check TaskList.
 ```
 
 ## Section 6 - Teammate Spawning (Lead's Judgment)
@@ -439,6 +491,8 @@ DO NOT include:
 - Full conversation history (teammates can't use it)
 - Research documents (skill fetches its own)
 - Code snippets (skill reads its own files)
+- Assignment instructions (workers self-claim)
+- SendMessage reporting instructions (workers use TaskUpdate)
 
 ### Example Spawns
 
@@ -451,7 +505,7 @@ Task(subagent_type="ralph-triager",
              Description: [description]
              Current state: Backlog, Estimate: S
              Invoke: Skill(skill='ralph-hero:ralph-triage', args='NNN')
-             Report results via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed results in task description via TaskUpdate when complete.",
      description="Triage #NNN")
 ```
 
@@ -465,8 +519,7 @@ Task(subagent_type="ralph-triager",
              Current state: Backlog, Estimate: L
              This issue is too large for direct implementation.
              Invoke: Skill(skill='ralph-hero:ralph-split', args='NNN')
-             After splitting, report the created sub-issues via SendMessage(type='message', recipient='team-lead', ...)
-             so I can create tasks for the new issues.",
+             Embed results (including ALL created sub-issue IDs and estimates) in task description via TaskUpdate when complete.",
      description="Split #NNN")
 ```
 
@@ -479,7 +532,7 @@ Task(subagent_type="ralph-researcher",
              Description: [description]
              Current state: Research Needed
              Invoke: Skill(skill='ralph-hero:ralph-research', args='NNN')
-             Report results via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed results in task description via TaskUpdate when complete.",
      description="Research #NNN")
 ```
 
@@ -492,7 +545,7 @@ Task(subagent_type="ralph-planner",
              Description: [description]
              Current state: Ready for Plan
              Invoke: Skill(skill='ralph-hero:ralph-plan', args='NNN')
-             Report results via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed results in task description via TaskUpdate when complete.",
      description="Plan #NNN")
 ```
 
@@ -506,7 +559,7 @@ Task(subagent_type="ralph-planner",
              All issues are in Ready for Plan state.
              Invoke: Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY]')
              ralph-plan will automatically discover the group and create a unified plan.
-             Report results via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed results in task description via TaskUpdate when complete.",
      description="Plan group #[PRIMARY]")
 ```
 
@@ -519,7 +572,7 @@ Task(subagent_type="ralph-advocate",
              Current state: Plan in Review
              Plan path: [path to plan document]
              Invoke: Skill(skill='ralph-hero:ralph-review', args='NNN')
-             Report FULL verdict (APPROVED/NEEDS_ITERATION) via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed FULL verdict (APPROVED/NEEDS_ITERATION) in task description via TaskUpdate when complete.",
      description="Review #NNN")
 ```
 
@@ -534,7 +587,7 @@ Task(subagent_type="ralph-advocate",
              Plan path: [path to group plan document]
              Invoke: Skill(skill='ralph-hero:ralph-review', args='[PRIMARY]')
              This is a unified plan covering [N] issues. Review all phases.
-             Report FULL verdict (APPROVED/NEEDS_ITERATION) via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed FULL verdict (APPROVED/NEEDS_ITERATION) in task description via TaskUpdate when complete.",
      description="Review group #[PRIMARY]")
 ```
 
@@ -548,7 +601,7 @@ Task(subagent_type="ralph-implementer",
              Plan path: [path to plan document]
              Worktree: worktrees/GH-NNN
              Invoke: Skill(skill='ralph-hero:ralph-impl', args='NNN')
-             Report results via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed results in task description via TaskUpdate when complete.",
      description="Implement #NNN")
 ```
 
@@ -564,32 +617,77 @@ Task(subagent_type="ralph-implementer",
              Worktree: worktrees/GH-[PRIMARY]
              Invoke: Skill(skill='ralph-hero:ralph-impl', args='[PRIMARY]')
              ralph-impl will detect the group plan and execute all phases.
-             Report results via SendMessage(type='message', recipient='team-lead', ...).",
+             Embed results in task description via TaskUpdate when complete.",
      description="Implement group #[PRIMARY]")
 ```
 
-### Reassigning Existing Teammates
+### Spawn Prompt Quality (Per Anthropic Best Practices)
 
-When a teammate finishes and you have new work for them, send via SendMessage:
+Every spawn prompt MUST include:
 
+1. **Role and team context** (1 line): "You are a [role] on the Ralph Team processing issues for [project]."
+2. **Available tickets** (list): Issue numbers, titles, and current workflow state for all tasks this worker might claim
+3. **Group context** (if applicable): Parent issue, sibling issues, dependency order
+4. **Codebase starting points** (2-5 lines): Specific directories and files relevant to these issues. This saves the skill from doing broad discovery searches.
+   - Example: "Production charts: check apps/web/src/components/charts/ and src/api/routers/production.py"
+   - Example: "Operator model: see src/models/operator.py and src/api/schemas/operator.py"
+5. **Artifacts from prior phases** (if applicable): Research doc paths, plan doc paths, worktree paths, commit hashes
+6. **Pull-based instructions** (1 line): "Check TaskList, claim a [role] task, invoke [skill], embed results in task description."
+
+DO NOT include:
+- Full conversation history
+- Research documents content (skill reads its own)
+- Code snippets (skill reads files directly)
+- Assignment instructions (workers self-claim)
+- SendMessage reporting instructions (workers use TaskUpdate)
+
+### Parallel Workers
+
+When multiple tasks exist for the same role, spawn multiple workers:
+
+**Research** (most common parallel case):
+- Group with 3 research issues -> spawn 3 researchers: `researcher`, `researcher-2`, `researcher-3`
+- Each claims a different task from the pool
+- Max 3 parallel researchers (diminishing returns beyond that)
+
+**Implementation** (when plan has independent phases):
+- If plan has phases with non-overlapping file ownership -> spawn up to 2 implementers
+- Include EXCLUSIVE FILE OWNERSHIP in each implementer's task description
+- Each claims their respective implementation task
+
+**All other roles**: Single worker is sufficient (planning and review are inherently sequential per group).
+
+Parallel spawn example:
 ```
-SendMessage(
-  type="message",
-  recipient="researcher",
-  content="New assignment: Research #NNN: [title].
-           Description: [description]
-           Current state: Research Needed
-           Invoke: Skill(skill='ralph-hero:ralph-research', args='NNN')
-           Report results via SendMessage(type='message', recipient='team-lead', ...).",
-  summary="New assignment: #NNN"
-)
+# Spawn 3 researchers in a single message for maximum parallelism
+Task(subagent_type="ralph-researcher", team_name=TEAM_NAME, name="researcher",
+     prompt="[context for available research issues]",
+     description="Research #NNN group")
+
+Task(subagent_type="ralph-researcher", team_name=TEAM_NAME, name="researcher-2",
+     prompt="[same context -- they'll claim different tasks]",
+     description="Research #NNN group")
+
+Task(subagent_type="ralph-researcher", team_name=TEAM_NAME, name="researcher-3",
+     prompt="[same context -- they'll claim different tasks]",
+     description="Research #NNN group")
 ```
 
-Create the corresponding task and assign ownership:
-```
-TaskCreate(subject="Research #NNN", ...)
-TaskUpdate(taskId="[new]", owner="researcher", status="in_progress")
-```
+### Giving Idle Workers New Work
+
+When a worker finishes and you've created new tasks for their role:
+- The worker will automatically check TaskList and claim the new task
+- NO SendMessage needed -- the worker's pull loop handles it
+- If a worker has been idle for >2 minutes and unclaimed tasks exist for their role,
+  nudge via SendMessage as a fallback:
+  ```
+  SendMessage(
+    type="message",
+    recipient="researcher",
+    content="New research tasks are available. Check TaskList.",
+    summary="New tasks available"
+  )
+  ```
 
 ## Section 7 - Momentum via Lifecycle Hooks
 
@@ -643,11 +741,26 @@ If the session terminates, all teammates are lost. Committed work survives.
 ### Team Name Must Be Unique
 Each `/ralph-team` session uses a unique team name (`ralph-team-GH-NNN`) to prevent namespace collisions when multiple sessions run in parallel. The SDK scopes task lists, inboxes, and teammate names per team -- so as long as team names are unique, no conflicts occur. The team name is set once in Section 4.1 and stored as `TEAM_NAME` for all subsequent operations.
 
+### Pull-Based Task Claiming
+Workers self-claim tasks from TaskList by matching subject patterns to their role. This means:
+- Tasks MUST use consistent subject patterns: "Research", "Plan", "Review", "Implement", "Triage", "Split"
+- If a task subject doesn't match any role's pattern, no worker will claim it
+- Multiple workers of the same role will race to claim -- file-locking prevents duplicate claims
+- If a worker fails to claim (already taken), it checks TaskList again for the next available task
+
+### Task Description as Communication Channel
+Workers embed results in TaskUpdate `description` instead of using SendMessage. Key implications:
+- `description` is a **REPLACE** operation -- original task context is overwritten
+- Workers MUST include issue number and key context in their completion description
+- The lead reads results via `TaskGet(taskId)` after each TaskCompleted event
+- If a worker fails to update the description, the lead has no results -- check work product directly (Glob, git log)
+- SendMessage is reserved for exceptions: blocking issues, conflicts, skill failures, revision feedback
+
 ### Lead Name Is Hardcoded
-The team lead's name is always `"team-lead"` -- this is hardcoded by the Claude Code SDK and cannot be changed. All spawn prompts and reassignment messages MUST instruct teammates to use `recipient="team-lead"` exactly. Messages sent to any other name (e.g., "ralph-team-lead", "lead") are **silently dropped** with no error feedback. This is the most common cause of "teammate appears unresponsive" -- they're reporting but to the wrong recipient.
+The team lead's name is always `"team-lead"` -- this is hardcoded by the Claude Code SDK and cannot be changed. For exception cases where teammates DO use SendMessage (blocking issues, conflicts), spawn prompts MUST instruct teammates to use `recipient="team-lead"` exactly. Messages sent to any other name (e.g., "ralph-team-lead", "lead") are **silently dropped** with no error feedback.
 
 ### Fire-and-Forget Messages
-No acknowledgment mechanism. After sending critical messages:
+SendMessage has no acknowledgment mechanism. For exception cases where SendMessage is still used:
 1. Wait 2 minutes for action
 2. Re-send once if no progress
 3. If still no action, check their output manually
