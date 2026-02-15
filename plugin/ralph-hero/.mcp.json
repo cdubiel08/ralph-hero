@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "ralph-github": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "ralph-hero-mcp-server@latest"],
       "env": {
         "RALPH_GH_REPO_TOKEN": "${RALPH_GH_REPO_TOKEN}",
         "RALPH_GH_PROJECT_TOKEN": "${RALPH_GH_PROJECT_TOKEN}",
