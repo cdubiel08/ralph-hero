@@ -774,14 +774,14 @@ export function registerIssueTools(
               };
             };
           }>(
-            `query($owner: String!, $repo: String!, $query: String) {
+            `query($owner: String!, $repo: String!) {
               repository(owner: $owner, name: $repo) {
-                labels(first: 100, query: $query) {
+                labels(first: 100) {
                   nodes { id name }
                 }
               }
             }`,
-            { owner, repo, query: "" },
+            { owner, repo },
             { cache: true, cacheTtlMs: 5 * 60 * 1000 },
           );
 
