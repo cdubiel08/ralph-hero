@@ -1,3 +1,5 @@
 node_modules/
-mcp-server/dist/
 *.local.md
+mcp-server/dist/__tests__/
+mcp-server/dist/**/*.map
+mcp-server/dist/**/*.d.ts.map
