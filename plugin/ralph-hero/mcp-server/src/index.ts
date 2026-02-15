@@ -21,16 +21,23 @@ import { registerRelationshipTools } from "./tools/relationship-tools.js";
 /**
  * Initialize the GitHub client from environment variables.
  */
+function resolveEnv(name: string): string | undefined {
+  const val = process.env[name];
+  // Claude Code passes unexpanded ${VAR} literals for unset env vars in .mcp.json
+  if (!val || val.startsWith("${")) return undefined;
+  return val;
+}
+
 function initGitHubClient(): GitHubClient {
   // Repo token: for repository operations (issues, PRs, comments)
   const repoToken =
-    process.env.RALPH_GH_REPO_TOKEN ||
-    process.env.RALPH_HERO_GITHUB_TOKEN;
+    resolveEnv("RALPH_GH_REPO_TOKEN") ||
+    resolveEnv("RALPH_HERO_GITHUB_TOKEN");
 
   // Project token: for Projects V2 operations (fields, workflow state)
   // Falls back to repo token if not set
   const projectToken =
-    process.env.RALPH_GH_PROJECT_TOKEN || repoToken;
+    resolveEnv("RALPH_GH_PROJECT_TOKEN") || repoToken;
 
   if (!repoToken) {
     console.error(
@@ -51,11 +58,11 @@ function initGitHubClient(): GitHubClient {
     process.exit(1);
   }
 
-  const owner = process.env.RALPH_GH_OWNER;
-  const repo = process.env.RALPH_GH_REPO;
-  const projectOwner = process.env.RALPH_GH_PROJECT_OWNER || owner;
-  const projectNumber = process.env.RALPH_GH_PROJECT_NUMBER
-    ? parseInt(process.env.RALPH_GH_PROJECT_NUMBER, 10)
+  const owner = resolveEnv("RALPH_GH_OWNER");
+  const repo = resolveEnv("RALPH_GH_REPO");
+  const projectOwner = resolveEnv("RALPH_GH_PROJECT_OWNER") || owner;
+  const projectNumber = resolveEnv("RALPH_GH_PROJECT_NUMBER")
+    ? parseInt(resolveEnv("RALPH_GH_PROJECT_NUMBER")!, 10)
     : undefined;
 
   if (!owner || !repo) {
@@ -74,7 +81,7 @@ function initGitHubClient(): GitHubClient {
   }
 
   const repoTokenSource =
-    process.env.RALPH_GH_REPO_TOKEN ? "RALPH_GH_REPO_TOKEN" : "RALPH_HERO_GITHUB_TOKEN";
+    resolveEnv("RALPH_GH_REPO_TOKEN") ? "RALPH_GH_REPO_TOKEN" : "RALPH_HERO_GITHUB_TOKEN";
   console.error(`[ralph-hero] Repo token: ${repoTokenSource}`);
 
   if (projectToken !== repoToken) {
