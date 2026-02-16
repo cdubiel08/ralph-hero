@@ -8,6 +8,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
+    - matcher: "ralph_hero__update_workflow_state"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/convergence-gate.sh"
   PostToolUse:
     - matcher: "ralph_hero__update_workflow_state"
       hooks:
