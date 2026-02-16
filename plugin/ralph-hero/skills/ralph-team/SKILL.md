@@ -126,17 +126,21 @@ After selection (and group detection), proceed to Section 3 (State Detection).
 
 ## Section 3 - State Detection & Pipeline Position
 
-Map the issue's current GitHub Projects workflow state to its position in the pipeline:
+Query the pipeline position tool:
 
-| Workflow State | Estimate | Pipeline Position | Remaining Phases |
-|---|---|---|---|
-| Backlog | M/L/XL | SPLIT | split -> research -> plan -> review -> implement -> PR |
-| Backlog | XS/S | TRIAGE | triage -> research -> plan -> review -> implement -> PR |
-| Research Needed | any | RESEARCH | research -> plan -> review -> implement -> PR |
-| Ready for Plan | any | PLAN | plan -> review -> implement -> PR |
-| Plan in Review | any | REVIEW | review -> implement -> PR |
-| In Progress | any | IMPLEMENT | implement -> PR |
-| In Review | any | TEAM-TERMINAL | PR exists. **Done requires PR merge (external event, not team action).** The team NEVER moves issues to Done. |
+```
+ralph_hero__detect_pipeline_position(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[issue-number])
+```
+
+The result tells you:
+- `phase`: Which phase to start at (SPLIT, TRIAGE, RESEARCH, PLAN, REVIEW, HUMAN_GATE, IMPLEMENT, TERMINAL)
+- `remainingPhases`: Full list of phases still needed
+- `convergence`: Whether the group is ready for the next gate
+- `isGroup` and `groupPrimary`: Group detection (replaces separate detect_group call for pipeline purposes)
+
+Use the `phase` field to determine which tasks to create (Section 4.2) and which teammate to spawn first (Section 4.3).
+
+**TERMINAL means**: PR exists or all issues are done. The team NEVER moves issues to Done -- that requires PR merge (external event).
 
 ### Convergence Requirements
 
@@ -315,11 +319,14 @@ DISPATCH LOOP:
      d. Implementation complete -> read commit/file info from task, create PR (lead's direct work)
    - Advance GitHub workflow state for completed issues (and their children):
      ```
-     children = ralph_hero__list_sub_issues(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[issue-number])
-     for each child where child.workflowState is EARLIER than parent's new state:
-       ralph_hero__update_workflow_state(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=child.number, state="[parent's new state]")
+     ralph_hero__advance_children(
+       owner=$RALPH_GH_OWNER,
+       repo=$RALPH_GH_REPO,
+       number=[parent-issue],
+       targetState="[parent's new state]"
+     )
      ```
-     Only advance children in earlier states. **The team's terminal state is "In Review", never "Done".**
+     The tool advances all children in earlier states and returns what changed. **The team's terminal state is "In Review", never "Done".**
    - Create worktrees for implementation phases as needed
 
 3. ENSURE WORKERS EXIST FOR AVAILABLE WORK
@@ -330,18 +337,25 @@ DISPATCH LOOP:
    - For group research with multiple tasks: spawn up to 3 researchers
 
    ONLY IF no pending tasks exist for any role AND workers are idle:
-   a. Query GitHub for new issues matching idle workers' roles:
-      - Researcher idle? -> Find workflowState="Research Needed" issues
-      - Planner idle? -> Find workflowState="Ready for Plan" issues
-      - Reviewer idle? -> Find workflowState="Plan in Review" issues
-      - Implementer idle? -> Find workflowState="In Progress" issues with plans
-      - Triager idle? -> Find workflowState="Backlog" issues
-   b. If new issue found:
-      - Fetch full issue details (ralph_hero__get_issue with number)
-      - Run group detection (Section 2 Mode A Step 3)
+   a. Use the pick tool to find new work matching idle workers' roles:
+      ```
+      ralph_hero__pick_actionable_issue(
+        owner=$RALPH_GH_OWNER,
+        repo=$RALPH_GH_REPO,
+        workflowState=[state matching teammate's role]
+      )
+      ```
+      Role-to-state mapping:
+      - Researcher -> "Research Needed"
+      - Planner -> "Ready for Plan"
+      - Reviewer -> "Plan in Review"
+      - Implementer -> "In Progress"
+      - Triager -> "Backlog"
+   b. If `found` is `true`:
+      - Run group detection on the returned issue
       - Create tasks with dependencies (Section 4.2)
       - Idle workers will self-claim the new tasks
-   c. If NO work found after checking GitHub -> proceed to step 5
+   c. If `found` is `false` for all roles -> proceed to step 5
 
 4. PROACTIVE LOOKAHEAD (when all workers are busy)
    - Query GitHub for issues matching the NEXT pipeline stage:

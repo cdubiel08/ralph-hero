@@ -157,16 +157,20 @@ This returns:
 
 ### Step 2: Determine Current State
 
-Based on the tree analysis, determine which phase to execute:
+Query the pipeline position tool:
 
-| Tree State | Action |
-|------------|--------|
-| Has M/L/XL issues (estimate in {"M", "L", "XL"}) | -> EXPANDING phase |
-| All XS/S, some in "Research Needed" | -> RESEARCHING phase |
-| All XS/S, all in "Ready for Plan" | -> PLANNING phase |
-| All in "Plan in Review" | -> HUMAN GATE (stop) |
-| All in "In Progress" | -> IMPLEMENTING phase |
-| All in "In Review" or "Done" | -> COMPLETE (stop) |
+```
+ralph_hero__detect_pipeline_position(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[ROOT-NUMBER])
+```
+
+The tool returns:
+- `phase`: The exact phase to execute (SPLIT, RESEARCH, PLAN, REVIEW, HUMAN_GATE, IMPLEMENT, COMPLETE, TERMINAL)
+- `reason`: Why this phase was selected
+- `convergence`: Whether all issues are ready for the next gate
+- `issues`: Current state of all issues in the group
+- `isGroup` and `groupPrimary`: Group detection info
+
+Execute the phase indicated by the `phase` field. Do NOT interpret workflow states yourself -- trust the tool's decision.
 
 ### Step 3: Execute Appropriate Phase
 
@@ -266,35 +270,23 @@ Research completed in parallel:
 
 After RESEARCHING phase completes:
 
-```markdown
-1. **Query tree state**:
+```
+ralph_hero__check_convergence(
+  owner=$RALPH_GH_OWNER,
+  repo=$RALPH_GH_REPO,
+  number=[ROOT-NUMBER],
+  targetState="Ready for Plan"
+)
+```
 
-ralph_hero__detect_group(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[ROOT-NUMBER])
+If `converged` is `true`: Proceed to PLANNING phase.
+If `converged` is `false`: Report the `blocking` issues and STOP.
 
-For each issue in the group, check workflow state:
-ralph_hero__get_issue(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[N])
+```
+Convergence incomplete. Blocking issues:
+[list from tool response blocking array]
 
-2. **Check convergence**:
-
-If ALL leaves are in "Ready for Plan":
-  -> Proceed to PLANNING phase
-
-If ANY leaves are NOT in "Ready for Plan":
-  Report:
-
-  Convergence incomplete. Issues not ready for planning:
-
-  - #NNN: [current state] - [reason if known]
-  - #MMM: [current state] - [reason if known]
-
-  These issues may need:
-  - Manual research completion
-  - Human intervention (check "Human Needed" status)
-  - Retry of failed research
-
-  Re-run /ralph-hero [ROOT-NUMBER] after resolving.
-
-  Then STOP.
+Re-run /ralph-hero [ROOT-NUMBER] after resolving.
 ```
 
 ---
