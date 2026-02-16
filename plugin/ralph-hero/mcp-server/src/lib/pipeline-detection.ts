@@ -34,6 +34,7 @@ export interface ConvergenceInfo {
   required: boolean;
   met: boolean;
   blocking: Array<{ number: number; state: string }>;
+  recommendation: "proceed" | "wait" | "escalate";
 }
 
 export interface PipelinePosition {
@@ -152,9 +153,9 @@ export function detectPipelinePosition(
 
   // Step 3: Any issues needing or in research -> RESEARCH
   if (needsResearch.length > 0 || inResearch.length > 0) {
-    const convergence: ConvergenceInfo = {
+    const convergence = {
       required: isGroup,
-      met: false,
+      met: false as const,
       blocking: [
         ...needsResearch.map((i) => ({ number: i.number, state: i.workflowState })),
         ...inResearch.map((i) => ({ number: i.number, state: i.workflowState })),
@@ -308,14 +309,24 @@ function buildResult(
   issues: IssueState[],
   isGroup: boolean,
   groupPrimary: number | null,
-  convergence: ConvergenceInfo,
+  convergence: Omit<ConvergenceInfo, "recommendation">,
 ): PipelinePosition {
+  // Derive recommendation from convergence state
+  let recommendation: ConvergenceInfo["recommendation"];
+  if (convergence.met) {
+    recommendation = "proceed";
+  } else if (convergence.blocking.some((b) => b.state === "Human Needed")) {
+    recommendation = "escalate";
+  } else {
+    recommendation = "wait";
+  }
+
   return {
     phase,
     reason,
     remainingPhases: REMAINING_PHASES[phase],
     issues,
-    convergence,
+    convergence: { ...convergence, recommendation },
     isGroup,
     groupPrimary,
   };

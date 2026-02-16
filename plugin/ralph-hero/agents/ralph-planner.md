@@ -49,6 +49,10 @@ TaskUpdate(
 **NOTE**: TaskUpdate `description` REPLACES the original. Always include ticket/group IDs in your completion description.
 
 Then immediately run `TaskList()` to claim next available planning task.
+If no planning tasks are available, hand off to the next pipeline stage per
+[shared/conventions.md](../skills/shared/conventions.md#pipeline-handoff-protocol):
+read the team config, find the `ralph-advocate` teammate, and SendMessage them
+to check TaskList.
 
 ## Handling Revision Requests
 

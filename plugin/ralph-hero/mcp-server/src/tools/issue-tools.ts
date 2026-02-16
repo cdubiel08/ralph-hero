@@ -343,7 +343,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_issues",
-    "List issues from a GitHub repository, optionally filtered by Workflow State, Estimate, Priority, or label. Returns issues with their project field values.",
+    "List issues from a GitHub repository with optional filters. Returns: number, title, state, workflowState, estimate, priority, labels, assignees. Use workflowState filter to find issues in a specific phase. Recovery: if no results, broaden filters or check that issues exist in the project.",
     {
       owner: z.string().optional().describe("GitHub owner (user or org). Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -515,11 +515,12 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__get_issue",
-    "Get a single GitHub issue with full context: properties, project field values, relationships (parent, sub-issues, blocking, blocked-by), and recent comments",
+    "Get a single GitHub issue with full context: properties, project field values, relationships (parent, sub-issues, blocking, blocked-by), recent comments, and optional group detection. Returns group data by default so callers don't need a separate detect_group call. Key fields: number, title, workflowState, estimate, priority, parent, subIssues, blocking, blockedBy, comments, group.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.number().describe("Issue number"),
+      includeGroup: z.boolean().optional().default(true).describe("Include group detection results (default: true). Set to false to skip group detection and save API calls when group context is not needed."),
     },
     async (args) => {
       try {
@@ -679,6 +680,35 @@ export function registerIssueTools(
           }
         }
 
+        // Optionally detect group context
+        let group: {
+          isGroup: boolean;
+          primary: { number: number; title: string };
+          members: Array<{ number: number; title: string; state: string; order: number }>;
+          totalTickets: number;
+        } | null = null;
+
+        if (args.includeGroup !== false) {
+          try {
+            const { owner: cfgOwner, repo: cfgRepo } = resolveConfig(client, args);
+            const groupResult = await detectGroup(client, cfgOwner, cfgRepo, args.number);
+            group = {
+              isGroup: groupResult.isGroup,
+              primary: { number: groupResult.groupPrimary.number, title: groupResult.groupPrimary.title },
+              members: groupResult.groupTickets.map((t) => ({
+                number: t.number,
+                title: t.title,
+                state: t.state,
+                order: t.order,
+              })),
+              totalTickets: groupResult.totalTickets,
+            };
+          } catch {
+            // Group detection is best-effort; don't fail the whole request
+            group = null;
+          }
+        }
+
         return toolSuccess({
           number: issue.number,
           id: issue.id,
@@ -720,6 +750,7 @@ export function registerIssueTools(
             author: c.author?.login || "unknown",
             createdAt: c.createdAt,
           })),
+          group,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -733,7 +764,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__create_issue",
-    "Create a GitHub issue and add it to the project with optional field values (Workflow State, Estimate, Priority)",
+    "Create a GitHub issue and add it to the project with optional field values. Returns: number, id, title, url, projectItemId, fieldsSet. Recovery: if field value fails, verify the option name matches exactly (case-sensitive).",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -908,7 +939,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__update_issue",
-    "Update a GitHub issue's basic properties (title, body, labels, assignees)",
+    "Update a GitHub issue's basic properties (title, body, labels, assignees). Returns: number, title, url. Use update_workflow_state for state changes, update_estimate for estimates, update_priority for priorities.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1001,7 +1032,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__update_workflow_state",
-    "Change an issue's Workflow State. Accepts semantic intents (__LOCK__, __COMPLETE__, __ESCALATE__, __CLOSE__, __CANCEL__) or direct state names. The command parameter enables validation.",
+    "Change an issue's Workflow State using semantic intents or direct state names. Returns: number, previousState, newState, command. Semantic intents: __LOCK__ (lock for processing), __COMPLETE__ (mark done), __ESCALATE__ (needs human), __CLOSE__, __CANCEL__. Recovery: if state transition fails, verify the issue is in the project and the state name is valid.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1060,7 +1091,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__update_estimate",
-    "Change an issue's Estimate in the project (XS, S, M, L, XL)",
+    "Change an issue's Estimate in the project. Returns: number, estimate. Valid values: XS, S, M, L, XL. Recovery: if the issue is not in the project, add it first via create_issue.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1093,7 +1124,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__update_priority",
-    "Change an issue's Priority in the project (P0, P1, P2, P3)",
+    "Change an issue's Priority in the project. Returns: number, priority. Valid values: P0, P1, P2, P3. Recovery: if the issue is not in the project, add it first via create_issue.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1126,7 +1157,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__create_comment",
-    "Add a comment to a GitHub issue",
+    "Add a comment to a GitHub issue. Returns: commentId, issueNumber. Recovery: if issue not found, verify the issue number exists in the repository.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1177,7 +1208,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__detect_pipeline_position",
-    "Determine the current pipeline position for an issue or group. Returns the phase to execute and remaining phases. Replaces manual interpretation of workflow state tables.",
+    "Determine which workflow phase to execute next for an issue or its group. Returns: phase (SPLIT/TRIAGE/RESEARCH/PLAN/REVIEW/IMPLEMENT/COMPLETE/HUMAN_GATE/TERMINAL), convergence status with recommendation (proceed/wait/escalate), all group member states, and remaining phases. Call this INSTEAD of separate detect_group + check_convergence calls. Recovery: if issue not found, verify the issue number and that it has been added to the project.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1236,7 +1267,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__check_convergence",
-    "Check if all issues in a group have reached the required state for the next phase. Returns convergence status with details on blocking issues.",
+    "Check if all issues in a group have reached the required state for the next phase. Returns: converged, targetState, total, ready, blocking (with distanceToTarget), recommendation (proceed/wait/escalate). Note: detect_pipeline_position already includes convergence data; use this only when checking convergence against a specific target state not covered by pipeline detection.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1343,7 +1374,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__pick_actionable_issue",
-    "Find the highest-priority issue that matches the given workflow state and is not blocked or locked. Used by dispatch loop to find work for idle teammates.",
+    "Find the highest-priority issue matching a workflow state that is not blocked or locked. Returns: found, issue (with number, title, workflowState, estimate, priority, group context), alternatives count. Used by dispatch loop to find work for idle teammates. Recovery: if no issues found, try a different workflowState or increase maxEstimate.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
@@ -1485,11 +1516,38 @@ export function registerIssueTools(
 
         const best = candidates[0];
         const content = best.content as Record<string, unknown>;
+        const issueNumber = content.number as number;
+
+        // Detect group context for the picked issue (best-effort)
+        let group: {
+          isGroup: boolean;
+          primary: { number: number; title: string };
+          members: Array<{ number: number; title: string; state: string; order: number }>;
+          totalTickets: number;
+        } | null = null;
+
+        try {
+          const groupResult = await detectGroup(client, owner, repo, issueNumber);
+          group = {
+            isGroup: groupResult.isGroup,
+            primary: { number: groupResult.groupPrimary.number, title: groupResult.groupPrimary.title },
+            members: groupResult.groupTickets.map((t) => ({
+              number: t.number,
+              title: t.title,
+              state: t.state,
+              order: t.order,
+            })),
+            totalTickets: groupResult.totalTickets,
+          };
+        } catch {
+          // Group detection is best-effort
+          group = null;
+        }
 
         return toolSuccess({
           found: true,
           issue: {
-            number: content.number,
+            number: issueNumber,
             title: content.title,
             description: content.body || "",
             workflowState: getFieldValue(best, "Workflow State"),
@@ -1498,6 +1556,7 @@ export function registerIssueTools(
             isLocked: false,
             blockedBy: [],
           },
+          group,
           alternatives: candidates.length - 1,
         });
       } catch (error: unknown) {

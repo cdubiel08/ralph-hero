@@ -20,108 +20,34 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 5. **Convergence before planning** - All leaves must reach "Ready for Plan"
 6. **Human gates preserved** - Plan approval required before implementation
 
-## Architecture
-
-```
-                         +-------------+
-                         |    #NNN     |
-                         |   (L/XL)   |
-                         +------+------+
-                                |
-                    +-----------+-----------+
-                    v           v           v
-              +---------+ +---------+ +---------+
-              |  #AAA   | |  #BBB   | |  #CCC   |
-              |   (S)   | |  (XS)   | |   (S)   |
-              +----+----+ +----+----+ +----+----+
-                   |           |           |
-     ====================================================
-     ||  PHASE 2: PARALLEL RESEARCH (background Tasks)  ||
-     ====================================================
-                   |           |           |
-                   v           v           v
-              Ready for   Ready for   Ready for
-                Plan        Plan        Plan
-                   |           |           |
-                   +-----------+-----------+
-                               |
-                               v
-     ====================================================
-     ||  PHASE 3: CONVERGENCE - All leaves ready        ||
-     ||  Create unified plan(s) for groups              ||
-     ====================================================
-                               |
-                               v
-     ====================================================
-     ||  PHASE 3.5: REVIEWING (optional)                ||
-     ||  RALPH_REVIEW_MODE: skip | auto | interactive   ||
-     ||  - skip: proceed to HUMAN GATE                  ||
-     ||  - auto/interactive: parallel plan reviews      ||
-     ====================================================
-                               |
-            +------------------+------------------+
-            |                  |                  |
-            v                  v                  v
-        [SKIP]            [APPROVED]       [NEEDS_ITERATION]
-            |                  |                  |
-            v                  |                  v
-     [HUMAN GATE]              |            [STOP: iterate]
-     Plan approval             |
-            |                  |
-            +------------------+
-                               |
-                               v
-     ====================================================
-     ||  PHASE 4: SEQUENTIAL IMPLEMENTATION             ||
-     ||  Respecting dependency order (blocks/blockedBy) ||
-     ====================================================
-```
-
 ## State Machine
 
 ```
 +-------------------------------------------------------------------+
 |                     RALPH HERO STATE MACHINE                       |
 +-------------------------------------------------------------------+
-|                                                                    |
-|  +----------+                                                      |
-|  |  START   |                                                      |
-|  +----+-----+                                                      |
-|       |                                                            |
-|       v                                                            |
-|  +------------------+    has M/L/XL?    +------------------+       |
-|  |  ANALYZE ROOT    | ----------------> |    EXPANDING     |       |
-|  +--------+---------+        yes        +--------+---------+       |
-|           | no                                   |                 |
-|           |                          <-----------+                 |
-|           v                          all XS/S                      |
-|  +------------------+                                              |
-|  |   RESEARCHING    |  (parallel background Tasks)                 |
-|  +--------+---------+                                              |
-|           | all "Ready for Plan"                                   |
-|           v                                                        |
-|  +------------------+                                              |
-|  |    PLANNING      |                                              |
-|  +--------+---------+                                              |
-|           |                                                        |
-|           v                                                        |
-|  +------------------+  RALPH_REVIEW_MODE                           |
-|  |   REVIEWING      |  != "skip"?                                  |
-|  |   (optional)     | ------------------+                          |
-|  +--------+---------+                   | all approved             |
-|           | skip or                     |                          |
-|           | needs_iteration             v                          |
-|           v                    +------------------+                |
-|  +------------------+          |  IMPLEMENTING    |                |
-|  |   HUMAN GATE     | <-------|  (sequential)    |                |
-|  +--------+---------+ approved+--------+---------+                |
-|           | (re-run)                   |                           |
-|           +----------------------------+                           |
-|                                        v                           |
-|                               +------------------+                 |
-|                               |    COMPLETE      |                 |
-|                               +------------------+                 |
-|                                                                    |
+|  START                                                             |
+|    |                                                               |
+|    v                                                               |
+|  ANALYZE ROOT -- has M/L/XL? --> EXPANDING (loop until all XS/S)  |
+|    | no                                                            |
+|    v                                                               |
+|  RESEARCHING (parallel background Tasks)                           |
+|    | all "Ready for Plan"                                          |
+|    v                                                               |
+|  PLANNING                                                          |
+|    |                                                               |
+|    v                                                               |
+|  REVIEWING (if RALPH_REVIEW_MODE != "skip")                        |
+|    | all approved     | needs_iteration -> STOP                    |
+|    v                  |                                            |
+|  HUMAN GATE (if review skipped) <--+                               |
+|    | approved (re-run)             |                               |
+|    +-------------------------------+                               |
+|    v                                                               |
+|  IMPLEMENTING (sequential, respecting dependency order)            |
+|    v                                                               |
+|  COMPLETE                                                          |
 +-------------------------------------------------------------------+
 ```
 
@@ -132,452 +58,155 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 If no issue number provided:
 ```
 Usage: /ralph-hero <issue-number>
-
 Please provide a GitHub issue number to orchestrate.
-Example: /ralph-hero 42
 ```
 Then STOP.
 
 ## Workflow
 
-### Step 1: Analyze Root Issue
+### Step 1: Detect Pipeline Position
 
-Fetch the root issue and analyze the full tree:
-
-```
-ralph_hero__get_issue(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[ROOT-NUMBER])
-ralph_hero__detect_group(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[ROOT-NUMBER])
-```
-
-This returns:
-- Root issue details (title, state, workflowState, estimate)
-- All issues in the group via transitive closure (sub-issues + dependencies)
-- Topological sort order for implementation
-- Group primary issue
-
-### Step 2: Determine Current State
-
-Query the pipeline position tool:
+Query the pipeline position tool to determine what phase to execute:
 
 ```
-ralph_hero__detect_pipeline_position(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[ROOT-NUMBER])
+ralph_hero__detect_pipeline_position(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[issue-number])
 ```
 
-The tool returns:
-- `phase`: The exact phase to execute (SPLIT, RESEARCH, PLAN, REVIEW, HUMAN_GATE, IMPLEMENT, COMPLETE, TERMINAL)
+The result provides:
+- `phase`: SPLIT, RESEARCH, PLAN, REVIEW, HUMAN_GATE, IMPLEMENT, COMPLETE, TERMINAL
 - `reason`: Why this phase was selected
 - `convergence`: Whether all issues are ready for the next gate
 - `issues`: Current state of all issues in the group
 - `isGroup` and `groupPrimary`: Group detection info
 
-Execute the phase indicated by the `phase` field. Do NOT interpret workflow states yourself -- trust the tool's decision.
+Execute the phase indicated by `phase`. Do NOT interpret workflow states yourself -- trust the tool's decision.
 
-### Step 3: Execute Appropriate Phase
+### Step 2: Execute Appropriate Phase
 
 ---
 
 ## PHASE: EXPANDING
 
-**Goal**: Split all M/L/XL issues until only XS/S leaves remain.
+Split all M/L/XL issues until only XS/S leaves remain.
 
-**Pattern**: Spawn parallel split tasks, wait for all to complete, re-analyze.
-
-```markdown
-For each M/L/XL issue found in tree analysis:
-
-1. **Spawn parallel split tasks** (in a SINGLE message):
-
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-split for issue #AAA.
-             Use Skill(skill='ralph-hero:ralph-split', args='AAA') to split this issue.
-             This is a [M/L/XL] issue that needs decomposition into XS/S sub-issues.",
-     run_in_background=true,
-     description="Split #AAA")
-
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-split for issue #BBB.
-             Use Skill(skill='ralph-hero:ralph-split', args='BBB') to split this issue.
-             This is a [M/L/XL] issue that needs decomposition into XS/S sub-issues.",
-     run_in_background=true,
-     description="Split #BBB")
-
-2. **Wait for all splits to complete**:
-
-TaskOutput(task_id=[task-1-id], block=true, timeout=300000)
-TaskOutput(task_id=[task-2-id], block=true, timeout=300000)
-
-3. **Re-analyze tree** to check if more splitting needed:
-
-ralph_hero__detect_group(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[ROOT-NUMBER])
-
-4. **Loop** until no M/L/XL issues remain in tree.
+For each M/L/XL issue, spawn a background split task:
+```
+Task(subagent_type="general-purpose", run_in_background=true,
+     prompt="Use Skill(skill='ralph-hero:ralph-split', args='NNN') to split issue #NNN.",
+     description="Split #NNN")
 ```
 
-**Exit condition**: All issues in tree are XS/S.
+Wait for all splits, then re-call `detect_pipeline_position` to check if more splitting is needed. Loop until no M/L/XL issues remain.
 
 ---
 
 ## PHASE: RESEARCHING
 
-**Goal**: Research all leaf issues in parallel that are in "Research Needed" state.
+Research all leaf issues in "Research Needed" state in parallel.
 
-**Pattern**: Spawn parallel research tasks in separate context windows, wait for convergence.
-
-```markdown
-From tree analysis, identify all leaves in "Research Needed" state.
-
-1. **Spawn parallel research tasks** (ALL in a SINGLE message for true parallelism):
-
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-research for issue #AAA.
-             Issue: [title]
-             Current state: Research Needed
-
-             Use Skill(skill='ralph-hero:ralph-research', args='AAA') to research this issue.
-             Complete the research and move the issue to 'Ready for Plan' state.",
-     run_in_background=true,
-     description="Research #AAA")
-
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-research for issue #BBB.
-             Issue: [title]
-             Current state: Research Needed
-
-             Use Skill(skill='ralph-hero:ralph-research', args='BBB') to research this issue.
-             Complete the research and move the issue to 'Ready for Plan' state.",
-     run_in_background=true,
-     description="Research #BBB")
-
-2. **Wait for ALL research to complete**:
-
-TaskOutput(task_id=[task-1-id], block=true, timeout=600000)
-TaskOutput(task_id=[task-2-id], block=true, timeout=600000)
-
-3. **Report parallel execution**:
-
-Research completed in parallel:
-- #AAA: [status from task output]
-- #BBB: [status from task output]
+Spawn ALL research tasks in a SINGLE message for true parallelism:
+```
+Task(subagent_type="general-purpose", run_in_background=true,
+     prompt="Use Skill(skill='ralph-hero:ralph-research', args='NNN') to research issue #NNN: [title].",
+     description="Research #NNN")
 ```
 
-**Exit condition**: All research tasks complete (success or failure).
-
----
-
-## PHASE: CONVERGENCE CHECK
-
-**Goal**: Verify all leaves are ready for planning.
-
-After RESEARCHING phase completes:
-
-```
-ralph_hero__check_convergence(
-  owner=$RALPH_GH_OWNER,
-  repo=$RALPH_GH_REPO,
-  number=[ROOT-NUMBER],
-  targetState="Ready for Plan"
-)
-```
-
-If `converged` is `true`: Proceed to PLANNING phase.
-If `converged` is `false`: Report the `blocking` issues and STOP.
-
-```
-Convergence incomplete. Blocking issues:
-[list from tool response blocking array]
-
-Re-run /ralph-hero [ROOT-NUMBER] after resolving.
-```
+Wait for all research to complete, then re-call `detect_pipeline_position`. If phase == PLAN, proceed to planning.
 
 ---
 
 ## PHASE: PLANNING
 
-**Goal**: Create unified plans for issue groups.
+Create unified plans for issue groups.
 
-**Pattern**: Group issues by parent/dependency, create one plan per group.
-
-```markdown
-1. **Identify issue groups** from tree analysis:
-
-Issues are in the SAME GROUP if:
-- They share the same parent issue
-- They are connected via blocks/blockedBy relationships
-
-For a single-issue tree, the issue is its own group.
-
-2. **For each group, invoke planning**:
+Issues are in the SAME GROUP if they share the same parent or are connected via blocks/blockedBy.
 
 For single-issue groups:
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-plan for issue #NNN.
-             Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create an implementation plan.
-             Ensure the plan is committed and issue is moved to 'Plan in Review'.",
-     description="Plan #NNN")
-
-For multi-issue groups (siblings under same parent):
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-plan for an issue group.
-             Primary issue: #AAA (use this as the plan anchor)
-             Group members: #AAA, #BBB, #CCC
-
-             Use Skill(skill='ralph-hero:ralph-plan', args='AAA') to create a GROUP implementation plan.
-             The plan should cover all issues in the group with phases for each.
-             Ensure all group issues are moved to 'Plan in Review'.",
-     description="Plan group #AAA")
-
-3. **Check review mode** and proceed accordingly:
-
-If `RALPH_REVIEW_MODE` == "skip":
-  -> Proceed to HUMAN GATE (default behavior)
-
-If `RALPH_REVIEW_MODE` == "auto" or `RALPH_REVIEW_MODE` == "interactive":
-  -> Proceed to Step 3.5: REVIEWING phase
 ```
+Task(subagent_type="general-purpose",
+     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create a plan for #NNN.",
+     description="Plan #NNN")
+```
+
+For multi-issue groups:
+```
+Task(subagent_type="general-purpose",
+     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY]') to create a GROUP plan. Group: #AAA, #BBB, #CCC.",
+     description="Plan group #[PRIMARY]")
+```
+
+After planning, check `RALPH_REVIEW_MODE`:
+- `"skip"` (default): Proceed to HUMAN GATE
+- `"auto"` or `"interactive"`: Proceed to REVIEWING
 
 ---
 
-## PHASE: REVIEWING (Step 3.5)
+## PHASE: REVIEWING (Optional)
 
-**Goal**: Automated critique of plans before human approval (optional phase).
-
-**Trigger**: `RALPH_REVIEW_MODE` != "skip"
-
-**Pattern**: Spawn parallel review tasks for all plan groups, route based on outcomes.
-
-```markdown
-1. **Spawn parallel review tasks** (ALL in a SINGLE message for true parallelism):
-
-For each group that was planned:
-
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-review for issue #AAA.
-             Review mode: [RALPH_REVIEW_MODE]
-
-             Use Skill(skill='ralph-hero:ralph-review', args='AAA') to review this plan.
-             The review will:
-             - AUTO mode: Generate critique document
-             - INTERACTIVE mode: Present human wizard for approval
-
-             Return the outcome: APPROVED or NEEDS_ITERATION",
-     run_in_background=true,
-     description="Review #AAA")
-
-2. **Wait for ALL reviews to complete**:
-
-TaskOutput(task_id=[task-1-id], block=true, timeout=600000)
-
-3. **Route based on outcomes**:
-
-If ALL reviews return APPROVED:
-  -> Skip HUMAN GATE, proceed directly to IMPLEMENTING phase
-
-  Reviews approved - proceeding to implementation:
-  - #AAA: APPROVED
-  - #BBB: APPROVED
-
-  All plans passed automated review. Proceeding to implementation.
-
-If ANY review returns NEEDS_ITERATION:
-  -> STOP with issues list
-
-  ===================================================================
-                       REVIEW FEEDBACK REQUIRED
-  ===================================================================
-
-  Some plans require iteration before implementation:
-
-  Needs iteration:
-  - #AAA: NEEDS_ITERATION
-    Critique: [GitHub URL to critique document]
-
-  Approved:
-  - #BBB: APPROVED
-
-  NEXT STEPS:
-  1. Review critique documents
-  2. Update plans based on feedback
-  3. Re-run: /ralph-hero [ROOT-NUMBER]
-
-  ===================================================================
-
-  Then STOP.
+Spawn parallel review tasks for all plan groups:
 ```
+Task(subagent_type="general-purpose", run_in_background=true,
+     prompt="Use Skill(skill='ralph-hero:ralph-review', args='NNN') to review the plan. Return: APPROVED or NEEDS_ITERATION.",
+     description="Review #NNN")
+```
+
+**Routing**:
+- ALL APPROVED: Skip HUMAN GATE, proceed to IMPLEMENTING
+- ANY NEEDS_ITERATION: STOP with critique document links for iteration
 
 ---
 
 ## HUMAN GATE (When review is skipped)
 
-**Goal**: Require human approval before implementation.
-
-**Trigger**: `RALPH_REVIEW_MODE` == "skip" (default)
-
-```markdown
-===================================================================
-                         HUMAN GATE
-===================================================================
-
-Plans created for issue tree rooted at #[ROOT-NUMBER]:
-
-Groups planned:
-- Group 1: #AAA, #BBB, #CCC
-  Plan: [GitHub URL to plan document]
-
-- Group 2: #DDD (single issue)
-  Plan: [GitHub URL to plan document]
-
-All issues are now in "Plan in Review" workflow state.
-
-NEXT STEPS:
-1. Review each plan document in GitHub
-2. Approve plans by updating workflow state to "In Progress" in GitHub Projects
-3. Re-run: /ralph-hero [ROOT-NUMBER]
-
-===================================================================
-
+Report planned groups with plan URLs. All issues are in "Plan in Review".
+Instruct user to: (1) Review plans in GitHub, (2) Move to "In Progress", (3) Re-run `/ralph-hero [ROOT-NUMBER]`.
 Then STOP.
-```
 
 ---
 
 ## PHASE: IMPLEMENTING
 
-**Goal**: Execute implementation sequentially respecting dependency order.
+Execute implementation sequentially respecting dependency order from `detect_group` topological sort.
 
-**Pattern**: Topological sort by blockedBy, execute one at a time.
-
-```markdown
-1. **Determine implementation order**:
-
-Use the topological sort from ralph_hero__detect_group:
-ralph_hero__detect_group(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[ROOT-NUMBER])
-
-The result provides issues in correct dependency order.
-
-Example order:
-1. #AAA (no blockers)
-2. #BBB (blocked by #AAA)
-3. #CCC (blocked by #BBB)
-
-2. **Execute implementations SEQUENTIALLY**:
-
-For FIRST issue in order:
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-impl for issue #AAA.
-             Use Skill(skill='ralph-hero:ralph-impl', args='AAA') to implement this issue.
-             Follow the implementation plan exactly.
-             Create PR and move issue to 'In Review' when complete.",
-     description="Implement #AAA")
-
-# Wait for completion before starting next
-TaskOutput(task_id=[task-id], block=true, timeout=900000)
-
-# Check result - if failed, STOP and report
-If implementation failed:
-  Report error and STOP.
-
-For SECOND issue in order:
-Task(subagent_type="general-purpose",
-     prompt="You are executing ralph-impl for issue #BBB.
-             Use Skill(skill='ralph-hero:ralph-impl', args='BBB') to implement this issue.
-             Follow the implementation plan exactly.
-             Create PR and move issue to 'In Review' when complete.",
-     description="Implement #BBB")
-
-# Wait for completion
-TaskOutput(task_id=[task-id], block=true, timeout=900000)
-
-# Continue for remaining issues...
-
-3. **Report completion**:
-
-===================================================================
-                    RALPH HERO COMPLETE
-===================================================================
-
-Issue tree #[ROOT-NUMBER] fully implemented:
-
-Issues completed:
-- #AAA: [PR URL] - In Review
-- #BBB: [PR URL] - In Review
-- #CCC: [PR URL] - In Review
-
-Total: [N] issues implemented
-
-Next steps:
-1. Review PRs
-2. Merge after approval
-3. Close issues
-
-===================================================================
+For each issue in order (wait for each to complete before starting next):
 ```
+Task(subagent_type="general-purpose",
+     prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN') to implement #NNN. Follow the plan exactly.",
+     description="Implement #NNN")
+```
+
+If any implementation fails, STOP immediately. Do NOT continue to next issue.
+
+After all implementations complete, report all issue numbers with PR URLs and "In Review" status.
 
 ---
 
 ## Error Handling
 
-### Split Failure
-```
-If a split task fails:
-1. Report which issue failed to split
-2. Preserve other split results
-3. Suggest manual intervention
-4. STOP
-```
+| Error | Action |
+|-------|--------|
+| Split failure | Report which issue failed, preserve other results, STOP |
+| Research failure | Report failure, other parallel research continues, STOP at convergence |
+| Implementation failure | STOP immediately, preserve worktree, do NOT continue |
+| Circular dependencies | Report the cycle, suggest manual cleanup, STOP |
 
-### Research Failure
-```
-If a research task fails:
-1. Report which issue failed
-2. Check if issue moved to "Human Needed"
-3. Other parallel research continues
-4. Report convergence failure at check
-5. STOP
-```
-
-### Implementation Failure
-```
-If an implementation fails:
-1. STOP immediately (sequential execution)
-2. Report which issue/phase failed
-3. Preserve worktree for debugging
-4. Do NOT continue to next issue
-```
-
-### Circular Dependencies
-```
-If topological sort fails (cycle detected):
-1. Report the cycle
-2. List issues involved
-3. Suggest manual dependency cleanup
-4. STOP
-```
+For escalation procedures (Human Needed state, @mention patterns), see [shared/conventions.md](../shared/conventions.md#escalation-protocol).
 
 ## Resumption
 
-Ralph GitHub Hero is designed to be **resumable**:
+Ralph Hero is **resumable** -- each invocation queries current tree state via `detect_pipeline_position`, skips completed phases, and continues from the appropriate phase.
 
-1. Each invocation queries current tree state from GitHub Projects
-2. State machine determines which phase to execute
-3. Partial progress is preserved in GitHub workflow states
-
-**To resume after interruption:**
 ```bash
 /ralph-hero [ROOT-NUMBER]
 ```
 
-The orchestrator will:
-- Analyze current tree state
-- Skip completed phases
-- Continue from appropriate phase
-
 ## Constraints
 
-- **One root issue per invocation** - Handles one tree at a time
-- **XS/S issues only for implementation** - M+ triggers EXPANDING
-- **Plan approval required** - HUMAN GATE before IMPLEMENTING
-- **Sequential implementation** - Respects dependency order
-- **Parallel research only** - Multiple context windows for research
+- One root issue per invocation
+- XS/S issues only for implementation (M+ triggers EXPANDING)
+- Plan approval required before implementation
+- Sequential implementation respecting dependency order
+- Parallel research only
 
 ## Environment Variables
 
@@ -592,5 +221,4 @@ The orchestrator will:
 
 ## Link Formatting
 
-All code references use GitHub links:
-`[path/file.py:42](https://github.com/OWNER/REPO/blob/main/path/file.py#L42)`
+See [shared/conventions.md](../shared/conventions.md#link-formatting) for GitHub link patterns.
