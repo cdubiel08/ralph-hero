@@ -151,8 +151,11 @@ ralph_hero__update_workflow_state
 - repo: [repo]
 - number: [issue-number]
 - state: "Done"
+- command: "ralph_triage"
 ```
 Add comment explaining why closed.
+
+**Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **If SPLIT:**
 
@@ -217,6 +220,7 @@ ralph_hero__update_workflow_state
 - repo: [repo]
 - number: [issue-number]
 - state: "Research Needed"
+- command: "ralph_triage"
 ```
 Add comment: "Moved to Research Needed for investigation."
 
@@ -381,7 +385,8 @@ When encountering complexity, uncertainty, or states that don't align with proto
    - owner: [owner]
    - repo: [repo]
    - number: [issue-number]
-   - state: "Human Needed"
+   - state: "__ESCALATE__"
+   - command: "ralph_triage"
    ```
 
 2. **Add comment with @mention**:

@@ -226,8 +226,11 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "In Progress"
+   - state: "__COMPLETE__"
+   - command: "ralph_review"
    ```
+
+   **Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 2. **Add approval comment**:
    ```
@@ -270,6 +273,7 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - state: "Ready for Plan"
+   - command: "ralph_review"
    ```
 
 3. **Add feedback comment**:
@@ -348,7 +352,8 @@ Run /ralph-plan NNN to address critique and update plan.
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "Human Needed"
+   - state: "__ESCALATE__"
+   - command: "ralph_review"
    ```
 
 2. Add comment with @mention:

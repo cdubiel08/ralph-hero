@@ -13,6 +13,7 @@ import { paginateConnection } from "../lib/pagination.js";
 import { detectGroup } from "../lib/group-detection.js";
 import { detectPipelinePosition, type IssueState } from "../lib/pipeline-detection.js";
 import { isValidState, isEarlierState, VALID_STATES, LOCK_STATES } from "../lib/workflow-states.js";
+import { resolveState } from "../lib/state-resolution.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -1000,16 +1001,26 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__update_workflow_state",
-    "Change an issue's Workflow State in the project (e.g., 'Backlog' -> 'Research Needed')",
+    "Change an issue's Workflow State. Accepts semantic intents (__LOCK__, __COMPLETE__, __ESCALATE__, __CLOSE__, __CANCEL__) or direct state names. The command parameter enables validation.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
       repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.number().describe("Issue number"),
-      state: z.string().describe("Target Workflow State name (e.g., 'Backlog', 'In Progress', 'Done')"),
+      state: z.string().describe(
+        "Target state: semantic intent (__LOCK__, __COMPLETE__, __ESCALATE__, __CLOSE__, __CANCEL__) " +
+        "or direct state name (e.g., 'Research Needed', 'In Progress')"
+      ),
+      command: z.string().describe(
+        "Ralph command making this transition (e.g., 'ralph_research', 'ralph_plan'). " +
+        "Required for validation and semantic intent resolution."
+      ),
     },
     async (args) => {
       try {
         const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
+
+        // Resolve semantic intent or validate direct state
+        const { resolvedState, wasIntent, originalState } = resolveState(args.state, args.command);
 
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
@@ -1022,14 +1033,21 @@ export function registerIssueTools(
         // Resolve project item ID
         const projectItemId = await resolveProjectItemId(client, fieldCache, owner, repo, args.number);
 
-        // Update the field
-        await updateProjectItemField(client, fieldCache, projectItemId, "Workflow State", args.state);
+        // Update the field with the resolved state
+        await updateProjectItemField(client, fieldCache, projectItemId, "Workflow State", resolvedState);
 
-        return toolSuccess({
+        const result: Record<string, unknown> = {
           number: args.number,
           previousState: previousState || "(unknown)",
-          newState: args.state,
-        });
+          newState: resolvedState,
+          command: args.command,
+        };
+
+        if (wasIntent) {
+          result.resolvedFrom = originalState;
+        }
+
+        return toolSuccess(result);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to update workflow state: ${message}`);

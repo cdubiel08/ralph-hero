@@ -141,8 +141,11 @@ ralph_hero__update_workflow_state
 - owner: $RALPH_GH_OWNER
 - repo: $RALPH_GH_REPO
 - number: [issue-number]
-- state: "In Progress"
+- state: "__LOCK__"
+- command: "ralph_impl"
 ```
+
+**Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 ### Step 5: Set Up or Reuse Worktree
 
@@ -220,7 +223,8 @@ If `git pull` fails with merge conflicts:
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "Human Needed"
+   - state: "__ESCALATE__"
+   - command: "ralph_impl"
    ```
 
 2. **Add conflict comment**:
@@ -547,7 +551,8 @@ For each issue in the epic:
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "In Review"
+   - state: "__COMPLETE__"
+   - command: "ralph_impl"
    ```
 
 **For single issue**:
@@ -576,7 +581,8 @@ For each issue in the epic:
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "In Review"
+   - state: "__COMPLETE__"
+   - command: "ralph_impl"
    ```
 
 **For group plan** - update ALL issues:
@@ -612,7 +618,8 @@ For each issue in the group:
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "In Review"
+   - state: "__COMPLETE__"
+   - command: "ralph_impl"
    ```
 
 ### Step 11: Final Report
@@ -786,7 +793,8 @@ When encountering complexity, uncertainty, or states that don't align with proto
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "Human Needed"
+   - state: "__ESCALATE__"
+   - command: "ralph_impl"
    ```
    For group plans, move ALL group issues to "Human Needed".
 

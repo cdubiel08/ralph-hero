@@ -112,8 +112,11 @@ ralph_hero__update_workflow_state
 - owner: [owner]
 - repo: [repo]
 - number: [issue-number]
-- state: "Research in Progress"
+- state: "__LOCK__"
+- command: "ralph_research"
 ```
+
+**Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 ### Step 3: Conduct Research
 
@@ -252,7 +255,8 @@ This ensures the GitHub link in the issue comment resolves correctly.
    - owner: [owner]
    - repo: [repo]
    - number: [issue-number]
-   - state: "Ready for Plan"
+   - state: "__COMPLETE__"
+   - command: "ralph_research"
    ```
 
 4. **Check if all group issues are researched**:
@@ -364,7 +368,8 @@ When encountering complexity, uncertainty, or states that don't align with proto
    - owner: [owner]
    - repo: [repo]
    - number: [issue-number]
-   - state: "Human Needed"
+   - state: "__ESCALATE__"
+   - command: "ralph_research"
    ```
 
 2. **Add comment with @mention**:
