@@ -270,8 +270,11 @@ ralph_hero__update_estimate
    - owner: [owner]
    - repo: [repo]
    - number: [new-issue-number]
-   - state: "Backlog"
+   - state: "__COMPLETE__"
+   - command: "ralph_split"
    ```
+
+   **Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **Sub-issue description template**:
 ```markdown
@@ -377,6 +380,7 @@ ralph_hero__update_workflow_state
 - repo: [repo]
 - number: [sub-issue-number]
 - state: [appropriate state]
+- command: "ralph_split"
 ```
 
 ### Step 9: Report

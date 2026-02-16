@@ -8,6 +8,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
+    - matcher: "ralph_hero__update_workflow_state"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/convergence-gate.sh"
   PostToolUse:
     - matcher: "ralph_hero__update_workflow_state"
       hooks:
@@ -168,8 +172,11 @@ ralph_hero__update_workflow_state
 - owner: [owner]
 - repo: [repo]
 - number: [issue-number]
-- state: "Plan in Progress"
+- state: "__LOCK__"
+- command: "ralph_plan"
 ```
+
+**Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 ### Step 4: Create Group Implementation Plan
 
@@ -415,7 +422,8 @@ For **each issue in the group**:
    - owner: [owner]
    - repo: [repo]
    - number: [issue-number]
-   - state: "Plan in Review"
+   - state: "__COMPLETE__"
+   - command: "ralph_plan"
    ```
 
 ### Step 6: Report Completion
@@ -475,7 +483,8 @@ When encountering complexity, uncertainty, or states that don't align with proto
    - owner: [owner]
    - repo: [repo]
    - number: [issue-number]
-   - state: "Human Needed"
+   - state: "__ESCALATE__"
+   - command: "ralph_plan"
    ```
 
 2. **Add comment with @mention**:
