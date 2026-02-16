@@ -10,6 +10,9 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { paginateConnection } from "../lib/pagination.js";
+import { detectGroup } from "../lib/group-detection.js";
+import { detectPipelinePosition, type IssueState } from "../lib/pipeline-detection.js";
+import { isValidState, isEarlierState, VALID_STATES, LOCK_STATES } from "../lib/workflow-states.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -1150,6 +1153,341 @@ export function registerIssueTools(
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__detect_pipeline_position
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__detect_pipeline_position",
+    "Determine the current pipeline position for an issue or group. Returns the phase to execute and remaining phases. Replaces manual interpretation of workflow state tables.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      number: z.number().describe("Issue number (seed for group detection)"),
+    },
+    async (args) => {
+      try {
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
+
+        // Ensure field cache is populated
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        // Detect group from seed issue
+        const group = await detectGroup(client, owner, repo, args.number);
+
+        // Fetch workflow state and estimate for each group member
+        const issueStates: IssueState[] = await Promise.all(
+          group.groupTickets.map(async (ticket) => {
+            const state = await getIssueFieldValues(
+              client, fieldCache, owner, repo, ticket.number,
+            );
+            return {
+              number: ticket.number,
+              title: ticket.title,
+              workflowState: state.workflowState || "unknown",
+              estimate: state.estimate || null,
+            };
+          }),
+        );
+
+        // Detect pipeline position
+        const position = detectPipelinePosition(
+          issueStates,
+          group.isGroup,
+          group.groupPrimary.number,
+        );
+
+        return toolSuccess(position);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Check if it's a "not found" error
+        if (message.includes("not found")) {
+          return toolError(
+            `Issue #${args.number} not found in project. ` +
+            `Recovery: verify the issue number is correct and the issue has been added to the project ` +
+            `via ralph_hero__create_issue or ralph_hero__get_issue.`
+          );
+        }
+        return toolError(`Failed to detect pipeline position: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__check_convergence
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__check_convergence",
+    "Check if all issues in a group have reached the required state for the next phase. Returns convergence status with details on blocking issues.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      number: z.number().describe("Issue number (any issue in the group)"),
+      targetState: z.string().describe("The state all issues must be in (e.g., 'Ready for Plan')"),
+    },
+    async (args) => {
+      try {
+        // Validate target state
+        if (!isValidState(args.targetState)) {
+          return toolError(
+            `Unknown target state '${args.targetState}'. ` +
+            `Valid states: ${VALID_STATES.join(", ")}. ` +
+            `Recovery: retry with a valid state name.`
+          );
+        }
+
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
+
+        // Ensure field cache is populated
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        // Detect group from seed issue
+        const group = await detectGroup(client, owner, repo, args.number);
+
+        // Single issue trivially converges
+        if (!group.isGroup) {
+          const state = await getIssueFieldValues(
+            client, fieldCache, owner, repo, args.number,
+          );
+          const atTarget = state.workflowState === args.targetState;
+          return toolSuccess({
+            converged: atTarget,
+            targetState: args.targetState,
+            total: 1,
+            ready: atTarget ? 1 : 0,
+            blocking: atTarget ? [] : [{
+              number: args.number,
+              title: group.groupPrimary.title,
+              currentState: state.workflowState || "unknown",
+              distanceToTarget: computeDistance(state.workflowState || "unknown", args.targetState),
+            }],
+            recommendation: atTarget ? "proceed" : "wait",
+          });
+        }
+
+        // Check each group member
+        const blocking: Array<{
+          number: number;
+          title: string;
+          currentState: string;
+          distanceToTarget: number;
+        }> = [];
+
+        let readyCount = 0;
+
+        for (const ticket of group.groupTickets) {
+          const state = await getIssueFieldValues(
+            client, fieldCache, owner, repo, ticket.number,
+          );
+          const currentState = state.workflowState || "unknown";
+
+          if (currentState === args.targetState) {
+            readyCount++;
+          } else {
+            blocking.push({
+              number: ticket.number,
+              title: ticket.title,
+              currentState,
+              distanceToTarget: computeDistance(currentState, args.targetState),
+            });
+          }
+        }
+
+        const converged = blocking.length === 0;
+        const hasHumanNeeded = blocking.some((b) => b.currentState === "Human Needed");
+
+        let recommendation: "proceed" | "wait" | "escalate";
+        if (converged) {
+          recommendation = "proceed";
+        } else if (hasHumanNeeded) {
+          recommendation = "escalate";
+        } else {
+          recommendation = "wait";
+        }
+
+        return toolSuccess({
+          converged,
+          targetState: args.targetState,
+          total: group.totalTickets,
+          ready: readyCount,
+          blocking,
+          recommendation,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to check convergence: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__pick_actionable_issue
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__pick_actionable_issue",
+    "Find the highest-priority issue that matches the given workflow state and is not blocked or locked. Used by dispatch loop to find work for idle teammates.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      workflowState: z.string().describe("Target workflow state (e.g., 'Research Needed', 'Ready for Plan')"),
+      maxEstimate: z.string().optional().default("S").describe("Maximum estimate to include (XS, S, M, L, XL). Default: S"),
+    },
+    async (args) => {
+      try {
+        // Validate workflow state
+        if (!isValidState(args.workflowState)) {
+          return toolError(
+            `Unknown workflow state '${args.workflowState}'. ` +
+            `Valid states: ${VALID_STATES.join(", ")}. ` +
+            `Recovery: retry with a valid state name. ` +
+            `Common states for dispatch: 'Research Needed' (for researchers), ` +
+            `'Ready for Plan' (for planners), 'Plan in Review' (for reviewers).`
+          );
+        }
+
+        // Validate estimate
+        const validEstimates = ["XS", "S", "M", "L", "XL"];
+        const maxEstimate = args.maxEstimate || "S";
+        if (!validEstimates.includes(maxEstimate)) {
+          return toolError(
+            `Unknown estimate '${maxEstimate}'. ` +
+            `Valid estimates: ${validEstimates.join(", ")}. ` +
+            `Recovery: retry with a valid estimate or omit for default (S).`
+          );
+        }
+
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
+
+        // Ensure field cache is populated
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        // Fetch all project items
+        const itemsResult = await paginateConnection<RawProjectItem>(
+          (q, v) => client.projectQuery(q, v),
+          `query($projectId: ID!, $cursor: String, $first: Int!) {
+            node(id: $projectId) {
+              ... on ProjectV2 {
+                items(first: $first, after: $cursor) {
+                  totalCount
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    id
+                    type
+                    content {
+                      ... on Issue {
+                        number
+                        title
+                        body
+                        state
+                        url
+                        labels(first: 10) { nodes { name } }
+                        trackedIssues(first: 10) {
+                          nodes { number state }
+                        }
+                      }
+                    }
+                    fieldValues(first: 20) {
+                      nodes {
+                        ... on ProjectV2ItemFieldSingleSelectValue {
+                          __typename
+                          name
+                          optionId
+                          field { ... on ProjectV2FieldCommon { name } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { projectId, first: 100 },
+          "node.items",
+          { maxItems: 500 },
+        );
+
+        // Filter to matching items
+        let candidates = itemsResult.nodes.filter((item) => {
+          if (item.type !== "ISSUE" || !item.content) return false;
+          const content = item.content as Record<string, unknown>;
+          if (content.state !== "OPEN") return false;
+
+          // Check workflow state
+          const ws = getFieldValue(item, "Workflow State");
+          if (ws !== args.workflowState) return false;
+
+          // Check estimate
+          const est = getFieldValue(item, "Estimate");
+          if (est) {
+            const estIdx = validEstimates.indexOf(est);
+            const maxIdx = validEstimates.indexOf(maxEstimate);
+            if (estIdx > maxIdx) return false;
+          }
+
+          return true;
+        });
+
+        // Filter out locked issues (in a lock state - shouldn't happen if matching target state, but safety check)
+        candidates = candidates.filter((item) => {
+          const ws = getFieldValue(item, "Workflow State");
+          return !ws || !LOCK_STATES.includes(ws);
+        });
+
+        // Filter out issues with unresolved blockers
+        candidates = candidates.filter((item) => {
+          const content = item.content as Record<string, unknown>;
+          const blockedBy = content.trackedIssues as { nodes: Array<{ number: number; state: string }> } | undefined;
+          if (!blockedBy?.nodes || blockedBy.nodes.length === 0) return true;
+          // Issue is blocked if any blocker is still OPEN
+          return !blockedBy.nodes.some((dep) => dep.state === "OPEN");
+        });
+
+        // Sort by priority (P0 > P1 > P2 > P3 > none)
+        const priorityOrder: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+        candidates.sort((a, b) => {
+          const pA = getFieldValue(a, "Priority");
+          const pB = getFieldValue(b, "Priority");
+          const orderA = pA ? (priorityOrder[pA] ?? 99) : 99;
+          const orderB = pB ? (priorityOrder[pB] ?? 99) : 99;
+          return orderA - orderB;
+        });
+
+        if (candidates.length === 0) {
+          return toolSuccess({
+            found: false,
+            issue: null,
+            alternatives: 0,
+          });
+        }
+
+        const best = candidates[0];
+        const content = best.content as Record<string, unknown>;
+
+        return toolSuccess({
+          found: true,
+          issue: {
+            number: content.number,
+            title: content.title,
+            description: content.body || "",
+            workflowState: getFieldValue(best, "Workflow State"),
+            estimate: getFieldValue(best, "Estimate") || null,
+            priority: getFieldValue(best, "Priority") || null,
+            isLocked: false,
+            blockedBy: [],
+          },
+          alternatives: candidates.length - 1,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to pick actionable issue: ${message}`);
+      }
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,4 +1515,82 @@ function getFieldValue(item: RawProjectItem, fieldName: string): string | undefi
     (fv) => fv.field?.name === fieldName && fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fieldValue?.name;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Get workflow state and estimate for a single issue
+// ---------------------------------------------------------------------------
+
+async function getIssueFieldValues(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<{ workflowState: string | undefined; estimate: string | undefined; priority: string | undefined }> {
+  const projectItemId = await resolveProjectItemId(client, fieldCache, owner, repo, issueNumber);
+
+  const result = await client.query<{
+    node: {
+      fieldValues: {
+        nodes: Array<{
+          __typename?: string;
+          name?: string;
+          field?: { name: string };
+        }>;
+      };
+    } | null;
+  }>(
+    `query($itemId: ID!) {
+      node(id: $itemId) {
+        ... on ProjectV2Item {
+          fieldValues(first: 20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                __typename
+                name
+                field { ... on ProjectV2FieldCommon { name } }
+              }
+            }
+          }
+        }
+      }
+    }`,
+    { itemId: projectItemId },
+  );
+
+  let workflowState: string | undefined;
+  let estimate: string | undefined;
+  let priority: string | undefined;
+
+  for (const fv of result.node?.fieldValues?.nodes || []) {
+    if (fv.__typename === "ProjectV2ItemFieldSingleSelectValue" && fv.field) {
+      switch (fv.field.name) {
+        case "Workflow State":
+          workflowState = fv.name;
+          break;
+        case "Estimate":
+          estimate = fv.name;
+          break;
+        case "Priority":
+          priority = fv.name;
+          break;
+      }
+    }
+  }
+
+  return { workflowState, estimate, priority };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Compute "distance" between two states in the pipeline
+// ---------------------------------------------------------------------------
+
+import { stateIndex } from "../lib/workflow-states.js";
+
+function computeDistance(currentState: string, targetState: string): number {
+  const currentIdx = stateIndex(currentState);
+  const targetIdx = stateIndex(targetState);
+  if (currentIdx === -1 || targetIdx === -1) return -1;
+  return targetIdx - currentIdx;
 }
