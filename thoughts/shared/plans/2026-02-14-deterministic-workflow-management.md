@@ -1227,10 +1227,11 @@ End-to-end validation of the complete deterministic workflow.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] MCP server builds: `cd mcp-server && npm run build`
-- [ ] MCP server tests pass: `cd mcp-server && npm test`
-- [ ] Hook scripts pass syntax check: `bash -n hooks/scripts/*.sh`
-- [ ] No prose decision tables remain in orchestrator SKILL.md files
+- [x] MCP server builds: `cd mcp-server && npm run build`
+- [x] MCP server tests pass: `cd mcp-server && npm test` (95 tests, 6 files)
+- [x] Hook scripts pass syntax check: `bash -n hooks/scripts/*.sh`
+- [x] No prose decision tables remain in orchestrator SKILL.md files
+- [x] All `update_workflow_state` calls have required `command` parameter (20 calls across 7 skills)
 
 #### Manual Verification
 - [ ] Phase detection is consistent across multiple runs (same input → same output)
