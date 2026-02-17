@@ -51,22 +51,44 @@ npm test             # Run tests (vitest)
 
 ### Publishing
 
-```bash
-cd plugin/ralph-hero/mcp-server
-npm publish          # Builds automatically via prepublishOnly, then publishes
-```
+**Do NOT run `npm publish` manually.** Publishing is handled by the GitHub Actions CD workflow (see #12). The workflow triggers on version tag pushes (`v*`), builds the TypeScript, and publishes to npm using the `NPM_TOKEN` repository secret.
+
+To release a new version:
+
+1. Bump version in `plugin/ralph-hero/mcp-server/package.json`
+2. Bump version in `plugin/ralph-hero/.claude-plugin/plugin.json`
+3. Commit, push, and merge to main
+4. Tag and push: `git tag v1.3.0 && git push origin v1.3.0`
+5. CD workflow builds and publishes automatically
+
+**Note**: If CI (#12) is not yet set up, you can publish manually with `npm publish` from `plugin/ralph-hero/mcp-server/` — but you must run `npm login` first as npm tokens expire.
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `RALPH_GH_REPO_TOKEN` | Yes | GitHub token for repo operations |
-| `RALPH_GH_PROJECT_TOKEN` | No | Separate token for project operations (falls back to repo token) |
-| `RALPH_HERO_GITHUB_TOKEN` | No | Legacy token variable |
-| `RALPH_GH_OWNER` | Yes | GitHub owner (user or org) |
-| `RALPH_GH_REPO` | Yes | Repository name |
-| `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
-| `RALPH_GH_PROJECT_NUMBER` | Yes | GitHub Projects V2 number |
+Set these in `.claude/settings.local.json` (recommended, gitignored):
+
+```json
+{
+  "env": {
+    "RALPH_HERO_GITHUB_TOKEN": "ghp_xxx",
+    "RALPH_GH_OWNER": "cdubiel08",
+    "RALPH_GH_REPO": "ralph-hero",
+    "RALPH_GH_PROJECT_NUMBER": "3"
+  }
+}
+```
+
+**Do NOT put tokens in `.mcp.json`** — the `env` block can overwrite inherited values with unexpanded `${VAR}` literals, preventing the MCP server from starting. Only non-sensitive defaults with fallbacks belong in `.mcp.json` (e.g., `${RALPH_GH_OWNER:-cdubiel08}`).
+
+| Variable | Required | Where to set | Description |
+|----------|----------|-------------|-------------|
+| `RALPH_HERO_GITHUB_TOKEN` | **Yes** | `settings.local.json` | GitHub PAT with `repo` + `project` scopes |
+| `RALPH_GH_OWNER` | Yes | `settings.local.json` or `.mcp.json` default | GitHub owner (user or org) |
+| `RALPH_GH_REPO` | Yes | `settings.local.json` or `.mcp.json` default | Repository name |
+| `RALPH_GH_PROJECT_NUMBER` | Yes | `settings.local.json` or `.mcp.json` default | GitHub Projects V2 number |
+| `RALPH_GH_REPO_TOKEN` | No | `settings.local.json` | Separate repo token (falls back to `RALPH_HERO_GITHUB_TOKEN`) |
+| `RALPH_GH_PROJECT_TOKEN` | No | `settings.local.json` | Separate project token (falls back to repo token) |
+| `RALPH_GH_PROJECT_OWNER` | No | `settings.local.json` | Project owner if different from repo owner |
 
 ### Key Implementation Details
 
