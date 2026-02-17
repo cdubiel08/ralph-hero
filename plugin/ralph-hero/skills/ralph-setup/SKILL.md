@@ -10,14 +10,45 @@ env:
 
 One-time interactive setup skill for configuring a GitHub repository with the Ralph workflow. Creates a GitHub Project V2 with all required custom fields, views, and configuration.
 
-## Prerequisites
+## Quick Start (Minimum Viable Config)
 
-Before running this skill, ensure you have at minimum:
+Ralph needs **one token** and **three settings**. That's it.
 
-1. **A GitHub Personal Access Token** with `repo` and `project` scopes
-2. **`RALPH_GH_OWNER`** and **`RALPH_GH_REPO`** set to target your repository
+### 1. Create a GitHub Token
 
-The setup will guide you through everything else, including token configuration for org repos with personal projects.
+Go to https://github.com/settings/tokens → **Generate new token (classic)**
+- Scopes needed: `repo`, `project`, `read:org` (if using org repos)
+
+### 2. Add to Claude Code Settings
+
+Create or edit `.claude/settings.local.json` in your project (this file is gitignored):
+
+```json
+{
+  "env": {
+    "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here",
+    "RALPH_GH_OWNER": "your-github-username-or-org",
+    "RALPH_GH_REPO": "your-repo-name",
+    "RALPH_GH_PROJECT_NUMBER": "1"
+  }
+}
+```
+
+If you don't have a project number yet, omit it — this skill will create one for you.
+
+### 3. Restart Claude Code
+
+The MCP server reads environment variables at startup. After changing settings, restart Claude Code, then run `/ralph-setup` again.
+
+### Where NOT to put tokens
+
+- **Don't put tokens in `.mcp.json`** — the `env` block can overwrite inherited values with unexpanded literals
+- **Don't put tokens in `.bashrc` after the interactive guard** — non-interactive processes (like MCP servers) won't see them
+- **Don't commit tokens to git** — use `settings.local.json` (gitignored) or shell profile
+
+### Advanced: Split-Owner / Dual-Token
+
+If your repo is in an org but the project is under your personal account, see Step 2b below for dual-token configuration.
 
 ## Workflow
 
@@ -46,13 +77,18 @@ Config:
    ```
    Authentication failed. Your token may be expired or invalid.
 
-   Fix: Set a valid token:
-     export RALPH_HERO_GITHUB_TOKEN="ghp_your_token_here"
+   Fix: Add a valid token to .claude/settings.local.json:
 
-   Generate one at: https://github.com/settings/tokens
+     {
+       "env": {
+         "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here"
+       }
+     }
+
+   Generate a token at: https://github.com/settings/tokens
    Required scopes: repo, project
 
-   After setting the variable, restart Claude Code.
+   Then restart Claude Code (the MCP server reads env vars at startup).
    ```
 
 4. **If `repoAccess` fails**: STOP. Display:
@@ -106,22 +142,23 @@ Ask using AskUserQuestion:
 Dual-Token Setup
 ================
 
-You need two Personal Access Tokens:
+You need two Personal Access Tokens. Create them at:
+https://github.com/settings/tokens
 
-1. Repo token (for org issues/PRs):
-   - Go to: https://github.com/settings/tokens
-   - Create a token with scopes: repo, read:org
-   - Set: export RALPH_GH_REPO_TOKEN="ghp_..."
+1. Repo token — scopes: repo, read:org
+2. Project token — scopes: project
 
-2. Project token (for personal project):
-   - Go to: https://github.com/settings/tokens
-   - Create a token with scopes: project
-   - Set: export RALPH_GH_PROJECT_TOKEN="ghp_..."
+Add both to .claude/settings.local.json:
 
-Also set:
-   export RALPH_GH_PROJECT_OWNER="[their-username]"
+{
+  "env": {
+    "RALPH_GH_REPO_TOKEN": "ghp_repo_token_here",
+    "RALPH_GH_PROJECT_TOKEN": "ghp_project_token_here",
+    "RALPH_GH_PROJECT_OWNER": "your-github-username"
+  }
+}
 
-After setting these variables, restart Claude Code and run /ralph-setup again.
+Then restart Claude Code and run /ralph-setup again.
 ```
 
 **STOP here** if they need to create new tokens — they must restart Claude Code for the MCP server to pick up new env vars.
@@ -200,14 +237,29 @@ Create a local configuration file at `.claude/ralph-hero.local.md` in the curren
 
 ## Environment Variables
 
-Set these in your shell profile or `.env` file:
+Add to `.claude/settings.local.json` (recommended — Claude Code native, gitignored):
+
+```json
+{
+  "env": {
+    "RALPH_HERO_GITHUB_TOKEN": "[token]",
+    "RALPH_GH_OWNER": "[owner]",
+    "RALPH_GH_REPO": "[repo]",
+    "RALPH_GH_PROJECT_NUMBER": "[number]"
+  }
+}
+```
+
+Or set in shell profile (must be before any interactive guard):
 
 ```bash
-export RALPH_HERO_GITHUB_TOKEN="[token]"  # or keep existing
+export RALPH_HERO_GITHUB_TOKEN="[token]"
 export RALPH_GH_OWNER="[owner]"
 export RALPH_GH_REPO="[repo]"
 export RALPH_GH_PROJECT_NUMBER="[number]"
 ```
+
+**Important**: Do NOT put tokens in `.mcp.json` — the env block can mask inherited values.
 ```
 
 **If repo owner != project owner (split-owner setup):**
@@ -234,22 +286,32 @@ export RALPH_GH_PROJECT_NUMBER="[number]"
 
 ## Environment Variables
 
-Set these in your shell profile or `.env` file:
+Add to `.claude/settings.local.json` (recommended — Claude Code native, gitignored):
 
-```bash
-export RALPH_GH_OWNER="[repo-owner]"
-export RALPH_GH_REPO="[repo]"
-export RALPH_GH_PROJECT_OWNER="[project-owner]"
-export RALPH_GH_PROJECT_NUMBER="[number]"
-
-# Token configuration:
-# Option A: Single token with both org repo + personal project access
-export RALPH_HERO_GITHUB_TOKEN="ghp_..."
-
-# Option B: Separate tokens (if single token doesn't cover both)
-export RALPH_GH_REPO_TOKEN="ghp_..."      # org repo access
-export RALPH_GH_PROJECT_TOKEN="ghp_..."   # personal project access
+```json
+{
+  "env": {
+    "RALPH_GH_OWNER": "[repo-owner]",
+    "RALPH_GH_REPO": "[repo]",
+    "RALPH_GH_PROJECT_OWNER": "[project-owner]",
+    "RALPH_GH_PROJECT_NUMBER": "[number]",
+    "RALPH_HERO_GITHUB_TOKEN": "ghp_..."
+  }
+}
 ```
+
+For dual-token setups (separate org repo + personal project tokens):
+
+```json
+{
+  "env": {
+    "RALPH_GH_REPO_TOKEN": "ghp_...",
+    "RALPH_GH_PROJECT_TOKEN": "ghp_..."
+  }
+}
+```
+
+**Important**: Do NOT put tokens in `.mcp.json` — the env block can mask inherited values.
 ```
 
 Also include the Workflow States table in both cases:
@@ -300,8 +362,8 @@ Views (create manually in GitHub UI):
 Configuration saved to: .claude/ralph-hero.local.md
 
 Next steps:
-1. Set environment variables (see configuration file)
-2. Restart Claude Code for env changes to take effect
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
 3. Run /ralph-triage to start processing issues
 ```
 
@@ -327,12 +389,12 @@ Views (create manually in GitHub UI):
 
 Configuration saved to: .claude/ralph-hero.local.md
 
-IMPORTANT: Set these environment variables and restart Claude Code:
-  export RALPH_GH_PROJECT_OWNER="[project-owner]"
-  export RALPH_GH_PROJECT_NUMBER="[number]"
-  [+ any token exports needed]
+IMPORTANT: Verify .claude/settings.local.json has:
+  RALPH_GH_PROJECT_OWNER: "[project-owner]"
+  RALPH_GH_PROJECT_NUMBER: "[number]"
+  [+ token vars]
 
-The MCP server reads env vars at startup — changes require a restart.
+Then restart Claude Code (MCP server reads env vars at startup).
 ```
 
 ## Error Handling

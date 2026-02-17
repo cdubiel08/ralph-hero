@@ -4,13 +4,9 @@
       "command": "npx",
       "args": ["-y", "ralph-hero-mcp-server@latest"],
       "env": {
-        "RALPH_GH_REPO_TOKEN": "${RALPH_GH_REPO_TOKEN}",
-        "RALPH_GH_PROJECT_TOKEN": "${RALPH_GH_PROJECT_TOKEN}",
-        "RALPH_HERO_GITHUB_TOKEN": "${RALPH_HERO_GITHUB_TOKEN}",
-        "RALPH_GH_OWNER": "${RALPH_GH_OWNER}",
-        "RALPH_GH_REPO": "${RALPH_GH_REPO}",
-        "RALPH_GH_PROJECT_OWNER": "${RALPH_GH_PROJECT_OWNER}",
-        "RALPH_GH_PROJECT_NUMBER": "${RALPH_GH_PROJECT_NUMBER}"
+        "RALPH_GH_OWNER": "${RALPH_GH_OWNER:-cdubiel08}",
+        "RALPH_GH_REPO": "${RALPH_GH_REPO:-ralph-hero}",
+        "RALPH_GH_PROJECT_NUMBER": "${RALPH_GH_PROJECT_NUMBER:-3}"
       }
     }
   }
