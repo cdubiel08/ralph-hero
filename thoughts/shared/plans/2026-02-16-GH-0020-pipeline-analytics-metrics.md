@@ -3,297 +3,217 @@ date: 2026-02-16
 status: draft
 github_issue: 20
 github_url: https://github.com/cdubiel08/ralph-hero/issues/20
+revision: 2
+revision_reason: "Reviewer rejection — Phase 1 targeted deleted tool (update_workflow_state → handoff_ticket per #19), Phase 2 redundant with #26 pipeline_dashboard. Rescoped to transition comment format spec + parser library only."
 ---
 
-# Pipeline Analytics and Metrics Tracking
+# Pipeline Analytics and Metrics Tracking (Revised)
+
+## Revision History
+
+**v2 (2026-02-16)**: Rescoped after reviewer rejection ([critique](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/reviews/2026-02-16-GH-0020-critique.md)). Two blocking issues addressed:
+1. **Phase 1 dropped instrumentation**: `update_workflow_state` will be deleted by #19 and replaced with `handoff_ticket`, which already creates audit comments on every transition. No instrumentation target exists.
+2. **Phase 2 dropped entirely**: `pipeline_metrics` is a strict subset of #26's approved `pipeline_dashboard`. Redundant.
+
+**Rescoped deliverable**: `lib/transition-comments.ts` — transition comment format specification, builder, and parser. This module provides the data layer for future temporal analytics tools (`cycle_time_report`, `bottleneck_check`) to parse transition history from issue comments.
 
 ## Overview
 
-Add pipeline analytics to the ralph-hero MCP server: (1) instrument `update_workflow_state` to record structured transition comments on every state change, and (2) implement a `pipeline_metrics` tool that returns a real-time pipeline snapshot with WIP counts, state distribution, and actionable bottleneck suggestions. This provides immediate visibility into pipeline health with no external dependencies — all data lives in GitHub.
+Create `lib/transition-comments.ts` — a pure utility module that defines the canonical machine-parseable transition comment format (`<!-- ralph-transition: {...} -->`), provides builder and parser functions, and includes a fallback parser for #19's `handoff_ticket` markdown audit comments. This module has no API dependencies, does not instrument any tool, and is fully unit-testable. It establishes the data format contract that future analytics tools will consume.
 
 ## Current State Analysis
 
-### No Temporal Data Exists
+### #19 `handoff_ticket` Creates Audit Comments
 
-The `update_workflow_state` tool ([issue-tools.ts:1208-1295](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts#L1208-L1295)) resolves semantic intents and updates the project field, but **does not record timestamps, create comments, or persist transition history**. The return value includes `previousState` and `newState` but this data is ephemeral.
+Issue #19 (P1, In Progress) replaces `update_workflow_state` with `handoff_ticket`. The new tool posts a structured audit comment on every state transition ([#19 plan, Phase 2, Step 8](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/plans/2026-02-16-GH-0019-validated-handoff-ticket-tool.md)):
 
-### Existing Skill Comments as Approximate Audit Trail
+```markdown
+**State transition**: {prev} → {new} (intent: {intent})
+**Command**: ralph_{command}
+**Reason**: {reason}
+```
 
-Ralph skills leave structured comments during transitions:
-- `"## Research Complete"` — research done
-- `"## Plan Created (Phase N of M)"` — plan done
-- `"## Review: APPROVED"` / `"REJECTED"` — review outcome
+These comments have `createdAt` timestamps (from GitHub) and contain transition metadata, but the format is human-readable markdown — not optimized for machine parsing.
 
-These have `createdAt` timestamps but formats aren't standardized and not all transitions leave comments.
+### #26 `pipeline_dashboard` Covers Snapshot Metrics
 
-### Relevant Infrastructure
+Issue #26 (approved) creates `ralph_hero__pipeline_dashboard` with WIP counts by state, per-issue listings, health indicators, and multiple output formats. This is a strict superset of the dropped `pipeline_metrics` tool.
 
-| Component | Location | Reusable For |
-|-----------|----------|-------------|
-| `list_project_items` | [project-tools.ts:382-549](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/tools/project-tools.ts#L382-L549) | Fetching all items with field values for WIP counts |
-| `paginateConnection` | [lib/pagination.ts](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/lib/pagination.ts) | Paginating project items and comments |
-| `SessionCache` | [lib/cache.ts:14-89](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/lib/cache.ts#L14-L89) | Caching expensive analytics queries within session |
-| `FieldOptionCache` | [lib/cache.ts:100-189](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/lib/cache.ts#L100-L189) | Resolving field names to IDs |
-| `resolveIssueNodeId` | [issue-tools.ts:117-145](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts#L117-L145) | Getting issue node ID for comment creation |
-| `PipelinePhase` enum | [lib/pipeline-detection.ts:15-24](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts#L15-L24) | Phase categorization for metrics grouping |
-| `STATE_ORDER` | [lib/workflow-states.ts:12-22](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/lib/workflow-states.ts#L12-L22) | Canonical state ordering for pipeline display |
+### The Gap: No Machine-Parseable Transition Format
+
+Neither #19's audit comments nor #26's dashboard provide a standardized, machine-parseable transition record format. Future tools like `cycle_time_report` need to:
+1. Scan issue comments for transition records
+2. Extract `from`, `to`, `command`, and timestamp
+3. Compute phase durations (diff between consecutive transitions)
+
+This requires a defined format and a reliable parser.
 
 ## Desired End State
 
-1. Every `update_workflow_state` call appends a structured HTML transition comment to the issue
-2. A new `ralph_hero__pipeline_metrics` tool returns a real-time pipeline snapshot (WIP by state, suggestions)
-3. A new `lib/transition-comments.ts` module provides transition comment creation and parsing
-4. All new code is tested
+1. `lib/transition-comments.ts` defines `TransitionRecord` type and the `<!-- ralph-transition: {...} -->` HTML comment format
+2. `buildTransitionComment()` creates machine-parseable HTML comments
+3. `parseTransitionComments()` extracts transition records from HTML comment format
+4. `parseAuditComments()` extracts transition records from #19's markdown audit comment format (backward compatibility)
+5. All functions are pure utilities with no API dependencies
+6. Comprehensive tests cover builder, parser, round-trip, edge cases, and audit comment parsing
 
 ### Verification
 - [ ] `npm run build` compiles with no type errors
-- [ ] `npm test` passes with new transition-comments and pipeline-metrics tests
-- [ ] Calling `update_workflow_state` creates an HTML comment with transition metadata on the issue
-- [ ] Calling `pipeline_metrics` returns WIP counts grouped by workflow state with issue details
-- [ ] `pipeline_metrics` returns actionable suggestions when WIP exceeds thresholds
-- [ ] Transition comments are invisible in rendered GitHub markdown
+- [ ] `npm test` passes with transition-comments tests
+- [ ] `buildTransitionComment()` produces valid HTML comment with JSON payload
+- [ ] `parseTransitionComments()` extracts records from HTML comments
+- [ ] `parseAuditComments()` extracts records from #19-style markdown audit comments
+- [ ] Round-trip: `build` → `parse` produces identical `TransitionRecord`
+- [ ] HTML comments are invisible in rendered GitHub markdown
 
 ## What We're NOT Doing
 
-- Not implementing `cycle_time_report` tool (Phase 2 — requires transition comment history to exist first)
-- Not implementing `bottleneck_check` tool (Phase 2 — requires temporal data from transition comments)
-- Not adding DATE custom fields to the project (comment-based approach is more flexible)
-- Not backfilling existing issues (backfill can be a follow-up once comment format is stable)
-- Not adding local/external storage (all data lives in GitHub comments)
-- Not changing the state machine or state transition rules
-- Not parsing existing skill comments for approximate timelines (Phase 2 scope)
+- Not instrumenting any tool (no modification to `handoff_ticket`, `update_workflow_state`, or any existing tool)
+- Not implementing `pipeline_metrics` tool (redundant with #26's `pipeline_dashboard`)
+- Not implementing `cycle_time_report` tool (future issue — will consume this module)
+- Not implementing `bottleneck_check` tool (future issue)
+- Not adding DATE custom fields to the project
+- Not backfilling existing issues
+- Not adding local/external storage
+- Not modifying `index.ts` (no tool registration needed)
 
 ## Implementation Approach
 
-Two independent workstreams that converge:
-
-1. **Instrumentation**: Add a `createTransitionComment()` helper in `lib/transition-comments.ts`. Modify `update_workflow_state` in `issue-tools.ts` to call it after every successful field update. Cost: 1 extra mutation per state transition (~2 API points).
-
-2. **Snapshot Metrics**: Create `tools/analytics-tools.ts` with `pipeline_metrics` tool. Reuse the `list_project_items` query pattern to fetch all items, group by Workflow State, compute WIP, and generate suggestions. Register via `registerAnalyticsTools()` in `index.ts`.
-
-Phase 1 ships instrumentation. Phase 2 ships the metrics tool. Phase 2 depends on Phase 1 only for the shared `transition-comments.ts` types (the metrics tool itself uses existing project data, not transition comments).
+Single phase — this is a pure library module with no API dependencies.
 
 ---
 
-## Phase 1: Transition Comment Instrumentation
+## Phase 1: Transition Comments Library (Only Phase)
 
 ### Overview
 
-Create the transition comment helper and wire it into `update_workflow_state`. After this phase, every state transition automatically records a structured, machine-parseable HTML comment on the issue.
+Create `lib/transition-comments.ts` with the canonical transition comment format, builder, two parsers (HTML comment + audit markdown), and comprehensive tests.
 
 ### Changes Required
 
-#### 1. Create transition comment helper module
+#### 1. Create transition comments module
 **File**: `plugin/ralph-hero/mcp-server/src/lib/transition-comments.ts` (new)
 
-**Contents**:
-- `TransitionRecord` interface: `{ from: string; to: string; command: string; at: string }`
-- `buildTransitionComment(record: TransitionRecord): string` — returns `<!-- ralph-transition: {"from":"...","to":"...","command":"...","at":"..."} -->`
-- `parseTransitionComments(commentBody: string): TransitionRecord[]` — extracts all `ralph-transition` markers from a comment body using regex `<!-- ralph-transition: ({.*?}) -->`
-- `TRANSITION_COMMENT_PATTERN` exported regex constant for reuse
-
-**Pattern to follow**: Similar to `lib/state-resolution.ts` — pure utility functions with no API dependencies.
-
-#### 2. Instrument `update_workflow_state` with transition comment
-**File**: `plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts`
-
-**Changes**: After the `updateProjectItemField` call at [line 1270-1276](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts#L1270-L1276), add a `client.mutate()` call to create a comment on the issue:
+**Types**:
 
 ```typescript
-// After updateProjectItemField (line 1276):
-import { buildTransitionComment } from "../lib/transition-comments.js";
-
-const transitionBody = buildTransitionComment({
-  from: previousState || "(unknown)",
-  to: resolvedState,
-  command: args.command,
-  at: new Date().toISOString(),
-});
-
-const issueId = await resolveIssueNodeId(client, owner, repo, args.number);
-await client.mutate(
-  `mutation($subjectId: ID!, $body: String!) {
-    addComment(input: { subjectId: $subjectId, body: $body }) {
-      commentEdge { node { id } }
-    }
-  }`,
-  { subjectId: issueId, body: transitionBody },
-);
+/** A single state transition record extracted from an issue comment. */
+export interface TransitionRecord {
+  from: string;       // Previous workflow state
+  to: string;         // New workflow state
+  command: string;    // Ralph command that triggered transition (e.g., "ralph_research")
+  at: string;         // ISO 8601 timestamp
+}
 ```
 
-**Important**: The transition comment mutation should be fire-and-forget within a try/catch — if it fails, the state transition itself should still succeed. Log the error but don't fail the tool call.
+**Constants**:
 
-#### 3. Add tests for transition comment module
+```typescript
+/** Regex pattern for HTML transition comments: <!-- ralph-transition: {...} --> */
+export const TRANSITION_COMMENT_PATTERN = /<!-- ralph-transition: ({.*?}) -->/g;
+
+/** Regex pattern for #19 handoff_ticket audit comments */
+export const AUDIT_COMMENT_PATTERN =
+  /\*\*State transition\*\*: (.+?) → (.+?) \(intent: .+?\)\n\*\*Command\*\*: ralph_(\w+)/g;
+```
+
+**Functions**:
+
+**`buildTransitionComment(record: TransitionRecord): string`**
+- Returns: `<!-- ralph-transition: {"from":"...","to":"...","command":"...","at":"..."} -->`
+- The HTML comment is invisible in rendered GitHub markdown
+- JSON is compact (no pretty-printing) for single-line format
+- Used by any tool that wants to record machine-parseable transition data
+
+**`parseTransitionComments(text: string): TransitionRecord[]`**
+- Scans text for all `<!-- ralph-transition: {...} -->` patterns
+- Parses JSON payload from each match
+- Returns array of `TransitionRecord` objects
+- Gracefully handles malformed JSON (skips unparseable entries, does not throw)
+- Returns empty array if no matches
+
+**`parseAuditComments(text: string, commentCreatedAt: string): TransitionRecord[]`**
+- Scans text for #19's markdown audit comment pattern: `**State transition**: X → Y (intent: Z)\n**Command**: ralph_cmd`
+- Extracts `from` (X), `to` (Y), `command` (cmd)
+- Uses `commentCreatedAt` parameter as the `at` timestamp (since audit comments don't embed their own timestamp — the comment's `createdAt` from GitHub serves as the transition time)
+- Returns array of `TransitionRecord` objects
+- Returns empty array if no matches
+
+**`parseAllTransitions(commentBody: string, commentCreatedAt: string): TransitionRecord[]`**
+- Convenience function that tries both parsers
+- First tries `parseTransitionComments()` (preferred format)
+- Falls back to `parseAuditComments()` if no HTML comments found
+- Returns combined results (deduped by `from` + `to` + `command` if both formats present)
+- This is the primary entry point for future analytics tools
+
+#### 2. Add comprehensive tests
 **File**: `plugin/ralph-hero/mcp-server/src/__tests__/transition-comments.test.ts` (new)
 
 **Tests**:
-- `buildTransitionComment` produces valid HTML comment with JSON payload
-- `parseTransitionComments` extracts single transition from comment body
-- `parseTransitionComments` extracts multiple transitions from multi-line body
-- `parseTransitionComments` returns empty array for comment with no transitions
-- `parseTransitionComments` handles malformed JSON gracefully (returns empty)
-- Round-trip: `build` → `parse` produces identical `TransitionRecord`
+
+**Builder tests**:
+- `buildTransitionComment` produces string starting with `<!--` and ending with `-->`
+- Output contains valid JSON with all 4 fields (`from`, `to`, `command`, `at`)
+- Output is a single line (no line breaks)
+- Special characters in state names are JSON-escaped properly
+
+**HTML comment parser tests**:
+- Extracts single transition from comment body
+- Extracts multiple transitions from multi-line body
+- Returns empty array for comment with no transition markers
+- Handles malformed JSON gracefully (returns empty, no throw)
+- Handles partial match (opening `<!--` without closing `-->`) — no match
+- Handles extra whitespace around JSON payload
+
+**Audit comment parser tests**:
+- Extracts transition from `**State transition**: X → Y (intent: Z)\n**Command**: ralph_cmd` format
+- Uses provided `commentCreatedAt` as the `at` timestamp
+- Returns empty array for non-audit comment text
+- Handles multiple audit transitions in one comment (unlikely but defensive)
+
+**Round-trip tests**:
+- `build` → `parse` produces identical `TransitionRecord`
+- Multiple `build` outputs concatenated → `parse` returns all records
+
+**`parseAllTransitions` tests**:
+- Prefers HTML comment format when both present
+- Falls back to audit format when no HTML comments found
+- Returns empty for comment with neither format
+- Deduplicates if both formats describe the same transition
 
 ### Success Criteria
 
 #### Automated Verification
 - [ ] `npm run build` — no type errors
-- [ ] `npm test` — transition-comments tests pass
+- [ ] `npm test` — all transition-comments tests pass
 - [ ] `npx vitest run src/__tests__/transition-comments.test.ts` — focused test pass
 
 #### Manual Verification
-- [ ] Call `update_workflow_state` on a test issue — verify HTML comment appears on the issue
-- [ ] View issue in GitHub — verify transition comment is invisible in rendered markdown
-- [ ] View issue raw markdown — verify comment contains valid JSON with from/to/command/at
-
-**Dependencies created for next phase**: `lib/transition-comments.ts` module with `TransitionRecord` type and `parseTransitionComments` function (will be used by future `cycle_time_report` tool).
-
----
-
-## Phase 2: Pipeline Metrics Tool
-
-### Overview
-
-Implement the `ralph_hero__pipeline_metrics` MCP tool that returns a real-time pipeline snapshot. This queries all project items, groups them by Workflow State, computes WIP counts, and generates actionable suggestions.
-
-### Changes Required
-
-#### 1. Create analytics tools module
-**File**: `plugin/ralph-hero/mcp-server/src/tools/analytics-tools.ts` (new)
-
-**Contents**:
-
-`registerAnalyticsTools(server, client, fieldCache)` function following the pattern of `registerProjectTools` / `registerIssueTools`.
-
-**`ralph_hero__pipeline_metrics` tool**:
-
-Input schema:
-```typescript
-{
-  owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
-  repo: z.string().optional().describe("Repository name. Defaults to env var"),
-}
-```
-
-Output structure:
-```typescript
-{
-  snapshot: {
-    [workflowState: string]: {
-      count: number;
-      issues: Array<{
-        number: number;
-        title: string;
-        estimate: string | null;
-        priority: string | null;
-      }>;
-    };
-  };
-  totalOpen: number;
-  totalDone: number;
-  totalCanceled: number;
-  wipByPhase: Record<string, number>;  // Workflow state name -> count
-  suggestions: string[];
-}
-```
-
-Implementation approach:
-1. Resolve project config (reuse `resolveProjectOwner`, `ensureFieldCache` patterns)
-2. Fetch ALL project items using `paginateConnection` with the same GraphQL query pattern from `list_project_items` (fetch items with `fieldValues` including Workflow State, Estimate, Priority)
-3. Filter to ISSUE type items only (exclude PRs and draft issues)
-4. Group items by Workflow State field value
-5. For each state, collect issue number, title, estimate, priority
-6. Compute suggestions based on WIP thresholds:
-   - WIP > 3 in any non-terminal state: `"[State] has [N] items — consider running [suggested command]"`
-   - WIP > 5 in any non-terminal state: `"WARNING: [State] has [N] items — pipeline bottleneck"`
-   - 0 items in "Ready for Plan" but >0 in "Research in Progress": `"Pipeline flowing — research in progress"`
-   - "Human Needed" has any items: `"[N] issue(s) need human attention"`
-7. Order states by `STATE_ORDER` from `workflow-states.ts` for consistent display
-
-Suggestion mapping (state → suggested command):
-| State | Suggestion |
-|-------|-----------|
-| Backlog | `ralph-triage` |
-| Research Needed | `ralph-research` |
-| Ready for Plan | `ralph-plan` |
-| Plan in Review | `ralph-review` |
-| In Progress | (implementation underway) |
-| In Review | (review underway) |
-| Human Needed | (manual intervention needed) |
-
-#### 2. Register analytics tools in index.ts
-**File**: `plugin/ralph-hero/mcp-server/src/index.ts`
-
-**Changes**:
-- Add import: `import { registerAnalyticsTools } from "./tools/analytics-tools.js";`
-- Add registration call after relationship tools (line ~294): `registerAnalyticsTools(server, client, fieldCache);`
-
-#### 3. Export shared helpers from project-tools (if needed)
-**File**: `plugin/ralph-hero/mcp-server/src/tools/project-tools.ts`
-
-**Changes**: If the `RawProjectItem` interface and `getFieldValue` / `ensureFieldCache` helpers are not already exported, export them for reuse. Alternatively, the analytics tool can inline its own copies of these small helpers.
-
-**Preferred approach**: Duplicate the small `getFieldValue` helper inline in `analytics-tools.ts` to avoid coupling (it's ~5 lines). The `RawProjectItem` type and `ensureFieldCache` pattern can be duplicated too since they're trivial. This avoids circular dependencies and keeps modules independent.
-
-#### 4. Add tests for pipeline metrics
-**File**: `plugin/ralph-hero/mcp-server/src/__tests__/analytics-tools.test.ts` (new)
-
-**Tests** (unit tests with mock data, no API calls):
-- Groups items by workflow state correctly
-- Computes WIP counts per state
-- Generates suggestion when WIP > 3 in a non-terminal state
-- Generates WARNING when WIP > 5
-- Generates human attention suggestion when Human Needed has items
-- Excludes PR and draft issue types from counts
-- Orders states by canonical pipeline order
-- Returns empty snapshot for empty project
-
-**Approach**: Extract the grouping/suggestion logic into a pure function (`computePipelineMetrics(items)`) that can be unit tested without mocking the GitHub API. The tool handler calls this function after fetching data.
-
-### Success Criteria
-
-#### Automated Verification
-- [ ] `npm run build` — no type errors
-- [ ] `npm test` — analytics-tools tests pass
-- [ ] `npx vitest run src/__tests__/analytics-tools.test.ts` — focused test pass
-
-#### Manual Verification
-- [ ] Call `pipeline_metrics` — returns JSON with snapshot grouped by workflow state
-- [ ] Verify WIP counts match actual project board state
-- [ ] Verify suggestions appear when a state has >3 items
-
-**Depends on**: Phase 1 (shares the `transition-comments.ts` types, though the metrics tool doesn't parse comments yet — that's Phase 2 scope for `cycle_time_report`).
+- [ ] Paste a `buildTransitionComment()` output into a GitHub comment — verify it's invisible in rendered view
+- [ ] Paste #19-style audit comment text into `parseAuditComments()` — verify extraction works
 
 ---
 
 ## Integration Testing
 
-After all phases complete:
+After phase complete:
 - [ ] `npm run build` — clean compile, no type errors
 - [ ] `npm test` — all tests pass (existing + new)
-- [ ] Call `update_workflow_state` followed by `pipeline_metrics` — verify transition comment was created and metrics reflect the updated state
-- [ ] Verify `pipeline_metrics` output is consistent with `list_project_items` filtered counts
-- [ ] Run `ralph-review` or `ralph-plan` end-to-end — verify transition comments appear automatically
+- [ ] Module exports are accessible: `TransitionRecord`, `buildTransitionComment`, `parseTransitionComments`, `parseAuditComments`, `parseAllTransitions`, `TRANSITION_COMMENT_PATTERN`
 
-## API Cost Analysis
+## Coordination with Other Issues
 
-| Operation | API Points | Frequency |
-|-----------|-----------|-----------|
-| Transition comment (per state change) | ~2 points | Every `update_workflow_state` call |
-| `pipeline_metrics` snapshot | ~4-6 points | On-demand (paginated project items query) |
-
-The transition comment adds ~2 points per state transition, effectively doubling the cost of `update_workflow_state` from ~6 to ~8 points. For a typical issue lifecycle (8-9 transitions), this adds ~16-18 points total per issue — negligible against the 5000/hour budget.
-
-## Interaction with Other Issues
-
-- **#19 (Handoff Ticket)**: If `update_workflow_state` is replaced by `handoff_ticket`, the transition comment instrumentation should move to the new tool. The `buildTransitionComment` helper is tool-agnostic and will work with either.
-- **#21 (Batch Operations)**: Batch state transitions should also create transition comments per issue. The `buildTransitionComment` helper can be called in a loop.
+| Issue | Relationship | Action |
+|-------|-------------|--------|
+| **#19** (handoff_ticket) | #19's audit comments are parseable by `parseAuditComments()` | No changes to #19 needed. Future enhancement: #19 could optionally append `<!-- ralph-transition: {...} -->` alongside audit text for dual-format support. |
+| **#26** (pipeline_dashboard) | #26 provides snapshot metrics, making `pipeline_metrics` redundant | Phase 2 dropped. No conflict. |
+| **Future: cycle_time_report** | Will import `parseAllTransitions()` to compute phase durations from issue comment history | This module provides the data layer. |
+| **Future: bottleneck_check** | Will combine #26 dashboard data with temporal data from this module | This module provides the parser. |
 
 ## References
 
 - [Issue #20](https://github.com/cdubiel08/ralph-hero/issues/20)
 - [Research: GH-20](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-16-GH-0020-pipeline-analytics.md)
-- [issue-tools.ts — update_workflow_state](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts#L1208-L1295)
-- [project-tools.ts — list_project_items](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/tools/project-tools.ts#L382-L549)
-- [lib/pipeline-detection.ts](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts)
-- [lib/workflow-states.ts](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/mcp-server/src/lib/workflow-states.ts)
+- [Review Critique](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/reviews/2026-02-16-GH-0020-critique.md)
+- [#19 Plan — handoff_ticket audit comments](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/plans/2026-02-16-GH-0019-validated-handoff-ticket-tool.md)
+- [#26 Plan — pipeline_dashboard](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/plans/2026-02-16-GH-0026-workflow-visualization-pipeline-dashboard.md)
