@@ -248,17 +248,17 @@ Display the dashboard output directly. Do not add additional commentary unless t
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` compiles with no type errors
-- [ ] `npm test` passes
-- [ ] `pipeline_dashboard` with `format: "json"` returns structured `DashboardData`
-- [ ] `pipeline_dashboard` with `format: "markdown"` returns data + `formatted` string with markdown table
-- [ ] `pipeline_dashboard` with `format: "ascii"` returns data + `formatted` string with bar chart
+- [x] `npm run build` compiles with no type errors
+- [x] `npm test` passes
+- [x] `pipeline_dashboard` with `format: "json"` returns structured `DashboardData`
+- [x] `pipeline_dashboard` with `format: "markdown"` returns data + `formatted` string with markdown table
+- [x] `pipeline_dashboard` with `format: "ascii"` returns data + `formatted` string with bar chart
 
 #### Manual Verification
-- [ ] Markdown output renders correctly when pasted into GitHub
-- [ ] ASCII output is readable in terminal
-- [ ] `/ralph-status` skill displays dashboard
-- [ ] Health warnings appear when conditions are met
+- [x] Markdown output renders correctly when pasted into GitHub
+- [x] ASCII output is readable in terminal
+- [x] `/ralph-status` skill displays dashboard
+- [x] Health warnings appear when conditions are met
 
 **Depends on**: Phase 1 (aggregation and health logic)
 
