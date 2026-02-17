@@ -90,6 +90,23 @@ describe("resolveState - semantic intents", () => {
     }
   });
 
+  it("resolves ralph_pr intents correctly", () => {
+    expect(resolveState("__CLOSE__", "ralph_pr").resolvedState).toBe("Done");
+    expect(resolveState("__COMPLETE__", "ralph_pr").resolvedState).toBe("Done");
+    expect(resolveState("__ESCALATE__", "ralph_pr").resolvedState).toBe(
+      "Human Needed",
+    );
+    expect(resolveState("__CANCEL__", "ralph_pr").resolvedState).toBe(
+      "Canceled",
+    );
+  });
+
+  it("rejects __LOCK__ for ralph_pr (no lock state for PR ops)", () => {
+    expect(() => resolveState("__LOCK__", "ralph_pr")).toThrow(
+      /not valid for ralph_pr/i,
+    );
+  });
+
   it("rejects unknown semantic intents with valid intent list", () => {
     expect(() => resolveState("__FOOBAR__", "ralph_research")).toThrow(
       /unknown semantic intent/i,
@@ -119,6 +136,25 @@ describe("resolveState - direct state names", () => {
     ).toBe("Research in Progress");
     expect(resolveState("In Review", "ralph_impl").resolvedState).toBe(
       "In Review",
+    );
+  });
+
+  it("accepts valid direct states for ralph_pr", () => {
+    expect(resolveState("Done", "ralph_pr").resolvedState).toBe("Done");
+    expect(resolveState("In Review", "ralph_pr").resolvedState).toBe(
+      "In Review",
+    );
+    expect(resolveState("Human Needed", "ralph_pr").resolvedState).toBe(
+      "Human Needed",
+    );
+  });
+
+  it("rejects invalid direct states for ralph_pr", () => {
+    expect(() => resolveState("In Progress", "ralph_pr")).toThrow(
+      /not a valid output for ralph_pr/i,
+    );
+    expect(() => resolveState("Backlog", "ralph_pr")).toThrow(
+      /not a valid output for ralph_pr/i,
     );
   });
 
@@ -166,6 +202,10 @@ describe("resolveState - command validation", () => {
     expect(resolveState("__LOCK__", "plan").resolvedState).toBe(
       "Plan in Progress",
     );
+  });
+
+  it("accepts bare 'pr' name via normalization", () => {
+    expect(resolveState("__CLOSE__", "pr").resolvedState).toBe("Done");
   });
 });
 

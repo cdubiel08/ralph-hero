@@ -532,9 +532,9 @@ In "resolveState - command validation":
 Note: The "data consistency with state machine JSON" test reads from `ralph-state-machine.json`. The JSON does not have a `ralph_pr` command, so the existing sync test will NOT fail (it only checks commands present in JSON). No changes needed for the sync test, but add a comment documenting that `ralph_pr` is an MCP-only command not in the workflow JSON.
 
 ### Success Criteria
-- [ ] `npm test` — all tests pass
-- [ ] `npx vitest run src/__tests__/pr-tools.test.ts` — focused test pass
-- [ ] `npx vitest run src/__tests__/state-resolution.test.ts` — focused test pass
+- [x] `npm test` — all tests pass
+- [x] `npx vitest run src/__tests__/pr-tools.test.ts` — focused test pass
+- [x] `npx vitest run src/__tests__/state-resolution.test.ts` — focused test pass
 
 ---
 
