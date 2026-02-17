@@ -225,9 +225,9 @@ Type compatibility:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` — no type errors
-- [ ] `npm test` — all tests pass (existing + new)
-- [ ] `npx vitest run src/__tests__/pr-tools.test.ts` — focused test pass
+- [x] `npm run build` — no type errors
+- [x] `npm test` — all tests pass (existing + new)
+- [x] `npx vitest run src/__tests__/pr-tools.test.ts` — focused test pass
 
 #### Manual Verification
 - [ ] Call `create_pull_request` on a test branch → PR created with correct title, body, branches

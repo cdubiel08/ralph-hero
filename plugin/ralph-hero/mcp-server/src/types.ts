@@ -141,6 +141,13 @@ export interface PullRequest {
   title: string;
   url: string;
   state: "OPEN" | "CLOSED" | "MERGED";
+  // Extended fields (all optional for backward compatibility):
+  body?: string;
+  isDraft?: boolean;
+  headRefName?: string;
+  baseRefName?: string;
+  createdAt?: string;
+  author?: { login: string };
 }
 
 // ---------------------------------------------------------------------------
