@@ -18,41 +18,8 @@ import {
   isEarlierState,
   VALID_STATES,
 } from "../lib/workflow-states.js";
+import { resolveIssueNodeId } from "../lib/resolve.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
-
-// ---------------------------------------------------------------------------
-// Helper: Resolve issue number to node ID (with caching)
-// ---------------------------------------------------------------------------
-
-async function resolveIssueNodeId(
-  client: GitHubClient,
-  owner: string,
-  repo: string,
-  number: number,
-): Promise<string> {
-  const cacheKey = `issue-node-id:${owner}/${repo}#${number}`;
-  const cached = client.getCache().get<string>(cacheKey);
-  if (cached) return cached;
-
-  const result = await client.query<{
-    repository: { issue: { id: string } | null } | null;
-  }>(
-    `query($owner: String!, $repo: String!, $number: Int!) {
-      repository(owner: $owner, name: $repo) {
-        issue(number: $number) { id }
-      }
-    }`,
-    { owner, repo, number },
-  );
-
-  const nodeId = result.repository?.issue?.id;
-  if (!nodeId) {
-    throw new Error(`Issue #${number} not found in ${owner}/${repo}`);
-  }
-
-  client.getCache().set(cacheKey, nodeId, 30 * 60 * 1000); // Cache 30 min
-  return nodeId;
-}
 
 // ---------------------------------------------------------------------------
 // Helper: Resolve required owner/repo with defaults from client config
