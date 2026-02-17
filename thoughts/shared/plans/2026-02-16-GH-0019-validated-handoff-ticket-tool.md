@@ -431,14 +431,14 @@ Delete this file. All test cases are migrated into `state-machine.test.ts` with 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm test` passes all new tests
-- [ ] All 11 states' transition rules tested
-- [ ] All semantic intent × command combinations tested
-- [ ] JSON consistency tests pass
-- [ ] No references to deleted `state-resolution.test.ts`
+- [x] `npm test` passes all new tests
+- [x] All 11 states' transition rules tested
+- [x] All semantic intent × command combinations tested
+- [x] JSON consistency tests pass
+- [x] No references to deleted `state-resolution.test.ts`
 
 #### Manual Verification
-- [ ] Test output is clean with descriptive test names
+- [x] Test output is clean with descriptive test names
 
 **Depends on**: Phase 1 (StateMachine class must exist), Phase 2 (state-resolution.ts deleted)
 
