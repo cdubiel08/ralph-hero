@@ -18,6 +18,7 @@ import { registerViewTools } from "./tools/view-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
+import { registerEstimationTools } from "./tools/estimation-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
 
 /**
@@ -297,6 +298,9 @@ async function main(): Promise<void> {
 
   // Phase 5: Batch operations
   registerBatchTools(server, client, fieldCache);
+
+  // Phase 6: Estimation tools
+  registerEstimationTools(server, client, fieldCache);
 
   // Dashboard and pipeline visualization tools
   registerDashboardTools(server, client, fieldCache);
