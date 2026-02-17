@@ -19,61 +19,14 @@ import {
   VALID_STATES,
 } from "../lib/workflow-states.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
-
-// ---------------------------------------------------------------------------
-// Helper: Resolve issue number to node ID (with caching)
-// ---------------------------------------------------------------------------
-
-async function resolveIssueNodeId(
-  client: GitHubClient,
-  owner: string,
-  repo: string,
-  number: number,
-): Promise<string> {
-  const cacheKey = `issue-node-id:${owner}/${repo}#${number}`;
-  const cached = client.getCache().get<string>(cacheKey);
-  if (cached) return cached;
-
-  const result = await client.query<{
-    repository: { issue: { id: string } | null } | null;
-  }>(
-    `query($owner: String!, $repo: String!, $number: Int!) {
-      repository(owner: $owner, name: $repo) {
-        issue(number: $number) { id }
-      }
-    }`,
-    { owner, repo, number },
-  );
-
-  const nodeId = result.repository?.issue?.id;
-  if (!nodeId) {
-    throw new Error(`Issue #${number} not found in ${owner}/${repo}`);
-  }
-
-  client.getCache().set(cacheKey, nodeId, 30 * 60 * 1000); // Cache 30 min
-  return nodeId;
-}
-
-// ---------------------------------------------------------------------------
-// Helper: Resolve required owner/repo with defaults from client config
-// ---------------------------------------------------------------------------
-
-function resolveConfig(
-  client: GitHubClient,
-  args: { owner?: string; repo?: string },
-): { owner: string; repo: string } {
-  const owner = args.owner || client.config.owner;
-  const repo = args.repo || client.config.repo;
-  if (!owner)
-    throw new Error(
-      "owner is required (set GITHUB_OWNER env var or pass explicitly)",
-    );
-  if (!repo)
-    throw new Error(
-      "repo is required (set GITHUB_REPO env var or pass explicitly)",
-    );
-  return { owner, repo };
-}
+import {
+  ensureFieldCache,
+  resolveIssueNodeId,
+  resolveProjectItemId,
+  updateProjectItemField,
+  getCurrentFieldValue,
+  resolveConfig,
+} from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
 // Register relationship tools
@@ -561,7 +514,7 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__advance_children",
-    "Advance all child/sub-issues of a parent to match the parent's new state. Only advances children that are in earlier workflow states. Returns what changed, what was skipped, and any errors.",
+    "Advance issues to a target workflow state. Provide either 'number' (parent issue, advances sub-issues) or 'issues' (explicit list of issue numbers). Only advances issues in earlier workflow states. Returns what changed, what was skipped, and any errors.",
     {
       owner: z
         .string()
@@ -571,15 +524,34 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Parent issue number"),
+      number: z
+        .number()
+        .optional()
+        .describe(
+          "Parent issue number (resolves sub-issues automatically)",
+        ),
+      issues: z
+        .array(z.number())
+        .optional()
+        .describe(
+          "Explicit list of issue numbers to advance (alternative to parent number)",
+        ),
       targetState: z
         .string()
         .describe(
-          "State to advance children to (e.g., 'Research Needed', 'Ready for Plan')",
+          "State to advance issues to (e.g., 'Research Needed', 'Ready for Plan')",
         ),
     },
     async (args) => {
       try {
+        // Validate: at least one of number or issues must be provided
+        if (args.number === undefined && (!args.issues || args.issues.length === 0)) {
+          return toolError(
+            "Either 'number' (parent issue) or 'issues' (explicit list) must be provided. " +
+              "Recovery: pass a parent issue number or an array of issue numbers.",
+          );
+        }
+
         // Validate target state
         if (!isValidState(args.targetState)) {
           return toolError(
@@ -606,53 +578,62 @@ export function registerRelationshipTools(
         }
 
         // Ensure field cache is populated
-        await ensureFieldCacheForRelationships(
+        await ensureFieldCache(
           client,
           fieldCache,
           projectOwner,
           projectNumber,
         );
 
-        // Fetch sub-issues
-        const result = await client.query<{
-          repository: {
-            issue: {
-              number: number;
-              title: string;
-              subIssues: {
-                nodes: Array<{
-                  id: string;
-                  number: number;
-                  title: string;
-                  state: string;
-                }>;
-              };
+        // Determine issue list: explicit issues take precedence over parent
+        let issueNumbers: number[];
+
+        if (args.issues && args.issues.length > 0) {
+          // Use explicit issue list
+          issueNumbers = args.issues;
+        } else {
+          // Fetch sub-issues from parent
+          const result = await client.query<{
+            repository: {
+              issue: {
+                number: number;
+                title: string;
+                subIssues: {
+                  nodes: Array<{
+                    id: string;
+                    number: number;
+                    title: string;
+                    state: string;
+                  }>;
+                };
+              } | null;
             } | null;
-          } | null;
-        }>(
-          `query($owner: String!, $repo: String!, $number: Int!) {
-            repository(owner: $owner, name: $repo) {
-              issue(number: $number) {
-                number
-                title
-                subIssues(first: 50) {
-                  nodes { id number title state }
+          }>(
+            `query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                issue(number: $number) {
+                  number
+                  title
+                  subIssues(first: 50) {
+                    nodes { id number title state }
+                  }
                 }
               }
-            }
-          }`,
-          { owner, repo, number: args.number },
-        );
-
-        const parentIssue = result.repository?.issue;
-        if (!parentIssue) {
-          return toolError(
-            `Issue #${args.number} not found in ${owner}/${repo}`,
+            }`,
+            { owner, repo, number: args.number },
           );
+
+          const parentIssue = result.repository?.issue;
+          if (!parentIssue) {
+            return toolError(
+              `Issue #${args.number} not found in ${owner}/${repo}`,
+            );
+          }
+
+          issueNumbers = parentIssue.subIssues.nodes.map((si) => si.number);
         }
 
-        const subIssues = parentIssue.subIssues.nodes;
-        if (subIssues.length === 0) {
+        if (issueNumbers.length === 0) {
           return toolSuccess({
             advanced: [],
             skipped: [],
@@ -672,30 +653,31 @@ export function registerRelationshipTools(
         }> = [];
         const errors: Array<{ number: number; error: string }> = [];
 
-        for (const child of subIssues) {
+        for (const issueNum of issueNumbers) {
           try {
             // Get current workflow state
-            const currentState = await getCurrentFieldValueForRelationships(
+            const currentState = await getCurrentFieldValue(
               client,
               fieldCache,
               owner,
               repo,
-              child.number,
+              issueNum,
+              "Workflow State",
             );
 
             if (!currentState) {
               skipped.push({
-                number: child.number,
+                number: issueNum,
                 currentState: "unknown",
                 reason: "No workflow state set on issue",
               });
               continue;
             }
 
-            // Only advance if child is in an earlier state
+            // Only advance if issue is in an earlier state
             if (!isEarlierState(currentState, args.targetState)) {
               skipped.push({
-                number: child.number,
+                number: issueNum,
                 currentState,
                 reason:
                   currentState === args.targetState
@@ -705,15 +687,15 @@ export function registerRelationshipTools(
               continue;
             }
 
-            // Advance the child
-            const projectItemId = await resolveProjectItemIdForRelationships(
+            // Advance the issue
+            const projectItemId = await resolveProjectItemId(
               client,
               fieldCache,
               owner,
               repo,
-              child.number,
+              issueNum,
             );
-            await updateProjectItemFieldForRelationships(
+            await updateProjectItemField(
               client,
               fieldCache,
               projectItemId,
@@ -722,7 +704,7 @@ export function registerRelationshipTools(
             );
 
             advanced.push({
-              number: child.number,
+              number: issueNum,
               fromState: currentState,
               toState: args.targetState,
             });
@@ -730,8 +712,8 @@ export function registerRelationshipTools(
             const message =
               error instanceof Error ? error.message : String(error);
             errors.push({
-              number: child.number,
-              error: `Failed to update: ${message}. Recovery: retry advance_children or update this child manually via update_workflow_state.`,
+              number: issueNum,
+              error: `Failed to update: ${message}. Recovery: retry advance_children or update this issue manually.`,
             });
           }
         }
@@ -746,239 +728,5 @@ export function registerRelationshipTools(
         return toolError(`Failed to advance children: ${message}`);
       }
     },
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Helpers for advance_children (project field operations)
-// ---------------------------------------------------------------------------
-
-async function ensureFieldCacheForRelationships(
-  client: GitHubClient,
-  fieldCache: FieldOptionCache,
-  owner: string,
-  projectNumber: number,
-): Promise<void> {
-  if (fieldCache.isPopulated()) return;
-
-  const QUERY = `query($owner: String!, $number: Int!) {
-    OWNER_TYPE(login: $owner) {
-      projectV2(number: $number) {
-        id
-        fields(first: 50) {
-          nodes {
-            ... on ProjectV2FieldCommon {
-              id
-              name
-              dataType
-            }
-            ... on ProjectV2SingleSelectField {
-              id
-              name
-              dataType
-              options { id name }
-            }
-          }
-        }
-      }
-    }
-  }`;
-
-  for (const ownerType of ["user", "organization"]) {
-    try {
-      const result = await client.projectQuery<
-        Record<
-          string,
-          {
-            projectV2: {
-              id: string;
-              fields: {
-                nodes: Array<{
-                  id: string;
-                  name: string;
-                  options?: Array<{ id: string; name: string }>;
-                }>;
-              };
-            } | null;
-          }
-        >
-      >(
-        QUERY.replace("OWNER_TYPE", ownerType),
-        { owner, number: projectNumber },
-        { cache: true, cacheTtlMs: 10 * 60 * 1000 },
-      );
-      const project = result[ownerType]?.projectV2;
-      if (project) {
-        fieldCache.populate(
-          project.id,
-          project.fields.nodes.map((f) => ({
-            id: f.id,
-            name: f.name,
-            options: f.options,
-          })),
-        );
-        return;
-      }
-    } catch {
-      // Try next owner type
-    }
-  }
-  throw new Error(`Project #${projectNumber} not found for owner "${owner}"`);
-}
-
-async function resolveProjectItemIdForRelationships(
-  client: GitHubClient,
-  fieldCache: FieldOptionCache,
-  owner: string,
-  repo: string,
-  issueNumber: number,
-): Promise<string> {
-  const projectId = fieldCache.getProjectId();
-  if (!projectId) {
-    throw new Error(
-      "Field cache not populated - cannot resolve project item ID",
-    );
-  }
-
-  const cacheKey = `project-item-id:${owner}/${repo}#${issueNumber}`;
-  const cached = client.getCache().get<string>(cacheKey);
-  if (cached) return cached;
-
-  const issueNodeId = await resolveIssueNodeId(
-    client,
-    owner,
-    repo,
-    issueNumber,
-  );
-
-  const result = await client.query<{
-    node: {
-      projectItems: {
-        nodes: Array<{
-          id: string;
-          project: { id: string };
-        }>;
-      };
-    } | null;
-  }>(
-    `query($issueId: ID!) {
-      node(id: $issueId) {
-        ... on Issue {
-          projectItems(first: 20) {
-            nodes {
-              id
-              project { id }
-            }
-          }
-        }
-      }
-    }`,
-    { issueId: issueNodeId },
-  );
-
-  const items = result.node?.projectItems?.nodes || [];
-  const projectItem = items.find((item) => item.project.id === projectId);
-
-  if (!projectItem) {
-    throw new Error(
-      `Issue #${issueNumber} is not in the project (projectId: ${projectId}). ` +
-        `Add it to the project first.`,
-    );
-  }
-
-  client.getCache().set(cacheKey, projectItem.id, 30 * 60 * 1000);
-  return projectItem.id;
-}
-
-async function getCurrentFieldValueForRelationships(
-  client: GitHubClient,
-  fieldCache: FieldOptionCache,
-  owner: string,
-  repo: string,
-  issueNumber: number,
-): Promise<string | undefined> {
-  const projectItemId = await resolveProjectItemIdForRelationships(
-    client,
-    fieldCache,
-    owner,
-    repo,
-    issueNumber,
-  );
-
-  const result = await client.query<{
-    node: {
-      fieldValues: {
-        nodes: Array<{
-          __typename?: string;
-          name?: string;
-          field?: { name: string };
-        }>;
-      };
-    } | null;
-  }>(
-    `query($itemId: ID!) {
-      node(id: $itemId) {
-        ... on ProjectV2Item {
-          fieldValues(first: 20) {
-            nodes {
-              ... on ProjectV2ItemFieldSingleSelectValue {
-                __typename
-                name
-                field { ... on ProjectV2FieldCommon { name } }
-              }
-            }
-          }
-        }
-      }
-    }`,
-    { itemId: projectItemId },
-  );
-
-  const fieldValue = result.node?.fieldValues?.nodes?.find(
-    (fv) =>
-      fv.field?.name === "Workflow State" &&
-      fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
-  );
-  return fieldValue?.name;
-}
-
-async function updateProjectItemFieldForRelationships(
-  client: GitHubClient,
-  fieldCache: FieldOptionCache,
-  projectItemId: string,
-  fieldName: string,
-  optionName: string,
-): Promise<void> {
-  const projectId = fieldCache.getProjectId();
-  if (!projectId) {
-    throw new Error("Field cache not populated");
-  }
-
-  const fieldId = fieldCache.getFieldId(fieldName);
-  if (!fieldId) {
-    throw new Error(`Field "${fieldName}" not found in project`);
-  }
-
-  const optionId = fieldCache.resolveOptionId(fieldName, optionName);
-  if (!optionId) {
-    const validOptions = fieldCache.getOptionNames(fieldName);
-    throw new Error(
-      `Option "${optionName}" not found for field "${fieldName}". ` +
-        `Valid options: ${validOptions.join(", ")}`,
-    );
-  }
-
-  await client.projectMutate(
-    `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-      updateProjectV2ItemFieldValue(input: {
-        projectId: $projectId,
-        itemId: $itemId,
-        fieldId: $fieldId,
-        value: { singleSelectOptionId: $optionId }
-      }) {
-        projectV2Item { id }
-      }
-    }`,
-    { projectId, itemId: projectItemId, fieldId, optionId },
   );
 }
