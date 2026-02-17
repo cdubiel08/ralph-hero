@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/impl-state-gate.sh
-# PreToolUse (ralph_hero__update_workflow_state): Validate impl state transitions
+# PreToolUse (ralph_hero__handoff_ticket): Validate impl state transitions
 #
 # Environment:
 #   RALPH_VALID_OUTPUT_STATES - Valid target states

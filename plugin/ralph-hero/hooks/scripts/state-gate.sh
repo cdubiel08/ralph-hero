@@ -2,7 +2,7 @@
 # ralph-hero/hooks/scripts/state-gate.sh
 # PreToolUse: Validate ticket is in expected state before allowing state transition
 #
-# Runs on: ralph_hero__update_workflow_state
+# Runs on: ralph_hero__handoff_ticket
 #
 # Environment:
 #   RALPH_VALID_FROM_STATES - Comma-separated list of valid source states
@@ -23,7 +23,7 @@ INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
 
 # Only validate workflow state update calls
-if [[ "$TOOL_NAME" != "ralph_hero__update_workflow_state" ]]; then
+if [[ "$TOOL_NAME" != "ralph_hero__handoff_ticket" ]]; then
   exit 0
 fi
 

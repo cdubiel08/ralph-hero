@@ -17,7 +17,7 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
 TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // {}')
 
 # Only validate workflow state update calls
-if [[ "$TOOL_NAME" != "ralph_hero__update_workflow_state" ]]; then
+if [[ "$TOOL_NAME" != "ralph_hero__handoff_ticket" ]]; then
   exit 0
 fi
 

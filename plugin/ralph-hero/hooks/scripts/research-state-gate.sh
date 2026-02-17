@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/research-state-gate.sh
-# PreToolUse (ralph_hero__update_workflow_state): Validate research state transitions
+# PreToolUse (ralph_hero__handoff_ticket): Validate research state transitions
 #
 # Environment:
 #   RALPH_VALID_INPUT_STATES - Valid source states (comma-separated)

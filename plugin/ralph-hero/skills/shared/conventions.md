@@ -29,12 +29,13 @@ When encountering complexity, uncertainty, or states that don't align with proto
 
 1. **Move issue to "Human Needed"**:
    ```
-   ralph_hero__update_workflow_state
+   ralph_hero__handoff_ticket
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "__ESCALATE__"
    - command: "[current-command]"
+   - intent: "escalate"
+   - reason: "Escalation: [issue description]"
    ```
    For group plans, move ALL group issues to "Human Needed".
 
@@ -69,7 +70,7 @@ When referencing code in documents, PRs, or GitHub comments, use GitHub links wi
 
 ## Common Error Handling
 
-**Tool call failures**: If `update_workflow_state` returns an error, read the error message -- it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+**Tool call failures**: If `handoff_ticket` returns an error, read the error message -- it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **State gate blocks**: Hooks enforce valid state transitions at the tool level. If a hook blocks your action, the state machine requires a different transition. Check the current workflow state and re-evaluate.
 

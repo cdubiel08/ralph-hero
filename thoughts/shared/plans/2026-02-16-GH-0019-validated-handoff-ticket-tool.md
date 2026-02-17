@@ -343,14 +343,14 @@ Replace `ralph_hero__update_workflow_state` with `ralph_hero__handoff_ticket` in
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -r "update_workflow_state" plugin/ralph-hero/` returns **zero matches**
-- [ ] `grep -r "handoff_ticket" plugin/ralph-hero/skills/` returns matches in all 7 skill files
-- [ ] `grep -r "handoff_ticket" plugin/ralph-hero/agents/` returns matches in all 5 agent files
-- [ ] `grep -r "handoff_ticket" plugin/ralph-hero/hooks/` returns matches in hooks.json
+- [x] `grep -r "update_workflow_state" plugin/ralph-hero/` returns **zero matches**
+- [x] `grep -r "handoff_ticket" plugin/ralph-hero/skills/` returns matches in all 7 skill files
+- [x] `grep -r "handoff_ticket" plugin/ralph-hero/agents/` returns matches in all 5 agent files
+- [x] `grep -r "handoff_ticket" plugin/ralph-hero/hooks/` returns matches in hooks.json
 
 #### Manual Verification
-- [ ] Skill invocation examples are syntactically correct (valid `intent`/`to_state` enum values, `reason` present)
-- [ ] Hook scripts correctly filter on the new tool name
+- [x] Skill invocation examples are syntactically correct (valid `intent`/`to_state` enum values, `reason` present)
+- [x] Hook scripts correctly filter on the new tool name
 
 **Depends on**: Phase 2 (tool must exist before references make sense)
 

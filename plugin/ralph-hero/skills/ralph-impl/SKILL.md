@@ -10,7 +10,7 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-plan-required.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-worktree-gate.sh"
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__handoff_ticket"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-state-gate.sh"
@@ -115,12 +115,13 @@ If any issue is in wrong state, STOP: "Implementation blocked. #NNN: [state] (ex
 
 Skip if already "In Progress". For each issue in `issues[]`:
 ```
-ralph_hero__update_workflow_state
+ralph_hero__handoff_ticket
 - owner: $RALPH_GH_OWNER
 - repo: $RALPH_GH_REPO
 - number: [issue-number]
-- state: "__LOCK__"
-- command: "ralph_impl"
+- command: "impl"
+- intent: "lock"
+- reason: "Starting implementation phase"
 ```
 On error: read message for valid states/recovery action, retry with corrected parameters.
 
@@ -158,7 +159,7 @@ fi
 
 **5.4. Handle Merge Conflict Escalation**
 
-If `git pull` fails with merge conflicts: escalate per `shared/conventions.md` (use `__ESCALATE__` state, comment with conflicted files list, STOP).
+If `git pull` fails with merge conflicts: escalate per `shared/conventions.md` (use `intent: "escalate"`, comment with conflicted files list, STOP).
 
 **IMPORTANT**: All subsequent file operations must be in the worktree directory.
 
@@ -257,12 +258,13 @@ For each issue in `issues[]` (single: just one; group/epic: all issues):
 
 2. **Move to "In Review"**:
    ```
-   ralph_hero__update_workflow_state
+   ralph_hero__handoff_ticket
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "__COMPLETE__"
-   - command: "ralph_impl"
+   - command: "impl"
+   - intent: "complete"
+   - reason: "Implementation complete, PR created"
    ```
 
 Note: PR auto-links via "Closes #NNN" in PR body. No explicit link attachment needed.

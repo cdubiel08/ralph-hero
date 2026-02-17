@@ -8,12 +8,12 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__handoff_ticket"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/convergence-gate.sh"
   PostToolUse:
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__handoff_ticket"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-state-gate.sh"
@@ -110,7 +110,7 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 
 ### Step 3: Transition to Plan in Progress
 
-Update **all group issues**: `ralph_hero__update_workflow_state(number, state="__LOCK__", command="ralph_plan")`
+Update **all group issues**: `ralph_hero__handoff_ticket(number, command="plan", intent="lock", reason="Starting planning phase")`
 
 See shared/conventions.md for error handling.
 
@@ -207,7 +207,7 @@ For **each issue in the group**:
    ```
    For single issues, omit "Phase N of M" and just list phases.
 
-3. **Move to Plan in Review**: `ralph_hero__update_workflow_state(number, state="__COMPLETE__", command="ralph_plan")`
+3. **Move to Plan in Review**: `ralph_hero__handoff_ticket(number, command="plan", intent="complete", reason="Plan created and committed")`
 
 ### Step 6: Report Completion
 

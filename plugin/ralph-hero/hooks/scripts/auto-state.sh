@@ -2,7 +2,7 @@
 # ralph-hero/hooks/scripts/auto-state.sh
 # PreToolUse: Auto-inject correct state from semantic intent
 #
-# Intercepts ralph_hero__update_workflow_state calls and replaces semantic intents
+# Intercepts ralph_hero__handoff_ticket calls and replaces semantic intents
 # (__LOCK__, __COMPLETE__, __ESCALATE__, __CLOSE__, __CANCEL__)
 # with actual state names from the state machine.
 #
@@ -24,7 +24,7 @@ STATE_MACHINE="$SCRIPT_DIR/ralph-state-machine.json"
 read_input > /dev/null
 
 tool_name=$(get_tool_name)
-if [[ "$tool_name" != "ralph_hero__update_workflow_state" ]]; then
+if [[ "$tool_name" != "ralph_hero__handoff_ticket" ]]; then
   allow
 fi
 

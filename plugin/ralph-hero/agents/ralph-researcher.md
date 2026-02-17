@@ -1,7 +1,7 @@
 ---
 name: ralph-researcher
 description: Research specialist - invokes ralph-research skill for thorough ticket investigation
-tools: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment
+tools: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__handoff_ticket, ralph_hero__create_comment
 model: sonnet
 color: magenta
 ---

@@ -1,9 +1,9 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/convergence-gate.sh
-# PreToolUse (ralph_hero__update_workflow_state): Warn on planning transitions
+# PreToolUse (ralph_hero__handoff_ticket): Warn on planning transitions
 # without convergence verification
 #
-# Fires on: ralph_hero__update_workflow_state
+# Fires on: ralph_hero__handoff_ticket
 # Warns: Transitions to "Plan in Progress" if RALPH_CONVERGENCE_VERIFIED not set
 #
 # Hooks cannot call MCP tools, so full convergence verification must happen

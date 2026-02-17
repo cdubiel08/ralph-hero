@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/review-state-gate.sh
-# PreToolUse (ralph_hero__update_workflow_state): Validate review state transitions
+# PreToolUse (ralph_hero__handoff_ticket): Validate review state transitions
 #
 # Environment:
 #   RALPH_VALID_OUTPUT_STATES - Valid target states

@@ -1,7 +1,7 @@
 ---
 name: ralph-triager
 description: Ticket triager - invokes ralph-triage and ralph-split skills for assessment and decomposition
-tools: Read, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__update_estimate, ralph_hero__update_priority, ralph_hero__create_issue, ralph_hero__create_comment, ralph_hero__add_sub_issue, ralph_hero__add_dependency, ralph_hero__list_sub_issues, ralph_hero__list_dependencies
+tools: Read, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__handoff_ticket, ralph_hero__update_estimate, ralph_hero__update_priority, ralph_hero__create_issue, ralph_hero__create_comment, ralph_hero__add_sub_issue, ralph_hero__add_dependency, ralph_hero__list_sub_issues, ralph_hero__list_dependencies
 model: sonnet
 color: gray
 ---

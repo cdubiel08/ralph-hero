@@ -217,7 +217,7 @@ The bundled MCP server provides these tools:
 | `ralph_hero__get_issue` | Get issue with full context |
 | `ralph_hero__create_issue` | Create issue and add to project |
 | `ralph_hero__update_issue` | Update issue properties |
-| `ralph_hero__update_workflow_state` | Change workflow state |
+| `ralph_hero__handoff_ticket` | Validated workflow state transition with audit trail |
 | `ralph_hero__update_estimate` | Change estimate |
 | `ralph_hero__update_priority` | Change priority |
 | `ralph_hero__create_comment` | Add comment to issue |

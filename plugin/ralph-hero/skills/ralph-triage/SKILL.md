@@ -9,7 +9,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
   PostToolUse:
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__handoff_ticket"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-state-gate.sh"
@@ -146,16 +146,17 @@ Choose ONE action:
 
 **If CLOSE:**
 ```
-ralph_hero__update_workflow_state
+ralph_hero__handoff_ticket
 - owner: [owner]
 - repo: [repo]
 - number: [issue-number]
-- state: "Done"
-- command: "ralph_triage"
+- command: "triage"
+- intent: "close"
+- reason: "Triage assessment: [brief reason for closing]"
 ```
 Add comment explaining why closed.
 
-**Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+**Error handling**: If `handoff_ticket` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **If SPLIT:**
 
@@ -215,12 +216,13 @@ Add comment explaining estimate reasoning.
 
 **If RESEARCH:**
 ```
-ralph_hero__update_workflow_state
+ralph_hero__handoff_ticket
 - owner: [owner]
 - repo: [repo]
 - number: [issue-number]
-- state: "Research Needed"
-- command: "ralph_triage"
+- command: "triage"
+- to_state: "Research Needed"
+- reason: "Moved to Research Needed for investigation"
 ```
 Add comment: "Moved to Research Needed for investigation."
 
@@ -381,12 +383,13 @@ When encountering complexity, uncertainty, or states that don't align with proto
 
 1. **Move issue to "Human Needed" workflow state**:
    ```
-   ralph_hero__update_workflow_state
+   ralph_hero__handoff_ticket
    - owner: [owner]
    - repo: [repo]
    - number: [issue-number]
-   - state: "__ESCALATE__"
-   - command: "ralph_triage"
+   - command: "triage"
+   - intent: "escalate"
+   - reason: "Escalation: [issue description]"
    ```
 
 2. **Add comment with @mention**:

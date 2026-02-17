@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/triage-state-gate.sh
-# PreToolUse (ralph_hero__update_workflow_state): Validate triage state transitions
+# PreToolUse (ralph_hero__handoff_ticket): Validate triage state transitions
 #
 # Environment:
 #   RALPH_VALID_OUTPUT_STATES - Valid target states

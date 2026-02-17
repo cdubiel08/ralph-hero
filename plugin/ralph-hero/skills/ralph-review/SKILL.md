@@ -12,7 +12,7 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-no-dup.sh"
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__handoff_ticket"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-state-gate.sh"
@@ -222,15 +222,16 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
 1. **Move issue to "In Progress"**:
    ```
-   ralph_hero__update_workflow_state
+   ralph_hero__handoff_ticket
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "__COMPLETE__"
-   - command: "ralph_review"
+   - command: "review"
+   - intent: "complete"
+   - reason: "Plan approved, ready for implementation"
    ```
 
-   **Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+   **Error handling**: If `handoff_ticket` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 2. **Add approval comment**:
    ```
@@ -268,12 +269,13 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
 2. **Move issue to "Ready for Plan"**:
    ```
-   ralph_hero__update_workflow_state
+   ralph_hero__handoff_ticket
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "Ready for Plan"
-   - command: "ralph_review"
+   - command: "review"
+   - to_state: "Ready for Plan"
+   - reason: "Plan needs iteration: [issues identified]"
    ```
 
 3. **Add feedback comment**:
@@ -348,12 +350,13 @@ Run /ralph-plan NNN to address critique and update plan.
 
 1. Move issue to "Human Needed":
    ```
-   ralph_hero__update_workflow_state
+   ralph_hero__handoff_ticket
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
-   - state: "__ESCALATE__"
-   - command: "ralph_review"
+   - command: "review"
+   - intent: "escalate"
+   - reason: "Escalation: [issue description]"
    ```
 
 2. Add comment with @mention:

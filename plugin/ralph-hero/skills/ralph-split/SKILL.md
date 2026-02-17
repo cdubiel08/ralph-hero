@@ -266,15 +266,16 @@ ralph_hero__update_estimate
 
 4. **Set initial workflow state**:
    ```
-   ralph_hero__update_workflow_state
+   ralph_hero__handoff_ticket
    - owner: [owner]
    - repo: [repo]
    - number: [new-issue-number]
-   - state: "__COMPLETE__"
-   - command: "ralph_split"
+   - command: "split"
+   - intent: "complete"
+   - reason: "Sub-issue created from split of #[parent-number]"
    ```
 
-   **Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+   **Error handling**: If `handoff_ticket` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **Sub-issue description template**:
 ```markdown
@@ -375,12 +376,13 @@ Based on research done during splitting:
 - **If blocked by external issue** -> Keep in "Backlog" with blocker set
 
 ```
-ralph_hero__update_workflow_state
+ralph_hero__handoff_ticket
 - owner: [owner]
 - repo: [repo]
 - number: [sub-issue-number]
-- state: [appropriate state]
-- command: "ralph_split"
+- command: "split"
+- to_state: [appropriate state]
+- reason: "Setting initial state after split from #[parent-number]"
 ```
 
 ### Step 9: Report
