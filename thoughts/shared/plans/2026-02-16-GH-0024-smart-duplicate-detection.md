@@ -159,8 +159,8 @@ export function diceSorensen(a: string, b: string): number {
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` — no type errors
-- [ ] `npx vitest run src/__tests__/similarity.test.ts` — all tests pass
+- [x] `npm run build` — no type errors
+- [x] `npx vitest run src/__tests__/similarity.test.ts` — all tests pass
 
 #### Manual Verification
 - [ ] `diceSorensen("pipeline analytics", "pipeline metrics")` returns reasonable score (> 0.3)
