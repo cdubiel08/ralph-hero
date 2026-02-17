@@ -138,7 +138,7 @@ All functions are pure (no I/O, no side effects). The `items` input matches the 
 
 #### Automated Verification
 - [x] `npm run build` compiles with no type errors
-- [ ] Unit tests pass for all aggregation and health detection functions (see Phase 3)
+- [x] Unit tests pass for all aggregation and health detection functions (see Phase 3)
 
 #### Manual Verification
 - [x] `aggregateByPhase` groups items by state in `STATE_ORDER` order
@@ -327,12 +327,12 @@ Test suites:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm test` passes all new tests
-- [ ] All health indicator types tested with positive and negative cases
-- [ ] Both formatters tested for output structure
+- [x] `npm test` passes all new tests
+- [x] All health indicator types tested with positive and negative cases
+- [x] Both formatters tested for output structure
 
 #### Manual Verification
-- [ ] Test output clean with descriptive names
+- [x] Test output clean with descriptive names
 
 **Depends on**: Phase 1 (functions under test), Phase 2 (formatters)
 
