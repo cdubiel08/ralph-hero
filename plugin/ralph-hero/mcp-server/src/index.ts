@@ -41,17 +41,20 @@ function initGitHubClient(): GitHubClient {
     console.error(
       "[ralph-hero] Error: No GitHub token found.\n" +
         "\n" +
-        "Set one of these environment variables:\n" +
-        "  RALPH_GH_REPO_TOKEN      - Token with 'repo' scope (for issues/PRs)\n" +
-        "  RALPH_GH_PROJECT_TOKEN   - Token with 'project' scope (for project fields)\n" +
-        "  RALPH_HERO_GITHUB_TOKEN  - Single token with both scopes\n" +
+        "Quick fix — add to .claude/settings.local.json:\n" +
         "\n" +
-        "For org repos where project is owned by a different user:\n" +
-        "  RALPH_GH_REPO_TOKEN    = PAT with org repo access\n" +
-        "  RALPH_GH_PROJECT_TOKEN = PAT with personal project access\n" +
+        '  {\n' +
+        '    "env": {\n' +
+        '      "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here"\n' +
+        "    }\n" +
+        "  }\n" +
         "\n" +
-        "Generate tokens at: https://github.com/settings/tokens\n" +
-        "Required scopes: 'repo' and/or 'project'",
+        "Then restart Claude Code.\n" +
+        "\n" +
+        "Generate a token at: https://github.com/settings/tokens\n" +
+        "Required scopes: repo, project\n" +
+        "\n" +
+        "For advanced setups (dual tokens, org projects), run /ralph-setup.",
     );
     process.exit(1);
   }
