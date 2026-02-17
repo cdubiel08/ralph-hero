@@ -32,20 +32,60 @@ interface FieldOption {
 
 const WORKFLOW_STATE_OPTIONS: FieldOption[] = [
   { name: "Backlog", color: "GRAY", description: "Awaiting triage" },
-  { name: "Research Needed", color: "PURPLE", description: "Needs investigation before planning" },
-  { name: "Research in Progress", color: "PURPLE", description: "Investigation underway (locked)" },
-  { name: "Ready for Plan", color: "BLUE", description: "Research complete, ready for planning" },
-  { name: "Plan in Progress", color: "BLUE", description: "Plan being written (locked)" },
-  { name: "Plan in Review", color: "BLUE", description: "Plan awaiting approval" },
-  { name: "In Progress", color: "ORANGE", description: "Implementation underway" },
-  { name: "In Review", color: "YELLOW", description: "PR created, awaiting code review" },
+  {
+    name: "Research Needed",
+    color: "PURPLE",
+    description: "Needs investigation before planning",
+  },
+  {
+    name: "Research in Progress",
+    color: "PURPLE",
+    description: "Investigation underway (locked)",
+  },
+  {
+    name: "Ready for Plan",
+    color: "BLUE",
+    description: "Research complete, ready for planning",
+  },
+  {
+    name: "Plan in Progress",
+    color: "BLUE",
+    description: "Plan being written (locked)",
+  },
+  {
+    name: "Plan in Review",
+    color: "BLUE",
+    description: "Plan awaiting approval",
+  },
+  {
+    name: "In Progress",
+    color: "ORANGE",
+    description: "Implementation underway",
+  },
+  {
+    name: "In Review",
+    color: "YELLOW",
+    description: "PR created, awaiting code review",
+  },
   { name: "Done", color: "GREEN", description: "Completed and merged" },
-  { name: "Human Needed", color: "RED", description: "Escalated - requires human intervention" },
-  { name: "Canceled", color: "GRAY", description: "Ticket canceled or superseded" },
+  {
+    name: "Human Needed",
+    color: "RED",
+    description: "Escalated - requires human intervention",
+  },
+  {
+    name: "Canceled",
+    color: "GRAY",
+    description: "Ticket canceled or superseded",
+  },
 ];
 
 const PRIORITY_OPTIONS: FieldOption[] = [
-  { name: "P0", color: "RED", description: "Critical - Drop everything, fix now" },
+  {
+    name: "P0",
+    color: "RED",
+    description: "Critical - Drop everything, fix now",
+  },
   { name: "P1", color: "ORANGE", description: "High - Must do this sprint" },
   { name: "P2", color: "YELLOW", description: "Medium - Should do soon" },
   { name: "P3", color: "GRAY", description: "Low - Nice to have" },
@@ -89,7 +129,12 @@ interface ProjectResponse {
       id: string;
       name: string;
       dataType: string;
-      options?: Array<{ id: string; name: string; color?: string; description?: string }>;
+      options?: Array<{
+        id: string;
+        name: string;
+        color?: string;
+        description?: string;
+      }>;
     }>;
   };
 }
@@ -131,7 +176,9 @@ export function registerProjectTools(
       try {
         const owner = args.owner || resolveProjectOwner(client.config);
         if (!owner) {
-          return toolError("owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)");
+          return toolError(
+            "owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)",
+          );
         }
 
         // Step 1: Get owner node ID (try user first, then org)
@@ -170,13 +217,20 @@ export function registerProjectTools(
         }
 
         if (!ownerId) {
-          return toolError(`Owner "${owner}" not found as user or organization`);
+          return toolError(
+            `Owner "${owner}" not found as user or organization`,
+          );
         }
 
         // Step 2: Create project (project operation)
         const createResult = await client.projectMutate<{
           createProjectV2: {
-            projectV2: { id: string; number: number; url: string; title: string };
+            projectV2: {
+              id: string;
+              number: number;
+              url: string;
+              title: string;
+            };
           };
         }>(
           `mutation($ownerId: ID!, $title: String!) {
@@ -195,7 +249,8 @@ export function registerProjectTools(
         const project = createResult.createProjectV2.projectV2;
 
         // Step 3: Create custom fields
-        const fieldResults: Record<string, { id: string; options: string[] }> = {};
+        const fieldResults: Record<string, { id: string; options: string[] }> =
+          {};
 
         // Workflow State field
         const wsField = await createSingleSelectField(
@@ -225,7 +280,12 @@ export function registerProjectTools(
         fieldResults["Estimate"] = estField;
 
         // Populate the field cache for this project
-        await ensureFieldCacheForNewProject(client, fieldCache, owner, project.number);
+        await ensureFieldCacheForNewProject(
+          client,
+          fieldCache,
+          owner,
+          project.number,
+        );
 
         return toolSuccess({
           project: {
@@ -250,8 +310,18 @@ export function registerProjectTools(
     "ralph_hero__get_project",
     "Get a GitHub Project V2 with all fields and their options",
     {
-      owner: z.string().optional().describe("GitHub owner (user or org). Defaults to GITHUB_OWNER env var"),
-      number: z.number().optional().describe("Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var"),
+      owner: z
+        .string()
+        .optional()
+        .describe(
+          "GitHub owner (user or org). Defaults to GITHUB_OWNER env var",
+        ),
+      number: z
+        .number()
+        .optional()
+        .describe(
+          "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
+        ),
     },
     async (args) => {
       try {
@@ -259,10 +329,14 @@ export function registerProjectTools(
         const number = args.number || client.config.projectNumber;
 
         if (!owner) {
-          return toolError("owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)");
+          return toolError(
+            "owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)",
+          );
         }
         if (!number) {
-          return toolError("number is required (set RALPH_GH_PROJECT_NUMBER env var or pass explicitly)");
+          return toolError(
+            "number is required (set RALPH_GH_PROJECT_NUMBER env var or pass explicitly)",
+          );
         }
 
         // Try user first, then organization
@@ -308,12 +382,33 @@ export function registerProjectTools(
     "ralph_hero__list_project_items",
     "List items in a GitHub Project V2, optionally filtered by Workflow State, Estimate, or Priority",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      number: z.number().optional().describe("Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var"),
-      workflowState: z.string().optional().describe("Filter by Workflow State name"),
-      estimate: z.string().optional().describe("Filter by Estimate name (XS, S, M, L, XL)"),
-      priority: z.string().optional().describe("Filter by Priority name (P0, P1, P2, P3)"),
-      limit: z.number().optional().default(50).describe("Max items to return (default 50)"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      number: z
+        .number()
+        .optional()
+        .describe(
+          "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
+        ),
+      workflowState: z
+        .string()
+        .optional()
+        .describe("Filter by Workflow State name"),
+      estimate: z
+        .string()
+        .optional()
+        .describe("Filter by Estimate name (XS, S, M, L, XL)"),
+      priority: z
+        .string()
+        .optional()
+        .describe("Filter by Priority name (P0, P1, P2, P3)"),
+      limit: z
+        .number()
+        .optional()
+        .default(50)
+        .describe("Max items to return (default 50)"),
     },
     async (args) => {
       try {
@@ -401,20 +496,21 @@ export function registerProjectTools(
         let items = itemsResult.nodes;
 
         if (args.workflowState) {
-          items = items.filter((item) =>
-            getFieldValue(item, "Workflow State") === args.workflowState,
+          items = items.filter(
+            (item) =>
+              getFieldValue(item, "Workflow State") === args.workflowState,
           );
         }
 
         if (args.estimate) {
-          items = items.filter((item) =>
-            getFieldValue(item, "Estimate") === args.estimate,
+          items = items.filter(
+            (item) => getFieldValue(item, "Estimate") === args.estimate,
           );
         }
 
         if (args.priority) {
-          items = items.filter((item) =>
-            getFieldValue(item, "Priority") === args.priority,
+          items = items.filter(
+            (item) => getFieldValue(item, "Priority") === args.priority,
           );
         }
 
@@ -431,12 +527,12 @@ export function registerProjectTools(
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),
-            labels: (content?.labels as { nodes: Array<{ name: string }> })?.nodes?.map(
-              (l: { name: string }) => l.name,
-            ),
-            assignees: (content?.assignees as { nodes: Array<{ login: string }> })?.nodes?.map(
-              (a: { login: string }) => a.login,
-            ),
+            labels: (
+              content?.labels as { nodes: Array<{ name: string }> }
+            )?.nodes?.map((l: { name: string }) => l.name),
+            assignees: (
+              content?.assignees as { nodes: Array<{ login: string }> }
+            )?.nodes?.map((a: { login: string }) => a.login),
           };
         });
 
@@ -473,9 +569,14 @@ interface RawProjectItem {
   };
 }
 
-function getFieldValue(item: RawProjectItem, fieldName: string): string | undefined {
+function getFieldValue(
+  item: RawProjectItem,
+  fieldName: string,
+): string | undefined {
   const fieldValue = item.fieldValues.nodes.find(
-    (fv) => fv.field?.name === fieldName && fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
+    (fv) =>
+      fv.field?.name === fieldName &&
+      fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fieldValue?.name;
 }

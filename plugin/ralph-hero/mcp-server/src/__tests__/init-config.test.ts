@@ -34,11 +34,9 @@ describe("Token resolution logic", () => {
    */
   function resolveTokens() {
     const repoToken =
-      process.env.RALPH_GH_REPO_TOKEN ||
-      process.env.RALPH_HERO_GITHUB_TOKEN;
+      process.env.RALPH_GH_REPO_TOKEN || process.env.RALPH_HERO_GITHUB_TOKEN;
 
-    const projectToken =
-      process.env.RALPH_GH_PROJECT_TOKEN || repoToken;
+    const projectToken = process.env.RALPH_GH_PROJECT_TOKEN || repoToken;
 
     return { repoToken, projectToken };
   }

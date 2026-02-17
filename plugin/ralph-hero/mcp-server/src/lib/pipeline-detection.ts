@@ -101,11 +101,18 @@ export function detectPipelinePosition(
   groupPrimary: number | null,
 ): PipelinePosition {
   if (issues.length === 0) {
-    return buildResult("TRIAGE", "No issues provided", issues, isGroup, groupPrimary, {
-      required: false,
-      met: true,
-      blocking: [],
-    });
+    return buildResult(
+      "TRIAGE",
+      "No issues provided",
+      issues,
+      isGroup,
+      groupPrimary,
+      {
+        required: false,
+        met: true,
+        blocking: [],
+      },
+    );
   }
 
   // Step 1: Check for oversized issues needing split
@@ -139,11 +146,21 @@ export function detectPipelinePosition(
   }
 
   // Categorize issues by state
-  const needsResearch = issues.filter((i) => i.workflowState === "Research Needed");
-  const inResearch = issues.filter((i) => i.workflowState === "Research in Progress");
-  const readyForPlan = issues.filter((i) => i.workflowState === "Ready for Plan");
-  const planInProgress = issues.filter((i) => i.workflowState === "Plan in Progress");
-  const planInReview = issues.filter((i) => i.workflowState === "Plan in Review");
+  const needsResearch = issues.filter(
+    (i) => i.workflowState === "Research Needed",
+  );
+  const inResearch = issues.filter(
+    (i) => i.workflowState === "Research in Progress",
+  );
+  const readyForPlan = issues.filter(
+    (i) => i.workflowState === "Ready for Plan",
+  );
+  const planInProgress = issues.filter(
+    (i) => i.workflowState === "Plan in Progress",
+  );
+  const planInReview = issues.filter(
+    (i) => i.workflowState === "Plan in Review",
+  );
   const inProgress = issues.filter((i) => i.workflowState === "In Progress");
   const inReview = issues.filter((i) => i.workflowState === "In Review");
   const done = issues.filter((i) => i.workflowState === "Done");
@@ -157,8 +174,14 @@ export function detectPipelinePosition(
       required: isGroup,
       met: false as const,
       blocking: [
-        ...needsResearch.map((i) => ({ number: i.number, state: i.workflowState })),
-        ...inResearch.map((i) => ({ number: i.number, state: i.workflowState })),
+        ...needsResearch.map((i) => ({
+          number: i.number,
+          state: i.workflowState,
+        })),
+        ...inResearch.map((i) => ({
+          number: i.number,
+          state: i.workflowState,
+        })),
       ],
     };
     return buildResult(

@@ -155,8 +155,12 @@ interface SeedIssueResponse {
     subIssues: { nodes: SeedIssueNode[] };
   } | null;
   subIssues: { nodes: SeedIssueNode[] };
-  blocking: { nodes: Array<{ id: string; number: number; title: string; state: string }> };
-  blockedBy: { nodes: Array<{ id: string; number: number; title: string; state: string }> };
+  blocking: {
+    nodes: Array<{ id: string; number: number; title: string; state: string }>;
+  };
+  blockedBy: {
+    nodes: Array<{ id: string; number: number; title: string; state: string }>;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +286,10 @@ export async function detectGroup(
 
   // Check all discovered issues for dependency targets not yet in the set
   for (const issue of issueMap.values()) {
-    for (const depNum of [...issue.blockingNumbers, ...issue.blockedByNumbers]) {
+    for (const depNum of [
+      ...issue.blockingNumbers,
+      ...issue.blockedByNumbers,
+    ]) {
       if (!issueMap.has(depNum)) {
         expandQueue.push(depNum);
       }
@@ -330,7 +337,9 @@ export async function detectGroup(
       }
     } catch {
       // Skip issues that can't be fetched (cross-repo, permissions, etc.)
-      console.error(`[group-detection] Could not fetch issue #${num}, skipping (may be cross-repo)`);
+      console.error(
+        `[group-detection] Could not fetch issue #${num}, skipping (may be cross-repo)`,
+      );
     }
   }
 
@@ -361,7 +370,11 @@ export async function detectGroup(
 
   return {
     groupTickets,
-    groupPrimary: { id: primary.id, number: primary.number, title: primary.title },
+    groupPrimary: {
+      id: primary.id,
+      number: primary.number,
+      title: primary.title,
+    },
     isGroup: groupTickets.length > 1,
     totalTickets: groupTickets.length,
   };
@@ -455,7 +468,10 @@ function filterGroupMembers(
       const issue = issueMap.get(num);
       if (!issue) continue;
 
-      for (const depNum of [...issue.blockingNumbers, ...issue.blockedByNumbers]) {
+      for (const depNum of [
+        ...issue.blockingNumbers,
+        ...issue.blockedByNumbers,
+      ]) {
         if (issueMap.has(depNum) && !members.has(depNum)) {
           // Only add non-parent issues
           const depIssue = issueMap.get(depNum)!;
@@ -542,7 +558,7 @@ function topologicalSort(
     const cycleMembers = groupNumbers.filter((n) => !sorted.includes(n));
     throw new Error(
       `Cycle detected in dependencies! Issues involved: ${cycleMembers.map((n) => `#${n}`).join(", ")}. ` +
-      `These issues form a circular dependency chain. Remove one dependency to resolve.`
+        `These issues form a circular dependency chain. Remove one dependency to resolve.`,
     );
   }
 

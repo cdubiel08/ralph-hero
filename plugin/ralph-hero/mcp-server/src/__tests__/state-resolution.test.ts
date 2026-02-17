@@ -20,47 +20,83 @@ describe("normalizeCommand", () => {
 
 describe("resolveState - semantic intents", () => {
   it("resolves __LOCK__ for commands with lock states", () => {
-    expect(resolveState("__LOCK__", "ralph_research").resolvedState).toBe("Research in Progress");
-    expect(resolveState("__LOCK__", "ralph_plan").resolvedState).toBe("Plan in Progress");
-    expect(resolveState("__LOCK__", "ralph_impl").resolvedState).toBe("In Progress");
+    expect(resolveState("__LOCK__", "ralph_research").resolvedState).toBe(
+      "Research in Progress",
+    );
+    expect(resolveState("__LOCK__", "ralph_plan").resolvedState).toBe(
+      "Plan in Progress",
+    );
+    expect(resolveState("__LOCK__", "ralph_impl").resolvedState).toBe(
+      "In Progress",
+    );
   });
 
   it("rejects __LOCK__ for commands without lock states with recovery guidance", () => {
-    expect(() => resolveState("__LOCK__", "ralph_triage")).toThrow(/not valid for ralph_triage/i);
+    expect(() => resolveState("__LOCK__", "ralph_triage")).toThrow(
+      /not valid for ralph_triage/i,
+    );
     expect(() => resolveState("__LOCK__", "ralph_triage")).toThrow(/recovery/i);
-    expect(() => resolveState("__LOCK__", "ralph_review")).toThrow(/not valid for ralph_review/i);
-    expect(() => resolveState("__LOCK__", "ralph_hero")).toThrow(/not valid for ralph_hero/i);
+    expect(() => resolveState("__LOCK__", "ralph_review")).toThrow(
+      /not valid for ralph_review/i,
+    );
+    expect(() => resolveState("__LOCK__", "ralph_hero")).toThrow(
+      /not valid for ralph_hero/i,
+    );
   });
 
   it("resolves __COMPLETE__ for commands with single completion target", () => {
-    expect(resolveState("__COMPLETE__", "ralph_research").resolvedState).toBe("Ready for Plan");
-    expect(resolveState("__COMPLETE__", "ralph_plan").resolvedState).toBe("Plan in Review");
-    expect(resolveState("__COMPLETE__", "ralph_impl").resolvedState).toBe("In Review");
-    expect(resolveState("__COMPLETE__", "ralph_review").resolvedState).toBe("In Progress");
-    expect(resolveState("__COMPLETE__", "ralph_split").resolvedState).toBe("Backlog");
+    expect(resolveState("__COMPLETE__", "ralph_research").resolvedState).toBe(
+      "Ready for Plan",
+    );
+    expect(resolveState("__COMPLETE__", "ralph_plan").resolvedState).toBe(
+      "Plan in Review",
+    );
+    expect(resolveState("__COMPLETE__", "ralph_impl").resolvedState).toBe(
+      "In Review",
+    );
+    expect(resolveState("__COMPLETE__", "ralph_review").resolvedState).toBe(
+      "In Progress",
+    );
+    expect(resolveState("__COMPLETE__", "ralph_split").resolvedState).toBe(
+      "Backlog",
+    );
   });
 
   it("rejects __COMPLETE__ for ralph_triage (null / multi-path) with recovery", () => {
-    expect(() => resolveState("__COMPLETE__", "ralph_triage")).toThrow(/ambiguous.*multiple output paths/i);
-    expect(() => resolveState("__COMPLETE__", "ralph_triage")).toThrow(/recovery.*direct state name/i);
+    expect(() => resolveState("__COMPLETE__", "ralph_triage")).toThrow(
+      /ambiguous.*multiple output paths/i,
+    );
+    expect(() => resolveState("__COMPLETE__", "ralph_triage")).toThrow(
+      /recovery.*direct state name/i,
+    );
   });
 
   it("rejects __COMPLETE__ for ralph_hero (not mapped) with recovery", () => {
-    expect(() => resolveState("__COMPLETE__", "ralph_hero")).toThrow(/not valid for ralph_hero/i);
-    expect(() => resolveState("__COMPLETE__", "ralph_hero")).toThrow(/recovery/i);
+    expect(() => resolveState("__COMPLETE__", "ralph_hero")).toThrow(
+      /not valid for ralph_hero/i,
+    );
+    expect(() => resolveState("__COMPLETE__", "ralph_hero")).toThrow(
+      /recovery/i,
+    );
   });
 
   it("resolves wildcard intents for all commands", () => {
     for (const cmd of Object.keys(COMMAND_ALLOWED_STATES)) {
-      expect(resolveState("__ESCALATE__", cmd).resolvedState).toBe("Human Needed");
+      expect(resolveState("__ESCALATE__", cmd).resolvedState).toBe(
+        "Human Needed",
+      );
       expect(resolveState("__CLOSE__", cmd).resolvedState).toBe("Done");
       expect(resolveState("__CANCEL__", cmd).resolvedState).toBe("Canceled");
     }
   });
 
   it("rejects unknown semantic intents with valid intent list", () => {
-    expect(() => resolveState("__FOOBAR__", "ralph_research")).toThrow(/unknown semantic intent/i);
-    expect(() => resolveState("__FOOBAR__", "ralph_research")).toThrow(/recovery.*retry/i);
+    expect(() => resolveState("__FOOBAR__", "ralph_research")).toThrow(
+      /unknown semantic intent/i,
+    );
+    expect(() => resolveState("__FOOBAR__", "ralph_research")).toThrow(
+      /recovery.*retry/i,
+    );
   });
 
   it("marks resolved intents with wasIntent=true", () => {
@@ -72,23 +108,43 @@ describe("resolveState - semantic intents", () => {
 
 describe("resolveState - direct state names", () => {
   it("accepts valid output states for each command", () => {
-    expect(resolveState("Research Needed", "ralph_triage").resolvedState).toBe("Research Needed");
-    expect(resolveState("Ready for Plan", "ralph_triage").resolvedState).toBe("Ready for Plan");
-    expect(resolveState("Research in Progress", "ralph_research").resolvedState).toBe("Research in Progress");
-    expect(resolveState("In Review", "ralph_impl").resolvedState).toBe("In Review");
+    expect(resolveState("Research Needed", "ralph_triage").resolvedState).toBe(
+      "Research Needed",
+    );
+    expect(resolveState("Ready for Plan", "ralph_triage").resolvedState).toBe(
+      "Ready for Plan",
+    );
+    expect(
+      resolveState("Research in Progress", "ralph_research").resolvedState,
+    ).toBe("Research in Progress");
+    expect(resolveState("In Review", "ralph_impl").resolvedState).toBe(
+      "In Review",
+    );
   });
 
   it("rejects states not in command's allowed outputs with recovery", () => {
-    expect(() => resolveState("Ready for Plan", "ralph_impl")).toThrow(/not a valid output for ralph_impl/i);
-    expect(() => resolveState("Ready for Plan", "ralph_impl")).toThrow(/recovery.*retry/i);
-    expect(() => resolveState("Done", "ralph_research")).toThrow(/not a valid output for ralph_research/i);
-    expect(() => resolveState("In Progress", "ralph_triage")).toThrow(/not a valid output for ralph_triage/i);
+    expect(() => resolveState("Ready for Plan", "ralph_impl")).toThrow(
+      /not a valid output for ralph_impl/i,
+    );
+    expect(() => resolveState("Ready for Plan", "ralph_impl")).toThrow(
+      /recovery.*retry/i,
+    );
+    expect(() => resolveState("Done", "ralph_research")).toThrow(
+      /not a valid output for ralph_research/i,
+    );
+    expect(() => resolveState("In Progress", "ralph_triage")).toThrow(
+      /not a valid output for ralph_triage/i,
+    );
   });
 
   it("includes semantic intent suggestions in recovery guidance", () => {
     // ralph_research can use __COMPLETE__ → "Ready for Plan", so recovery should list it
-    expect(() => resolveState("Done", "ralph_research")).toThrow(/available semantic intents/i);
-    expect(() => resolveState("Done", "ralph_research")).toThrow(/__COMPLETE__/);
+    expect(() => resolveState("Done", "ralph_research")).toThrow(
+      /available semantic intents/i,
+    );
+    expect(() => resolveState("Done", "ralph_research")).toThrow(
+      /__COMPLETE__/,
+    );
   });
 
   it("marks direct states with wasIntent=false", () => {
@@ -104,15 +160,23 @@ describe("resolveState - command validation", () => {
   });
 
   it("accepts bare command names via normalization", () => {
-    expect(resolveState("__LOCK__", "research").resolvedState).toBe("Research in Progress");
-    expect(resolveState("__LOCK__", "plan").resolvedState).toBe("Plan in Progress");
+    expect(resolveState("__LOCK__", "research").resolvedState).toBe(
+      "Research in Progress",
+    );
+    expect(resolveState("__LOCK__", "plan").resolvedState).toBe(
+      "Plan in Progress",
+    );
   });
 });
 
 describe("error messages contain Recovery: section", () => {
   const errorScenarios = [
     { state: "__LOCK__", command: "ralph_triage", desc: "invalid lock" },
-    { state: "__COMPLETE__", command: "ralph_triage", desc: "ambiguous complete" },
+    {
+      state: "__COMPLETE__",
+      command: "ralph_triage",
+      desc: "ambiguous complete",
+    },
     { state: "__COMPLETE__", command: "ralph_hero", desc: "unmapped complete" },
     { state: "__FOOBAR__", command: "ralph_research", desc: "unknown intent" },
     { state: "Done", command: "ralph_research", desc: "invalid direct state" },
@@ -147,7 +211,9 @@ describe("data consistency with state machine JSON", () => {
       const hardcodedMapping = SEMANTIC_INTENTS[intent];
       expect(hardcodedMapping).toBeDefined();
 
-      for (const [cmd, resolvedState] of Object.entries(mapping as Record<string, string | null>)) {
+      for (const [cmd, resolvedState] of Object.entries(
+        mapping as Record<string, string | null>,
+      )) {
         if (hardcodedMapping[cmd] !== undefined) {
           expect(hardcodedMapping[cmd]).toBe(resolvedState);
         }

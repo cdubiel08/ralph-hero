@@ -52,7 +52,12 @@ export interface GitHubClient {
   ) => Promise<T>;
 
   /** Get rate limit status. */
-  getRateLimitStatus: () => { remaining: number; resetAt: Date; isLow: boolean; isCritical: boolean };
+  getRateLimitStatus: () => {
+    remaining: number;
+    resetAt: Date;
+    isLow: boolean;
+    isCritical: boolean;
+  };
 
   /** Get the session cache instance. */
   getCache: () => SessionCache;
@@ -67,7 +72,9 @@ export interface GitHubClient {
 /**
  * Create an authenticated GitHub GraphQL client.
  */
-export function createGitHubClient(clientConfig: GitHubClientConfig): GitHubClient {
+export function createGitHubClient(
+  clientConfig: GitHubClientConfig,
+): GitHubClient {
   const graphqlWithAuth = graphql.defaults({
     headers: {
       authorization: `token ${clientConfig.token}`,
@@ -75,7 +82,9 @@ export function createGitHubClient(clientConfig: GitHubClientConfig): GitHubClie
   });
 
   // Create a separate graphql instance for project operations if a different token is configured
-  const hasProjectToken = clientConfig.projectToken && clientConfig.projectToken !== clientConfig.token;
+  const hasProjectToken =
+    clientConfig.projectToken &&
+    clientConfig.projectToken !== clientConfig.token;
   const projectGraphqlWithAuth = hasProjectToken
     ? graphql.defaults({
         headers: {
@@ -104,10 +113,12 @@ export function createGitHubClient(clientConfig: GitHubClientConfig): GitHubClie
       // Insert rateLimit into the query's top-level selection set
       const match = fullQuery.match(/(query)\s*(\([^)]*\))?\s*\{/);
       if (match) {
-        const insertPos = fullQuery.indexOf("{", fullQuery.indexOf(match[0])) + 1;
+        const insertPos =
+          fullQuery.indexOf("{", fullQuery.indexOf(match[0])) + 1;
         fullQuery =
           fullQuery.slice(0, insertPos) +
-          "\n  " + RATE_LIMIT_FRAGMENT +
+          "\n  " +
+          RATE_LIMIT_FRAGMENT +
           fullQuery.slice(insertPos);
       }
     }
@@ -135,13 +146,18 @@ export function createGitHubClient(clientConfig: GitHubClientConfig): GitHubClie
         "status" in error &&
         (error as { status: number }).status === 403
       ) {
-        const retryAfter = error && typeof error === "object" && "headers" in error
-          ? ((error as { headers?: Record<string, string> }).headers?.["retry-after"])
-          : undefined;
+        const retryAfter =
+          error && typeof error === "object" && "headers" in error
+            ? (error as { headers?: Record<string, string> }).headers?.[
+                "retry-after"
+              ]
+            : undefined;
 
         if (retryAfter) {
           const waitMs = parseInt(retryAfter, 10) * 1000;
-          console.error(`[github-client] Rate limited. Waiting ${retryAfter}s before retry.`);
+          console.error(
+            `[github-client] Rate limited. Waiting ${retryAfter}s before retry.`,
+          );
           await new Promise((resolve) => setTimeout(resolve, waitMs));
           return executeGraphQL<T>(queryString, variables, graphqlFn);
         }
@@ -186,7 +202,11 @@ export function createGitHubClient(clientConfig: GitHubClientConfig): GitHubClie
           return cached;
         }
 
-        const result = await executeGraphQL<T>(queryString, variables, projectGraphqlWithAuth);
+        const result = await executeGraphQL<T>(
+          queryString,
+          variables,
+          projectGraphqlWithAuth,
+        );
         cache.set(cacheKey, result, options.cacheTtlMs);
         return result;
       }
@@ -210,7 +230,11 @@ export function createGitHubClient(clientConfig: GitHubClientConfig): GitHubClie
       variables?: Record<string, unknown>,
     ): Promise<T> {
       cache.invalidatePrefix("query:");
-      const result = await executeGraphQL<T>(mutation, variables, projectGraphqlWithAuth);
+      const result = await executeGraphQL<T>(
+        mutation,
+        variables,
+        projectGraphqlWithAuth,
+      );
       return result;
     },
 

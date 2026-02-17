@@ -13,7 +13,11 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { detectGroup } from "../lib/group-detection.js";
-import { isValidState, isEarlierState, VALID_STATES } from "../lib/workflow-states.js";
+import {
+  isValidState,
+  isEarlierState,
+  VALID_STATES,
+} from "../lib/workflow-states.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -60,8 +64,14 @@ function resolveConfig(
 ): { owner: string; repo: string } {
   const owner = args.owner || client.config.owner;
   const repo = args.repo || client.config.repo;
-  if (!owner) throw new Error("owner is required (set GITHUB_OWNER env var or pass explicitly)");
-  if (!repo) throw new Error("repo is required (set GITHUB_REPO env var or pass explicitly)");
+  if (!owner)
+    throw new Error(
+      "owner is required (set GITHUB_OWNER env var or pass explicitly)",
+    );
+  if (!repo)
+    throw new Error(
+      "repo is required (set GITHUB_REPO env var or pass explicitly)",
+    );
   return { owner, repo };
 }
 
@@ -74,7 +84,6 @@ export function registerRelationshipTools(
   client: GitHubClient,
   fieldCache: FieldOptionCache,
 ): void {
-
   // -------------------------------------------------------------------------
   // ralph_hero__add_sub_issue
   // -------------------------------------------------------------------------
@@ -82,18 +91,40 @@ export function registerRelationshipTools(
     "ralph_hero__add_sub_issue",
     "Create a parent/child (sub-issue) relationship between two GitHub issues. The parent issue becomes the container for the child issue.",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
       parentNumber: z.number().describe("Parent issue number"),
-      childNumber: z.number().describe("Child issue number (will become sub-issue of parent)"),
-      replaceParent: z.boolean().optional().default(false).describe("If true, move child even if it already has a parent"),
+      childNumber: z
+        .number()
+        .describe("Child issue number (will become sub-issue of parent)"),
+      replaceParent: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, move child even if it already has a parent"),
     },
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
 
-        const parentId = await resolveIssueNodeId(client, owner, repo, args.parentNumber);
-        const childId = await resolveIssueNodeId(client, owner, repo, args.childNumber);
+        const parentId = await resolveIssueNodeId(
+          client,
+          owner,
+          repo,
+          args.parentNumber,
+        );
+        const childId = await resolveIssueNodeId(
+          client,
+          owner,
+          repo,
+          args.childNumber,
+        );
 
         const result = await client.mutate<{
           addSubIssue: {
@@ -140,8 +171,14 @@ export function registerRelationshipTools(
     "ralph_hero__list_sub_issues",
     "List all sub-issues (children) of a parent GitHub issue, with completion summary",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.number().describe("Parent issue number"),
     },
     async (args) => {
@@ -190,7 +227,9 @@ export function registerRelationshipTools(
 
         const issue = result.repository?.issue;
         if (!issue) {
-          return toolError(`Issue #${args.number} not found in ${owner}/${repo}`);
+          return toolError(
+            `Issue #${args.number} not found in ${owner}/${repo}`,
+          );
         }
 
         return toolSuccess({
@@ -207,14 +246,18 @@ export function registerRelationshipTools(
           })),
           summary: issue.subIssuesSummary || {
             total: issue.subIssues.nodes.length,
-            completed: issue.subIssues.nodes.filter((si) => si.state === "CLOSED").length,
-            percentCompleted: issue.subIssues.nodes.length > 0
-              ? Math.round(
-                  (issue.subIssues.nodes.filter((si) => si.state === "CLOSED").length /
-                    issue.subIssues.nodes.length) *
-                    100,
-                )
-              : 0,
+            completed: issue.subIssues.nodes.filter(
+              (si) => si.state === "CLOSED",
+            ).length,
+            percentCompleted:
+              issue.subIssues.nodes.length > 0
+                ? Math.round(
+                    (issue.subIssues.nodes.filter((si) => si.state === "CLOSED")
+                      .length /
+                      issue.subIssues.nodes.length) *
+                      100,
+                  )
+                : 0,
           },
           hasMore: issue.subIssues.pageInfo.hasNextPage,
         });
@@ -232,17 +275,39 @@ export function registerRelationshipTools(
     "ralph_hero__add_dependency",
     "Create a blocking dependency between two GitHub issues. The 'blockingNumber' issue blocks the 'blockedNumber' issue.",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
-      blockedNumber: z.number().describe("Issue number that IS blocked (cannot proceed until blocker is done)"),
-      blockingNumber: z.number().describe("Issue number that IS the blocker (must be completed first)"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      blockedNumber: z
+        .number()
+        .describe(
+          "Issue number that IS blocked (cannot proceed until blocker is done)",
+        ),
+      blockingNumber: z
+        .number()
+        .describe("Issue number that IS the blocker (must be completed first)"),
     },
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
 
-        const blockedId = await resolveIssueNodeId(client, owner, repo, args.blockedNumber);
-        const blockingId = await resolveIssueNodeId(client, owner, repo, args.blockingNumber);
+        const blockedId = await resolveIssueNodeId(
+          client,
+          owner,
+          repo,
+          args.blockedNumber,
+        );
+        const blockingId = await resolveIssueNodeId(
+          client,
+          owner,
+          repo,
+          args.blockingNumber,
+        );
 
         const result = await client.mutate<{
           addBlockedBy: {
@@ -288,8 +353,14 @@ export function registerRelationshipTools(
     "ralph_hero__remove_dependency",
     "Remove a blocking dependency between two GitHub issues",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
       blockedNumber: z.number().describe("Issue number that was blocked"),
       blockingNumber: z.number().describe("Issue number that was the blocker"),
     },
@@ -297,8 +368,18 @@ export function registerRelationshipTools(
       try {
         const { owner, repo } = resolveConfig(client, args);
 
-        const blockedId = await resolveIssueNodeId(client, owner, repo, args.blockedNumber);
-        const blockingId = await resolveIssueNodeId(client, owner, repo, args.blockingNumber);
+        const blockedId = await resolveIssueNodeId(
+          client,
+          owner,
+          repo,
+          args.blockedNumber,
+        );
+        const blockingId = await resolveIssueNodeId(
+          client,
+          owner,
+          repo,
+          args.blockingNumber,
+        );
 
         const result = await client.mutate<{
           removeBlockedBy: {
@@ -344,8 +425,14 @@ export function registerRelationshipTools(
     "ralph_hero__list_dependencies",
     "List all dependencies (blocking and blocked-by) for a GitHub issue",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.number().describe("Issue number"),
     },
     async (args) => {
@@ -401,7 +488,9 @@ export function registerRelationshipTools(
 
         const issue = result.repository?.issue;
         if (!issue) {
-          return toolError(`Issue #${args.number} not found in ${owner}/${repo}`);
+          return toolError(
+            `Issue #${args.number} not found in ${owner}/${repo}`,
+          );
         }
 
         return toolSuccess({
@@ -441,9 +530,17 @@ export function registerRelationshipTools(
     "ralph_hero__detect_group",
     "Detect the group of related issues by traversing sub-issues and dependencies transitively from a seed issue. Returns all group members in topological order (blockers first). Used by Ralph workflow to discover atomic implementation groups.",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Seed issue number to start group detection from"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      number: z
+        .number()
+        .describe("Seed issue number to start group detection from"),
     },
     async (args) => {
       try {
@@ -466,10 +563,20 @@ export function registerRelationshipTools(
     "ralph_hero__advance_children",
     "Advance all child/sub-issues of a parent to match the parent's new state. Only advances children that are in earlier workflow states. Returns what changed, what was skipped, and any errors.",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.number().describe("Parent issue number"),
-      targetState: z.string().describe("State to advance children to (e.g., 'Research Needed', 'Ready for Plan')"),
+      targetState: z
+        .string()
+        .describe(
+          "State to advance children to (e.g., 'Research Needed', 'Ready for Plan')",
+        ),
     },
     async (args) => {
       try {
@@ -477,8 +584,8 @@ export function registerRelationshipTools(
         if (!isValidState(args.targetState)) {
           return toolError(
             `Unknown target state '${args.targetState}'. ` +
-            `Valid states: ${VALID_STATES.join(", ")}. ` +
-            `Recovery: retry with a valid state name.`
+              `Valid states: ${VALID_STATES.join(", ")}. ` +
+              `Recovery: retry with a valid state name.`,
           );
         }
 
@@ -487,15 +594,24 @@ export function registerRelationshipTools(
         // Need full config for project operations
         const projectNumber = client.config.projectNumber;
         if (!projectNumber) {
-          return toolError("projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)");
+          return toolError(
+            "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)",
+          );
         }
         const projectOwner = resolveProjectOwner(client.config);
         if (!projectOwner) {
-          return toolError("projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)");
+          return toolError(
+            "projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)",
+          );
         }
 
         // Ensure field cache is populated
-        await ensureFieldCacheForRelationships(client, fieldCache, projectOwner, projectNumber);
+        await ensureFieldCacheForRelationships(
+          client,
+          fieldCache,
+          projectOwner,
+          projectNumber,
+        );
 
         // Fetch sub-issues
         const result = await client.query<{
@@ -530,7 +646,9 @@ export function registerRelationshipTools(
 
         const parentIssue = result.repository?.issue;
         if (!parentIssue) {
-          return toolError(`Issue #${args.number} not found in ${owner}/${repo}`);
+          return toolError(
+            `Issue #${args.number} not found in ${owner}/${repo}`,
+          );
         }
 
         const subIssues = parentIssue.subIssues.nodes;
@@ -542,15 +660,27 @@ export function registerRelationshipTools(
           });
         }
 
-        const advanced: Array<{ number: number; fromState: string; toState: string }> = [];
-        const skipped: Array<{ number: number; currentState: string; reason: string }> = [];
+        const advanced: Array<{
+          number: number;
+          fromState: string;
+          toState: string;
+        }> = [];
+        const skipped: Array<{
+          number: number;
+          currentState: string;
+          reason: string;
+        }> = [];
         const errors: Array<{ number: number; error: string }> = [];
 
         for (const child of subIssues) {
           try {
             // Get current workflow state
             const currentState = await getCurrentFieldValueForRelationships(
-              client, fieldCache, owner, repo, child.number,
+              client,
+              fieldCache,
+              owner,
+              repo,
+              child.number,
             );
 
             if (!currentState) {
@@ -567,19 +697,28 @@ export function registerRelationshipTools(
               skipped.push({
                 number: child.number,
                 currentState,
-                reason: currentState === args.targetState
-                  ? "Already at target state"
-                  : "Already at or past target state",
+                reason:
+                  currentState === args.targetState
+                    ? "Already at target state"
+                    : "Already at or past target state",
               });
               continue;
             }
 
             // Advance the child
             const projectItemId = await resolveProjectItemIdForRelationships(
-              client, fieldCache, owner, repo, child.number,
+              client,
+              fieldCache,
+              owner,
+              repo,
+              child.number,
             );
             await updateProjectItemFieldForRelationships(
-              client, fieldCache, projectItemId, "Workflow State", args.targetState,
+              client,
+              fieldCache,
+              projectItemId,
+              "Workflow State",
+              args.targetState,
             );
 
             advanced.push({
@@ -588,7 +727,8 @@ export function registerRelationshipTools(
               toState: args.targetState,
             });
           } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message =
+              error instanceof Error ? error.message : String(error);
             errors.push({
               number: child.number,
               error: `Failed to update: ${message}. Recovery: retry advance_children or update this child manually via update_workflow_state.`,
@@ -646,16 +786,23 @@ async function ensureFieldCacheForRelationships(
 
   for (const ownerType of ["user", "organization"]) {
     try {
-      const result = await client.projectQuery<Record<string, { projectV2: {
-        id: string;
-        fields: {
-          nodes: Array<{
-            id: string;
-            name: string;
-            options?: Array<{ id: string; name: string }>;
-          }>;
-        };
-      } | null }>>(
+      const result = await client.projectQuery<
+        Record<
+          string,
+          {
+            projectV2: {
+              id: string;
+              fields: {
+                nodes: Array<{
+                  id: string;
+                  name: string;
+                  options?: Array<{ id: string; name: string }>;
+                }>;
+              };
+            } | null;
+          }
+        >
+      >(
         QUERY.replace("OWNER_TYPE", ownerType),
         { owner, number: projectNumber },
         { cache: true, cacheTtlMs: 10 * 60 * 1000 },
@@ -688,14 +835,21 @@ async function resolveProjectItemIdForRelationships(
 ): Promise<string> {
   const projectId = fieldCache.getProjectId();
   if (!projectId) {
-    throw new Error("Field cache not populated - cannot resolve project item ID");
+    throw new Error(
+      "Field cache not populated - cannot resolve project item ID",
+    );
   }
 
   const cacheKey = `project-item-id:${owner}/${repo}#${issueNumber}`;
   const cached = client.getCache().get<string>(cacheKey);
   if (cached) return cached;
 
-  const issueNodeId = await resolveIssueNodeId(client, owner, repo, issueNumber);
+  const issueNodeId = await resolveIssueNodeId(
+    client,
+    owner,
+    repo,
+    issueNumber,
+  );
 
   const result = await client.query<{
     node: {
@@ -728,7 +882,7 @@ async function resolveProjectItemIdForRelationships(
   if (!projectItem) {
     throw new Error(
       `Issue #${issueNumber} is not in the project (projectId: ${projectId}). ` +
-      `Add it to the project first.`
+        `Add it to the project first.`,
     );
   }
 
@@ -744,7 +898,11 @@ async function getCurrentFieldValueForRelationships(
   issueNumber: number,
 ): Promise<string | undefined> {
   const projectItemId = await resolveProjectItemIdForRelationships(
-    client, fieldCache, owner, repo, issueNumber,
+    client,
+    fieldCache,
+    owner,
+    repo,
+    issueNumber,
   );
 
   const result = await client.query<{
@@ -777,7 +935,9 @@ async function getCurrentFieldValueForRelationships(
   );
 
   const fieldValue = result.node?.fieldValues?.nodes?.find(
-    (fv) => fv.field?.name === "Workflow State" && fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
+    (fv) =>
+      fv.field?.name === "Workflow State" &&
+      fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fieldValue?.name;
 }
@@ -804,7 +964,7 @@ async function updateProjectItemFieldForRelationships(
     const validOptions = fieldCache.getOptionNames(fieldName);
     throw new Error(
       `Option "${optionName}" not found for field "${fieldName}". ` +
-      `Valid options: ${validOptions.join(", ")}`
+        `Valid options: ${validOptions.join(", ")}`,
     );
   }
 

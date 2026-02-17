@@ -22,11 +22,15 @@ function makeIssue(
   };
 }
 
-function detectSingle(issue: IssueState): ReturnType<typeof detectPipelinePosition> {
+function detectSingle(
+  issue: IssueState,
+): ReturnType<typeof detectPipelinePosition> {
   return detectPipelinePosition([issue], false, issue.number);
 }
 
-function detectGroup(issues: IssueState[]): ReturnType<typeof detectPipelinePosition> {
+function detectGroup(
+  issues: IssueState[],
+): ReturnType<typeof detectPipelinePosition> {
   return detectPipelinePosition(issues, true, issues[0]?.number ?? null);
 }
 
@@ -220,21 +224,34 @@ describe("detectPipelinePosition - remaining phases", () => {
   it("SPLIT has full pipeline remaining", () => {
     const result = detectSingle(makeIssue(1, "Backlog", "M"));
     expect(result.remainingPhases).toEqual([
-      "split", "triage", "research", "plan", "review", "implement", "pr",
+      "split",
+      "triage",
+      "research",
+      "plan",
+      "review",
+      "implement",
+      "pr",
     ]);
   });
 
   it("RESEARCH has research through pr remaining", () => {
     const result = detectSingle(makeIssue(1, "Research Needed"));
     expect(result.remainingPhases).toEqual([
-      "research", "plan", "review", "implement", "pr",
+      "research",
+      "plan",
+      "review",
+      "implement",
+      "pr",
     ]);
   });
 
   it("PLAN has plan through pr remaining", () => {
     const result = detectSingle(makeIssue(1, "Ready for Plan"));
     expect(result.remainingPhases).toEqual([
-      "plan", "review", "implement", "pr",
+      "plan",
+      "review",
+      "implement",
+      "pr",
     ]);
   });
 

@@ -52,7 +52,19 @@ export interface ProjectV2FieldCommon {
 }
 
 export interface ProjectV2Field extends ProjectV2FieldCommon {
-  dataType: "TEXT" | "NUMBER" | "DATE" | "SINGLE_SELECT" | "ITERATION" | "LABELS" | "MILESTONE" | "REPOSITORY" | "REVIEWERS" | "LINKED_PULL_REQUESTS" | "TRACKS" | "TRACKED_BY";
+  dataType:
+    | "TEXT"
+    | "NUMBER"
+    | "DATE"
+    | "SINGLE_SELECT"
+    | "ITERATION"
+    | "LABELS"
+    | "MILESTONE"
+    | "REPOSITORY"
+    | "REVIEWERS"
+    | "LINKED_PULL_REQUESTS"
+    | "TRACKS"
+    | "TRACKED_BY";
 }
 
 export interface ProjectV2SingleSelectField extends ProjectV2FieldCommon {
@@ -135,7 +147,10 @@ export interface PullRequest {
 // Projects V2 - Views
 // ---------------------------------------------------------------------------
 
-export type ProjectV2ViewLayout = "BOARD_LAYOUT" | "TABLE_LAYOUT" | "ROADMAP_LAYOUT";
+export type ProjectV2ViewLayout =
+  | "BOARD_LAYOUT"
+  | "TABLE_LAYOUT"
+  | "ROADMAP_LAYOUT";
 
 export interface ProjectV2View {
   id: string;
@@ -247,14 +262,16 @@ export function toolError(message: string): ToolResult {
 
 export interface GitHubClientConfig {
   token: string;
-  projectToken?: string;  // Separate token for project operations. Falls back to token.
+  projectToken?: string; // Separate token for project operations. Falls back to token.
   owner?: string;
   repo?: string;
   projectNumber?: number;
-  projectOwner?: string;  // Defaults to owner if unset
+  projectOwner?: string; // Defaults to owner if unset
 }
 
-export function resolveProjectOwner(config: GitHubClientConfig): string | undefined {
+export function resolveProjectOwner(
+  config: GitHubClientConfig,
+): string | undefined {
   return config.projectOwner || config.owner;
 }
 
