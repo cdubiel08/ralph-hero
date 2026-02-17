@@ -21,7 +21,7 @@ import {
   VALID_STATES,
   LOCK_STATES,
 } from "../lib/workflow-states.js";
-import { resolveState } from "../lib/state-resolution.js";
+import { StateMachine } from "../lib/state-machine.js";
 import { resolveIssueNodeId } from "../lib/resolve.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
 
@@ -338,6 +338,7 @@ export function registerIssueTools(
   server: McpServer,
   client: GitHubClient,
   fieldCache: FieldOptionCache,
+  stateMachine: StateMachine,
 ): void {
   // -------------------------------------------------------------------------
   // ralph_hero__list_issues
@@ -1064,7 +1065,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__update_issue",
-    "Update a GitHub issue's basic properties (title, body, labels, assignees). Returns: number, title, url. Use update_workflow_state for state changes, update_estimate for estimates, update_priority for priorities.",
+    "Update a GitHub issue's basic properties (title, body, labels, assignees). Returns: number, title, url. Use handoff_ticket for state changes, update_estimate for estimates, update_priority for priorities.",
     {
       owner: z
         .string()
@@ -1170,11 +1171,16 @@ export function registerIssueTools(
   );
 
   // -------------------------------------------------------------------------
-  // ralph_hero__update_workflow_state
+  // ralph_hero__handoff_ticket
   // -------------------------------------------------------------------------
   server.tool(
-    "ralph_hero__update_workflow_state",
-    "Change an issue's Workflow State using semantic intents or direct state names. Returns: number, previousState, newState, command. Semantic intents: __LOCK__ (lock for processing), __COMPLETE__ (mark done), __ESCALATE__ (needs human), __CLOSE__, __CANCEL__. Recovery: if state transition fails, verify the issue is in the project and the state name is valid.",
+    "ralph_hero__handoff_ticket",
+    "Change an issue's Workflow State with validated state machine transitions. " +
+      "Enforces the transition graph: only valid transitions are allowed. " +
+      "Use semantic intents (lock, complete, escalate, close, cancel) or explicit to_state. " +
+      "Posts an audit comment on the issue for every transition. " +
+      "Returns: number, previousState, newState, intent, command, reason, guidance. " +
+      "Recovery: if transition is invalid, the error lists valid transitions from the current state.",
     {
       owner: z
         .string()
@@ -1185,17 +1191,39 @@ export function registerIssueTools(
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.number().describe("Issue number"),
-      state: z
-        .string()
-        .describe(
-          "Target state: semantic intent (__LOCK__, __COMPLETE__, __ESCALATE__, __CLOSE__, __CANCEL__) " +
-            "or direct state name (e.g., 'Research Needed', 'In Progress')",
-        ),
       command: z
+        .enum([
+          "triage",
+          "split",
+          "research",
+          "plan",
+          "review",
+          "impl",
+          "hero",
+        ])
+        .describe(
+          "Ralph command making this transition (e.g., 'research', 'plan', 'impl')",
+        ),
+      intent: z
+        .enum(["lock", "complete", "escalate", "close", "cancel"])
+        .optional()
+        .describe(
+          "Semantic intent. Mutually exclusive with to_state. " +
+            "lock=claim work, complete=finish phase, escalate=needs human, " +
+            "close=mark done, cancel=abandon",
+        ),
+      to_state: z
+        .string()
+        .optional()
+        .describe(
+          "Explicit target state (e.g., 'Research Needed', 'In Progress'). " +
+            "Mutually exclusive with intent.",
+        ),
+      reason: z
         .string()
         .describe(
-          "Ralph command making this transition (e.g., 'ralph_research', 'ralph_plan'). " +
-            "Required for validation and semantic intent resolution.",
+          "Audit trail text explaining why this transition is happening. " +
+            "Posted as a GitHub issue comment.",
         ),
     },
     async (args) => {
@@ -1205,16 +1233,62 @@ export function registerIssueTools(
           args,
         );
 
-        // Resolve semantic intent or validate direct state
-        const { resolvedState, wasIntent, originalState } = resolveState(
-          args.state,
-          args.command,
-        );
+        // Input validation: exactly one of intent or to_state required
+        if (args.intent && args.to_state) {
+          return toolError(
+            `Cannot specify both 'intent' and 'to_state'. Use one or the other. ` +
+              `Recovery: remove one parameter and retry.`,
+          );
+        }
+        if (!args.intent && !args.to_state) {
+          return toolError(
+            `Must specify either 'intent' or 'to_state'. ` +
+              `Recovery: add intent (lock, complete, escalate, close, cancel) ` +
+              `or to_state (e.g., 'Research Needed').`,
+          );
+        }
+
+        // Resolve target state
+        let targetState: string;
+        const normalizedCommand = `ralph_${args.command}`;
+
+        if (args.intent) {
+          const resolved = stateMachine.resolveIntent(
+            args.intent,
+            normalizedCommand,
+          );
+          if (resolved === null) {
+            // Could be ambiguous or unmapped
+            const allowed = stateMachine.isValidOutputForCommand(
+              normalizedCommand,
+              "",
+            )
+              ? ""
+              : "";
+            return toolError(
+              `Intent '${args.intent}' cannot be resolved for command '${args.command}'. ` +
+                `The intent may be ambiguous (multiple output paths) or not mapped for this command. ` +
+                `Recovery: use 'to_state' with an explicit state name instead.`,
+            );
+          }
+          targetState = resolved;
+        } else {
+          targetState = args.to_state!;
+        }
+
+        // Validate target state exists
+        if (!stateMachine.isValidState(targetState)) {
+          return toolError(
+            `Unknown state '${targetState}'. ` +
+              `Valid states: ${Object.keys(stateMachine.getConfig().states).join(", ")}. ` +
+              `Recovery: retry with a valid state name.`,
+          );
+        }
 
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        // Get current state for the response
+        // Fetch current state
         const previousState = await getCurrentFieldValue(
           client,
           fieldCache,
@@ -1224,7 +1298,35 @@ export function registerIssueTools(
           "Workflow State",
         );
 
-        // Resolve project item ID
+        // Validate transition
+        if (previousState) {
+          if (!stateMachine.isValidTransition(previousState, targetState)) {
+            const allowed = stateMachine.getAllowedTransitions(previousState);
+            return toolError(
+              `Invalid transition: '${previousState}' → '${targetState}'. ` +
+                `Valid transitions from '${previousState}': ${allowed.length > 0 ? allowed.join(", ") : "(none — terminal state)"}. ` +
+                `Recovery: retry with one of the valid target states listed above.`,
+            );
+          }
+        }
+
+        // Validate command output
+        if (!stateMachine.isValidOutputForCommand(normalizedCommand, targetState)) {
+          const cmdDef = stateMachine.getConfig().commands[normalizedCommand];
+          const validOutputs = cmdDef
+            ? [
+                ...cmdDef.valid_output_states,
+                ...(cmdDef.lock_state ? [cmdDef.lock_state] : []),
+              ]
+            : [];
+          return toolError(
+            `State '${targetState}' is not a valid output for command '${args.command}'. ` +
+              `Valid outputs for '${args.command}': ${validOutputs.join(", ")}. ` +
+              `Recovery: retry with one of the valid output states.`,
+          );
+        }
+
+        // Execute transition
         const projectItemId = await resolveProjectItemId(
           client,
           fieldCache,
@@ -1233,30 +1335,66 @@ export function registerIssueTools(
           args.number,
         );
 
-        // Update the field with the resolved state
         await updateProjectItemField(
           client,
           fieldCache,
           projectItemId,
           "Workflow State",
-          resolvedState,
+          targetState,
         );
 
-        const result: Record<string, unknown> = {
+        // Post audit comment
+        const intentStr = args.intent ? ` (intent: ${args.intent})` : "";
+        const auditBody =
+          `**State transition**: ${previousState || "(unknown)"} → ${targetState}${intentStr}\n` +
+          `**Command**: ralph_${args.command}\n` +
+          `**Reason**: ${args.reason}`;
+
+        const issueId = await resolveIssueNodeId(
+          client,
+          owner,
+          repo,
+          args.number,
+        );
+
+        await client.mutate(
+          `mutation($subjectId: ID!, $body: String!) {
+            addComment(input: {
+              subjectId: $subjectId,
+              body: $body
+            }) {
+              commentEdge {
+                node { id }
+              }
+            }
+          }`,
+          { subjectId: issueId, body: auditBody },
+        );
+
+        // Return structured guidance
+        const allowedNextTransitions =
+          stateMachine.getAllowedTransitions(targetState);
+        const expectedByCommands =
+          stateMachine.getExpectedByCommands(targetState);
+
+        return toolSuccess({
           number: args.number,
           previousState: previousState || "(unknown)",
-          newState: resolvedState,
+          newState: targetState,
+          intent: args.intent || null,
           command: args.command,
-        };
-
-        if (wasIntent) {
-          result.resolvedFrom = originalState;
-        }
-
-        return toolSuccess(result);
+          reason: args.reason,
+          guidance: {
+            isLockState: stateMachine.isLockState(targetState),
+            isTerminal: stateMachine.isTerminal(targetState),
+            requiresHumanAction: stateMachine.requiresHumanAction(targetState),
+            allowedNextTransitions,
+            expectedByCommands,
+          },
+        });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to update workflow state: ${message}`);
+        return toolError(`Failed to handoff ticket: ${message}`);
       }
     },
   );

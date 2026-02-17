@@ -240,17 +240,17 @@ to:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` compiles with no type errors
-- [ ] `npm test` passes (existing `state-resolution.test.ts` tests will need updates — see Phase 4)
-- [ ] `update_workflow_state` no longer appears in MCP tool list
-- [ ] `handoff_ticket` with `intent: "complete", command: "research"` returns `newState: "Ready for Plan"`
-- [ ] `handoff_ticket` with invalid transition returns error with allowed transitions
-- [ ] `handoff_ticket` with both `intent` and `to_state` returns error
-- [ ] `handoff_ticket` with neither `intent` nor `to_state` returns error
+- [x] `npm run build` compiles with no type errors
+- [x] `npm test` passes (existing `state-resolution.test.ts` tests will need updates — see Phase 4)
+- [x] `update_workflow_state` no longer appears in MCP tool list
+- [x] `handoff_ticket` with `intent: "complete", command: "research"` returns `newState: "Ready for Plan"`
+- [x] `handoff_ticket` with invalid transition returns error with allowed transitions
+- [x] `handoff_ticket` with both `intent` and `to_state` returns error
+- [x] `handoff_ticket` with neither `intent` nor `to_state` returns error
 
 #### Manual Verification
-- [ ] GitHub issue comment is created on successful transition
-- [ ] Comment includes previous state, new state, command, and reason
+- [x] GitHub issue comment is created on successful transition
+- [x] Comment includes previous state, new state, command, and reason
 
 **Depends on**: Phase 1 (`StateMachine` class, `resolveIssueNodeId` utility)
 

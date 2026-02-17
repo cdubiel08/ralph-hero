@@ -698,7 +698,7 @@ export function registerRelationshipTools(
               error instanceof Error ? error.message : String(error);
             errors.push({
               number: child.number,
-              error: `Failed to update: ${message}. Recovery: retry advance_children or update this child manually via update_workflow_state.`,
+              error: `Failed to update: ${message}. Recovery: retry advance_children or update this child manually via handoff_ticket.`,
             });
           }
         }

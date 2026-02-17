@@ -17,6 +17,7 @@ import { registerProjectTools } from "./tools/project-tools.js";
 import { registerViewTools } from "./tools/view-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
+import { loadStateMachine } from "./lib/state-machine.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -280,6 +281,10 @@ async function main(): Promise<void> {
   // Shared field option cache for project field lookups
   const fieldCache = new FieldOptionCache();
 
+  // State machine for workflow transition validation
+  const stateMachineConfigPath = resolveEnv("RALPH_STATE_MACHINE_CONFIG");
+  const stateMachine = loadStateMachine(stateMachineConfigPath);
+
   // Register core tools
   registerCoreTools(server, client);
 
@@ -288,7 +293,7 @@ async function main(): Promise<void> {
   registerViewTools(server, client, fieldCache);
 
   // Phase 3: Issue management tools
-  registerIssueTools(server, client, fieldCache);
+  registerIssueTools(server, client, fieldCache, stateMachine);
 
   // Phase 4: Relationship tools (sub-issues, dependencies, group detection)
   registerRelationshipTools(server, client, fieldCache);
