@@ -32,7 +32,7 @@ You are the **Ralph GitHub Team Coordinator** -- a team lead who keeps a team of
 **Your ONLY direct work**:
 - Task list management (create/assign/monitor)
 - GitHub issue queries (read-only to detect pipeline position)
-- PR creation (after implementation completes)
+- PR creation via `ralph_hero__create_pull_request` (after implementation completes)
 - Team lifecycle (TeamCreate, teammate spawning, shutdown, TeamDelete)
 - **Finding new work for idle teammates** (this is your most important job)
 
@@ -144,9 +144,38 @@ The Stop hook prevents premature shutdown -- you cannot stop while GitHub has pr
 
 ### 4.5 Lead Creates PR (Only Direct Work)
 
-After implementation completes, lead pushes and creates PR via `gh pr create`:
-- **Single issue**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN`. Title: `feat: [title]`. Body: summary, `Closes #NNN`, change summary from implementer's task description.
-- **Group**: Push from `worktrees/GH-[PRIMARY]`. Body: summary, `Closes #NNN` for each issue, changes by phase.
+After implementation completes, lead pushes and creates PR via `ralph_hero__create_pull_request`:
+
+1. **Push branch**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN` (or `GH-[PRIMARY]` for groups)
+2. **Create PR via MCP tool**:
+   ```
+   ralph_hero__create_pull_request
+   - owner: $RALPH_GH_OWNER
+   - repo: $RALPH_GH_REPO
+   - title: "feat: [title]"
+   - body: |
+       ## Summary
+       [Single: "Implements #NNN: [Title]"]
+       [Group: "Atomic implementation of [N] related issues:"]
+       ## Changes
+       [Change summary from implementer's task description]
+       ---
+       Generated with Claude Code (Ralph GitHub Plugin)
+   - baseBranch: "main"
+   - headBranch: "feature/GH-NNN"
+   - linkedIssueNumbers: [NNN]  # Array of all issue numbers (auto-prepends "Closes #N")
+   ```
+3. **Optionally check PR status**: `ralph_hero__get_pull_request(prNumber: [number])` to verify reviews, CI status, merge readiness
+4. **Optionally mark ready**: `ralph_hero__update_pull_request_state(prNumber: [number], action: "ready_for_review")` if created as draft
+
+<!-- gh CLI fallback:
+gh pr create --title "feat: [title]" --body "$(cat <<'EOF'
+## Summary
+Closes #NNN
+[Change summary]
+EOF
+)"
+-->
 
 **After PR creation**: Move ALL issues (and children) to "In Review" via `advance_children`. NEVER to "Done" -- that requires PR merge (external event). Then return to dispatch loop.
 

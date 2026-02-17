@@ -63,10 +63,12 @@ Then STOP.
 After fetching the issue, check its current state:
 
 **If issue workflow state == "In Review":**
-1. Scan issue comments for a `github.com` PR URL
-2. Run: `gh pr view [number] --json state,comments,reviews`
+1. Scan issue comments for a PR number (from `github.com` PR URL)
+2. Call `ralph_hero__get_pull_request(prNumber: [number])` to get PR state, reviews, and checks
 3. If open PR exists with review comments -> **ADDRESS MODE** (jump to Step A1)
 4. If no PR found -> Error: "Issue is In Review but no PR found." STOP.
+
+<!-- gh CLI fallback: gh pr view [number] --json state,comments,reviews -->
 
 **Otherwise** -> Continue normal implementation flow (Step 2).
 
@@ -205,31 +207,41 @@ Query siblings via `ralph_hero__list_sub_issues` on the epic. For each sibling: 
 
 **9.3. Create PR** (single template, adapt sections by context)
 
-```bash
+```
+ralph_hero__create_pull_request
+- owner: $RALPH_GH_OWNER
+- repo: $RALPH_GH_REPO
+- title: "[Title]"
+- body: |
+    ## Summary
+    [Single: "Implements #NNN: [Title]"]
+    [Group/Epic: "Atomic implementation of [N] related issues:"]
+
+    ## Changes
+    [Single: bullet list of changes]
+    [Group/Epic: subsection per issue with change summary from plan]
+
+    ## Test Plan
+    [From plan document - automated verification + integration testing]
+
+    [If epic, add:]
+    ## Epic
+    - Parent: #[EPIC_NUMBER]
+
+    ---
+    Generated with Claude Code (Ralph GitHub Plugin)
+- baseBranch: "main"
+- headBranch: "feature/GH-[WORKTREE_ID]"
+- draft: false
+- linkedIssueNumbers: [NNN]  # Array of all issue numbers (auto-prepends "Closes #N")
+```
+
+<!-- gh CLI fallback:
 gh pr create --title "[Title]" --body "$(cat <<'EOF'
-## Summary
-[Single: "Implements #NNN: [Title]"]
-[Group/Epic: "Atomic implementation of [N] related issues:"]
-
-[For each issue:]
-- Closes #NNN
-
-## Changes
-[Single: bullet list of changes]
-[Group/Epic: subsection per issue with change summary from plan]
-
-## Test Plan
-[From plan document - automated verification + integration testing]
-
-[If epic, add:]
-## Epic
-- Parent: #[EPIC_NUMBER]
-
----
-Generated with Claude Code (Ralph GitHub Plugin)
+[body content]
 EOF
 )"
-```
+-->
 
 ### Step 9.5: PR Gate
 
@@ -285,7 +297,9 @@ Run ./scripts/remove-worktree.sh [WORKTREE_ID] after PR is merged.
 
 Activated when issue is "In Review" with an open PR (detected in Step 1.5).
 
-**A1. Gather feedback**: `gh pr view [number] --json reviews,comments` + `gh api repos/$RALPH_GH_OWNER/$RALPH_GH_REPO/pulls/[number]/comments`. Skip resolved/outdated comments.
+**A1. Gather feedback**: Call `ralph_hero__get_pull_request(prNumber: [number])` for reviews, checks, and review requests. For line-level PR comments, use `gh api repos/$RALPH_GH_OWNER/$RALPH_GH_REPO/pulls/[number]/comments`. Skip resolved/outdated comments.
+
+<!-- gh CLI fallback: gh pr view [number] --json reviews,comments -->
 
 **A2. Classify** each comment:
 - **MUST_FIX**: Explicit change requests
