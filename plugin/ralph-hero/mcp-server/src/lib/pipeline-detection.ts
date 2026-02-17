@@ -34,6 +34,7 @@ export interface ConvergenceInfo {
   required: boolean;
   met: boolean;
   blocking: Array<{ number: number; state: string }>;
+  recommendation: "proceed" | "wait" | "escalate";
 }
 
 export interface PipelinePosition {
@@ -100,11 +101,18 @@ export function detectPipelinePosition(
   groupPrimary: number | null,
 ): PipelinePosition {
   if (issues.length === 0) {
-    return buildResult("TRIAGE", "No issues provided", issues, isGroup, groupPrimary, {
-      required: false,
-      met: true,
-      blocking: [],
-    });
+    return buildResult(
+      "TRIAGE",
+      "No issues provided",
+      issues,
+      isGroup,
+      groupPrimary,
+      {
+        required: false,
+        met: true,
+        blocking: [],
+      },
+    );
   }
 
   // Step 1: Check for oversized issues needing split
@@ -138,11 +146,21 @@ export function detectPipelinePosition(
   }
 
   // Categorize issues by state
-  const needsResearch = issues.filter((i) => i.workflowState === "Research Needed");
-  const inResearch = issues.filter((i) => i.workflowState === "Research in Progress");
-  const readyForPlan = issues.filter((i) => i.workflowState === "Ready for Plan");
-  const planInProgress = issues.filter((i) => i.workflowState === "Plan in Progress");
-  const planInReview = issues.filter((i) => i.workflowState === "Plan in Review");
+  const needsResearch = issues.filter(
+    (i) => i.workflowState === "Research Needed",
+  );
+  const inResearch = issues.filter(
+    (i) => i.workflowState === "Research in Progress",
+  );
+  const readyForPlan = issues.filter(
+    (i) => i.workflowState === "Ready for Plan",
+  );
+  const planInProgress = issues.filter(
+    (i) => i.workflowState === "Plan in Progress",
+  );
+  const planInReview = issues.filter(
+    (i) => i.workflowState === "Plan in Review",
+  );
   const inProgress = issues.filter((i) => i.workflowState === "In Progress");
   const inReview = issues.filter((i) => i.workflowState === "In Review");
   const done = issues.filter((i) => i.workflowState === "Done");
@@ -152,12 +170,18 @@ export function detectPipelinePosition(
 
   // Step 3: Any issues needing or in research -> RESEARCH
   if (needsResearch.length > 0 || inResearch.length > 0) {
-    const convergence: ConvergenceInfo = {
+    const convergence = {
       required: isGroup,
-      met: false,
+      met: false as const,
       blocking: [
-        ...needsResearch.map((i) => ({ number: i.number, state: i.workflowState })),
-        ...inResearch.map((i) => ({ number: i.number, state: i.workflowState })),
+        ...needsResearch.map((i) => ({
+          number: i.number,
+          state: i.workflowState,
+        })),
+        ...inResearch.map((i) => ({
+          number: i.number,
+          state: i.workflowState,
+        })),
       ],
     };
     return buildResult(
@@ -308,14 +332,24 @@ function buildResult(
   issues: IssueState[],
   isGroup: boolean,
   groupPrimary: number | null,
-  convergence: ConvergenceInfo,
+  convergence: Omit<ConvergenceInfo, "recommendation">,
 ): PipelinePosition {
+  // Derive recommendation from convergence state
+  let recommendation: ConvergenceInfo["recommendation"];
+  if (convergence.met) {
+    recommendation = "proceed";
+  } else if (convergence.blocking.some((b) => b.state === "Human Needed")) {
+    recommendation = "escalate";
+  } else {
+    recommendation = "wait";
+  }
+
   return {
     phase,
     reason,
     remainingPhases: REMAINING_PHASES[phase],
     issues,
-    convergence,
+    convergence: { ...convergence, recommendation },
     isGroup,
     groupPrimary,
   };

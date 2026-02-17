@@ -49,6 +49,10 @@ TaskUpdate(
 **NOTE**: TaskUpdate `description` REPLACES the original (does not append). Always include the ticket ID in your completion description since the original task context is overwritten.
 
 Then immediately run `TaskList()` to claim next available research task.
+If no research tasks are available, hand off to the next pipeline stage per
+[shared/conventions.md](../skills/shared/conventions.md#pipeline-handoff-protocol):
+read the team config, find the `ralph-planner` teammate, and SendMessage them
+to check TaskList.
 
 ## When to Use SendMessage
 

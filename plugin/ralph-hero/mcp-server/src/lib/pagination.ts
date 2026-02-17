@@ -29,7 +29,11 @@ function getNestedValue(obj: unknown, path: string): unknown {
 /**
  * Set a nested value on an object using a dot-separated path.
  */
-function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): void {
+function setNestedValue(
+  obj: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): void {
   const parts = path.split(".");
   let current: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
@@ -59,7 +63,10 @@ export interface PaginateOptions {
  * @returns All accumulated nodes from all pages
  */
 export async function paginateConnection<T>(
-  executeQuery: (query: string, variables: Record<string, unknown>) => Promise<unknown>,
+  executeQuery: (
+    query: string,
+    variables: Record<string, unknown>,
+  ) => Promise<unknown>,
   query: string,
   variables: Record<string, unknown>,
   connectionPath: string,
@@ -81,15 +88,17 @@ export async function paginateConnection<T>(
 
     const response = await executeQuery(query, queryVars);
 
-    const connection = getNestedValue(response, connectionPath) as {
-      nodes: T[];
-      pageInfo: PageInfo;
-      totalCount?: number;
-    } | undefined;
+    const connection = getNestedValue(response, connectionPath) as
+      | {
+          nodes: T[];
+          pageInfo: PageInfo;
+          totalCount?: number;
+        }
+      | undefined;
 
     if (!connection) {
       throw new Error(
-        `Connection not found at path "${connectionPath}" in GraphQL response`
+        `Connection not found at path "${connectionPath}" in GraphQL response`,
       );
     }
 

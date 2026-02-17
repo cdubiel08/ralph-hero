@@ -53,7 +53,7 @@ export class RateLimiter {
         const waitMs = Math.min(msUntilReset, 60_000); // Wait at most 60s
         console.error(
           `[rate-limiter] Rate limit critically low (${this.remaining} remaining). ` +
-          `Waiting ${Math.ceil(waitMs / 1000)}s until reset at ${this.resetAt.toISOString()}`
+            `Waiting ${Math.ceil(waitMs / 1000)}s until reset at ${this.resetAt.toISOString()}`,
         );
         await this.sleep(waitMs);
       }
@@ -61,7 +61,7 @@ export class RateLimiter {
       // Warning zone: log but don't block
       console.error(
         `[rate-limiter] Rate limit approaching threshold (${this.remaining} remaining). ` +
-        `Resets at ${this.resetAt.toISOString()}`
+          `Resets at ${this.resetAt.toISOString()}`,
       );
     }
   }
@@ -69,7 +69,12 @@ export class RateLimiter {
   /**
    * Get current rate limit status.
    */
-  getStatus(): { remaining: number; resetAt: Date; isLow: boolean; isCritical: boolean } {
+  getStatus(): {
+    remaining: number;
+    resetAt: Date;
+    isLow: boolean;
+    isCritical: boolean;
+  } {
     return {
       remaining: this.remaining,
       resetAt: this.resetAt,

@@ -81,7 +81,9 @@ export class SessionCache {
    */
   static queryKey(query: string, variables?: Record<string, unknown>): string {
     const normalized = query.replace(/\s+/g, " ").trim();
-    const varsKey = variables ? JSON.stringify(variables, Object.keys(variables).sort()) : "";
+    const varsKey = variables
+      ? JSON.stringify(variables, Object.keys(variables).sort())
+      : "";
     return `query:${normalized}:${varsKey}`;
   }
 }

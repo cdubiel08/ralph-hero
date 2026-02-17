@@ -3,7 +3,9 @@ import { createGitHubClient } from "../github-client.js";
 
 // Mock @octokit/graphql to avoid real API calls
 vi.mock("@octokit/graphql", () => {
-  const mockGraphql = vi.fn().mockResolvedValue({ viewer: { login: "test-user" } });
+  const mockGraphql = vi
+    .fn()
+    .mockResolvedValue({ viewer: { login: "test-user" } });
   mockGraphql.defaults = vi.fn().mockReturnValue(mockGraphql);
   return { graphql: mockGraphql };
 });

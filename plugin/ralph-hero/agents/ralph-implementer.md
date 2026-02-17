@@ -55,6 +55,9 @@ TaskUpdate(
 **DO NOT push to remote** -- the lead handles pushing and PR creation.
 
 Then immediately run `TaskList()` to claim next available implementation task.
+If no implementation tasks are available, notify the lead per
+[shared/conventions.md](../skills/shared/conventions.md#pipeline-handoff-protocol):
+SendMessage `team-lead` that implementation is complete and PR creation may be needed.
 
 ## When to Use SendMessage
 

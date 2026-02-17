@@ -30,8 +30,16 @@ export function registerViewTools(
     "ralph_hero__list_views",
     "List all views for a GitHub Project V2",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      number: z.number().optional().describe("Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      number: z
+        .number()
+        .optional()
+        .describe(
+          "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
+        ),
     },
     async (args) => {
       try {
@@ -48,7 +56,9 @@ export function registerViewTools(
         const views = await fetchViews(client, owner, projectNumber);
 
         if (!views) {
-          return toolError(`Project #${projectNumber} not found for owner "${owner}"`);
+          return toolError(
+            `Project #${projectNumber} not found for owner "${owner}"`,
+          );
         }
 
         return toolSuccess({
@@ -74,14 +84,41 @@ export function registerViewTools(
     "ralph_hero__update_field_options",
     "Update a single-select field's options (names, colors, descriptions). Overwrites ALL existing options — include unchanged options to preserve them.",
     {
-      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      number: z.number().optional().describe("Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var"),
-      fieldName: z.string().describe("Name of the single-select field to update (e.g., 'Workflow State', 'Priority', 'Estimate')"),
-      options: z.array(z.object({
-        name: z.string().describe("Option name"),
-        color: z.enum(["GRAY", "BLUE", "GREEN", "YELLOW", "ORANGE", "RED", "PINK", "PURPLE"]).describe("Display color"),
-        description: z.string().describe("Description text"),
-      })).describe("Complete list of options (replaces all existing options)"),
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      number: z
+        .number()
+        .optional()
+        .describe(
+          "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
+        ),
+      fieldName: z
+        .string()
+        .describe(
+          "Name of the single-select field to update (e.g., 'Workflow State', 'Priority', 'Estimate')",
+        ),
+      options: z
+        .array(
+          z.object({
+            name: z.string().describe("Option name"),
+            color: z
+              .enum([
+                "GRAY",
+                "BLUE",
+                "GREEN",
+                "YELLOW",
+                "ORANGE",
+                "RED",
+                "PINK",
+                "PURPLE",
+              ])
+              .describe("Display color"),
+            description: z.string().describe("Description text"),
+          }),
+        )
+        .describe("Complete list of options (replaces all existing options)"),
     },
     async (args) => {
       try {
@@ -100,14 +137,21 @@ export function registerViewTools(
 
         const fieldId = fieldCache.getFieldId(args.fieldName);
         if (!fieldId) {
-          return toolError(`Field "${args.fieldName}" not found. Available fields: ${fieldCache.getFieldNames().join(", ")}`);
+          return toolError(
+            `Field "${args.fieldName}" not found. Available fields: ${fieldCache.getFieldNames().join(", ")}`,
+          );
         }
 
         const result = await client.projectMutate<{
           updateProjectV2Field: {
             projectV2Field: {
               name: string;
-              options?: Array<{ id: string; name: string; color: string; description: string }>;
+              options?: Array<{
+                id: string;
+                name: string;
+                color: string;
+                description: string;
+              }>;
             };
           };
         }>(
@@ -199,10 +243,23 @@ async function ensureFieldCache(
 
   for (const ownerType of ["user", "organization"]) {
     try {
-      const result = await client.projectQuery<Record<string, { projectV2: {
-        id: string;
-        fields: { nodes: Array<{ id: string; name: string; options?: Array<{ id: string; name: string }> }> };
-      } | null }>>(
+      const result = await client.projectQuery<
+        Record<
+          string,
+          {
+            projectV2: {
+              id: string;
+              fields: {
+                nodes: Array<{
+                  id: string;
+                  name: string;
+                  options?: Array<{ id: string; name: string }>;
+                }>;
+              };
+            } | null;
+          }
+        >
+      >(
         QUERY.replace("OWNER_TYPE", ownerType),
         { owner, number: projectNumber },
         { cache: true },
@@ -212,7 +269,11 @@ async function ensureFieldCache(
       if (project) {
         fieldCache.populate(
           project.id,
-          project.fields.nodes.map((f) => ({ id: f.id, name: f.name, options: f.options })),
+          project.fields.nodes.map((f) => ({
+            id: f.id,
+            name: f.name,
+            options: f.options,
+          })),
         );
         return;
       }

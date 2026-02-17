@@ -10,12 +10,12 @@
 // undefined (missing key) means the intent isn't mapped for that command
 
 const SEMANTIC_INTENTS: Record<string, Record<string, string | null>> = {
-  "__LOCK__": {
+  __LOCK__: {
     ralph_research: "Research in Progress",
     ralph_plan: "Plan in Progress",
     ralph_impl: "In Progress",
   },
-  "__COMPLETE__": {
+  __COMPLETE__: {
     ralph_triage: null, // multi-path: caller must use direct state
     ralph_split: "Backlog",
     ralph_research: "Ready for Plan",
@@ -23,15 +23,21 @@ const SEMANTIC_INTENTS: Record<string, Record<string, string | null>> = {
     ralph_impl: "In Review",
     ralph_review: "In Progress",
   },
-  "__ESCALATE__": { "*": "Human Needed" },
-  "__CLOSE__": { "*": "Done" },
-  "__CANCEL__": { "*": "Canceled" },
+  __ESCALATE__: { "*": "Human Needed" },
+  __CLOSE__: { "*": "Done" },
+  __CANCEL__: { "*": "Canceled" },
 };
 
 // --- Per-command allowed output states (valid_output_states ∪ {lock_state}) ---
 
 const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
-  ralph_triage: ["Research Needed", "Ready for Plan", "Done", "Canceled", "Human Needed"],
+  ralph_triage: [
+    "Research Needed",
+    "Ready for Plan",
+    "Done",
+    "Canceled",
+    "Human Needed",
+  ],
   ralph_split: ["Backlog"],
   ralph_research: ["Research in Progress", "Ready for Plan", "Human Needed"],
   ralph_plan: ["Plan in Progress", "Plan in Review", "Human Needed"],
@@ -71,8 +77,8 @@ function resolveState(state: string, rawCommand: string): ResolutionResult {
   if (!COMMAND_ALLOWED_STATES[command]) {
     throw new Error(
       `Unknown command "${rawCommand}". Valid commands: ${VALID_COMMANDS.join(", ")}. ` +
-      `Recovery: retry with the correct ralph_* command name. ` +
-      `If you passed a bare name like "${rawCommand}", use "ralph_${rawCommand}".`
+        `Recovery: retry with the correct ralph_* command name. ` +
+        `If you passed a bare name like "${rawCommand}", use "ralph_${rawCommand}".`,
     );
   }
 
@@ -83,16 +89,19 @@ function resolveState(state: string, rawCommand: string): ResolutionResult {
   }
 }
 
-function resolveSemanticIntent(intent: string, command: string): ResolutionResult {
+function resolveSemanticIntent(
+  intent: string,
+  command: string,
+): ResolutionResult {
   const intentMapping = SEMANTIC_INTENTS[intent];
 
   // Unknown intent
   if (!intentMapping) {
     throw new Error(
       `Unknown semantic intent "${intent}". ` +
-      `Valid intents: __LOCK__ (claim work), __COMPLETE__ (finish work), ` +
-      `__ESCALATE__ (needs human), __CLOSE__ (mark done), __CANCEL__ (abandon). ` +
-      `Recovery: retry with one of these intents, or use a direct state name.`
+        `Valid intents: __LOCK__ (claim work), __COMPLETE__ (finish work), ` +
+        `__ESCALATE__ (needs human), __CLOSE__ (mark done), __CANCEL__ (abandon). ` +
+        `Recovery: retry with one of these intents, or use a direct state name.`,
     );
   }
 
@@ -119,9 +128,9 @@ function resolveSemanticIntent(intent: string, command: string): ResolutionResul
     const allowedStates = COMMAND_ALLOWED_STATES[command].join(", ");
     throw new Error(
       `Intent ${intent} is not valid for ${command}. ` +
-      `Commands supporting ${intent}: ${supported || "none"}. ` +
-      `Recovery: for ${command}, use a direct state name instead: ${allowedStates}. ` +
-      `Or use __ESCALATE__ to escalate to human.`
+        `Commands supporting ${intent}: ${supported || "none"}. ` +
+        `Recovery: for ${command}, use a direct state name instead: ${allowedStates}. ` +
+        `Or use __ESCALATE__ to escalate to human.`,
     );
   }
 
@@ -130,7 +139,7 @@ function resolveSemanticIntent(intent: string, command: string): ResolutionResul
     const allowedStates = COMMAND_ALLOWED_STATES[command].join(", ");
     throw new Error(
       `Intent ${intent} is ambiguous for ${command} (multiple output paths). ` +
-      `Recovery: use a direct state name instead: ${allowedStates}.`
+        `Recovery: use a direct state name instead: ${allowedStates}.`,
     );
   }
 
@@ -154,14 +163,15 @@ function validateDirectState(state: string, command: string): ResolutionResult {
         recoveryIntents.push(`${intent} → ${resolved}`);
       }
     }
-    const recoveryStr = recoveryIntents.length > 0
-      ? ` Available semantic intents for ${command}: ${recoveryIntents.join(", ")}.`
-      : "";
+    const recoveryStr =
+      recoveryIntents.length > 0
+        ? ` Available semantic intents for ${command}: ${recoveryIntents.join(", ")}.`
+        : "";
 
     throw new Error(
       `State "${state}" is not a valid output for ${command}. ` +
-      `Valid direct states for ${command}: ${allowed.join(", ")}. ` +
-      `Recovery: retry with one of the valid states listed above.${recoveryStr}`
+        `Valid direct states for ${command}: ${allowed.join(", ")}. ` +
+        `Recovery: retry with one of the valid states listed above.${recoveryStr}`,
     );
   }
 
