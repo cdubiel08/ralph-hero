@@ -32,6 +32,10 @@ import {
   resolveConfig,
   resolveFullConfig,
 } from "../lib/helpers.js";
+import {
+  extractSearchKeywords,
+  scoreCandidates,
+} from "../lib/similarity.js";
 
 // ---------------------------------------------------------------------------
 // Register issue tools
@@ -1130,6 +1134,197 @@ export function registerIssueTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to create comment: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__find_duplicates
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__find_duplicates",
+    "Find potential duplicate issues using keyword search + title similarity scoring. Returns ranked candidates above a similarity threshold. Used during triage to detect duplicates before research. Recovery: if no candidates found, the issue is likely unique.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to env var"),
+      number: z.number().describe("Issue number to check for duplicates"),
+      threshold: z
+        .number()
+        .optional()
+        .default(0.3)
+        .describe("Minimum title similarity score (0.0-1.0, default 0.3)"),
+      maxCandidates: z
+        .number()
+        .optional()
+        .default(10)
+        .describe("Maximum candidates to return (default 10)"),
+      includeClosed: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Include closed issues in search (default false)"),
+    },
+    async (args) => {
+      try {
+        const { owner, repo } = resolveConfig(client, args);
+
+        // Fetch target issue
+        const targetResult = await client.query<{
+          repository: {
+            issue: {
+              number: number;
+              title: string;
+              body: string;
+            } | null;
+          } | null;
+        }>(
+          `query($owner: String!, $repo: String!, $number: Int!) {
+            repository(owner: $owner, name: $repo) {
+              issue(number: $number) {
+                number title body
+              }
+            }
+          }`,
+          { owner, repo, number: args.number },
+        );
+
+        const targetIssue = targetResult.repository?.issue;
+        if (!targetIssue) {
+          return toolError(
+            `Issue #${args.number} not found in ${owner}/${repo}`,
+          );
+        }
+
+        // Extract search keywords
+        const keywords = extractSearchKeywords(
+          targetIssue.title,
+          targetIssue.body,
+        );
+
+        if (!keywords.trim()) {
+          return toolSuccess({
+            issue: {
+              number: targetIssue.number,
+              title: targetIssue.title,
+            },
+            candidates: [],
+            candidateCount: 0,
+            searchQuery: "(no keywords extracted)",
+          });
+        }
+
+        // Build GitHub search query
+        const stateFilter = args.includeClosed ? "" : "is:open";
+        const searchQuery = `repo:${owner}/${repo} is:issue ${stateFilter} in:title ${keywords}`.trim();
+
+        // Execute GitHub search
+        const searchResult = await client.query<{
+          search: {
+            issueCount: number;
+            nodes: Array<{
+              number: number;
+              title: string;
+              url: string;
+              state: string;
+              labels: { nodes: Array<{ name: string }> };
+              projectItems: {
+                nodes: Array<{
+                  fieldValues: {
+                    nodes: Array<{
+                      __typename?: string;
+                      name?: string;
+                      field?: { name: string };
+                    }>;
+                  };
+                }>;
+              };
+            }>;
+          };
+        }>(
+          `query($searchQuery: String!) {
+            search(query: $searchQuery, type: ISSUE, first: 50) {
+              issueCount
+              nodes {
+                ... on Issue {
+                  number
+                  title
+                  url
+                  state
+                  labels(first: 5) { nodes { name } }
+                  projectItems(first: 5) {
+                    nodes {
+                      fieldValues(first: 10) {
+                        nodes {
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            __typename name
+                            field { ... on ProjectV2FieldCommon { name } }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { searchQuery },
+        );
+
+        const candidates = searchResult.search.nodes.filter(
+          (n) => n.number !== undefined,
+        );
+
+        // Score and filter candidates
+        const scored = scoreCandidates(
+          targetIssue.title,
+          args.number,
+          candidates,
+          args.threshold,
+          args.maxCandidates,
+        );
+
+        // Extract workflow state from project field values
+        const rankedCandidates = scored.map((c) => {
+          let workflowState: string | null = null;
+          const projectItem = c.projectItems?.nodes?.[0];
+          if (projectItem) {
+            const wsField = projectItem.fieldValues.nodes.find(
+              (fv) =>
+                fv.field?.name === "Workflow State" &&
+                fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
+            );
+            workflowState = wsField?.name ?? null;
+          }
+
+          return {
+            number: c.number,
+            title: c.title,
+            url: c.url,
+            state: c.state,
+            workflowState,
+            similarity: c.score,
+            labels: c.labels.nodes.map((l) => l.name),
+          };
+        });
+
+        return toolSuccess({
+          issue: {
+            number: targetIssue.number,
+            title: targetIssue.title,
+          },
+          candidates: rankedCandidates,
+          candidateCount: rankedCandidates.length,
+          searchQuery,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to find duplicates: ${message}`);
       }
     },
   );
