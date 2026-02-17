@@ -10,7 +10,8 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import type { FieldOptionCache } from "../lib/cache.js";
 import { paginateConnection } from "../lib/pagination.js";
-import { toolSuccess, toolError } from "../types.js";
+import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+import { resolveState } from "../lib/state-resolution.js";
 
 // ---------------------------------------------------------------------------
 // Config resolution (same pattern as issue-tools.ts, relationship-tools.ts)
@@ -172,13 +173,246 @@ export function summarizeChecks(
 }
 
 // ---------------------------------------------------------------------------
+// Project field helpers (duplicated from issue-tools.ts)
+// TODO: Replace with import from lib/helpers.ts after #21 merges
+// ---------------------------------------------------------------------------
+
+interface ProjectCacheResponse {
+  id: string;
+  fields: {
+    nodes: Array<{
+      id: string;
+      name: string;
+      dataType: string;
+      options?: Array<{ id: string; name: string }>;
+    }>;
+  };
+}
+
+async function fetchProjectForCache(
+  client: GitHubClient,
+  owner: string,
+  number: number,
+): Promise<ProjectCacheResponse | null> {
+  const QUERY = `query($owner: String!, $number: Int!) {
+    OWNER_TYPE(login: $owner) {
+      projectV2(number: $number) {
+        id
+        fields(first: 50) {
+          nodes {
+            ... on ProjectV2FieldCommon { id name dataType }
+            ... on ProjectV2SingleSelectField { id name dataType options { id name } }
+          }
+        }
+      }
+    }
+  }`;
+
+  for (const ownerType of ["user", "organization"]) {
+    try {
+      const result = await client.projectQuery<
+        Record<string, { projectV2: ProjectCacheResponse | null }>
+      >(
+        QUERY.replace("OWNER_TYPE", ownerType),
+        { owner, number },
+        { cache: true, cacheTtlMs: 10 * 60 * 1000 },
+      );
+      const project = result[ownerType]?.projectV2;
+      if (project) return project;
+    } catch {
+      // Try next owner type
+    }
+  }
+  return null;
+}
+
+async function ensureFieldCache(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  projectNumber: number,
+): Promise<void> {
+  if (fieldCache.isPopulated()) return;
+  const project = await fetchProjectForCache(client, owner, projectNumber);
+  if (!project) {
+    throw new Error(`Project #${projectNumber} not found for owner "${owner}"`);
+  }
+  fieldCache.populate(
+    project.id,
+    project.fields.nodes.map((f) => ({
+      id: f.id,
+      name: f.name,
+      options: f.options,
+    })),
+  );
+}
+
+async function resolveIssueNodeId(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<string> {
+  const cacheKey = `issue-node-id:${owner}/${repo}#${number}`;
+  const cached = client.getCache().get<string>(cacheKey);
+  if (cached) return cached;
+
+  const result = await client.query<{
+    repository: { issue: { id: string } | null } | null;
+  }>(
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        issue(number: $number) { id }
+      }
+    }`,
+    { owner, repo, number },
+  );
+
+  const nodeId = result.repository?.issue?.id;
+  if (!nodeId) throw new Error(`Issue #${number} not found in ${owner}/${repo}`);
+  client.getCache().set(cacheKey, nodeId, 30 * 60 * 1000);
+  return nodeId;
+}
+
+async function resolveProjectItemId(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+): Promise<string> {
+  const projectId = fieldCache.getProjectId();
+  if (!projectId) throw new Error("Field cache not populated");
+
+  const cacheKey = `project-item-id:${owner}/${repo}#${issueNumber}`;
+  const cached = client.getCache().get<string>(cacheKey);
+  if (cached) return cached;
+
+  const issueNodeId = await resolveIssueNodeId(client, owner, repo, issueNumber);
+  const result = await client.query<{
+    node: {
+      projectItems: {
+        nodes: Array<{ id: string; project: { id: string } }>;
+      };
+    } | null;
+  }>(
+    `query($issueId: ID!) {
+      node(id: $issueId) {
+        ... on Issue {
+          projectItems(first: 20) {
+            nodes { id project { id } }
+          }
+        }
+      }
+    }`,
+    { issueId: issueNodeId },
+  );
+
+  const items = result.node?.projectItems?.nodes || [];
+  const projectItem = items.find((item) => item.project.id === projectId);
+  if (!projectItem) {
+    throw new Error(`Issue #${issueNumber} is not in the project`);
+  }
+
+  client.getCache().set(cacheKey, projectItem.id, 30 * 60 * 1000);
+  return projectItem.id;
+}
+
+async function updateProjectItemField(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  projectItemId: string,
+  fieldName: string,
+  optionName: string,
+): Promise<void> {
+  const projectId = fieldCache.getProjectId();
+  if (!projectId) throw new Error("Field cache not populated");
+
+  const fieldId = fieldCache.getFieldId(fieldName);
+  if (!fieldId) throw new Error(`Field "${fieldName}" not found in project`);
+
+  const optionId = fieldCache.resolveOptionId(fieldName, optionName);
+  if (!optionId) {
+    const validOptions = fieldCache.getOptionNames(fieldName);
+    throw new Error(
+      `Option "${optionName}" not found for field "${fieldName}". ` +
+        `Valid options: ${validOptions.join(", ")}`,
+    );
+  }
+
+  await client.projectMutate(
+    `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId,
+        itemId: $itemId,
+        fieldId: $fieldId,
+        value: { singleSelectOptionId: $optionId }
+      }) {
+        projectV2Item { id }
+      }
+    }`,
+    { projectId, itemId: projectItemId, fieldId, optionId },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Node ID resolvers for PR operations
+// ---------------------------------------------------------------------------
+
+async function resolvePrNodeId(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<string> {
+  const cacheKey = `pr-node-id:${owner}/${repo}#${prNumber}`;
+  const cached = client.getCache().get<string>(cacheKey);
+  if (cached) return cached;
+
+  const result = await client.query<{
+    repository: { pullRequest: { id: string } | null } | null;
+  }>(
+    `query($owner: String!, $repo: String!, $prNumber: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $prNumber) { id }
+      }
+    }`,
+    { owner, repo, prNumber },
+  );
+
+  const nodeId = result.repository?.pullRequest?.id;
+  if (!nodeId) throw new Error(`PR #${prNumber} not found in ${owner}/${repo}`);
+  client.getCache().set(cacheKey, nodeId, 30 * 60 * 1000);
+  return nodeId;
+}
+
+async function resolveUserNodeId(
+  client: GitHubClient,
+  login: string,
+): Promise<string> {
+  const cacheKey = `user-node-id:${login}`;
+  const cached = client.getCache().get<string>(cacheKey);
+  if (cached) return cached;
+
+  const result = await client.query<{ user: { id: string } | null }>(
+    `query($login: String!) { user(login: $login) { id } }`,
+    { login },
+  );
+
+  const nodeId = result.user?.id;
+  if (!nodeId) throw new Error(`GitHub user "${login}" not found`);
+  client.getCache().set(cacheKey, nodeId, 60 * 60 * 1000);
+  return nodeId;
+}
+
+// ---------------------------------------------------------------------------
 // Register PR tools
 // ---------------------------------------------------------------------------
 
 export function registerPrTools(
   server: McpServer,
   client: GitHubClient,
-  _fieldCache: FieldOptionCache,
+  fieldCache: FieldOptionCache,
 ): void {
   // -------------------------------------------------------------------------
   // ralph_hero__create_pull_request
@@ -606,6 +840,205 @@ export function registerPrTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to list pull requests: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__update_pull_request_state
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "ralph_hero__update_pull_request_state",
+    "Update PR lifecycle state: mark ready/draft, request reviewers, or merge. Merge action auto-transitions linked issues to Done. Returns: prNumber, action, result details. Recovery: for merge failures, use get_pull_request to check CI/review/conflict status.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to env var"),
+      prNumber: z.number().describe("Pull request number"),
+      action: z
+        .enum(["ready_for_review", "convert_to_draft", "request_reviewers", "merge"])
+        .describe("Action to perform"),
+      mergeStrategy: z
+        .enum(["MERGE", "SQUASH", "REBASE"])
+        .optional()
+        .default("SQUASH")
+        .describe("Merge strategy (default: SQUASH)"),
+      reviewers: z
+        .array(z.string())
+        .optional()
+        .describe("GitHub usernames for request_reviewers action"),
+      teamReviewers: z
+        .array(z.string())
+        .optional()
+        .describe("Team slugs for request_reviewers action (requires org context)"),
+    },
+    async (args) => {
+      try {
+        const { owner, repo } = resolveConfig(client, args);
+        const prNodeId = await resolvePrNodeId(client, owner, repo, args.prNumber);
+
+        // --- ready_for_review ---
+        if (args.action === "ready_for_review") {
+          await client.mutate(
+            `mutation($pullRequestId: ID!) {
+              markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+                pullRequest { id isDraft }
+              }
+            }`,
+            { pullRequestId: prNodeId },
+          );
+          return toolSuccess({
+            prNumber: args.prNumber,
+            action: "ready_for_review",
+            isDraft: false,
+          });
+        }
+
+        // --- convert_to_draft ---
+        if (args.action === "convert_to_draft") {
+          await client.mutate(
+            `mutation($pullRequestId: ID!) {
+              convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
+                pullRequest { id isDraft }
+              }
+            }`,
+            { pullRequestId: prNodeId },
+          );
+          return toolSuccess({
+            prNumber: args.prNumber,
+            action: "convert_to_draft",
+            isDraft: true,
+          });
+        }
+
+        // --- request_reviewers ---
+        if (args.action === "request_reviewers") {
+          const reviewerLogins = args.reviewers || [];
+          const teamSlugs = args.teamReviewers || [];
+
+          if (reviewerLogins.length === 0 && teamSlugs.length === 0) {
+            return toolError(
+              "At least one reviewer or teamReviewer is required for request_reviewers action",
+            );
+          }
+
+          const userIds: string[] = [];
+          for (const login of reviewerLogins) {
+            userIds.push(await resolveUserNodeId(client, login));
+          }
+
+          await client.mutate(
+            `mutation($pullRequestId: ID!, $userIds: [ID!]!) {
+              requestReviews(input: { pullRequestId: $pullRequestId, userIds: $userIds }) {
+                pullRequest { id }
+              }
+            }`,
+            { pullRequestId: prNodeId, userIds },
+          );
+
+          return toolSuccess({
+            prNumber: args.prNumber,
+            action: "request_reviewers",
+            reviewersRequested: [...reviewerLogins, ...teamSlugs],
+          });
+        }
+
+        // --- merge ---
+        if (args.action === "merge") {
+          // Pre-merge check: query PR for mergeable status
+          const prCheck = await client.query<{
+            repository: {
+              pullRequest: {
+                mergeable: string;
+                body: string | null;
+              } | null;
+            } | null;
+          }>(
+            `query($owner: String!, $repo: String!, $prNumber: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $prNumber) {
+                  mergeable
+                  body
+                }
+              }
+            }`,
+            { owner, repo, prNumber: args.prNumber },
+          );
+
+          const prData = prCheck.repository?.pullRequest;
+          if (!prData) {
+            return toolError(`PR #${args.prNumber} not found`);
+          }
+
+          if (prData.mergeable === "CONFLICTING") {
+            return toolError(
+              "Cannot merge: PR has merge conflicts. Update the branch first.",
+            );
+          }
+
+          // Execute merge
+          await client.mutate(
+            `mutation($pullRequestId: ID!, $mergeMethod: PullRequestMergeMethod) {
+              mergePullRequest(input: { pullRequestId: $pullRequestId, mergeMethod: $mergeMethod }) {
+                pullRequest { id number state merged }
+              }
+            }`,
+            { pullRequestId: prNodeId, mergeMethod: args.mergeStrategy },
+          );
+
+          // Post-merge: transition linked issues to Done
+          // TODO: Replace with handoff_ticket after #19 merges
+          const linkedIssues = parseLinkedIssues(prData.body);
+          const linkedIssuesTransitioned: number[] = [];
+          const linkedIssuesFailed: Array<{ number: number; error: string }> = [];
+
+          if (linkedIssues.length > 0) {
+            const resolved = resolveState("__CLOSE__", "ralph_pr");
+            const targetState = resolved.resolvedState;
+
+            const projectOwner = resolveProjectOwner(client.config);
+            const projectNumber = client.config.projectNumber;
+
+            if (projectOwner && projectNumber) {
+              await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+              for (const issueNum of linkedIssues) {
+                try {
+                  const itemId = await resolveProjectItemId(
+                    client, fieldCache, owner, repo, issueNum,
+                  );
+                  await updateProjectItemField(
+                    client, fieldCache, itemId, "Workflow State", targetState,
+                  );
+                  linkedIssuesTransitioned.push(issueNum);
+                } catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  linkedIssuesFailed.push({ number: issueNum, error: msg });
+                }
+              }
+            }
+          }
+
+          return toolSuccess({
+            prNumber: args.prNumber,
+            action: "merge",
+            merged: true,
+            mergeStrategy: args.mergeStrategy,
+            linkedIssuesTransitioned,
+            linkedIssuesFailed,
+          });
+        }
+
+        return toolError(`Unknown action: ${args.action}`);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to update pull request state: ${message}`);
       }
     },
   );

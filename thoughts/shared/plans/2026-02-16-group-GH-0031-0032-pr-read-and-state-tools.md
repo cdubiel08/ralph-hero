@@ -460,11 +460,11 @@ Input schema:
 - Linked issue transition failures → report in `linkedIssuesFailed` array but don't fail the overall response (merge already succeeded)
 
 ### Success Criteria
-- [ ] `npm run build` — no type errors
-- [ ] `ralph_pr` command accepted by `resolveState`
-- [ ] `resolveState("__CLOSE__", "ralph_pr")` returns "Done"
-- [ ] `resolveState("__COMPLETE__", "ralph_pr")` returns "Done"
-- [ ] merge action transitions linked issues to "Done" via project field update
+- [x] `npm run build` — no type errors
+- [x] `ralph_pr` command accepted by `resolveState`
+- [x] `resolveState("__CLOSE__", "ralph_pr")` returns "Done"
+- [x] `resolveState("__COMPLETE__", "ralph_pr")` returns "Done"
+- [x] merge action transitions linked issues to "Done" via project field update
 
 ---
 

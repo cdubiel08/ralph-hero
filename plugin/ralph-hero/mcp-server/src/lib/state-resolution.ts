@@ -22,6 +22,7 @@ const SEMANTIC_INTENTS: Record<string, Record<string, string | null>> = {
     ralph_plan: "Plan in Review",
     ralph_impl: "In Review",
     ralph_review: "In Progress",
+    ralph_pr: "Done",
   },
   __ESCALATE__: { "*": "Human Needed" },
   __CLOSE__: { "*": "Done" },
@@ -44,6 +45,7 @@ const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
   ralph_impl: ["In Progress", "In Review", "Human Needed"],
   ralph_review: ["In Progress", "Ready for Plan", "Human Needed"],
   ralph_hero: ["In Review", "Human Needed"],
+  ralph_pr: ["In Review", "Done", "Human Needed"],
 };
 
 // --- Helpers ---
