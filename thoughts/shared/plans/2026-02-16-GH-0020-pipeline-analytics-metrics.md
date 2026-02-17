@@ -184,9 +184,9 @@ export const AUDIT_COMMENT_PATTERN =
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` — no type errors
-- [ ] `npm test` — all transition-comments tests pass
-- [ ] `npx vitest run src/__tests__/transition-comments.test.ts` — focused test pass
+- [x] `npm run build` — no type errors
+- [x] `npm test` — all transition-comments tests pass
+- [x] `npx vitest run src/__tests__/transition-comments.test.ts` — focused test pass
 
 #### Manual Verification
 - [ ] Paste a `buildTransitionComment()` output into a GitHub comment — verify it's invisible in rendered view
