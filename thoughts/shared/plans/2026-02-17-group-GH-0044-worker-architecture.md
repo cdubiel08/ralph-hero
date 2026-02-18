@@ -693,14 +693,14 @@ fi
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -q 'ANALYST PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
-- [ ] `grep -q 'BUILDER PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
-- [ ] `grep -q 'INTEGRATOR PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
-- [ ] `grep -q 'analyst-only' plugin/ralph-hero/scripts/ralph-loop.sh`
-- [ ] `grep -q 'builder-only' plugin/ralph-hero/scripts/ralph-loop.sh`
-- [ ] `grep -q 'integrator-only' plugin/ralph-hero/scripts/ralph-loop.sh`
-- [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` (syntax check passes)
-- [ ] `bash -n plugin/ralph-hero/scripts/ralph-team-loop.sh` (syntax check passes)
+- [x] `grep -q 'ANALYST PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
+- [x] `grep -q 'BUILDER PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
+- [x] `grep -q 'INTEGRATOR PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
+- [x] `grep -q 'analyst-only' plugin/ralph-hero/scripts/ralph-loop.sh`
+- [x] `grep -q 'builder-only' plugin/ralph-hero/scripts/ralph-loop.sh`
+- [x] `grep -q 'integrator-only' plugin/ralph-hero/scripts/ralph-loop.sh`
+- [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` (syntax check passes)
+- [x] `bash -n plugin/ralph-hero/scripts/ralph-team-loop.sh` (syntax check passes)
 
 #### Manual Verification
 - [ ] Old CLI flags (`--triage-only`, `--plan-only`, etc.) still work

@@ -3,8 +3,8 @@
 #
 # Usage: ./scripts/ralph-team-loop.sh [ISSUE_NUMBER]
 #
-# Launches the team coordinator skill which spawns specialized agents
-# for each pipeline phase (triage, research, plan, review, implement).
+# Launches the team coordinator skill which spawns specialized workers
+# for each pipeline phase (analyst, builder, validator, integrator).
 #
 # Arguments:
 #   ISSUE_NUMBER  Optional GitHub issue number to process. If not provided,
