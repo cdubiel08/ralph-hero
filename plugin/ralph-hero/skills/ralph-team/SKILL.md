@@ -165,45 +165,57 @@ Only when dispatch loop confirms no more work. Send `shutdown_request` to each t
 
 ## Section 6 - Teammate Spawning
 
-No prescribed roster -- spawn what's needed. Each teammate invokes a skill with an issue number.
+No prescribed roster -- spawn what's needed. Each teammate receives a minimal prompt from a template.
 
-### Spawn Template
+### Spawn Procedure
 
-```
-Task(subagent_type="[agent-type]", team_name=TEAM_NAME, name="[role]",
-     prompt="[Role] for #NNN: [title]. State: [state].
-             [Artifacts: plan path, worktree, group context if applicable]
-             [Codebase hints: 2-5 relevant directories/files]
-             Invoke: Skill(skill='ralph-hero:[skill-name]', args='NNN')
-             Embed results in task description via TaskUpdate.",
-     description="[Role] #NNN")
-```
+1. **Determine role** from the pending task subject:
 
-### Per-Role Reference
+   | Task subject contains | Role | Template | Agent type |
+   |----------------------|------|----------|------------|
+   | "Triage" | triager | `triager.md` | ralph-triager |
+   | "Split" | splitter | `splitter.md` | ralph-triager |
+   | "Research" | researcher | `researcher.md` | ralph-researcher |
+   | "Plan" (not "Review") | planner | `planner.md` | ralph-planner |
+   | "Review" | reviewer | `reviewer.md` | ralph-advocate |
+   | "Implement" | implementer | `implementer.md` | ralph-implementer |
 
-| Role | agent-type | Skill | Extra prompt context |
-|------|-----------|-------|---------------------|
-| Triager (XS/S) | ralph-triager | ralph-triage | Estimate |
-| Triager (M+) | ralph-triager | ralph-split | "Too large for direct implementation" |
-| Researcher | ralph-researcher | ralph-research | Description |
-| Planner | ralph-planner | ralph-plan | Group issues if applicable; ralph-plan auto-discovers groups |
-| Reviewer | ralph-advocate | ralph-review | Plan path; for groups note "unified plan covering N issues" |
-| Implementer | ralph-implementer | ralph-impl | Plan path, worktree path; ralph-impl auto-detects group plans |
+2. **Resolve template path**: `Bash("echo $CLAUDE_PLUGIN_ROOT")` to get the plugin root, then read:
+   `Read(file_path="[resolved-root]/templates/spawn/{template}")`
 
-### Spawn Prompt Requirements
+3. **Substitute placeholders** from the issue context gathered in Section 2-3:
+   - `{ISSUE_NUMBER}` -> issue number
+   - `{TITLE}` -> issue title
+   - `{ESTIMATE}` -> issue estimate
+   - `{GROUP_CONTEXT}` -> group line if IS_GROUP, empty if not
+   - `{WORKTREE_CONTEXT}` -> worktree path if exists, empty if not
 
-**MUST include**: Issue number, title, description, workflow state, group context (if any), codebase starting points (2-5 relevant dirs/files), artifacts from prior phases (doc paths, worktree), pull-based instructions.
+   If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it.
 
-**DO NOT include**: conversation history, document contents, code snippets, assignment instructions, SendMessage reporting instructions.
+4. **Spawn**:
+   ```
+   Task(subagent_type="[agent-type]", team_name=TEAM_NAME, name="[role]",
+        prompt=[resolved template content],
+        description="[Role] #NNN")
+   ```
 
-**Lead name**: Teammates needing to message lead MUST use `recipient="team-lead"` exactly. Other names are silently dropped.
+See `shared/conventions.md` "Spawn Template Protocol" for full placeholder reference, authoring rules, and naming conventions.
 
-### Parallel Workers
+### Per-Role Instance Limits
 
-- **Research**: Up to 3 parallel (`researcher`, `researcher-2`, `researcher-3`). Each self-claims a different task.
-- **Implementation**: Up to 2 if plan has non-overlapping file ownership. Include EXCLUSIVE FILE OWNERSHIP in task description.
-- **All other roles**: Single worker (planning/review are sequential per group).
-- Idle workers auto-claim new tasks. Nudge via SendMessage only if idle >2 minutes with unclaimed tasks.
+- **Research**: Up to 3 parallel (`researcher`, `researcher-2`, `researcher-3`)
+- **Implementation**: Up to 2 if plan has non-overlapping file ownership
+- **All other roles**: Single worker
+
+### Worker Lifecycle
+
+- Idle workers auto-claim new tasks from TaskList
+- Nudge idle workers via SendMessage only if idle >2 minutes with unclaimed tasks
+
+### Naming Convention
+
+- Single instance: `"triager"`, `"researcher"`, `"planner"`, `"reviewer"`, `"implementer"`
+- Multiple instances: `"researcher-2"`, `"researcher-3"`, `"implementer-2"`
 
 ## Section 7 - Lifecycle Hooks
 

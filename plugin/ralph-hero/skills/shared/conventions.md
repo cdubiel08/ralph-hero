@@ -120,3 +120,100 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 - **SendMessage is fire-and-forget** -- no acknowledgment mechanism. The handoff wakes the peer; they self-claim from TaskList.
 - **Lead gets visibility** via idle notification DM summaries -- no need to CC the lead on handoffs.
 - **Multiple handoffs are fine** -- if 3 researchers complete and all message the planner, the planner wakes 3 times and claims one task each time.
+
+## Spawn Template Protocol
+
+### Template Location
+
+Spawn templates live at: `${CLAUDE_PLUGIN_ROOT}/templates/spawn/{role}.md`
+
+To resolve the path at runtime, use Bash to expand the variable first:
+```
+TEMPLATE_DIR=$(echo $CLAUDE_PLUGIN_ROOT)/templates/spawn
+```
+Then read templates via `Read(file_path="[resolved-path]/researcher.md")`.
+
+Available templates: `researcher`, `planner`, `reviewer`, `implementer`, `triager`, `splitter`
+
+### Placeholder Substitution
+
+| Placeholder | Source | Required |
+|-------------|--------|----------|
+| `{ISSUE_NUMBER}` | Issue number from GitHub | Always |
+| `{TITLE}` | Issue title from `get_issue` | Always |
+| `{ESTIMATE}` | Issue estimate from `get_issue` | Triager, Splitter |
+| `{GROUP_CONTEXT}` | See below | Planner, Reviewer (groups only) |
+| `{WORKTREE_CONTEXT}` | See below | Implementer only |
+
+### Group Context Resolution
+
+If `IS_GROUP=true` for the issue:
+```
+{GROUP_CONTEXT} = "Group: #{PRIMARY} (#{A}, #{B}, #{C}). Plan covers all group issues."
+```
+
+If `IS_GROUP=false`:
+```
+{GROUP_CONTEXT} = ""
+```
+
+### Worktree Context Resolution
+
+If worktree already exists:
+```
+{WORKTREE_CONTEXT} = "Worktree: worktrees/GH-{ISSUE_NUMBER}/ (exists, reuse it)"
+```
+
+If no worktree:
+```
+{WORKTREE_CONTEXT} = ""
+```
+
+### Empty Placeholder Line Removal
+
+If a placeholder resolves to an empty string, remove the ENTIRE LINE containing that placeholder. Do not leave blank lines where optional context was omitted.
+
+Example -- planner template before substitution:
+```
+Plan #42: Add caching.
+{GROUP_CONTEXT}
+
+Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
+```
+
+After substitution when IS_GROUP=false (GROUP_CONTEXT is empty):
+```
+Plan #42: Add caching.
+
+Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
+```
+The `{GROUP_CONTEXT}` line is removed entirely.
+
+### Resolution Procedure (for orchestrator)
+
+1. Determine the role from the task subject (Research -> `researcher.md`, Plan -> `planner.md`, etc.)
+2. Resolve template path: `Bash("echo $CLAUDE_PLUGIN_ROOT")` then append `/templates/spawn/{role}.md`
+3. Read the template file via `Read` tool
+4. Replace all `{PLACEHOLDER}` strings with actual values from `get_issue` response
+5. If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it
+6. Use the result as the `prompt` parameter in `Task()`
+
+### Template Naming Convention
+
+Templates are named by role: `{role}.md` matching the agent type:
+
+| Agent type | Template |
+|------------|----------|
+| `ralph-triager` agent (triage mode) | `triager.md` |
+| `ralph-triager` agent (split mode) | `splitter.md` |
+| `ralph-researcher` agent | `researcher.md` |
+| `ralph-planner` agent | `planner.md` |
+| `ralph-advocate` agent | `reviewer.md` |
+| `ralph-implementer` agent | `implementer.md` |
+
+### Template Authoring Rules
+
+- Templates MUST be under 15 lines
+- DO NOT include: conversation history, document contents, code snippets, assignment instructions
+- Teammates message the lead using `recipient="team-lead"` exactly
+- Result reporting follows the agent's `.md` definition, not the spawn template
