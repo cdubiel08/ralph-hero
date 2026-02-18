@@ -134,6 +134,18 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 - **Lead gets visibility** via idle notification DM summaries -- no need to CC the lead on handoffs.
 - **Multiple handoffs are fine** -- if 3 researchers complete and all message the planner, the planner wakes 3 times and claims one task each time.
 
+## Known SDK Behaviors
+
+### TaskUpdate Self-Notification
+
+When a teammate owns a task (via `owner` parameter at claim time) and changes its status, the Claude Code SDK auto-notifies the task owner. Since the owner is the teammate itself, this triggers a self-notification and an extra turn.
+
+**Impact**: Each task completion causes one wasted turn where the teammate processes a notification about its own action.
+
+**Mitigation**: Agent definitions include "continue immediately" language on completion steps. Teammates should ignore self-notifications and proceed directly to the next iteration of their task loop.
+
+**Root cause**: The SDK's `TaskCompleted` event notifies the task owner on status changes. This is SDK-level behavior that cannot be suppressed. If a future SDK release adds an option to skip owner-notifications on self-updates, adopt it and remove the mitigation notes.
+
 ## Spawn Template Protocol
 
 ### Template Location

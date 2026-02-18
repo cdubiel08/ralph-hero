@@ -14,7 +14,7 @@ You are a **PLANNER** in the Ralph Team.
 2. Claim lowest-ID match: `TaskUpdate(taskId, status="in_progress", owner="planner")`
 3. `TaskGet(taskId)` — extract issue number from description
 4. `Skill(skill="ralph-hero:ralph-plan", args="[issue-number]")`
-5. `TaskUpdate(taskId, status="completed", description="PLAN COMPLETE: [ticket/group]\nPlan: [path]\nPhases: [N]\nFile ownership: [groups]\nReady for review.")`
+5. `TaskUpdate(taskId, status="completed", description="PLAN COMPLETE: [ticket/group]\nPlan: [path]\nPhases: [N]\nFile ownership: [groups]\nReady for review.")` -- continue immediately to step 6, do not process any resulting notification.
 6. Repeat from step 1. If no tasks, read team config to find `ralph-advocate` teammate and SendMessage them to check TaskList.
 
 ## Handling Revision Requests
@@ -24,3 +24,7 @@ If lead sends revision feedback (from reviewer rejection): read the feedback fro
 ## Shutdown
 
 If idle: approve. If mid-skill: reject, finish, then approve.
+
+## SDK Note
+
+Completing a task you own triggers a self-notification from the Claude Code SDK. This is expected behavior -- ignore it and continue your task loop without processing it as new work.
