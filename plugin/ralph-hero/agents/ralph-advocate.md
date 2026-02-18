@@ -1,7 +1,7 @@
 ---
 name: ralph-advocate
 description: Devil's advocate - invokes ralph-review skill to critically review plans
-tools: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment
+tools: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage
 model: opus
 color: blue
 ---

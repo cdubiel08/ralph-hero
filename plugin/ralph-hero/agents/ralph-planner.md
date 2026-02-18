@@ -1,7 +1,7 @@
 ---
 name: ralph-planner
 description: Implementation planner - invokes ralph-plan skill to create phased plans from research
-tools: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__detect_group, ralph_hero__list_sub_issues, ralph_hero__list_dependencies, ralph_hero__create_comment
+tools: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage
 model: opus
 color: blue
 ---

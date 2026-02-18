@@ -201,6 +201,21 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
 See `shared/conventions.md` "Spawn Template Protocol" for full placeholder reference, authoring rules, and naming conventions.
 
+### Template Integrity
+
+**CRITICAL**: The resolved template content is the COMPLETE spawn prompt. Do NOT add any additional context.
+
+**Rules**:
+- The prompt passed to `Task()` must be the template output and NOTHING else
+- Resolved prompts must be under 10 lines. If longer, you have violated template integrity
+- The agent discovers all context it needs via skill invocation -- that is the entire point of HOP
+
+**Anti-patterns** (NEVER do these):
+- Prepending root cause analysis, research hints, or investigation guidance
+- Including file paths, code snippets, or architectural context not in the template
+- Replacing template content with custom multi-paragraph instructions
+- Adding "Key files:", "Context:", or "Background:" sections
+
 ### Per-Role Instance Limits
 
 - **Research**: Up to 3 parallel (`researcher`, `researcher-2`, `researcher-3`)

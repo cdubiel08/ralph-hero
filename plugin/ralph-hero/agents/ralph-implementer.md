@@ -1,7 +1,7 @@
 ---
 name: ralph-implementer
 description: Implementation specialist - invokes ralph-impl skill for approved plans
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment, ralph_hero__list_sub_issues
+tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage
 model: sonnet
 color: orange
 ---

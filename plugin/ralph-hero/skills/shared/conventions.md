@@ -243,6 +243,20 @@ Templates are named by role: `{role}.md` matching the agent type:
 - Teammates message the lead using `recipient="team-lead"` exactly
 - Result reporting follows the agent's `.md` definition, not the spawn template
 
+### Template Integrity
+
+Resolved template content is the COMPLETE prompt for spawned teammates. Orchestrators MUST NOT add context beyond placeholder substitution.
+
+**Line-count guardrail**: A correctly resolved prompt is 5-8 lines. If the prompt exceeds 10 lines, the orchestrator has violated template integrity by adding prohibited context.
+
+**Prohibited additions**:
+- Research hints, root cause analysis, or investigation guidance
+- File paths or code snippets not present in the template
+- Custom instructions replacing or augmenting template content
+- "Key files:", "Context:", "Background:" sections
+
+**Why this matters**: Agents invoke skills in isolated context windows. When the orchestrator front-loads context, agents skip skill invocation and work directly, bypassing hook enforcement and postcondition validation.
+
 ## Skill Invocation Convention
 
 ### Default: Fork via Task()
