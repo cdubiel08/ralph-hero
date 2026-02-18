@@ -1,6 +1,6 @@
 {
   "name": "ralph-hero",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "The naive hero picks tickets, does their best work, and moves on. Autonomous triage, research, planning, and implementation with GitHub Projects V2.",
   "author": {
     "name": "Chad Dubiel",
@@ -9,5 +9,15 @@
   "homepage": "https://github.com/cdubiel08/ralph-hero",
   "repository": "https://github.com/cdubiel08/ralph-hero",
   "license": "MIT",
-  "keywords": ["autonomous", "development", "workflow", "github", "projects", "triage", "planning", "implementation", "naive-hero"]
+  "keywords": [
+    "autonomous",
+    "development",
+    "workflow",
+    "github",
+    "projects",
+    "triage",
+    "planning",
+    "implementation",
+    "naive-hero"
+  ]
 }
