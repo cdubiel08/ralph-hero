@@ -146,10 +146,10 @@ Do NOT use `git add -A`, `git add .`, or `git add --all`.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -c 'git add -A' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0`
-- [ ] `grep -c 'git add \.' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0` (excluding the new warning text)
-- [ ] `grep -c 'git status --porcelain' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
-- [ ] `grep -c 'File Ownership Summary' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
+- [x] `grep -c 'git add -A' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0`
+- [x] `grep -c 'git add \.' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0` (excluding the new warning text)
+- [x] `grep -c 'git status --porcelain' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
+- [x] `grep -c 'File Ownership Summary' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
 
 #### Manual Verification
 - [ ] Step 7 instructions are clear and actionable for an LLM agent

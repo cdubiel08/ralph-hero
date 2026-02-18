@@ -192,12 +192,32 @@ Current phase = first unchecked phase from Step 2.5.
 
 ### Step 7: Commit and Push
 
-```bash
-git add -A
-git commit -m "feat(component): [phase description]
-Phase [N] of [M]: #NNN - [Title]"
-git push -u origin [branch-name]
-```
+1. Review all changes in the working directory:
+   ```bash
+   git status --porcelain
+   ```
+
+2. Compare against this phase's expected files from the plan's **File Ownership Summary** table (or the **Changes Required** file list for this phase). Stage ONLY the expected files:
+   ```bash
+   git add <file1> <file2> ...
+   ```
+
+3. If `git status` shows unexpected modified/new files NOT in this phase's ownership, do NOT stage them. Warn:
+   ```
+   WARNING: Unexpected files not in Phase [N] ownership:
+   - path/to/unexpected-file
+   Skipping. These may belong to another agent or phase.
+   ```
+
+4. If the plan has no File Ownership Summary, stage only files you explicitly created or modified in this phase. Never use `git add -A`, `git add .`, or `git add --all`.
+
+5. Commit and push:
+   ```bash
+   git commit -m "feat(component): [phase description]
+
+   Phase [N] of [M]: #NNN - [Title]"
+   git push -u origin [branch-name]
+   ```
 
 ### Step 8: Check if All Phases Complete
 
@@ -315,12 +335,18 @@ Activated when issue is "In Review" with an open PR (detected in Step 1.5).
 **A4. Address items** grouped by file: read, fix, verify (lint/tests).
 
 **A5. Commit and push**:
+
+Stage only files you modified to address feedback. Use the PR's existing file list as your staging constraint — files already in the PR diff plus any new files explicitly requested by reviewers.
+
 ```bash
-git add -A
+git add <file1> <file2> ...
 git commit -m "fix: address PR review feedback
+
 - [change summaries]"
 git push
 ```
+
+Do NOT use `git add -A`, `git add .`, or `git add --all`.
 
 **A6. Reply to PR comments**: Reply to each addressed item with change + commit ref. For DISCUSS items, reply with rationale. Post summary comment.
 
