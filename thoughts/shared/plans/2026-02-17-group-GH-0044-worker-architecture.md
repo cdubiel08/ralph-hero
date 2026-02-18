@@ -383,11 +383,11 @@ Report results. Then check TaskList for more integration tasks.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] `test -f plugin/ralph-hero/templates/spawn/integrator.md`
-- [ ] `grep -q 'name: ralph-integrator' plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] `grep -q 'advance_children' plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `test -f plugin/ralph-hero/templates/spawn/integrator.md`
+- [x] `grep -q 'name: ralph-integrator' plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `grep -q 'advance_children' plugin/ralph-hero/agents/ralph-integrator.md`
 
 #### Manual Verification
 - [ ] Agent does NOT have Skill tool (operates directly, no skill composition)
