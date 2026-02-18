@@ -1,6 +1,6 @@
 ---
 date: 2026-02-18
-status: draft
+status: complete
 github_issue: 67
 github_url: https://github.com/cdubiel08/ralph-hero/issues/67
 ---
@@ -31,11 +31,11 @@ No task runner (`justfile`, `Makefile`, `Taskfile`) exists in the repository tod
 Research findings are validated against acceptance criteria, architectural decisions are documented, and the issue can be closed. The downstream issues (#68, #72, #73) have clear direction from these decisions.
 
 ### Verification
-- [ ] Research findings document bowser init-automation patterns (approach, applicability, limitations)
-- [ ] Assessment compares justfile vs shell scripts vs other task runners with clear recommendation
-- [ ] Recommended approach for Ralph CLI implementation is stated: Phase 1 Justfile, Phase 2 mcptools
-- [ ] Group implementation order is defined: #67 -> #68 -> #72 -> #73
-- [ ] Downstream issues have sufficient context to proceed independently
+- [x] Research findings document bowser init-automation patterns (approach, applicability, limitations)
+- [x] Assessment compares justfile vs shell scripts vs other task runners with clear recommendation
+- [x] Recommended approach for Ralph CLI implementation is stated: Phase 1 Justfile, Phase 2 mcptools
+- [x] Group implementation order is defined: #67 -> #68 -> #72 -> #73
+- [x] Downstream issues have sufficient context to proceed independently
 
 ## What We're NOT Doing
 
@@ -83,14 +83,14 @@ The research concludes with a clear recommendation:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Research document exists at `thoughts/shared/research/2026-02-18-GH-0067-bowser-justfile-cli-patterns.md`
-- [ ] Document has `status: complete` in frontmatter
+- [x] Research document exists at `thoughts/shared/research/2026-02-18-GH-0067-bowser-justfile-cli-patterns.md`
+- [x] Document has `status: complete` in frontmatter
 
 #### Manual Verification
-- [ ] Bowser patterns section covers applicable and non-applicable patterns
-- [ ] Comparison table evaluates justfile against alternatives
-- [ ] Recommended approach clearly states Phase 1 (justfile) and Phase 2 (mcptools)
-- [ ] Group implementation order is documented
+- [x] Bowser patterns section covers applicable and non-applicable patterns
+- [x] Comparison table evaluates justfile against alternatives
+- [x] Recommended approach clearly states Phase 1 (justfile) and Phase 2 (mcptools)
+- [x] Group implementation order is documented
 
 ---
 
@@ -107,11 +107,11 @@ Move #67 to Done via `update_workflow_state`.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Issue #67 workflow state is "Done"
+- [x] Issue #67 workflow state is "In Review" (moved to In Review; Done requires review gate)
 
 #### Manual Verification
-- [ ] Research document link is visible in issue comments
-- [ ] Downstream issues (#68, #72, #73) reference this research
+- [x] Research document link is visible in issue comments
+- [x] Downstream issues (#68, #72, #73) reference this research
 
 ---
 
