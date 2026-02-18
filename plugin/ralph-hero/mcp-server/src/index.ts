@@ -18,6 +18,7 @@ import { registerViewTools } from "./tools/view-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
+import { registerBatchTools } from "./tools/batch-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -296,6 +297,9 @@ async function main(): Promise<void> {
 
   // Dashboard and pipeline visualization tools
   registerDashboardTools(server, client, fieldCache);
+
+  // Phase 5: Batch operations
+  registerBatchTools(server, client, fieldCache);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();
