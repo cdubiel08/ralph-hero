@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugin/ralph-hero/mcp-server/src/**'
+      - 'plugin/ralph-hero/mcp-server/package.json'
+      - 'plugin/ralph-hero/mcp-server/package-lock.json'
+      - 'plugin/ralph-hero/mcp-server/tsconfig.json'
+      - 'plugin/ralph-hero/.claude-plugin/plugin.json'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+defaults:
+  run:
+    working-directory: plugin/ralph-hero/mcp-server
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: plugin/ralph-hero/mcp-server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Determine version bump
+        id: bump
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_BUMP: ${{ inputs.bump }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "type=$MANUAL_BUMP" >> "$GITHUB_OUTPUT"
+          else
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            if echo "$COMMIT_MSG" | grep -qiE '\b#major\b'; then
+              echo "type=major" >> "$GITHUB_OUTPUT"
+            elif echo "$COMMIT_MSG" | grep -qiE '\b#minor\b'; then
+              echo "type=minor" >> "$GITHUB_OUTPUT"
+            else
+              echo "type=patch" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Bump npm package version
+        id: version
+        env:
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+        run: |
+          NEW_VERSION=$(npm version "$BUMP_TYPE" --no-git-tag-version | tr -d 'v')
+          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Bump plugin version
+        working-directory: plugin/ralph-hero/.claude-plugin
+        env:
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+        run: |
+          CURRENT=$(jq -r '.version' plugin.json)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$BUMP_TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          jq --arg v "$MAJOR.$MINOR.$PATCH" '.version = $v' plugin.json > tmp.json && mv tmp.json plugin.json
+          echo "Bumped plugin version to $MAJOR.$MINOR.$PATCH"
+
+      - name: Commit version bump and tag
+        working-directory: .
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugin/ralph-hero/mcp-server/package.json
+          git add plugin/ralph-hero/mcp-server/package-lock.json
+          git add plugin/ralph-hero/.claude-plugin/plugin.json
+          git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
+          git tag "v${NEW_VERSION}"
+          git push origin main --tags
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -49,19 +49,19 @@ npm run build        # Build TypeScript -> dist/
 npm test             # Run tests (vitest)
 ```
 
-### Publishing
+### CI/CD
 
-**Do NOT run `npm publish` manually.** Publishing is handled by the GitHub Actions CD workflow (see #12). The workflow triggers on version tag pushes (`v*`), builds the TypeScript, and publishes to npm using the `NPM_TOKEN` repository secret.
+**PR checks** (`ci.yml`): Every PR to `main` runs build + test across Node 18, 20, and 22.
 
-To release a new version:
+**Auto-release** (`release.yml`): Merges to `main` that touch MCP server source, `package.json`, or `plugin.json` automatically:
+1. Build and test
+2. Bump versions in both `mcp-server/package.json` and `.claude-plugin/plugin.json`
+3. Commit, tag, and push
+4. Publish to npm with provenance
 
-1. Bump version in `plugin/ralph-hero/mcp-server/package.json`
-2. Bump version in `plugin/ralph-hero/.claude-plugin/plugin.json`
-3. Commit, push, and merge to main
-4. Tag and push: `git tag v1.3.0 && git push origin v1.3.0`
-5. CD workflow builds and publishes automatically
+Version bump defaults to **patch**. Include `#minor` or `#major` in a commit message for larger bumps. Manual releases are available via `workflow_dispatch` in the GitHub Actions UI.
 
-**Note**: If CI (#12) is not yet set up, you can publish manually with `npm publish` from `plugin/ralph-hero/mcp-server/` — but you must run `npm login` first as npm tokens expire.
+**Do NOT run `npm publish` manually** — the release workflow handles it. Do NOT push `v*` tags manually — the workflow creates them.
 
 ### Environment Variables
 
