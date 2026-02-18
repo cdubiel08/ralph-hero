@@ -309,10 +309,10 @@ color: blue
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `grep -q 'name: ralph-validator' plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `grep -q 'model: opus' plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `grep -q 'ralph-hero:ralph-review' plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `grep -q 'name: ralph-validator' plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `grep -q 'model: opus' plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `grep -q 'ralph-hero:ralph-review' plugin/ralph-hero/agents/ralph-validator.md`
 
 #### Manual Verification
 - [ ] Tool list matches current `ralph-advocate` (no Edit tool -- read-only for implementation)
