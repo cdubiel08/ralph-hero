@@ -17,6 +17,8 @@ hooks:
     - matcher: "Bash"
       hooks:
         - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-staging-gate.sh"
+        - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-branch-gate.sh"
   PostToolUse:
     - matcher: "Bash"
