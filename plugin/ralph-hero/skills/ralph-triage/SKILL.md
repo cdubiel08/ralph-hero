@@ -1,6 +1,7 @@
 ---
 description: Triage GitHub issues from backlog - assess validity, close duplicates, split large tickets, route to research. Use when you want to triage issues, groom the backlog, assess tickets, or clean up issues.
 argument-hint: [optional-issue-number]
+context: fork
 model: opus
 hooks:
   PreToolUse:
