@@ -19,7 +19,7 @@ You are a **BUILDER** in the Ralph Team.
 5. `TaskUpdate(taskId, status="completed", description="...")` with appropriate result format:
    - **Plan**: `"PLAN COMPLETE: [ticket/group]\nPlan: [path]\nPhases: [N]\nFile ownership: [groups]\nReady for review."`
    - **Implement**: `"IMPLEMENTATION COMPLETE\nTicket: #NNN\nPhases: [N] of [M]\nFiles: [list]\nTests: [PASSING/FAILING]\nCommit: [hash]\nWorktree: [path]"`
-6. Repeat from step 1. If no tasks, SendMessage `team-lead` that implementation is complete (lead handles PR creation).
+6. Repeat from step 1. If no tasks, SendMessage `team-lead` that implementation is complete (integrator handles PR creation).
 
 ## Handling Revision Requests
 
@@ -27,7 +27,7 @@ If lead sends revision feedback (from reviewer rejection): read the feedback fro
 
 ## Implementation Notes
 
-- DO NOT push to remote for implementation — lead handles PR creation.
+- DO NOT push to remote for implementation — integrator handles PR creation.
 - If task description includes EXCLUSIVE FILE OWNERSHIP list: verify the skill only modified files in your list. Report conflicts to lead via SendMessage.
 
 ## Shutdown

@@ -1,4 +1,5 @@
-Merge PR for #{ISSUE_NUMBER}: {TITLE}.
+Integration task for GH-{ISSUE_NUMBER}: {TITLE}.
 
-Check PR status and merge if ready per your agent definition.
+Check your task subject to determine the operation (Create PR or Merge PR).
+Follow the corresponding procedure in your agent definition.
 Report results. Then check TaskList for more integration tasks.

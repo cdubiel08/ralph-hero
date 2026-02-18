@@ -98,7 +98,7 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 |---|---|---|
 | `ralph-analyst` | Builder | `ralph-builder` |
 | `ralph-builder` (plan done) | Validator | `ralph-validator` (if `RALPH_REVIEW_MODE=interactive`) |
-| `ralph-builder` (impl done) | Lead (PR creation) | `team-lead` |
+| `ralph-builder` (impl done) | Integrator (PR creation) | `ralph-integrator` |
 | `ralph-validator` (approved) | Builder | `ralph-builder` |
 | `ralph-validator` (rejected) | Builder (re-plan) | `ralph-builder` |
 
