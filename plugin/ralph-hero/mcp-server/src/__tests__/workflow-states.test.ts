@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   STATE_ORDER,
   VALID_STATES,
+  PARENT_GATE_STATES,
   WORKFLOW_STATE_TO_STATUS,
   stateIndex,
   compareStates,
   isEarlierState,
   isValidState,
+  isParentGateState,
 } from "../lib/workflow-states.js";
 
 describe("stateIndex", () => {
@@ -94,6 +96,36 @@ describe("VALID_STATES completeness", () => {
     }
     expect(VALID_STATES).toContain("Canceled");
     expect(VALID_STATES).toContain("Human Needed");
+  });
+});
+
+describe("PARENT_GATE_STATES", () => {
+  it("contains exactly the expected gate states", () => {
+    expect(PARENT_GATE_STATES).toEqual(["Ready for Plan", "In Review", "Done"]);
+  });
+
+  it("does not include intermediate states", () => {
+    expect(PARENT_GATE_STATES).not.toContain("Research in Progress");
+    expect(PARENT_GATE_STATES).not.toContain("Plan in Progress");
+    expect(PARENT_GATE_STATES).not.toContain("In Progress");
+    expect(PARENT_GATE_STATES).not.toContain("Backlog");
+  });
+});
+
+describe("isParentGateState", () => {
+  it("returns true for gate states", () => {
+    expect(isParentGateState("Ready for Plan")).toBe(true);
+    expect(isParentGateState("In Review")).toBe(true);
+    expect(isParentGateState("Done")).toBe(true);
+  });
+
+  it("returns false for non-gate states", () => {
+    expect(isParentGateState("Backlog")).toBe(false);
+    expect(isParentGateState("Research in Progress")).toBe(false);
+    expect(isParentGateState("Plan in Progress")).toBe(false);
+    expect(isParentGateState("In Progress")).toBe(false);
+    expect(isParentGateState("Human Needed")).toBe(false);
+    expect(isParentGateState("Canceled")).toBe(false);
   });
 });
 

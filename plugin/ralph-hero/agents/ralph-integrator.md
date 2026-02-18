@@ -1,7 +1,7 @@
 ---
 name: ralph-integrator
 description: Integration specialist - handles PR creation, merge, worktree cleanup, and git operations for completed implementations
-tools: Read, Glob, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment, ralph_hero__advance_children, ralph_hero__list_sub_issues
+tools: Read, Glob, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment, ralph_hero__advance_children, ralph_hero__advance_parent, ralph_hero__list_sub_issues
 model: sonnet
 color: orange
 ---
@@ -45,8 +45,9 @@ When task subject contains "Merge" or "Integrate":
    a. Merge: `gh pr merge [N] --merge --delete-branch`
    b. Clean worktree: `scripts/remove-worktree.sh GH-NNN` (from git root)
    c. Update state: `update_workflow_state(number, state="Done")` for each issue
-   d. Advance parent: `advance_children(parentNumber=EPIC)` if epic member
-   e. Post comment: merge completion summary
+   d. Advance parent (downward): `advance_children(parentNumber=EPIC)` if epic member
+   e. Advance parent (upward): `advance_parent(number=ISSUE)` -- checks if all siblings are at a gate state and advances the parent if so
+   f. Post comment: merge completion summary
 4. `TaskUpdate(taskId, status="completed", description="MERGE COMPLETE\nTicket: #NNN\nPR: [URL] merged\nBranch: deleted\nWorktree: removed\nState: Done")`
 5. **CRITICAL**: Full result MUST be in task description — lead cannot see your command output.
 6. Return to task loop (step 1). If no tasks, go idle.

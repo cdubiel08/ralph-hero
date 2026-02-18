@@ -88,6 +88,7 @@ Use `phase` to determine tasks (Section 4.2) and first teammate (Section 4.3). T
 - Group membership is immutable once detected
 - Tree issues: each phase runs at group speed; independent branches proceed independently
 - **Child state advancement**: Lead MUST advance children via `ralph_hero__advance_children` when parent advances
+- **Parent state advancement**: When all children of an epic reach a gate state (Ready for Plan, In Review, Done), the parent advances automatically via `ralph_hero__advance_parent`. The integrator calls this after merge; the lead should call it at convergence gates (e.g., after all research tasks complete for a group).
 
 After detecting pipeline position, check for fast-track eligibility (Section 3.1), then proceed to Section 4.
 

@@ -44,6 +44,23 @@ export const HUMAN_STATES: readonly string[] = [
 ] as const;
 
 /**
+ * Gate states that trigger parent advancement when ALL children reach them.
+ * Intermediate "in progress" states should NOT advance the parent.
+ */
+export const PARENT_GATE_STATES: readonly string[] = [
+  "Ready for Plan",
+  "In Review",
+  "Done",
+] as const;
+
+/**
+ * Check if a state is a parent advancement gate.
+ */
+export function isParentGateState(state: string): boolean {
+  return PARENT_GATE_STATES.includes(state);
+}
+
+/**
  * Valid workflow states for the project (all known states).
  */
 export const VALID_STATES: readonly string[] = [

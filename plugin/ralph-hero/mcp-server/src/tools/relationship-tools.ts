@@ -17,6 +17,9 @@ import {
   isValidState,
   isEarlierState,
   VALID_STATES,
+  PARENT_GATE_STATES,
+  isParentGateState,
+  stateIndex,
 } from "../lib/workflow-states.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
 import {
@@ -702,6 +705,261 @@ export function registerRelationshipTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to advance children: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__advance_parent
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__advance_parent",
+    "Check if all siblings of a child issue have reached a gate state, and if so, advance the parent issue to match. Gate states: Ready for Plan, In Review, Done. Only applies to parent/child (sub-issue) relationships. Returns what changed or why the parent was not advanced.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      number: z
+        .number()
+        .describe("Child issue number (any child in the group)"),
+    },
+    async (args) => {
+      try {
+        const { owner, repo } = resolveConfig(client, args);
+
+        const projectNumber = client.config.projectNumber;
+        if (!projectNumber) {
+          return toolError(
+            "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)",
+          );
+        }
+        const projectOwner = resolveProjectOwner(client.config);
+        if (!projectOwner) {
+          return toolError(
+            "projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)",
+          );
+        }
+
+        await ensureFieldCache(
+          client,
+          fieldCache,
+          projectOwner,
+          projectNumber,
+        );
+
+        // Fetch child issue to find its parent
+        const childResult = await client.query<{
+          repository: {
+            issue: {
+              number: number;
+              title: string;
+              parent: {
+                number: number;
+                title: string;
+                state: string;
+              } | null;
+            } | null;
+          } | null;
+        }>(
+          `query($owner: String!, $repo: String!, $issueNumber: Int!) {
+            repository(owner: $owner, name: $repo) {
+              issue(number: $issueNumber) {
+                number
+                title
+                parent { number title state }
+              }
+            }
+          }`,
+          { owner, repo, issueNumber: args.number },
+        );
+
+        const childIssue = childResult.repository?.issue;
+        if (!childIssue) {
+          return toolError(
+            `Issue #${args.number} not found in ${owner}/${repo}`,
+          );
+        }
+
+        if (!childIssue.parent) {
+          return toolSuccess({
+            advanced: false,
+            reason: "Issue has no parent",
+            child: { number: childIssue.number, title: childIssue.title },
+          });
+        }
+
+        const parentNumber = childIssue.parent.number;
+
+        // Fetch all siblings (sub-issues of the parent)
+        const siblingResult = await client.query<{
+          repository: {
+            issue: {
+              number: number;
+              title: string;
+              subIssues: {
+                nodes: Array<{
+                  id: string;
+                  number: number;
+                  title: string;
+                  state: string;
+                }>;
+              };
+            } | null;
+          } | null;
+        }>(
+          `query($owner: String!, $repo: String!, $parentNum: Int!) {
+            repository(owner: $owner, name: $repo) {
+              issue(number: $parentNum) {
+                number
+                title
+                subIssues(first: 50) {
+                  nodes { id number title state }
+                }
+              }
+            }
+          }`,
+          { owner, repo, parentNum: parentNumber },
+        );
+
+        const parentIssue = siblingResult.repository?.issue;
+        if (!parentIssue) {
+          return toolError(
+            `Parent issue #${parentNumber} not found in ${owner}/${repo}`,
+          );
+        }
+
+        const siblings = parentIssue.subIssues.nodes;
+        if (siblings.length === 0) {
+          return toolSuccess({
+            advanced: false,
+            reason: "Parent has no sub-issues",
+            parent: { number: parentNumber, title: parentIssue.title },
+          });
+        }
+
+        // Get workflow state for each sibling and find the minimum
+        const childStates: Array<{
+          number: number;
+          title: string;
+          workflowState: string;
+        }> = [];
+        let minStateIdx = Infinity;
+
+        for (const sibling of siblings) {
+          const currentState = await getCurrentFieldValue(
+            client,
+            fieldCache,
+            owner,
+            repo,
+            sibling.number,
+            "Workflow State",
+          );
+
+          const state = currentState || "unknown";
+          childStates.push({
+            number: sibling.number,
+            title: sibling.title,
+            workflowState: state,
+          });
+
+          const idx = stateIndex(state);
+          // States not in STATE_ORDER (Human Needed, Canceled, unknown) block advancement
+          if (idx === -1) {
+            return toolSuccess({
+              advanced: false,
+              reason: `Child #${sibling.number} is in state "${state}" which is outside the pipeline -- blocks parent advancement`,
+              parent: { number: parentNumber, title: parentIssue.title },
+              childStates,
+            });
+          }
+
+          if (idx < minStateIdx) {
+            minStateIdx = idx;
+          }
+        }
+
+        // Find the minimum state name
+        const minState = siblings.length > 0
+          ? childStates.reduce((min, cs) => {
+              const idx = stateIndex(cs.workflowState);
+              const minIdx = stateIndex(min.workflowState);
+              return idx < minIdx ? cs : min;
+            }).workflowState
+          : "unknown";
+
+        // Check if the minimum state is a gate state
+        if (!isParentGateState(minState)) {
+          return toolSuccess({
+            advanced: false,
+            reason: "Not all children at a gate state",
+            minimumChildState: minState,
+            gateStates: [...PARENT_GATE_STATES],
+            parent: { number: parentNumber, title: parentIssue.title },
+            childStates,
+          });
+        }
+
+        // Get parent's current workflow state
+        const parentState = await getCurrentFieldValue(
+          client,
+          fieldCache,
+          owner,
+          repo,
+          parentNumber,
+          "Workflow State",
+        );
+
+        // Check if parent is already at or past the target state
+        const parentIdx = stateIndex(parentState || "");
+        if (parentIdx >= minStateIdx) {
+          return toolSuccess({
+            advanced: false,
+            reason: "Parent already at or past target state",
+            parent: {
+              number: parentNumber,
+              title: parentIssue.title,
+              currentState: parentState,
+            },
+            targetState: minState,
+            childStates,
+          });
+        }
+
+        // Advance the parent
+        const projectItemId = await resolveProjectItemId(
+          client,
+          fieldCache,
+          owner,
+          repo,
+          parentNumber,
+        );
+        await updateProjectItemField(
+          client,
+          fieldCache,
+          projectItemId,
+          "Workflow State",
+          minState,
+        );
+        await syncStatusField(client, fieldCache, projectItemId, minState);
+
+        return toolSuccess({
+          advanced: true,
+          parent: {
+            number: parentNumber,
+            title: parentIssue.title,
+            fromState: parentState || "unknown",
+            toState: minState,
+          },
+          childStates,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to advance parent: ${message}`);
       }
     },
   );
