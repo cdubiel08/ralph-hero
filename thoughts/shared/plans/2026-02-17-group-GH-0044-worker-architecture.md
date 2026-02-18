@@ -518,12 +518,12 @@ EOF
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/ralph-team/SKILL.md`
-- [ ] `grep -q 'ralph-builder' plugin/ralph-hero/skills/ralph-team/SKILL.md`
-- [ ] `grep -q 'ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md`
-- [ ] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/shared/conventions.md`
-- [ ] `grep -q 'integrator.md' plugin/ralph-hero/skills/shared/conventions.md`
-- [ ] `grep -q 'builder' plugin/ralph-hero/hooks/scripts/team-task-completed.sh`
+- [x] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/ralph-team/SKILL.md`
+- [x] `grep -q 'ralph-builder' plugin/ralph-hero/skills/ralph-team/SKILL.md`
+- [x] `grep -q 'ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md`
+- [x] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/shared/conventions.md`
+- [x] `grep -q 'integrator.md' plugin/ralph-hero/skills/shared/conventions.md`
+- [x] `grep -q 'builder' plugin/ralph-hero/hooks/scripts/team-task-completed.sh`
 
 #### Manual Verification
 - [ ] Spawn table has 7 rows mapping to 4 agent types

@@ -83,10 +83,11 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 
 | Current Role (agentType) | Next Stage | agentType to find |
 |---|---|---|
-| `ralph-researcher` | Planner | `ralph-planner` |
-| `ralph-planner` | Reviewer | `ralph-advocate` |
-| `ralph-advocate` | Implementer | `ralph-implementer` |
-| `ralph-implementer` | Lead (PR creation) | `team-lead` |
+| `ralph-analyst` | Builder | `ralph-builder` |
+| `ralph-builder` (plan done) | Validator | `ralph-validator` (if `RALPH_REVIEW_MODE=interactive`) |
+| `ralph-builder` (impl done) | Lead (PR creation) | `team-lead` |
+| `ralph-validator` (approved) | Builder | `ralph-builder` |
+| `ralph-validator` (rejected) | Builder (re-plan) | `ralph-builder` |
 
 ### Handoff Procedure (after completing a task)
 
@@ -133,7 +134,7 @@ TEMPLATE_DIR=$(echo $CLAUDE_PLUGIN_ROOT)/templates/spawn
 ```
 Then read templates via `Read(file_path="[resolved-path]/researcher.md")`.
 
-Available templates: `researcher`, `planner`, `reviewer`, `implementer`, `triager`, `splitter`
+Available templates: `triager`, `splitter`, `researcher`, `planner`, `reviewer`, `implementer`, `integrator`
 
 ### Placeholder Substitution
 
@@ -204,12 +205,13 @@ Templates are named by role: `{role}.md` matching the agent type:
 
 | Agent type | Template |
 |------------|----------|
-| `ralph-triager` agent (triage mode) | `triager.md` |
-| `ralph-triager` agent (split mode) | `splitter.md` |
-| `ralph-researcher` agent | `researcher.md` |
-| `ralph-planner` agent | `planner.md` |
-| `ralph-advocate` agent | `reviewer.md` |
-| `ralph-implementer` agent | `implementer.md` |
+| `ralph-analyst` agent (triage mode) | `triager.md` |
+| `ralph-analyst` agent (split mode) | `splitter.md` |
+| `ralph-analyst` agent (research mode) | `researcher.md` |
+| `ralph-builder` agent (plan mode) | `planner.md` |
+| `ralph-builder` agent (implement mode) | `implementer.md` |
+| `ralph-validator` agent | `reviewer.md` |
+| `ralph-integrator` agent | `integrator.md` |
 
 ### Template Authoring Rules
 

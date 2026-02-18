@@ -22,8 +22,8 @@ if echo "$TASK_SUBJECT" | grep -qi "review"; then
   cat >&2 <<EOF
 Review task completed by $TEAMMATE: "$TASK_SUBJECT"
 ACTION: TaskGet the completed task. Check verdict:
-- APPROVED: peer handoff will wake implementer. Verify worker exists.
-- NEEDS_ITERATION: Create revision task with "Plan" in subject for planner.
+- APPROVED: peer handoff will wake builder. Verify worker exists.
+- NEEDS_ITERATION: Create revision task with "Plan" in subject for builder.
 EOF
 else
   cat >&2 <<EOF
