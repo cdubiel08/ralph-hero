@@ -42,6 +42,9 @@ describe("resolveState - semantic intents", () => {
     expect(() => resolveState("__LOCK__", "ralph_hero")).toThrow(
       /not valid for ralph_hero/i,
     );
+    expect(() => resolveState("__LOCK__", "ralph_merge")).toThrow(
+      /not valid for ralph_merge/i,
+    );
   });
 
   it("resolves __COMPLETE__ for commands with single completion target", () => {
@@ -59,6 +62,9 @@ describe("resolveState - semantic intents", () => {
     );
     expect(resolveState("__COMPLETE__", "ralph_split").resolvedState).toBe(
       "Backlog",
+    );
+    expect(resolveState("__COMPLETE__", "ralph_merge").resolvedState).toBe(
+      "Done",
     );
   });
 
@@ -122,6 +128,22 @@ describe("resolveState - direct state names", () => {
     );
   });
 
+  it("accepts valid output states for ralph_merge", () => {
+    expect(resolveState("Done", "ralph_merge").resolvedState).toBe("Done");
+    expect(resolveState("Human Needed", "ralph_merge").resolvedState).toBe(
+      "Human Needed",
+    );
+  });
+
+  it("rejects invalid states for ralph_merge", () => {
+    expect(() => resolveState("In Review", "ralph_merge")).toThrow(
+      /not a valid output for ralph_merge/i,
+    );
+    expect(() => resolveState("In Progress", "ralph_merge")).toThrow(
+      /not a valid output for ralph_merge/i,
+    );
+  });
+
   it("rejects states not in command's allowed outputs with recovery", () => {
     expect(() => resolveState("Ready for Plan", "ralph_impl")).toThrow(
       /not a valid output for ralph_impl/i,
@@ -166,6 +188,7 @@ describe("resolveState - command validation", () => {
     expect(resolveState("__LOCK__", "plan").resolvedState).toBe(
       "Plan in Progress",
     );
+    expect(resolveState("__COMPLETE__", "merge").resolvedState).toBe("Done");
   });
 });
 

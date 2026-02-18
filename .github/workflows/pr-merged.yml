@@ -1,0 +1,132 @@
+name: PR Merged - Update Workflow State
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  update-project-state:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.RALPH_HERO_GITHUB_TOKEN }}
+      PROJECT_OWNER: ${{ github.repository_owner }}
+      PROJECT_NUMBER: ${{ vars.RALPH_GH_PROJECT_NUMBER }}
+    steps:
+      - name: Extract linked issue numbers from PR body
+        id: issues
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # Extract issue numbers from Closes/Fixes/Resolves #N patterns (case-insensitive)
+          ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves)\s+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
+          ISSUES=$(echo "$ISSUES" | xargs)  # trim whitespace
+          echo "numbers=$ISSUES" >> "$GITHUB_OUTPUT"
+          if [ -z "$ISSUES" ]; then
+            echo "No linked issues found in PR body"
+          else
+            echo "Found linked issues: $ISSUES"
+          fi
+
+      - name: Update Workflow State to Done
+        if: steps.issues.outputs.numbers != ''
+        env:
+          ISSUE_NUMBERS: ${{ steps.issues.outputs.numbers }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          # Fetch project ID and Workflow State field ID
+          PROJECT_DATA=$(gh api graphql -f query='
+            query($owner: String!, $number: Int!) {
+              user(login: $owner) {
+                projectV2(number: $number) {
+                  id
+                  field(name: "Workflow State") {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      options { id name }
+                    }
+                  }
+                }
+              }
+            }
+          ' -f owner="$PROJECT_OWNER" -F number="$PROJECT_NUMBER" 2>/dev/null) || \
+          PROJECT_DATA=$(gh api graphql -f query='
+            query($owner: String!, $number: Int!) {
+              organization(login: $owner) {
+                projectV2(number: $number) {
+                  id
+                  field(name: "Workflow State") {
+                    ... on ProjectV2SingleSelectField {
+                      id
+                      options { id name }
+                    }
+                  }
+                }
+              }
+            }
+          ' -f owner="$PROJECT_OWNER" -F number="$PROJECT_NUMBER")
+
+          # Extract from whichever query succeeded (user or organization)
+          PROJECT_ID=$(echo "$PROJECT_DATA" | jq -r '(.data.user // .data.organization).projectV2.id')
+          FIELD_ID=$(echo "$PROJECT_DATA" | jq -r '(.data.user // .data.organization).projectV2.field.id')
+          DONE_OPTION_ID=$(echo "$PROJECT_DATA" | jq -r '(.data.user // .data.organization).projectV2.field.options[] | select(.name == "Done") | .id')
+
+          if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
+            echo "::error::Could not find project $PROJECT_OWNER/$PROJECT_NUMBER"
+            exit 1
+          fi
+
+          if [ -z "$DONE_OPTION_ID" ] || [ "$DONE_OPTION_ID" = "null" ]; then
+            echo "::error::Could not find 'Done' option in Workflow State field"
+            exit 1
+          fi
+
+          echo "Project ID: $PROJECT_ID"
+          echo "Field ID: $FIELD_ID"
+          echo "Done option ID: $DONE_OPTION_ID"
+
+          for ISSUE_NUM in $ISSUE_NUMBERS; do
+            echo "Processing issue #$ISSUE_NUM..."
+
+            # Get the project item ID for this issue
+            ITEM_ID=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!, $issueNumber: Int!, $projectId: ID!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $issueNumber) {
+                    projectItems(first: 10) {
+                      nodes {
+                        id
+                        project { id }
+                      }
+                    }
+                  }
+                }
+              }
+            ' -f owner="$REPO_OWNER" -f repo="$REPO_NAME" -F issueNumber="$ISSUE_NUM" -f projectId="$PROJECT_ID" \
+              | jq -r --arg pid "$PROJECT_ID" '.data.repository.issue.projectItems.nodes[] | select(.project.id == $pid) | .id')
+
+            if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+              echo "Issue #$ISSUE_NUM is not in the project, skipping"
+              continue
+            fi
+
+            echo "Updating issue #$ISSUE_NUM (item $ITEM_ID) to Done..."
+
+            gh api graphql -f query='
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) {
+                  projectV2Item { id }
+                }
+              }
+            ' -f projectId="$PROJECT_ID" -f itemId="$ITEM_ID" -f fieldId="$FIELD_ID" -f optionId="$DONE_OPTION_ID"
+
+            echo "Issue #$ISSUE_NUM updated to Done"
+          done

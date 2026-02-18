@@ -176,6 +176,17 @@
         "If final phase: PR created, ticket In Review"
       ]
     },
+    "ralph_merge": {
+      "description": "Transition ticket to Done after PR merge",
+      "valid_input_states": ["In Review"],
+      "valid_output_states": ["Done", "Human Needed"],
+      "preconditions": [
+        "PR must be merged"
+      ],
+      "postconditions": [
+        "Ticket moved to Done"
+      ]
+    },
     "ralph_hero": {
       "description": "Orchestrate full ticket lifecycle",
       "valid_input_states": ["Backlog", "Research Needed", "Ready for Plan", "Plan in Review", "In Progress"],
@@ -274,7 +285,8 @@
       "ralph_plan": "Plan in Review",
       "ralph_impl": "In Review",
       "ralph_review": "In Progress",
-      "ralph_split": "Backlog"
+      "ralph_split": "Backlog",
+      "ralph_merge": "Done"
     },
     "__ESCALATE__": {
       "*": "Human Needed"
