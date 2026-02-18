@@ -21,6 +21,10 @@ on:
           - minor
           - major
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 defaults:
   run:
     working-directory: plugin/ralph-hero/mcp-server
@@ -104,6 +108,7 @@ jobs:
           git add plugin/ralph-hero/.claude-plugin/plugin.json
           git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
           git tag "v${NEW_VERSION}"
+          git pull --rebase origin main
           git push origin main --tags
 
       - name: Publish to npm
