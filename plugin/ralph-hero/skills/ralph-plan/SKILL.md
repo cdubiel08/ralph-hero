@@ -155,7 +155,7 @@ primary_issue: 123
 
 | Phase | Issue | Title | Estimate |
 |-------|-------|-------|----------|
-| 1 | #123 | [Title] | XS |
+| 1 | GH-123 | [Title] | XS |
 
 **Why grouped**: [Explanation]
 
@@ -174,7 +174,7 @@ primary_issue: 123
 
 ---
 
-## Phase 1: [#123 Title]
+## Phase 1: [GH-123 Title]
 > **Issue**: [URL] | **Research**: [URL] | **Depends on**: (if applicable)
 
 ### Changes Required
@@ -202,7 +202,7 @@ primary_issue: 123
 
 ```bash
 git add thoughts/shared/plans/YYYY-MM-DD-*.md
-git commit -m "docs(plan): GH-NNN implementation plan"  # or "#123, #124, #125 group plan"
+git commit -m "docs(plan): GH-NNN implementation plan"  # or "GH-123, GH-124, GH-125 group plan"
 git push origin main
 ```
 

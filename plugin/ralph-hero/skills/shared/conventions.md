@@ -2,6 +2,19 @@
 
 Common protocols referenced by all Ralph skills. Skills should link here rather than duplicating this content.
 
+## Identifier Disambiguation
+
+Task list IDs and GitHub issue numbers use different prefixes to avoid confusion:
+
+| Entity | Prefix | Example | Scope |
+|--------|--------|---------|-------|
+| Task list item | `T-` | T-7 | Session-local, ephemeral |
+| GitHub issue | `GH-` | GH-49 | Repository-scoped, permanent |
+
+- **Task subjects and spawn templates** use `GH-NNN` when referencing GitHub issues (e.g., `"Research GH-42"`)
+- **Task list IDs** (from TaskCreate/TaskList) are referenced as `T-N` in lead messages and instructions
+- **Exception**: GitHub PR body `Closes #NNN` syntax uses bare `#NNN` because GitHub requires it
+
 ## Escalation Protocol
 
 When encountering complexity, uncertainty, or states that don't align with protocol, **escalate via GitHub issue comment** by @mentioning the appropriate person.
@@ -149,7 +162,7 @@ Available templates: `researcher`, `planner`, `reviewer`, `implementer`, `triage
 
 If `IS_GROUP=true` for the issue:
 ```
-{GROUP_CONTEXT} = "Group: #{PRIMARY} (#{A}, #{B}, #{C}). Plan covers all group issues."
+{GROUP_CONTEXT} = "Group: GH-{PRIMARY} (GH-{A}, GH-{B}, GH-{C}). Plan covers all group issues."
 ```
 
 If `IS_GROUP=false`:
@@ -175,7 +188,7 @@ If a placeholder resolves to an empty string, remove the ENTIRE LINE containing 
 
 Example -- planner template before substitution:
 ```
-Plan #42: Add caching.
+Plan GH-42: Add caching.
 {GROUP_CONTEXT}
 
 Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
@@ -183,7 +196,7 @@ Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
 
 After substitution when IS_GROUP=false (GROUP_CONTEXT is empty):
 ```
-Plan #42: Add caching.
+Plan GH-42: Add caching.
 
 Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
 ```
@@ -227,7 +240,7 @@ Skills should be invoked via forked subprocesses to isolate context:
 ```
 Task(subagent_type="general-purpose",
      prompt="Skill(skill='ralph-hero:ralph-research', args='42')",
-     description="Research #42")
+     description="Research GH-42")
 ```
 
 This ensures:
@@ -368,4 +381,4 @@ This ensures subsequent phases find the artifact via the primary channel.
 ### Known Limitations
 
 - **10-comment limit**: `get_issue` returns only the last 10 comments. For issues with many status updates, early comments (e.g., the research document comment) may scroll off. This is why the glob fallback is essential — it provides a reliable secondary discovery path when comments are no longer visible.
-- **Group glob for non-primary issues**: Group plans use the primary issue number in filenames (e.g., `group-GH-0042-*.md`). Non-primary group members (e.g., #43, #44) won't match `*GH-43*`. The comment-based path handles groups correctly since the plan skill posts to ALL group issues. The glob fallback should try `*group*GH-{primary}*` after `*GH-{number}*` fails.
+- **Group glob for non-primary issues**: Group plans use the primary issue number in filenames (e.g., `group-GH-0042-*.md`). Non-primary group members (e.g., GH-43, GH-44) won't match `*GH-43*`. The comment-based path handles groups correctly since the plan skill posts to ALL group issues. The glob fallback should try `*group*GH-{primary}*` after `*GH-{number}*` fails.

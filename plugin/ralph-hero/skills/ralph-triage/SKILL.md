@@ -287,7 +287,7 @@ After triage action is complete, scan for related issues in Backlog or Research 
    - blockingNumber: [earlier-phase-issue-number]
    ```
 
-   Example: A test config issue (#10) that must complete before test implementation issues (#11, #12) can start:
+   Example: A test config issue (GH-10) that must complete before test implementation issues (GH-11, GH-12) can start:
    ```
    # Config issue blocks the implementation issues
    ralph_hero__add_dependency(blockedNumber=11, blockingNumber=10)

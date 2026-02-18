@@ -1,4 +1,4 @@
-Research #{ISSUE_NUMBER}: {TITLE}.
+Research GH-{ISSUE_NUMBER}: {TITLE}.
 
 Invoke: Skill(skill="ralph-hero:ralph-research", args="{ISSUE_NUMBER}")
 

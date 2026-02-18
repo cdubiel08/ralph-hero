@@ -83,7 +83,7 @@ Use `phase` to determine tasks (Section 4.2) and first teammate (Section 4.3). T
 
 ### Group Tracking
 
-- **GROUP_TICKETS**: Encoded in task descriptions (e.g., "Plan group #42 (#42, #43, #44)")
+- **GROUP_TICKETS**: Encoded in task descriptions (e.g., "Plan group GH-42 (GH-42, GH-43, GH-44)")
 - **GROUP_PRIMARY**: Used for worktree naming, planner/implementer spawning
 - **IS_GROUP**: Determines per-group vs per-issue tasks
 - Group membership is immutable once detected
@@ -106,14 +106,14 @@ For XS issues (estimate=1) with specific, actionable descriptions: skip research
 
 **CRITICAL**: Create team BEFORE any tasks. Tasks created before TeamCreate become orphaned.
 
-Team name must be unique: `TEAM_NAME = "ralph-team-GH-NNN"` (use issue number or group primary). Use for ALL subsequent `team_name` parameters.
+Team name must be unique: `TEAM_NAME = "ralph-team-GH-NNN"` (e.g., `ralph-team-GH-42`; use issue number or group primary). Use for ALL subsequent `team_name` parameters.
 
 ### 4.2 Create Tasks for Remaining Phases
 
 Based on pipeline position (Section 3), create tasks with sequential blocking: Research -> Plan -> Review -> Implement -> PR.
 
 **Subject patterns** (workers match on these to self-claim):
-- `"Research #NNN"` / `"Plan #NNN"` / `"Review plan for #NNN"` / `"Implement #NNN"` / `"Create PR for #NNN"`
+- `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"`
 
 **Groups** (IS_GROUP=true): Research tasks are per-issue; Plan/Review/Implement/PR are per-group using GROUP_PRIMARY. Include all issue numbers in descriptions. Plan is blocked by ALL research tasks.
 
@@ -145,8 +145,8 @@ The Stop hook prevents premature shutdown -- you cannot stop while GitHub has pr
 ### 4.5 Lead Creates PR (Only Direct Work)
 
 After implementation completes, lead pushes and creates PR via `gh pr create`:
-- **Single issue**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN`. Title: `feat: [title]`. Body: summary, `Closes #NNN`, change summary from implementer's task description.
-- **Group**: Push from `worktrees/GH-[PRIMARY]`. Body: summary, `Closes #NNN` for each issue, changes by phase.
+- **Single issue**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN`. Title: `feat: [title]`. Body: summary, `Closes #NNN` (bare `#NNN` here is GitHub PR syntax, not our convention), change summary from implementer's task description.
+- **Group**: Push from `worktrees/GH-[PRIMARY]`. Body: summary, `Closes #NNN` for each issue (bare `#NNN` is GitHub PR syntax), changes by phase.
 
 **After PR creation**: Move ALL issues (and children) to "In Review" via `advance_children`. NEVER to "Done" -- that requires PR merge (external event). Then return to dispatch loop.
 
@@ -196,7 +196,7 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
    ```
    Task(subagent_type="[agent-type]", team_name=TEAM_NAME, name="[role]",
         prompt=[resolved template content],
-        description="[Role] #NNN")
+        description="[Role] GH-NNN")
    ```
 
 See `shared/conventions.md` "Spawn Template Protocol" for full placeholder reference, authoring rules, and naming conventions.

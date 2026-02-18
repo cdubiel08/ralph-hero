@@ -120,9 +120,9 @@ After verifying issue needs splitting:
 
 ```
 analyze_task = TaskCreate(
-  subject: "#NNN: Analyze scope",
-  description: "Research scope and identify split boundaries for #NNN",
-  activeForm: "Analyzing scope for #NNN...",
+  subject: "GH-NNN: Analyze scope",
+  description: "Research scope and identify split boundaries for GH-NNN",
+  activeForm: "Analyzing scope for GH-NNN...",
   metadata: {
     "issue_number": "NNN",
     "command": "split",
@@ -132,8 +132,8 @@ analyze_task = TaskCreate(
 )
 
 create_task = TaskCreate(
-  subject: "#NNN: Create sub-issues",
-  description: "Create XS/S sub-issues from #NNN",
+  subject: "GH-NNN: Create sub-issues",
+  description: "Create XS/S sub-issues from GH-NNN",
   activeForm: "Creating sub-issues...",
   addBlockedBy: [analyze_task],
   metadata: {
@@ -409,8 +409,8 @@ Next: Run /ralph-research or /ralph-plan on sub-issues as appropriate.
 
 | Situation | Action |
 |-----------|--------|
-| Can't identify natural split boundaries | @mention: "Unable to decompose #NNN. Scope is atomic or unclear." |
-| Split would create too many issues (>5) | @mention: "#NNN decomposes into [N] issues. Confirm this is acceptable." |
+| Can't identify natural split boundaries | @mention: "Unable to decompose GH-NNN. Scope is atomic or unclear." |
+| Split would create too many issues (>5) | @mention: "GH-NNN decomposes into [N] issues. Confirm this is acceptable." |
 | Circular dependencies in proposed split | @mention: "Proposed split has circular dependency. Need guidance." |
 | Issue is actually XS/Small after research | Update estimate instead of splitting |
 
