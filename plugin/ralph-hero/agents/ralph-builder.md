@@ -1,7 +1,7 @@
 ---
 name: ralph-builder
 description: Builder worker - composes plan, implement, and self-review skills for the full build lifecycle
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment, ralph_hero__detect_group, ralph_hero__list_sub_issues, ralph_hero__list_dependencies
+tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage
 model: sonnet
 color: cyan
 ---
