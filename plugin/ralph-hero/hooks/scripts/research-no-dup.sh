@@ -1,4 +1,7 @@
 #!/bin/bash
+# ORPHANED: not registered in any skill frontmatter or hooks.json.
+# Overlaps with pre-artifact-validator.sh (registered in hooks.json on Write) which already
+# blocks duplicate research docs globally. Do not register both.
 # ralph-hero/hooks/scripts/research-no-dup.sh
 # PreToolUse (Write): Block if research doc already exists
 #

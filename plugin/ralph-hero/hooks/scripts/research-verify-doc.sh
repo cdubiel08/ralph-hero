@@ -1,4 +1,6 @@
 #!/bin/bash
+# ORPHANED: not registered in any skill frontmatter or hooks.json.
+# Created for PostToolUse (Write) in ralph-research but never wired up.
 # ralph-hero/hooks/scripts/research-verify-doc.sh
 # PostToolUse (Write): Verify research doc has required structure
 #

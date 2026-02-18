@@ -1,4 +1,6 @@
 #!/bin/bash
+# ORPHANED: not registered in any skill frontmatter or hooks.json.
+# Superseded by per-skill state gates (research-state-gate.sh, plan-state-gate.sh, etc.)
 # ralph-hero/hooks/scripts/state-gate.sh
 # PreToolUse: Validate ticket is in expected state before allowing state transition
 #

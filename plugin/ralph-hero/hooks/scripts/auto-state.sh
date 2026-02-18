@@ -1,4 +1,6 @@
 #!/bin/bash
+# ORPHANED: not registered in any skill frontmatter or hooks.json.
+# Semantic intents (__LOCK__, __COMPLETE__, etc.) are resolved server-side by the MCP server.
 # ralph-hero/hooks/scripts/auto-state.sh
 # PreToolUse: Auto-inject correct state from semantic intent
 #

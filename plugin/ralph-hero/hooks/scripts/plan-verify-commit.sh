@@ -1,4 +1,6 @@
 #!/bin/bash
+# ORPHANED: not registered in any skill frontmatter or hooks.json.
+# Created for PostToolUse (Bash) in ralph-plan but never wired up.
 # ralph-hero/hooks/scripts/plan-verify-commit.sh
 # PostToolUse (Bash): Verify git commit succeeded
 #
