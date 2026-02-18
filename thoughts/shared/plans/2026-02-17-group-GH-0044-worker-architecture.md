@@ -251,12 +251,12 @@ Note: `Edit` tool comes from the implementer role (for code changes during imple
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'name: ralph-builder' plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'Edit' plugin/ralph-hero/agents/ralph-builder.md` (has Edit tool from implementer)
-- [ ] `grep -q 'ralph-hero:ralph-plan' plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'ralph-hero:ralph-impl' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'name: ralph-builder' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'Edit' plugin/ralph-hero/agents/ralph-builder.md` (has Edit tool from implementer)
+- [x] `grep -q 'ralph-hero:ralph-plan' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'ralph-hero:ralph-impl' plugin/ralph-hero/agents/ralph-builder.md`
 
 #### Manual Verification
 - [ ] Tool list is the union of `ralph-planner` and `ralph-implementer` tools
