@@ -32,6 +32,7 @@ env:
   RALPH_VALID_OUTPUT_STATES: "In Progress,Ready for Plan,Human Needed"
   RALPH_ARTIFACT_DIR: "thoughts/shared/reviews"
   RALPH_MAX_ESTIMATE: "S"
+  RALPH_REQUIRES_PLAN: "true"
 ---
 
 # Ralph GitHub Review - Plan Quality Gate
@@ -85,14 +86,26 @@ Then STOP.
    - number: [issue-number]
    ```
 
-2. Search issue comments for a plan document URL. Look for a comment containing `## Implementation Plan` or `## Group Implementation Plan` and extract the GitHub URL (pattern: `https://github.com/.../thoughts/shared/plans/...`). Also check the issue body.
-
-3. If no plan document found:
-   ```
-   Issue #NNN has no implementation plan attached.
-   Cannot review without a plan. Run /ralph-plan first.
-   ```
-   Then STOP.
+2. **Find linked plan document** (per Artifact Comment Protocol in shared/conventions.md):
+   1. Search issue comments for `## Implementation Plan` or `## Group Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
+   2. Extract the GitHub URL from the line after the header
+   3. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
+   4. Read the plan document fully
+   5. **Fallback**: If no comment found, glob for the plan doc. Try both padded and unpadded:
+      - `thoughts/shared/plans/*GH-${number}*`
+      - `thoughts/shared/plans/*GH-$(printf '%04d' ${number})*`
+      Use the most recent match if multiple found.
+   6. **Group fallback**: If standard glob fails, try `thoughts/shared/plans/*group*GH-{primary}*` where `{primary}` is the primary issue number from the issue's group context.
+   7. **If fallback found, self-heal**: Post the missing comment to the issue:
+      ```
+      ralph_hero__create_comment(owner, repo, number, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
+      ```
+   8. **If neither found**:
+      ```
+      Issue #NNN has no implementation plan attached.
+      Cannot review without a plan. Run /ralph-plan first.
+      ```
+      Then STOP.
 
 4. Store issue number for postcondition hook:
    - Set `RALPH_TICKET_ID` environment context (format: `GH-NNN`)
@@ -232,14 +245,16 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
    **Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
-2. **Add approval comment**:
+2. **Add approval comment** (per Artifact Comment Protocol in shared/conventions.md):
    ```
    ralph_hero__create_comment
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: |
-       ## Plan Approved
+       ## Plan Review
+
+       VERDICT: APPROVED
 
        [INTERACTIVE]: Approved by human review.
        [AUTO]: Approved by automated critique - no major issues found.
@@ -276,14 +291,16 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
    - command: "ralph_review"
    ```
 
-3. **Add feedback comment**:
+3. **Add feedback comment** (per Artifact Comment Protocol in shared/conventions.md):
    ```
    ralph_hero__create_comment
    - owner: $RALPH_GH_OWNER
    - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: |
-       ## Plan Needs Iteration
+       ## Plan Review
+
+       VERDICT: NEEDS_ITERATION
 
        Issues identified:
        - [Issue 1]

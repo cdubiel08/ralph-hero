@@ -28,6 +28,7 @@ hooks:
 env:
   RALPH_COMMAND: "plan"
   RALPH_REQUIRED_BRANCH: "main"
+  RALPH_REQUIRES_RESEARCH: "true"
   CLAUDE_CODE_TASK_LIST_ID: "ralph-workflow"
 ---
 
@@ -105,7 +106,20 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 
 ### Step 2: Gather Group Context
 
-1. **For each issue** (dependency order): read details, comments, and linked research doc (look for `## Research Document` in comments)
+1. **For each issue** (dependency order):
+   1. Read issue via `ralph_hero__get_issue(owner, repo, number)` — response includes comments
+   2. Search comments for `## Research Document` header. If multiple matches, use the **most recent** (last) match.
+   3. Extract the URL from the line after the header
+   4. Convert GitHub URL to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
+   5. Read the local research file
+   6. **Fallback**: If no comment found, glob for the research doc. Try both padded and unpadded:
+      - `thoughts/shared/research/*GH-${number}*`
+      - `thoughts/shared/research/*GH-$(printf '%04d' ${number})*`
+   7. **If fallback found, self-heal**: Post the missing comment to the issue:
+      ```
+      ralph_hero__create_comment(owner, repo, number, body="## Research Document\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
+      ```
+   8. **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
 2. **Build unified understanding**: shared patterns, data flow between phases, integration points
 3. **Spawn sub-tasks** for research gaps:
    - `Task(subagent_type="codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
@@ -196,10 +210,13 @@ git push origin main
 
 For **each issue in the group**:
 
-1. **Add plan link comment**: `ralph_hero__create_comment` with body:
+1. **Add plan link comment** (per Artifact Comment Protocol in shared/conventions.md): `ralph_hero__create_comment` with body:
    ```
    ## Implementation Plan
-   [Plan (Phase N of M)](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/[filename].md)
+
+   https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/[filename].md
+
+   Phase N of M for this issue. [1-line summary]
    ```
 
 2. **Add phase summary comment**:

@@ -84,16 +84,23 @@ After fetching the issue, check its current state:
    - number: [issue-number]
    ```
 
-2. **Find linked plan document** - search issue comments for a comment containing `## Implementation Plan` or `## Group Implementation Plan` and extract the GitHub URL (pattern: `https://github.com/.../thoughts/shared/plans/...`). Also check the issue body.
+2. **Find linked plan document** (per Artifact Comment Protocol in shared/conventions.md):
+   1. Search issue comments for `## Implementation Plan` or `## Group Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
+   2. Extract the GitHub URL from the line after the header
+   3. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
+   4. Read the plan document fully
+   5. **Fallback**: If no comment found, glob for the plan doc. Try both padded and unpadded:
+      - `thoughts/shared/plans/*GH-${number}*`
+      - `thoughts/shared/plans/*GH-$(printf '%04d' ${number})*`
+      Use the most recent match if multiple found.
+   6. **Group fallback**: If standard glob fails, try `thoughts/shared/plans/*group*GH-{primary}*` where `{primary}` is the primary issue number from the issue's group context.
+   7. **If fallback found, self-heal**: Post the missing comment to the issue:
+      ```
+      ralph_hero__create_comment(owner, repo, number, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
+      ```
+   8. **If neither found**: STOP with "Issue #NNN has no implementation plan. Run /ralph-plan first."
 
 3. **Read plan document fully**
-
-If NO plan document exists:
-```
-Issue #NNN has no implementation plan.
-Moving back to "Ready for Plan" status.
-```
-Update status and STOP.
 
 4. **Build `issues[]` list** from plan frontmatter:
    - If `github_issues` array exists -> `issues[] = github_issues` (group plan)
@@ -251,7 +258,7 @@ Only execute when ALL phases are complete and PR is created.
 
 For each issue in `issues[]` (single: just one; group/epic: all issues):
 
-1. **Add completion comment**:
+1. **Add completion comment** (per Artifact Comment Protocol in shared/conventions.md):
    ```
    ralph_hero__create_comment
    - owner: $RALPH_GH_OWNER
@@ -259,6 +266,7 @@ For each issue in `issues[]` (single: just one; group/epic: all issues):
    - number: [issue-number]
    - body: |
        ## Implementation Complete
+
        PR: [GitHub PR URL]
        Branch: [branch-name]
        [If group/epic: list all issues and their status]

@@ -249,3 +249,123 @@ This is acceptable because the agent already has its own isolated context window
 ### Exception: Direct User Invocation
 
 Users invoking skills directly (e.g., `/ralph-research 42`) run inline in their session. This is the expected behavior for interactive use.
+
+## Artifact Comment Protocol
+
+### Overview
+
+GitHub issue comments are the **primary source of truth** for all artifacts produced by the pipeline.
+Each phase posts a comment with a standardized section header. The next phase searches for that header.
+
+### Comment Section Headers
+
+| Phase | Header | Content |
+|-------|--------|---------|
+| Research | `## Research Document` | GitHub URL to research `.md` file |
+| Plan | `## Implementation Plan` | GitHub URL to plan `.md` file |
+| Review | `## Plan Review` | VERDICT line (APPROVED or NEEDS_ITERATION) + optional critique URL |
+| Implementation | `## Implementation Complete` | PR URL, branch name, files changed |
+
+### Comment Format
+
+Each artifact comment MUST follow this exact format:
+
+```
+## [Section Header]
+
+[GitHub URL to artifact file]
+
+[Optional summary - 1-3 lines]
+```
+
+**Example - Research:**
+```
+## Research Document
+
+https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/2026-02-17-GH-0042-auth-flow.md
+
+Key findings: Auth flow uses Firebase JWT tokens. Current middleware validates but doesn't refresh.
+Recommended approach: Add token refresh middleware.
+```
+
+**Example - Plan:**
+```
+## Implementation Plan
+
+https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/2026-02-17-GH-0042-auth-refresh.md
+
+Phases: 3 (middleware -> token refresh -> integration tests)
+```
+
+**Example - Review:**
+```
+## Plan Review
+
+VERDICT: APPROVED
+Full critique: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/reviews/2026-02-17-GH-0042-critique.md
+```
+
+### Discovery Protocol
+
+To find a prior-phase artifact:
+
+1. Fetch issue with comments: `ralph_hero__get_issue(owner, repo, number)`
+2. Search comments for the section header (e.g., `## Research Document`)
+3. If multiple comments match the same section header, use the **most recent** (last) match
+4. Extract the URL from the first line after the header
+5. Convert GitHub URL to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
+6. Read the local file
+
+**URL to local path conversion:**
+```
+https://github.com/OWNER/REPO/blob/main/thoughts/shared/research/FILE.md
+-> thoughts/shared/research/FILE.md
+```
+
+### Deterministic File Naming
+
+Artifacts follow this naming convention:
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Research | `thoughts/shared/research/YYYY-MM-DD-GH-NNNN-description.md` | `2026-02-17-GH-0042-auth-flow.md` |
+| Plan | `thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-description.md` | `2026-02-17-GH-0042-auth-refresh.md` |
+| Group Plan | `thoughts/shared/plans/YYYY-MM-DD-group-GH-NNNN-description.md` | `2026-02-17-group-GH-0042-auth-suite.md` |
+| Review | `thoughts/shared/reviews/YYYY-MM-DD-GH-NNNN-critique.md` | `2026-02-17-GH-0042-critique.md` |
+
+The issue number (`GH-NNNN`) in the filename makes artifacts discoverable even without comments.
+
+**Note on zero-padding**: Filenames use zero-padded 4-digit issue numbers (e.g., `GH-0042`). When constructing glob patterns from a plain issue number, try BOTH padded and unpadded forms: `*GH-${number}*` and `*GH-$(printf '%04d' $number)*`.
+
+### Fallback Discovery
+
+If a comment search fails (comment was never posted, was deleted, or scrolled past the comment limit):
+
+1. **Glob fallback**: Search `thoughts/shared/{type}/*GH-{number}*` for the artifact. Try both unpadded (`*GH-42*`) and zero-padded (`*GH-0042*`) patterns.
+2. **Group glob fallback**: If the standard glob fails for a group member, try `*group*GH-{primary}*` where `{primary}` is the primary issue number from the issue's group context (parent or first blocker).
+3. **If found, self-heal**: Post the missing comment to the issue using the correct section header (see Self-Healing below).
+4. **If not found**: Block and report the missing artifact.
+
+### Self-Healing
+
+When an artifact is found via glob fallback but the expected comment is missing, post it:
+
+```
+ralph_hero__create_comment
+- owner: $RALPH_GH_OWNER
+- repo: $RALPH_GH_REPO
+- number: [issue-number]
+- body: |
+    ## [Section Header]
+
+    https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[local-path]
+
+    (Self-healed: artifact was found on disk but not linked via comment)
+```
+
+This ensures subsequent phases find the artifact via the primary channel.
+
+### Known Limitations
+
+- **10-comment limit**: `get_issue` returns only the last 10 comments. For issues with many status updates, early comments (e.g., the research document comment) may scroll off. This is why the glob fallback is essential — it provides a reliable secondary discovery path when comments are no longer visible.
+- **Group glob for non-primary issues**: Group plans use the primary issue number in filenames (e.g., `group-GH-0042-*.md`). Non-primary group members (e.g., #43, #44) won't match `*GH-43*`. The comment-based path handles groups correctly since the plan skill posts to ALL group issues. The glob fallback should try `*group*GH-{primary}*` after `*GH-{number}*` fails.
