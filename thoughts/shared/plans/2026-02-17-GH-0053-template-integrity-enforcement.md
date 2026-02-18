@@ -92,9 +92,9 @@ Add a "Template Integrity" subsection to SKILL.md Section 6 (Teammate Spawning) 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep "Template Integrity" plugin/ralph-hero/skills/ralph-team/SKILL.md` matches
-- [ ] `grep "Anti-patterns" plugin/ralph-hero/skills/ralph-team/SKILL.md` matches
-- [ ] `grep "under 10 lines" plugin/ralph-hero/skills/ralph-team/SKILL.md` matches
+- [x] `grep "Template Integrity" plugin/ralph-hero/skills/ralph-team/SKILL.md` matches
+- [x] `grep "Anti-patterns" plugin/ralph-hero/skills/ralph-team/SKILL.md` matches
+- [x] `grep "under 10 lines" plugin/ralph-hero/skills/ralph-team/SKILL.md` matches
 
 #### Manual Verification
 - [ ] Rule is positioned directly after the spawn procedure steps in Section 6
@@ -134,8 +134,8 @@ Resolved template content is the COMPLETE prompt for spawned teammates. Orchestr
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep "Template Integrity" plugin/ralph-hero/skills/shared/conventions.md` matches
-- [ ] `grep "Line-count guardrail" plugin/ralph-hero/skills/shared/conventions.md` matches
+- [x] `grep "Template Integrity" plugin/ralph-hero/skills/shared/conventions.md` matches
+- [x] `grep "Line-count guardrail" plugin/ralph-hero/skills/shared/conventions.md` matches
 
 #### Manual Verification
 - [ ] Subsection is placed within the Spawn Template Protocol section
@@ -182,11 +182,11 @@ Remove `ralph_hero__*` MCP tools from agent definitions where they are not neede
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-researcher.md` returns no matches
-- [ ] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-planner.md` returns no matches
-- [ ] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-advocate.md` returns no matches
-- [ ] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-implementer.md` returns no matches
-- [ ] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-triager.md` still returns matches (unchanged)
+- [x] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-researcher.md` returns no matches
+- [x] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-planner.md` returns no matches
+- [x] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-advocate.md` returns no matches
+- [x] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-implementer.md` returns no matches
+- [x] `grep "ralph_hero__" plugin/ralph-hero/agents/ralph-triager.md` still returns matches (unchanged)
 
 #### Manual Verification
 - [ ] Each reduced agent retains: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage
