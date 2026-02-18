@@ -189,12 +189,12 @@ color: green
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'name: ralph-analyst' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'ralph-hero:ralph-triage' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'ralph-hero:ralph-split' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'ralph-hero:ralph-research' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'name: ralph-analyst' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'ralph-hero:ralph-triage' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'ralph-hero:ralph-split' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'ralph-hero:ralph-research' plugin/ralph-hero/agents/ralph-analyst.md`
 
 #### Manual Verification
 - [ ] Tool list is the union of `ralph-triager` and `ralph-researcher` tools
