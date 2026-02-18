@@ -14,6 +14,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-state-gate.sh"
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-branch-gate.sh"
   PostToolUse:
     - matcher: "Bash"
       hooks:
@@ -103,7 +107,8 @@ Update status and STOP.
    - Find the **first unchecked phase** - this is what we'll implement
 
 6. **If resuming (issue already "In Progress")**:
-   - Check if worktree exists: `ls ../worktrees/GH-NNN`
+   - Resolve git root: `GIT_ROOT=$(git rev-parse --show-toplevel)`
+   - Check if worktree exists: `ls "$GIT_ROOT/worktrees/GH-NNN"`
    - If exists, use it; if not, create it
 
 ### Step 3: Verify Readiness (First Phase Only)
@@ -145,13 +150,16 @@ Choose the worktree identifier based on context:
 **5.3. Check for Existing Worktree and Sync**
 
 ```bash
-WORKTREE_PATH="../worktrees/$WORKTREE_ID"
+# Resolve paths from git root (works from any directory)
+GIT_ROOT=$(git rev-parse --show-toplevel)
+WORKTREE_PATH="$GIT_ROOT/worktrees/$WORKTREE_ID"
+
 if [ -d "$WORKTREE_PATH" ]; then
     cd "$WORKTREE_PATH"
     git fetch origin main && git pull origin "$(git branch --show-current)" --no-edit
     # If merge conflict -> escalate (5.4)
 else
-    ./scripts/create-worktree.sh "$WORKTREE_ID" [--epic "GH-$EPIC_NUMBER" if epic]
+    "$GIT_ROOT/scripts/create-worktree.sh" "$WORKTREE_ID"
     cd "$WORKTREE_PATH"
 fi
 ```
@@ -160,7 +168,9 @@ fi
 
 If `git pull` fails with merge conflicts: escalate per `shared/conventions.md` (use `__ESCALATE__` state, comment with conflicted files list, STOP).
 
-**IMPORTANT**: All subsequent file operations must be in the worktree directory.
+**CRITICAL**: After `cd "$WORKTREE_PATH"`, ALL subsequent file operations (Read, Write, Edit, Bash)
+must use paths relative to the worktree OR absolute paths within the worktree.
+The impl-worktree-gate hook will BLOCK any Write/Edit outside the worktree directory.
 
 ### Step 6: Implement ONE Phase
 
@@ -275,7 +285,7 @@ Implementation complete.
 PR: [GitHub PR URL]
 [List all issues with titles and "In Review" status]
 
-Worktree preserved at: ../worktrees/[WORKTREE_ID]
+Worktree preserved at: $GIT_ROOT/worktrees/[WORKTREE_ID]
 Run ./scripts/remove-worktree.sh [WORKTREE_ID] after PR is merged.
 ```
 
@@ -292,7 +302,7 @@ Activated when issue is "In Review" with an open PR (detected in Step 1.5).
 - **SHOULD_FIX**: Quality improvements
 - **DISCUSS**: Reply only, no code change
 
-**A3. Reuse worktree**: `cd ../worktrees/GH-NNN && git pull origin [branch-name]`
+**A3. Reuse worktree**: `GIT_ROOT=$(git rev-parse --show-toplevel) && cd "$GIT_ROOT/worktrees/GH-NNN" && git pull origin [branch-name]`
 
 **A4. Address items** grouped by file: read, fix, verify (lint/tests).
 
