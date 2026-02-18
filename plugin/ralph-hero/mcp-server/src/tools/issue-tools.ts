@@ -31,6 +31,7 @@ import {
   getCurrentFieldValue,
   resolveConfig,
   resolveFullConfig,
+  syncStatusField,
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -944,6 +945,9 @@ export function registerIssueTools(
           "Workflow State",
           resolvedState,
         );
+
+        // Sync default Status field (best-effort, one-way)
+        await syncStatusField(client, fieldCache, projectItemId, resolvedState);
 
         const result: Record<string, unknown> = {
           number: args.number,

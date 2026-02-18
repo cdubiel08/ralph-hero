@@ -23,6 +23,7 @@ ralph-hero/
 │       │   ├── tools/              # MCP tool implementations
 │       │   │   ├── issue-tools.ts  # Issue CRUD + workflow state + estimates
 │       │   │   ├── project-tools.ts
+│       │   │   ├── project-management-tools.ts  # Archive, remove, add, link, clear
 │       │   │   ├── relationship-tools.ts
 │       │   │   └── view-tools.ts
 │       │   └── __tests__/          # Vitest tests
@@ -96,3 +97,5 @@ Set these in `.claude/settings.local.json` (recommended, gitignored):
 - **`SessionCache` vs `FieldOptionCache`**: `SessionCache` stores API response caches (keyed with `query:` prefix) and stable node ID lookups (`issue-node-id:*`, `project-item-id:*`). `FieldOptionCache` is a separate in-memory structure for project field option IDs. Mutations invalidate `query:` prefixed entries only — node ID lookups are stable across mutations.
 - **Split-owner support**: Repo and project can have different owners (e.g., personal repo with org project). `resolveProjectOwner()` handles this. `fetchProjectForCache()` tries both `user` and `organization` GraphQL types.
 - **Rate limiting**: Every non-mutation query auto-injects a `rateLimit` fragment for proactive tracking. The `RateLimiter` class tracks remaining quota and pauses before requests when low.
+- **Status sync (one-way)**: `update_workflow_state` automatically syncs the default Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping in `workflow-states.ts`. The sync is best-effort: if the Status field is missing or has custom options, the sync silently skips. Mapping: queue states -> Todo, lock/active states -> In Progress, terminal states -> Done. `batch_update` and `advance_children` also sync Status.
+- **Project management tools**: 5 tools in `project-management-tools.ts` for project operations: `archive_item`, `remove_from_project`, `add_to_project`, `link_repository`, `clear_field`. See `thoughts/shared/research/2026-02-18-GH-0066-github-projects-v2-docs-guidance.md` for full tool reference and setup guide.

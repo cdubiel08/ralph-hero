@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   STATE_ORDER,
   VALID_STATES,
+  WORKFLOW_STATE_TO_STATUS,
   stateIndex,
   compareStates,
   isEarlierState,
@@ -93,5 +94,36 @@ describe("VALID_STATES completeness", () => {
     }
     expect(VALID_STATES).toContain("Canceled");
     expect(VALID_STATES).toContain("Human Needed");
+  });
+});
+
+describe("WORKFLOW_STATE_TO_STATUS", () => {
+  it("maps all VALID_STATES to a Status value", () => {
+    for (const state of VALID_STATES) {
+      expect(WORKFLOW_STATE_TO_STATUS[state]).toBeDefined();
+      expect(["Todo", "In Progress", "Done"]).toContain(
+        WORKFLOW_STATE_TO_STATUS[state],
+      );
+    }
+  });
+
+  it("maps queue states to Todo", () => {
+    expect(WORKFLOW_STATE_TO_STATUS["Backlog"]).toBe("Todo");
+    expect(WORKFLOW_STATE_TO_STATUS["Research Needed"]).toBe("Todo");
+    expect(WORKFLOW_STATE_TO_STATUS["Ready for Plan"]).toBe("Todo");
+    expect(WORKFLOW_STATE_TO_STATUS["Plan in Review"]).toBe("Todo");
+  });
+
+  it("maps active states to In Progress", () => {
+    expect(WORKFLOW_STATE_TO_STATUS["Research in Progress"]).toBe("In Progress");
+    expect(WORKFLOW_STATE_TO_STATUS["Plan in Progress"]).toBe("In Progress");
+    expect(WORKFLOW_STATE_TO_STATUS["In Progress"]).toBe("In Progress");
+    expect(WORKFLOW_STATE_TO_STATUS["In Review"]).toBe("In Progress");
+  });
+
+  it("maps terminal states to Done", () => {
+    expect(WORKFLOW_STATE_TO_STATUS["Done"]).toBe("Done");
+    expect(WORKFLOW_STATE_TO_STATUS["Canceled"]).toBe("Done");
+    expect(WORKFLOW_STATE_TO_STATUS["Human Needed"]).toBe("Done");
   });
 });

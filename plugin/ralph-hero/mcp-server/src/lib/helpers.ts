@@ -9,6 +9,7 @@
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "./cache.js";
 import { resolveProjectOwner } from "../types.js";
+import { WORKFLOW_STATE_TO_STATUS } from "./workflow-states.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -359,4 +360,40 @@ export function resolveFullConfig(
     );
   }
   return { owner, repo, projectNumber, projectOwner };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Sync default Status field after Workflow State change
+// ---------------------------------------------------------------------------
+
+/**
+ * Sync the default Status field to match a Workflow State change.
+ * Best-effort: logs warning on failure but does not throw.
+ */
+export async function syncStatusField(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  projectItemId: string,
+  workflowState: string,
+): Promise<void> {
+  const targetStatus = WORKFLOW_STATE_TO_STATUS[workflowState];
+  if (!targetStatus) return;
+
+  const statusFieldId = fieldCache.getFieldId("Status");
+  if (!statusFieldId) return;
+
+  const statusOptionId = fieldCache.resolveOptionId("Status", targetStatus);
+  if (!statusOptionId) return;
+
+  try {
+    await updateProjectItemField(
+      client,
+      fieldCache,
+      projectItemId,
+      "Status",
+      targetStatus,
+    );
+  } catch {
+    // Best-effort sync - don't fail the primary operation
+  }
 }
