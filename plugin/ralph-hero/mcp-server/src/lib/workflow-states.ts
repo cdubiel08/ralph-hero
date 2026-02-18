@@ -87,3 +87,26 @@ export function isEarlierState(a: string, b: string): boolean {
 export function isValidState(state: string): boolean {
   return VALID_STATES.includes(state);
 }
+
+/**
+ * Maps Ralph Workflow States to GitHub's default Status field values.
+ * Used for one-way sync: Workflow State changes -> Status field updates.
+ *
+ * Rationale:
+ * - Todo = work not yet actively started (queued states)
+ * - In Progress = work actively being processed (lock states + review)
+ * - Done = terminal/escalated states (no automated progression)
+ */
+export const WORKFLOW_STATE_TO_STATUS: Record<string, string> = {
+  "Backlog": "Todo",
+  "Research Needed": "Todo",
+  "Ready for Plan": "Todo",
+  "Plan in Review": "Todo",
+  "Research in Progress": "In Progress",
+  "Plan in Progress": "In Progress",
+  "In Progress": "In Progress",
+  "In Review": "In Progress",
+  "Done": "Done",
+  "Canceled": "Done",
+  "Human Needed": "Done",
+};

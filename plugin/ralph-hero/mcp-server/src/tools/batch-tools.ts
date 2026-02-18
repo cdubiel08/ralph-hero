@@ -10,7 +10,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { isEarlierState } from "../lib/workflow-states.js";
+import { isEarlierState, WORKFLOW_STATE_TO_STATUS } from "../lib/workflow-states.js";
 import { toolSuccess, toolError } from "../types.js";
 import {
   ensureFieldCache,
@@ -419,6 +419,28 @@ export function registerBatchTools(
                 field: op.field,
                 value: op.value,
               });
+
+              // For workflow_state operations, also sync the default Status field
+              if (op.field === "workflow_state") {
+                const targetStatus = WORKFLOW_STATE_TO_STATUS[op.value];
+                if (targetStatus) {
+                  const statusFieldId = fieldCache.getFieldId("Status");
+                  const statusOptionId = statusFieldId
+                    ? fieldCache.resolveOptionId("Status", targetStatus)
+                    : undefined;
+                  if (statusFieldId && statusOptionId) {
+                    updates.push({
+                      alias: `s${num}_${opIdx}`,
+                      itemId: issue.projectItemId,
+                      fieldId: statusFieldId,
+                      optionId: statusOptionId,
+                      issueNumber: num,
+                      field: "status_sync",
+                      value: targetStatus,
+                    });
+                  }
+                }
+              }
             }
           }
 

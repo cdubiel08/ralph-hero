@@ -26,6 +26,7 @@ import {
   updateProjectItemField,
   getCurrentFieldValue,
   resolveConfig,
+  syncStatusField,
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -674,6 +675,9 @@ export function registerRelationshipTools(
               "Workflow State",
               args.targetState,
             );
+
+            // Sync default Status field (best-effort, one-way)
+            await syncStatusField(client, fieldCache, projectItemId, args.targetState);
 
             advanced.push({
               number: child.number,

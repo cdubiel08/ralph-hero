@@ -19,6 +19,7 @@ import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
+import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -300,6 +301,9 @@ async function main(): Promise<void> {
 
   // Phase 5: Batch operations
   registerBatchTools(server, client, fieldCache);
+
+  // Project management tools (archive, remove, add, link repo, clear field)
+  registerProjectManagementTools(server, client, fieldCache);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();
