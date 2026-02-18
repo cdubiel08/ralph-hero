@@ -1,6 +1,7 @@
 ---
 description: Review and critique implementation plans before coding begins. INTERACTIVE mode for human review, AUTO mode for automated critique. Use when you want to review a plan, approve or reject a spec, or run quality gates on plans.
 argument-hint: <issue-number> [--interactive]
+context: fork
 model: opus
 hooks:
   PreToolUse:
