@@ -56,17 +56,17 @@ Key benefits: fewer handoffs (3 vs 6+), broader per-worker scope, optional valid
 All 4 new worker agents are operational, both orchestrators use the new worker model, and legacy agent/template files are removed. The state machine and skills remain unchanged -- only the agent definitions, orchestrators, and supporting docs change.
 
 ### Verification
-- [ ] 4 new agent files exist: `ralph-analyst.md`, `ralph-builder.md`, `ralph-validator.md`, `ralph-integrator.md`
-- [ ] 5 old agent files removed: `ralph-triager.md`, `ralph-researcher.md`, `ralph-planner.md`, `ralph-advocate.md`, `ralph-implementer.md`
-- [ ] 6 old spawn templates removed: `triager.md`, `splitter.md`, `researcher.md`, `planner.md`, `reviewer.md`, `implementer.md`
-- [ ] 1 new spawn template exists: `integrator.md`
-- [ ] `ralph-team` SKILL.md spawn table references 4 worker agent types
-- [ ] `ralph-hero` SKILL.md phases grouped by worker scope
-- [ ] `ralph-loop.sh` has `--analyst-only`, `--builder-only`, `--validator-only`, `--integrator-only` flags
-- [ ] `conventions.md` pipeline handoff table uses new worker names
-- [ ] No stale references to old agent names in `plugin/` (excluding `thoughts/`)
-- [ ] Design doc committed with complete state ownership map
-- [ ] All existing skills (`ralph-triage`, `ralph-split`, `ralph-research`, `ralph-plan`, `ralph-review`, `ralph-impl`) remain unmodified
+- [x] 4 new agent files exist: `ralph-analyst.md`, `ralph-builder.md`, `ralph-validator.md`, `ralph-integrator.md`
+- [x] 5 old agent files removed: `ralph-triager.md`, `ralph-researcher.md`, `ralph-planner.md`, `ralph-advocate.md`, `ralph-implementer.md`
+- [x] Old spawn templates retained (still referenced by spawn table -- see Phase 8 resolution)
+- [x] 1 new spawn template exists: `integrator.md`
+- [x] `ralph-team` SKILL.md spawn table references 4 worker agent types
+- [x] `ralph-hero` SKILL.md phases grouped by worker scope
+- [x] `ralph-loop.sh` has `--analyst-only`, `--builder-only`, `--validator-only`, `--integrator-only` flags
+- [x] `conventions.md` pipeline handoff table uses new worker names
+- [x] No stale references to old agent names in `plugin/` (excluding `thoughts/`)
+- [x] Design doc committed with complete state ownership map
+- [x] All existing skills (`ralph-triage`, `ralph-split`, `ralph-research`, `ralph-plan`, `ralph-review`, `ralph-impl`) remain unmodified
 
 ## What We're NOT Doing
 
@@ -797,16 +797,16 @@ Expected: no results (all references updated or removed).
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-triager.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-researcher.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-planner.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-advocate.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-implementer.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] Stale reference grep returns 0 matches (excluding thoughts/)
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-triager.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-researcher.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-planner.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-advocate.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-implementer.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] Stale reference grep returns 0 matches (excluding thoughts/)
 
 #### Manual Verification
 - [ ] README.md directory diagram shows new agent names
