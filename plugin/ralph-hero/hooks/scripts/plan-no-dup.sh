@@ -1,4 +1,7 @@
 #!/bin/bash
+# ORPHANED: not registered in any skill frontmatter or hooks.json.
+# Overlaps with pre-artifact-validator.sh (registered in hooks.json on Write) which already
+# blocks duplicate plan docs globally. Do not register both.
 # ralph-hero/hooks/scripts/plan-no-dup.sh
 # PreToolUse (Write): Block if plan doc already exists
 #

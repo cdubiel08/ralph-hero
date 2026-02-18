@@ -1,4 +1,6 @@
 #!/bin/bash
+# ORPHANED: not registered in any skill frontmatter or hooks.json.
+# Created for PostToolUse (Write) in ralph-plan but never wired up.
 # ralph-hero/hooks/scripts/plan-verify-doc.sh
 # PostToolUse (Write): Verify plan has phases and success criteria
 #

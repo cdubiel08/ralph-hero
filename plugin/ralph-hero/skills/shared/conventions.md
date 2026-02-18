@@ -217,3 +217,35 @@ Templates are named by role: `{role}.md` matching the agent type:
 - DO NOT include: conversation history, document contents, code snippets, assignment instructions
 - Teammates message the lead using `recipient="team-lead"` exactly
 - Result reporting follows the agent's `.md` definition, not the spawn template
+
+## Skill Invocation Convention
+
+### Default: Fork via Task()
+
+Skills should be invoked via forked subprocesses to isolate context:
+
+```
+Task(subagent_type="general-purpose",
+     prompt="Skill(skill='ralph-hero:ralph-research', args='42')",
+     description="Research #42")
+```
+
+This ensures:
+- Skill runs in a fresh context window (no context pollution)
+- Skill failures don't corrupt the caller's state
+- Token usage is isolated per skill invocation
+- Results are returned as a summary, not full conversation
+
+### Exception: Team Agents
+
+When agents are spawned as team members, the agent IS the subprocess. The agent invokes the skill inline:
+
+```
+Skill(skill="ralph-hero:ralph-research", args="42")
+```
+
+This is acceptable because the agent already has its own isolated context window via the team system.
+
+### Exception: Direct User Invocation
+
+Users invoking skills directly (e.g., `/ralph-research 42`) run inline in their session. This is the expected behavior for interactive use.
