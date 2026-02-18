@@ -187,12 +187,11 @@ ralph-hero/
 │   ├── ralph-hero/
 │   ├── ralph-team/
 │   └── ralph-setup/
-├── agents/                   # Specialized agent definitions
-│   ├── ralph-triager.md
-│   ├── ralph-researcher.md
-│   ├── ralph-planner.md
-│   ├── ralph-advocate.md
-│   └── ralph-implementer.md
+├── agents/                   # Scope-bounded worker definitions
+│   ├── ralph-analyst.md
+│   ├── ralph-builder.md
+│   ├── ralph-validator.md
+│   └── ralph-integrator.md
 ├── hooks/                    # State machine enforcement
 │   ├── hooks.json
 │   └── scripts/

@@ -56,17 +56,17 @@ Key benefits: fewer handoffs (3 vs 6+), broader per-worker scope, optional valid
 All 4 new worker agents are operational, both orchestrators use the new worker model, and legacy agent/template files are removed. The state machine and skills remain unchanged -- only the agent definitions, orchestrators, and supporting docs change.
 
 ### Verification
-- [ ] 4 new agent files exist: `ralph-analyst.md`, `ralph-builder.md`, `ralph-validator.md`, `ralph-integrator.md`
-- [ ] 5 old agent files removed: `ralph-triager.md`, `ralph-researcher.md`, `ralph-planner.md`, `ralph-advocate.md`, `ralph-implementer.md`
-- [ ] 6 old spawn templates removed: `triager.md`, `splitter.md`, `researcher.md`, `planner.md`, `reviewer.md`, `implementer.md`
-- [ ] 1 new spawn template exists: `integrator.md`
-- [ ] `ralph-team` SKILL.md spawn table references 4 worker agent types
-- [ ] `ralph-hero` SKILL.md phases grouped by worker scope
-- [ ] `ralph-loop.sh` has `--analyst-only`, `--builder-only`, `--validator-only`, `--integrator-only` flags
-- [ ] `conventions.md` pipeline handoff table uses new worker names
-- [ ] No stale references to old agent names in `plugin/` (excluding `thoughts/`)
-- [ ] Design doc committed with complete state ownership map
-- [ ] All existing skills (`ralph-triage`, `ralph-split`, `ralph-research`, `ralph-plan`, `ralph-review`, `ralph-impl`) remain unmodified
+- [x] 4 new agent files exist: `ralph-analyst.md`, `ralph-builder.md`, `ralph-validator.md`, `ralph-integrator.md`
+- [x] 5 old agent files removed: `ralph-triager.md`, `ralph-researcher.md`, `ralph-planner.md`, `ralph-advocate.md`, `ralph-implementer.md`
+- [x] Old spawn templates retained (still referenced by spawn table -- see Phase 8 resolution)
+- [x] 1 new spawn template exists: `integrator.md`
+- [x] `ralph-team` SKILL.md spawn table references 4 worker agent types
+- [x] `ralph-hero` SKILL.md phases grouped by worker scope
+- [x] `ralph-loop.sh` has `--analyst-only`, `--builder-only`, `--validator-only`, `--integrator-only` flags
+- [x] `conventions.md` pipeline handoff table uses new worker names
+- [x] No stale references to old agent names in `plugin/` (excluding `thoughts/`)
+- [x] Design doc committed with complete state ownership map
+- [x] All existing skills (`ralph-triage`, `ralph-split`, `ralph-research`, `ralph-plan`, `ralph-review`, `ralph-impl`) remain unmodified
 
 ## What We're NOT Doing
 
@@ -133,8 +133,8 @@ Use the research document as the primary source. Structure the design doc as a c
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md`
-- [ ] `grep -c "Analyst\|Builder\|Validator\|Integrator" thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md` returns >= 20
+- [x] `test -f thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md`
+- [x] `grep -c "Analyst\|Builder\|Validator\|Integrator" thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md` returns >= 20
 
 #### Manual Verification
 - [ ] All 11 workflow states from `ralph-state-machine.json` appear in the ownership map
@@ -189,12 +189,12 @@ color: green
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'name: ralph-analyst' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'ralph-hero:ralph-triage' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'ralph-hero:ralph-split' plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `grep -q 'ralph-hero:ralph-research' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'name: ralph-analyst' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'ralph-hero:ralph-triage' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'ralph-hero:ralph-split' plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `grep -q 'ralph-hero:ralph-research' plugin/ralph-hero/agents/ralph-analyst.md`
 
 #### Manual Verification
 - [ ] Tool list is the union of `ralph-triager` and `ralph-researcher` tools
@@ -251,12 +251,12 @@ Note: `Edit` tool comes from the implementer role (for code changes during imple
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'name: ralph-builder' plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'Edit' plugin/ralph-hero/agents/ralph-builder.md` (has Edit tool from implementer)
-- [ ] `grep -q 'ralph-hero:ralph-plan' plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `grep -q 'ralph-hero:ralph-impl' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'name: ralph-builder' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'Edit' plugin/ralph-hero/agents/ralph-builder.md` (has Edit tool from implementer)
+- [x] `grep -q 'ralph-hero:ralph-plan' plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `grep -q 'ralph-hero:ralph-impl' plugin/ralph-hero/agents/ralph-builder.md`
 
 #### Manual Verification
 - [ ] Tool list is the union of `ralph-planner` and `ralph-implementer` tools
@@ -309,10 +309,10 @@ color: blue
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `grep -q 'name: ralph-validator' plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `grep -q 'model: opus' plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `grep -q 'ralph-hero:ralph-review' plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `grep -q 'name: ralph-validator' plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `grep -q 'model: opus' plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `grep -q 'ralph-hero:ralph-review' plugin/ralph-hero/agents/ralph-validator.md`
 
 #### Manual Verification
 - [ ] Tool list matches current `ralph-advocate` (no Edit tool -- read-only for implementation)
@@ -383,11 +383,11 @@ Report results. Then check TaskList for more integration tasks.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] `test -f plugin/ralph-hero/templates/spawn/integrator.md`
-- [ ] `grep -q 'name: ralph-integrator' plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] `grep -q 'advance_children' plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `test -f plugin/ralph-hero/templates/spawn/integrator.md`
+- [x] `grep -q 'name: ralph-integrator' plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `grep -q 'model: sonnet' plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] `grep -q 'advance_children' plugin/ralph-hero/agents/ralph-integrator.md`
 
 #### Manual Verification
 - [ ] Agent does NOT have Skill tool (operates directly, no skill composition)
@@ -518,12 +518,12 @@ EOF
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/ralph-team/SKILL.md`
-- [ ] `grep -q 'ralph-builder' plugin/ralph-hero/skills/ralph-team/SKILL.md`
-- [ ] `grep -q 'ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md`
-- [ ] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/shared/conventions.md`
-- [ ] `grep -q 'integrator.md' plugin/ralph-hero/skills/shared/conventions.md`
-- [ ] `grep -q 'builder' plugin/ralph-hero/hooks/scripts/team-task-completed.sh`
+- [x] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/ralph-team/SKILL.md`
+- [x] `grep -q 'ralph-builder' plugin/ralph-hero/skills/ralph-team/SKILL.md`
+- [x] `grep -q 'ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md`
+- [x] `grep -q 'ralph-analyst' plugin/ralph-hero/skills/shared/conventions.md`
+- [x] `grep -q 'integrator.md' plugin/ralph-hero/skills/shared/conventions.md`
+- [x] `grep -q 'builder' plugin/ralph-hero/hooks/scripts/team-task-completed.sh`
 
 #### Manual Verification
 - [ ] Spawn table has 7 rows mapping to 4 agent types
@@ -693,14 +693,14 @@ fi
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -q 'ANALYST PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
-- [ ] `grep -q 'BUILDER PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
-- [ ] `grep -q 'INTEGRATOR PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
-- [ ] `grep -q 'analyst-only' plugin/ralph-hero/scripts/ralph-loop.sh`
-- [ ] `grep -q 'builder-only' plugin/ralph-hero/scripts/ralph-loop.sh`
-- [ ] `grep -q 'integrator-only' plugin/ralph-hero/scripts/ralph-loop.sh`
-- [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` (syntax check passes)
-- [ ] `bash -n plugin/ralph-hero/scripts/ralph-team-loop.sh` (syntax check passes)
+- [x] `grep -q 'ANALYST PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
+- [x] `grep -q 'BUILDER PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
+- [x] `grep -q 'INTEGRATOR PHASE' plugin/ralph-hero/skills/ralph-hero/SKILL.md`
+- [x] `grep -q 'analyst-only' plugin/ralph-hero/scripts/ralph-loop.sh`
+- [x] `grep -q 'builder-only' plugin/ralph-hero/scripts/ralph-loop.sh`
+- [x] `grep -q 'integrator-only' plugin/ralph-hero/scripts/ralph-loop.sh`
+- [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` (syntax check passes)
+- [x] `bash -n plugin/ralph-hero/scripts/ralph-team-loop.sh` (syntax check passes)
 
 #### Manual Verification
 - [ ] Old CLI flags (`--triage-only`, `--plan-only`, etc.) still work
@@ -797,16 +797,16 @@ Expected: no results (all references updated or removed).
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-triager.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-researcher.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-planner.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-advocate.md`
-- [ ] `test ! -f plugin/ralph-hero/agents/ralph-implementer.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-builder.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-validator.md`
-- [ ] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
-- [ ] Stale reference grep returns 0 matches (excluding thoughts/)
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-triager.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-researcher.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-planner.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-advocate.md`
+- [x] `test ! -f plugin/ralph-hero/agents/ralph-implementer.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-analyst.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-builder.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-validator.md`
+- [x] `test -f plugin/ralph-hero/agents/ralph-integrator.md`
+- [x] Stale reference grep returns 0 matches (excluding thoughts/)
 
 #### Manual Verification
 - [ ] README.md directory diagram shows new agent names

@@ -1,5 +1,5 @@
 ---
-description: Multi-agent team coordinator that spawns specialist teammates (triager, researcher, planner, reviewer, implementer) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
+description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, validator, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
 argument-hint: "[issue-number]"
 model: opus
 env:
@@ -84,7 +84,7 @@ Use `phase` to determine tasks (Section 4.2) and first teammate (Section 4.3). T
 ### Group Tracking
 
 - **GROUP_TICKETS**: Encoded in task descriptions (e.g., "Plan group GH-42 (GH-42, GH-43, GH-44)")
-- **GROUP_PRIMARY**: Used for worktree naming, planner/implementer spawning
+- **GROUP_PRIMARY**: Used for worktree naming, builder spawning
 - **IS_GROUP**: Determines per-group vs per-issue tasks
 - Group membership is immutable once detected
 - Tree issues: each phase runs at group speed; independent branches proceed independently
@@ -113,7 +113,13 @@ Team name must be unique: `TEAM_NAME = "ralph-team-GH-NNN"` (e.g., `ralph-team-G
 Based on pipeline position (Section 3), create tasks with sequential blocking: Research -> Plan -> Review -> Implement -> PR.
 
 **Subject patterns** (workers match on these to self-claim):
-- `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"`
+- `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
+
+**Review task creation** depends on `RALPH_REVIEW_MODE`:
+- `interactive`: Create "Review plan for GH-NNN" task. Implement is blocked by Review.
+- `skip` or `auto` (default): No Review task. Implement is blocked by Plan.
+
+**After PR task**: Create "Merge PR for GH-NNN" task blocked by the PR task. Integrator will self-claim.
 
 **Groups** (IS_GROUP=true): Research tasks are per-issue; Plan/Review/Implement/PR are per-group using GROUP_PRIMARY. Include all issue numbers in descriptions. Plan is blocked by ALL research tasks.
 
@@ -125,7 +131,7 @@ Based on pipeline position (Section 3), create tasks with sequential blocking: R
 
 Check TaskList for pending, unblocked tasks. Spawn one worker per role with available work (see Section 6 for spawn template). Workers self-claim -- no assignment messages needed.
 
-For group research with multiple tasks: spawn up to 3 researchers (`researcher`, `researcher-2`, `researcher-3`).
+For group research with multiple tasks: spawn up to 3 analysts (`analyst`, `analyst-2`, `analyst-3`).
 
 ### 4.4 Dispatch Loop
 
@@ -135,9 +141,9 @@ The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural de
 
 Your dispatch responsibilities:
 
-1. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The planner will self-claim. Terminal state is "In Review", never "Done".
+1. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
 2. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
-3. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Researcher->"Research Needed", Planner->"Ready for Plan", Reviewer->"Plan in Review", Implementer->"In Progress", Triager->"Backlog"). Create task chains for found issues.
+3. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create task chains for found issues.
 4. **PR creation**: When all implementation tasks for an issue/group complete, push and create PR (Section 4.5). This is your only direct work.
 
 The Stop hook prevents premature shutdown -- you cannot stop while GitHub has processable issues. Trust it.
@@ -145,10 +151,10 @@ The Stop hook prevents premature shutdown -- you cannot stop while GitHub has pr
 ### 4.5 Lead Creates PR (Only Direct Work)
 
 After implementation completes, lead pushes and creates PR via `gh pr create`:
-- **Single issue**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN`. Title: `feat: [title]`. Body: summary, `Closes #NNN` (bare `#NNN` here is GitHub PR syntax, not our convention), change summary from implementer's task description.
+- **Single issue**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN`. Title: `feat: [title]`. Body: summary, `Closes #NNN` (bare `#NNN` here is GitHub PR syntax, not our convention), change summary from builder's task description.
 - **Group**: Push from `worktrees/GH-[PRIMARY]`. Body: summary, `Closes #NNN` for each issue (bare `#NNN` is GitHub PR syntax), changes by phase.
 
-**After PR creation**: Move ALL issues (and children) to "In Review" via `advance_children`. NEVER to "Done" -- that requires PR merge (external event). Then return to dispatch loop.
+**After PR creation**: Move ALL issues (and children) to "In Review" via `advance_children`. NEVER to "Done" -- that requires PR merge (external event). Create "Merge PR for #NNN" task for Integrator to pick up. Then return to dispatch loop.
 
 ### 4.6 Shutdown and Cleanup
 
@@ -173,12 +179,13 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
    | Task subject contains | Role | Template | Agent type |
    |----------------------|------|----------|------------|
-   | "Triage" | triager | `triager.md` | ralph-triager |
-   | "Split" | splitter | `splitter.md` | ralph-triager |
-   | "Research" | researcher | `researcher.md` | ralph-researcher |
-   | "Plan" (not "Review") | planner | `planner.md` | ralph-planner |
-   | "Review" | reviewer | `reviewer.md` | ralph-advocate |
-   | "Implement" | implementer | `implementer.md` | ralph-implementer |
+   | "Triage" | analyst | `triager.md` | ralph-analyst |
+   | "Split" | analyst | `splitter.md` | ralph-analyst |
+   | "Research" | analyst | `researcher.md` | ralph-analyst |
+   | "Plan" (not "Review") | builder | `planner.md` | ralph-builder |
+   | "Review" | validator | `reviewer.md` | ralph-validator |
+   | "Implement" | builder | `implementer.md` | ralph-builder |
+   | "Merge" or "Integrate" | integrator | `integrator.md` | ralph-integrator |
 
 2. **Resolve template path**: `Bash("echo $CLAUDE_PLUGIN_ROOT")` to get the plugin root, then read:
    `Read(file_path="[resolved-root]/templates/spawn/{template}")`
@@ -203,9 +210,10 @@ See `shared/conventions.md` "Spawn Template Protocol" for full placeholder refer
 
 ### Per-Role Instance Limits
 
-- **Research**: Up to 3 parallel (`researcher`, `researcher-2`, `researcher-3`)
-- **Implementation**: Up to 2 if plan has non-overlapping file ownership
-- **All other roles**: Single worker
+- **Analyst**: Up to 3 parallel (`analyst`, `analyst-2`, `analyst-3`)
+- **Builder**: Up to 3 parallel if non-overlapping file ownership (`builder`, `builder-2`, `builder-3`)
+- **Validator**: Single worker (`validator`)
+- **Integrator**: Single worker, serialized on main (`integrator`)
 
 ### Worker Lifecycle
 
@@ -214,8 +222,8 @@ See `shared/conventions.md` "Spawn Template Protocol" for full placeholder refer
 
 ### Naming Convention
 
-- Single instance: `"triager"`, `"researcher"`, `"planner"`, `"reviewer"`, `"implementer"`
-- Multiple instances: `"researcher-2"`, `"researcher-3"`, `"implementer-2"`
+- Single instance: `"analyst"`, `"builder"`, `"validator"`, `"integrator"`
+- Multiple instances: `"analyst-2"`, `"analyst-3"`, `"builder-2"`, `"builder-3"`
 
 ## Section 7 - Lifecycle Hooks
 
@@ -243,10 +251,10 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **Task status may lag**: Check work product directly (Glob, git log). If done, mark it yourself. If not, nudge then replace.
 - **Task list scoping**: All tasks MUST be created AFTER TeamCreate (Section 4.1).
 - **State trusts GitHub**: If workflow state is wrong, behavior will be wrong.
-- **Teammate GitHub access**: Only triager has direct MCP access. Others use skill invocations.
+- **Teammate GitHub access**: All 4 workers have scoped `ralph_hero__*` MCP tool access in their frontmatter. Analyst has the widest set (14 tools); validator has the narrowest (5 tools).
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
-- **Pull-based claiming**: Tasks MUST use consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split"). Workers match on these.
+- **Pull-based claiming**: Tasks MUST use consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these.
 - **Task description = results channel**: Workers embed results via TaskUpdate description (REPLACE operation). Lead reads via TaskGet. If missing, check work product.
 - **Lead name hardcoded**: Always `"team-lead"`. Other names silently dropped.
 - **Fire-and-forget messages**: Wait 2 min, re-send once, then check manually.
