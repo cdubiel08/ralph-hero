@@ -118,7 +118,19 @@ git push origin main
 
 ### Step 5: Update GitHub Issue
 
-1. **Add research document link** as comment with GitHub URL to the committed file
+1. **Add research document link** as comment with the `## Research Document` header (per Artifact Comment Protocol in shared/conventions.md):
+   ```
+   ralph_hero__create_comment
+   - owner: $RALPH_GH_OWNER
+   - repo: $RALPH_GH_REPO
+   - number: [issue-number]
+   - body: |
+       ## Research Document
+
+       https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
+
+       Key findings: [1-3 line summary]
+   ```
 2. **Add summary comment** with key findings, recommended approach, and group context (if multi-issue group)
 3. **Move to "Ready for Plan"**:
    ```
