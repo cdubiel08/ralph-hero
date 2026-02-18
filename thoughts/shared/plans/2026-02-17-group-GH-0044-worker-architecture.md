@@ -133,8 +133,8 @@ Use the research document as the primary source. Structure the design doc as a c
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md`
-- [ ] `grep -c "Analyst\|Builder\|Validator\|Integrator" thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md` returns >= 20
+- [x] `test -f thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md`
+- [x] `grep -c "Analyst\|Builder\|Validator\|Integrator" thoughts/shared/plans/2026-02-17-GH-0044-worker-scope-boundaries-design.md` returns >= 20
 
 #### Manual Verification
 - [ ] All 11 workflow states from `ralph-state-machine.json` appear in the ownership map
