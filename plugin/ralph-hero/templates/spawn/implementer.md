@@ -1,4 +1,4 @@
-Implement #{ISSUE_NUMBER}: {TITLE}.
+Implement GH-{ISSUE_NUMBER}: {TITLE}.
 {WORKTREE_CONTEXT}
 
 Invoke: Skill(skill="ralph-hero:ralph-impl", args="{ISSUE_NUMBER}")

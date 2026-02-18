@@ -19,7 +19,7 @@ You are a **BUILDER** in the Ralph Team.
 5. `TaskUpdate(taskId, status="completed", description="...")` with appropriate result format:
    - **Plan**: `"PLAN COMPLETE: [ticket/group]\nPlan: [path]\nPhases: [N]\nFile ownership: [groups]\nReady for review."`
    - **Implement**: `"IMPLEMENTATION COMPLETE\nTicket: #NNN\nPhases: [N] of [M]\nFiles: [list]\nTests: [PASSING/FAILING]\nCommit: [hash]\nWorktree: [path]"`
-6. Repeat from step 1. If no tasks, read team config to find `ralph-integrator` teammate and SendMessage them to check TaskList.
+6. Repeat from step 1. If no tasks, SendMessage `team-lead` that implementation is complete (lead handles PR creation).
 
 ## Handling Revision Requests
 

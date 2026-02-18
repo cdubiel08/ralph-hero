@@ -320,7 +320,7 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
 **If APPROVED**:
 ```
-Review complete for #NNN: [Title]
+Review complete for GH-NNN: [Title]
 
 Mode: [INTERACTIVE/AUTO]
 Result: APPROVED
@@ -333,7 +333,7 @@ Ready for implementation. Run /ralph-impl NNN
 
 **If NEEDS_ITERATION**:
 ```
-Review complete for #NNN: [Title]
+Review complete for GH-NNN: [Title]
 
 Mode: [INTERACTIVE/AUTO]
 Result: NEEDS ITERATION

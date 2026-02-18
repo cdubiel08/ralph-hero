@@ -83,8 +83,8 @@ Use `phase` to determine tasks (Section 4.2) and first teammate (Section 4.3). T
 
 ### Group Tracking
 
-- **GROUP_TICKETS**: Encoded in task descriptions (e.g., "Plan group #42 (#42, #43, #44)")
-- **GROUP_PRIMARY**: Used for worktree naming, planner/implementer spawning
+- **GROUP_TICKETS**: Encoded in task descriptions (e.g., "Plan group GH-42 (GH-42, GH-43, GH-44)")
+- **GROUP_PRIMARY**: Used for worktree naming, builder spawning
 - **IS_GROUP**: Determines per-group vs per-issue tasks
 - Group membership is immutable once detected
 - Tree issues: each phase runs at group speed; independent branches proceed independently
@@ -106,20 +106,20 @@ For XS issues (estimate=1) with specific, actionable descriptions: skip research
 
 **CRITICAL**: Create team BEFORE any tasks. Tasks created before TeamCreate become orphaned.
 
-Team name must be unique: `TEAM_NAME = "ralph-team-GH-NNN"` (use issue number or group primary). Use for ALL subsequent `team_name` parameters.
+Team name must be unique: `TEAM_NAME = "ralph-team-GH-NNN"` (e.g., `ralph-team-GH-42`; use issue number or group primary). Use for ALL subsequent `team_name` parameters.
 
 ### 4.2 Create Tasks for Remaining Phases
 
 Based on pipeline position (Section 3), create tasks with sequential blocking: Research -> Plan -> Review -> Implement -> PR.
 
 **Subject patterns** (workers match on these to self-claim):
-- `"Research #NNN"` / `"Plan #NNN"` / `"Review plan for #NNN"` / `"Implement #NNN"` / `"Create PR for #NNN"` / `"Merge PR for #NNN"`
+- `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
 
 **Review task creation** depends on `RALPH_REVIEW_MODE`:
-- `interactive`: Create "Review plan for #NNN" task. Implement is blocked by Review.
+- `interactive`: Create "Review plan for GH-NNN" task. Implement is blocked by Review.
 - `skip` or `auto` (default): No Review task. Implement is blocked by Plan.
 
-**After PR task**: Create "Merge PR for #NNN" task blocked by the PR task. Integrator will self-claim.
+**After PR task**: Create "Merge PR for GH-NNN" task blocked by the PR task. Integrator will self-claim.
 
 **Groups** (IS_GROUP=true): Research tasks are per-issue; Plan/Review/Implement/PR are per-group using GROUP_PRIMARY. Include all issue numbers in descriptions. Plan is blocked by ALL research tasks.
 
@@ -141,7 +141,7 @@ The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural de
 
 Your dispatch responsibilities:
 
-1. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The planner will self-claim. Terminal state is "In Review", never "Done".
+1. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
 2. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
 3. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create task chains for found issues.
 4. **PR creation**: When all implementation tasks for an issue/group complete, push and create PR (Section 4.5). This is your only direct work.
@@ -151,8 +151,8 @@ The Stop hook prevents premature shutdown -- you cannot stop while GitHub has pr
 ### 4.5 Lead Creates PR (Only Direct Work)
 
 After implementation completes, lead pushes and creates PR via `gh pr create`:
-- **Single issue**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN`. Title: `feat: [title]`. Body: summary, `Closes #NNN`, change summary from implementer's task description.
-- **Group**: Push from `worktrees/GH-[PRIMARY]`. Body: summary, `Closes #NNN` for each issue, changes by phase.
+- **Single issue**: `git push -u origin feature/GH-NNN` from `worktrees/GH-NNN`. Title: `feat: [title]`. Body: summary, `Closes #NNN` (bare `#NNN` here is GitHub PR syntax, not our convention), change summary from builder's task description.
+- **Group**: Push from `worktrees/GH-[PRIMARY]`. Body: summary, `Closes #NNN` for each issue (bare `#NNN` is GitHub PR syntax), changes by phase.
 
 **After PR creation**: Move ALL issues (and children) to "In Review" via `advance_children`. NEVER to "Done" -- that requires PR merge (external event). Create "Merge PR for #NNN" task for Integrator to pick up. Then return to dispatch loop.
 
@@ -203,7 +203,7 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
    ```
    Task(subagent_type="[agent-type]", team_name=TEAM_NAME, name="[role]",
         prompt=[resolved template content],
-        description="[Role] #NNN")
+        description="[Role] GH-NNN")
    ```
 
 See `shared/conventions.md` "Spawn Template Protocol" for full placeholder reference, authoring rules, and naming conventions.
@@ -251,7 +251,7 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **Task status may lag**: Check work product directly (Glob, git log). If done, mark it yourself. If not, nudge then replace.
 - **Task list scoping**: All tasks MUST be created AFTER TeamCreate (Section 4.1).
 - **State trusts GitHub**: If workflow state is wrong, behavior will be wrong.
-- **Teammate GitHub access**: Only analyst has direct MCP access. Others use skill invocations.
+- **Teammate GitHub access**: All 4 workers have scoped `ralph_hero__*` MCP tool access in their frontmatter. Analyst has the widest set (14 tools); validator has the narrowest (5 tools).
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
 - **Pull-based claiming**: Tasks MUST use consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these.

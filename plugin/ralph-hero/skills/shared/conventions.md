@@ -2,6 +2,19 @@
 
 Common protocols referenced by all Ralph skills. Skills should link here rather than duplicating this content.
 
+## Identifier Disambiguation
+
+Task list IDs and GitHub issue numbers use different prefixes to avoid confusion:
+
+| Entity | Prefix | Example | Scope |
+|--------|--------|---------|-------|
+| Task list item | `T-` | T-7 | Session-local, ephemeral |
+| GitHub issue | `GH-` | GH-49 | Repository-scoped, permanent |
+
+- **Task subjects and spawn templates** use `GH-NNN` when referencing GitHub issues (e.g., `"Research GH-42"`)
+- **Task list IDs** (from TaskCreate/TaskList) are referenced as `T-N` in lead messages and instructions
+- **Exception**: GitHub PR body `Closes #NNN` syntax uses bare `#NNN` because GitHub requires it
+
 ## Escalation Protocol
 
 When encountering complexity, uncertainty, or states that don't align with protocol, **escalate via GitHub issue comment** by @mentioning the appropriate person.
@@ -120,7 +133,19 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 - **Never use TaskUpdate with `owner` parameter** to assign tasks to other teammates. Workers self-claim only.
 - **SendMessage is fire-and-forget** -- no acknowledgment mechanism. The handoff wakes the peer; they self-claim from TaskList.
 - **Lead gets visibility** via idle notification DM summaries -- no need to CC the lead on handoffs.
-- **Multiple handoffs are fine** -- if 3 researchers complete and all message the planner, the planner wakes 3 times and claims one task each time.
+- **Multiple handoffs are fine** -- if 3 analysts complete and all message the builder, the builder wakes 3 times and claims one task each time.
+
+## Known SDK Behaviors
+
+### TaskUpdate Self-Notification
+
+When a teammate owns a task (via `owner` parameter at claim time) and changes its status, the Claude Code SDK auto-notifies the task owner. Since the owner is the teammate itself, this triggers a self-notification and an extra turn.
+
+**Impact**: Each task completion causes one wasted turn where the teammate processes a notification about its own action.
+
+**Mitigation**: Agent definitions include "continue immediately" language on completion steps. Teammates should ignore self-notifications and proceed directly to the next iteration of their task loop.
+
+**Root cause**: The SDK's `TaskCompleted` event notifies the task owner on status changes. This is SDK-level behavior that cannot be suppressed. If a future SDK release adds an option to skip owner-notifications on self-updates, adopt it and remove the mitigation notes.
 
 ## Spawn Template Protocol
 
@@ -150,7 +175,7 @@ Available templates: `triager`, `splitter`, `researcher`, `planner`, `reviewer`,
 
 If `IS_GROUP=true` for the issue:
 ```
-{GROUP_CONTEXT} = "Group: #{PRIMARY} (#{A}, #{B}, #{C}). Plan covers all group issues."
+{GROUP_CONTEXT} = "Group: GH-{PRIMARY} (GH-{A}, GH-{B}, GH-{C}). Plan covers all group issues."
 ```
 
 If `IS_GROUP=false`:
@@ -176,7 +201,7 @@ If a placeholder resolves to an empty string, remove the ENTIRE LINE containing 
 
 Example -- planner template before substitution:
 ```
-Plan #42: Add caching.
+Plan GH-42: Add caching.
 {GROUP_CONTEXT}
 
 Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
@@ -184,7 +209,7 @@ Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
 
 After substitution when IS_GROUP=false (GROUP_CONTEXT is empty):
 ```
-Plan #42: Add caching.
+Plan GH-42: Add caching.
 
 Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
 ```
@@ -229,7 +254,7 @@ Skills should be invoked via forked subprocesses to isolate context:
 ```
 Task(subagent_type="general-purpose",
      prompt="Skill(skill='ralph-hero:ralph-research', args='42')",
-     description="Research #42")
+     description="Research GH-42")
 ```
 
 This ensures:
@@ -370,4 +395,4 @@ This ensures subsequent phases find the artifact via the primary channel.
 ### Known Limitations
 
 - **10-comment limit**: `get_issue` returns only the last 10 comments. For issues with many status updates, early comments (e.g., the research document comment) may scroll off. This is why the glob fallback is essential — it provides a reliable secondary discovery path when comments are no longer visible.
-- **Group glob for non-primary issues**: Group plans use the primary issue number in filenames (e.g., `group-GH-0042-*.md`). Non-primary group members (e.g., #43, #44) won't match `*GH-43*`. The comment-based path handles groups correctly since the plan skill posts to ALL group issues. The glob fallback should try `*group*GH-{primary}*` after `*GH-{number}*` fails.
+- **Group glob for non-primary issues**: Group plans use the primary issue number in filenames (e.g., `group-GH-0042-*.md`). Non-primary group members (e.g., GH-43, GH-44) won't match `*GH-43*`. The comment-based path handles groups correctly since the plan skill posts to ALL group issues. The glob fallback should try `*group*GH-{primary}*` after `*GH-{number}*` fails.

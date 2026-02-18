@@ -1,4 +1,4 @@
-Split #{ISSUE_NUMBER}: {TITLE}.
+Split GH-{ISSUE_NUMBER}: {TITLE}.
 Too large for direct implementation (estimate: {ESTIMATE}).
 
 Invoke: Skill(skill="ralph-hero:ralph-split", args="{ISSUE_NUMBER}")

@@ -112,8 +112,8 @@ Research all leaf issues in "Research Needed" state in parallel.
 Spawn ALL research tasks in a SINGLE message for true parallelism:
 ```
 Task(subagent_type="general-purpose", run_in_background=true,
-     prompt="Use Skill(skill='ralph-hero:ralph-research', args='NNN') to research issue #NNN: [title].",
-     description="Research #NNN")
+     prompt="Use Skill(skill='ralph-hero:ralph-research', args='NNN') to research issue GH-NNN: [title].",
+     description="Research GH-NNN")
 ```
 
 Wait for all research to complete, then re-call `detect_pipeline_position`. If phase == PLAN, proceed to planning.
@@ -129,15 +129,15 @@ Issues are in the SAME GROUP if they share the same parent or are connected via 
 For single-issue groups:
 ```
 Task(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create a plan for #NNN.",
-     description="Plan #NNN")
+     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create a plan for GH-NNN.",
+     description="Plan GH-NNN")
 ```
 
 For multi-issue groups:
 ```
 Task(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY]') to create a GROUP plan. Group: #AAA, #BBB, #CCC.",
-     description="Plan group #[PRIMARY]")
+     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY]') to create a GROUP plan. Group: GH-AAA, GH-BBB, GH-CCC.",
+     description="Plan group GH-[PRIMARY]")
 ```
 
 After planning, check `RALPH_REVIEW_MODE`:
@@ -152,7 +152,7 @@ Spawn parallel review tasks for all plan groups:
 ```
 Task(subagent_type="general-purpose", run_in_background=true,
      prompt="Use Skill(skill='ralph-hero:ralph-review', args='NNN') to review the plan. Return: APPROVED or NEEDS_ITERATION.",
-     description="Review #NNN")
+     description="Review GH-NNN")
 ```
 
 **Routing**:
@@ -176,8 +176,8 @@ Execute implementation sequentially respecting dependency order from `detect_gro
 For each issue in order (wait for each to complete before starting next):
 ```
 Task(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN') to implement #NNN. Follow the plan exactly.",
-     description="Implement #NNN")
+     prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN') to implement GH-NNN. Follow the plan exactly.",
+     description="Implement GH-NNN")
 ```
 
 If any implementation fails, STOP immediately. Do NOT continue to next issue.

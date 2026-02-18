@@ -1,4 +1,4 @@
-Triage #{ISSUE_NUMBER}: {TITLE}.
+Triage GH-{ISSUE_NUMBER}: {TITLE}.
 Estimate: {ESTIMATE}.
 
 Invoke: Skill(skill="ralph-hero:ralph-triage", args="{ISSUE_NUMBER}")

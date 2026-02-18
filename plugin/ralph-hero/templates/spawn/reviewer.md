@@ -1,4 +1,4 @@
-Review plan for #{ISSUE_NUMBER}: {TITLE}.
+Review plan for GH-{ISSUE_NUMBER}: {TITLE}.
 {GROUP_CONTEXT}
 
 Invoke: Skill(skill="ralph-hero:ralph-review", args="{ISSUE_NUMBER}")
