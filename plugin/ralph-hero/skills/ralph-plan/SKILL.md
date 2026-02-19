@@ -1,6 +1,7 @@
 ---
 description: Create implementation plan for a GitHub issue from research findings - phased plan with file ownership, success criteria, and verification steps. Use when you want to plan an issue, create a spec, or write an implementation plan.
 argument-hint: [optional-issue-number]
+context: fork
 model: opus
 hooks:
   PreToolUse:
