@@ -255,7 +255,7 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **Task status may lag**: Check work product directly (Glob, git log). If done, mark it yourself. If not, nudge then replace.
 - **Task list scoping**: All tasks MUST be created AFTER TeamCreate (Section 4.1).
 - **State trusts GitHub**: If workflow state is wrong, behavior will be wrong.
-- **Teammate GitHub access**: Only analyst and integrator have `ralph_hero__*` MCP tools. Builder and validator access GitHub exclusively through skill invocations.
+- **Teammate GitHub access**: All 4 workers have scoped `ralph_hero__*` MCP tool access in their frontmatter. `Skill()` runs inline and inherits the calling agent's tool restrictions, so these tools MUST remain in agent frontmatter even when accessed indirectly through skills. Analyst has the widest set (14 tools); validator has the narrowest (5 tools).
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
 - **Pull-based claiming**: Tasks MUST use consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these.
