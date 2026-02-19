@@ -197,6 +197,21 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
 See `shared/conventions.md` "Spawn Template Protocol" for full placeholder reference, authoring rules, and naming conventions.
 
+### Template Integrity
+
+**CRITICAL**: The resolved template content is the COMPLETE spawn prompt. Do NOT add any additional context.
+
+**Rules**:
+- The prompt passed to `Task()` must be the template output and NOTHING else
+- Resolved prompts must be under 10 lines. If longer, you have violated template integrity
+- The agent discovers all context it needs via skill invocation -- that is the entire point of HOP
+
+**Anti-patterns** (NEVER do these):
+- Prepending root cause analysis, research hints, or investigation guidance
+- Including file paths, code snippets, or architectural context not in the template
+- Replacing template content with custom multi-paragraph instructions
+- Adding "Key files:", "Context:", or "Background:" sections
+
 ### Per-Role Instance Limits
 
 - **Analyst**: Up to 3 parallel (`analyst`, `analyst-2`, `analyst-3`)
@@ -240,7 +255,7 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **Task status may lag**: Check work product directly (Glob, git log). If done, mark it yourself. If not, nudge then replace.
 - **Task list scoping**: All tasks MUST be created AFTER TeamCreate (Section 4.1).
 - **State trusts GitHub**: If workflow state is wrong, behavior will be wrong.
-- **Teammate GitHub access**: All 4 workers have scoped `ralph_hero__*` MCP tool access in their frontmatter. Analyst has the widest set (14 tools); validator has the narrowest (5 tools).
+- **Teammate GitHub access**: All 4 workers have scoped `ralph_hero__*` MCP tool access in their frontmatter. `Skill()` runs inline and inherits the calling agent's tool restrictions, so these tools MUST remain in agent frontmatter even when accessed indirectly through skills. Analyst has the widest set (14 tools); validator has the narrowest (5 tools).
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
 - **Pull-based claiming**: Tasks MUST use consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these.

@@ -4,11 +4,18 @@ on:
   push:
     branches: [main]
     paths:
+      # MCP server (existing)
       - 'plugin/ralph-hero/mcp-server/src/**'
       - 'plugin/ralph-hero/mcp-server/package.json'
       - 'plugin/ralph-hero/mcp-server/package-lock.json'
       - 'plugin/ralph-hero/mcp-server/tsconfig.json'
       - 'plugin/ralph-hero/.claude-plugin/plugin.json'
+      # Plugin content (new)
+      - 'plugin/ralph-hero/agents/**'
+      - 'plugin/ralph-hero/skills/**'
+      - 'plugin/ralph-hero/hooks/**'
+      - 'plugin/ralph-hero/scripts/**'
+      - 'plugin/ralph-hero/templates/**'
   workflow_dispatch:
     inputs:
       bump:
@@ -37,6 +44,33 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changes
+        id: classify
+        working-directory: .
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # For workflow_dispatch or new branch push (before is all-zeros), default to mcp_changed=true
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || echo "$BEFORE" | grep -qE '^0+$'; then
+            echo "mcp_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Classification: mcp_changed=true (dispatch or new branch)"
+            exit 0
+          fi
+
+          DIFF=$(git diff --name-only "$BEFORE" "$AFTER")
+          echo "Changed files:"
+          echo "$DIFF"
+
+          MCP_CHANGED=false
+          echo "$DIFF" | grep -qE '^plugin/ralph-hero/mcp-server/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
+
+          echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "Classification: mcp_changed=$MCP_CHANGED"
 
       - uses: actions/setup-node@v4
         with:
@@ -73,28 +107,15 @@ jobs:
             fi
           fi
 
-      - name: Bump npm package version
+      - name: Bump version
         id: version
         env:
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
         run: |
           NEW_VERSION=$(npm version "$BUMP_TYPE" --no-git-tag-version | tr -d 'v')
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Bump plugin version
-        working-directory: plugin/ralph-hero/.claude-plugin
-        env:
-          BUMP_TYPE: ${{ steps.bump.outputs.type }}
-        run: |
-          CURRENT=$(jq -r '.version' plugin.json)
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          case "$BUMP_TYPE" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-          esac
-          jq --arg v "$MAJOR.$MINOR.$PATCH" '.version = $v' plugin.json > tmp.json && mv tmp.json plugin.json
-          echo "Bumped plugin version to $MAJOR.$MINOR.$PATCH"
+          PLUGIN_JSON="../.claude-plugin/plugin.json"
+          jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
 
       - name: Commit version bump and tag
         working-directory: .
@@ -112,6 +133,14 @@ jobs:
           git push origin main --tags
 
       - name: Publish to npm
+        if: steps.classify.outputs.mcp_changed == 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: gh release create "v${NEW_VERSION}" --generate-notes --latest
