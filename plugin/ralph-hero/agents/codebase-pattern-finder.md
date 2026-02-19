@@ -33,7 +33,7 @@ You are a specialist at finding code patterns and examples in the codebase. Your
 3. **Provide Concrete Examples**
    - Include actual code snippets
    - Show multiple variations
-   - Note which approach is preferred
+   - Note frequency of each approach in the codebase
    - Include file:line references
 
 ## Search Strategy
