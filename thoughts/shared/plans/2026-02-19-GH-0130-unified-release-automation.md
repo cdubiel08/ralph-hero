@@ -153,12 +153,12 @@ Key design decisions:
 All other steps (build, test, version bump, commit, tag, GitHub Release) remain unconditional -- they execute for every trigger regardless of change classification.
 
 ### Success Criteria
-- [ ] Automated: Push a commit touching only `plugin/ralph-hero/skills/` to main -> workflow triggers, version bumps, GitHub Release created, npm publish SKIPPED
-- [ ] Automated: Push a commit touching `plugin/ralph-hero/mcp-server/src/` to main -> workflow triggers, version bumps, GitHub Release created, npm publish RUNS
-- [ ] Automated: Push a commit touching both MCP server and skills -> workflow triggers, version bumps, GitHub Release created, npm publish RUNS
-- [ ] Automated: `workflow_dispatch` trigger -> npm publish RUNS (explicit intent)
-- [ ] Manual: Verify `package.json` and `plugin.json` versions match after each release type
-- [ ] Manual: Verify `#minor` and `#major` commit message flags still produce correct bump types
+- [x] Automated: Push a commit touching only `plugin/ralph-hero/skills/` to main -> workflow triggers, version bumps, GitHub Release created, npm publish SKIPPED
+- [x] Automated: Push a commit touching `plugin/ralph-hero/mcp-server/src/` to main -> workflow triggers, version bumps, GitHub Release created, npm publish RUNS
+- [x] Automated: Push a commit touching both MCP server and skills -> workflow triggers, version bumps, GitHub Release created, npm publish RUNS
+- [x] Automated: `workflow_dispatch` trigger -> npm publish RUNS (explicit intent)
+- [x] Manual: Verify `package.json` and `plugin.json` versions match after each release type
+- [x] Manual: Verify `#minor` and `#major` commit message flags still produce correct bump types
 
 ---
 

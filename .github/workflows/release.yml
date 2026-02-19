@@ -4,11 +4,18 @@ on:
   push:
     branches: [main]
     paths:
+      # MCP server (existing)
       - 'plugin/ralph-hero/mcp-server/src/**'
       - 'plugin/ralph-hero/mcp-server/package.json'
       - 'plugin/ralph-hero/mcp-server/package-lock.json'
       - 'plugin/ralph-hero/mcp-server/tsconfig.json'
       - 'plugin/ralph-hero/.claude-plugin/plugin.json'
+      # Plugin content (new)
+      - 'plugin/ralph-hero/agents/**'
+      - 'plugin/ralph-hero/skills/**'
+      - 'plugin/ralph-hero/hooks/**'
+      - 'plugin/ralph-hero/scripts/**'
+      - 'plugin/ralph-hero/templates/**'
   workflow_dispatch:
     inputs:
       bump:
@@ -37,6 +44,33 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changes
+        id: classify
+        working-directory: .
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # For workflow_dispatch or new branch push (before is all-zeros), default to mcp_changed=true
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || echo "$BEFORE" | grep -qE '^0+$'; then
+            echo "mcp_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Classification: mcp_changed=true (dispatch or new branch)"
+            exit 0
+          fi
+
+          DIFF=$(git diff --name-only "$BEFORE" "$AFTER")
+          echo "Changed files:"
+          echo "$DIFF"
+
+          MCP_CHANGED=false
+          echo "$DIFF" | grep -qE '^plugin/ralph-hero/mcp-server/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
+
+          echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "Classification: mcp_changed=$MCP_CHANGED"
 
       - uses: actions/setup-node@v4
         with:
@@ -99,6 +133,7 @@ jobs:
           git push origin main --tags
 
       - name: Publish to npm
+        if: steps.classify.outputs.mcp_changed == 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
