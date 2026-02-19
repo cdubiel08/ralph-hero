@@ -1,6 +1,7 @@
 ---
 description: Autonomous implementation of a GitHub issue following its approved plan - executes one phase per invocation in an isolated worktree. Use when you want to implement an issue, execute a plan, code a ticket, or address PR review feedback.
 argument-hint: [optional-issue-number]
+context: fork
 model: opus
 hooks:
   PreToolUse:
