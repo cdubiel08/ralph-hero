@@ -28,12 +28,12 @@ Dependencies for GH-140 are resolved:
 
 ## Desired End State
 ### Verification
-- [ ] `skills/ralph-report/SKILL.md` exists with valid YAML frontmatter
-- [ ] Frontmatter includes: description, argument-hint, model (sonnet), env (RALPH_COMMAND: "report")
-- [ ] Workflow steps reference correct MCP tool names and parameters
-- [ ] Report template includes all 5 required sections: pipeline summary, velocity, health indicators, highlights, status
-- [ ] Dry-run mode documented (generate without posting)
-- [ ] Graceful fallback when `includeMetrics` is unavailable
+- [x] `skills/ralph-report/SKILL.md` exists with valid YAML frontmatter
+- [x] Frontmatter includes: description, argument-hint, model (sonnet), env (RALPH_COMMAND: "report")
+- [x] Workflow steps reference correct MCP tool names and parameters
+- [x] Report template includes all 5 required sections: pipeline summary, velocity, health indicators, highlights, status
+- [x] Dry-run mode documented (generate without posting)
+- [x] Graceful fallback when `includeMetrics` is unavailable
 
 ## What We're NOT Doing
 - TypeScript code changes (pure skill definition file)
@@ -133,8 +133,8 @@ Auto-determined based on risk score: {riskScore}
 ```
 
 ### Success Criteria
-- [ ] Automated: File exists at `plugin/ralph-hero/skills/ralph-report/SKILL.md`
-- [ ] Automated: YAML frontmatter is valid (parseable)
+- [x] Automated: File exists at `plugin/ralph-hero/skills/ralph-report/SKILL.md`
+- [x] Automated: YAML frontmatter is valid (parseable)
 - [ ] Manual: Skill appears in `/ralph-report` autocomplete
 - [ ] Manual: `/ralph-report --dry-run` generates report without posting
 - [ ] Manual: `/ralph-report` posts status update to GitHub Projects
@@ -142,7 +142,7 @@ Auto-determined based on risk score: {riskScore}
 ---
 
 ## Integration Testing
-- [ ] Skill file exists and has valid frontmatter
+- [x] Skill file exists and has valid frontmatter
 - [ ] Skill is discoverable via Claude Code skill system
 - [ ] Dry-run produces report output without side effects
 - [ ] Full run posts to GitHub Projects V2 status updates
