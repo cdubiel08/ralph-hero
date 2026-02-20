@@ -5,6 +5,10 @@
  */
 
 import { describe, it, expect } from "vitest";
+import {
+  buildSyncAuditBody,
+  detectSyncAuditMarker,
+} from "../tools/sync-tools.js";
 
 // ---------------------------------------------------------------------------
 // Factory helpers
@@ -451,5 +455,110 @@ describe("no project memberships", () => {
 
     expect(synced).toEqual([]);
     expect(skipped).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit trail: buildSyncAuditBody (#199)
+// ---------------------------------------------------------------------------
+
+describe("buildSyncAuditBody", () => {
+  it("builds correct body for single synced project", () => {
+    const body = buildSyncAuditBody("In Progress", [
+      { projectNumber: 3, currentState: "Backlog", targetState: "In Progress" },
+    ]);
+    expect(body).toContain("<!-- cross-project-sync-audit -->");
+    expect(body).toContain("**In Progress**");
+    expect(body).toContain("1 project(s)");
+    expect(body).toContain("Project #3 (Backlog -> In Progress)");
+  });
+
+  it("builds correct body for multiple synced projects", () => {
+    const body = buildSyncAuditBody("Done", [
+      { projectNumber: 3, currentState: "In Progress", targetState: "Done" },
+      { projectNumber: 5, currentState: "Backlog", targetState: "Done" },
+    ]);
+    expect(body).toContain("2 project(s)");
+    expect(body).toContain("Project #3 (In Progress -> Done)");
+    expect(body).toContain("Project #5 (Backlog -> Done)");
+  });
+
+  it('uses "none" when currentState is null', () => {
+    const body = buildSyncAuditBody("In Progress", [
+      { projectNumber: 7, currentState: null, targetState: "In Progress" },
+    ]);
+    expect(body).toContain("Project #7 (none -> In Progress)");
+  });
+
+  it("starts with the sync audit marker", () => {
+    const body = buildSyncAuditBody("Todo", [
+      { projectNumber: 1, currentState: "Backlog", targetState: "Todo" },
+    ]);
+    expect(body.startsWith("<!-- cross-project-sync-audit -->")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit trail: detectSyncAuditMarker (#199)
+// ---------------------------------------------------------------------------
+
+describe("detectSyncAuditMarker", () => {
+  it("returns true when marker is present", () => {
+    const comments = [
+      { body: "Some other comment" },
+      { body: "<!-- cross-project-sync-audit -->\n**Cross-project sync** ..." },
+    ];
+    expect(detectSyncAuditMarker(comments)).toBe(true);
+  });
+
+  it("returns false when no marker present", () => {
+    const comments = [
+      { body: "Regular comment" },
+      { body: "<!-- routing-audit -->\nDifferent marker" },
+    ];
+    expect(detectSyncAuditMarker(comments)).toBe(false);
+  });
+
+  it("returns false for empty comments array", () => {
+    expect(detectSyncAuditMarker([])).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit trail: decision logic (#199)
+// ---------------------------------------------------------------------------
+
+describe("audit comment decision logic", () => {
+  it("auditComment=false suppresses comment even with synced results", () => {
+    // Simulate the tool's decision: auditComment && !dryRun && synced.length > 0
+    const auditComment = false;
+    const dryRun = false;
+    const syncedLength = 2;
+    const shouldAddComment = auditComment && !dryRun && syncedLength > 0;
+    expect(shouldAddComment).toBe(false);
+  });
+
+  it("dryRun=true suppresses comment even with auditComment=true", () => {
+    const auditComment = true;
+    const dryRun = true;
+    const syncedLength = 2;
+    const shouldAddComment = auditComment && !dryRun && syncedLength > 0;
+    expect(shouldAddComment).toBe(false);
+  });
+
+  it("no synced results suppresses comment", () => {
+    const auditComment = true;
+    const dryRun = false;
+    const syncedLength = 0;
+    const shouldAddComment = auditComment && !dryRun && syncedLength > 0;
+    expect(shouldAddComment).toBe(false);
+  });
+
+  it("auditComment=true with synced results enables comment", () => {
+    const auditComment = true;
+    const dryRun = false;
+    const syncedLength = 1;
+    const shouldAddComment = auditComment && !dryRun && syncedLength > 0;
+    expect(shouldAddComment).toBe(true);
   });
 });

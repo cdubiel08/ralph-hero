@@ -69,7 +69,45 @@ async function fetchProjectFieldMeta(gql, projectId) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Main
+// 3. Audit trail helpers (#199)
+// ---------------------------------------------------------------------------
+
+const SYNC_AUDIT_MARKER = '<!-- cross-project-sync-audit -->';
+
+/**
+ * Build the audit comment body for a cross-project sync operation.
+ */
+function buildSyncAuditBody(workflowState, syncedProjects) {
+  const lines = syncedProjects.map(
+    p => `- Project #${p.projectNumber} (${p.previousState || 'none'} -> ${workflowState})`
+  );
+  return (
+    `${SYNC_AUDIT_MARKER}\n` +
+    `**Cross-project sync** \u2014 Workflow State synced to **${workflowState}** across ${syncedProjects.length} project(s):\n` +
+    lines.join('\n')
+  );
+}
+
+/**
+ * Check if an issue already has a sync audit comment.
+ */
+async function hasExistingSyncAuditComment(gql, contentNodeId) {
+  const result = await gql(
+    `query($issueId: ID!) {
+      node(id: $issueId) {
+        ... on Issue {
+          comments(last: 20) { nodes { body } }
+        }
+      }
+    }`,
+    { issueId: contentNodeId },
+  );
+  const comments = (result.node && result.node.comments && result.node.comments.nodes) || [];
+  return comments.some(c => c.body.startsWith(SYNC_AUDIT_MARKER));
+}
+
+// ---------------------------------------------------------------------------
+// 4. Main
 // ---------------------------------------------------------------------------
 
 async function main() {
@@ -119,6 +157,7 @@ async function main() {
 
   let syncedCount = 0;
   let skippedCount = 0;
+  const syncedProjects = [];
 
   for (const item of projectItems) {
     const projectId = item.project.id;
@@ -191,7 +230,27 @@ async function main() {
     );
 
     console.log(`  Project #${projectNumber}: synced ("${currentStateName || 'none'}" -> "${WORKFLOW_STATE}")`);
+    syncedProjects.push({ projectNumber, previousState: currentStateName });
     syncedCount++;
+  }
+
+  // Audit trail: add comment documenting the sync (#199)
+  if (syncedCount > 0) {
+    const alreadyAudited = await hasExistingSyncAuditComment(graphqlWithAuth, CONTENT_NODE_ID);
+    if (!alreadyAudited) {
+      const body = buildSyncAuditBody(WORKFLOW_STATE, syncedProjects);
+      await graphqlWithAuth(
+        `mutation($subjectId: ID!, $body: String!) {
+          addComment(input: { subjectId: $subjectId, body: $body }) {
+            commentEdge { node { id } }
+          }
+        }`,
+        { subjectId: CONTENT_NODE_ID, body },
+      );
+      console.log('Audit comment added.');
+    } else {
+      console.log('Audit comment already exists. Skipping.');
+    }
   }
 
   console.log(`\nSync complete. Synced: ${syncedCount}, Skipped: ${skippedCount}`);
