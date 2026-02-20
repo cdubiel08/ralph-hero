@@ -22,6 +22,7 @@ import {
   LOCK_STATES,
 } from "../lib/workflow-states.js";
 import { resolveState } from "../lib/state-resolution.js";
+import { parseDateMath } from "../lib/date-math.js";
 import { toolSuccess, toolError } from "../types.js";
 import {
   ensureFieldCache,
@@ -79,6 +80,24 @@ export function registerIssueTools(
         .optional()
         .default("OPEN")
         .describe("Issue state filter (default: OPEN)"),
+      reason: z
+        .enum(["completed", "not_planned", "reopened"])
+        .optional()
+        .describe(
+          "Filter by close reason: completed, not_planned, reopened",
+        ),
+      updatedSince: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated on or after this date. Supports date-math (@today-7d, @now-24h) or ISO dates (YYYY-MM-DD).",
+        ),
+      updatedBefore: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated before this date. Supports date-math (@today-7d, @now-24h) or ISO dates (YYYY-MM-DD).",
+        ),
       orderBy: z
         .enum(["CREATED_AT", "UPDATED_AT", "COMMENTS"])
         .optional()
@@ -123,6 +142,7 @@ export function registerIssueTools(
                         title
                         body
                         state
+                        stateReason
                         url
                         createdAt
                         updatedAt
@@ -160,6 +180,15 @@ export function registerIssueTools(
           items = items.filter((item) => {
             const content = item.content as Record<string, unknown> | null;
             return content?.state === args.state;
+          });
+        }
+
+        // Filter by close reason (stateReason)
+        if (args.reason) {
+          const reasonUpper = args.reason.toUpperCase();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            return content?.stateReason === reasonUpper;
           });
         }
 
@@ -207,6 +236,26 @@ export function registerIssueTools(
           });
         }
 
+        // Filter by updatedSince
+        if (args.updatedSince) {
+          const since = parseDateMath(args.updatedSince).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() >= since : false;
+          });
+        }
+
+        // Filter by updatedBefore
+        if (args.updatedBefore) {
+          const before = parseDateMath(args.updatedBefore).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() < before : false;
+          });
+        }
+
         // Sort
         items.sort((a, b) => {
           const ac = a.content as Record<string, unknown> | null;
@@ -228,7 +277,9 @@ export function registerIssueTools(
             number: content?.number,
             title: content?.title,
             state: content?.state,
+            stateReason: content?.stateReason ?? null,
             url: content?.url,
+            updatedAt: content?.updatedAt ?? null,
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),

@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: draft
+status: complete
 github_issues: [105, 107, 108]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/105
@@ -45,13 +45,13 @@ Date-math comparison: `now - new Date(ts).getTime() <= windowMs` — days to mil
 ## Desired End State
 
 ### Verification
-- [ ] `parseDateMath("@today-7d")` resolves correctly with unit tests
-- [ ] `list_issues` accepts `updatedSince`/`updatedBefore` and filters by date
-- [ ] `list_project_items` accepts `updatedSince`/`updatedBefore` and filters by date (with `updatedAt` now fetched)
-- [ ] `list_issues` accepts `reason` param and filters by `stateReason` (completed/not_planned/reopened)
-- [ ] `list_project_items` accepts `itemType` param and filters by item type (ISSUE/PULL_REQUEST/DRAFT_ISSUE)
-- [ ] All existing tests pass, new structural tests added
-- [ ] `npm run build` succeeds with no type errors
+- [x] `parseDateMath("@today-7d")` resolves correctly with unit tests
+- [x] `list_issues` accepts `updatedSince`/`updatedBefore` and filters by date
+- [x] `list_project_items` accepts `updatedSince`/`updatedBefore` and filters by date (with `updatedAt` now fetched)
+- [x] `list_issues` accepts `reason` param and filters by `stateReason` (completed/not_planned/reopened)
+- [x] `list_project_items` accepts `itemType` param and filters by item type (ISSUE/PULL_REQUEST/DRAFT_ISSUE)
+- [x] All existing tests pass, new structural tests added
+- [x] `npm run build` succeeds with no type errors
 
 ## What We're NOT Doing
 - NOT adding `includeDrafts` to `list_issues` (drafts lack number/state/url — confusing in issue-focused tool)
@@ -205,9 +205,9 @@ export function parseDateMath(expr: string, now: Date = new Date()): Date
 - Add test: `list_project_items` GraphQL query contains `updatedAt`
 
 ### Success Criteria
-- [ ] Automated: `npm run build` succeeds (no type errors)
-- [ ] Automated: `npm test` passes — all existing tests + new date-math unit tests + structural tests
-- [ ] Manual: `parseDateMath("@today-7d")` returns correct Date 7 days ago
+- [x] Automated: `npm run build` succeeds (no type errors)
+- [x] Automated: `npm test` passes — all existing tests + new date-math unit tests + structural tests
+- [x] Manual: `parseDateMath("@today-7d")` returns correct Date 7 days ago
 
 **Creates for next phase**: Pattern established for adding filter params + filter blocks. `updatedAt` now available in both tools' responses.
 
@@ -265,9 +265,9 @@ stateReason: content?.stateReason ?? null,
 - Add test: `list_issues` tool description mentions `reason`
 
 ### Success Criteria
-- [ ] Automated: `npm run build` succeeds
-- [ ] Automated: `npm test` passes — all existing + new tests
-- [ ] Manual: `reason: "completed"` filters to only COMPLETED-closed issues
+- [x] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes — all existing + new tests
+- [x] Manual: `reason: "completed"` filters to only COMPLETED-closed issues
 
 **Creates for next phase**: `stateReason` available in `list_issues` response for velocity metrics (#139).
 
@@ -314,9 +314,9 @@ This ensures type-filtered queries fetch enough items before filtering.
 - Add test: `list_project_items` tool description mentions `itemType`
 
 ### Success Criteria
-- [ ] Automated: `npm run build` succeeds
-- [ ] Automated: `npm test` passes
-- [ ] Manual: `itemType: "DRAFT_ISSUE"` returns only draft items
+- [x] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes
+- [x] Manual: `itemType: "DRAFT_ISSUE"` returns only draft items
 
 **No GraphQL changes needed** — `list_project_items` already fetches all three content type fragments.
 
