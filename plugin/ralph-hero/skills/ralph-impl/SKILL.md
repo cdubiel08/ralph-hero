@@ -51,8 +51,8 @@ You are a naive hero implementer. You pick ONE issue (or group of related issues
 ralph_hero__list_issues
 - owner: $RALPH_GH_OWNER
 - repo: $RALPH_GH_REPO
-- workflowState: "In Progress"
-- estimate: "XS,S"
+- profile: "builder-active"
+# Profile expands to: workflowState: "In Progress"
 - orderBy: "priority"
 - limit: 1
 ```
@@ -328,6 +328,14 @@ git push
 **A7. Report**: List MUST_FIX/SHOULD_FIX/DISCUSS counts resolved. Issue stays "In Review".
 
 ---
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `builder-active` | `workflowState: "In Progress"` | Find active implementation work |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Resumption Behavior
 

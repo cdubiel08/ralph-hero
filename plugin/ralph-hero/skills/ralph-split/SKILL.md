@@ -52,6 +52,8 @@ Task(subagent_type="codebase-locator", prompt="Find issues with M/L/XL estimates
 
 Or query directly:
 ```
+# Note: No filter profile for split candidate selection.
+# Split uses multi-query pattern across estimates (M, L, XL) and workflow states.
 ralph_hero__list_issues
 - owner: [owner]
 - repo: [repo]
