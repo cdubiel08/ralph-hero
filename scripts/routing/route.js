@@ -17,6 +17,8 @@ const {
   ITEM_LABELS,           // JSON string: [{ name, color, ... }]
   EVENT_NAME,            // "issues" or "pull_request"
   RALPH_ROUTING_CONFIG = '.ralph-routing.yml',
+  RALPH_PROJECT_NUMBER,  // Optional: default project number (from workflow_call input)
+  RALPH_PROJECT_OWNER,   // Optional: default project owner (from workflow_call input)
 } = process.env;
 
 // Validate and initialize auth only when running as a script (not when imported for tests)
@@ -286,8 +288,13 @@ async function main() {
 
   // For each matched rule: add to project + set fields
   for (const rule of matchedRules) {
-    const projectNumber = rule.action.projectNumber;
-    const projectOwner = rule.action.projectOwner || GH_OWNER;
+    const projectNumber = rule.action.projectNumber
+      || (RALPH_PROJECT_NUMBER ? parseInt(RALPH_PROJECT_NUMBER, 10) : null);
+    if (!projectNumber) {
+      console.warn(`Rule matched but no projectNumber specified and no RALPH_PROJECT_NUMBER default — skipping`);
+      continue;
+    }
+    const projectOwner = rule.action.projectOwner || RALPH_PROJECT_OWNER || GH_OWNER;
 
     console.log(`Routing #${itemNumber} to project #${projectNumber}...`);
 
