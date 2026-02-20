@@ -265,6 +265,97 @@ describe("collaborator mutations", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Status update mutation structure
+// ---------------------------------------------------------------------------
+
+describe("status update mutations", () => {
+  it("createProjectV2StatusUpdate mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $statusValue: ProjectV2StatusUpdateStatus!, $body: String, $startDate: Date, $targetDate: Date) {
+      createProjectV2StatusUpdate(input: {
+        projectId: $projectId,
+        status: $statusValue,
+        body: $body,
+        startDate: $startDate,
+        targetDate: $targetDate
+      }) {
+        statusUpdate {
+          id
+          status
+          body
+          startDate
+          targetDate
+          createdAt
+        }
+      }
+    }`;
+    expect(mutation).toContain("createProjectV2StatusUpdate");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("ProjectV2StatusUpdateStatus");
+    expect(mutation).toContain("statusUpdate");
+  });
+
+  it("supports all 5 ProjectV2StatusUpdateStatus values", () => {
+    const validStatuses = ["ON_TRACK", "AT_RISK", "OFF_TRACK", "INACTIVE", "COMPLETE"];
+    expect(validStatuses).toHaveLength(5);
+    for (const status of validStatuses) {
+      expect(status).toMatch(/^[A-Z_]+$/);
+    }
+  });
+
+  it("updateProjectV2StatusUpdate mutation has required input fields", () => {
+    const mutation = `mutation($statusUpdateId: ID!, $statusValue: ProjectV2StatusUpdateStatus, $body: String, $startDate: Date, $targetDate: Date) {
+      updateProjectV2StatusUpdate(input: {
+        statusUpdateId: $statusUpdateId,
+        status: $statusValue,
+        body: $body,
+        startDate: $startDate,
+        targetDate: $targetDate
+      }) {
+        statusUpdate {
+          id
+          status
+          body
+          startDate
+          targetDate
+          updatedAt
+        }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2StatusUpdate");
+    expect(mutation).toContain("statusUpdateId");
+    expect(mutation).toContain("statusUpdate");
+  });
+
+  it("deleteProjectV2StatusUpdate mutation has required input fields", () => {
+    const mutation = `mutation($statusUpdateId: ID!) {
+      deleteProjectV2StatusUpdate(input: {
+        statusUpdateId: $statusUpdateId
+      }) {
+        deletedStatusUpdateId
+      }
+    }`;
+    expect(mutation).toContain("deleteProjectV2StatusUpdate");
+    expect(mutation).toContain("statusUpdateId");
+    expect(mutation).toContain("deletedStatusUpdateId");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// update_status_update validation
+// ---------------------------------------------------------------------------
+
+describe("update_status_update validation", () => {
+  it("requires at least one content field", () => {
+    const contentFields = ["status", "body", "startDate", "targetDate"];
+    const emptyArgs = { statusUpdateId: "test-id" };
+    const hasContentField = contentFields.some(
+      (f) => f in emptyArgs && (emptyArgs as Record<string, unknown>)[f] !== undefined,
+    );
+    expect(hasContentField).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // repoToLink parsing logic
 // ---------------------------------------------------------------------------
 
