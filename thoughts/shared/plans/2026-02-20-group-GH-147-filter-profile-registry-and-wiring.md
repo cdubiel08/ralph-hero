@@ -86,8 +86,8 @@ Phase 1 creates the pure library module (`filter-profiles.ts`) with the profile 
 - Test `VALID_PROFILE_NAMES` contains all 6 expected names
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/filter-profiles.test.ts`
-- [ ] Manual: `FILTER_PROFILES` contains exactly 6 profiles with correct workflow states
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/filter-profiles.test.ts`
+- [x] Manual: `FILTER_PROFILES` contains exactly 6 profiles with correct workflow states
 
 **Creates for next phase**: `expandProfile` function and `ProfileFilterParams` type imported by Phase 2.
 
