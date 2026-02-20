@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: draft
+status: complete
 github_issue: 158
 github_url: https://github.com/cdubiel08/ralph-hero/issues/158
 primary_issue: 158
@@ -28,13 +28,13 @@ Single issue implementation: GH-158 — Create core `project_hygiene` MCP tool w
 ## Desired End State
 
 ### Verification
-- [ ] `ralph_hero__project_hygiene` tool registered and functional
-- [ ] 6 report sections: archive candidates, stale items, orphaned items, field gaps, WIP violations, summary
-- [ ] Pure functions in `lib/hygiene.ts` with `now` parameter injection for testability
-- [ ] I/O layer in `tools/hygiene-tools.ts` reusing dashboard query infrastructure
-- [ ] JSON and markdown output formats supported
-- [ ] Tests pass for all pure functions
-- [ ] `npm run build` and `npm test` succeed
+- [x] `ralph_hero__project_hygiene` tool registered and functional
+- [x] 6 report sections: archive candidates, stale items, orphaned items, field gaps, WIP violations, summary
+- [x] Pure functions in `lib/hygiene.ts` with `now` parameter injection for testability
+- [x] I/O layer in `tools/hygiene-tools.ts` reusing dashboard query infrastructure
+- [x] JSON and markdown output formats supported
+- [x] Tests pass for all pure functions
+- [x] `npm run build` and `npm test` succeed
 
 ## What We're NOT Doing
 - No `list_status_updates` query tool
@@ -826,20 +826,20 @@ describe("formatHygieneMarkdown", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Manual: `ralph_hero__project_hygiene` tool appears in MCP tool listing
-- [ ] Manual: Tool returns correct report with 6 sections + summary
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Manual: `ralph_hero__project_hygiene` tool appears in MCP tool listing
+- [x] Manual: Tool returns correct report with 6 sections + summary
 
 ---
 
 ## Integration Testing
-- [ ] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
-- [ ] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] No type errors in new code
-- [ ] Pure function tests cover all 6 sections
-- [ ] Markdown formatter produces valid output
-- [ ] Dashboard query export doesn't break existing dashboard tool
+- [x] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] No type errors in new code
+- [x] Pure function tests cover all 6 sections
+- [x] Markdown formatter produces valid output
+- [x] Dashboard query export doesn't break existing dashboard tool
 
 ## References
 - Research GH-158: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-20-GH-0158-project-hygiene-reporting-tool.md
