@@ -2,7 +2,8 @@
  * MCP tools for GitHub Projects V2 management operations.
  *
  * Provides tools for archiving/unarchiving items, removing items from projects,
- * adding existing issues to projects, linking repositories, and clearing field values.
+ * adding existing issues to projects, linking repositories, clearing field values,
+ * and managing project status updates (create, update, delete).
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -890,6 +891,92 @@ export function registerProjectManagementTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to update collaborators: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__create_status_update
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__create_status_update",
+    "Post a project-level status update with health designation. Visible in GitHub Projects UI header and panel. Returns: id, status, body, startDate, targetDate, createdAt.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      status: z.enum(["ON_TRACK", "AT_RISK", "OFF_TRACK", "INACTIVE", "COMPLETE"])
+        .describe("Project health designation"),
+      body: z.string().optional().describe("Status update body (markdown)"),
+      startDate: z.string().optional().describe("Start date (YYYY-MM-DD)"),
+      targetDate: z.string().optional().describe("Target date (YYYY-MM-DD)"),
+    },
+    async (args) => {
+      try {
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        const vars: Record<string, unknown> = {
+          projectId,
+          statusValue: args.status,
+        };
+        if (args.body !== undefined) vars.body = args.body;
+        if (args.startDate !== undefined) vars.startDate = args.startDate;
+        if (args.targetDate !== undefined) vars.targetDate = args.targetDate;
+
+        const result = await client.projectMutate<{
+          createProjectV2StatusUpdate: {
+            statusUpdate: {
+              id: string;
+              status: string;
+              body: string | null;
+              startDate: string | null;
+              targetDate: string | null;
+              createdAt: string;
+            };
+          };
+        }>(
+          `mutation($projectId: ID!, $statusValue: ProjectV2StatusUpdateStatus!, $body: String, $startDate: Date, $targetDate: Date) {
+            createProjectV2StatusUpdate(input: {
+              projectId: $projectId,
+              status: $statusValue,
+              body: $body,
+              startDate: $startDate,
+              targetDate: $targetDate
+            }) {
+              statusUpdate {
+                id
+                status
+                body
+                startDate
+                targetDate
+                createdAt
+              }
+            }
+          }`,
+          vars,
+        );
+
+        const su = result.createProjectV2StatusUpdate.statusUpdate;
+        return toolSuccess({
+          id: su.id,
+          status: su.status,
+          body: su.body,
+          startDate: su.startDate,
+          targetDate: su.targetDate,
+          createdAt: su.createdAt,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to create status update: ${message}`);
       }
     },
   );

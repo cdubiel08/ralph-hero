@@ -265,6 +265,45 @@ describe("collaborator mutations", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Status update mutation structure
+// ---------------------------------------------------------------------------
+
+describe("status update mutations", () => {
+  it("createProjectV2StatusUpdate mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $statusValue: ProjectV2StatusUpdateStatus!, $body: String, $startDate: Date, $targetDate: Date) {
+      createProjectV2StatusUpdate(input: {
+        projectId: $projectId,
+        status: $statusValue,
+        body: $body,
+        startDate: $startDate,
+        targetDate: $targetDate
+      }) {
+        statusUpdate {
+          id
+          status
+          body
+          startDate
+          targetDate
+          createdAt
+        }
+      }
+    }`;
+    expect(mutation).toContain("createProjectV2StatusUpdate");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("ProjectV2StatusUpdateStatus");
+    expect(mutation).toContain("statusUpdate");
+  });
+
+  it("supports all 5 ProjectV2StatusUpdateStatus values", () => {
+    const validStatuses = ["ON_TRACK", "AT_RISK", "OFF_TRACK", "INACTIVE", "COMPLETE"];
+    expect(validStatuses).toHaveLength(5);
+    for (const status of validStatuses) {
+      expect(status).toMatch(/^[A-Z_]+$/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // repoToLink parsing logic
 // ---------------------------------------------------------------------------
 

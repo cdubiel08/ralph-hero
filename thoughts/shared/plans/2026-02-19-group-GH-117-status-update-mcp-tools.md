@@ -151,8 +151,8 @@ it("supports all 5 ProjectV2StatusUpdateStatus values", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
 - [ ] Manual: Tool appears in MCP server tool listing
 
 **Creates for next phase**: The `create_status_update` tool establishes the pattern for status enum handling and project mutation flow. Phase 2's update/delete tools follow the same structure but use `statusUpdateId` instead of `projectId`.
