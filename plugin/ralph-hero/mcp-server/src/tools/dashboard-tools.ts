@@ -20,6 +20,11 @@ import {
   DEFAULT_HEALTH_CONFIG,
 } from "../lib/dashboard.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+import {
+  calculateMetrics,
+  DEFAULT_METRICS_CONFIG,
+  type MetricsConfig,
+} from "../lib/metrics.js";
 
 // ---------------------------------------------------------------------------
 // Helper: Ensure field option cache is populated
@@ -269,6 +274,34 @@ export function registerDashboardTools(
         .optional()
         .default(10)
         .describe("Max issues to list per phase (default: 10)"),
+      includeMetrics: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Include velocity metrics, risk score, and auto-status (default: false)",
+        ),
+      velocityWindowDays: z
+        .number()
+        .optional()
+        .default(7)
+        .describe(
+          "Days to look back for velocity calculation (default: 7)",
+        ),
+      atRiskThreshold: z
+        .number()
+        .optional()
+        .default(2)
+        .describe(
+          "Risk score threshold for AT_RISK status (default: 2)",
+        ),
+      offTrackThreshold: z
+        .number()
+        .optional()
+        .default(6)
+        .describe(
+          "Risk score threshold for OFF_TRACK status (default: 6)",
+        ),
     },
     async (args) => {
       try {
@@ -325,6 +358,22 @@ export function registerDashboardTools(
           phase.issues = phase.issues.slice(0, issuesPerPhase);
         }
 
+        // Compute metrics if requested
+        let metrics: ReturnType<typeof calculateMetrics> | undefined;
+        if (args.includeMetrics) {
+          const metricsConfig: MetricsConfig = {
+            ...DEFAULT_METRICS_CONFIG,
+            velocityWindowDays: args.velocityWindowDays ?? 7,
+            atRiskThreshold: args.atRiskThreshold ?? 2,
+            offTrackThreshold: args.offTrackThreshold ?? 6,
+          };
+          metrics = calculateMetrics(
+            dashboardItems,
+            dashboard,
+            metricsConfig,
+          );
+        }
+
         // Format output
         const format = args.format ?? "json";
         let formatted: string | undefined;
@@ -338,6 +387,7 @@ export function registerDashboardTools(
         return toolSuccess({
           ...dashboard,
           ...(formatted !== undefined ? { formatted } : {}),
+          ...(metrics !== undefined ? { metrics } : {}),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
