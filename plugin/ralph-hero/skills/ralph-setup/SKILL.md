@@ -339,6 +339,134 @@ Also include the Workflow States table in both cases:
 2. Call `ralph_hero__get_project` to confirm project is accessible
 3. If verification fails, display what went wrong and remediation steps
 
+### Step 6b: Enable Routing & Sync (Optional)
+
+This step introduces the routing and sync infrastructure shipped with Ralph. The workflows are already installed in `.github/workflows/` but require a `ROUTING_PAT` secret to function.
+
+Display context, then ask the user using AskUserQuestion:
+
+```
+Routing & Sync (Optional)
+=========================
+Ralph can automatically:
+- Route new issues/PRs to your project based on label rules
+- Sync Workflow State when issues are closed/reopened
+- Advance linked issues when PRs are merged
+- Sync state across multiple projects
+
+These features require a ROUTING_PAT repository secret.
+The workflows are already installed in .github/workflows/.
+```
+
+**Question**: "Would you like to enable automated issue routing and workflow state sync?"
+**Options**:
+- **"Yes, set it up now"** — Continue with sub-steps below
+- **"Skip for now"** — Record `routingEnabled: false` and skip to Step 7
+
+**If "Skip for now"**: Record routing state and proceed to Step 7. No routing references will appear in the final report beyond a one-line note.
+
+**If "Yes, set it up now"**, guide through three sub-steps:
+
+#### 6b-i. ROUTING_PAT Secret
+
+Display instructions (secret creation cannot be automated via API):
+
+```
+Step 1: Add ROUTING_PAT Secret
+===============================
+Go to: https://github.com/[owner]/[repo]/settings/secrets/actions
+Click "New repository secret"
+
+Name:  ROUTING_PAT
+Value: (paste your GitHub PAT — same token as RALPH_HERO_GITHUB_TOKEN works)
+
+Required scopes: repo, project
+Note: GITHUB_TOKEN cannot write to Projects V2 — a PAT is required.
+```
+
+Then ask using AskUserQuestion:
+
+**Question**: "Have you added the ROUTING_PAT secret?"
+**Options**:
+- **"Yes, it's added"** — Record `routingPatAdded: true`, continue
+- **"I'll do it later"** — Record `routingPatAdded: pending`, continue to next sub-step
+
+#### 6b-ii. Repository Variables (Optional)
+
+Display the variables table and explain defaults:
+
+```
+Step 2: Repository Variables (Optional)
+========================================
+The sync workflows use these variables with defaults.
+Only set them if your values differ from the defaults.
+
+Go to: https://github.com/[owner]/[repo]/settings/variables/actions
+
+| Variable              | Default      | Set if...                          |
+|-----------------------|--------------|------------------------------------|
+| RALPH_PROJECT_OWNER   | cdubiel08    | Your project owner differs         |
+| RALPH_PROJECT_NUMBER  | 3            | Your project number differs        |
+| ROUTING_DEFAULT_PROJECT | (none)     | You want a fallback project        |
+| SYNC_PROJECT_FILTER   | (none)       | You use cross-project sync         |
+```
+
+Then ask using AskUserQuestion:
+
+**Question**: "Do you need to set any repository variables?"
+**Options**:
+- **"No, defaults are fine"** — Record `repoVarsConfigured: true`, continue
+- **"Yes, I'll set them now"** — Display the Settings > Variables URL, wait for confirmation, record `repoVarsConfigured: true`
+- **"I'll configure later"** — Record `repoVarsConfigured: pending`, continue
+
+#### 6b-iii. Routing Config Stub (Optional)
+
+Ask using AskUserQuestion:
+
+**Question**: "Would you like to create a starter `.ralph-routing.yml` config?"
+**Options**:
+- **"Yes, create a starter config"** — Call `ralph_hero__configure_routing(operation: "add_rule", rule: { match: { labels: ["enhancement"] }, action: { workflowState: "Backlog", projectNumber: [project-number] } })` to create a minimal stub, then display:
+  ```
+  Created .ralph-routing.yml with a starter rule:
+  - Issues labeled "enhancement" → Project #[N], Workflow State: Backlog
+
+  Edit this file to add more rules. See docs/cross-repo-routing.md for the full config format.
+  ```
+  Record `routingConfigCreated: true`
+- **"No, I'll create it manually"** — Display: `See docs/cross-repo-routing.md for the full config format.` Record `routingConfigCreated: false`
+- **"Skip routing config"** — Record `routingConfigCreated: false`, continue
+
+#### Record Routing State
+
+After completing (or skipping) the sub-steps, record the following for use in the config file append and final report:
+
+- `routingEnabled`: true/false
+- `routingPatAdded`: true/false/pending
+- `repoVarsConfigured`: true/false/pending
+- `routingConfigCreated`: true/false
+
+**Append to `.claude/ralph-hero.local.md`** (written in Step 5):
+
+If `routingEnabled` is true, append the following section to the existing config file:
+
+```markdown
+## Routing & Sync
+
+| Setting | Value |
+|---------|-------|
+| Routing Enabled | [yes/no] |
+| ROUTING_PAT Secret | [added/pending/not configured] |
+| Repository Variables | [defaults/custom/pending] |
+| Routing Config | [created at .ralph-routing.yml / not created] |
+
+Sync workflows (auto-activate when ROUTING_PAT is set):
+- sync-issue-state.yml — Syncs Workflow State on close/reopen
+- sync-pr-merge.yml — Advances linked issues on PR merge
+- sync-project-state.yml — Cross-project state sync
+
+For cross-repo routing setup, see: docs/cross-repo-routing.md
+```
+
 ### Step 7: Final Report
 
 **For simple setup (same owner):**
@@ -360,7 +488,35 @@ Views (create manually in GitHub UI):
   - Ralph Kanban (Board, Workflow State columns, hidden: Canceled/Done/locked states)
 
 Configuration saved to: .claude/ralph-hero.local.md
+```
 
+**If routing was enabled (`routingEnabled: true`)**, append:
+```
+Routing & Sync:
+  - ROUTING_PAT secret: [Added / Pending — add at Settings > Secrets > Actions]
+  - Repository variables: [Defaults OK / Custom set / Pending]
+  - Routing config: [Created (.ralph-routing.yml) / Not created]
+  - Sync workflows: Pre-installed (activate when ROUTING_PAT is set)
+```
+
+**If routing was skipped**, append:
+```
+Routing & Sync: Skipped (run /ralph-setup again to enable later)
+  See docs/cross-repo-routing.md for manual setup
+```
+
+Then display next steps. **If routing was enabled**, use:
+```
+Next steps:
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
+3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
+4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
+5. Run /ralph-triage to start processing issues
+```
+
+Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped**, use the original 3-item list:
+```
 Next steps:
 1. Verify .claude/settings.local.json has your token and config
 2. Restart Claude Code if you changed any env vars
@@ -388,13 +544,51 @@ Views (create manually in GitHub UI):
   - Ralph Kanban (Board, Workflow State columns, hidden: Canceled/Done/locked states)
 
 Configuration saved to: .claude/ralph-hero.local.md
+```
 
+**If routing was enabled (`routingEnabled: true`)**, append:
+```
+Routing & Sync:
+  - ROUTING_PAT secret: [Added / Pending — add at Settings > Secrets > Actions]
+  - Repository variables: [Defaults OK / Custom set / Pending]
+  - Routing config: [Created (.ralph-routing.yml) / Not created]
+  - Sync workflows: Pre-installed (activate when ROUTING_PAT is set)
+```
+
+**If routing was skipped**, append:
+```
+Routing & Sync: Skipped (run /ralph-setup again to enable later)
+  See docs/cross-repo-routing.md for manual setup
+```
+
+Then display:
+```
 IMPORTANT: Verify .claude/settings.local.json has:
   RALPH_GH_PROJECT_OWNER: "[project-owner]"
   RALPH_GH_PROJECT_NUMBER: "[number]"
   [+ token vars]
 
 Then restart Claude Code (MCP server reads env vars at startup).
+```
+
+Next steps follow the same conditional pattern as the simple setup:
+
+**If routing was enabled:**
+```
+Next steps:
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
+3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
+4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
+5. Run /ralph-triage to start processing issues
+```
+
+Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped:**
+```
+Next steps:
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
+3. Run /ralph-triage to start processing issues
 ```
 
 ## Error Handling
