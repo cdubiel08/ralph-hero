@@ -37,12 +37,12 @@ Known gaps:
 
 ## Desired End State
 ### Verification
-- [ ] `lib/metrics.ts` exports 4 pure functions: `calculateVelocity`, `calculateRiskScore`, `determineStatus`, `extractHighlights`
-- [ ] `MetricsConfig` interface with configurable thresholds and sensible defaults
-- [ ] `pipeline_dashboard` tool exposes metrics via optional `includeMetrics` param
-- [ ] `__tests__/metrics.test.ts` covers all functions with edge cases
-- [ ] `npm test` passes
-- [ ] `npm run build` succeeds
+- [x] `lib/metrics.ts` exports 4 pure functions: `calculateVelocity`, `calculateRiskScore`, `determineStatus`, `extractHighlights`
+- [x] `MetricsConfig` interface with configurable thresholds and sensible defaults
+- [x] `pipeline_dashboard` tool exposes metrics via optional `includeMetrics` param
+- [x] `__tests__/metrics.test.ts` covers all functions with edge cases
+- [x] `npm test` passes
+- [x] `npm run build` succeeds
 
 ## What We're NOT Doing
 - Adding `createdAt` to `DashboardItem` or the GraphQL query (future enhancement; approximate with `updatedAt` for now)
@@ -192,17 +192,17 @@ export const DEFAULT_METRICS_CONFIG: MetricsConfig = {
   - Spread metrics into the response object alongside dashboard data
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` — all tests pass including new metrics tests
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` — compiles without errors
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` — all tests pass including new metrics tests
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` — compiles without errors
 - [ ] Manual: `pipeline_dashboard` with `includeMetrics: false` (default) returns same response as before
 - [ ] Manual: `pipeline_dashboard` with `includeMetrics: true` returns additional `metrics` object with `velocity`, `riskScore`, `status`, `highlights`
 
 ---
 
 ## Integration Testing
-- [ ] Build succeeds: `npm run build`
-- [ ] All existing dashboard tests still pass (no regressions)
-- [ ] New metrics tests pass: `npm test -- --reporter=verbose`
+- [x] Build succeeds: `npm run build`
+- [x] All existing dashboard tests still pass (no regressions)
+- [x] New metrics tests pass: `npm test -- --reporter=verbose`
 - [ ] `pipeline_dashboard` without `includeMetrics` is unchanged (backward compatible)
 - [ ] `pipeline_dashboard` with `includeMetrics: true` returns metrics block
 
