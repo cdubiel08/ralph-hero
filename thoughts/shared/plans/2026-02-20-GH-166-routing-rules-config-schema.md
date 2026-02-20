@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: draft
+status: complete
 github_issue: 166
 github_url: https://github.com/cdubiel08/ralph-hero/issues/166
 primary_issue: 166
@@ -472,21 +472,21 @@ describe("validateRoutingConfig", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Manual: `RoutingConfigSchema`, `MatchCriteriaSchema`, `RoutingActionSchema`, `RoutingRuleSchema` exported
-- [ ] Manual: `RoutingConfig`, `MatchCriteria`, `RoutingAction`, `RoutingRule` types exported
-- [ ] Manual: `validateRoutingConfig()` function exported
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Manual: `RoutingConfigSchema`, `MatchCriteriaSchema`, `RoutingActionSchema`, `RoutingRuleSchema` exported
+- [x] Manual: `RoutingConfig`, `MatchCriteria`, `RoutingAction`, `RoutingRule` types exported
+- [x] Manual: `validateRoutingConfig()` function exported
 
 ---
 
 ## Integration Testing
-- [ ] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
-- [ ] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] No type errors in new code
-- [ ] Zod refinement validations work (empty match rejected, empty action rejected)
-- [ ] Version literal enforced (version: 2 rejected)
-- [ ] Defaults applied correctly (stopOnFirstMatch, enabled, negate)
+- [x] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] No type errors in new code
+- [x] Zod refinement validations work (empty match rejected, empty action rejected)
+- [x] Version literal enforced (version: 2 rejected)
+- [x] Defaults applied correctly (stopOnFirstMatch, enabled, negate)
 
 ## References
 - Research GH-166: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-20-GH-0166-routing-rules-config-schema.md
