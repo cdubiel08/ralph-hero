@@ -1,0 +1,9 @@
+{
+  "name": "sync-project-state",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitHub Actions script for cross-project Workflow State sync",
+  "dependencies": {
+    "@octokit/graphql": "^9.0.3"
+  }
+}

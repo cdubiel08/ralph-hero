@@ -42,11 +42,11 @@ primary_issue: 180
 - [x] Tool is idempotent — skips projects already at the target state
 - [x] Tool supports `dryRun` mode — returns affected list without mutations
 - [x] Tool gracefully skips projects missing Workflow State field or target option
-- [ ] `.github/workflows/sync-project-state.yml` triggers via `workflow_dispatch` and `repository_dispatch`
-- [ ] `.github/scripts/sync/sync-project-state.js` replicates sync logic with loop prevention
-- [ ] Script skips originating project number to prevent sync loops
-- [ ] Concurrency group prevents parallel syncs for the same content node
-- [ ] Build succeeds, all tests pass
+- [x] `.github/workflows/sync-project-state.yml` triggers via `workflow_dispatch` and `repository_dispatch`
+- [x] `.github/scripts/sync/sync-project-state.js` replicates sync logic with loop prevention
+- [x] Script skips originating project number to prevent sync loops
+- [x] Concurrency group prevents parallel syncs for the same content node
+- [x] Build succeeds, all tests pass
 
 ## What We're NOT Doing
 - No automated org webhook bridge (future follow-up — requires external infrastructure)
@@ -228,8 +228,8 @@ Note: Uses same `@octokit/graphql` version as `scripts/routing/package.json` for
 Run `cd .github/scripts/sync && npm install` to generate `package-lock.json` (required for `npm ci` in the workflow).
 
 ### Success Criteria
-- [ ] Automated: `node -c .github/scripts/sync/sync-project-state.js` passes syntax check
-- [ ] Automated: `cd .github/scripts/sync && npm install` succeeds
+- [x] Automated: `node -c .github/scripts/sync/sync-project-state.js` passes syntax check
+- [x] Automated: `cd .github/scripts/sync && npm install` succeeds
 - [ ] Manual: Workflow appears in Actions tab after merge
 - [ ] Manual: `workflow_dispatch` with test inputs triggers sync script
 
@@ -239,11 +239,11 @@ Run `cd .github/scripts/sync && npm install` to generate `package-lock.json` (re
 
 ## Integration Testing
 - [x] MCP tool builds and all tests pass
-- [ ] Sync script passes `node -c` syntax check
-- [ ] `.github/scripts/sync/package.json` dependencies install cleanly
-- [ ] Workflow YAML is syntactically valid
-- [ ] Concurrency group uses correct expression for content node ID
-- [ ] `ROUTING_PAT` verification step exits 1 when secret missing
+- [x] Sync script passes `node -c` syntax check
+- [x] `.github/scripts/sync/package.json` dependencies install cleanly
+- [x] Workflow YAML is syntactically valid
+- [x] Concurrency group uses correct expression for content node ID
+- [x] `ROUTING_PAT` verification step exits 1 when secret missing
 - [ ] End-to-end: `workflow_dispatch` with real content node ID triggers sync across projects (requires ROUTING_PAT secret + multi-project issue)
 
 ## References
