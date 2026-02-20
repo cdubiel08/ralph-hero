@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: draft
+status: complete
 github_issues: [213]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/213
@@ -31,12 +31,12 @@ Users completing `/ralph-setup` today have no awareness that routing and sync ex
 ## Desired End State
 
 ### Verification
-- [ ] SKILL.md contains a new interactive Step 6b "Enable Routing & Sync (Optional)" between current Step 6 (Verify Setup) and Step 7 (Final Report)
-- [ ] The new step uses the `AskUserQuestion` pattern consistent with Steps 2, 2b
-- [ ] The step covers: ROUTING_PAT secret, repository variables, optional `.ralph-routing.yml` stub creation, sync workflow overview
-- [ ] Step 7 Final Report includes routing/sync configuration status
-- [ ] Step 5 (Store Configuration) includes a Routing & Sync section in the `.claude/ralph-hero.local.md` template
-- [ ] Cross-repo setup is deferred to `docs/cross-repo-routing.md` (out of scope for basic setup)
+- [x] SKILL.md contains a new interactive Step 6b "Enable Routing & Sync (Optional)" between current Step 6 (Verify Setup) and Step 7 (Final Report)
+- [x] The new step uses the `AskUserQuestion` pattern consistent with Steps 2, 2b
+- [x] The step covers: ROUTING_PAT secret, repository variables, optional `.ralph-routing.yml` stub creation, sync workflow overview
+- [x] Step 7 Final Report includes routing/sync configuration status
+- [x] Step 5 (Store Configuration) includes a Routing & Sync section in the `.claude/ralph-hero.local.md` template
+- [x] Cross-repo setup is deferred to `docs/cross-repo-routing.md` (out of scope for basic setup)
 
 ## What We're NOT Doing
 - Not creating a separate `/ralph-setup-routing` skill (contradicts the issue's intent)
@@ -210,25 +210,25 @@ Next steps:
 For users who skipped routing entirely, items 3 and 4 should not appear (keep the existing 3-item list).
 
 ### Success Criteria
-- [ ] Automated: `grep -c "Step 6b" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns 1
-- [ ] Automated: `grep -c "ROUTING_PAT" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns at least 3 (instructions, status display, next steps reference)
-- [ ] Automated: `grep -c "configure_routing" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns at least 1
-- [ ] Automated: `grep -c "cross-repo-routing.md" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns at least 2
-- [ ] Manual: The new step follows the `AskUserQuestion` interactive pattern used by Steps 2 and 2b
-- [ ] Manual: Step 7 Final Report displays routing/sync status for both "enabled" and "skipped" paths
-- [ ] Manual: The `.claude/ralph-hero.local.md` template includes routing section when enabled
-- [ ] Manual: No changes to any file other than SKILL.md
-- [ ] Manual: Cross-repo setup is deferred to docs (not inlined into the skill)
+- [x] Automated: `grep -c "Step 6b" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns 1
+- [x] Automated: `grep -c "ROUTING_PAT" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns at least 3 (instructions, status display, next steps reference)
+- [x] Automated: `grep -c "configure_routing" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns at least 1
+- [x] Automated: `grep -c "cross-repo-routing.md" plugin/ralph-hero/skills/ralph-setup/SKILL.md` returns at least 2
+- [x] Manual: The new step follows the `AskUserQuestion` interactive pattern used by Steps 2 and 2b
+- [x] Manual: Step 7 Final Report displays routing/sync status for both "enabled" and "skipped" paths
+- [x] Manual: The `.claude/ralph-hero.local.md` template includes routing section when enabled
+- [x] Manual: No changes to any file other than SKILL.md
+- [x] Manual: Cross-repo setup is deferred to docs (not inlined into the skill)
 
 ---
 
 ## Integration Testing
-- [ ] Read through the full SKILL.md flow from Step 1 to Step 7 to verify step numbering consistency
-- [ ] Verify the "Skip for now" path produces a clean final report without routing references cluttering it
-- [ ] Verify the "Yes, set it up now" path covers all three sub-steps (secret, variables, config stub)
-- [ ] Verify `configure_routing` tool call uses correct parameter format (operation, rule object, configPath)
-- [ ] Verify all GitHub Settings URLs use `[owner]/[repo]` placeholders consistently
-- [ ] Verify the `.claude/ralph-hero.local.md` routing section matches the format of existing sections (table style)
+- [x] Read through the full SKILL.md flow from Step 1 to Step 7 to verify step numbering consistency
+- [x] Verify the "Skip for now" path produces a clean final report without routing references cluttering it
+- [x] Verify the "Yes, set it up now" path covers all three sub-steps (secret, variables, config stub)
+- [x] Verify `configure_routing` tool call uses correct parameter format (operation, rule object, configPath)
+- [x] Verify all GitHub Settings URLs use `[owner]/[repo]` placeholders consistently
+- [x] Verify the `.claude/ralph-hero.local.md` routing section matches the format of existing sections (table style)
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-20-GH-0213-setup-routing-sync-breadcrumbs.md
