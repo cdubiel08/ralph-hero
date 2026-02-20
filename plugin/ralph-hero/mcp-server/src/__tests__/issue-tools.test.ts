@@ -34,4 +34,19 @@ describe("list_issues structural", () => {
       'import { parseDateMath } from "../lib/date-math.js"',
     );
   });
+
+  it("GraphQL query contains stateReason", () => {
+    expect(issueToolsSrc).toContain("stateReason");
+  });
+
+  it("tool has reason parameter", () => {
+    // Verify the reason enum is defined in the Zod schema
+    expect(issueToolsSrc).toContain(
+      '"completed", "not_planned", "reopened"',
+    );
+  });
+
+  it("response mapping includes stateReason", () => {
+    expect(issueToolsSrc).toContain("stateReason: content?.stateReason");
+  });
 });

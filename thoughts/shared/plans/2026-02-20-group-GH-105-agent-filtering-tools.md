@@ -265,9 +265,9 @@ stateReason: content?.stateReason ?? null,
 - Add test: `list_issues` tool description mentions `reason`
 
 ### Success Criteria
-- [ ] Automated: `npm run build` succeeds
-- [ ] Automated: `npm test` passes — all existing + new tests
-- [ ] Manual: `reason: "completed"` filters to only COMPLETED-closed issues
+- [x] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes — all existing + new tests
+- [x] Manual: `reason: "completed"` filters to only COMPLETED-closed issues
 
 **Creates for next phase**: `stateReason` available in `list_issues` response for velocity metrics (#139).
 

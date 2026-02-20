@@ -80,6 +80,12 @@ export function registerIssueTools(
         .optional()
         .default("OPEN")
         .describe("Issue state filter (default: OPEN)"),
+      reason: z
+        .enum(["completed", "not_planned", "reopened"])
+        .optional()
+        .describe(
+          "Filter by close reason: completed, not_planned, reopened",
+        ),
       updatedSince: z
         .string()
         .optional()
@@ -136,6 +142,7 @@ export function registerIssueTools(
                         title
                         body
                         state
+                        stateReason
                         url
                         createdAt
                         updatedAt
@@ -173,6 +180,15 @@ export function registerIssueTools(
           items = items.filter((item) => {
             const content = item.content as Record<string, unknown> | null;
             return content?.state === args.state;
+          });
+        }
+
+        // Filter by close reason (stateReason)
+        if (args.reason) {
+          const reasonUpper = args.reason.toUpperCase();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            return content?.stateReason === reasonUpper;
           });
         }
 
@@ -261,6 +277,7 @@ export function registerIssueTools(
             number: content?.number,
             title: content?.title,
             state: content?.state,
+            stateReason: content?.stateReason ?? null,
             url: content?.url,
             updatedAt: content?.updatedAt ?? null,
             workflowState: getFieldValue(item, "Workflow State"),
