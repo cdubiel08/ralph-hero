@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: draft
+status: complete
 github_issues: [175, 176]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/175
@@ -292,11 +292,11 @@ jobs:
 ```
 
 ### Success Criteria
-- [ ] Automated: workflow YAML is valid (parseable by GitHub Actions)
-- [ ] Automated: `workflow_dispatch` trigger allows manual testing
-- [ ] Manual: close reason mapping correct (completed→Done, not_planned→Canceled, reopen→Backlog)
-- [ ] Manual: idempotency check (skip if already at target)
-- [ ] Manual: graceful skip when issue not in project
+- [x] Automated: workflow YAML is valid (parseable by GitHub Actions)
+- [x] Automated: `workflow_dispatch` trigger allows manual testing
+- [x] Manual: close reason mapping correct (completed→Done, not_planned→Canceled, reopen→Backlog)
+- [x] Manual: idempotency check (skip if already at target)
+- [x] Manual: graceful skip when issue not in project
 
 **Creates for next phase**: Auth pattern (`ROUTING_PAT`), project/field resolution queries, idempotency check pattern, concurrency group pattern.
 
@@ -562,14 +562,14 @@ jobs:
 ```
 
 ### Success Criteria
-- [ ] Automated: workflow YAML is valid (parseable by GitHub Actions)
-- [ ] Automated: `workflow_dispatch` trigger allows manual testing
-- [ ] Manual: `closingIssuesReferences` query correctly finds linked issues
-- [ ] Manual: fallback body parsing works when GraphQL returns empty
-- [ ] Manual: state advancement correct (In Progress → In Review, In Review → Done, others → skip)
-- [ ] Manual: idempotency (no-op if already at target)
-- [ ] Manual: graceful skip when issue not in project
-- [ ] Manual: multiple linked issues processed independently
+- [x] Automated: workflow YAML is valid (parseable by GitHub Actions)
+- [x] Automated: `workflow_dispatch` trigger allows manual testing
+- [x] Manual: `closingIssuesReferences` query correctly finds linked issues
+- [x] Manual: fallback body parsing works when GraphQL returns empty
+- [x] Manual: state advancement correct (In Progress → In Review, In Review → Done, others → skip)
+- [x] Manual: idempotency (no-op if already at target)
+- [x] Manual: graceful skip when issue not in project
+- [x] Manual: multiple linked issues processed independently
 
 ---
 
