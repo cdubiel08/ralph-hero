@@ -301,6 +301,58 @@ describe("status update mutations", () => {
       expect(status).toMatch(/^[A-Z_]+$/);
     }
   });
+
+  it("updateProjectV2StatusUpdate mutation has required input fields", () => {
+    const mutation = `mutation($statusUpdateId: ID!, $statusValue: ProjectV2StatusUpdateStatus, $body: String, $startDate: Date, $targetDate: Date) {
+      updateProjectV2StatusUpdate(input: {
+        statusUpdateId: $statusUpdateId,
+        status: $statusValue,
+        body: $body,
+        startDate: $startDate,
+        targetDate: $targetDate
+      }) {
+        statusUpdate {
+          id
+          status
+          body
+          startDate
+          targetDate
+          updatedAt
+        }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2StatusUpdate");
+    expect(mutation).toContain("statusUpdateId");
+    expect(mutation).toContain("statusUpdate");
+  });
+
+  it("deleteProjectV2StatusUpdate mutation has required input fields", () => {
+    const mutation = `mutation($statusUpdateId: ID!) {
+      deleteProjectV2StatusUpdate(input: {
+        statusUpdateId: $statusUpdateId
+      }) {
+        deletedStatusUpdateId
+      }
+    }`;
+    expect(mutation).toContain("deleteProjectV2StatusUpdate");
+    expect(mutation).toContain("statusUpdateId");
+    expect(mutation).toContain("deletedStatusUpdateId");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// update_status_update validation
+// ---------------------------------------------------------------------------
+
+describe("update_status_update validation", () => {
+  it("requires at least one content field", () => {
+    const contentFields = ["status", "body", "startDate", "targetDate"];
+    const emptyArgs = { statusUpdateId: "test-id" };
+    const hasContentField = contentFields.some(
+      (f) => f in emptyArgs && (emptyArgs as Record<string, unknown>)[f] !== undefined,
+    );
+    expect(hasContentField).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

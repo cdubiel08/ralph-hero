@@ -980,4 +980,143 @@ export function registerProjectManagementTools(
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__update_status_update
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__update_status_update",
+    "Update an existing project status update. Modify body, status designation, or dates. Returns: id, status, body, startDate, targetDate, updatedAt.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      statusUpdateId: z.string().describe("Node ID of the status update to modify"),
+      status: z.enum(["ON_TRACK", "AT_RISK", "OFF_TRACK", "INACTIVE", "COMPLETE"]).optional()
+        .describe("Updated project health designation"),
+      body: z.string().optional().describe("Updated body (markdown)"),
+      startDate: z.string().optional().describe("Updated start date (YYYY-MM-DD)"),
+      targetDate: z.string().optional().describe("Updated target date (YYYY-MM-DD)"),
+    },
+    async (args) => {
+      try {
+        if (
+          args.status === undefined &&
+          args.body === undefined &&
+          args.startDate === undefined &&
+          args.targetDate === undefined
+        ) {
+          return toolError(
+            "At least one field to update is required (status, body, startDate, targetDate)",
+          );
+        }
+
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const vars: Record<string, unknown> = {
+          statusUpdateId: args.statusUpdateId,
+        };
+        if (args.status !== undefined) vars.statusValue = args.status;
+        if (args.body !== undefined) vars.body = args.body;
+        if (args.startDate !== undefined) vars.startDate = args.startDate;
+        if (args.targetDate !== undefined) vars.targetDate = args.targetDate;
+
+        const result = await client.projectMutate<{
+          updateProjectV2StatusUpdate: {
+            statusUpdate: {
+              id: string;
+              status: string;
+              body: string | null;
+              startDate: string | null;
+              targetDate: string | null;
+              updatedAt: string;
+            };
+          };
+        }>(
+          `mutation($statusUpdateId: ID!, $statusValue: ProjectV2StatusUpdateStatus, $body: String, $startDate: Date, $targetDate: Date) {
+            updateProjectV2StatusUpdate(input: {
+              statusUpdateId: $statusUpdateId,
+              status: $statusValue,
+              body: $body,
+              startDate: $startDate,
+              targetDate: $targetDate
+            }) {
+              statusUpdate {
+                id
+                status
+                body
+                startDate
+                targetDate
+                updatedAt
+              }
+            }
+          }`,
+          vars,
+        );
+
+        const su = result.updateProjectV2StatusUpdate.statusUpdate;
+        return toolSuccess({
+          id: su.id,
+          status: su.status,
+          body: su.body,
+          startDate: su.startDate,
+          targetDate: su.targetDate,
+          updatedAt: su.updatedAt,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to update status update: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__delete_status_update
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__delete_status_update",
+    "Delete a project status update. This action cannot be undone. Returns: deletedStatusUpdateId.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      statusUpdateId: z.string().describe("Node ID of the status update to delete"),
+    },
+    async (args) => {
+      try {
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const result = await client.projectMutate<{
+          deleteProjectV2StatusUpdate: {
+            deletedStatusUpdateId: string;
+          };
+        }>(
+          `mutation($statusUpdateId: ID!) {
+            deleteProjectV2StatusUpdate(input: {
+              statusUpdateId: $statusUpdateId
+            }) {
+              deletedStatusUpdateId
+            }
+          }`,
+          { statusUpdateId: args.statusUpdateId },
+        );
+
+        return toolSuccess({
+          deletedStatusUpdateId:
+            result.deleteProjectV2StatusUpdate.deletedStatusUpdateId,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to delete status update: ${message}`);
+      }
+    },
+  );
 }

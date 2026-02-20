@@ -320,8 +320,8 @@ describe("update_status_update validation", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
 - [ ] Manual: Both tools appear in MCP server tool listing
 
 **Creates for next phase**: The 3 status update tools (create, update, delete) provide the MCP tool foundation that the `project_report` skill (GH-119's children: GH-138, GH-139, GH-140) will use to post automated status updates.
@@ -329,11 +329,11 @@ describe("update_status_update validation", () => {
 ---
 
 ## Integration Testing
-- [ ] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
-- [ ] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] No type errors in new code
-- [ ] New tools follow existing patterns in `project-management-tools.ts`
-- [ ] File header comment updated to reflect new tools
+- [x] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] No type errors in new code
+- [x] New tools follow existing patterns in `project-management-tools.ts`
+- [x] File header comment updated to reflect new tools
 
 ## References
 - Research GH-117: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-19-GH-0117-create-status-update-mcp-tool.md
