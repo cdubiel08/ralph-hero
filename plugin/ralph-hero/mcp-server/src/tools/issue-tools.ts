@@ -22,6 +22,7 @@ import {
   LOCK_STATES,
 } from "../lib/workflow-states.js";
 import { resolveState } from "../lib/state-resolution.js";
+import { parseDateMath } from "../lib/date-math.js";
 import { toolSuccess, toolError } from "../types.js";
 import {
   ensureFieldCache,
@@ -79,6 +80,18 @@ export function registerIssueTools(
         .optional()
         .default("OPEN")
         .describe("Issue state filter (default: OPEN)"),
+      updatedSince: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated on or after this date. Supports date-math (@today-7d, @now-24h) or ISO dates (YYYY-MM-DD).",
+        ),
+      updatedBefore: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated before this date. Supports date-math (@today-7d, @now-24h) or ISO dates (YYYY-MM-DD).",
+        ),
       orderBy: z
         .enum(["CREATED_AT", "UPDATED_AT", "COMMENTS"])
         .optional()
@@ -207,6 +220,26 @@ export function registerIssueTools(
           });
         }
 
+        // Filter by updatedSince
+        if (args.updatedSince) {
+          const since = parseDateMath(args.updatedSince).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() >= since : false;
+          });
+        }
+
+        // Filter by updatedBefore
+        if (args.updatedBefore) {
+          const before = parseDateMath(args.updatedBefore).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() < before : false;
+          });
+        }
+
         // Sort
         items.sort((a, b) => {
           const ac = a.content as Record<string, unknown> | null;
@@ -229,6 +262,7 @@ export function registerIssueTools(
             title: content?.title,
             state: content?.state,
             url: content?.url,
+            updatedAt: content?.updatedAt ?? null,
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),

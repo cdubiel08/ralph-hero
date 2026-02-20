@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { paginateConnection } from "../lib/pagination.js";
+import { parseDateMath } from "../lib/date-math.js";
 import { toolSuccess, toolError } from "../types.js";
 import type {
   ProjectV2,
@@ -404,6 +405,18 @@ export function registerProjectTools(
         .string()
         .optional()
         .describe("Filter by Priority name (P0, P1, P2, P3)"),
+      updatedSince: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated on or after this date. Supports date-math (@today-7d, @now-24h) or ISO dates.",
+        ),
+      updatedBefore: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated before this date. Supports date-math (@today-7d, @now-24h) or ISO dates.",
+        ),
       limit: z
         .number()
         .optional()
@@ -430,6 +443,10 @@ export function registerProjectTools(
           return toolError("Could not resolve project ID");
         }
 
+        // When date filters are active, fetch more items to ensure adequate results after filtering
+        const hasDateFilters = args.updatedSince || args.updatedBefore;
+        const maxItems = hasDateFilters ? 500 : (args.limit || 50);
+
         // Fetch all project items with field values
         const itemsResult = await paginateConnection<RawProjectItem>(
           (q, v) => client.projectQuery(q, v),
@@ -448,6 +465,7 @@ export function registerProjectTools(
                         title
                         state
                         url
+                        updatedAt
                         labels(first: 10) { nodes { name } }
                         assignees(first: 5) { nodes { login } }
                       }
@@ -487,9 +505,9 @@ export function registerProjectTools(
               }
             }
           }`,
-          { projectId, first: Math.min(args.limit || 50, 100) },
+          { projectId, first: Math.min(maxItems, 100) },
           "node.items",
-          { maxItems: args.limit || 50 },
+          { maxItems },
         );
 
         // Filter items by field values
@@ -514,6 +532,29 @@ export function registerProjectTools(
           );
         }
 
+        // Filter by updatedSince
+        if (args.updatedSince) {
+          const since = parseDateMath(args.updatedSince).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() >= since : false;
+          });
+        }
+
+        // Filter by updatedBefore
+        if (args.updatedBefore) {
+          const before = parseDateMath(args.updatedBefore).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() < before : false;
+          });
+        }
+
+        // Apply limit after filtering
+        items = items.slice(0, args.limit || 50);
+
         // Format response
         const formattedItems = items.map((item) => {
           const content = item.content as Record<string, unknown> | null;
@@ -524,6 +565,7 @@ export function registerProjectTools(
             title: content?.title,
             state: content?.state,
             url: content?.url,
+            updatedAt: content?.updatedAt ?? null,
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),

@@ -205,9 +205,9 @@ export function parseDateMath(expr: string, now: Date = new Date()): Date
 - Add test: `list_project_items` GraphQL query contains `updatedAt`
 
 ### Success Criteria
-- [ ] Automated: `npm run build` succeeds (no type errors)
-- [ ] Automated: `npm test` passes — all existing tests + new date-math unit tests + structural tests
-- [ ] Manual: `parseDateMath("@today-7d")` returns correct Date 7 days ago
+- [x] Automated: `npm run build` succeeds (no type errors)
+- [x] Automated: `npm test` passes — all existing tests + new date-math unit tests + structural tests
+- [x] Manual: `parseDateMath("@today-7d")` returns correct Date 7 days ago
 
 **Creates for next phase**: Pattern established for adding filter params + filter blocks. `updatedAt` now available in both tools' responses.
 
