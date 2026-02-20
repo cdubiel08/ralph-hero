@@ -24,6 +24,10 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install routing dependencies
+        run: npm ci
+        working-directory: scripts/routing
+
       - name: Verify ROUTING_PAT is set
         run: |
           if [ -z "$ROUTING_PAT" ]; then
