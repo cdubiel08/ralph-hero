@@ -109,6 +109,69 @@ const UPDATE_FIELD_MUTATION = `mutation($projectId: ID!, $itemId: ID!, $fieldId:
   }
 }`;
 
+const ADD_SYNC_AUDIT_COMMENT = `mutation($subjectId: ID!, $body: String!) {
+  addComment(input: { subjectId: $subjectId, body: $body }) {
+    commentEdge { node { id } }
+  }
+}`;
+
+const SYNC_AUDIT_MARKER = "<!-- cross-project-sync-audit -->";
+
+const ISSUE_COMMENTS_QUERY = `query($issueId: ID!) {
+  node(id: $issueId) {
+    ... on Issue {
+      comments(last: 20) { nodes { body } }
+    }
+  }
+}`;
+
+// ---------------------------------------------------------------------------
+// Audit trail helpers (#199)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the audit comment body for a cross-project sync operation.
+ * Pure function, no I/O.
+ */
+export function buildSyncAuditBody(
+  workflowState: string,
+  syncedResults: SyncResult[],
+): string {
+  const lines = syncedResults.map(
+    (r) =>
+      `- Project #${r.projectNumber} (${r.currentState ?? "none"} -> ${workflowState})`,
+  );
+  return (
+    `${SYNC_AUDIT_MARKER}\n` +
+    `**Cross-project sync** \u2014 Workflow State synced to **${workflowState}** across ${syncedResults.length} project(s):\n` +
+    lines.join("\n")
+  );
+}
+
+/**
+ * Detect if any comment bodies contain the sync audit marker.
+ * Pure function for testability.
+ */
+export function detectSyncAuditMarker(
+  comments: Array<{ body: string }>,
+): boolean {
+  return comments.some((c) => c.body.startsWith(SYNC_AUDIT_MARKER));
+}
+
+/**
+ * Check if an issue already has a sync audit comment.
+ */
+async function hasExistingSyncAuditComment(
+  client: GitHubClient,
+  issueNodeId: string,
+): Promise<boolean> {
+  const result = await client.query<{
+    node: { comments?: { nodes: Array<{ body: string }> } } | null;
+  }>(ISSUE_COMMENTS_QUERY, { issueId: issueNodeId });
+  const comments = result.node?.comments?.nodes ?? [];
+  return detectSyncAuditMarker(comments);
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -159,6 +222,11 @@ export function registerSyncTools(
         .optional()
         .default(false)
         .describe("If true, return affected projects without mutating (default: false)"),
+      auditComment: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("Add audit comment to the issue after sync (default: true)"),
     },
     async (args) => {
       try {
@@ -259,6 +327,23 @@ export function registerSyncTools(
           });
         }
 
+        // Audit trail: add comment documenting the sync (#199)
+        let auditCommentAdded = false;
+        if (args.auditComment && !args.dryRun && synced.length > 0) {
+          const alreadyAudited = await hasExistingSyncAuditComment(
+            client,
+            issueNodeId,
+          );
+          if (!alreadyAudited) {
+            const body = buildSyncAuditBody(args.workflowState, synced);
+            await client.mutate(ADD_SYNC_AUDIT_COMMENT, {
+              subjectId: issueNodeId,
+              body,
+            });
+            auditCommentAdded = true;
+          }
+        }
+
         return toolSuccess({
           number: args.number,
           workflowState: args.workflowState,
@@ -267,6 +352,7 @@ export function registerSyncTools(
           skippedCount: skipped.length,
           synced,
           skipped,
+          auditCommentAdded,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
