@@ -51,4 +51,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           # Path to routing config (default: .ralph-routing.yml in repo root)
           RALPH_ROUTING_CONFIG: .ralph-routing.yml
+          # Optional: default project number for fallback routing when no rules match
+          ROUTING_DEFAULT_PROJECT: ${{ vars.ROUTING_DEFAULT_PROJECT }}
         run: node scripts/routing/route.js

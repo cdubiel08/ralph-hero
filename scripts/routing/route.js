@@ -19,17 +19,39 @@ const {
   RALPH_ROUTING_CONFIG = '.ralph-routing.yml',
 } = process.env;
 
-if (!ROUTING_PAT) {
-  console.error('::error::ROUTING_PAT is not set. Cannot write to Projects V2.');
-  process.exit(1);
+// Validate and initialize auth only when running as a script (not when imported for tests)
+let graphqlWithAuth;
+if (require.main === module) {
+  if (!ROUTING_PAT) {
+    console.error('::error::ROUTING_PAT is not set. Cannot write to Projects V2.');
+    process.exit(1);
+  }
+  graphqlWithAuth = graphql.defaults({
+    headers: { authorization: `token ${ROUTING_PAT}` },
+  });
 }
 
-const graphqlWithAuth = graphql.defaults({
-  headers: { authorization: `token ${ROUTING_PAT}` },
-});
+// ---------------------------------------------------------------------------
+// 2. Retry helper (#173 — exponential backoff on transient errors)
+// ---------------------------------------------------------------------------
+
+async function withRetry(fn, maxRetries = 3, baseDelayMs = 1000) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err.status ?? err.response?.status;
+      const isTransient = status === 429 || (status >= 500 && status < 600);
+      if (!isTransient || attempt === maxRetries) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      console.warn(`API error ${status}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
-// 2. Config loader (stub — TODO: replace with import from #168 config loader)
+// 3. Config loader (stub — TODO: replace with import from #168 config loader)
 // ---------------------------------------------------------------------------
 
 function loadConfig(configPath) {
@@ -39,7 +61,7 @@ function loadConfig(configPath) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Rule evaluator (stub — TODO: replace with import from #167 matching engine)
+// 4. Rule evaluator (stub — TODO: replace with import from #167 matching engine)
 // ---------------------------------------------------------------------------
 
 function evaluateRules(rules, issueContext) {
@@ -53,7 +75,7 @@ function evaluateRules(rules, issueContext) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. GraphQL helpers
+// 5. GraphQL helpers
 // ---------------------------------------------------------------------------
 
 async function fetchContentNodeId(gql, owner, repo, number, eventName) {
@@ -133,7 +155,7 @@ async function setField(gql, projectId, itemId, fields, fieldName, optionName) {
     return;
   }
 
-  await gql(
+  await withRetry(() => gql(
     `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
       updateProjectV2ItemFieldValue(input: {
         projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
@@ -141,20 +163,89 @@ async function setField(gql, projectId, itemId, fields, fieldName, optionName) {
       }) { projectV2Item { id } }
     }`,
     { projectId, itemId, fieldId: field.id, optionId: option.id },
+  ));
+}
+
+// ---------------------------------------------------------------------------
+// 6. Audit trail and idempotency (#173)
+// ---------------------------------------------------------------------------
+
+async function hasExistingAuditComment(gql, owner, repo, number, eventName) {
+  const field = eventName === 'pull_request' ? 'pullRequest' : 'issue';
+  const result = await withRetry(() => gql(
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        item: ${field}(number: $number) {
+          comments(last: 20) { nodes { body } }
+        }
+      }
+    }`,
+    { owner, repo, number },
+  ));
+  const comments = result.repository?.item?.comments?.nodes ?? [];
+  return comments.some(c => c.body.startsWith('<!-- routing-audit -->'));
+}
+
+async function addAuditComment(gql, contentId, matchedRules) {
+  const lines = matchedRules.map(r => {
+    const fields = [];
+    if (r.action.workflowState) fields.push(`Workflow State: ${r.action.workflowState}`);
+    if (r.action.priority) fields.push(`Priority: ${r.action.priority}`);
+    if (r.action.estimate) fields.push(`Estimate: ${r.action.estimate}`);
+    const fieldStr = fields.length ? ` | ${fields.join(' | ')}` : '';
+    return `- Project #${r.action.projectNumber}${fieldStr}`;
+  });
+  const body = `<!-- routing-audit -->\n**Routing applied** by \`.ralph-routing.yml\`:\n${lines.join('\n')}`;
+
+  await withRetry(() => gql(
+    `mutation($subjectId: ID!, $body: String!) {
+      addComment(input: { subjectId: $subjectId, body: $body }) {
+        commentEdge { node { id } }
+      }
+    }`,
+    { subjectId: contentId, body },
+  ));
+}
+
+// ---------------------------------------------------------------------------
+// 7. Fallback routing (#173)
+// ---------------------------------------------------------------------------
+
+async function handleNoRulesMatch(gql, contentId, context) {
+  const defaultProjectNum = parseInt(process.env.ROUTING_DEFAULT_PROJECT ?? '', 10);
+  if (!defaultProjectNum || isNaN(defaultProjectNum)) {
+    console.log('No default project configured. Skipping fallback routing.');
+    return;
+  }
+  const { projectId } = await fetchProjectMeta(gql, GH_OWNER, defaultProjectNum);
+  await withRetry(() => addToProject(gql, projectId, contentId));
+  console.log(`Fallback: routed #${context.number} to default project #${defaultProjectNum}`);
+}
+
+// ---------------------------------------------------------------------------
+// 8. Actions step summary (#173)
+// ---------------------------------------------------------------------------
+
+function writeStepSummary(itemNumber, matchedRules) {
+  const summary = matchedRules.map(r =>
+    `- Routed to project #${r.action.projectNumber}` +
+    (r.action.workflowState ? ` (Workflow State: ${r.action.workflowState})` : '') +
+    (r.action.priority ? ` (Priority: ${r.action.priority})` : '')
+  ).join('\n');
+
+  fs.appendFileSync(
+    process.env.GITHUB_STEP_SUMMARY || '/dev/null',
+    `## Routing Results for #${itemNumber}\n${summary || 'No rules matched.'}\n`,
   );
 }
 
 // ---------------------------------------------------------------------------
-// 5. Main
+// 9. Main
 // ---------------------------------------------------------------------------
 
 async function main() {
   // Load routing config
   const config = loadConfig(RALPH_ROUTING_CONFIG);
-  if (!config.rules || !config.rules.length) {
-    console.log('No routing rules configured. Skipping.');
-    return;
-  }
 
   // Build issue context from env
   const labels = JSON.parse(ITEM_LABELS || '[]').map(l => l.name);
@@ -167,17 +258,31 @@ async function main() {
     eventName: EVENT_NAME,
   };
 
-  // Evaluate rules
-  const matchedRules = evaluateRules(config.rules, issueContext);
-  if (!matchedRules.length) {
-    console.log(`No routing rules matched for #${itemNumber}.`);
+  // Evaluate rules (returns empty array if no rules configured)
+  const matchedRules = config.rules?.length
+    ? evaluateRules(config.rules, issueContext)
+    : [];
+
+  // Fetch content ID early — needed for both routing and fallback
+  const contentId = await withRetry(() =>
+    fetchContentNodeId(graphqlWithAuth, GH_OWNER, GH_REPO, itemNumber, EVENT_NAME),
+  );
+
+  // Idempotency: skip if already routed
+  const alreadyRouted = await hasExistingAuditComment(
+    graphqlWithAuth, GH_OWNER, GH_REPO, itemNumber, EVENT_NAME,
+  );
+  if (alreadyRouted) {
+    console.log(`#${itemNumber} already has a routing audit comment. Skipping.`);
     return;
   }
 
-  // Fetch issue/PR node ID
-  const contentId = await fetchContentNodeId(
-    graphqlWithAuth, GH_OWNER, GH_REPO, itemNumber, EVENT_NAME,
-  );
+  // Fallback when no rules match
+  if (!matchedRules.length) {
+    console.log(`No routing rules matched for #${itemNumber}.`);
+    await handleNoRulesMatch(graphqlWithAuth, contentId, { number: itemNumber });
+    return;
+  }
 
   // For each matched rule: add to project + set fields
   for (const rule of matchedRules) {
@@ -187,12 +292,14 @@ async function main() {
     console.log(`Routing #${itemNumber} to project #${projectNumber}...`);
 
     // Resolve project ID and field IDs
-    const { projectId, fields } = await fetchProjectMeta(
-      graphqlWithAuth, projectOwner, projectNumber,
+    const { projectId, fields } = await withRetry(() =>
+      fetchProjectMeta(graphqlWithAuth, projectOwner, projectNumber),
     );
 
     // Add item to project (idempotent — re-adding returns existing item)
-    const projectItemId = await addToProject(graphqlWithAuth, projectId, contentId);
+    const projectItemId = await withRetry(() =>
+      addToProject(graphqlWithAuth, projectId, contentId),
+    );
 
     // Set field values from rule action
     if (rule.action.workflowState) {
@@ -207,9 +314,30 @@ async function main() {
 
     console.log(`Routed #${itemNumber} to project #${projectNumber}`);
   }
+
+  // Audit comment after all mutations succeed
+  await addAuditComment(graphqlWithAuth, contentId, matchedRules);
+
+  // Actions step summary
+  writeStepSummary(itemNumber, matchedRules);
 }
 
-main().catch(err => {
-  console.error('::error::Routing failed:', err.message);
-  process.exit(1);
-});
+// ---------------------------------------------------------------------------
+// Entry point — only run main() when executed directly (not imported)
+// ---------------------------------------------------------------------------
+
+if (require.main === module) {
+  main().catch(err => {
+    console.error('::error::Routing failed:', err.message);
+    process.exit(1);
+  });
+}
+
+// Export functions for testing (#173)
+module.exports = {
+  withRetry,
+  hasExistingAuditComment,
+  addAuditComment,
+  handleNoRulesMatch,
+  writeStepSummary,
+};
