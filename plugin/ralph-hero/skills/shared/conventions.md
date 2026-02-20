@@ -94,13 +94,13 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 
 ### Pipeline Order
 
-| Current Role (agentType) | Next Stage | agentType to find |
+| Current Worker (name) | Next Stage | Worker name to find |
 |---|---|---|
-| `ralph-analyst` | Builder | `ralph-builder` |
-| `ralph-builder` (plan done) | Validator | `ralph-validator` (if `RALPH_REVIEW_MODE=interactive`) |
-| `ralph-builder` (impl done) | Integrator (PR creation) | `ralph-integrator` |
-| `ralph-validator` (approved) | Builder | `ralph-builder` |
-| `ralph-validator` (rejected) | Builder (re-plan) | `ralph-builder` |
+| `analyst` | Builder | `builder` |
+| `builder` (plan done) | Validator | `validator` (if `RALPH_REVIEW_MODE=interactive`) |
+| `builder` (impl done) | Integrator (PR creation) | `integrator` |
+| `validator` (approved) | Builder | `builder` |
+| `validator` (rejected) | Builder (re-plan) | `builder` |
 
 ### Handoff Procedure (after completing a task)
 
@@ -108,7 +108,7 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 2. If found: self-claim and continue (no handoff needed)
 3. If none available: hand off to the next-stage peer:
    - Read team config at `~/.claude/teams/[TEAM_NAME]/config.json`
-   - Find the member whose `agentType` matches your "Next Stage" from the table above
+   - Find the member whose `name` matches your "Next Stage" from the table above
    - SendMessage using the member's `name` field:
      ```
      SendMessage(
@@ -214,17 +214,17 @@ The `{GROUP_CONTEXT}` line is removed entirely.
 
 ### Template Naming Convention
 
-Templates are named by role: `{role}.md` matching the agent type:
+Templates are named by role, selected via task subject keyword:
 
-| Agent type | Template |
-|------------|----------|
-| `ralph-analyst` agent (triage mode) | `triager.md` |
-| `ralph-analyst` agent (split mode) | `splitter.md` |
-| `ralph-analyst` agent (research mode) | `researcher.md` |
-| `ralph-builder` agent (plan mode) | `planner.md` |
-| `ralph-builder` agent (implement mode) | `implementer.md` |
-| `ralph-validator` agent | `reviewer.md` |
-| `ralph-integrator` agent | `integrator.md` |
+| Role (task subject) | Template |
+|---------------------|----------|
+| Analyst (triage) | `triager.md` |
+| Analyst (split) | `splitter.md` |
+| Analyst (research) | `researcher.md` |
+| Builder (plan) | `planner.md` |
+| Builder (implement) | `implementer.md` |
+| Validator (review) | `reviewer.md` |
+| Integrator (create PR / merge) | `integrator.md` |
 
 ### Template Authoring Rules
 
