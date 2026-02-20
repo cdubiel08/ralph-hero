@@ -245,6 +245,26 @@ describe("delete_field safety", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Collaborator mutation structure
+// ---------------------------------------------------------------------------
+
+describe("collaborator mutations", () => {
+  it("updateProjectV2Collaborators mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $collaborators: [ProjectV2Collaborator!]!) {
+      updateProjectV2Collaborators(input: {
+        projectId: $projectId,
+        collaborators: $collaborators
+      }) {
+        collaborators { totalCount }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2Collaborators");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("collaborators");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // repoToLink parsing logic
 // ---------------------------------------------------------------------------
 

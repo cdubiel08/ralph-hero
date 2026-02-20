@@ -772,4 +772,125 @@ export function registerProjectManagementTools(
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__update_collaborators
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__update_collaborators",
+    "Manage project collaborator access — add, update, or remove users/teams. Each entry needs exactly one of username or teamSlug. Team collaborators require an org-owned project. Returns: updated, collaboratorCount.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      collaborators: z.array(z.object({
+        username: z.string().optional().describe("GitHub username"),
+        teamSlug: z.string().optional().describe("Team slug (org projects only)"),
+        role: z.enum(["READER", "WRITER", "ADMIN", "NONE"])
+          .describe("Permission level (NONE removes access)"),
+      })).describe("List of collaborator changes"),
+    },
+    async (args) => {
+      try {
+        if (args.collaborators.length === 0) {
+          return toolError("At least one collaborator entry must be provided");
+        }
+
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        const resolvedCollaborators: Array<{
+          userId?: string;
+          teamId?: string;
+          role: string;
+        }> = [];
+
+        for (const entry of args.collaborators) {
+          if (entry.username && entry.teamSlug) {
+            return toolError(
+              `Collaborator entry has both username ("${entry.username}") and ` +
+              `teamSlug ("${entry.teamSlug}"). Provide exactly one.`,
+            );
+          }
+          if (!entry.username && !entry.teamSlug) {
+            return toolError(
+              "Collaborator entry must have either username or teamSlug",
+            );
+          }
+
+          if (entry.username) {
+            const userResult = await client.query<{
+              user: { id: string } | null;
+            }>(
+              `query($login: String!) { user(login: $login) { id } }`,
+              { login: entry.username },
+              { cache: true, cacheTtlMs: 60 * 60 * 1000 },
+            );
+            if (!userResult.user) {
+              return toolError(`User "${entry.username}" not found`);
+            }
+            resolvedCollaborators.push({
+              userId: userResult.user.id,
+              role: entry.role,
+            });
+          } else if (entry.teamSlug) {
+            const teamResult = await client.query<{
+              organization: { team: { id: string } | null } | null;
+            }>(
+              `query($org: String!, $slug: String!) {
+                organization(login: $org) {
+                  team(slug: $slug) { id }
+                }
+              }`,
+              { org: projectOwner, slug: entry.teamSlug },
+              { cache: true, cacheTtlMs: 60 * 60 * 1000 },
+            );
+            if (!teamResult.organization) {
+              return toolError(
+                `Team collaborators require an organization-owned project. ` +
+                `"${projectOwner}" is not an organization.`,
+              );
+            }
+            if (!teamResult.organization.team) {
+              return toolError(
+                `Team "${entry.teamSlug}" not found in organization "${projectOwner}"`,
+              );
+            }
+            resolvedCollaborators.push({
+              teamId: teamResult.organization.team.id,
+              role: entry.role,
+            });
+          }
+        }
+
+        await client.projectMutate(
+          `mutation($projectId: ID!, $collaborators: [ProjectV2Collaborator!]!) {
+            updateProjectV2Collaborators(input: {
+              projectId: $projectId,
+              collaborators: $collaborators
+            }) {
+              collaborators { totalCount }
+            }
+          }`,
+          { projectId, collaborators: resolvedCollaborators },
+        );
+
+        return toolSuccess({
+          updated: true,
+          collaboratorCount: args.collaborators.length,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to update collaborators: ${message}`);
+      }
+    },
+  );
 }
