@@ -82,8 +82,8 @@ Then STOP. Do not proceed.
 
 1. **Query issues in Ready for Plan**:
    ```
-   ralph_hero__list_issues(profile="builder-planned", limit=50)
-   # Profile expands to: workflowState: "Ready for Plan"
+   ralph_hero__list_issues(owner, repo, profile="builder-planned", limit=50)
+   # Profile expands to: workflowState="Ready for Plan"
    ```
 
 2. **Filter to XS/Small** estimates ("XS" or "S")

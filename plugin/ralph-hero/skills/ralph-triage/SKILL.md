@@ -64,6 +64,8 @@ ralph_hero__get_issue
 **Query 1**: Get IDs of already-triaged Backlog issues:
 ```
 ralph_hero__list_issues
+- owner: [owner]
+- repo: [repo]
 - profile: "analyst-triage"
 - label: "ralph-triage"
 # Profile expands to: workflowState: "Backlog"
@@ -75,6 +77,8 @@ Store the returned issue numbers as `triaged_numbers`.
 **Query 2**: Get all Backlog issues ordered by creation date:
 ```
 ralph_hero__list_issues
+- owner: [owner]
+- repo: [repo]
 - profile: "analyst-triage"
 # Profile expands to: workflowState: "Backlog"
 - orderBy: "createdAt"
@@ -249,6 +253,8 @@ After triage action is complete, scan for related issues in Backlog or Research 
 1. **Query candidate issues**:
    ```
    ralph_hero__list_issues
+   - owner: [owner]
+   - repo: [repo]
    - profile: "analyst-triage"
    # Profile expands to: workflowState: "Backlog"
    - limit: 50
@@ -256,6 +262,8 @@ After triage action is complete, scan for related issues in Backlog or Research 
 
    ```
    ralph_hero__list_issues
+   - owner: [owner]
+   - repo: [repo]
    - profile: "analyst-research"
    # Profile expands to: workflowState: "Research Needed"
    - limit: 50

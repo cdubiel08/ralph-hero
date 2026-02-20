@@ -49,6 +49,8 @@ You are a naive hero implementer. You pick ONE issue (or group of related issues
 
 ```
 ralph_hero__list_issues
+- owner: $RALPH_GH_OWNER
+- repo: $RALPH_GH_REPO
 - profile: "builder-active"
 # Profile expands to: workflowState: "In Progress"
 - orderBy: "priority"

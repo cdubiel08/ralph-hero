@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: draft
+status: complete
 github_issues: [148]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/148
@@ -203,17 +203,17 @@ ralph_hero__list_issues
 No profile table needed since split has no matching profile.
 
 ### Success Criteria
-- [ ] Automated: `grep -l "profile:" plugin/ralph-hero/skills/*/SKILL.md | wc -l` returns 5 (all except ralph-split)
-- [ ] Automated: `grep -l "Available Filter Profiles" plugin/ralph-hero/skills/*/SKILL.md | wc -l` returns 5
-- [ ] Automated: `grep "No filter profile" plugin/ralph-hero/skills/ralph-split/SKILL.md` returns match
-- [ ] Manual: Each profile reference shows correct expansion comment
-- [ ] Manual: No skill hook or frontmatter changes
+- [x] Automated: `grep -l "profile:" plugin/ralph-hero/skills/*/SKILL.md | wc -l` returns 5 (all except ralph-split)
+- [x] Automated: `grep -l "Available Filter Profiles" plugin/ralph-hero/skills/*/SKILL.md | wc -l` returns 5
+- [x] Automated: `grep "No filter profile" plugin/ralph-hero/skills/ralph-split/SKILL.md` returns match
+- [x] Manual: Each profile reference shows correct expansion comment
+- [x] Manual: No skill hook or frontmatter changes
 
 ---
 
 ## Integration Testing
-- [ ] Verify no YAML frontmatter changes (skills still parse correctly)
-- [ ] Verify all profile names match the registry defined in #147
+- [x] Verify no YAML frontmatter changes (skills still parse correctly)
+- [x] Verify all profile names match the registry defined in #147
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-20-GH-0148-document-filter-profiles-agent-skill-files.md

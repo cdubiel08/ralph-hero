@@ -63,6 +63,8 @@ Starting ralph-review in [INTERACTIVE/AUTO] mode
 
 ```
 ralph_hero__list_issues
+- owner: $RALPH_GH_OWNER
+- repo: $RALPH_GH_REPO
 - profile: "validator-review"
 # Profile expands to: workflowState: "Plan in Review"
 - orderBy: "priority"
