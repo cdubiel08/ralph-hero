@@ -405,6 +405,12 @@ export function registerProjectTools(
         .string()
         .optional()
         .describe("Filter by Priority name (P0, P1, P2, P3)"),
+      itemType: z
+        .enum(["ISSUE", "PULL_REQUEST", "DRAFT_ISSUE"])
+        .optional()
+        .describe(
+          "Filter by item type (ISSUE, PULL_REQUEST, DRAFT_ISSUE). Omit to include all types.",
+        ),
       updatedSince: z
         .string()
         .optional()
@@ -443,9 +449,9 @@ export function registerProjectTools(
           return toolError("Could not resolve project ID");
         }
 
-        // When date filters are active, fetch more items to ensure adequate results after filtering
-        const hasDateFilters = args.updatedSince || args.updatedBefore;
-        const maxItems = hasDateFilters ? 500 : (args.limit || 50);
+        // When filters are active, fetch more items to ensure adequate results after filtering
+        const hasFilters = args.updatedSince || args.updatedBefore || args.itemType;
+        const maxItems = hasFilters ? 500 : (args.limit || 50);
 
         // Fetch all project items with field values
         const itemsResult = await paginateConnection<RawProjectItem>(
@@ -512,6 +518,11 @@ export function registerProjectTools(
 
         // Filter items by field values
         let items = itemsResult.nodes;
+
+        // Filter by item type (broadest filter first to reduce working set)
+        if (args.itemType) {
+          items = items.filter((item) => item.type === args.itemType);
+        }
 
         if (args.workflowState) {
           items = items.filter(

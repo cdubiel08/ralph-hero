@@ -35,4 +35,11 @@ describe("list_project_items structural", () => {
       'import { parseDateMath } from "../lib/date-math.js"',
     );
   });
+
+  it("tool has itemType parameter", () => {
+    expect(projectToolsSrc).toContain("itemType");
+    expect(projectToolsSrc).toContain(
+      '"ISSUE", "PULL_REQUEST", "DRAFT_ISSUE"',
+    );
+  });
 });
