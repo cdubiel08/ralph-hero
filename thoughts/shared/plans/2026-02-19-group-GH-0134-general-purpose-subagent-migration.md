@@ -132,8 +132,8 @@ Keep the "Agent type" column header -- it serves as documentation even when all 
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0 (no custom agent types remain in the file)
-- [ ] Manual: Spawn table retains "Agent type" column header with all rows showing `general-purpose`
+- [x] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0 (no custom agent types remain in the file)
+- [x] Manual: Spawn table retains "Agent type" column header with all rows showing `general-purpose`
 
 **Creates for next phases**: The conceptual foundation -- all spawns are now `general-purpose`, which makes Phases 2-4 necessary (templates, conventions, and Section 9 must align).
 
@@ -302,10 +302,10 @@ Then check TaskList for more implementation tasks. If none, notify team-lead.
 The integrator template is the only template that does NOT invoke a skill via `Skill()`. It follows procedures defined in the `ralph-integrator.md` agent definition. Making it self-contained requires either creating a new `ralph-integrate` skill or inlining 15+ lines of procedure, both of which exceed this issue's scope. The integrator remains as a `ralph-integrator` custom agent type exception.
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'per your agent definition' plugin/ralph-hero/templates/spawn/*.md` returns 0 for all non-integrator templates
-- [ ] Automated: `wc -l plugin/ralph-hero/templates/spawn/*.md` shows all templates under 15 lines
-- [ ] Manual: Each template contains an inline `Report via TaskUpdate:` line with the expected format string
-- [ ] Manual: `integrator.md` is unchanged
+- [x] Automated: `grep -c 'per your agent definition' plugin/ralph-hero/templates/spawn/*.md` returns 0 for all non-integrator templates
+- [x] Automated: `wc -l plugin/ralph-hero/templates/spawn/*.md` shows all templates under 15 lines
+- [x] Manual: Each template contains an inline `Report via TaskUpdate:` line with the expected format string
+- [x] Manual: `integrator.md` is unchanged
 
 **Creates for next phases**: Independent -- does not create dependencies for Phases 3 or 4.
 
@@ -433,10 +433,10 @@ This works because the team system provides isolated context windows, identical 
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'agentType' plugin/ralph-hero/skills/shared/conventions.md` returns 0
-- [ ] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/shared/conventions.md` returns 0
-- [ ] Manual: Pipeline Handoff table uses worker `name` values (`analyst`, `builder`, `validator`, `integrator`)
-- [ ] Manual: Template Naming Convention uses role-based descriptions instead of agent type references
+- [x] Automated: `grep -c 'agentType' plugin/ralph-hero/skills/shared/conventions.md` returns 0
+- [x] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/shared/conventions.md` returns 0
+- [x] Manual: Pipeline Handoff table uses worker `name` values (`analyst`, `builder`, `validator`, `integrator`)
+- [x] Manual: Template Naming Convention uses role-based descriptions instead of agent type references
 
 **Creates for next phases**: Independent -- does not create dependencies for Phase 4.
 
@@ -459,9 +459,9 @@ This works because the team system provides isolated context windows, identical 
 No replacement text is needed -- full tool access is expected behavior for `general-purpose` agents, not a "limitation."
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'scoped.*ralph_hero' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
-- [ ] Automated: `grep -c 'Teammate GitHub access' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
-- [ ] Manual: Section 9 has 11 bullet points (was 12), all remaining bullets are agent-type-agnostic
+- [x] Automated: `grep -c 'scoped.*ralph_hero' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
+- [x] Automated: `grep -c 'Teammate GitHub access' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
+- [x] Manual: Section 9 has 11 bullet points (was 12), all remaining bullets are agent-type-agnostic
 
 **Creates for next phases**: Final phase -- no further dependencies.
 
