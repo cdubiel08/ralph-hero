@@ -64,10 +64,10 @@ ralph_hero__get_issue
 **Query 1**: Get IDs of already-triaged Backlog issues:
 ```
 ralph_hero__list_issues
-- owner: [owner]
-- repo: [repo]
-- workflowState: "Backlog"
+- profile: "analyst-triage"
 - label: "ralph-triage"
+# Profile expands to: workflowState: "Backlog"
+# Explicit label param composes with profile defaults
 - limit: 250
 ```
 Store the returned issue numbers as `triaged_numbers`.
@@ -75,9 +75,8 @@ Store the returned issue numbers as `triaged_numbers`.
 **Query 2**: Get all Backlog issues ordered by creation date:
 ```
 ralph_hero__list_issues
-- owner: [owner]
-- repo: [repo]
-- workflowState: "Backlog"
+- profile: "analyst-triage"
+# Profile expands to: workflowState: "Backlog"
 - orderBy: "createdAt"
 - limit: 250
 ```
@@ -250,17 +249,15 @@ After triage action is complete, scan for related issues in Backlog or Research 
 1. **Query candidate issues**:
    ```
    ralph_hero__list_issues
-   - owner: [owner]
-   - repo: [repo]
-   - workflowState: "Backlog"
+   - profile: "analyst-triage"
+   # Profile expands to: workflowState: "Backlog"
    - limit: 50
    ```
 
    ```
    ralph_hero__list_issues
-   - owner: [owner]
-   - repo: [repo]
-   - workflowState: "Research Needed"
+   - profile: "analyst-research"
+   # Profile expands to: workflowState: "Research Needed"
    - limit: 50
    ```
 
@@ -420,6 +417,15 @@ When encountering complexity, uncertainty, or states that don't align with proto
    ```
 
 **Note**: The "Human Needed" workflow state must exist in the GitHub Project. If missing, create it via `ralph-setup`.
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `analyst-triage` | `workflowState: "Backlog"` | Find untriaged backlog items |
+| `analyst-research` | `workflowState: "Research Needed"` | Find items needing research |
+
+Profiles set default filters. Explicit params (e.g., `label`) override or compose with profile defaults.
 
 ## Constraints
 

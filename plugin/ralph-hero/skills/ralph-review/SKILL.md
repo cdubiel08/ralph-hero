@@ -63,10 +63,8 @@ Starting ralph-review in [INTERACTIVE/AUTO] mode
 
 ```
 ralph_hero__list_issues
-- owner: $RALPH_GH_OWNER
-- repo: $RALPH_GH_REPO
-- workflowState: "Plan in Review"
-- estimate: "XS,S"
+- profile: "validator-review"
+# Profile expands to: workflowState: "Plan in Review"
 - orderBy: "priority"
 - limit: 1
 ```
@@ -384,6 +382,14 @@ Run /ralph-plan NNN to address critique and update plan.
    ```
 
 3. STOP and report.
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `validator-review` | `workflowState: "Plan in Review"` | Find plans awaiting review |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Constraints
 

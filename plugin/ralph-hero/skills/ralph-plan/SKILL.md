@@ -82,7 +82,8 @@ Then STOP. Do not proceed.
 
 1. **Query issues in Ready for Plan**:
    ```
-   ralph_hero__list_issues(owner, repo, workflowState="Ready for Plan", limit=50)
+   ralph_hero__list_issues(profile="builder-planned", limit=50)
+   # Profile expands to: workflowState: "Ready for Plan"
    ```
 
 2. **Filter to XS/Small** estimates ("XS" or "S")
@@ -244,6 +245,14 @@ Ready for human review.
 ## Escalation Protocol
 
 See shared/conventions.md for full escalation protocol. Use `command="ralph_plan"` in state transitions.
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `builder-planned` | `workflowState: "Ready for Plan"` | Find issues ready for planning |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Constraints
 

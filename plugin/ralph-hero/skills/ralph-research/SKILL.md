@@ -44,7 +44,8 @@ If NOT on `main`, STOP: "Cannot run /ralph-research from branch: [branch-name]. 
 
 **If no issue number**:
 
-1. Call `ralph_hero__list_issues(owner, repo, workflowState="Research Needed", limit=50)`
+1. Call `ralph_hero__list_issues(profile="analyst-research", limit=50)`
+   # Profile expands to: workflowState: "Research Needed"
 2. Filter to XS/Small estimates
 3. Filter to unblocked issues:
    - An issue is blocked only if `blockedBy` points to issues **outside** its group that are not Done
@@ -163,6 +164,14 @@ Group status: [M of N] issues researched
 [If not]: Run /ralph-research to continue group research.
 Key recommendation: [One sentence]
 ```
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `analyst-research` | `workflowState: "Research Needed"` | Find items needing research |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Constraints
 
