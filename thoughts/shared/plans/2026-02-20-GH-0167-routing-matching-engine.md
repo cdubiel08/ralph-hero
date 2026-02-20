@@ -31,15 +31,15 @@ The codebase's pure-function lib modules follow a consistent pattern (see [`pipe
 ## Desired End State
 
 ### Verification
-- [ ] `evaluateRules(config, issue)` returns matched rules with actions for all criteria combinations
-- [ ] Custom `matchesGlob` handles `*`, `**`, `?` patterns correctly
-- [ ] Case-insensitive matching for labels, repo names, and issue types
-- [ ] `stopOnFirstMatch` controls early termination vs fan-out
-- [ ] Disabled rules are skipped entirely
-- [ ] `negate` inverts combined match result
-- [ ] ~20 tests pass covering all criteria types, edge cases, and combinations
-- [ ] `npm run build` succeeds with no type errors
-- [ ] `npm test` passes with all new tests green
+- [x] `evaluateRules(config, issue)` returns matched rules with actions for all criteria combinations
+- [x] Custom `matchesGlob` handles `*`, `**`, `?` patterns correctly
+- [x] Case-insensitive matching for labels, repo names, and issue types
+- [x] `stopOnFirstMatch` controls early termination vs fan-out
+- [x] Disabled rules are skipped entirely
+- [x] `negate` inverts combined match result
+- [x] ~20 tests pass covering all criteria types, edge cases, and combinations
+- [x] `npm run build` succeeds with no type errors
+- [x] `npm test` passes with all new tests green
 
 ## What We're NOT Doing
 - No `picomatch` or `minimatch` dependency -- custom inline glob matching (~10 lines)
@@ -157,18 +157,18 @@ import type { RoutingConfig, RoutingRule, RoutingAction, MatchCriteria } from ".
    - Repo matching is case-insensitive
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` -- zero type errors
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` -- all ~20 new tests pass, existing tests unaffected
-- [ ] Manual: Review that `routing-engine.ts` imports from `./routing-types.js` (not inline types)
-- [ ] Manual: Verify no new runtime dependencies added to `package.json`
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` -- zero type errors
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` -- all ~20 new tests pass, existing tests unaffected
+- [x] Manual: Review that `routing-engine.ts` imports from `./routing-types.js` (not inline types)
+- [x] Manual: Verify no new runtime dependencies added to `package.json`
 
 ---
 
 ## Integration Testing
-- [ ] Build succeeds: `npm run build` produces `dist/lib/routing-engine.js`
-- [ ] All existing tests still pass (no regressions)
-- [ ] New `routing-engine.test.ts` tests all pass
-- [ ] TypeScript strict mode: no `any` types, all helpers properly typed
+- [x] Build succeeds: `npm run build` produces `dist/lib/routing-engine.js`
+- [x] All existing tests still pass (no regressions)
+- [x] New `routing-engine.test.ts` tests all pass
+- [x] TypeScript strict mode: no `any` types, all helpers properly typed
 
 ## References
 - Research: [GH-0167 Routing Matching Engine Research](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-20-GH-0167-routing-matching-engine.md)
