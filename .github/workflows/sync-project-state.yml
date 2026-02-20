@@ -1,0 +1,50 @@
+name: Sync Project State
+
+on:
+  workflow_dispatch:
+    inputs:
+      content_node_id:
+        description: 'Issue/PR GraphQL node ID (I_kwDO... or PR_kwDO...)'
+        required: true
+      workflow_state:
+        description: 'Target Workflow State to propagate'
+        required: true
+      originating_project_number:
+        description: 'Project number that triggered the sync (skipped to prevent loops)'
+        required: false
+        default: '0'
+  repository_dispatch:
+    types: [project-item-workflow-state-changed]
+
+concurrency:
+  group: sync-project-state-${{ github.event.inputs.content_node_id || github.event.client_payload.content_node_id }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+        working-directory: .github/scripts/sync
+      - name: Verify ROUTING_PAT is set
+        run: |
+          if [ -z "$SYNC_PAT" ]; then
+            echo "::error::ROUTING_PAT secret is not set."
+            exit 1
+          fi
+        env:
+          SYNC_PAT: ${{ secrets.ROUTING_PAT }}
+      - name: Sync Workflow State across projects
+        env:
+          SYNC_PAT: ${{ secrets.ROUTING_PAT }}
+          CONTENT_NODE_ID: ${{ github.event.inputs.content_node_id || github.event.client_payload.content_node_id }}
+          WORKFLOW_STATE: ${{ github.event.inputs.workflow_state || github.event.client_payload.workflow_state }}
+          ORIGINATING_PROJECT_NUMBER: ${{ github.event.inputs.originating_project_number || github.event.client_payload.originating_project_number || '0' }}
+          SYNC_PROJECT_FILTER: ${{ vars.SYNC_PROJECT_FILTER }}
+        run: node .github/scripts/sync/sync-project-state.js
