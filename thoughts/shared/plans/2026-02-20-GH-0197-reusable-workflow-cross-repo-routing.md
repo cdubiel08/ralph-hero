@@ -176,13 +176,13 @@ const projectOwner = rule.action.projectOwner || RALPH_PROJECT_OWNER || GH_OWNER
 
 ### Success Criteria
 
-- [ ] Automated: `yamllint .github/workflows/route-issues.yml` passes (valid YAML syntax)
-- [ ] Automated: `node -c scripts/routing/route.js` passes (valid JS syntax)
-- [ ] Manual: Verify workflow YAML has all 3 triggers (`issues`, `pull_request`, `workflow_call`)
-- [ ] Manual: Verify conditional checkout step has correct `if` guard
-- [ ] Manual: Verify `EVENT_NAME` derivation handles `workflow_call` trigger
-- [ ] Manual: Verify `docs/cross-repo-routing.md` has complete caller workflow example
-- [ ] Manual: Verify route.js `RALPH_PROJECT_NUMBER`/`RALPH_PROJECT_OWNER` overrides work in the matched rule loop
+- [x] Automated: `yamllint .github/workflows/route-issues.yml` passes (valid YAML syntax)
+- [x] Automated: `node -c scripts/routing/route.js` passes (valid JS syntax)
+- [x] Manual: Verify workflow YAML has all 3 triggers (`issues`, `pull_request`, `workflow_call`)
+- [x] Manual: Verify conditional checkout step has correct `if` guard
+- [x] Manual: Verify `EVENT_NAME` derivation handles `workflow_call` trigger
+- [x] Manual: Verify `docs/cross-repo-routing.md` has complete caller workflow example
+- [x] Manual: Verify route.js `RALPH_PROJECT_NUMBER`/`RALPH_PROJECT_OWNER` overrides work in the matched rule loop
 
 ---
 
