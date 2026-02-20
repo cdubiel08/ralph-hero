@@ -1,8 +1,9 @@
 /**
  * MCP tool for managing routing rules in .ralph-routing.yml.
  *
- * Provides a single `ralph_hero__configure_routing` tool with four
- * CRUD operations: list_rules, add_rule, update_rule, remove_rule.
+ * Provides a single `ralph_hero__configure_routing` tool with six
+ * operations: list_rules, add_rule, update_rule, remove_rule,
+ * validate_rules, dry_run.
  */
 
 import fs from "node:fs/promises";
@@ -11,9 +12,14 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { toolSuccess, toolError } from "../types.js";
+import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+import { ensureFieldCache } from "../lib/helpers.js";
+import { validateRoutingConfig } from "../lib/routing-types.js";
+import { evaluateRules, type IssueContext } from "../lib/routing-engine.js";
 
-// Temporary inline types — will be replaced by import from lib/routing-types.ts (#166)
+// Temporary inline types for CRUD operations — CRUD uses loose typing
+// since rules come from user YAML input (not Zod-parsed).
+// validate_rules and dry_run parse through validateRoutingConfig() for strict types.
 interface RoutingRule {
   match: { labels?: string[]; repo?: string };
   action: { workflowState?: string; projectNumber?: number };
@@ -28,16 +34,23 @@ interface RoutingConfig {
 
 export function registerRoutingTools(
   server: McpServer,
-  _client: GitHubClient,
-  _fieldCache: FieldOptionCache,
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
 ): void {
   server.tool(
     "ralph_hero__configure_routing",
-    "Manage routing rules in .ralph-routing.yml. CRUD operations: list, add, update, remove rules. Config path: configPath arg > RALPH_ROUTING_CONFIG env var > .ralph-routing.yml. Returns: updated rule list and configPath.",
+    "Manage routing rules in .ralph-routing.yml. Operations: list_rules, add_rule, update_rule, remove_rule (CRUD), validate_rules (check field references), dry_run (simulate matching for an issue). Config path: configPath arg > RALPH_ROUTING_CONFIG env var > .ralph-routing.yml.",
     {
       operation: z
-        .enum(["list_rules", "add_rule", "update_rule", "remove_rule"])
-        .describe("CRUD operation to perform"),
+        .enum([
+          "list_rules",
+          "add_rule",
+          "update_rule",
+          "remove_rule",
+          "validate_rules",
+          "dry_run",
+        ])
+        .describe("Operation to perform"),
       configPath: z
         .string()
         .optional()
@@ -63,6 +76,10 @@ export function registerRoutingTools(
         .describe(
           "Zero-based rule index (required for update_rule, remove_rule)",
         ),
+      issueNumber: z
+        .number()
+        .optional()
+        .describe("Issue number (required for dry_run)"),
     },
     async (args) => {
       const configPath =
@@ -115,6 +132,122 @@ export function registerRoutingTools(
             );
             await fs.writeFile(configPath, stringify(config, { lineWidth: 0 }));
             return toolSuccess({ rules: config.rules, configPath });
+
+          case "validate_rules": {
+            const errors: Array<{
+              ruleIndex: number;
+              field: string;
+              message: string;
+            }> = [];
+
+            // Populate field cache for the default project
+            const projectOwner = resolveProjectOwner(client.config);
+            const projectNumber = client.config.projectNumber;
+            if (projectOwner && projectNumber) {
+              await ensureFieldCache(
+                client,
+                fieldCache,
+                projectOwner,
+                projectNumber,
+              );
+            }
+
+            for (let i = 0; i < config.rules.length; i++) {
+              const rule = config.rules[i];
+
+              if (rule.action.workflowState) {
+                const optionId = fieldCache.resolveOptionId(
+                  "Workflow State",
+                  rule.action.workflowState,
+                );
+                if (optionId === undefined) {
+                  const valid = fieldCache.getOptionNames("Workflow State");
+                  errors.push({
+                    ruleIndex: i,
+                    field: "action.workflowState",
+                    message: `"${rule.action.workflowState}" is not a valid Workflow State. Valid: ${valid.join(", ")}`,
+                  });
+                }
+              }
+            }
+
+            return toolSuccess({
+              valid: errors.length === 0,
+              ruleCount: config.rules.length,
+              errors,
+              configPath,
+            });
+          }
+
+          case "dry_run": {
+            if (!args.issueNumber) {
+              return toolError(
+                "issueNumber is required for dry_run operation",
+              );
+            }
+
+            const owner = client.config.owner;
+            const repo = client.config.repo;
+            if (!owner || !repo) {
+              return toolError(
+                "owner and repo must be configured (set RALPH_GH_OWNER and RALPH_GH_REPO env vars)",
+              );
+            }
+
+            // Parse config through Zod for proper RoutingConfig type
+            const typedConfig = validateRoutingConfig(
+              raw ? parse(raw) : { version: 1, rules: [] },
+            );
+
+            // Fetch issue details
+            const issueResult = await client.query<{
+              repository: {
+                issue: {
+                  number: number;
+                  title: string;
+                  labels: { nodes: Array<{ name: string }> };
+                  repository: { nameWithOwner: string };
+                } | null;
+              };
+            }>(
+              `query($owner: String!, $repo: String!, $issueNum: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $issueNum) {
+                    number
+                    title
+                    labels(first: 20) { nodes { name } }
+                    repository { nameWithOwner }
+                  }
+                }
+              }`,
+              { owner, repo, issueNum: args.issueNumber },
+            );
+
+            const issue = issueResult.repository?.issue;
+            if (!issue) {
+              return toolError(
+                `Issue #${args.issueNumber} not found in ${owner}/${repo}`,
+              );
+            }
+
+            const issueContext: IssueContext = {
+              repo: issue.repository.nameWithOwner,
+              labels: issue.labels.nodes.map((l) => l.name),
+              issueType: "issue",
+            };
+
+            const evalResult = evaluateRules(typedConfig, issueContext);
+
+            return toolSuccess({
+              issueNumber: args.issueNumber,
+              issueTitle: issue.title,
+              issueContext,
+              matchedRules: evalResult.matchedRules,
+              stoppedEarly: evalResult.stoppedEarly,
+              note: "No mutations performed -- dry run only",
+              configPath,
+            });
+          }
         }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
