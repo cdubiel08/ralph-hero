@@ -1,0 +1,54 @@
+name: Route Issues
+
+on:
+  issues:
+    types: [opened, labeled]
+  pull_request:
+    types: [opened, ready_for_review]
+
+# Prevent concurrent routing for the same issue/PR.
+# cancel-in-progress: false ensures a routing run isn't killed mid-mutation.
+concurrency:
+  group: route-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install routing dependencies
+        run: npm ci
+        working-directory: scripts/routing
+
+      - name: Verify ROUTING_PAT is set
+        run: |
+          if [ -z "$ROUTING_PAT" ]; then
+            echo "::error::ROUTING_PAT secret is not set. GITHUB_TOKEN cannot write to Projects V2."
+            exit 1
+          fi
+        env:
+          ROUTING_PAT: ${{ secrets.ROUTING_PAT }}
+
+      - name: Route issue or PR
+        env:
+          # ROUTING_PAT must be set as a repository secret.
+          # Required scopes: repo + project (GITHUB_TOKEN cannot write to Projects V2).
+          ROUTING_PAT: ${{ secrets.ROUTING_PAT }}
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO: ${{ github.event.repository.name }}
+          # Issue number (issues event) OR PR number (pull_request event)
+          ITEM_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          # JSON array of label objects: [{ name, color, ... }]
+          ITEM_LABELS: ${{ toJSON(github.event.issue.labels || github.event.pull_request.labels) }}
+          EVENT_NAME: ${{ github.event_name }}
+          # Path to routing config (default: .ralph-routing.yml in repo root)
+          RALPH_ROUTING_CONFIG: .ralph-routing.yml
+        run: node scripts/routing/route.js
