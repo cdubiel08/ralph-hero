@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: draft
+status: complete
 github_issue: 153
 github_url: https://github.com/cdubiel08/ralph-hero/issues/153
 primary_issue: 153
@@ -26,13 +26,13 @@ Single issue implementation: GH-153 — Create core `bulk_archive` MCP tool with
 ## Desired End State
 
 ### Verification
-- [ ] `ralph_hero__bulk_archive` tool registered and functional
-- [ ] Filters project items by workflow state(s)
-- [ ] Batch archives matching items using aliased mutations (chunked at 50)
-- [ ] Returns count and list of archived items
-- [ ] `buildBatchArchiveMutation` builder function exported from `batch-tools.ts`
-- [ ] Tests pass for builder function and mutation structure
-- [ ] `npm run build` and `npm test` succeed
+- [x] `ralph_hero__bulk_archive` tool registered and functional
+- [x] Filters project items by workflow state(s)
+- [x] Batch archives matching items using aliased mutations (chunked at 50)
+- [x] Returns count and list of archived items
+- [x] `buildBatchArchiveMutation` builder function exported from `batch-tools.ts`
+- [x] Tests pass for builder function and mutation structure
+- [x] `npm run build` and `npm test` succeed
 
 ## What We're NOT Doing
 - No `dryRun` mode (GH-154 scope)
@@ -255,10 +255,10 @@ describe("bulk_archive mutation structure", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Manual: `ralph_hero__bulk_archive` tool appears in MCP tool listing
-- [ ] Manual: Tool correctly filters by workflow state and archives matching items
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Manual: `ralph_hero__bulk_archive` tool appears in MCP tool listing
+- [x] Manual: Tool correctly filters by workflow state and archives matching items
 
 ---
 
