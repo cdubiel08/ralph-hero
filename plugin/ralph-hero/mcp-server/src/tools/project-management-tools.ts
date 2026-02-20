@@ -519,4 +519,74 @@ export function registerProjectManagementTools(
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__reorder_item
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__reorder_item",
+    "Set item position within project views. Moves an issue before or after another item. Omit afterNumber to move to the top. Returns: number, position.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      number: z.number().describe("Issue number to reposition"),
+      afterNumber: z.number().optional()
+        .describe("Issue number to place after; omit to move to top"),
+    },
+    async (args) => {
+      try {
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        const itemId = await resolveProjectItemId(
+          client,
+          fieldCache,
+          owner,
+          repo,
+          args.number,
+        );
+
+        let afterId: string | undefined;
+        if (args.afterNumber !== undefined) {
+          afterId = await resolveProjectItemId(
+            client,
+            fieldCache,
+            owner,
+            repo,
+            args.afterNumber,
+          );
+        }
+
+        await client.projectMutate(
+          `mutation($projectId: ID!, $itemId: ID!, $afterId: ID) {
+            updateProjectV2ItemPosition(input: {
+              projectId: $projectId,
+              itemId: $itemId,
+              afterId: $afterId
+            }) {
+              items(first: 1) { nodes { id } }
+            }
+          }`,
+          { projectId, itemId, afterId: afterId ?? null },
+        );
+
+        return toolSuccess({
+          number: args.number,
+          position: args.afterNumber ? `after #${args.afterNumber}` : "top",
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to reorder item: ${message}`);
+      }
+    },
+  );
 }
