@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { WORKFLOW_STATE_TO_STATUS } from "../lib/workflow-states.js";
+import { PROTECTED_FIELDS } from "../tools/project-management-tools.js";
 
 // ---------------------------------------------------------------------------
 // WORKFLOW_STATE_TO_STATUS integration with batch_update
@@ -151,6 +152,115 @@ describe("project management mutations", () => {
     expect(mutation).toContain("projectId");
     expect(mutation).toContain("itemId");
     expect(mutation).toContain("fieldId");
+  });
+
+  it("addProjectV2DraftIssue mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $title: String!, $body: String) {
+      addProjectV2DraftIssue(input: {
+        projectId: $projectId,
+        title: $title,
+        body: $body
+      }) {
+        projectItem { id }
+      }
+    }`;
+    expect(mutation).toContain("addProjectV2DraftIssue");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("title");
+  });
+
+  it("updateProjectV2DraftIssue mutation has required input fields", () => {
+    const mutation = `mutation($draftIssueId: ID!, $title: String, $body: String) {
+      updateProjectV2DraftIssue(input: {
+        draftIssueId: $draftIssueId,
+        title: $title,
+        body: $body
+      }) {
+        projectItem { id }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2DraftIssue");
+    expect(mutation).toContain("draftIssueId");
+    expect(mutation).toContain("title");
+    expect(mutation).toContain("body");
+  });
+
+  it("updateProjectV2ItemPosition mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $itemId: ID!, $afterId: ID) {
+      updateProjectV2ItemPosition(input: {
+        projectId: $projectId,
+        itemId: $itemId,
+        afterId: $afterId
+      }) {
+        items(first: 1) { nodes { id } }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2ItemPosition");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("itemId");
+    expect(mutation).toContain("afterId");
+  });
+
+  it("updateProjectV2 mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!) {
+      updateProjectV2(input: {
+        projectId: $projectId
+      }) {
+        projectV2 { id title }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2");
+    expect(mutation).toContain("projectId");
+  });
+
+  it("deleteProjectV2Field mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $fieldId: ID!) {
+      deleteProjectV2Field(input: {
+        projectId: $projectId,
+        fieldId: $fieldId
+      }) {
+        projectV2Field {
+          ... on ProjectV2SingleSelectField { id name }
+          ... on ProjectV2Field { id name }
+        }
+      }
+    }`;
+    expect(mutation).toContain("deleteProjectV2Field");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("fieldId");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// delete_field safety guardrails
+// ---------------------------------------------------------------------------
+
+describe("delete_field safety", () => {
+  it("protected fields list includes required Ralph fields", () => {
+    expect(PROTECTED_FIELDS).toContain("Workflow State");
+    expect(PROTECTED_FIELDS).toContain("Priority");
+    expect(PROTECTED_FIELDS).toContain("Estimate");
+    expect(PROTECTED_FIELDS).toContain("Status");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Collaborator mutation structure
+// ---------------------------------------------------------------------------
+
+describe("collaborator mutations", () => {
+  it("updateProjectV2Collaborators mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $collaborators: [ProjectV2Collaborator!]!) {
+      updateProjectV2Collaborators(input: {
+        projectId: $projectId,
+        collaborators: $collaborators
+      }) {
+        collaborators { totalCount }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2Collaborators");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("collaborators");
   });
 });
 

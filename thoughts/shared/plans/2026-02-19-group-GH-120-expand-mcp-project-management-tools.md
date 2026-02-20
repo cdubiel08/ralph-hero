@@ -45,16 +45,16 @@ Supporting infrastructure already exists:
 ## Desired End State
 
 ### Verification
-- [ ] `create_draft_issue` creates a project draft with optional field setting
-- [ ] `update_draft_issue` updates title/body of an existing draft
-- [ ] `reorder_item` repositions an item within the project view
-- [ ] `update_project` edits project title, description, README, visibility, closed state
-- [ ] `delete_field` deletes custom fields with safety guardrails and dry-run default
-- [ ] `update_collaborators` manages project access for users and teams
-- [ ] All 7 new tools registered in MCP server (2 from GH-120, 1 each from GH-121-124)
-- [ ] All existing tests pass (`npm test`)
-- [ ] New structural tests added for each mutation
-- [ ] `npm run build` succeeds with no type errors
+- [x] `create_draft_issue` creates a project draft with optional field setting
+- [x] `update_draft_issue` updates title/body of an existing draft
+- [x] `reorder_item` repositions an item within the project view
+- [x] `update_project` edits project title, description, README, visibility, closed state
+- [x] `delete_field` deletes custom fields with safety guardrails and dry-run default
+- [x] `update_collaborators` manages project access for users and teams
+- [x] All 7 new tools registered in MCP server (2 from GH-120, 1 each from GH-121-124)
+- [x] All existing tests pass (`npm test`)
+- [x] New structural tests added for each mutation
+- [x] `npm run build` succeeds with no type errors
 
 ## What We're NOT Doing
 - Not modifying dashboard/list tools to include/exclude drafts (tracked in GH-108)
@@ -160,8 +160,8 @@ Tests to add:
 - `"updateProjectV2DraftIssue mutation has required input fields"` — assert `toContain("updateProjectV2DraftIssue")`, `toContain("draftIssueId")`, `toContain("title")`, `toContain("body")`
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes with new tests
-- [ ] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes with new tests
+- [x] Automated: `npm run build` succeeds
 - [ ] Manual: `create_draft_issue` tool appears in MCP tool list
 - [ ] Manual: `update_draft_issue` tool appears in MCP tool list
 
@@ -206,8 +206,8 @@ Tests to add:
 - `"updateProjectV2ItemPosition mutation has required input fields"` — assert `toContain("updateProjectV2ItemPosition")`, `toContain("projectId")`, `toContain("itemId")`, `toContain("afterId")`
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes
-- [ ] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes
+- [x] Automated: `npm run build` succeeds
 - [ ] Manual: `reorder_item` tool appears in MCP tool list
 
 **Creates for next phase**: Nothing (independent)
@@ -254,8 +254,8 @@ Tests to add:
 - `"updateProjectV2 mutation has required input fields"` — assert `toContain("updateProjectV2")`, `toContain("projectId")`
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes
-- [ ] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes
+- [x] Automated: `npm run build` succeeds
 - [ ] Manual: `update_project` tool appears in MCP tool list
 
 **Creates for next phase**: Nothing (independent)
@@ -311,8 +311,8 @@ Tests to add:
 To support the protected fields test, export the `PROTECTED_FIELDS` constant from `project-management-tools.ts`.
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes with safety guardrail tests
-- [ ] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes with safety guardrail tests
+- [x] Automated: `npm run build` succeeds
 - [ ] Manual: `delete_field` with `confirm: false` returns dry-run result
 - [ ] Manual: `delete_field` refuses to delete "Workflow State"
 
@@ -362,16 +362,16 @@ Tests to add:
 - `"updateProjectV2Collaborators mutation has required input fields"` — assert `toContain("updateProjectV2Collaborators")`, `toContain("projectId")`, `toContain("collaborators")`
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes
-- [ ] Automated: `npm run build` succeeds
+- [x] Automated: `npm test` passes
+- [x] Automated: `npm run build` succeeds
 - [ ] Manual: `update_collaborators` tool appears in MCP tool list
 
 ---
 
 ## Integration Testing
 
-- [ ] `npm run build` compiles all new tools with no type errors
-- [ ] `npm test` passes all existing + new structural tests
+- [x] `npm run build` compiles all new tools with no type errors
+- [x] `npm test` passes all existing + new structural tests (182 total)
 - [ ] All 7 new tools appear in MCP server tool listing
 - [ ] `project-management-tools.ts` follows consistent pattern across all 10 tools (5 existing + 5 new = 10, but GH-120 adds 2 tools so total is 12)
 
