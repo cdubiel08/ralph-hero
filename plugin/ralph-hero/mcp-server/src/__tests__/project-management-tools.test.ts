@@ -152,6 +152,37 @@ describe("project management mutations", () => {
     expect(mutation).toContain("itemId");
     expect(mutation).toContain("fieldId");
   });
+
+  it("addProjectV2DraftIssue mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $title: String!, $body: String) {
+      addProjectV2DraftIssue(input: {
+        projectId: $projectId,
+        title: $title,
+        body: $body
+      }) {
+        projectItem { id }
+      }
+    }`;
+    expect(mutation).toContain("addProjectV2DraftIssue");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("title");
+  });
+
+  it("updateProjectV2DraftIssue mutation has required input fields", () => {
+    const mutation = `mutation($draftIssueId: ID!, $title: String, $body: String) {
+      updateProjectV2DraftIssue(input: {
+        draftIssueId: $draftIssueId,
+        title: $title,
+        body: $body
+      }) {
+        projectItem { id }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2DraftIssue");
+    expect(mutation).toContain("draftIssueId");
+    expect(mutation).toContain("title");
+    expect(mutation).toContain("body");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import {
   resolveIssueNodeId,
   resolveProjectItemId,
   resolveFullConfig,
+  updateProjectItemField,
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -387,6 +388,134 @@ export function registerProjectManagementTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to clear field: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__create_draft_issue
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__create_draft_issue",
+    "Create a draft issue in the project (no repo required). Optionally set workflow state, priority, and estimate after creation. Returns: projectItemId, title, fieldsSet.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      title: z.string().describe("Draft issue title"),
+      body: z.string().optional().describe("Draft issue body (markdown)"),
+      workflowState: z.string().optional().describe("Workflow state to set after creation"),
+      priority: z.string().optional().describe("Priority to set after creation"),
+      estimate: z.string().optional().describe("Estimate to set after creation"),
+    },
+    async (args) => {
+      try {
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        const result = await client.projectMutate<{
+          addProjectV2DraftIssue: {
+            projectItem: { id: string };
+          };
+        }>(
+          `mutation($projectId: ID!, $title: String!, $body: String) {
+            addProjectV2DraftIssue(input: {
+              projectId: $projectId,
+              title: $title,
+              body: $body
+            }) {
+              projectItem { id }
+            }
+          }`,
+          { projectId, title: args.title, body: args.body },
+        );
+
+        const projectItemId = result.addProjectV2DraftIssue.projectItem.id;
+        const fieldsSet: string[] = [];
+
+        if (args.workflowState) {
+          await updateProjectItemField(client, fieldCache, projectItemId, "Workflow State", args.workflowState);
+          fieldsSet.push("Workflow State");
+        }
+        if (args.priority) {
+          await updateProjectItemField(client, fieldCache, projectItemId, "Priority", args.priority);
+          fieldsSet.push("Priority");
+        }
+        if (args.estimate) {
+          await updateProjectItemField(client, fieldCache, projectItemId, "Estimate", args.estimate);
+          fieldsSet.push("Estimate");
+        }
+
+        return toolSuccess({
+          projectItemId,
+          title: args.title,
+          fieldsSet,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to create draft issue: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__update_draft_issue
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__update_draft_issue",
+    "Update title and/or body of an existing draft issue. Requires the draft issue content node ID (DI_...), not the project item ID. Returns: draftIssueId, updated.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      draftIssueId: z.string().describe("Draft issue content node ID (DI_...)"),
+      title: z.string().optional().describe("New title"),
+      body: z.string().optional().describe("New body (markdown)"),
+    },
+    async (args) => {
+      try {
+        if (!args.title && args.body === undefined) {
+          return toolError("At least one of title or body must be provided");
+        }
+
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const vars: Record<string, unknown> = { draftIssueId: args.draftIssueId };
+        if (args.title !== undefined) vars.title = args.title;
+        if (args.body !== undefined) vars.body = args.body;
+
+        await client.projectMutate(
+          `mutation($draftIssueId: ID!, $title: String, $body: String) {
+            updateProjectV2DraftIssue(input: {
+              draftIssueId: $draftIssueId,
+              title: $title,
+              body: $body
+            }) {
+              projectItem { id }
+            }
+          }`,
+          vars,
+        );
+
+        return toolSuccess({
+          draftIssueId: args.draftIssueId,
+          updated: true,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to update draft issue: ${message}`);
       }
     },
   );
