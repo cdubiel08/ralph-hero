@@ -589,4 +589,98 @@ export function registerProjectManagementTools(
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__update_project
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__update_project",
+    "Update project settings — title, description, README, visibility, open/closed state. At least one field must be provided. Returns: projectId, updated, fields.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      title: z.string().optional().describe("New project title"),
+      shortDescription: z.string().optional().describe("Short summary for listings"),
+      readme: z.string().optional().describe("Full README in markdown"),
+      public: z.boolean().optional().describe("Visibility (true=public, false=private)"),
+      closed: z.boolean().optional().describe("Close (true) or reopen (false) the project"),
+    },
+    async (args) => {
+      try {
+        const updatedFields: string[] = [];
+        const vars: Record<string, unknown> = {};
+        const varDefs: string[] = ["$projectId: ID!"];
+        const inputFields: string[] = ["projectId: $projectId"];
+
+        if (args.title !== undefined) {
+          vars.updateTitle = args.title;
+          varDefs.push("$updateTitle: String");
+          inputFields.push("title: $updateTitle");
+          updatedFields.push("title");
+        }
+        if (args.shortDescription !== undefined) {
+          vars.shortDescription = args.shortDescription;
+          varDefs.push("$shortDescription: String");
+          inputFields.push("shortDescription: $shortDescription");
+          updatedFields.push("shortDescription");
+        }
+        if (args.readme !== undefined) {
+          vars.updateReadme = args.readme;
+          varDefs.push("$updateReadme: String");
+          inputFields.push("readme: $updateReadme");
+          updatedFields.push("readme");
+        }
+        if (args.public !== undefined) {
+          vars.publicVisibility = args.public;
+          varDefs.push("$publicVisibility: Boolean");
+          inputFields.push("public: $publicVisibility");
+          updatedFields.push("public");
+        }
+        if (args.closed !== undefined) {
+          vars.closedState = args.closed;
+          varDefs.push("$closedState: Boolean");
+          inputFields.push("closed: $closedState");
+          updatedFields.push("closed");
+        }
+
+        if (updatedFields.length === 0) {
+          return toolError("At least one field to update must be provided");
+        }
+
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        vars.projectId = projectId;
+
+        await client.projectMutate(
+          `mutation(${varDefs.join(", ")}) {
+            updateProjectV2(input: {
+              ${inputFields.join(",\n              ")}
+            }) {
+              projectV2 { id title }
+            }
+          }`,
+          vars,
+        );
+
+        return toolSuccess({
+          projectId,
+          updated: true,
+          fields: updatedFields,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to update project: ${message}`);
+      }
+    },
+  );
 }

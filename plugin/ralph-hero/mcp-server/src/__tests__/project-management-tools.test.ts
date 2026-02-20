@@ -199,6 +199,18 @@ describe("project management mutations", () => {
     expect(mutation).toContain("itemId");
     expect(mutation).toContain("afterId");
   });
+
+  it("updateProjectV2 mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!) {
+      updateProjectV2(input: {
+        projectId: $projectId
+      }) {
+        projectV2 { id title }
+      }
+    }`;
+    expect(mutation).toContain("updateProjectV2");
+    expect(mutation).toContain("projectId");
+  });
 });
 
 // ---------------------------------------------------------------------------
