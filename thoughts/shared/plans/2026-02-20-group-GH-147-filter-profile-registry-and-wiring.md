@@ -86,8 +86,8 @@ Phase 1 creates the pure library module (`filter-profiles.ts`) with the profile 
 - Test `VALID_PROFILE_NAMES` contains all 6 expected names
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/filter-profiles.test.ts`
-- [ ] Manual: `FILTER_PROFILES` contains exactly 6 profiles with correct workflow states
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/filter-profiles.test.ts`
+- [x] Manual: `FILTER_PROFILES` contains exactly 6 profiles with correct workflow states
 
 **Creates for next phase**: `expandProfile` function and `ProfileFilterParams` type imported by Phase 2.
 
@@ -153,8 +153,8 @@ Phase 1 creates the pure library module (`filter-profiles.ts`) with the profile 
 - Source contains `expandProfile(args.profile)` (expansion call)
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npx vitest run`
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npx vitest run`
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build`
 - [ ] Manual: calling `list_issues(profile="analyst-triage")` expands to `workflowState: "Backlog"`
 - [ ] Manual: calling `list_issues(profile="analyst-triage", workflowState="Research Needed")` uses explicit `workflowState` override
 
@@ -163,8 +163,8 @@ Phase 1 creates the pure library module (`filter-profiles.ts`) with the profile 
 ---
 
 ## Integration Testing
-- [ ] `npm run build` succeeds (TypeScript compiles without errors)
-- [ ] `npm test` passes all existing and new tests
+- [x] `npm run build` succeeds (TypeScript compiles without errors)
+- [x] `npm test` passes all existing and new tests
 - [ ] Profile expansion is a no-op when `profile` param is omitted (backwards compatible)
 - [ ] Invalid profile name returns a `toolError` with list of valid profile names
 - [ ] All 6 profile workflow states are valid per `VALID_STATES` cross-check
