@@ -11,6 +11,8 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { toolSuccess, toolError } from "../types.js";
+import { paginateConnection } from "../lib/pagination.js";
+import { buildBatchArchiveMutation } from "./batch-tools.js";
 import {
   ensureFieldCache,
   resolveIssueNodeId,
@@ -1119,4 +1121,172 @@ export function registerProjectManagementTools(
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__bulk_archive
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__bulk_archive",
+    "Archive multiple project items matching workflow state filter. Uses aliased GraphQL mutations for efficiency (chunked at 50). Archived items are hidden from views but not deleted. Returns: archivedCount, items, errors.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      workflowStates: z
+        .array(z.string())
+        .min(1)
+        .describe(
+          'Workflow states to archive (e.g., ["Done", "Canceled"])',
+        ),
+      maxItems: z
+        .number()
+        .optional()
+        .default(50)
+        .describe("Max items to archive per invocation (default 50, cap 200)"),
+    },
+    async (args) => {
+      try {
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        const effectiveMax = Math.min(args.maxItems || 50, 200);
+
+        // Query project items with field values
+        const itemsResult = await paginateConnection<RawBulkArchiveItem>(
+          (q, v) => client.projectQuery(q, v),
+          `query($projectId: ID!, $cursor: String, $first: Int!) {
+            node(id: $projectId) {
+              ... on ProjectV2 {
+                items(first: $first, after: $cursor) {
+                  totalCount
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    id
+                    type
+                    content {
+                      ... on Issue {
+                        number
+                        title
+                      }
+                      ... on PullRequest {
+                        number
+                        title
+                      }
+                    }
+                    fieldValues(first: 20) {
+                      nodes {
+                        ... on ProjectV2ItemFieldSingleSelectValue {
+                          __typename
+                          name
+                          field { ... on ProjectV2FieldCommon { name } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { projectId, first: 100 },
+          "node.items",
+          { maxItems: effectiveMax * 3 },
+        );
+
+        // Filter by workflow state
+        const matched = itemsResult.nodes
+          .filter((item) => {
+            const ws = getBulkArchiveFieldValue(item, "Workflow State");
+            return ws && args.workflowStates.includes(ws);
+          })
+          .slice(0, effectiveMax);
+
+        if (matched.length === 0) {
+          return toolSuccess({
+            archivedCount: 0,
+            items: [],
+            errors: [],
+          });
+        }
+
+        // Chunk and execute archive mutations
+        const ARCHIVE_CHUNK_SIZE = 50;
+        const itemIds = matched.map((m) => m.id);
+        const archived: Array<{
+          number?: number;
+          title?: string;
+          itemId: string;
+        }> = [];
+        const errors: string[] = [];
+
+        for (let i = 0; i < itemIds.length; i += ARCHIVE_CHUNK_SIZE) {
+          const chunk = itemIds.slice(i, i + ARCHIVE_CHUNK_SIZE);
+          const chunkItems = matched.slice(i, i + ARCHIVE_CHUNK_SIZE);
+          try {
+            const { mutationString, variables } =
+              buildBatchArchiveMutation(projectId, chunk);
+            await client.projectMutate(mutationString, variables);
+            for (const item of chunkItems) {
+              archived.push({
+                number: item.content?.number,
+                title: item.content?.title,
+                itemId: item.id,
+              });
+            }
+          } catch (error: unknown) {
+            const msg =
+              error instanceof Error ? error.message : String(error);
+            errors.push(
+              `Chunk ${Math.floor(i / ARCHIVE_CHUNK_SIZE) + 1} failed: ${msg}`,
+            );
+          }
+        }
+
+        return toolSuccess({
+          archivedCount: archived.length,
+          items: archived,
+          errors,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to bulk archive: ${message}`);
+      }
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Internal types for bulk_archive
+// ---------------------------------------------------------------------------
+
+interface RawBulkArchiveItem {
+  id: string;
+  type: string;
+  content: { number?: number; title?: string } | null;
+  fieldValues: {
+    nodes: Array<{
+      __typename?: string;
+      name?: string;
+      field?: { name: string };
+    }>;
+  };
+}
+
+function getBulkArchiveFieldValue(
+  item: RawBulkArchiveItem,
+  fieldName: string,
+): string | undefined {
+  const fieldValue = item.fieldValues.nodes.find(
+    (fv) =>
+      fv.field?.name === fieldName &&
+      fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
+  );
+  return fieldValue?.name;
 }
