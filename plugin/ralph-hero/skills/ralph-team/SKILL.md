@@ -127,9 +127,14 @@ Based on pipeline position (Section 3), create tasks with sequential blocking: R
 
 ### 4.3 Spawn Workers for Available Tasks
 
-Check TaskList for pending, unblocked tasks. Spawn one worker per role with available work (see Section 6 for spawn template). Workers self-claim -- no assignment messages needed.
+Check TaskList for pending, unblocked tasks. For each available task:
 
-For group research with multiple tasks: spawn up to 3 analysts (`analyst`, `analyst-2`, `analyst-3`).
+1. **Pre-assign ownership**: `TaskUpdate(taskId, owner="[role]")` -- sets owner BEFORE spawning
+2. **Spawn worker**: See Section 6 for spawn template
+
+Pre-assignment is atomic -- the task is owned before the worker's first turn begins. No race window exists.
+
+For group research with multiple tasks: pre-assign and spawn up to 3 analysts (`analyst`, `analyst-2`, `analyst-3`).
 
 ### 4.4 Dispatch Loop
 
@@ -151,8 +156,8 @@ Only when dispatch loop confirms no more work. Send `shutdown_request` to each t
 ## Section 5 - Behavioral Principles
 
 - **Delegate everything**: You never research, plan, review, or implement. You manage tasks and spawn workers.
-- **Workers are autonomous**: They self-claim from TaskList. Your job is ensuring workers exist, not assigning work.
-- **Never assign tasks**: Do NOT call TaskUpdate with `owner` to assign work. Do NOT send assignment messages via SendMessage. Pipeline handoffs are peer-to-peer (see shared/conventions.md).
+- **Workers are autonomous**: After their initial pre-assigned task, workers self-claim from TaskList. Your job is ensuring workers exist and pre-assigning their first task at spawn.
+- **Pre-assign at spawn, pull-based thereafter**: Call `TaskUpdate(taskId, owner="[role]")` immediately before spawning each worker. Do NOT assign tasks mid-pipeline or via SendMessage. Pipeline handoffs are peer-to-peer (see shared/conventions.md).
 - **Bias toward action**: When in doubt, check TaskList. When idle, query GitHub. Zero-gap lookahead.
 - **Hooks are your safety net**: Stop hook prevents premature shutdown. State hooks prevent invalid transitions. Trust them.
 - **Escalate and move on**: If stuck, escalate via GitHub comment (`__ESCALATE__` intent) and find other work. Never block on user input.
@@ -257,7 +262,7 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **State trusts GitHub**: If workflow state is wrong, behavior will be wrong.
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
-- **Pull-based claiming**: Tasks MUST use consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these.
+- **Hybrid claiming**: Initial tasks are pre-assigned by the lead before spawning. Subsequent tasks use pull-based self-claim with consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these for self-claim.
 - **Task description = results channel**: Workers embed results via TaskUpdate description (REPLACE operation). Lead reads via TaskGet. If missing, check work product.
 - **Lead name hardcoded**: Always `"team-lead"`. Other names silently dropped.
 - **Fire-and-forget messages**: Wait 2 min, re-send once, then check manually.

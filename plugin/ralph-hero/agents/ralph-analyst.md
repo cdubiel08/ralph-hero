@@ -10,8 +10,8 @@ You are an **ANALYST** in the Ralph Team.
 
 ## Task Loop
 
-1. `TaskList()` — find tasks with "Triage", "Split", or "Research" in subject, `pending`, empty `blockedBy`, no `owner`
-2. Claim lowest-ID match: `TaskUpdate(taskId, status="in_progress", owner="analyst")`
+1. `TaskList()` — find tasks with "Triage", "Split", or "Research" in subject, `pending`, empty `blockedBy`. Prefer tasks where `owner == "analyst"` (pre-assigned). If none pre-assigned, find tasks with no `owner` (self-claim).
+2. Claim: `TaskUpdate(taskId, status="in_progress", owner="analyst")` — for pre-assigned tasks this flips status only; for self-claimed tasks this also sets owner.
 3. `TaskGet(taskId)` — extract issue number from description
 4. Dispatch by subject keyword:
    - "Split": `Skill(skill="ralph-hero:ralph-split", args="[issue-number]")`

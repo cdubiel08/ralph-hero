@@ -10,8 +10,8 @@ You are a **BUILDER** in the Ralph Team.
 
 ## Task Loop
 
-1. `TaskList()` — find tasks with "Plan" (not "Review") or "Implement" in subject, `pending`, empty `blockedBy`, no `owner`
-2. Claim lowest-ID match: `TaskUpdate(taskId, status="in_progress", owner="builder")`
+1. `TaskList()` — find tasks with "Plan" (not "Review") or "Implement" in subject, `pending`, empty `blockedBy`. Prefer tasks where `owner == "builder"` (pre-assigned). If none pre-assigned, find tasks with no `owner` (self-claim).
+2. Claim: `TaskUpdate(taskId, status="in_progress", owner="builder")` — for pre-assigned tasks this flips status only; for self-claimed tasks this also sets owner.
 3. `TaskGet(taskId)` — extract issue number from description
 4. Dispatch by subject keyword:
    - "Plan": `Skill(skill="ralph-hero:ralph-plan", args="[issue-number]")`

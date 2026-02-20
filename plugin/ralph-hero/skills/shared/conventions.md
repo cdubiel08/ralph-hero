@@ -130,7 +130,7 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 
 ### Rules
 
-- **Never use TaskUpdate with `owner` parameter** to assign tasks to other teammates. Workers self-claim only.
+- **Lead pre-assigns at spawn only**: The lead sets `owner` via `TaskUpdate` immediately before spawning a worker. After spawn, workers self-claim subsequent tasks. Do NOT assign tasks mid-pipeline via TaskUpdate or SendMessage.
 - **SendMessage is fire-and-forget** -- no acknowledgment mechanism. The handoff wakes the peer; they self-claim from TaskList.
 - **Lead gets visibility** via idle notification DM summaries -- no need to CC the lead on handoffs.
 - **Multiple handoffs are fine** -- if 3 analysts complete and all message the builder, the builder wakes 3 times and claims one task each time.
