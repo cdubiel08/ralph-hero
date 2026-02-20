@@ -231,7 +231,7 @@ Templates are named by role, selected via task subject keyword:
 - Templates MUST be under 15 lines
 - DO NOT include: conversation history, document contents, code snippets, assignment instructions
 - Teammates message the lead using `recipient="team-lead"` exactly
-- Result reporting follows the agent's `.md` definition, not the spawn template
+- Result reporting follows the inline format in the spawn template (via `TaskUpdate`)
 
 ### Template Integrity
 
@@ -265,15 +265,15 @@ This ensures:
 - Token usage is isolated per skill invocation
 - Results are returned as a summary, not full conversation
 
-### Exception: Team Agents
+### Note: Team Agents
 
-When agents are spawned as team members, the agent IS the subprocess. The agent invokes the skill inline:
+Team members are spawned as `general-purpose` subagents via `Task()`, so they follow the same isolation pattern as the default. Each team member invokes its skill inline:
 
 ```
 Skill(skill="ralph-hero:ralph-research", args="42")
 ```
 
-This is acceptable because the agent already has its own isolated context window via the team system.
+This works because the team system provides isolated context windows, identical to `Task()` subprocesses.
 
 ### Exception: Direct User Invocation
 
