@@ -413,6 +413,41 @@ export function registerProjectTools(
         .string()
         .optional()
         .describe("Filter by Priority name (P0, P1, P2, P3)"),
+      has: z
+        .array(z.enum(["workflowState", "estimate", "priority", "labels", "assignees"]))
+        .optional()
+        .describe(
+          "Include only items where these fields are non-empty. " +
+          "Valid fields: workflowState, estimate, priority, labels, assignees",
+        ),
+      no: z
+        .array(z.enum(["workflowState", "estimate", "priority", "labels", "assignees"]))
+        .optional()
+        .describe(
+          "Include only items where these fields are empty/absent. " +
+          "Valid fields: workflowState, estimate, priority, labels, assignees",
+        ),
+      excludeWorkflowStates: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Workflow State names " +
+          '(e.g., ["Done", "Canceled"])',
+        ),
+      excludeEstimates: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Estimate values " +
+          '(e.g., ["M", "L", "XL"])',
+        ),
+      excludePriorities: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Priority values " +
+          '(e.g., ["P3"])',
+        ),
       itemType: z
         .enum(["ISSUE", "PULL_REQUEST", "DRAFT_ISSUE"])
         .optional()
@@ -468,7 +503,12 @@ export function registerProjectTools(
         }
 
         // When filters are active, fetch more items to ensure adequate results after filtering
-        const hasFilters = args.updatedSince || args.updatedBefore || args.itemType;
+        const hasFilters = args.updatedSince || args.updatedBefore || args.itemType ||
+          (args.has && args.has.length > 0) ||
+          (args.no && args.no.length > 0) ||
+          (args.excludeWorkflowStates && args.excludeWorkflowStates.length > 0) ||
+          (args.excludeEstimates && args.excludeEstimates.length > 0) ||
+          (args.excludePriorities && args.excludePriorities.length > 0);
         const maxItems = hasFilters ? 500 : (args.limit || 50);
 
         // Fetch all project items with field values
@@ -561,6 +601,50 @@ export function registerProjectTools(
           );
         }
 
+        // Filter by field presence (has)
+        if (args.has && args.has.length > 0) {
+          items = items.filter((item) =>
+            args.has!.every((field) => hasField(item, field as PresenceField)),
+          );
+        }
+
+        // Filter by field absence (no)
+        if (args.no && args.no.length > 0) {
+          items = items.filter((item) =>
+            args.no!.every((field) => !hasField(item, field as PresenceField)),
+          );
+        }
+
+        // Filter by excluded workflow states
+        if (args.excludeWorkflowStates && args.excludeWorkflowStates.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludeWorkflowStates!.includes(
+                getFieldValue(item, "Workflow State") ?? "",
+              ),
+          );
+        }
+
+        // Filter by excluded estimates
+        if (args.excludeEstimates && args.excludeEstimates.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludeEstimates!.includes(
+                getFieldValue(item, "Estimate") ?? "",
+              ),
+          );
+        }
+
+        // Filter by excluded priorities
+        if (args.excludePriorities && args.excludePriorities.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludePriorities!.includes(
+                getFieldValue(item, "Priority") ?? "",
+              ),
+          );
+        }
+
         // Filter by updatedSince
         if (args.updatedSince) {
           const since = parseDateMath(args.updatedSince).getTime();
@@ -650,6 +734,29 @@ function getFieldValue(
       fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fieldValue?.name;
+}
+
+type PresenceField = "workflowState" | "estimate" | "priority" | "labels" | "assignees";
+
+function hasField(item: RawProjectItem, field: PresenceField): boolean {
+  switch (field) {
+    case "workflowState":
+      return getFieldValue(item, "Workflow State") !== undefined;
+    case "estimate":
+      return getFieldValue(item, "Estimate") !== undefined;
+    case "priority":
+      return getFieldValue(item, "Priority") !== undefined;
+    case "labels": {
+      const content = item.content as Record<string, unknown> | null;
+      const labels = (content?.labels as { nodes: Array<{ name: string }> })?.nodes || [];
+      return labels.length > 0;
+    }
+    case "assignees": {
+      const content = item.content as Record<string, unknown> | null;
+      const assignees = (content?.assignees as { nodes: Array<{ login: string }> })?.nodes || [];
+      return assignees.length > 0;
+    }
+  }
 }
 
 async function fetchProject(
