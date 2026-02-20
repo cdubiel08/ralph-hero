@@ -20,6 +20,7 @@ import { registerRelationshipTools } from "./tools/relationship-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
+import { registerHygieneTools } from "./tools/hygiene-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -304,6 +305,9 @@ async function main(): Promise<void> {
 
   // Project management tools (archive, remove, add, link repo, clear field)
   registerProjectManagementTools(server, client, fieldCache);
+
+  // Hygiene reporting tools
+  registerHygieneTools(server, client, fieldCache);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

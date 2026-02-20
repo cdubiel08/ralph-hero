@@ -110,7 +110,7 @@ async function fetchProjectForCache(
 // Raw item shape from GraphQL
 // ---------------------------------------------------------------------------
 
-interface RawDashboardItem {
+export interface RawDashboardItem {
   id: string;
   type: string;
   content: {
@@ -147,7 +147,7 @@ function getFieldValue(
 /**
  * Convert raw GraphQL project items to DashboardItem[].
  */
-function toDashboardItems(raw: RawDashboardItem[]): DashboardItem[] {
+export function toDashboardItems(raw: RawDashboardItem[]): DashboardItem[] {
   const items: DashboardItem[] = [];
 
   for (const r of raw) {
@@ -176,7 +176,7 @@ function toDashboardItems(raw: RawDashboardItem[]): DashboardItem[] {
 // GraphQL query for dashboard items
 // ---------------------------------------------------------------------------
 
-const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $first: Int!) {
+export const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $first: Int!) {
   node(id: $projectId) {
     ... on ProjectV2 {
       items(first: $first, after: $cursor) {
