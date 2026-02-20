@@ -194,20 +194,20 @@ describe("link_team org validation", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
 - [ ] Manual: `ralph_hero__link_team` tool appears in MCP tool listing
 - [ ] Manual: Tool correctly validates org ownership and team existence
 
 ---
 
 ## Integration Testing
-- [ ] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
-- [ ] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] No type errors in new code
-- [ ] New tool follows `link_repository` pattern exactly
-- [ ] Team slug resolution follows `update_collaborators` pattern
-- [ ] Variable names avoid `@octokit/graphql` reserved names (`query`, `method`, `url`)
+- [x] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] No type errors in new code
+- [x] New tool follows `link_repository` pattern exactly
+- [x] Team slug resolution follows `update_collaborators` pattern
+- [x] Variable names avoid `@octokit/graphql` reserved names (`query`, `method`, `url`)
 
 ## References
 - Research GH-104: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-20-GH-0104-link-team-mcp-tool.md

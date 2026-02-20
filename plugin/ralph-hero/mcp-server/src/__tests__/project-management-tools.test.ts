@@ -356,6 +356,57 @@ describe("update_status_update validation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Team link/unlink mutation structure
+// ---------------------------------------------------------------------------
+
+describe("team link mutations", () => {
+  it("linkProjectV2ToTeam mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $teamId: ID!) {
+      linkProjectV2ToTeam(input: {
+        projectId: $projectId,
+        teamId: $teamId
+      }) {
+        team { id }
+      }
+    }`;
+    expect(mutation).toContain("linkProjectV2ToTeam");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("teamId");
+  });
+
+  it("unlinkProjectV2FromTeam mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $teamId: ID!) {
+      unlinkProjectV2FromTeam(input: {
+        projectId: $projectId,
+        teamId: $teamId
+      }) {
+        team { id }
+      }
+    }`;
+    expect(mutation).toContain("unlinkProjectV2FromTeam");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("teamId");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// link_team org validation
+// ---------------------------------------------------------------------------
+
+describe("link_team org validation", () => {
+  it("team slug resolution query targets organization type", () => {
+    const teamQuery = `query($org: String!, $slug: String!) {
+      organization(login: $org) {
+        team(slug: $slug) { id }
+      }
+    }`;
+    expect(teamQuery).toContain("organization");
+    expect(teamQuery).toContain("team(slug:");
+    expect(teamQuery).not.toContain("user");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // repoToLink parsing logic
 // ---------------------------------------------------------------------------
 

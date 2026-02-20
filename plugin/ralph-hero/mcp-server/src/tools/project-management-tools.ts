@@ -2,8 +2,9 @@
  * MCP tools for GitHub Projects V2 management operations.
  *
  * Provides tools for archiving/unarchiving items, removing items from projects,
- * adding existing issues to projects, linking repositories, clearing field values,
- * and managing project status updates (create, update, delete).
+ * adding existing issues to projects, linking repositories, linking teams,
+ * clearing field values, managing project status updates (create, update, delete),
+ * updating collaborator access, and bulk archiving.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -1257,6 +1258,97 @@ export function registerProjectManagementTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to bulk archive: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__link_team
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__link_team",
+    "Link or unlink a project from a GitHub team. Makes the project visible on the team's Projects page (org-owned projects only). Distinct from update_collaborators which controls access roles. Returns: team, linked.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      teamSlug: z.string().describe("Team slug (e.g., 'engineering')"),
+      unlink: z.boolean().optional().default(false)
+        .describe("If true, unlink instead of link (default: false)"),
+    },
+    async (args) => {
+      try {
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        // Resolve team slug to node ID via organization query
+        const teamResult = await client.query<{
+          organization: { team: { id: string } | null } | null;
+        }>(
+          `query($org: String!, $slug: String!) {
+            organization(login: $org) {
+              team(slug: $slug) { id }
+            }
+          }`,
+          { org: projectOwner, slug: args.teamSlug },
+          { cache: true, cacheTtlMs: 60 * 60 * 1000 },
+        );
+
+        if (!teamResult.organization) {
+          return toolError(
+            `Team linking requires an organization-owned project. ` +
+            `"${projectOwner}" is not an organization.`,
+          );
+        }
+        if (!teamResult.organization.team) {
+          return toolError(
+            `Team "${args.teamSlug}" not found in organization "${projectOwner}"`,
+          );
+        }
+
+        const teamId = teamResult.organization.team.id;
+
+        if (args.unlink) {
+          await client.projectMutate(
+            `mutation($projectId: ID!, $teamId: ID!) {
+              unlinkProjectV2FromTeam(input: {
+                projectId: $projectId,
+                teamId: $teamId
+              }) {
+                team { id }
+              }
+            }`,
+            { projectId, teamId },
+          );
+        } else {
+          await client.projectMutate(
+            `mutation($projectId: ID!, $teamId: ID!) {
+              linkProjectV2ToTeam(input: {
+                projectId: $projectId,
+                teamId: $teamId
+              }) {
+                team { id }
+              }
+            }`,
+            { projectId, teamId },
+          );
+        }
+
+        return toolSuccess({
+          team: args.teamSlug,
+          linked: !args.unlink,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to ${args.unlink ? "unlink" : "link"} team: ${message}`);
       }
     },
   );
