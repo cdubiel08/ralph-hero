@@ -24,16 +24,16 @@ primary_issue: 179
 - `FieldOptionCache.resolveOptionId(fieldName, optionName)` returns `undefined` for non-existent options (`cache.ts:141-143`)
 - `FieldOptionCache.getOptionNames(fieldName)` returns all valid option names for a field (`cache.ts:169-172`)
 - `ensureFieldCache(client, fieldCache, owner, projectNumber)` in `helpers.ts:91-113` populates the cache from project field data
-- The tool uses temporary inline `RoutingRule`/`RoutingConfig` interfaces (marked as TODO to replace with GH-166 types)
+- The tool uses temporary inline `RoutingRule`/`RoutingConfig` interfaces (should be replaced with GH-166 types from `routing-types.ts`)
 - `routing-tools.test.ts` uses pure logic tests without mocks (testing YAML round-trip, array manipulation, index validation)
-- GH-167 (matching engine) is not yet merged -- `dry_run` must use a stub matcher
+- GH-167 (matching engine) is now implemented in `lib/routing-engine.ts`, exporting `evaluateRules(config, issue)` with `IssueContext` and `EvaluationResult` types -- `dry_run` can use it directly
 
 ## Desired End State
 
 ### Verification
 - [ ] `validate_rules` operation checks `workflowState` values against `FieldOptionCache` and returns `{ valid, ruleCount, errors }`
 - [ ] `validate_rules` calls `ensureFieldCache` to populate cache before checking
-- [ ] `dry_run` operation fetches issue details, reads config, runs stub matcher, returns matched rules without mutations
+- [ ] `dry_run` operation fetches issue details, reads config, runs `evaluateRules()` from GH-167, returns matched rules without mutations
 - [ ] `dry_run` returns error if `issueNumber` is not provided
 - [ ] Both operations are registered in the `operation` enum
 - [ ] `issueNumber` optional parameter is added to the tool schema
@@ -43,10 +43,10 @@ primary_issue: 179
 ## What We're NOT Doing
 - No cross-project field option validation (v1 validates against default project only)
 - No label validation against GitHub API (labels not cached by `FieldOptionCache`)
-- No full matching engine integration (GH-167 not merged -- use stub matcher)
+- No full routing config loading from GH-168 -- uses same `fs.readFile` + YAML parse as CRUD operations
 - No mutations in either operation (both are read-only)
 - No changes to existing CRUD operations
-- No replacement of inline types with GH-166 types (separate concern)
+- No config file loading from GH-168 -- uses same `fs.readFile` + YAML parse as CRUD operations
 
 ## Implementation Approach
 
@@ -88,13 +88,18 @@ function resolveOwnerRepo(): { owner: string; repo: string } {
 }
 ```
 
-#### 4. Import `ensureFieldCache` from helpers
+#### 4. Update imports
 **File**: `plugin/ralph-hero/mcp-server/src/tools/routing-tools.ts`
 **Where**: Import section (lines 8-14)
 
-**Changes**: Add import:
+**Changes**:
+- Remove inline `RoutingRule`/`RoutingConfig` interfaces
+- Add imports:
 ```typescript
-import { ensureFieldCache } from "../lib/helpers.js";
+import type { RoutingConfig } from "../lib/routing-types.js";
+import { validateRoutingConfig } from "../lib/routing-types.js";
+import { evaluateRules, type IssueContext } from "../lib/routing-engine.js";
+import { ensureFieldCache, resolveFullConfig } from "../lib/helpers.js";
 ```
 
 #### 5. Add `validate_rules` case block
@@ -162,28 +167,33 @@ case "dry_run": {
     return toolError("issueNumber is required for dry_run operation");
   }
 
-  const { owner, repo } = resolveOwnerRepo();
+  const { owner, repo } = resolveFullConfig(client, args);
+
+  // Parse config through Zod for proper RoutingConfig type
+  const typedConfig = validateRoutingConfig(raw ? parse(raw) : { version: 1, rules: [] });
 
   // Fetch issue details
-  const issueResult = await client.graphql<{
+  const issueResult = await client.query<{
     repository: {
       issue: {
         number: number;
         title: string;
         labels: { nodes: Array<{ name: string }> };
+        repository: { nameWithOwner: string };
       } | null;
     };
   }>(
-    `query($owner: String!, $repo: String!, $number: Int!) {
+    `query($owner: String!, $repo: String!, $issueNum: Int!) {
       repository(owner: $owner, name: $repo) {
-        issue(number: $number) {
+        issue(number: $issueNum) {
           number
           title
           labels(first: 20) { nodes { name } }
+          repository { nameWithOwner }
         }
       }
     }`,
-    { owner, repo, number: args.issueNumber },
+    { owner, repo, issueNum: args.issueNumber },
   );
 
   const issue = issueResult.repository?.issue;
@@ -191,35 +201,33 @@ case "dry_run": {
     return toolError(`Issue #${args.issueNumber} not found in ${owner}/${repo}`);
   }
 
-  const issueLabels = issue.labels.nodes.map((l) => l.name);
-
-  // Stub matcher — TODO: replace with import from #167 matching engine
-  const matchedRules = config.rules.filter((rule) => {
-    if (!rule.match.labels) return false;
-    return rule.match.labels.some((label) => issueLabels.includes(label));
-  });
+  // Build IssueContext and run matching engine (GH-167)
+  const issueContext: IssueContext = {
+    repo: issue.repository.nameWithOwner,
+    labels: issue.labels.nodes.map((l) => l.name),
+    issueType: "issue",
+  };
+  const evalResult = evaluateRules(typedConfig, issueContext);
 
   return toolSuccess({
     issueNumber: args.issueNumber,
     issueTitle: issue.title,
-    issueLabels,
-    ruleCount: config.rules.length,
-    matchedRules: matchedRules.map((rule, i) => ({
-      ruleIndex: config.rules.indexOf(rule),
-      match: rule.match,
-      wouldExecute: rule.action,
-    })),
-    note: "No mutations performed - dry run only. Matcher is a stub until GH-167 ships.",
+    issueContext,
+    matchedRules: evalResult.matchedRules,
+    stoppedEarly: evalResult.stoppedEarly,
+    note: "No mutations performed -- dry run only",
     configPath,
   });
 }
 ```
 
 Key design decisions:
-- Uses `client.graphql()` to fetch issue details (labels needed for matching)
-- Stub matcher reuses same label-matching logic as `scripts/routing/route.js` for consistency
-- Returns full context: issue title, labels, matched rules with proposed actions
-- Clearly marked as stub until GH-167 (matching engine) is integrated
+- Uses `client.query()` to fetch issue details (labels + repo name needed for matching)
+- Uses `validateRoutingConfig()` to parse config into proper `RoutingConfig` type for `evaluateRules()`
+- Calls `evaluateRules()` from GH-167 matching engine directly -- no stub needed
+- Uses `nameWithOwner` for repo context so glob patterns like `my-org/*` work correctly
+- GraphQL variable named `issueNum` (not `number`) to avoid Octokit reserved name conflict
+- Returns full context: issue title, IssueContext, matched rules, stoppedEarly flag
 
 #### 7. Add tests for validate_rules and dry_run
 **File**: `plugin/ralph-hero/mcp-server/src/__tests__/routing-tools.test.ts`
@@ -282,40 +290,42 @@ describe("dry_run logic", () => {
     expect(issueNumber).toBeUndefined();
   });
 
-  it("stub matcher matches rules by label intersection", () => {
-    const rules = [
-      { match: { labels: ["bug"] }, action: { workflowState: "Backlog" } },
-      { match: { labels: ["feature"] }, action: { workflowState: "Todo" } },
-    ];
-    const issueLabels = ["bug", "enhancement"];
-    const matched = rules.filter((rule) =>
-      rule.match.labels?.some((l) => issueLabels.includes(l))
-    );
-    expect(matched).toHaveLength(1);
-    expect(matched[0].match.labels).toContain("bug");
+  it("evaluateRules matches rules by label criteria", () => {
+    // Uses evaluateRules from routing-engine.ts directly
+    const { evaluateRules } = require("../lib/routing-engine.js");
+    const config = {
+      version: 1, stopOnFirstMatch: true,
+      rules: [{ match: { labels: { any: ["bug"] }, negate: false }, action: { projectNumber: 3 }, enabled: true }],
+    };
+    const issue = { repo: "my-org/my-repo", labels: ["bug"], issueType: "issue" };
+    const result = evaluateRules(config, issue);
+    expect(result.matchedRules).toHaveLength(1);
   });
 
-  it("returns empty matches when no rules match", () => {
-    const rules = [
-      { match: { labels: ["bug"] }, action: { workflowState: "Backlog" } },
-    ];
-    const issueLabels = ["enhancement"];
-    const matched = rules.filter((rule) =>
-      rule.match.labels?.some((l) => issueLabels.includes(l))
-    );
-    expect(matched).toHaveLength(0);
+  it("evaluateRules returns empty matchedRules when no rules match", () => {
+    const { evaluateRules } = require("../lib/routing-engine.js");
+    const config = {
+      version: 1, stopOnFirstMatch: true,
+      rules: [{ match: { labels: { any: ["bug"] }, negate: false }, action: { projectNumber: 3 }, enabled: true }],
+    };
+    const issue = { repo: "my-org/my-repo", labels: ["enhancement"], issueType: "issue" };
+    const result = evaluateRules(config, issue);
+    expect(result.matchedRules).toHaveLength(0);
   });
 
-  it("returns all matching rules when multiple match", () => {
-    const rules = [
-      { match: { labels: ["bug"] }, action: { workflowState: "Backlog" } },
-      { match: { labels: ["bug", "critical"] }, action: { workflowState: "Todo" } },
-    ];
-    const issueLabels = ["bug"];
-    const matched = rules.filter((rule) =>
-      rule.match.labels?.some((l) => issueLabels.includes(l))
-    );
-    expect(matched).toHaveLength(2);
+  it("evaluateRules respects stopOnFirstMatch", () => {
+    const { evaluateRules } = require("../lib/routing-engine.js");
+    const config = {
+      version: 1, stopOnFirstMatch: false,
+      rules: [
+        { match: { labels: { any: ["bug"] }, negate: false }, action: { projectNumber: 3 }, enabled: true },
+        { match: { labels: { any: ["bug"] }, negate: false }, action: { projectNumber: 5 }, enabled: true },
+      ],
+    };
+    const issue = { repo: "my-org/my-repo", labels: ["bug"], issueType: "issue" };
+    const result = evaluateRules(config, issue);
+    expect(result.matchedRules).toHaveLength(2);
+    expect(result.stoppedEarly).toBe(false);
   });
 });
 ```
