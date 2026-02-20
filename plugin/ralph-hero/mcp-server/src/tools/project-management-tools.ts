@@ -19,6 +19,13 @@ import {
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Fields that Ralph depends on — delete_field refuses to remove these. */
+export const PROTECTED_FIELDS = ["Workflow State", "Priority", "Estimate", "Status"];
+
+// ---------------------------------------------------------------------------
 // Register project management tools
 // ---------------------------------------------------------------------------
 
@@ -680,6 +687,88 @@ export function registerProjectManagementTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to update project: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__delete_field
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__delete_field",
+    "Delete a custom field from the project. Refuses to delete Ralph's required fields (Workflow State, Priority, Estimate, Status). Defaults to dry-run; set confirm=true to execute. Returns: field, deleted or action.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      field: z.string().describe("Name of the field to delete"),
+      confirm: z.boolean().optional().default(false)
+        .describe("Must be true to execute deletion; false for dry-run"),
+    },
+    async (args) => {
+      try {
+        if (PROTECTED_FIELDS.includes(args.field)) {
+          return toolError(
+            `Cannot delete protected field "${args.field}". ` +
+            `Protected fields: ${PROTECTED_FIELDS.join(", ")}`,
+          );
+        }
+
+        const { projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        const projectId = fieldCache.getProjectId();
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        const fieldId = fieldCache.getFieldId(args.field);
+        if (!fieldId) {
+          const validFields = fieldCache.getFieldNames();
+          return toolError(
+            `Field "${args.field}" not found in project. ` +
+            `Valid fields: ${validFields.join(", ")}`,
+          );
+        }
+
+        if (!args.confirm) {
+          return toolSuccess({
+            field: args.field,
+            fieldId,
+            action: "would_delete",
+            confirm: false,
+            message: "Dry run. Set confirm=true to delete.",
+          });
+        }
+
+        await client.projectMutate(
+          `mutation($projectId: ID!, $fieldId: ID!) {
+            deleteProjectV2Field(input: {
+              projectId: $projectId,
+              fieldId: $fieldId
+            }) {
+              projectV2Field {
+                ... on ProjectV2SingleSelectField { id name }
+                ... on ProjectV2Field { id name }
+              }
+            }
+          }`,
+          { projectId, fieldId },
+        );
+
+        // Invalidate field cache since a field definition was removed
+        fieldCache.clear();
+
+        return toolSuccess({
+          field: args.field,
+          deleted: true,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to delete field: ${message}`);
       }
     },
   );

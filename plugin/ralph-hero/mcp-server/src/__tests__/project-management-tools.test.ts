@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { WORKFLOW_STATE_TO_STATUS } from "../lib/workflow-states.js";
+import { PROTECTED_FIELDS } from "../tools/project-management-tools.js";
 
 // ---------------------------------------------------------------------------
 // WORKFLOW_STATE_TO_STATUS integration with batch_update
@@ -210,6 +211,36 @@ describe("project management mutations", () => {
     }`;
     expect(mutation).toContain("updateProjectV2");
     expect(mutation).toContain("projectId");
+  });
+
+  it("deleteProjectV2Field mutation has required input fields", () => {
+    const mutation = `mutation($projectId: ID!, $fieldId: ID!) {
+      deleteProjectV2Field(input: {
+        projectId: $projectId,
+        fieldId: $fieldId
+      }) {
+        projectV2Field {
+          ... on ProjectV2SingleSelectField { id name }
+          ... on ProjectV2Field { id name }
+        }
+      }
+    }`;
+    expect(mutation).toContain("deleteProjectV2Field");
+    expect(mutation).toContain("projectId");
+    expect(mutation).toContain("fieldId");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// delete_field safety guardrails
+// ---------------------------------------------------------------------------
+
+describe("delete_field safety", () => {
+  it("protected fields list includes required Ralph fields", () => {
+    expect(PROTECTED_FIELDS).toContain("Workflow State");
+    expect(PROTECTED_FIELDS).toContain("Priority");
+    expect(PROTECTED_FIELDS).toContain("Estimate");
+    expect(PROTECTED_FIELDS).toContain("Status");
   });
 });
 
