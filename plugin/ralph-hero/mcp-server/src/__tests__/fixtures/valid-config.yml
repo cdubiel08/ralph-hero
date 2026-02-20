@@ -1,0 +1,16 @@
+version: 1
+stopOnFirstMatch: true
+rules:
+  - name: "Route bugs to project 3"
+    match:
+      labels:
+        any: ["bug"]
+    action:
+      projectNumber: 3
+      workflowState: "Backlog"
+  - name: "Route enhancements"
+    match:
+      labels:
+        any: ["enhancement"]
+    action:
+      projectNumber: 3
