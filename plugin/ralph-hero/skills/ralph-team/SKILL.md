@@ -167,14 +167,14 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
    | Task subject contains | Role | Template | Agent type |
    |----------------------|------|----------|------------|
-   | "Triage" | analyst | `triager.md` | ralph-analyst |
-   | "Split" | analyst | `splitter.md` | ralph-analyst |
-   | "Research" | analyst | `researcher.md` | ralph-analyst |
-   | "Plan" (not "Review") | builder | `planner.md` | ralph-builder |
-   | "Review" | validator | `reviewer.md` | ralph-validator |
-   | "Implement" | builder | `implementer.md` | ralph-builder |
-   | "Create PR" | integrator | `integrator.md` | ralph-integrator |
-   | "Merge" or "Integrate" | integrator | `integrator.md` | ralph-integrator |
+   | "Triage" | analyst | `triager.md` | general-purpose |
+   | "Split" | analyst | `splitter.md` | general-purpose |
+   | "Research" | analyst | `researcher.md` | general-purpose |
+   | "Plan" (not "Review") | builder | `planner.md` | general-purpose |
+   | "Review" | validator | `reviewer.md` | general-purpose |
+   | "Implement" | builder | `implementer.md` | general-purpose |
+   | "Create PR" | integrator | `integrator.md` | general-purpose |
+   | "Merge" or "Integrate" | integrator | `integrator.md` | general-purpose |
 
 2. **Resolve template path**: `Bash("echo $CLAUDE_PLUGIN_ROOT")` to get the plugin root, then read:
    `Read(file_path="[resolved-root]/templates/spawn/{template}")`
@@ -190,7 +190,7 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
 4. **Spawn**:
    ```
-   Task(subagent_type="[agent-type]", team_name=TEAM_NAME, name="[role]",
+   Task(subagent_type="general-purpose", team_name=TEAM_NAME, name="[role]",
         prompt=[resolved template content],
         description="[Role] GH-NNN")
    ```

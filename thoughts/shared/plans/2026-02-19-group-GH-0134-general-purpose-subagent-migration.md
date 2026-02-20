@@ -132,8 +132,8 @@ Keep the "Agent type" column header -- it serves as documentation even when all 
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0 (no custom agent types remain in the file)
-- [ ] Manual: Spawn table retains "Agent type" column header with all rows showing `general-purpose`
+- [x] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0 (no custom agent types remain in the file)
+- [x] Manual: Spawn table retains "Agent type" column header with all rows showing `general-purpose`
 
 **Creates for next phases**: The conceptual foundation -- all spawns are now `general-purpose`, which makes Phases 2-4 necessary (templates, conventions, and Section 9 must align).
 
