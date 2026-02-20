@@ -433,10 +433,10 @@ This works because the team system provides isolated context windows, identical 
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'agentType' plugin/ralph-hero/skills/shared/conventions.md` returns 0
-- [ ] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/shared/conventions.md` returns 0
-- [ ] Manual: Pipeline Handoff table uses worker `name` values (`analyst`, `builder`, `validator`, `integrator`)
-- [ ] Manual: Template Naming Convention uses role-based descriptions instead of agent type references
+- [x] Automated: `grep -c 'agentType' plugin/ralph-hero/skills/shared/conventions.md` returns 0
+- [x] Automated: `grep -c 'ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator' plugin/ralph-hero/skills/shared/conventions.md` returns 0
+- [x] Manual: Pipeline Handoff table uses worker `name` values (`analyst`, `builder`, `validator`, `integrator`)
+- [x] Manual: Template Naming Convention uses role-based descriptions instead of agent type references
 
 **Creates for next phases**: Independent -- does not create dependencies for Phase 4.
 
