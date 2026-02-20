@@ -12,6 +12,22 @@ const projectToolsSrc = fs.readFileSync(
   "utf-8",
 );
 
+describe("list_project_items profile param", () => {
+  it("has profile param in Zod schema", () => {
+    expect(projectToolsSrc).toContain("profile: z");
+  });
+
+  it("imports expandProfile", () => {
+    expect(projectToolsSrc).toContain(
+      'import { expandProfile } from "../lib/filter-profiles.js"',
+    );
+  });
+
+  it("calls expandProfile when profile is set", () => {
+    expect(projectToolsSrc).toContain("expandProfile(args.profile)");
+  });
+});
+
 describe("list_project_items structural", () => {
   it("GraphQL query contains updatedAt in Issue fragment", () => {
     // Verify updatedAt is fetched in the Issue content fragment

@@ -11,6 +11,7 @@ import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { paginateConnection } from "../lib/pagination.js";
 import { parseDateMath } from "../lib/date-math.js";
+import { expandProfile } from "../lib/filter-profiles.js";
 import { toolSuccess, toolError } from "../types.js";
 import type {
   ProjectV2,
@@ -393,6 +394,13 @@ export function registerProjectTools(
         .describe(
           "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
         ),
+      profile: z
+        .string()
+        .optional()
+        .describe(
+          "Named filter profile (e.g., 'analyst-triage', 'builder-active'). " +
+            "Profile filters are defaults; explicit params override them.",
+        ),
       workflowState: z
         .string()
         .optional()
@@ -431,6 +439,16 @@ export function registerProjectTools(
     },
     async (args) => {
       try {
+        // Expand profile into filter defaults (explicit args override)
+        if (args.profile) {
+          const profileFilters = expandProfile(args.profile);
+          for (const [key, value] of Object.entries(profileFilters)) {
+            if (args[key as keyof typeof args] === undefined) {
+              (args as Record<string, unknown>)[key] = value;
+            }
+          }
+        }
+
         const owner = args.owner || resolveProjectOwner(client.config);
         const projectNumber = args.number || client.config.projectNumber;
 

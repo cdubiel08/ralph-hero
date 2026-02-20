@@ -12,6 +12,26 @@ const issueToolsSrc = fs.readFileSync(
   "utf-8",
 );
 
+describe("list_issues profile param", () => {
+  it("has profile param in Zod schema", () => {
+    expect(issueToolsSrc).toContain("profile: z");
+  });
+
+  it("imports expandProfile", () => {
+    expect(issueToolsSrc).toContain(
+      'import { expandProfile } from "../lib/filter-profiles.js"',
+    );
+  });
+
+  it("calls expandProfile when profile is set", () => {
+    expect(issueToolsSrc).toContain("expandProfile(args.profile)");
+  });
+
+  it("explicit args override profile defaults", () => {
+    expect(issueToolsSrc).toContain("=== undefined");
+  });
+});
+
 describe("list_issues structural", () => {
   it("tool description mentions updatedSince", () => {
     expect(issueToolsSrc).toContain("updatedSince");
