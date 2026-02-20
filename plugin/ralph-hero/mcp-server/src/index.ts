@@ -22,6 +22,7 @@ import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
 import { registerRoutingTools } from "./tools/routing-tools.js";
+import { registerSyncTools } from "./tools/sync-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -312,6 +313,9 @@ async function main(): Promise<void> {
 
   // Routing config management tools
   registerRoutingTools(server, client, fieldCache);
+
+  // Cross-project sync tools
+  registerSyncTools(server, client, fieldCache);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

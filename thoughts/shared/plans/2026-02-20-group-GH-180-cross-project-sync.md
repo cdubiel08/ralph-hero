@@ -37,11 +37,11 @@ primary_issue: 180
 ## Desired End State
 
 ### Verification
-- [ ] `ralph_hero__sync_across_projects` MCP tool discovers all project memberships via `projectItems` query
-- [ ] Tool propagates Workflow State to projects where current state differs from target
-- [ ] Tool is idempotent — skips projects already at the target state
-- [ ] Tool supports `dryRun` mode — returns affected list without mutations
-- [ ] Tool gracefully skips projects missing Workflow State field or target option
+- [x] `ralph_hero__sync_across_projects` MCP tool discovers all project memberships via `projectItems` query
+- [x] Tool propagates Workflow State to projects where current state differs from target
+- [x] Tool is idempotent — skips projects already at the target state
+- [x] Tool supports `dryRun` mode — returns affected list without mutations
+- [x] Tool gracefully skips projects missing Workflow State field or target option
 - [ ] `.github/workflows/sync-project-state.yml` triggers via `workflow_dispatch` and `repository_dispatch`
 - [ ] `.github/scripts/sync/sync-project-state.js` replicates sync logic with loop prevention
 - [ ] Script skips originating project number to prevent sync loops
@@ -109,8 +109,8 @@ Phase 1 creates the MCP tool (`sync-tools.ts`) with the core GraphQL queries and
   8. Multiple projects → syncs differing, skips matching
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (all tests including new sync tests)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (all tests including new sync tests)
 - [ ] Manual: Tool appears in MCP server tool listing
 
 **Creates for next phase**: Established GraphQL query/mutation patterns that Phase 2's CJS script replicates
