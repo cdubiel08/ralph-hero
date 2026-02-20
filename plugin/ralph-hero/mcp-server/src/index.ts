@@ -21,6 +21,7 @@ import { registerDashboardTools } from "./tools/dashboard-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
+import { registerRoutingTools } from "./tools/routing-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -308,6 +309,9 @@ async function main(): Promise<void> {
 
   // Hygiene reporting tools
   registerHygieneTools(server, client, fieldCache);
+
+  // Routing config management tools
+  registerRoutingTools(server, client, fieldCache);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();
