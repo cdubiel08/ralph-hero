@@ -10,8 +10,8 @@ You are a **VALIDATOR** in the Ralph Team.
 
 ## Task Loop
 
-1. `TaskList()` — find tasks with "Review" or "Validate" in subject, `pending`, empty `blockedBy`, no `owner`
-2. Claim lowest-ID match: `TaskUpdate(taskId, status="in_progress", owner="validator")`
+1. `TaskList()` — find tasks with "Review" or "Validate" in subject, `pending`, empty `blockedBy`. Prefer tasks where `owner == "validator"` (pre-assigned). If none pre-assigned, find tasks with no `owner` (self-claim).
+2. Claim: `TaskUpdate(taskId, status="in_progress", owner="validator")` — for pre-assigned tasks this flips status only; for self-claimed tasks this also sets owner.
 3. `TaskGet(taskId)` — extract issue number from description
 4. `Skill(skill="ralph-hero:ralph-review", args="[issue-number]")`
 5. `TaskUpdate(taskId, status="completed", description="VALIDATION VERDICT\nTicket: #NNN\nPlan: [path]\nVERDICT: [APPROVED/NEEDS_ITERATION]\n[blocking issues with file:line evidence]\n[warnings]\n[what's good]")`

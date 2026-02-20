@@ -183,18 +183,18 @@ Pre-assignment is atomic -- the task is owned before the worker's first turn beg
 
 ### Success Criteria
 
-- [ ] Automated: `grep -c "Never assign tasks" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
-- [ ] Automated: `grep -c "Never use TaskUpdate with .owner. parameter" plugin/ralph-hero/skills/shared/conventions.md` returns 0
-- [ ] Automated: `grep -c "Pre-assign at spawn" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 1
-- [ ] Automated: `grep -c "Lead pre-assigns at spawn" plugin/ralph-hero/skills/shared/conventions.md` returns 1
-- [ ] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-analyst.md` returns at least 1
-- [ ] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-builder.md` returns at least 1
-- [ ] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-validator.md` returns at least 1
-- [ ] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-integrator.md` returns at least 1
-- [ ] Manual: Lead's Section 4.3 includes `TaskUpdate(taskId, owner="[role]")` step before spawning
-- [ ] Manual: Agent definitions support BOTH pre-assigned (`owner == "[role]"`) and self-claimed (`no owner`) discovery
-- [ ] Manual: Peer-to-peer handoff protocol in conventions.md is unchanged (fire-and-forget SendMessage, workers self-claim from TaskList)
-- [ ] Manual: No spawn template files were modified (templates remain unchanged)
+- [x] Automated: `grep -c "Never assign tasks" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
+- [x] Automated: `grep -c "Never use TaskUpdate with .owner. parameter" plugin/ralph-hero/skills/shared/conventions.md` returns 0
+- [x] Automated: `grep -c "Pre-assign at spawn" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 1
+- [x] Automated: `grep -c "Lead pre-assigns at spawn" plugin/ralph-hero/skills/shared/conventions.md` returns 1
+- [x] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-analyst.md` returns at least 1
+- [x] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-builder.md` returns at least 1
+- [x] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-validator.md` returns at least 1
+- [x] Automated: `grep -c "pre-assigned" plugin/ralph-hero/agents/ralph-integrator.md` returns at least 1
+- [x] Manual: Lead's Section 4.3 includes `TaskUpdate(taskId, owner="[role]")` step before spawning
+- [x] Manual: Agent definitions support BOTH pre-assigned (`owner == "[role]"`) and self-claimed (`no owner`) discovery
+- [x] Manual: Peer-to-peer handoff protocol in conventions.md is unchanged (fire-and-forget SendMessage, workers self-claim from TaskList)
+- [x] Manual: No spawn template files were modified (templates remain unchanged)
 
 ---
 
