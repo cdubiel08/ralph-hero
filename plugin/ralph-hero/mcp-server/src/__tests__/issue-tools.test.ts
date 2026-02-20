@@ -50,3 +50,59 @@ describe("list_issues structural", () => {
     expect(issueToolsSrc).toContain("stateReason: content?.stateReason");
   });
 });
+
+describe("list_issues has/no presence filters structural", () => {
+  it("Zod schema includes has param with enum", () => {
+    expect(issueToolsSrc).toContain('"workflowState", "estimate", "priority", "labels", "assignees"');
+  });
+
+  it("Zod schema includes both has and no params", () => {
+    expect(issueToolsSrc).toMatch(/has:\s*z\s*\.array/);
+    expect(issueToolsSrc).toMatch(/no:\s*z\s*\.array/);
+  });
+
+  it("has filter applies every() check", () => {
+    expect(issueToolsSrc).toContain("args.has!.every");
+  });
+
+  it("no filter applies every() with negation", () => {
+    expect(issueToolsSrc).toContain("!hasField(item, field");
+  });
+
+  it("hasField helper handles all five field types", () => {
+    expect(issueToolsSrc).toContain('case "workflowState"');
+    expect(issueToolsSrc).toContain('case "estimate"');
+    expect(issueToolsSrc).toContain('case "priority"');
+    expect(issueToolsSrc).toContain('case "labels"');
+    expect(issueToolsSrc).toContain('case "assignees"');
+  });
+});
+
+describe("list_issues exclude negation filters structural", () => {
+  it("Zod schema includes excludeWorkflowStates param", () => {
+    expect(issueToolsSrc).toContain("excludeWorkflowStates");
+  });
+
+  it("Zod schema includes excludeEstimates param", () => {
+    expect(issueToolsSrc).toContain("excludeEstimates");
+  });
+
+  it("Zod schema includes excludePriorities param", () => {
+    expect(issueToolsSrc).toContain("excludePriorities");
+  });
+
+  it("Zod schema includes excludeLabels param", () => {
+    expect(issueToolsSrc).toContain("excludeLabels");
+  });
+
+  it("negation filters use Array.includes for matching", () => {
+    expect(issueToolsSrc).toContain("excludeWorkflowStates!.includes");
+    expect(issueToolsSrc).toContain("excludeEstimates!.includes");
+    expect(issueToolsSrc).toContain("excludePriorities!.includes");
+    expect(issueToolsSrc).toContain("excludeLabels!.includes");
+  });
+
+  it("items without field values are not excluded via ?? coercion", () => {
+    expect(issueToolsSrc).toContain('?? ""');
+  });
+});
