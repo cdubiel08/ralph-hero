@@ -31,14 +31,14 @@ primary_issue: 179
 ## Desired End State
 
 ### Verification
-- [ ] `validate_rules` operation checks `workflowState` values against `FieldOptionCache` and returns `{ valid, ruleCount, errors }`
-- [ ] `validate_rules` calls `ensureFieldCache` to populate cache before checking
-- [ ] `dry_run` operation fetches issue details, reads config, runs `evaluateRules()` from GH-167, returns matched rules without mutations
-- [ ] `dry_run` returns error if `issueNumber` is not provided
-- [ ] Both operations are registered in the `operation` enum
-- [ ] `issueNumber` optional parameter is added to the tool schema
-- [ ] `npm test` passes with new tests
-- [ ] `npm run build` compiles cleanly
+- [x] `validate_rules` operation checks `workflowState` values against `FieldOptionCache` and returns `{ valid, ruleCount, errors }`
+- [x] `validate_rules` calls `ensureFieldCache` to populate cache before checking
+- [x] `dry_run` operation fetches issue details, reads config, runs `evaluateRules()` from GH-167, returns matched rules without mutations
+- [x] `dry_run` returns error if `issueNumber` is not provided
+- [x] Both operations are registered in the `operation` enum
+- [x] `issueNumber` optional parameter is added to the tool schema
+- [x] `npm test` passes with new tests
+- [x] `npm run build` compiles cleanly
 
 ## What We're NOT Doing
 - No cross-project field option validation (v1 validates against default project only)
@@ -331,22 +331,22 @@ describe("dry_run logic", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `npm test` -- all tests pass including new validate_rules and dry_run tests
-- [ ] Automated: `npm run build` -- TypeScript compiles without errors
-- [ ] Manual: `validate_rules` on a config with invalid workflowState returns structured errors
-- [ ] Manual: `validate_rules` on a valid config returns `{ valid: true }`
-- [ ] Manual: `dry_run` with an issue number returns matched rules and proposed actions
-- [ ] Manual: `dry_run` without issueNumber returns an error message
+- [x] Automated: `npm test` -- all tests pass including new validate_rules and dry_run tests
+- [x] Automated: `npm run build` -- TypeScript compiles without errors
+- [x] Manual: `validate_rules` on a config with invalid workflowState returns structured errors
+- [x] Manual: `validate_rules` on a valid config returns `{ valid: true }`
+- [x] Manual: `dry_run` with an issue number returns matched rules and proposed actions
+- [x] Manual: `dry_run` without issueNumber returns an error message
 
 ---
 
 ## Integration Testing
-- [ ] `npm run build` compiles `routing-tools.ts` without errors
-- [ ] `npm test` passes all existing tests plus 8 new tests
-- [ ] Existing CRUD operations (`list_rules`, `add_rule`, `update_rule`, `remove_rule`) are unaffected
-- [ ] `validate_rules` gracefully handles empty config files
-- [ ] `dry_run` gracefully handles non-existent issue numbers
-- [ ] `client` and `fieldCache` closure parameters are properly unwrapped (no `_` prefix)
+- [x] `npm run build` compiles `routing-tools.ts` without errors
+- [x] `npm test` passes all existing tests plus 8 new tests
+- [x] Existing CRUD operations (`list_rules`, `add_rule`, `update_rule`, `remove_rule`) are unaffected
+- [x] `validate_rules` gracefully handles empty config files
+- [x] `dry_run` gracefully handles non-existent issue numbers
+- [x] `client` and `fieldCache` closure parameters are properly unwrapped (no `_` prefix)
 
 ## References
 - Research GH-179: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-20-GH-0179-configure-routing-validate-dryrun.md
