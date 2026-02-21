@@ -112,9 +112,9 @@ Add `resolveFullConfig` to this import list.
 **Note**: `resolveProjectOwner` import from `../types.js` can be removed if no other code in the file uses it (only the 2 inline patterns referenced it).
 
 ### Success Criteria
-- [ ] Automated: `npm run build` passes
-- [ ] Automated: `npm test` passes (existing advance_children/advance_parent tests still pass)
-- [ ] Manual: Both tools behave identically to before (same error messages via `resolveFullConfig` throws)
+- [x] Automated: `npm run build` passes
+- [x] Automated: `npm test` passes (existing advance_children/advance_parent tests still pass)
+- [x] Manual: Both tools behave identically to before (same error messages via `resolveFullConfig` throws)
 
 **Creates for Phase 2**: Both tools now use `resolveFullConfig`, making them eligible for the mechanical schema addition.
 
