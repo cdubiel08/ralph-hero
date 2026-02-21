@@ -2,8 +2,8 @@
 # ralph-hero/hooks/scripts/team-task-completed.sh
 # TaskCompleted: Guide team lead after a teammate completes a task
 #
-# Peer-to-peer handoffs handle routine pipeline progression.
-# Lead only needs to act on exceptions (review rejections) or
+# Bough advancement: lead checks convergence and creates next-phase tasks.
+# Lead also acts on exceptions (review rejections) and
 # pipeline drain (intake of new GitHub issues).
 #
 # Exit codes:
@@ -28,7 +28,9 @@ EOF
 else
   cat >&2 <<EOF
 Task completed by $TEAMMATE: "$TASK_SUBJECT"
-Peer handoff handles routine pipeline progression.
+ACTION: Check pipeline convergence via detect_pipeline_position.
+If phase converged: create next-bough tasks (Section 4.2) and assign to idle workers.
+If not converged: wait for remaining tasks to complete. No lead action needed.
 CHECK: Are there idle workers with no unblocked tasks? If so, pull new GitHub issues.
 EOF
 fi

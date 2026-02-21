@@ -26,13 +26,13 @@ Section 4.4 (lines 156-167) delegates routine progression to peer-to-peer handof
 
 ## Desired End State
 ### Verification
-- [ ] Section 4.2 creates tasks ONLY for the current pipeline phase (bough)
-- [ ] Section 4.4 includes convergence-driven bough advancement as a dispatch responsibility
-- [ ] Section 5 allows mid-pipeline assignment for bough advancement
-- [ ] `team-task-completed.sh` guides the lead to check pipeline convergence
-- [ ] Section 3.1 (XS fast-track) remains coherent with the bough model
-- [ ] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
-- [ ] Tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] Section 4.2 creates tasks ONLY for the current pipeline phase (bough)
+- [x] Section 4.4 includes convergence-driven bough advancement as a dispatch responsibility
+- [x] Section 5 allows mid-pipeline assignment for bough advancement
+- [x] `team-task-completed.sh` guides the lead to check pipeline convergence
+- [x] Section 3.1 (XS fast-track) remains coherent with the bough model
+- [x] Build succeeds: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] Tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
 
 ## What We're NOT Doing
 - Modifying `conventions.md` (that is GH-258 scope)
@@ -116,12 +116,12 @@ EOF
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build && npm test` passes
-- [ ] Manual: Section 4.2 describes current-phase-only task creation (no sequential blocking of future phases)
-- [ ] Manual: Section 4.4 lists bough advancement as primary dispatch responsibility
-- [ ] Manual: Section 5 no longer prohibits mid-pipeline assignment
-- [ ] Manual: `team-task-completed.sh` guides lead to check `detect_pipeline_position` convergence
-- [ ] Manual: Section 3.1 (XS fast-track) still coherently creates Implement + PR + Merge as a single bough exception
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build && npm test` passes
+- [x] Manual: Section 4.2 describes current-phase-only task creation (no sequential blocking of future phases)
+- [x] Manual: Section 4.4 lists bough advancement as primary dispatch responsibility
+- [x] Manual: Section 5 no longer prohibits mid-pipeline assignment
+- [x] Manual: `team-task-completed.sh` guides lead to check `detect_pipeline_position` convergence
+- [x] Manual: Section 3.1 (XS fast-track) still coherently creates Implement + PR + Merge as a single bough exception
 
 ---
 
