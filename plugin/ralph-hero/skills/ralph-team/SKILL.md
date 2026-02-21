@@ -123,24 +123,27 @@ For XS issues (estimate=1) with specific, actionable descriptions: skip research
 
 Team name must be unique: `TEAM_NAME = "ralph-team-GH-NNN"` (e.g., `ralph-team-GH-42`; use issue number or group primary). Use for ALL subsequent `team_name` parameters.
 
-### 4.2 Create Tasks for Remaining Phases
+### 4.2 Create Tasks for Current Phase Only (Bough Model)
 
-Based on pipeline position (Section 3), create tasks with sequential blocking: Research -> Plan -> Review -> Implement -> PR.
+Based on pipeline position (Section 3), create tasks ONLY for the current phase. Do NOT create downstream tasks -- they will be created when the current phase converges (see Section 4.4).
+
+Call `detect_pipeline_position` to determine the current phase and its issues.
+
+**Current-phase task rules**:
+- **SPLIT**: `"Split GH-NNN"` per oversized issue (only if `subIssueCount === 0`)
+- **TRIAGE**: `"Triage GH-NNN"` per untriaged issue
+- **RESEARCH**: `"Research GH-NNN"` per issue (for groups: per-member)
+- **PLAN**: `"Plan GH-NNN"` per group (using GROUP_PRIMARY). For groups, include all issue numbers in description.
+- **REVIEW**: `"Review plan for GH-NNN"` -- only if `RALPH_REVIEW_MODE=interactive`
+- **IMPLEMENT**: `"Implement GH-NNN"`
+- **COMPLETE**: `"Create PR for GH-NNN"` + `"Merge PR for GH-NNN"` (coupled pair, Merge blocked by PR)
 
 **Subject patterns** (workers match on these to self-claim):
 - `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
 
-**SPLIT tasks**: Only create split tasks for issues without existing children (`subIssueCount === 0` in the `detect_pipeline_position` response). Issues that already have sub-issues are automatically excluded from the SPLIT phase by the detection tool, so they should not appear in the `issues` array. This is defense-in-depth -- verify before creating tasks.
+**SPLIT safety check**: Only create split tasks for issues without existing children (`subIssueCount === 0`). The detection tool excludes already-split issues from the `issues` array. This is defense-in-depth -- verify before creating tasks.
 
-**Review task creation** depends on `RALPH_REVIEW_MODE`:
-- `interactive`: Create "Review plan for GH-NNN" task. Implement is blocked by Review.
-- `skip` or `auto` (default): No Review task. Implement is blocked by Plan.
-
-**After PR task**: Create "Merge PR for GH-NNN" task blocked by the PR task. Integrator will self-claim.
-
-**Groups** (IS_GROUP=true): Research tasks are per-issue; Plan/Review/Implement/PR are per-group using GROUP_PRIMARY. Include all issue numbers in descriptions. Plan is blocked by ALL research tasks.
-
-**Single issues** (IS_GROUP=false): One task per phase, sequential blocking.
+**XS fast-track exception** (Section 3.1): For XS issues, create Implement + PR + Merge as a single bough (all three tasks at once). This is the only case where multiple phases are created together.
 
 ### 4.3 Spawn Workers for Available Tasks
 
@@ -157,13 +160,12 @@ For group research with multiple tasks: pre-assign and spawn up to 3 analysts (`
 
 The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural decision points and tell you what to check. Follow their guidance.
 
-**Routine pipeline progression is handled by peer-to-peer handoffs** -- workers SendMessage the next-stage teammate when they complete a task and have no more work of their type. You do NOT need to route every completion.
-
 Your dispatch responsibilities:
 
-1. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
-2. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
-3. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create task chains for found issues.
+1. **Bough advancement** (primary): When a phase's tasks complete, call `detect_pipeline_position` to check convergence. If `convergence.met === true` and the phase advances: create next-bough tasks per Section 4.2 and assign to idle workers. For groups: wait for ALL group members to converge before creating next-bough tasks. Workers also discover new tasks via the Stop hook.
+2. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
+3. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
+4. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create new-bough tasks for found issues.
 The Stop hook prevents premature shutdown -- you cannot stop while GitHub has processable issues. Trust it.
 
 ### 4.5 Shutdown and Cleanup
@@ -174,7 +176,7 @@ Only when dispatch loop confirms no more work. Send `shutdown_request` to each t
 
 - **Delegate everything**: You never research, plan, review, or implement. You manage tasks and spawn workers.
 - **Workers are autonomous**: After their initial pre-assigned task, workers self-claim from TaskList. Your job is ensuring workers exist and pre-assigning their first task at spawn.
-- **Pre-assign at spawn, pull-based thereafter**: Call `TaskUpdate(taskId, owner="[role]")` immediately before spawning each worker. Do NOT assign tasks mid-pipeline or via SendMessage. Pipeline handoffs are peer-to-peer (see shared/conventions.md).
+- **Pre-assign at spawn**: Call `TaskUpdate(taskId, owner="[role]")` immediately before spawning each worker. Lead creates and assigns new-bough tasks when convergence is detected. Workers also self-claim unclaimed tasks via Stop hook.
 - **Bias toward action**: When in doubt, check TaskList. When idle, query GitHub. Zero-gap lookahead.
 - **Hooks are your safety net**: Stop hook prevents premature shutdown. State hooks prevent invalid transitions. Trust them.
 - **Escalate and move on**: If stuck, escalate via GitHub comment (`__ESCALATE__` intent) and find other work. Never block on user input.
