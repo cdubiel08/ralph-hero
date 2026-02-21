@@ -39,12 +39,10 @@ done
 
 if [[ "$TOTAL_FOUND" -gt 0 ]]; then
   cat >&2 <<EOF
-GitHub has $TOTAL_FOUND processable issues waiting:
+GitHub has $TOTAL_FOUND processable issues that may need attention:
 $(echo -e "$SUMMARY")
 
-Run the dispatch loop: check TaskList for unblocked tasks, spawn workers
-for available roles, or use pick_actionable_issue to find new work.
-Do NOT shut down while work remains.
+Consider checking TaskList for unblocked tasks or spawning workers for available roles.
 EOF
   exit 2
 fi

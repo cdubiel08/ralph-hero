@@ -21,17 +21,16 @@ TEAMMATE=$(echo "$INPUT" | jq -r '.teammate_name // "unknown"')
 if echo "$TASK_SUBJECT" | grep -qi "review"; then
   cat >&2 <<EOF
 Review task completed by $TEAMMATE: "$TASK_SUBJECT"
-ACTION: TaskGet the completed task. Check verdict:
+Consider checking the verdict via TaskGet:
 - APPROVED: peer handoff will wake builder. Verify worker exists.
 - NEEDS_ITERATION: Create revision task with "Plan" in subject for builder.
 EOF
 else
   cat >&2 <<EOF
 Task completed by $TEAMMATE: "$TASK_SUBJECT"
-ACTION: Check pipeline convergence via detect_pipeline_position.
-If phase converged: create next-bough tasks (Section 4.2) and assign to idle workers.
-If not converged: wait for remaining tasks to complete. No lead action needed.
-CHECK: Are there idle workers with no unblocked tasks? If so, pull new GitHub issues.
+Consider checking pipeline convergence via detect_pipeline_position.
+If the phase has converged, create next-bough tasks (Section 4.2).
+If not converged, no action needed -- wait for remaining tasks.
 EOF
 fi
 exit 0
