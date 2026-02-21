@@ -1,6 +1,6 @@
 ---
 date: 2026-02-21
-status: draft
+status: complete
 github_issues: [252]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/252
@@ -25,12 +25,12 @@ The justfile ([`plugin/ralph-hero/justfile`](https://github.com/cdubiel08/ralph-
 ## Desired End State
 
 ### Verification
-- [ ] `_mcp_call` helper exists in justfile with mcptools dependency check
-- [ ] `just quick-status` calls `ralph_hero__pipeline_dashboard` and returns markdown output
-- [ ] `just quick-move <issue> <state>` calls `ralph_hero__update_workflow_state`
-- [ ] `just quick-pick` calls `ralph_hero__pick_actionable_issue` with configurable state/estimate
-- [ ] `just quick-assign <issue> <user>` calls `ralph_hero__update_issue` with assignees
-- [ ] Justfile header comment lists mcptools as optional dependency
+- [x] `_mcp_call` helper exists in justfile with mcptools dependency check
+- [x] `just quick-status` calls `ralph_hero__pipeline_dashboard` and returns markdown output
+- [x] `just quick-move <issue> <state>` calls `ralph_hero__update_workflow_state`
+- [x] `just quick-pick` calls `ralph_hero__pick_actionable_issue` with configurable state/estimate
+- [x] `just quick-assign <issue> <user>` calls `ralph_hero__update_issue` with assignees
+- [x] Justfile header comment lists mcptools as optional dependency
 - [ ] `just --list` shows all 4 quick-action recipes with descriptions
 
 ## What We're NOT Doing
@@ -148,9 +148,9 @@ quick-assign issue user:
 | `plugin/ralph-hero/justfile` | Update header, add `_mcp_call` helper, add 4 `quick-*` recipes |
 
 ### Success Criteria
-- [ ] Automated: `grep -c "quick-" plugin/ralph-hero/justfile` returns 4 (4 quick-action recipes)
-- [ ] Automated: `grep "_mcp_call" plugin/ralph-hero/justfile | head -1` shows the helper definition
-- [ ] Automated: `grep "mcptools" plugin/ralph-hero/justfile` shows header dependency comment
+- [x] Automated: `grep -c "quick-" plugin/ralph-hero/justfile` returns 4 (4 quick-action recipes)
+- [x] Automated: `grep "_mcp_call" plugin/ralph-hero/justfile | head -1` shows the helper definition
+- [x] Automated: `grep "mcptools" plugin/ralph-hero/justfile` shows header dependency comment
 - [ ] Manual: `just --list` in the plugin directory shows quick-status, quick-move, quick-pick, quick-assign
 - [ ] Manual: `just quick-status` returns pipeline dashboard output (requires mcptools + token)
 
