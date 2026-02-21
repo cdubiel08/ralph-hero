@@ -9,6 +9,7 @@ import {
   aggregateByPhase,
   detectHealthIssues,
   buildDashboard,
+  computeArchiveStats,
   formatMarkdown,
   formatAscii,
   DEFAULT_HEALTH_CONFIG,
@@ -788,6 +789,7 @@ describe("formatMarkdown", () => {
       totalIssues: 1,
       phases: [{ state: "Backlog", count: 1, issues: [] }],
       health: { ok: true, warnings: [] },
+      archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
     };
     const md = formatMarkdown(healthy);
     expect(md).toContain("**Health**: All clear");
@@ -879,6 +881,7 @@ describe("formatAscii", () => {
       totalIssues: 1,
       phases: [{ state: "Backlog", count: 1, issues: [] }],
       health: { ok: true, warnings: [] },
+      archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
     };
     const ascii = formatAscii(healthy);
     expect(ascii).toContain("Health: OK");
@@ -959,5 +962,218 @@ describe("buildDashboard", () => {
     const data = buildDashboard([], DEFAULT_HEALTH_CONFIG, NOW);
     const parsed = new Date(data.generatedAt);
     expect(parsed.getTime()).toBe(NOW);
+  });
+
+  it("includes archive stats in output", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 3 * DAY_MS).toISOString(),
+      }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.archive).toBeDefined();
+    expect(data.archive.archiveThresholdDays).toBe(14);
+    expect(data.archive.eligibleForArchive).toBe(1);
+    expect(data.archive.eligibleItems[0].number).toBe(1);
+    expect(data.archive.recentlyCompleted).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeArchiveStats
+// ---------------------------------------------------------------------------
+
+describe("computeArchiveStats", () => {
+  it("marks Done items beyond threshold as eligible", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+      }),
+    ];
+
+    const stats = computeArchiveStats(items, NOW, 14, 7);
+    expect(stats.eligibleForArchive).toBe(1);
+    expect(stats.eligibleItems[0].number).toBe(1);
+    expect(stats.eligibleItems[0].staleDays).toBe(20);
+  });
+
+  it("marks Canceled items beyond threshold as eligible", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Canceled",
+        updatedAt: new Date(NOW - 18 * DAY_MS).toISOString(),
+      }),
+    ];
+
+    const stats = computeArchiveStats(items, NOW, 14, 7);
+    expect(stats.eligibleForArchive).toBe(1);
+    expect(stats.eligibleItems[0].workflowState).toBe("Canceled");
+  });
+
+  it("does not mark Done items within threshold as eligible", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 5 * DAY_MS).toISOString(),
+      }),
+    ];
+
+    const stats = computeArchiveStats(items, NOW, 14, 7);
+    expect(stats.eligibleForArchive).toBe(0);
+  });
+
+  it("never marks non-terminal items as eligible", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 100 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "In Progress",
+        updatedAt: new Date(NOW - 100 * DAY_MS).toISOString(),
+      }),
+    ];
+
+    const stats = computeArchiveStats(items, NOW, 14, 7);
+    expect(stats.eligibleForArchive).toBe(0);
+  });
+
+  it("counts recently completed items within doneWindowDays", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 3 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 5 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 3,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+      }),
+    ];
+
+    const stats = computeArchiveStats(items, NOW, 14, 7);
+    expect(stats.recentlyCompleted).toBe(2);
+  });
+
+  it("sorts eligible items by staleDays descending", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 15 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 30 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 3,
+        workflowState: "Canceled",
+        updatedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+      }),
+    ];
+
+    const stats = computeArchiveStats(items, NOW, 14, 7);
+    expect(stats.eligibleItems.map((i) => i.number)).toEqual([2, 3, 1]);
+  });
+
+  it("uses closedAt when available, falls back to updatedAt", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        closedAt: new Date(NOW - 5 * DAY_MS).toISOString(), // closed recently
+      }),
+    ];
+
+    const stats = computeArchiveStats(items, NOW, 14, 7);
+    // Should use closedAt (5 days) not updatedAt (20 days), so NOT eligible
+    expect(stats.eligibleForArchive).toBe(0);
+    expect(stats.recentlyCompleted).toBe(1);
+  });
+
+  it("returns 0 eligible and 0 recent for empty items", () => {
+    const stats = computeArchiveStats([], NOW, 14, 7);
+    expect(stats.eligibleForArchive).toBe(0);
+    expect(stats.eligibleItems).toEqual([]);
+    expect(stats.recentlyCompleted).toBe(0);
+    expect(stats.archiveThresholdDays).toBe(14);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatMarkdown archive section
+// ---------------------------------------------------------------------------
+
+describe("formatMarkdown archive section", () => {
+  it("includes archive eligibility section with eligible items", () => {
+    const items = [
+      makeItem({
+        number: 42,
+        title: "Fix login timeout",
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 21 * DAY_MS).toISOString(),
+      }),
+    ];
+    const d = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(d);
+    expect(md).toContain("## Archive Eligibility");
+    expect(md).toContain("**Eligible for archive**: 1 items");
+    expect(md).toContain("| #42 | Fix login timeout | Done | 21 |");
+  });
+
+  it("shows 0 eligible with no table when nothing to archive", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 3 * DAY_MS).toISOString(),
+      }),
+    ];
+    const d = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(d);
+    expect(md).toContain("**Eligible for archive**: 0 items");
+    expect(md).not.toContain("| # | Title | State | Stale Days |");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatAscii archive section
+// ---------------------------------------------------------------------------
+
+describe("formatAscii archive section", () => {
+  it("includes archive summary line", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        updatedAt: new Date(NOW - 21 * DAY_MS).toISOString(),
+      }),
+    ];
+    const d = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const ascii = formatAscii(d);
+    expect(ascii).toContain("Archive: 1 eligible (threshold: 14d), 0 recent");
   });
 });
