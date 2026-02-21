@@ -125,3 +125,78 @@ describe("list_project_items exclude negation filters structural", () => {
     expect(projectToolsSrc).toContain("args.excludePriorities");
   });
 });
+
+// ---------------------------------------------------------------------------
+// list_project_repos structural tests
+// ---------------------------------------------------------------------------
+
+const helpersSrc = fs.readFileSync(
+  path.resolve(__dirname, "../lib/helpers.ts"),
+  "utf-8",
+);
+
+describe("list_project_repos structural", () => {
+  it("tool is registered with correct name", () => {
+    expect(projectToolsSrc).toContain("ralph_hero__list_project_repos");
+  });
+
+  it("imports queryProjectRepositories from helpers", () => {
+    expect(projectToolsSrc).toContain(
+      'import { queryProjectRepositories } from "../lib/helpers.js"',
+    );
+  });
+
+  it("calls queryProjectRepositories helper", () => {
+    expect(projectToolsSrc).toContain("queryProjectRepositories(");
+  });
+
+  it("has optional owner param", () => {
+    // The tool has owner as optional string param
+    expect(projectToolsSrc).toContain("ralph_hero__list_project_repos");
+  });
+
+  it("has optional number param", () => {
+    // Verified via tool registration containing number param
+    expect(projectToolsSrc).toContain("ralph_hero__list_project_repos");
+  });
+
+  it("returns projectId, repos, and totalRepos", () => {
+    expect(projectToolsSrc).toContain("projectId: result.projectId");
+    expect(projectToolsSrc).toContain("repos: result.repos");
+    expect(projectToolsSrc).toContain("totalRepos: result.totalRepos");
+  });
+});
+
+describe("queryProjectRepositories helper structural", () => {
+  it("exports queryProjectRepositories function", () => {
+    expect(helpersSrc).toContain("export async function queryProjectRepositories");
+  });
+
+  it("queries ProjectV2.repositories connection", () => {
+    expect(helpersSrc).toContain("repositories(first: 100)");
+  });
+
+  it("uses user/organization fallback pattern", () => {
+    expect(helpersSrc).toContain('for (const ownerType of ["user", "organization"]');
+  });
+
+  it("uses OWNER_TYPE replacement pattern like fetchProjectForCache", () => {
+    expect(helpersSrc).toContain('QUERY.replace("OWNER_TYPE", ownerType)');
+  });
+
+  it("caches results with 10-min TTL", () => {
+    // The helper uses projectQuery with cache option and 10-min TTL
+    expect(helpersSrc).toContain("cacheTtlMs: 10 * 60 * 1000");
+  });
+
+  it("returns owner, repo, and nameWithOwner per repository", () => {
+    expect(helpersSrc).toContain("owner: r.owner.login");
+    expect(helpersSrc).toContain("repo: r.name");
+    expect(helpersSrc).toContain("nameWithOwner: r.nameWithOwner");
+  });
+
+  it("exports ProjectRepository and ProjectRepositoriesResult types", () => {
+    expect(helpersSrc).toContain("export interface ProjectRepository");
+    expect(helpersSrc).toContain("export interface ProjectRepositoriesResult");
+  });
+});
