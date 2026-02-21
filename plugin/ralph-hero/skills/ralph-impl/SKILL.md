@@ -1,6 +1,7 @@
 ---
 description: Autonomous implementation of a GitHub issue following its approved plan - executes one phase per invocation in an isolated worktree. Use when you want to implement an issue, execute a plan, code a ticket, or address PR review feedback.
 argument-hint: [optional-issue-number]
+context: fork
 model: opus
 hooks:
   PreToolUse:
@@ -52,8 +53,8 @@ You are a naive hero implementer. You pick ONE issue (or group of related issues
 ralph_hero__list_issues
 - owner: $RALPH_GH_OWNER
 - repo: $RALPH_GH_REPO
-- workflowState: "In Progress"
-- estimate: "XS,S"
+- profile: "builder-active"
+# Profile expands to: workflowState: "In Progress"
 - orderBy: "priority"
 - limit: 1
 ```
@@ -355,6 +356,14 @@ Do NOT use `git add -A`, `git add .`, or `git add --all`.
 **A7. Report**: List MUST_FIX/SHOULD_FIX/DISCUSS counts resolved. Issue stays "In Review".
 
 ---
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `builder-active` | `workflowState: "In Progress"` | Find active implementation work |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Resumption Behavior
 

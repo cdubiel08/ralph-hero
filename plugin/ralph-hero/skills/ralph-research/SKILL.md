@@ -1,6 +1,7 @@
 ---
 description: Autonomous research on a GitHub issue - investigates codebase, creates research findings document, updates issue state. Use when you want to research an issue, investigate a ticket, or analyze codebase for planning.
 argument-hint: [optional-issue-number]
+context: fork
 model: opus
 hooks:
   PreToolUse:
@@ -43,7 +44,8 @@ If NOT on `main`, STOP: "Cannot run /ralph-research from branch: [branch-name]. 
 
 **If no issue number**:
 
-1. Call `ralph_hero__list_issues(owner, repo, workflowState="Research Needed", limit=50)`
+1. Call `ralph_hero__list_issues(owner, repo, profile="analyst-research", limit=50)`
+   <!-- Profile expands to: workflowState="Research Needed" -->
 2. Filter to XS/Small estimates
 3. Filter to unblocked issues:
    - An issue is blocked only if `blockedBy` points to issues **outside** its group that are not Done
@@ -77,6 +79,9 @@ If `update_workflow_state` returns an error, read the error message for valid st
    - **codebase-pattern-finder**: Find similar patterns to model after
    - **thoughts-locator**: Find existing research or decisions
    - **web-search-researcher**: External APIs, best practices (if needed)
+
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+
 4. **Wait for ALL sub-tasks** before proceeding
 5. **Synthesize findings** - combine results into coherent understanding
 6. **Document findings unbiasedly** - don't pre-judge the solution
@@ -162,6 +167,14 @@ Group status: [M of N] issues researched
 [If not]: Run /ralph-research to continue group research.
 Key recommendation: [One sentence]
 ```
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `analyst-research` | `workflowState: "Research Needed"` | Find items needing research |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Constraints
 

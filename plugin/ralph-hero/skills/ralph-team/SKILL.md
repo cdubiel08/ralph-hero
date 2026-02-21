@@ -127,9 +127,14 @@ Based on pipeline position (Section 3), create tasks with sequential blocking: R
 
 ### 4.3 Spawn Workers for Available Tasks
 
-Check TaskList for pending, unblocked tasks. Spawn one worker per role with available work (see Section 6 for spawn template). Workers self-claim -- no assignment messages needed.
+Check TaskList for pending, unblocked tasks. For each available task:
 
-For group research with multiple tasks: spawn up to 3 analysts (`analyst`, `analyst-2`, `analyst-3`).
+1. **Pre-assign ownership**: `TaskUpdate(taskId, owner="[role]")` -- sets owner BEFORE spawning
+2. **Spawn worker**: See Section 6 for spawn template
+
+Pre-assignment is atomic -- the task is owned before the worker's first turn begins. No race window exists.
+
+For group research with multiple tasks: pre-assign and spawn up to 3 analysts (`analyst`, `analyst-2`, `analyst-3`).
 
 ### 4.4 Dispatch Loop
 
@@ -151,8 +156,8 @@ Only when dispatch loop confirms no more work. Send `shutdown_request` to each t
 ## Section 5 - Behavioral Principles
 
 - **Delegate everything**: You never research, plan, review, or implement. You manage tasks and spawn workers.
-- **Workers are autonomous**: They self-claim from TaskList. Your job is ensuring workers exist, not assigning work.
-- **Never assign tasks**: Do NOT call TaskUpdate with `owner` to assign work. Do NOT send assignment messages via SendMessage. Pipeline handoffs are peer-to-peer (see shared/conventions.md).
+- **Workers are autonomous**: After their initial pre-assigned task, workers self-claim from TaskList. Your job is ensuring workers exist and pre-assigning their first task at spawn.
+- **Pre-assign at spawn, pull-based thereafter**: Call `TaskUpdate(taskId, owner="[role]")` immediately before spawning each worker. Do NOT assign tasks mid-pipeline or via SendMessage. Pipeline handoffs are peer-to-peer (see shared/conventions.md).
 - **Bias toward action**: When in doubt, check TaskList. When idle, query GitHub. Zero-gap lookahead.
 - **Hooks are your safety net**: Stop hook prevents premature shutdown. State hooks prevent invalid transitions. Trust them.
 - **Escalate and move on**: If stuck, escalate via GitHub comment (`__ESCALATE__` intent) and find other work. Never block on user input.
@@ -167,14 +172,14 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
    | Task subject contains | Role | Template | Agent type |
    |----------------------|------|----------|------------|
-   | "Triage" | analyst | `triager.md` | ralph-analyst |
-   | "Split" | analyst | `splitter.md` | ralph-analyst |
-   | "Research" | analyst | `researcher.md` | ralph-analyst |
-   | "Plan" (not "Review") | builder | `planner.md` | ralph-builder |
-   | "Review" | validator | `reviewer.md` | ralph-validator |
-   | "Implement" | builder | `implementer.md` | ralph-builder |
-   | "Create PR" | integrator | `integrator.md` | ralph-integrator |
-   | "Merge" or "Integrate" | integrator | `integrator.md` | ralph-integrator |
+   | "Triage" | analyst | `triager.md` | general-purpose |
+   | "Split" | analyst | `splitter.md` | general-purpose |
+   | "Research" | analyst | `researcher.md` | general-purpose |
+   | "Plan" (not "Review") | builder | `planner.md` | general-purpose |
+   | "Review" | validator | `reviewer.md` | general-purpose |
+   | "Implement" | builder | `implementer.md` | general-purpose |
+   | "Create PR" | integrator | `integrator.md` | general-purpose |
+   | "Merge" or "Integrate" | integrator | `integrator.md` | general-purpose |
 
 2. **Resolve template path**: `Bash("echo $CLAUDE_PLUGIN_ROOT")` to get the plugin root, then read:
    `Read(file_path="[resolved-root]/templates/spawn/{template}")`
@@ -190,12 +195,27 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
 4. **Spawn**:
    ```
-   Task(subagent_type="[agent-type]", team_name=TEAM_NAME, name="[role]",
+   Task(subagent_type="general-purpose", team_name=TEAM_NAME, name="[role]",
         prompt=[resolved template content],
         description="[Role] GH-NNN")
    ```
 
 See `shared/conventions.md` "Spawn Template Protocol" for full placeholder reference, authoring rules, and naming conventions.
+
+### Template Integrity
+
+**CRITICAL**: The resolved template content is the COMPLETE spawn prompt. Do NOT add any additional context.
+
+**Rules**:
+- The prompt passed to `Task()` must be the template output and NOTHING else
+- Resolved prompts must be under 10 lines. If longer, you have violated template integrity
+- The agent discovers all context it needs via skill invocation -- that is the entire point of HOP
+
+**Anti-patterns** (NEVER do these):
+- Prepending root cause analysis, research hints, or investigation guidance
+- Including file paths, code snippets, or architectural context not in the template
+- Replacing template content with custom multi-paragraph instructions
+- Adding "Key files:", "Context:", or "Background:" sections
 
 ### Per-Role Instance Limits
 
@@ -240,10 +260,9 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **Task status may lag**: Check work product directly (Glob, git log). If done, mark it yourself. If not, nudge then replace.
 - **Task list scoping**: All tasks MUST be created AFTER TeamCreate (Section 4.1).
 - **State trusts GitHub**: If workflow state is wrong, behavior will be wrong.
-- **Teammate GitHub access**: All 4 workers have scoped `ralph_hero__*` MCP tool access in their frontmatter. Analyst has the widest set (14 tools); validator has the narrowest (5 tools).
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
-- **Pull-based claiming**: Tasks MUST use consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these.
+- **Hybrid claiming**: Initial tasks are pre-assigned by the lead before spawning. Subsequent tasks use pull-based self-claim with consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these for self-claim.
 - **Task description = results channel**: Workers embed results via TaskUpdate description (REPLACE operation). Lead reads via TaskGet. If missing, check work product.
 - **Lead name hardcoded**: Always `"team-lead"`. Other names silently dropped.
 - **Fire-and-forget messages**: Wait 2 min, re-send once, then check manually.

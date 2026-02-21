@@ -8,6 +8,20 @@ type: research
 
 # Research: GH-23 - Multi-Repository Support for Cross-Repo Project Management
 
+## Architectural Direction (Updated 2026-02-20)
+
+**The project is the source of truth for repo identity — not environment variables.**
+
+After initial research, the design was refined:
+
+- `RALPH_GH_REPO` becomes **optional**. It is a tiebreaker hint when multiple repos are linked to the project, not a required configuration value.
+- Repo identity is **inferred** from the GitHub Projects V2 board via `ProjectV2.repositories`. If exactly one repo is linked, it is used automatically with no env var needed.
+- The `RALPH_GH_REPOS` multi-repo env var approach (Approach C below) is **explicitly rejected** as over-engineering. Inference from the project supersedes it.
+- **Bootstrap flow**: If no project exists yet, run `setup_project` (already implemented) → `link_repository` (already implemented) → repo is inferred going forward. No repo env var required.
+- The new Phase 1 scope is: implement `list_project_repos` tool + repo inference logic, making `RALPH_GH_REPO` optional.
+
+See updated issue #23 for full details.
+
 ## Problem Statement
 
 The ralph-hero MCP server is hardcoded to a single `RALPH_GH_OWNER/RALPH_GH_REPO` pair. Teams that split work across multiple repositories (frontend/backend/infra) but use one GitHub Projects V2 board cannot manage issues across repos. The issue proposes three options: multi-repo env config, per-call repo specification, and auto-detection from the project.
@@ -340,11 +354,13 @@ The repo name in the filename/path prevents collisions when the same issue numbe
 ## Recommended Next Steps
 
 1. **Split this XL issue** into phased sub-issues:
-   - Phase 1 (S): Add `list_project_repos` tool + enrich `list_project_items` with repo info
+   - Phase 1 (S): Add `list_project_repos` tool + repo inference logic (`RALPH_GH_REPO` becomes optional)
    - Phase 2 (M): Update skill artifact paths and comment formats for repo disambiguation
    - Phase 3 (L): Cross-repo group detection and dependency traversal
    - Phase 4 (S): Multi-repo aware scripts and hooks
 
-2. **Implement Phase 1 first** — it's additive, non-breaking, and enables agents to discover and operate on multi-repo projects using existing per-call overrides
+2. **Implement Phase 1 first** — it's additive, non-breaking, and makes `RALPH_GH_REPO` optional by inferring from the project's linked repositories
 
-3. **Validate with a real multi-repo project** — create a test project with items from 2 repos and verify Phase 1 tools work correctly
+3. **Bootstrap path**: `setup_project` → `link_repository` (both already implemented) → `list_project_repos` infers the repo. Zero env var config required for single-repo setups.
+
+4. **Validate with a real multi-repo project** — link 2 repos to a test project and verify inference handles both single and multiple repo cases correctly

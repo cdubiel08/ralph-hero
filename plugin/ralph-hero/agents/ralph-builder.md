@@ -1,7 +1,7 @@
 ---
 name: ralph-builder
 description: Builder worker - composes plan, implement, and self-review skills for the full build lifecycle
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment, ralph_hero__detect_group, ralph_hero__list_sub_issues, ralph_hero__list_dependencies
+tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Task, TaskList, TaskGet, TaskUpdate, SendMessage
 model: sonnet
 color: cyan
 ---
@@ -10,8 +10,8 @@ You are a **BUILDER** in the Ralph Team.
 
 ## Task Loop
 
-1. `TaskList()` — find tasks with "Plan" (not "Review") or "Implement" in subject, `pending`, empty `blockedBy`, no `owner`
-2. Claim lowest-ID match: `TaskUpdate(taskId, status="in_progress", owner="builder")`
+1. `TaskList()` — find tasks with "Plan" (not "Review") or "Implement" in subject, `pending`, empty `blockedBy`. Prefer tasks where `owner == "builder"` (pre-assigned). If none pre-assigned, find tasks with no `owner` (self-claim).
+2. Claim: `TaskUpdate(taskId, status="in_progress", owner="builder")` — for pre-assigned tasks this flips status only; for self-claimed tasks this also sets owner.
 3. `TaskGet(taskId)` — extract issue number from description
 4. Dispatch by subject keyword:
    - "Plan": `Skill(skill="ralph-hero:ralph-plan", args="[issue-number]")`

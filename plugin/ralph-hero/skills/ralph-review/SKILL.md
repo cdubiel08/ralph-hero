@@ -1,6 +1,7 @@
 ---
 description: Review and critique implementation plans before coding begins. INTERACTIVE mode for human review, AUTO mode for automated critique. Use when you want to review a plan, approve or reject a spec, or run quality gates on plans.
 argument-hint: <issue-number> [--interactive]
+context: fork
 model: opus
 hooks:
   PreToolUse:
@@ -64,8 +65,8 @@ Starting ralph-review in [INTERACTIVE/AUTO] mode
 ralph_hero__list_issues
 - owner: $RALPH_GH_OWNER
 - repo: $RALPH_GH_REPO
-- workflowState: "Plan in Review"
-- estimate: "XS,S"
+- profile: "validator-review"
+# Profile expands to: workflowState: "Plan in Review"
 - orderBy: "priority"
 - limit: 1
 ```
@@ -219,6 +220,8 @@ INSTRUCTIONS:
 }",
      description="Critique #NNN plan")
 ```
+
+> **Team Isolation**: Do NOT pass `team_name` to this critique `Task()` call or any sub-agent `Task()` calls within it. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
 
 **Wait for result**:
 ```
@@ -383,6 +386,14 @@ Run /ralph-plan NNN to address critique and update plan.
    ```
 
 3. STOP and report.
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `validator-review` | `workflowState: "Plan in Review"` | Find plans awaiting review |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Constraints
 

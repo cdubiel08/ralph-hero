@@ -10,6 +10,8 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { paginateConnection } from "../lib/pagination.js";
+import { parseDateMath } from "../lib/date-math.js";
+import { expandProfile } from "../lib/filter-profiles.js";
 import { toolSuccess, toolError } from "../types.js";
 import type {
   ProjectV2,
@@ -19,6 +21,7 @@ import type {
   ProjectV2SingleSelectField,
 } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
+import { queryProjectRepositories } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -376,6 +379,286 @@ export function registerProjectTools(
   );
 
   // -------------------------------------------------------------------------
+  // ralph_hero__list_projects
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__list_projects",
+    "List all GitHub Projects V2 for an owner (user or organization). Returns project summaries with item/field/view counts. Supports open/closed filtering.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe(
+          "GitHub owner (user or org). Defaults to RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var",
+        ),
+      state: z
+        .enum(["open", "closed", "all"])
+        .optional()
+        .default("open")
+        .describe(
+          'Filter by project state: "open" (default), "closed", or "all"',
+        ),
+      limit: z
+        .number()
+        .optional()
+        .default(50)
+        .describe("Maximum number of projects to return (default: 50, max: 100)"),
+    },
+    async (args) => {
+      try {
+        const owner = args.owner || resolveProjectOwner(client.config);
+        if (!owner) {
+          return toolError(
+            "owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)",
+          );
+        }
+
+        const maxItems = Math.min(args.limit ?? 50, 100);
+
+        const LIST_PROJECTS_QUERY = `
+          query($owner: String!, $cursor: String, $first: Int!) {
+            OWNER_TYPE(login: $owner) {
+              projectsV2(first: $first, after: $cursor, orderBy: {field: TITLE, direction: ASC}) {
+                totalCount
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id
+                  number
+                  title
+                  shortDescription
+                  public
+                  closed
+                  url
+                  items { totalCount }
+                  fields { totalCount }
+                  views { totalCount }
+                }
+              }
+            }
+          }
+        `;
+
+        interface ListProjectNode {
+          id: string;
+          number: number;
+          title: string;
+          shortDescription: string | null;
+          public: boolean;
+          closed: boolean;
+          url: string;
+          items?: { totalCount: number };
+          fields?: { totalCount: number };
+          views?: { totalCount: number };
+        }
+
+        let allProjects: ListProjectNode[] = [];
+        let totalCount: number | undefined;
+
+        for (const ownerType of ["user", "organization"] as const) {
+          try {
+            const result = await paginateConnection<ListProjectNode>(
+              (q, vars) => client.projectQuery(q, vars),
+              LIST_PROJECTS_QUERY.replace("OWNER_TYPE", ownerType),
+              { owner },
+              `${ownerType}.projectsV2`,
+              { maxItems },
+            );
+            allProjects = result.nodes;
+            totalCount = result.totalCount;
+            break;
+          } catch {
+            // Try next owner type
+          }
+        }
+
+        // Client-side state filtering
+        const filtered =
+          args.state === "all"
+            ? allProjects
+            : args.state === "closed"
+              ? allProjects.filter((p) => p.closed)
+              : allProjects.filter((p) => !p.closed);
+
+        const projects = filtered.map((p) => ({
+          id: p.id,
+          number: p.number,
+          title: p.title,
+          shortDescription: p.shortDescription,
+          public: p.public,
+          closed: p.closed,
+          url: p.url,
+          itemCount: p.items?.totalCount ?? 0,
+          fieldCount: p.fields?.totalCount ?? 0,
+          viewCount: p.views?.totalCount ?? 0,
+        }));
+
+        return toolSuccess({
+          owner,
+          state: args.state,
+          projects,
+          totalCount: totalCount ?? projects.length,
+          returnedCount: projects.length,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to list projects: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__copy_project
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__copy_project",
+    "Copy (duplicate) a GitHub Project V2, preserving views, custom fields, workflows, and insights. Does NOT copy items, collaborators, team links, or repository links.",
+    {
+      sourceProjectNumber: z
+        .number()
+        .describe("Project number of the source project to copy"),
+      sourceOwner: z
+        .string()
+        .optional()
+        .describe(
+          "Owner of the source project. Defaults to RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var",
+        ),
+      title: z.string().describe("Title for the new project"),
+      targetOwner: z
+        .string()
+        .optional()
+        .describe(
+          "Owner for the new project. Defaults to sourceOwner. Supports cross-owner copy (e.g., personal to org)",
+        ),
+      includeDraftIssues: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Include draft issues from the source project in the copy (default: false)",
+        ),
+    },
+    async (args) => {
+      try {
+        const sourceOwner =
+          args.sourceOwner || resolveProjectOwner(client.config);
+        if (!sourceOwner) {
+          return toolError(
+            "sourceOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)",
+          );
+        }
+
+        // Step 1: Resolve source project node ID via fetchProject
+        const sourceProject = await fetchProject(
+          client,
+          sourceOwner,
+          args.sourceProjectNumber,
+        );
+        if (!sourceProject) {
+          return toolError(
+            `Source project #${args.sourceProjectNumber} not found for owner "${sourceOwner}"`,
+          );
+        }
+
+        // Step 2: Resolve target owner node ID (try user first, then org)
+        const targetOwnerLogin = args.targetOwner || sourceOwner;
+        let targetOwnerId: string | undefined;
+
+        try {
+          const userResult = await client.query<{
+            user: { id: string } | null;
+          }>(
+            `query($login: String!) {
+              user(login: $login) { id }
+            }`,
+            { login: targetOwnerLogin },
+            { cache: true },
+          );
+          targetOwnerId = userResult.user?.id;
+        } catch {
+          // Not a user, try org below
+        }
+
+        if (!targetOwnerId) {
+          try {
+            const orgResult = await client.query<{
+              organization: { id: string } | null;
+            }>(
+              `query($login: String!) {
+                organization(login: $login) { id }
+              }`,
+              { login: targetOwnerLogin },
+              { cache: true },
+            );
+            targetOwnerId = orgResult.organization?.id;
+          } catch {
+            // Not an org either
+          }
+        }
+
+        if (!targetOwnerId) {
+          return toolError(
+            `Target owner "${targetOwnerLogin}" not found as user or organization`,
+          );
+        }
+
+        // Step 3: Execute copyProjectV2 mutation
+        const copyResult = await client.projectMutate<{
+          copyProjectV2: {
+            projectV2: {
+              id: string;
+              number: number;
+              url: string;
+              title: string;
+            };
+          };
+        }>(
+          `mutation($projectId: ID!, $ownerId: ID!, $title: String!, $includeDraftIssues: Boolean!) {
+            copyProjectV2(input: {
+              projectId: $projectId
+              ownerId: $ownerId
+              title: $title
+              includeDraftIssues: $includeDraftIssues
+            }) {
+              projectV2 {
+                id
+                number
+                url
+                title
+              }
+            }
+          }`,
+          {
+            projectId: sourceProject.id,
+            ownerId: targetOwnerId,
+            title: args.title,
+            includeDraftIssues: args.includeDraftIssues ?? false,
+          },
+        );
+
+        const newProject = copyResult.copyProjectV2.projectV2;
+
+        return toolSuccess({
+          project: {
+            id: newProject.id,
+            number: newProject.number,
+            url: newProject.url,
+            title: newProject.title,
+          },
+          copiedFrom: {
+            number: args.sourceProjectNumber,
+            owner: sourceOwner,
+            title: sourceProject.title,
+          },
+          note: "Copied views, custom fields, workflows, and insights. Items, collaborators, team links, and repository links were NOT copied.",
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to copy project: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // ralph_hero__list_project_items
   // -------------------------------------------------------------------------
   server.tool(
@@ -392,6 +675,13 @@ export function registerProjectTools(
         .describe(
           "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
         ),
+      profile: z
+        .string()
+        .optional()
+        .describe(
+          "Named filter profile (e.g., 'analyst-triage', 'builder-active'). " +
+            "Profile filters are defaults; explicit params override them.",
+        ),
       workflowState: z
         .string()
         .optional()
@@ -404,6 +694,59 @@ export function registerProjectTools(
         .string()
         .optional()
         .describe("Filter by Priority name (P0, P1, P2, P3)"),
+      has: z
+        .array(z.enum(["workflowState", "estimate", "priority", "labels", "assignees"]))
+        .optional()
+        .describe(
+          "Include only items where these fields are non-empty. " +
+          "Valid fields: workflowState, estimate, priority, labels, assignees",
+        ),
+      no: z
+        .array(z.enum(["workflowState", "estimate", "priority", "labels", "assignees"]))
+        .optional()
+        .describe(
+          "Include only items where these fields are empty/absent. " +
+          "Valid fields: workflowState, estimate, priority, labels, assignees",
+        ),
+      excludeWorkflowStates: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Workflow State names " +
+          '(e.g., ["Done", "Canceled"])',
+        ),
+      excludeEstimates: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Estimate values " +
+          '(e.g., ["M", "L", "XL"])',
+        ),
+      excludePriorities: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Priority values " +
+          '(e.g., ["P3"])',
+        ),
+      itemType: z
+        .enum(["ISSUE", "PULL_REQUEST", "DRAFT_ISSUE"])
+        .optional()
+        .describe(
+          "Filter by item type (ISSUE, PULL_REQUEST, DRAFT_ISSUE). Omit to include all types.",
+        ),
+      updatedSince: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated on or after this date. Supports date-math (@today-7d, @now-24h) or ISO dates.",
+        ),
+      updatedBefore: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated before this date. Supports date-math (@today-7d, @now-24h) or ISO dates.",
+        ),
       limit: z
         .number()
         .optional()
@@ -412,6 +755,16 @@ export function registerProjectTools(
     },
     async (args) => {
       try {
+        // Expand profile into filter defaults (explicit args override)
+        if (args.profile) {
+          const profileFilters = expandProfile(args.profile);
+          for (const [key, value] of Object.entries(profileFilters)) {
+            if (args[key as keyof typeof args] === undefined) {
+              (args as Record<string, unknown>)[key] = value;
+            }
+          }
+        }
+
         const owner = args.owner || resolveProjectOwner(client.config);
         const projectNumber = args.number || client.config.projectNumber;
 
@@ -429,6 +782,15 @@ export function registerProjectTools(
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
+
+        // When filters are active, fetch more items to ensure adequate results after filtering
+        const hasFilters = args.updatedSince || args.updatedBefore || args.itemType ||
+          (args.has && args.has.length > 0) ||
+          (args.no && args.no.length > 0) ||
+          (args.excludeWorkflowStates && args.excludeWorkflowStates.length > 0) ||
+          (args.excludeEstimates && args.excludeEstimates.length > 0) ||
+          (args.excludePriorities && args.excludePriorities.length > 0);
+        const maxItems = hasFilters ? 500 : (args.limit || 50);
 
         // Fetch all project items with field values
         const itemsResult = await paginateConnection<RawProjectItem>(
@@ -448,14 +810,17 @@ export function registerProjectTools(
                         title
                         state
                         url
+                        updatedAt
                         labels(first: 10) { nodes { name } }
                         assignees(first: 5) { nodes { login } }
+                        repository { nameWithOwner name owner { login } }
                       }
                       ... on PullRequest {
                         number
                         title
                         state
                         url
+                        repository { nameWithOwner name owner { login } }
                       }
                       ... on DraftIssue {
                         title
@@ -487,13 +852,18 @@ export function registerProjectTools(
               }
             }
           }`,
-          { projectId, first: Math.min(args.limit || 50, 100) },
+          { projectId, first: Math.min(maxItems, 100) },
           "node.items",
-          { maxItems: args.limit || 50 },
+          { maxItems },
         );
 
         // Filter items by field values
         let items = itemsResult.nodes;
+
+        // Filter by item type (broadest filter first to reduce working set)
+        if (args.itemType) {
+          items = items.filter((item) => item.type === args.itemType);
+        }
 
         if (args.workflowState) {
           items = items.filter(
@@ -514,6 +884,73 @@ export function registerProjectTools(
           );
         }
 
+        // Filter by field presence (has)
+        if (args.has && args.has.length > 0) {
+          items = items.filter((item) =>
+            args.has!.every((field) => hasField(item, field as PresenceField)),
+          );
+        }
+
+        // Filter by field absence (no)
+        if (args.no && args.no.length > 0) {
+          items = items.filter((item) =>
+            args.no!.every((field) => !hasField(item, field as PresenceField)),
+          );
+        }
+
+        // Filter by excluded workflow states
+        if (args.excludeWorkflowStates && args.excludeWorkflowStates.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludeWorkflowStates!.includes(
+                getFieldValue(item, "Workflow State") ?? "",
+              ),
+          );
+        }
+
+        // Filter by excluded estimates
+        if (args.excludeEstimates && args.excludeEstimates.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludeEstimates!.includes(
+                getFieldValue(item, "Estimate") ?? "",
+              ),
+          );
+        }
+
+        // Filter by excluded priorities
+        if (args.excludePriorities && args.excludePriorities.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludePriorities!.includes(
+                getFieldValue(item, "Priority") ?? "",
+              ),
+          );
+        }
+
+        // Filter by updatedSince
+        if (args.updatedSince) {
+          const since = parseDateMath(args.updatedSince).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() >= since : false;
+          });
+        }
+
+        // Filter by updatedBefore
+        if (args.updatedBefore) {
+          const before = parseDateMath(args.updatedBefore).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() < before : false;
+          });
+        }
+
+        // Apply limit after filtering
+        items = items.slice(0, args.limit || 50);
+
         // Format response
         const formattedItems = items.map((item) => {
           const content = item.content as Record<string, unknown> | null;
@@ -524,6 +961,10 @@ export function registerProjectTools(
             title: content?.title,
             state: content?.state,
             url: content?.url,
+            updatedAt: content?.updatedAt ?? null,
+            owner: (content?.repository as { owner?: { login?: string } })?.owner?.login ?? null,
+            repo: (content?.repository as { name?: string })?.name ?? null,
+            nameWithOwner: (content?.repository as { nameWithOwner?: string })?.nameWithOwner ?? null,
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),
@@ -544,6 +985,66 @@ export function registerProjectTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to list project items: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__list_project_repos
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__list_project_repos",
+    "List all repositories linked to a GitHub Project V2. Returns owner, name, and nameWithOwner for each linked repo.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe(
+          "GitHub owner (user or org). Defaults to RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var",
+        ),
+      number: z
+        .number()
+        .optional()
+        .describe(
+          "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
+        ),
+    },
+    async (args) => {
+      try {
+        const owner = args.owner || resolveProjectOwner(client.config);
+        const projectNumber = args.number || client.config.projectNumber;
+
+        if (!owner) {
+          return toolError(
+            "owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)",
+          );
+        }
+        if (!projectNumber) {
+          return toolError(
+            "number is required (set RALPH_GH_PROJECT_NUMBER env var or pass explicitly)",
+          );
+        }
+
+        const result = await queryProjectRepositories(
+          client,
+          owner,
+          projectNumber,
+        );
+
+        if (!result) {
+          return toolError(
+            `Project #${projectNumber} not found for owner "${owner}"`,
+          );
+        }
+
+        return toolSuccess({
+          projectId: result.projectId,
+          repos: result.repos,
+          totalRepos: result.totalRepos,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to list project repos: ${message}`);
       }
     },
   );
@@ -579,6 +1080,29 @@ function getFieldValue(
       fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fieldValue?.name;
+}
+
+type PresenceField = "workflowState" | "estimate" | "priority" | "labels" | "assignees";
+
+function hasField(item: RawProjectItem, field: PresenceField): boolean {
+  switch (field) {
+    case "workflowState":
+      return getFieldValue(item, "Workflow State") !== undefined;
+    case "estimate":
+      return getFieldValue(item, "Estimate") !== undefined;
+    case "priority":
+      return getFieldValue(item, "Priority") !== undefined;
+    case "labels": {
+      const content = item.content as Record<string, unknown> | null;
+      const labels = (content?.labels as { nodes: Array<{ name: string }> })?.nodes || [];
+      return labels.length > 0;
+    }
+    case "assignees": {
+      const content = item.content as Record<string, unknown> | null;
+      const assignees = (content?.assignees as { nodes: Array<{ login: string }> })?.nodes || [];
+      return assignees.length > 0;
+    }
+  }
 }
 
 async function fetchProject(

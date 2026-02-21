@@ -94,13 +94,13 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 
 ### Pipeline Order
 
-| Current Role (agentType) | Next Stage | agentType to find |
+| Current Worker (name) | Next Stage | Worker name to find |
 |---|---|---|
-| `ralph-analyst` | Builder | `ralph-builder` |
-| `ralph-builder` (plan done) | Validator | `ralph-validator` (if `RALPH_REVIEW_MODE=interactive`) |
-| `ralph-builder` (impl done) | Integrator (PR creation) | `ralph-integrator` |
-| `ralph-validator` (approved) | Builder | `ralph-builder` |
-| `ralph-validator` (rejected) | Builder (re-plan) | `ralph-builder` |
+| `analyst` | Builder | `builder` |
+| `builder` (plan done) | Validator | `validator` (if `RALPH_REVIEW_MODE=interactive`) |
+| `builder` (impl done) | Integrator (PR creation) | `integrator` |
+| `validator` (approved) | Builder | `builder` |
+| `validator` (rejected) | Builder (re-plan) | `builder` |
 
 ### Handoff Procedure (after completing a task)
 
@@ -108,7 +108,7 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 2. If found: self-claim and continue (no handoff needed)
 3. If none available: hand off to the next-stage peer:
    - Read team config at `~/.claude/teams/[TEAM_NAME]/config.json`
-   - Find the member whose `agentType` matches your "Next Stage" from the table above
+   - Find the member whose `name` matches your "Next Stage" from the table above
    - SendMessage using the member's `name` field:
      ```
      SendMessage(
@@ -130,7 +130,7 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 
 ### Rules
 
-- **Never use TaskUpdate with `owner` parameter** to assign tasks to other teammates. Workers self-claim only.
+- **Lead pre-assigns at spawn only**: The lead sets `owner` via `TaskUpdate` immediately before spawning a worker. After spawn, workers self-claim subsequent tasks. Do NOT assign tasks mid-pipeline via TaskUpdate or SendMessage.
 - **SendMessage is fire-and-forget** -- no acknowledgment mechanism. The handoff wakes the peer; they self-claim from TaskList.
 - **Lead gets visibility** via idle notification DM summaries -- no need to CC the lead on handoffs.
 - **Multiple handoffs are fine** -- if 3 analysts complete and all message the builder, the builder wakes 3 times and claims one task each time.
@@ -214,24 +214,38 @@ The `{GROUP_CONTEXT}` line is removed entirely.
 
 ### Template Naming Convention
 
-Templates are named by role: `{role}.md` matching the agent type:
+Templates are named by role, selected via task subject keyword:
 
-| Agent type | Template |
-|------------|----------|
-| `ralph-analyst` agent (triage mode) | `triager.md` |
-| `ralph-analyst` agent (split mode) | `splitter.md` |
-| `ralph-analyst` agent (research mode) | `researcher.md` |
-| `ralph-builder` agent (plan mode) | `planner.md` |
-| `ralph-builder` agent (implement mode) | `implementer.md` |
-| `ralph-validator` agent | `reviewer.md` |
-| `ralph-integrator` agent | `integrator.md` |
+| Role (task subject) | Template |
+|---------------------|----------|
+| Analyst (triage) | `triager.md` |
+| Analyst (split) | `splitter.md` |
+| Analyst (research) | `researcher.md` |
+| Builder (plan) | `planner.md` |
+| Builder (implement) | `implementer.md` |
+| Validator (review) | `reviewer.md` |
+| Integrator (create PR / merge) | `integrator.md` |
 
 ### Template Authoring Rules
 
 - Templates MUST be under 15 lines
 - DO NOT include: conversation history, document contents, code snippets, assignment instructions
 - Teammates message the lead using `recipient="team-lead"` exactly
-- Result reporting follows the agent's `.md` definition, not the spawn template
+- Result reporting follows the inline format in the spawn template (via `TaskUpdate`)
+
+### Template Integrity
+
+Resolved template content is the COMPLETE prompt for spawned teammates. Orchestrators MUST NOT add context beyond placeholder substitution.
+
+**Line-count guardrail**: A correctly resolved prompt is 5-8 lines. If the prompt exceeds 10 lines, the orchestrator has violated template integrity by adding prohibited context.
+
+**Prohibited additions**:
+- Research hints, root cause analysis, or investigation guidance
+- File paths or code snippets not present in the template
+- Custom instructions replacing or augmenting template content
+- "Key files:", "Context:", "Background:" sections
+
+**Why this matters**: Agents invoke skills in isolated context windows. When the orchestrator front-loads context, agents skip skill invocation and work directly, bypassing hook enforcement and postcondition validation.
 
 ## Skill Invocation Convention
 
@@ -251,19 +265,40 @@ This ensures:
 - Token usage is isolated per skill invocation
 - Results are returned as a summary, not full conversation
 
-### Exception: Team Agents
+### Note: Team Agents
 
-When agents are spawned as team members, the agent IS the subprocess. The agent invokes the skill inline:
+Team members are spawned as `general-purpose` subagents via `Task()`, so they follow the same isolation pattern as the default. Each team member invokes its skill inline:
 
 ```
 Skill(skill="ralph-hero:ralph-research", args="42")
 ```
 
-This is acceptable because the agent already has its own isolated context window via the team system.
+This works because the team system provides isolated context windows, identical to `Task()` subprocesses.
 
 ### Exception: Direct User Invocation
 
 Users invoking skills directly (e.g., `/ralph-research 42`) run inline in their session. This is the expected behavior for interactive use.
+
+## Sub-Agent Team Isolation
+
+Skills that spawn internal sub-agents via `Task()` (e.g., `codebase-locator`, `codebase-analyzer`, `codebase-pattern-finder`) must ensure those sub-agents do NOT inherit team context.
+
+**Rule**: Never pass `team_name` to internal `Task()` calls within skills. Sub-agents are utility workers that return results to the skill -- they are not team members.
+
+**Why**: When a skill runs inside a team worker's session (via `ralph-team`), the `context: fork` setting isolates the context window but does NOT isolate the team session environment. If internal `Task()` calls inherit team context, sub-agents enroll as phantom teammates, generating idle notifications that flood the team lead.
+
+**Correct**:
+```
+Task(subagent_type="codebase-locator", prompt="Find files related to ...")
+Task(subagent_type="codebase-analyzer", prompt="Analyze component ...")
+```
+
+**Incorrect**:
+```
+Task(subagent_type="codebase-locator", team_name=TEAM_NAME, prompt="Find files related to ...")
+```
+
+This applies to all skills that spawn internal sub-agents: ralph-research, ralph-plan, ralph-split, ralph-triage, and ralph-review. See individual SKILL.md files for inline reminders.
 
 ## Artifact Comment Protocol
 

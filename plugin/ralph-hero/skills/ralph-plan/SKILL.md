@@ -1,6 +1,7 @@
 ---
 description: Create implementation plan for a GitHub issue from research findings - phased plan with file ownership, success criteria, and verification steps. Use when you want to plan an issue, create a spec, or write an implementation plan.
 argument-hint: [optional-issue-number]
+context: fork
 model: opus
 hooks:
   PreToolUse:
@@ -81,7 +82,8 @@ Then STOP. Do not proceed.
 
 1. **Query issues in Ready for Plan**:
    ```
-   ralph_hero__list_issues(owner, repo, workflowState="Ready for Plan", limit=50)
+   ralph_hero__list_issues(owner, repo, profile="builder-planned", limit=50)
+   # Profile expands to: workflowState="Ready for Plan"
    ```
 
 2. **Filter to XS/Small** estimates ("XS" or "S")
@@ -124,6 +126,9 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 3. **Spawn sub-tasks** for research gaps:
    - `Task(subagent_type="codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
    - `Task(subagent_type="codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
+
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+
 4. **Wait for sub-tasks** before proceeding
 
 ### Step 3: Transition to Plan in Progress
@@ -243,6 +248,14 @@ Ready for human review.
 ## Escalation Protocol
 
 See shared/conventions.md for full escalation protocol. Use `command="ralph_plan"` in state transitions.
+
+## Available Filter Profiles
+
+| Profile | Expands To | Use Case |
+|---------|-----------|----------|
+| `builder-planned` | `workflowState: "Ready for Plan"` | Find issues ready for planning |
+
+Profiles set default filters. Explicit params override profile defaults.
 
 ## Constraints
 

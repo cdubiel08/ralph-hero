@@ -1,0 +1,91 @@
+name: Route Issues
+
+on:
+  issues:
+    types: [opened, labeled]
+  pull_request:
+    types: [opened, ready_for_review]
+  workflow_call:
+    inputs:
+      config-path:
+        description: 'Path to routing config in the caller repo'
+        required: false
+        type: string
+        default: '.ralph-routing.yml'
+      project-number:
+        description: 'Default GitHub Projects V2 number (overrides rule-level defaults)'
+        required: false
+        type: string
+        default: ''
+      project-owner:
+        description: 'GitHub owner of the target project (defaults to repo owner)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      routing-pat:
+        description: 'GitHub PAT with repo + project scopes'
+        required: true
+
+# Prevent concurrent routing for the same issue/PR.
+# cancel-in-progress: false ensures a routing run isn't killed mid-mutation.
+concurrency:
+  group: route-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout routing script (cross-repo calls)
+        if: github.repository != 'cdubiel08/ralph-hero'
+        uses: actions/checkout@v4
+        with:
+          repository: cdubiel08/ralph-hero
+          path: .ralph-hero
+          sparse-checkout: scripts/routing
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify ROUTING_PAT is set
+        run: |
+          if [ -z "$ROUTING_PAT" ]; then
+            echo "::error::ROUTING_PAT secret is not set. GITHUB_TOKEN cannot write to Projects V2."
+            exit 1
+          fi
+        env:
+          ROUTING_PAT: ${{ secrets.routing-pat || secrets.ROUTING_PAT }}
+
+      - name: Route issue or PR
+        env:
+          # ROUTING_PAT: via workflow_call secret (routing-pat) or direct repo secret (ROUTING_PAT).
+          # Required scopes: repo + project (GITHUB_TOKEN cannot write to Projects V2).
+          ROUTING_PAT: ${{ secrets.routing-pat || secrets.ROUTING_PAT }}
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO: ${{ github.event.repository.name }}
+          # Issue number (issues event) OR PR number (pull_request event)
+          ITEM_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          # JSON array of label objects: [{ name, color, ... }]
+          ITEM_LABELS: ${{ toJSON(github.event.issue.labels || github.event.pull_request.labels) }}
+          # Derive event type from payload — github.event_name is "workflow_call" for reusable calls
+          EVENT_NAME: ${{ github.event.issue && 'issues' || 'pull_request' }}
+          # Path to routing config (from workflow_call input or default)
+          RALPH_ROUTING_CONFIG: ${{ inputs.config-path || '.ralph-routing.yml' }}
+          # Optional: default project overrides from workflow_call inputs
+          RALPH_PROJECT_NUMBER: ${{ inputs.project-number || '' }}
+          RALPH_PROJECT_OWNER: ${{ inputs.project-owner || '' }}
+          # Optional: default project number for fallback routing when no rules match
+          ROUTING_DEFAULT_PROJECT: ${{ vars.ROUTING_DEFAULT_PROJECT }}
+        run: |
+          if [ -d ".ralph-hero/scripts/routing" ]; then
+            SCRIPT_DIR=".ralph-hero/scripts/routing"
+          else
+            SCRIPT_DIR="scripts/routing"
+          fi
+          cd "$SCRIPT_DIR" && npm ci && node route.js

@@ -318,6 +318,139 @@ export async function getCurrentFieldValue(
 }
 
 // ---------------------------------------------------------------------------
+// Helper: Query project-linked repositories
+// ---------------------------------------------------------------------------
+
+export interface ProjectRepository {
+  owner: string;
+  repo: string;
+  nameWithOwner: string;
+}
+
+export interface ProjectRepositoriesResult {
+  projectId: string;
+  repos: ProjectRepository[];
+  totalRepos: number;
+}
+
+/**
+ * Query all repositories linked to a GitHub Project V2.
+ * Uses the same user/organization fallback pattern as fetchProjectForCache.
+ * Results are cached for 10 minutes via projectQuery cache option.
+ */
+export async function queryProjectRepositories(
+  client: GitHubClient,
+  owner: string,
+  projectNumber: number,
+): Promise<ProjectRepositoriesResult | null> {
+  const QUERY = `query($owner: String!, $number: Int!) {
+    OWNER_TYPE(login: $owner) {
+      projectV2(number: $number) {
+        id
+        repositories(first: 100) {
+          totalCount
+          nodes {
+            owner { login }
+            name
+            nameWithOwner
+          }
+        }
+      }
+    }
+  }`;
+
+  for (const ownerType of ["user", "organization"]) {
+    try {
+      const result = await client.projectQuery<
+        Record<string, {
+          projectV2: {
+            id: string;
+            repositories: {
+              totalCount: number;
+              nodes: Array<{
+                owner: { login: string };
+                name: string;
+                nameWithOwner: string;
+              }>;
+            };
+          } | null;
+        }>
+      >(
+        QUERY.replace("OWNER_TYPE", ownerType),
+        { owner, number: projectNumber },
+        { cache: true, cacheTtlMs: 10 * 60 * 1000 },
+      );
+      const project = result[ownerType]?.projectV2;
+      if (project) {
+        return {
+          projectId: project.id,
+          repos: project.repositories.nodes.map((r) => ({
+            owner: r.owner.login,
+            repo: r.name,
+            nameWithOwner: r.nameWithOwner,
+          })),
+          totalRepos: project.repositories.totalCount,
+        };
+      }
+    } catch {
+      // Try next owner type
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Infer repo from project-linked repositories
+// ---------------------------------------------------------------------------
+
+/**
+ * Infer repo from the project's linked repositories when RALPH_GH_REPO is not set.
+ *
+ * Rules:
+ * - If client.config.repo is already set → return it (env var takes precedence)
+ * - If exactly 1 repo linked → use it, cache in client.config.repo
+ * - If 0 repos linked → throw with bootstrap instructions
+ * - If 2+ repos linked → throw with list of repos and hint to set RALPH_GH_REPO
+ */
+export async function resolveRepoFromProject(client: GitHubClient): Promise<string> {
+  if (client.config.repo) return client.config.repo;
+
+  const projectNumber = client.config.projectNumber;
+  const projectOwner = resolveProjectOwner(client.config);
+
+  if (!projectNumber || !projectOwner) {
+    throw new Error(
+      "Cannot infer repo: RALPH_GH_PROJECT_NUMBER and RALPH_GH_OWNER (or RALPH_GH_PROJECT_OWNER) are required. " +
+      "Set RALPH_GH_REPO explicitly, or configure project settings first."
+    );
+  }
+
+  const result = await queryProjectRepositories(client, projectOwner, projectNumber);
+
+  if (!result || result.totalRepos === 0) {
+    throw new Error(
+      "No repositories linked to project. Cannot infer repo. " +
+      "Bootstrap: run link_repository to link a repo to your project, then restart."
+    );
+  }
+
+  if (result.totalRepos === 1) {
+    const inferred = result.repos[0];
+    client.config.repo = inferred.repo;
+    if (!client.config.owner) {
+      client.config.owner = inferred.owner;
+    }
+    return inferred.repo;
+  }
+
+  const repoList = result.repos.map(r => r.nameWithOwner).join(", ");
+  throw new Error(
+    `Multiple repos linked to project: ${repoList}. ` +
+    "Set RALPH_GH_REPO to select which repo to use as default."
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helper: Resolve required owner/repo with defaults
 // ---------------------------------------------------------------------------
 
@@ -333,7 +466,7 @@ export function resolveConfig(
     );
   if (!repo)
     throw new Error(
-      "repo is required (set RALPH_GH_REPO env var or pass explicitly)",
+      "repo is required. Set RALPH_GH_REPO env var, pass repo explicitly, or link exactly one repo to your project.",
     );
   return { owner, repo };
 }

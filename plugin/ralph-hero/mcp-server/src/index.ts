@@ -13,6 +13,7 @@ import { z } from "zod";
 import { createGitHubClient, type GitHubClient } from "./github-client.js";
 import { FieldOptionCache } from "./lib/cache.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "./types.js";
+import { resolveRepoFromProject } from "./lib/helpers.js";
 import { registerProjectTools } from "./tools/project-tools.js";
 import { registerViewTools } from "./tools/view-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
@@ -20,6 +21,9 @@ import { registerRelationshipTools } from "./tools/relationship-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
+import { registerHygieneTools } from "./tools/hygiene-tools.js";
+import { registerRoutingTools } from "./tools/routing-tools.js";
+import { registerSyncTools } from "./tools/sync-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -69,10 +73,10 @@ function initGitHubClient(): GitHubClient {
     ? parseInt(resolveEnv("RALPH_GH_PROJECT_NUMBER")!, 10)
     : undefined;
 
-  if (!owner || !repo) {
+  if (!owner) {
     console.error(
-      "[ralph-hero] Warning: RALPH_GH_OWNER and/or RALPH_GH_REPO not set.\n" +
-        "Most tools require these. Set them in your environment or .claude/ralph-hero.local.md",
+      "[ralph-hero] Warning: RALPH_GH_OWNER not set.\n" +
+        "Most tools require this. Set in your environment or .claude/ralph-hero.local.md",
     );
   }
 
@@ -275,6 +279,20 @@ async function main(): Promise<void> {
 
   const client = initGitHubClient();
 
+  // Attempt lazy repo inference from project (non-fatal)
+  try {
+    await resolveRepoFromProject(client);
+    if (client.config.repo) {
+      console.error(
+        `[ralph-hero] Repo: ${client.config.owner}/${client.config.repo}${resolveEnv("RALPH_GH_REPO") ? "" : " (inferred from project)"}`,
+      );
+    }
+  } catch (e) {
+    console.error(
+      `[ralph-hero] Repo inference skipped: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
   const server = new McpServer({
     name: "ralph-hero",
     version: "1.0.0",
@@ -304,6 +322,15 @@ async function main(): Promise<void> {
 
   // Project management tools (archive, remove, add, link repo, clear field)
   registerProjectManagementTools(server, client, fieldCache);
+
+  // Hygiene reporting tools
+  registerHygieneTools(server, client, fieldCache);
+
+  // Routing config management tools
+  registerRoutingTools(server, client, fieldCache);
+
+  // Cross-project sync tools
+  registerSyncTools(server, client, fieldCache);
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

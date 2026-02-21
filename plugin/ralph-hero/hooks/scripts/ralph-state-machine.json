@@ -67,7 +67,7 @@
       "description": "Ticket completed",
       "allowed_transitions": [],
       "required_by_commands": [],
-      "produces_for_commands": ["ralph_triage", "ralph_impl"],
+      "produces_for_commands": ["ralph_triage", "ralph_impl", "ralph_merge"],
       "is_terminal": true
     },
     "Canceled": {
@@ -191,6 +191,19 @@
         "Ticket reached In Review or escalated to Human Needed"
       ]
     },
+    "ralph_merge": {
+      "description": "Transition issues to Done after PR merge",
+      "valid_input_states": ["In Review"],
+      "valid_output_states": ["Done", "Human Needed"],
+      "preconditions": [
+        "PR must be merged",
+        "Ticket must be in In Review state"
+      ],
+      "postconditions": [
+        "Ticket moved to Done",
+        "GitHub issue closed via PR auto-link"
+      ]
+    },
     "ralph_review": {
       "description": "Review implementation plans before execution",
       "valid_input_states": ["Plan in Review"],
@@ -274,7 +287,8 @@
       "ralph_plan": "Plan in Review",
       "ralph_impl": "In Review",
       "ralph_review": "In Progress",
-      "ralph_split": "Backlog"
+      "ralph_split": "Backlog",
+      "ralph_merge": "Done"
     },
     "__ESCALATE__": {
       "*": "Human Needed"

@@ -22,6 +22,8 @@ import {
   LOCK_STATES,
 } from "../lib/workflow-states.js";
 import { resolveState } from "../lib/state-resolution.js";
+import { parseDateMath } from "../lib/date-math.js";
+import { expandProfile } from "../lib/filter-profiles.js";
 import { toolSuccess, toolError } from "../types.js";
 import {
   ensureFieldCache,
@@ -60,6 +62,13 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      profile: z
+        .string()
+        .optional()
+        .describe(
+          "Named filter profile (e.g., 'analyst-triage', 'builder-active'). " +
+            "Profile filters are defaults; explicit params override them.",
+        ),
       workflowState: z
         .string()
         .optional()
@@ -79,19 +88,89 @@ export function registerIssueTools(
         .optional()
         .default("OPEN")
         .describe("Issue state filter (default: OPEN)"),
+      reason: z
+        .enum(["completed", "not_planned", "reopened"])
+        .optional()
+        .describe(
+          "Filter by close reason: completed, not_planned, reopened",
+        ),
+      has: z
+        .array(z.enum(["workflowState", "estimate", "priority", "labels", "assignees"]))
+        .optional()
+        .describe(
+          "Include only items where these fields are non-empty. " +
+          "Valid fields: workflowState, estimate, priority, labels, assignees",
+        ),
+      no: z
+        .array(z.enum(["workflowState", "estimate", "priority", "labels", "assignees"]))
+        .optional()
+        .describe(
+          "Include only items where these fields are empty/absent. " +
+          "Valid fields: workflowState, estimate, priority, labels, assignees",
+        ),
+      excludeWorkflowStates: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Workflow State names " +
+          '(e.g., ["Done", "Canceled"])',
+        ),
+      excludeEstimates: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Estimate values " +
+          '(e.g., ["M", "L", "XL"])',
+        ),
+      excludePriorities: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items matching any of these Priority values " +
+          '(e.g., ["P3"])',
+        ),
+      excludeLabels: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Exclude items that have ANY of these labels " +
+          '(e.g., ["wontfix", "duplicate"])',
+        ),
+      updatedSince: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated on or after this date. Supports date-math (@today-7d, @now-24h) or ISO dates (YYYY-MM-DD).",
+        ),
+      updatedBefore: z
+        .string()
+        .optional()
+        .describe(
+          "Include items updated before this date. Supports date-math (@today-7d, @now-24h) or ISO dates (YYYY-MM-DD).",
+        ),
       orderBy: z
         .enum(["CREATED_AT", "UPDATED_AT", "COMMENTS"])
         .optional()
         .default("CREATED_AT")
         .describe("Order by field"),
       limit: z
-        .number()
+        .coerce.number()
         .optional()
         .default(50)
         .describe("Max items to return (default 50)"),
     },
     async (args) => {
       try {
+        // Expand profile into filter defaults (explicit args override)
+        if (args.profile) {
+          const profileFilters = expandProfile(args.profile);
+          for (const [key, value] of Object.entries(profileFilters)) {
+            if (args[key as keyof typeof args] === undefined) {
+              (args as Record<string, unknown>)[key] = value;
+            }
+          }
+        }
+
         const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
           client,
           args,
@@ -123,6 +202,7 @@ export function registerIssueTools(
                         title
                         body
                         state
+                        stateReason
                         url
                         createdAt
                         updatedAt
@@ -163,6 +243,15 @@ export function registerIssueTools(
           });
         }
 
+        // Filter by close reason (stateReason)
+        if (args.reason) {
+          const reasonUpper = args.reason.toUpperCase();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            return content?.stateReason === reasonUpper;
+          });
+        }
+
         // Filter by workflow state
         if (args.workflowState) {
           items = items.filter(
@@ -196,6 +285,60 @@ export function registerIssueTools(
           });
         }
 
+        // Filter by field presence (has)
+        if (args.has && args.has.length > 0) {
+          items = items.filter((item) =>
+            args.has!.every((field) => hasField(item, field as PresenceField)),
+          );
+        }
+
+        // Filter by field absence (no)
+        if (args.no && args.no.length > 0) {
+          items = items.filter((item) =>
+            args.no!.every((field) => !hasField(item, field as PresenceField)),
+          );
+        }
+
+        // Filter by excluded workflow states
+        if (args.excludeWorkflowStates && args.excludeWorkflowStates.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludeWorkflowStates!.includes(
+                getFieldValue(item, "Workflow State") ?? "",
+              ),
+          );
+        }
+
+        // Filter by excluded estimates
+        if (args.excludeEstimates && args.excludeEstimates.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludeEstimates!.includes(
+                getFieldValue(item, "Estimate") ?? "",
+              ),
+          );
+        }
+
+        // Filter by excluded priorities
+        if (args.excludePriorities && args.excludePriorities.length > 0) {
+          items = items.filter(
+            (item) =>
+              !args.excludePriorities!.includes(
+                getFieldValue(item, "Priority") ?? "",
+              ),
+          );
+        }
+
+        // Filter by excluded labels
+        if (args.excludeLabels && args.excludeLabels.length > 0) {
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const labels =
+              (content?.labels as { nodes: Array<{ name: string }> })?.nodes || [];
+            return !labels.some((l) => args.excludeLabels!.includes(l.name));
+          });
+        }
+
         // Filter by search query (simple title/body substring match)
         if (args.query) {
           const q = args.query.toLowerCase();
@@ -204,6 +347,26 @@ export function registerIssueTools(
             const title = ((content?.title as string) || "").toLowerCase();
             const body = ((content?.body as string) || "").toLowerCase();
             return title.includes(q) || body.includes(q);
+          });
+        }
+
+        // Filter by updatedSince
+        if (args.updatedSince) {
+          const since = parseDateMath(args.updatedSince).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() >= since : false;
+          });
+        }
+
+        // Filter by updatedBefore
+        if (args.updatedBefore) {
+          const before = parseDateMath(args.updatedBefore).getTime();
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const updatedAt = content?.updatedAt as string | undefined;
+            return updatedAt ? new Date(updatedAt).getTime() < before : false;
           });
         }
 
@@ -228,7 +391,9 @@ export function registerIssueTools(
             number: content?.number,
             title: content?.title,
             state: content?.state,
+            stateReason: content?.stateReason ?? null,
             url: content?.url,
+            updatedAt: content?.updatedAt ?? null,
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),
@@ -268,7 +433,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       includeGroup: z
         .boolean()
         .optional()
@@ -778,7 +943,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       title: z.string().optional().describe("New issue title"),
       body: z.string().optional().describe("New issue body (Markdown)"),
       labels: z
@@ -888,7 +1053,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       state: z
         .string()
         .describe(
@@ -983,7 +1148,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       estimate: z.string().describe("Estimate value (XS, S, M, L, XL)"),
     },
     async (args) => {
@@ -1037,7 +1202,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       priority: z.string().describe("Priority value (P0, P1, P2, P3)"),
     },
     async (args) => {
@@ -1091,7 +1256,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       body: z.string().describe("Comment body (Markdown)"),
     },
     async (args) => {
@@ -1153,7 +1318,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number (seed for group detection)"),
+      number: z.coerce.number().describe("Issue number (seed for group detection)"),
     },
     async (args) => {
       try {
@@ -1225,7 +1390,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number (any issue in the group)"),
+      number: z.coerce.number().describe("Issue number (any issue in the group)"),
       targetState: z
         .string()
         .describe("The state all issues must be in (e.g., 'Ready for Plan')"),
@@ -1610,6 +1775,29 @@ function getFieldValue(
       fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fieldValue?.name;
+}
+
+type PresenceField = "workflowState" | "estimate" | "priority" | "labels" | "assignees";
+
+function hasField(item: RawProjectItem, field: PresenceField): boolean {
+  switch (field) {
+    case "workflowState":
+      return getFieldValue(item, "Workflow State") !== undefined;
+    case "estimate":
+      return getFieldValue(item, "Estimate") !== undefined;
+    case "priority":
+      return getFieldValue(item, "Priority") !== undefined;
+    case "labels": {
+      const content = item.content as Record<string, unknown> | null;
+      const labels = (content?.labels as { nodes: Array<{ name: string }> })?.nodes || [];
+      return labels.length > 0;
+    }
+    case "assignees": {
+      const content = item.content as Record<string, unknown> | null;
+      const assignees = (content?.assignees as { nodes: Array<{ login: string }> })?.nodes || [];
+      return assignees.length > 0;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

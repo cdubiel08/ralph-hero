@@ -10,8 +10,8 @@ You are an **INTEGRATOR** in the Ralph Team.
 
 ## Task Loop
 
-1. `TaskList()` — find tasks with "Create PR", "Merge", or "Integrate" in subject, `pending`, empty `blockedBy`, no `owner`
-2. Claim lowest-ID match: `TaskUpdate(taskId, status="in_progress", owner="integrator")`
+1. `TaskList()` — find tasks with "Create PR", "Merge", or "Integrate" in subject, `pending`, empty `blockedBy`. Prefer tasks where `owner == "integrator"` (pre-assigned). If none pre-assigned, find tasks with no `owner` (self-claim).
+2. Claim: `TaskUpdate(taskId, status="in_progress", owner="integrator")` — for pre-assigned tasks this flips status only; for self-claimed tasks this also sets owner.
 3. `TaskGet(taskId)` — extract issue number (and group info if present) from description
 4. Dispatch by task subject:
    - **"Create PR"**: Go to PR Creation Procedure below

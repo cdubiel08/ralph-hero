@@ -161,6 +161,37 @@ export function buildBatchFieldValueQuery(
   return { queryString, variables };
 }
 
+/**
+ * Build an aliased mutation to archive multiple project items
+ * in a single GraphQL call.
+ */
+export function buildBatchArchiveMutation(
+  projectId: string,
+  itemIds: string[],
+): { mutationString: string; variables: Record<string, unknown> } {
+  const variables: Record<string, unknown> = { projectId };
+  const varDecls = ["$projectId: ID!"];
+  const aliases: string[] = [];
+
+  for (let i = 0; i < itemIds.length; i++) {
+    const itemVar = `item_a${i}`;
+    varDecls.push(`$${itemVar}: ID!`);
+    variables[itemVar] = itemIds[i];
+
+    aliases.push(
+      `a${i}: archiveProjectV2Item(input: {
+        projectId: $projectId,
+        itemId: $${itemVar}
+      }) {
+        item { id }
+      }`,
+    );
+  }
+
+  const mutationString = `mutation(${varDecls.join(", ")}) {\n  ${aliases.join("\n  ")}\n}`;
+  return { mutationString, variables };
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -200,7 +231,7 @@ export function registerBatchTools(
         .optional()
         .describe("Repository name. Defaults to env var"),
       issues: z
-        .array(z.number())
+        .array(z.coerce.number())
         .min(1)
         .max(MAX_ISSUES)
         .describe("Issue numbers to update (1-50)"),

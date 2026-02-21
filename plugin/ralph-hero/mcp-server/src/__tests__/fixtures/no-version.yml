@@ -1,0 +1,5 @@
+rules:
+  - match:
+      repo: "owner/repo"
+    action:
+      projectNumber: 3
