@@ -90,8 +90,8 @@ Key design decisions from research:
 - `set -euo pipefail` for robustness
 
 ### Success Criteria
-- [ ] Automated: `bash -n plugin/ralph-hero/scripts/ralph-cli.sh` (syntax check passes)
-- [ ] Automated: `test -x plugin/ralph-hero/scripts/ralph-cli.sh` (executable bit set)
+- [x] Automated: `bash -n plugin/ralph-hero/scripts/ralph-cli.sh` (syntax check passes)
+- [x] Automated: `test -x plugin/ralph-hero/scripts/ralph-cli.sh` (executable bit set)
 - [ ] Manual: Script shows error message when justfile symlink is missing
 
 **Creates for next phase**: The script file that `install-cli` will copy/symlink to `~/.local/bin/ralph`.
@@ -207,8 +207,8 @@ uninstall-cli:
 ```
 
 ### Success Criteria
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-cli` (recipe parses)
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run uninstall-cli` (recipe parses)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-cli` (recipe parses)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run uninstall-cli` (recipe parses)
 - [ ] Manual: `just install-cli` creates symlink and copies script
 - [ ] Manual: `just uninstall-cli` removes everything cleanly
 - [ ] Manual: Running `install-cli` twice works without errors (idempotent)
@@ -409,8 +409,8 @@ source plugin/ralph-hero/scripts/ralph-completions.zsh
 ```
 
 ### Success Criteria
-- [ ] Automated: `bash -n plugin/ralph-hero/scripts/ralph-completions.bash` (syntax check)
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-completions` (recipe parses)
+- [x] Automated: `bash -n plugin/ralph-hero/scripts/ralph-completions.bash` (syntax check)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-completions` (recipe parses)
 - [ ] Manual: `ralph <TAB>` completes recipe names in bash after sourcing
 - [ ] Manual: `ralph <TAB>` completes recipe names in zsh after sourcing
 

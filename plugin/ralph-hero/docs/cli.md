@@ -33,6 +33,43 @@ just loop
 just team 42
 ```
 
+## Global Access
+
+Install the `ralph` command for use from any directory:
+
+```bash
+cd plugin/ralph-hero
+just install-cli
+```
+
+Then use Ralph from anywhere:
+
+```bash
+ralph triage 42
+ralph loop
+ralph team 42
+ralph status
+```
+
+To remove:
+
+```bash
+just uninstall-cli
+```
+
+### How It Works
+
+The installer:
+1. Symlinks the justfile to `~/.config/ralph-hero/justfile`
+2. Copies a wrapper script to `~/.local/bin/ralph`
+3. The wrapper delegates to `just --justfile` so all recipes work normally
+
+Override the justfile location with `RALPH_JUSTFILE`:
+
+```bash
+export RALPH_JUSTFILE="/custom/path/to/justfile"
+```
+
 ## Recipes
 
 ### Individual Phase Recipes
@@ -129,20 +166,34 @@ just completions zsh     # Output zsh completions
 just completions fish    # Output fish completions
 ```
 
+### Global `ralph` Command
+
+After installing the global CLI (`just install-cli`), install completions for the `ralph` command:
+
+```bash
+just install-completions bash   # For bash
+just install-completions zsh    # For zsh
+```
+
+Or source directly:
+
+```bash
+# Bash - add to ~/.bashrc:
+source plugin/ralph-hero/scripts/ralph-completions.bash
+
+# Zsh - add to ~/.zshrc:
+source plugin/ralph-hero/scripts/ralph-completions.zsh
+```
+
 ## Overriding from Project Root
 
-If invoking from the repository root instead of `plugin/ralph-hero/`:
+For one-off use from the repository root:
 
 ```bash
 just --justfile plugin/ralph-hero/justfile triage 42
 ```
 
-Or set an alias:
-
-```bash
-alias ralph='just --justfile plugin/ralph-hero/justfile'
-ralph triage 42
-```
+For persistent global access, use `just install-cli` instead (see [Global Access](#global-access) above).
 
 ## Environment Variables
 
@@ -153,5 +204,6 @@ Recipes inherit environment variables from `.env` (via `set dotenv-load` in the 
 | `RALPH_HERO_GITHUB_TOKEN` | GitHub PAT with `repo` + `project` scopes |
 | `RALPH_GH_OWNER` | GitHub owner (user or org) |
 | `RALPH_GH_PROJECT_NUMBER` | GitHub Projects V2 number |
+| `RALPH_JUSTFILE` | Override justfile path for global `ralph` command (default: `~/.config/ralph-hero/justfile`) |
 
 See the main [CLAUDE.md](../../../CLAUDE.md) for full configuration details.
