@@ -29,13 +29,13 @@ The fix is a defense-in-depth approach: update SKILL.md instructions to use spec
 - Address Mode uses PR file list as its staging constraint
 
 ### Verification
-- [ ] SKILL.md Step 7 no longer contains `git add -A`
-- [ ] SKILL.md Address Mode A5 no longer contains `git add -A`
-- [ ] `impl-staging-gate.sh` exists and blocks blanket staging commands
-- [ ] `impl-staging-gate.sh` is registered in SKILL.md frontmatter PreToolUse hooks
-- [ ] `impl-staging-gate.sh` allows `git add <specific-files>` to pass through
-- [ ] Step 7 instructions reference plan's File Ownership Summary for expected files
-- [ ] Address Mode instructions use PR file list as staging constraint
+- [x] SKILL.md Step 7 no longer contains `git add -A`
+- [x] SKILL.md Address Mode A5 no longer contains `git add -A`
+- [x] `impl-staging-gate.sh` exists and blocks blanket staging commands
+- [x] `impl-staging-gate.sh` is registered in SKILL.md frontmatter PreToolUse hooks
+- [x] `impl-staging-gate.sh` allows `git add <specific-files>` to pass through
+- [x] Step 7 instructions reference plan's File Ownership Summary for expected files
+- [x] Address Mode instructions use PR file list as staging constraint
 
 ## What We're NOT Doing
 
@@ -146,10 +146,10 @@ Do NOT use `git add -A`, `git add .`, or `git add --all`.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -c 'git add -A' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0`
-- [ ] `grep -c 'git add \.' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0` (excluding the new warning text)
-- [ ] `grep -c 'git status --porcelain' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
-- [ ] `grep -c 'File Ownership Summary' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
+- [x] `grep -c 'git add -A' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0`
+- [x] `grep -c 'git add \.' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `0` (excluding the new warning text)
+- [x] `grep -c 'git status --porcelain' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
+- [x] `grep -c 'File Ownership Summary' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
 
 #### Manual Verification
 - [ ] Step 7 instructions are clear and actionable for an LLM agent
@@ -252,10 +252,10 @@ allow
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -x plugin/ralph-hero/hooks/scripts/impl-staging-gate.sh` passes (file exists and is executable)
-- [ ] `bash -n plugin/ralph-hero/hooks/scripts/impl-staging-gate.sh` passes (valid shell syntax)
-- [ ] `grep -c 'impl-staging-gate.sh' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `1` (registered in frontmatter)
-- [ ] Hook appears BEFORE `impl-branch-gate.sh` in the Bash matcher hooks array
+- [x] `test -x plugin/ralph-hero/hooks/scripts/impl-staging-gate.sh` passes (file exists and is executable)
+- [x] `bash -n plugin/ralph-hero/hooks/scripts/impl-staging-gate.sh` passes (valid shell syntax)
+- [x] `grep -c 'impl-staging-gate.sh' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns `1` (registered in frontmatter)
+- [x] Hook appears BEFORE `impl-branch-gate.sh` in the Bash matcher hooks array
 
 #### Manual Verification
 - [ ] Hook blocks `git add -A` with a helpful error message
