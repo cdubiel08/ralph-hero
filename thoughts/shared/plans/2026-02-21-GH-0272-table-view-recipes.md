@@ -1,6 +1,6 @@
 ---
 date: 2026-02-21
-status: draft
+status: complete
 github_issues: [272]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/272
@@ -76,9 +76,9 @@ Single phase — edit `view-recipes.md` to replace 3 TODO placeholders with full
 - When to use: standup blockers review, dependency management
 
 ### Success Criteria
-- [ ] Automated: `grep -c "TODO.*#272" thoughts/shared/research/view-recipes.md` returns 0
-- [ ] Automated: `grep -c "Setup Steps" thoughts/shared/research/view-recipes.md` returns at least 3 (one per new recipe)
-- [ ] Manual: Each recipe follows the View Recipe Template structure from the skeleton
+- [x] Automated: `grep -c "TODO.*#272" thoughts/shared/research/view-recipes.md` returns 0
+- [x] Automated: `grep -c "Setup Steps" thoughts/shared/research/view-recipes.md` returns at least 3 (one per new recipe)
+- [x] Manual: Each recipe follows the View Recipe Template structure from the skeleton
 
 ## File Ownership Summary
 
