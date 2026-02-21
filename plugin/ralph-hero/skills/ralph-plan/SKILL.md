@@ -126,6 +126,9 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 3. **Spawn sub-tasks** for research gaps:
    - `Task(subagent_type="codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
    - `Task(subagent_type="codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
+
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+
 4. **Wait for sub-tasks** before proceeding
 
 ### Step 3: Transition to Plan in Progress

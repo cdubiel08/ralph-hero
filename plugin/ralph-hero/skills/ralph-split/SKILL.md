@@ -50,6 +50,8 @@ Use a subagent to find candidates:
 Task(subagent_type="codebase-locator", prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first.")
 ```
 
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+
 Or query directly:
 ```
 # Note: No filter profile for split candidate selection.
@@ -160,6 +162,8 @@ Task(subagent_type="codebase-locator", prompt="Find all files related to [issue 
 
 Task(subagent_type="codebase-analyzer", prompt="Analyze [primary component]. What are the distinct pieces of work?")
 ```
+
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
 
 **Goal**: Identify natural boundaries for splitting:
 - Separate layers (database, API, frontend)
