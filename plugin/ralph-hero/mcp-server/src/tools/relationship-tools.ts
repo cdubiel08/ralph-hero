@@ -518,7 +518,7 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__advance_children",
-    "Advance all child/sub-issues of a parent to match the parent's new state. Only advances children that are in earlier workflow states. Returns what changed, what was skipped, and any errors.",
+    "Advance issues to a target workflow state. Provide either 'number' (parent issue, advances sub-issues) or 'issues' (explicit list of issue numbers). Only advances issues in earlier workflow states. Returns what changed, what was skipped, and any errors.",
     {
       owner: z
         .string()
@@ -528,15 +528,32 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.coerce.number().describe("Parent issue number"),
+      number: z
+        .coerce.number()
+        .optional()
+        .describe("Parent issue number (resolves sub-issues automatically)"),
+      issues: z
+        .array(z.coerce.number())
+        .optional()
+        .describe(
+          "Explicit list of issue numbers to advance (alternative to parent number)",
+        ),
       targetState: z
         .string()
         .describe(
-          "State to advance children to (e.g., 'Research Needed', 'Ready for Plan')",
+          "State to advance issues to (e.g., 'Research Needed', 'Ready for Plan')",
         ),
     },
     async (args) => {
       try {
+        // Validate: at least one of number or issues must be provided
+        if (args.number === undefined && (!args.issues || args.issues.length === 0)) {
+          return toolError(
+            "Either 'number' (parent issue) or 'issues' (explicit list) is required. " +
+              "Recovery: provide one of these parameters.",
+          );
+        }
+
         // Validate target state
         if (!isValidState(args.targetState)) {
           return toolError(
@@ -570,46 +587,55 @@ export function registerRelationshipTools(
           projectNumber,
         );
 
-        // Fetch sub-issues
-        const result = await client.query<{
-          repository: {
-            issue: {
-              number: number;
-              title: string;
-              subIssues: {
-                nodes: Array<{
-                  id: string;
-                  number: number;
-                  title: string;
-                  state: string;
-                }>;
-              };
+        // Build issue list: from explicit `issues` param or from parent's sub-issues
+        let issueNumbers: number[];
+
+        if (args.issues && args.issues.length > 0) {
+          // Explicit issue list takes precedence
+          issueNumbers = args.issues;
+        } else {
+          // Fetch sub-issues from parent
+          const result = await client.query<{
+            repository: {
+              issue: {
+                number: number;
+                title: string;
+                subIssues: {
+                  nodes: Array<{
+                    id: string;
+                    number: number;
+                    title: string;
+                    state: string;
+                  }>;
+                };
+              } | null;
             } | null;
-          } | null;
-        }>(
-          `query($owner: String!, $repo: String!, $number: Int!) {
-            repository(owner: $owner, name: $repo) {
-              issue(number: $number) {
-                number
-                title
-                subIssues(first: 50) {
-                  nodes { id number title state }
+          }>(
+            `query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                issue(number: $number) {
+                  number
+                  title
+                  subIssues(first: 50) {
+                    nodes { id number title state }
+                  }
                 }
               }
-            }
-          }`,
-          { owner, repo, number: args.number },
-        );
-
-        const parentIssue = result.repository?.issue;
-        if (!parentIssue) {
-          return toolError(
-            `Issue #${args.number} not found in ${owner}/${repo}`,
+            }`,
+            { owner, repo, number: args.number! },
           );
+
+          const parentIssue = result.repository?.issue;
+          if (!parentIssue) {
+            return toolError(
+              `Issue #${args.number} not found in ${owner}/${repo}`,
+            );
+          }
+
+          issueNumbers = parentIssue.subIssues.nodes.map((si) => si.number);
         }
 
-        const subIssues = parentIssue.subIssues.nodes;
-        if (subIssues.length === 0) {
+        if (issueNumbers.length === 0) {
           return toolSuccess({
             advanced: [],
             skipped: [],
@@ -629,7 +655,7 @@ export function registerRelationshipTools(
         }> = [];
         const errors: Array<{ number: number; error: string }> = [];
 
-        for (const child of subIssues) {
+        for (const issueNum of issueNumbers) {
           try {
             // Get current workflow state
             const currentState = await getCurrentFieldValue(
@@ -637,23 +663,23 @@ export function registerRelationshipTools(
               fieldCache,
               owner,
               repo,
-              child.number,
+              issueNum,
               "Workflow State",
             );
 
             if (!currentState) {
               skipped.push({
-                number: child.number,
+                number: issueNum,
                 currentState: "unknown",
                 reason: "No workflow state set on issue",
               });
               continue;
             }
 
-            // Only advance if child is in an earlier state
+            // Only advance if issue is in an earlier state
             if (!isEarlierState(currentState, args.targetState)) {
               skipped.push({
-                number: child.number,
+                number: issueNum,
                 currentState,
                 reason:
                   currentState === args.targetState
@@ -663,13 +689,13 @@ export function registerRelationshipTools(
               continue;
             }
 
-            // Advance the child
+            // Advance the issue
             const projectItemId = await resolveProjectItemId(
               client,
               fieldCache,
               owner,
               repo,
-              child.number,
+              issueNum,
             );
             await updateProjectItemField(
               client,
@@ -683,7 +709,7 @@ export function registerRelationshipTools(
             await syncStatusField(client, fieldCache, projectItemId, args.targetState);
 
             advanced.push({
-              number: child.number,
+              number: issueNum,
               fromState: currentState,
               toState: args.targetState,
             });
@@ -691,8 +717,8 @@ export function registerRelationshipTools(
             const message =
               error instanceof Error ? error.message : String(error);
             errors.push({
-              number: child.number,
-              error: `Failed to update: ${message}. Recovery: retry advance_children or update this child manually via update_workflow_state.`,
+              number: issueNum,
+              error: `Failed to update: ${message}. Recovery: retry advance_children or update this issue manually.`,
             });
           }
         }
