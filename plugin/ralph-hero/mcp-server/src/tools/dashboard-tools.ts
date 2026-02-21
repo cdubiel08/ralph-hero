@@ -302,6 +302,13 @@ export function registerDashboardTools(
         .describe(
           "Risk score threshold for OFF_TRACK status (default: 6)",
         ),
+      archiveThresholdDays: z
+        .number()
+        .optional()
+        .default(14)
+        .describe(
+          "Days in Done/Canceled before eligible for archive (default: 14)",
+        ),
     },
     async (args) => {
       try {
@@ -342,6 +349,7 @@ export function registerDashboardTools(
           criticalStuckHours: (args.stuckThresholdHours ?? 48) * 2,
           wipLimits: args.wipLimits ?? {},
           doneWindowDays: args.doneWindowDays ?? 7,
+          archiveThresholdDays: args.archiveThresholdDays ?? 14,
         };
 
         // Build dashboard

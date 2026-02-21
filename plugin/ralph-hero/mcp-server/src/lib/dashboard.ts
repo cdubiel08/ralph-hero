@@ -58,6 +58,18 @@ export interface HealthWarning {
   issues: number[];
 }
 
+export interface ArchiveStats {
+  eligibleForArchive: number;
+  eligibleItems: Array<{
+    number: number;
+    title: string;
+    workflowState: string;
+    staleDays: number;
+  }>;
+  recentlyCompleted: number;
+  archiveThresholdDays: number;
+}
+
 export interface DashboardData {
   generatedAt: string; // ISO timestamp
   totalIssues: number;
@@ -66,6 +78,7 @@ export interface DashboardData {
     ok: boolean;
     warnings: HealthWarning[];
   };
+  archive: ArchiveStats;
 }
 
 export interface HealthConfig {
@@ -73,6 +86,7 @@ export interface HealthConfig {
   criticalStuckHours: number; // default: 96
   wipLimits: Record<string, number>; // default: {}
   doneWindowDays: number; // default: 7
+  archiveThresholdDays: number; // default: 14
 }
 
 export const DEFAULT_HEALTH_CONFIG: HealthConfig = {
@@ -80,6 +94,7 @@ export const DEFAULT_HEALTH_CONFIG: HealthConfig = {
   criticalStuckHours: 96,
   wipLimits: {},
   doneWindowDays: 7,
+  archiveThresholdDays: 14,
 };
 
 // ---------------------------------------------------------------------------
@@ -343,12 +358,73 @@ export function detectHealthIssues(
 }
 
 // ---------------------------------------------------------------------------
+// computeArchiveStats
+// ---------------------------------------------------------------------------
+
+const ARCHIVE_TERMINAL_STATES = new Set(["Done", "Canceled"]);
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Compute archive eligibility stats from project items.
+ *
+ * - "Eligible for archive": Done/Canceled items stale beyond archiveThresholdDays
+ * - "Recently completed": Done/Canceled items within doneWindowDays
+ * - Staleness computed from closedAt (preferred) or updatedAt (fallback)
+ * - Zero additional API calls — works on already-fetched items.
+ */
+export function computeArchiveStats(
+  items: DashboardItem[],
+  now: number,
+  archiveThresholdDays: number,
+  doneWindowDays: number,
+): ArchiveStats {
+  const thresholdMs = archiveThresholdDays * DAY_MS;
+  const recentMs = doneWindowDays * DAY_MS;
+
+  const eligible: ArchiveStats["eligibleItems"] = [];
+  let recentlyCompleted = 0;
+
+  for (const item of items) {
+    if (!item.workflowState || !ARCHIVE_TERMINAL_STATES.has(item.workflowState)) {
+      continue;
+    }
+
+    const ts = item.closedAt ?? item.updatedAt;
+    const ageMs = now - new Date(ts).getTime();
+    const staleDays = Math.floor(ageMs / DAY_MS);
+
+    if (ageMs > thresholdMs) {
+      eligible.push({
+        number: item.number,
+        title: item.title,
+        workflowState: item.workflowState,
+        staleDays,
+      });
+    }
+
+    if (ageMs <= recentMs) {
+      recentlyCompleted++;
+    }
+  }
+
+  // Sort by staleDays descending (stalest first)
+  eligible.sort((a, b) => b.staleDays - a.staleDays);
+
+  return {
+    eligibleForArchive: eligible.length,
+    eligibleItems: eligible,
+    recentlyCompleted,
+    archiveThresholdDays,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // buildDashboard
 // ---------------------------------------------------------------------------
 
 /**
- * Orchestrator: aggregate items by phase, detect health issues, return
- * a complete DashboardData snapshot.
+ * Orchestrator: aggregate items by phase, detect health issues, compute
+ * archive stats, return a complete DashboardData snapshot.
  */
 export function buildDashboard(
   items: DashboardItem[],
@@ -357,6 +433,12 @@ export function buildDashboard(
 ): DashboardData {
   const phases = aggregateByPhase(items, now, config);
   const warnings = detectHealthIssues(phases, config);
+  const archive = computeArchiveStats(
+    items,
+    now,
+    config.archiveThresholdDays,
+    config.doneWindowDays,
+  );
 
   return {
     generatedAt: new Date(now).toISOString(),
@@ -366,6 +448,7 @@ export function buildDashboard(
       ok: warnings.length === 0,
       warnings,
     },
+    archive,
   };
 }
 
@@ -429,6 +512,30 @@ export function formatMarkdown(
     }
   }
 
+  // Archive eligibility section
+  if (data.archive) {
+    lines.push("");
+    lines.push("## Archive Eligibility");
+    lines.push("");
+    lines.push(
+      `**Eligible for archive**: ${data.archive.eligibleForArchive} items (stale > ${data.archive.archiveThresholdDays} days in Done/Canceled)`,
+    );
+    lines.push(
+      `**Recently completed**: ${data.archive.recentlyCompleted} items`,
+    );
+
+    if (data.archive.eligibleItems.length > 0) {
+      lines.push("");
+      lines.push("| # | Title | State | Stale Days |");
+      lines.push("|---|-------|-------|------------|");
+      for (const item of data.archive.eligibleItems) {
+        lines.push(
+          `| #${item.number} | ${item.title} | ${item.workflowState} | ${item.staleDays} |`,
+        );
+      }
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -471,6 +578,13 @@ export function formatAscii(data: DashboardData): string {
     for (const w of data.health.warnings) {
       lines.push(`  ${w.severity.toUpperCase()}: ${w.message}`);
     }
+  }
+
+  // Archive summary
+  if (data.archive) {
+    lines.push(
+      `Archive: ${data.archive.eligibleForArchive} eligible (threshold: ${data.archive.archiveThresholdDays}d), ${data.archive.recentlyCompleted} recent`,
+    );
   }
 
   return lines.join("\n");
