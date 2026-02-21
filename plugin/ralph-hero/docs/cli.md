@@ -59,10 +59,7 @@ just uninstall-cli
 
 ### How It Works
 
-The installer:
-1. Symlinks the justfile to `~/.config/ralph-hero/justfile`
-2. Copies a wrapper script to `~/.local/bin/ralph`
-3. The wrapper delegates to `just --justfile` so all recipes work normally
+The installer copies a wrapper script to `~/.local/bin/ralph`. At runtime, the wrapper automatically resolves the latest installed plugin version from `~/.claude/plugins/cache/ralph-hero/ralph-hero/`. Plugin updates are picked up immediately — no need to re-run `install-cli`.
 
 Override the justfile location with `RALPH_JUSTFILE`:
 
@@ -204,6 +201,6 @@ Recipes inherit environment variables from `.env` (via `set dotenv-load` in the 
 | `RALPH_HERO_GITHUB_TOKEN` | GitHub PAT with `repo` + `project` scopes |
 | `RALPH_GH_OWNER` | GitHub owner (user or org) |
 | `RALPH_GH_PROJECT_NUMBER` | GitHub Projects V2 number |
-| `RALPH_JUSTFILE` | Override justfile path for global `ralph` command (default: `~/.config/ralph-hero/justfile`) |
+| `RALPH_JUSTFILE` | Override justfile path for global `ralph` command (default: auto-resolved from plugin cache) |
 
 See the main [CLAUDE.md](../../../CLAUDE.md) for full configuration details.

@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # ralph -- global CLI for Ralph Hero workflows
-# Delegates to just --justfile, resolving the justfile via symlink or env var.
+# Resolves the latest installed plugin version at runtime.
 set -euo pipefail
 
-RALPH_JUSTFILE="${RALPH_JUSTFILE:-$HOME/.config/ralph-hero/justfile}"
+RALPH_JUSTFILE="${RALPH_JUSTFILE:-}"
 
-if [ ! -f "$RALPH_JUSTFILE" ]; then
-    echo "Error: Ralph justfile not found at $RALPH_JUSTFILE"
-    echo "Run 'just install-cli' from the ralph-hero plugin directory to set up."
+if [ -z "$RALPH_JUSTFILE" ]; then
+    CACHE_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero"
+    if [ -d "$CACHE_DIR" ]; then
+        LATEST=$(ls -v "$CACHE_DIR" | tail -1)
+        RALPH_JUSTFILE="$CACHE_DIR/$LATEST/justfile"
+    fi
+fi
+
+if [ -z "$RALPH_JUSTFILE" ] || [ ! -f "$RALPH_JUSTFILE" ]; then
+    echo "Error: Ralph justfile not found."
+    echo "Install: claude plugin install https://github.com/cdubiel08/ralph-hero"
     exit 1
 fi
 

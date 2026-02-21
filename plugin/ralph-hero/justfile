@@ -162,14 +162,13 @@ install-cli:
     #!/usr/bin/env bash
     set -eu
     PLUGIN_DIR="{{justfile_directory()}}"
-    CONFIG_DIR="$HOME/.config/ralph-hero"
     BIN_DIR="$HOME/.local/bin"
-    mkdir -p "$CONFIG_DIR" "$BIN_DIR"
-    ln -sf "$PLUGIN_DIR/justfile" "$CONFIG_DIR/justfile"
+    mkdir -p "$BIN_DIR"
     cp "$PLUGIN_DIR/scripts/ralph-cli.sh" "$BIN_DIR/ralph"
     chmod +x "$BIN_DIR/ralph"
     echo "Installed: $BIN_DIR/ralph"
-    echo "  Justfile: $CONFIG_DIR/justfile -> $PLUGIN_DIR/justfile"
+    echo "  Resolves latest plugin version at runtime from:"
+    echo "  ~/.claude/plugins/cache/ralph-hero/ralph-hero/"
     if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
         echo ""
         echo "WARNING: $BIN_DIR is not in your PATH."
@@ -183,31 +182,26 @@ install-cli:
     echo "  ralph team 42"
     echo "For tab completions: just install-completions bash  (or zsh)"
 
-# Remove global 'ralph' command and config
+# Remove global 'ralph' command
 uninstall-cli:
     #!/usr/bin/env bash
     set -eu
-    CONFIG_DIR="$HOME/.config/ralph-hero"
     BIN_DIR="$HOME/.local/bin"
-    removed=0
     if [ -f "$BIN_DIR/ralph" ]; then
         rm "$BIN_DIR/ralph"
         echo "Removed: $BIN_DIR/ralph"
-        removed=1
-    fi
-    if [ -L "$CONFIG_DIR/justfile" ]; then
-        rm "$CONFIG_DIR/justfile"
-        echo "Removed: $CONFIG_DIR/justfile"
-        removed=1
-    fi
-    if [ -d "$CONFIG_DIR" ] && [ -z "$(ls -A "$CONFIG_DIR")" ]; then
-        rmdir "$CONFIG_DIR"
-        echo "Removed: $CONFIG_DIR/"
-    fi
-    if [ "$removed" -eq 0 ]; then
-        echo "Nothing to uninstall -- ralph CLI was not installed."
-    else
+        # Clean up legacy symlink if present
+        CONFIG_DIR="$HOME/.config/ralph-hero"
+        if [ -L "$CONFIG_DIR/justfile" ]; then
+            rm "$CONFIG_DIR/justfile"
+            echo "Removed legacy symlink: $CONFIG_DIR/justfile"
+        fi
+        if [ -d "$CONFIG_DIR" ] && [ -z "$(ls -A "$CONFIG_DIR")" ]; then
+            rmdir "$CONFIG_DIR"
+        fi
         echo "Ralph CLI uninstalled."
+    else
+        echo "Nothing to uninstall -- ralph CLI was not installed."
     fi
 
 # Install shell completions for the global 'ralph' command
