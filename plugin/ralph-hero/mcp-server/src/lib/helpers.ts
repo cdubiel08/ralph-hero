@@ -318,6 +318,88 @@ export async function getCurrentFieldValue(
 }
 
 // ---------------------------------------------------------------------------
+// Helper: Query project-linked repositories
+// ---------------------------------------------------------------------------
+
+export interface ProjectRepository {
+  owner: string;
+  repo: string;
+  nameWithOwner: string;
+}
+
+export interface ProjectRepositoriesResult {
+  projectId: string;
+  repos: ProjectRepository[];
+  totalRepos: number;
+}
+
+/**
+ * Query all repositories linked to a GitHub Project V2.
+ * Uses the same user/organization fallback pattern as fetchProjectForCache.
+ * Results are cached for 10 minutes via projectQuery cache option.
+ */
+export async function queryProjectRepositories(
+  client: GitHubClient,
+  owner: string,
+  projectNumber: number,
+): Promise<ProjectRepositoriesResult | null> {
+  const QUERY = `query($owner: String!, $number: Int!) {
+    OWNER_TYPE(login: $owner) {
+      projectV2(number: $number) {
+        id
+        repositories(first: 100) {
+          totalCount
+          nodes {
+            owner { login }
+            name
+            nameWithOwner
+          }
+        }
+      }
+    }
+  }`;
+
+  for (const ownerType of ["user", "organization"]) {
+    try {
+      const result = await client.projectQuery<
+        Record<string, {
+          projectV2: {
+            id: string;
+            repositories: {
+              totalCount: number;
+              nodes: Array<{
+                owner: { login: string };
+                name: string;
+                nameWithOwner: string;
+              }>;
+            };
+          } | null;
+        }>
+      >(
+        QUERY.replace("OWNER_TYPE", ownerType),
+        { owner, number: projectNumber },
+        { cache: true, cacheTtlMs: 10 * 60 * 1000 },
+      );
+      const project = result[ownerType]?.projectV2;
+      if (project) {
+        return {
+          projectId: project.id,
+          repos: project.repositories.nodes.map((r) => ({
+            owner: r.owner.login,
+            repo: r.name,
+            nameWithOwner: r.nameWithOwner,
+          })),
+          totalRepos: project.repositories.totalCount,
+        };
+      }
+    } catch {
+      // Try next owner type
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Helper: Resolve required owner/repo with defaults
 // ---------------------------------------------------------------------------
 

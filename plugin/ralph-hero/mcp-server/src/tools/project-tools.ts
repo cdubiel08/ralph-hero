@@ -21,6 +21,7 @@ import type {
   ProjectV2SingleSelectField,
 } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
+import { queryProjectRepositories } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -704,6 +705,66 @@ export function registerProjectTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to list project items: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__list_project_repos
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__list_project_repos",
+    "List all repositories linked to a GitHub Project V2. Returns owner, name, and nameWithOwner for each linked repo.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe(
+          "GitHub owner (user or org). Defaults to RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var",
+        ),
+      number: z
+        .number()
+        .optional()
+        .describe(
+          "Project number. Defaults to RALPH_GH_PROJECT_NUMBER env var",
+        ),
+    },
+    async (args) => {
+      try {
+        const owner = args.owner || resolveProjectOwner(client.config);
+        const projectNumber = args.number || client.config.projectNumber;
+
+        if (!owner) {
+          return toolError(
+            "owner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var or pass explicitly)",
+          );
+        }
+        if (!projectNumber) {
+          return toolError(
+            "number is required (set RALPH_GH_PROJECT_NUMBER env var or pass explicitly)",
+          );
+        }
+
+        const result = await queryProjectRepositories(
+          client,
+          owner,
+          projectNumber,
+        );
+
+        if (!result) {
+          return toolError(
+            `Project #${projectNumber} not found for owner "${owner}"`,
+          );
+        }
+
+        return toolSuccess({
+          projectId: result.projectId,
+          repos: result.repos,
+          totalRepos: result.totalRepos,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to list project repos: ${message}`);
       }
     },
   );
