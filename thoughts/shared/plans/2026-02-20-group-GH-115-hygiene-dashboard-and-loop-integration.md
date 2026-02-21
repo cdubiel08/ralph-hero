@@ -149,9 +149,9 @@ Phase 2 creates a new `/ralph-hygiene` skill that calls `project_hygiene` and op
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Manual: `computeArchiveStats` returns correct eligible items for test data
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Manual: `computeArchiveStats` returns correct eligible items for test data
 
 **Creates for next phase**: Archive eligibility data available in dashboard output for the hygiene skill to reference.
 
@@ -202,12 +202,12 @@ Phase 2 creates a new `/ralph-hygiene` skill that calls `project_hygiene` and op
 
 ### Success Criteria
 
-- [ ] Automated: `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes (syntax check)
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` still passes
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` still succeeds
+- [x] Automated: `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes (syntax check)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` still passes
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` still succeeds
 - [ ] Manual: `./scripts/ralph-loop.sh --hygiene-only` invokes the hygiene skill
 - [ ] Manual: `./scripts/ralph-loop.sh --hygiene=skip` skips hygiene phase
-- [ ] Manual: Skill file is well-structured and follows existing patterns
+- [x] Manual: Skill file is well-structured and follows existing patterns
 
 **Creates for next phase**: N/A (final phase)
 
@@ -215,11 +215,11 @@ Phase 2 creates a new `/ralph-hygiene` skill that calls `project_hygiene` and op
 
 ## Integration Testing
 
-- [ ] Full `npm test` suite passes with no regressions
-- [ ] `npm run build` produces clean output
-- [ ] `bash -n` passes on all modified shell scripts
-- [ ] Dashboard archive section renders correctly in markdown and ascii formats
-- [ ] ralph-loop.sh hygiene flags work as documented
+- [x] Full `npm test` suite passes with no regressions
+- [x] `npm run build` produces clean output
+- [x] `bash -n` passes on all modified shell scripts
+- [x] Dashboard archive section renders correctly in markdown and ascii formats
+- [x] ralph-loop.sh hygiene flags work as documented
 
 ## References
 
