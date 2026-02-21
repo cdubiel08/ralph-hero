@@ -1,17 +1,21 @@
 #!/bin/bash
 # Run the Ralph GitHub workflow loop until all queues are empty
 #
-# Usage: ./scripts/ralph-loop.sh [--triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only]
+# Usage: ./scripts/ralph-loop.sh [--triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only]
 #        ./scripts/ralph-loop.sh [--analyst-only|--builder-only|--validator-only|--integrator-only]
-#        ./scripts/ralph-loop.sh --split=auto|skip --review=auto|skip|interactive
+#        ./scripts/ralph-loop.sh --split=auto|skip --review=auto|skip|interactive --hygiene=auto|skip
 #
-# Runs: triage -> split (optional) -> research -> plan -> review (optional) -> implement in sequence
+# Runs: hygiene (optional) -> triage -> split (optional) -> research -> plan -> review (optional) -> implement in sequence
 # Repeats until no eligible tickets in any queue
 #
 # Review modes:
 #   --review=skip        Skip review phase (default, backwards compatible)
 #   --review=auto        Opus critiques plan automatically
 #   --review=interactive Human reviews via wizard
+#
+# Hygiene modes:
+#   --hygiene=auto       Run hygiene before triage (default)
+#   --hygiene=skip       Skip hygiene phase
 
 set -e
 
@@ -19,6 +23,7 @@ set -e
 MODE="all"
 REVIEW_MODE="${RALPH_REVIEW_MODE:-skip}"
 SPLIT_MODE="${RALPH_SPLIT_MODE:-auto}"
+HYGIENE_MODE="${RALPH_HYGIENE_MODE:-auto}"
 for arg in "$@"; do
     case "$arg" in
         --review=*)
@@ -27,7 +32,10 @@ for arg in "$@"; do
         --split=*)
             SPLIT_MODE="${arg#*=}"
             ;;
-        --triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only)
+        --hygiene=*)
+            HYGIENE_MODE="${arg#*=}"
+            ;;
+        --triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only)
             MODE="$arg"
             ;;
         --analyst-only|--builder-only|--validator-only|--integrator-only)
@@ -37,6 +45,7 @@ for arg in "$@"; do
 done
 export RALPH_REVIEW_MODE="$REVIEW_MODE"
 export RALPH_SPLIT_MODE="$SPLIT_MODE"
+export RALPH_HYGIENE_MODE="$HYGIENE_MODE"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
 TIMEOUT="${TIMEOUT:-15m}"
 
@@ -44,6 +53,7 @@ echo "=========================================="
 echo "  RALPH GITHUB LOOP - Autonomous Mode"
 echo "=========================================="
 echo "Mode: $MODE"
+echo "Hygiene mode: $HYGIENE_MODE"
 echo "Split mode: $SPLIT_MODE"
 echo "Review mode: $REVIEW_MODE"
 echo "Max iterations: $MAX_ITERATIONS"
@@ -83,6 +93,17 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     work_done=false
 
     # === ANALYST PHASE ===
+
+    # Hygiene phase (before triage for clean board scanning)
+    if [ "$MODE" = "all" ] || [ "$MODE" = "--hygiene-only" ] || [ "$MODE" = "--analyst-only" ]; then
+        if [ "$HYGIENE_MODE" != "skip" ]; then
+            echo "--- Analyst: Hygiene Phase (mode: $HYGIENE_MODE) ---"
+            run_claude "/ralph-hygiene" "hygiene"
+            work_done=true
+        else
+            echo "--- Analyst: Hygiene Phase: SKIPPED (--hygiene=skip) ---"
+        fi
+    fi
 
     # Triage phase
     if [ "$MODE" = "all" ] || [ "$MODE" = "--triage-only" ] || [ "$MODE" = "--analyst-only" ]; then
