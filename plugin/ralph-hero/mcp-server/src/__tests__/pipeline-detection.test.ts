@@ -13,12 +13,14 @@ function makeIssue(
   number: number,
   workflowState: string,
   estimate: string | null = "S",
+  subIssueCount: number = 0,
 ): IssueState {
   return {
     number,
     title: `Issue #${number}`,
     workflowState,
     estimate,
+    subIssueCount,
   };
 }
 
@@ -331,5 +333,56 @@ describe("detectPipelinePosition - edge cases", () => {
     ]);
     // In Progress takes priority over Ready for Plan in mixed state
     expect(result.phase).toBe("IMPLEMENT");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sub-issue count: skip SPLIT for already-split issues
+// ---------------------------------------------------------------------------
+
+describe("detectPipelinePosition - sub-issue count (SPLIT skip)", () => {
+  it("M issue with children should NOT trigger SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "Backlog", "M", 3));
+    expect(result.phase).not.toBe("SPLIT");
+    expect(result.phase).toBe("TRIAGE"); // Falls through to Backlog check
+  });
+
+  it("M issue without children should trigger SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "Backlog", "M", 0));
+    expect(result.phase).toBe("SPLIT");
+  });
+
+  it("L issue with children should NOT trigger SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "Backlog", "L", 2));
+    expect(result.phase).not.toBe("SPLIT");
+  });
+
+  it("XL issue with children should NOT trigger SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "Backlog", "XL", 1));
+    expect(result.phase).not.toBe("SPLIT");
+  });
+
+  it("mixed group: some M issues already split, some not", () => {
+    const result = detectGroup([
+      makeIssue(1, "Backlog", "M", 3),  // already split
+      makeIssue(2, "Backlog", "M", 0),  // needs splitting
+    ]);
+    expect(result.phase).toBe("SPLIT");
+    expect(result.reason).toContain("#2=M");
+    expect(result.reason).not.toContain("#1=M");
+  });
+
+  it("all M issues already split: no SPLIT phase", () => {
+    const result = detectGroup([
+      makeIssue(1, "Backlog", "M", 3),
+      makeIssue(2, "Backlog", "L", 2),
+    ]);
+    expect(result.phase).not.toBe("SPLIT");
+    expect(result.phase).toBe("TRIAGE"); // Falls through to Backlog check
+  });
+
+  it("S issue with children: subIssueCount is irrelevant (not oversized)", () => {
+    const result = detectSingle(makeIssue(1, "Backlog", "S", 5));
+    expect(result.phase).toBe("TRIAGE"); // S is not oversized, so SPLIT never fires
   });
 });

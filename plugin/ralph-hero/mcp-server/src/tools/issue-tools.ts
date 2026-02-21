@@ -13,6 +13,7 @@ import { paginateConnection } from "../lib/pagination.js";
 import { detectGroup } from "../lib/group-detection.js";
 import {
   detectPipelinePosition,
+  OVERSIZED_ESTIMATES,
   type IssueState,
 } from "../lib/pipeline-detection.js";
 import {
@@ -1362,9 +1363,40 @@ export function registerIssueTools(
               title: ticket.title,
               workflowState: state.workflowState || "unknown",
               estimate: state.estimate || null,
+              subIssueCount: 0,
             };
           }),
         );
+
+        // Fetch sub-issue counts for oversized issues (targeted query, not all issues)
+        const oversizedNumbers = issueStates
+          .filter((i) => i.estimate !== null && OVERSIZED_ESTIMATES.has(i.estimate))
+          .map((i) => i.number);
+
+        if (oversizedNumbers.length > 0) {
+          await Promise.all(
+            oversizedNumbers.map(async (num) => {
+              const subResult = await client.query<{
+                repository: {
+                  issue: { subIssuesSummary: { total: number } | null } | null;
+                } | null;
+              }>(
+                `query($owner: String!, $repo: String!, $issueNum: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $issueNum) {
+                      subIssuesSummary { total }
+                    }
+                  }
+                }`,
+                { owner, repo, issueNum: num },
+              );
+              const issueState = issueStates.find((i) => i.number === num);
+              if (issueState && subResult.repository?.issue?.subIssuesSummary) {
+                issueState.subIssueCount = subResult.repository.issue.subIssuesSummary.total;
+              }
+            }),
+          );
+        }
 
         // Detect pipeline position
         const position = detectPipelinePosition(

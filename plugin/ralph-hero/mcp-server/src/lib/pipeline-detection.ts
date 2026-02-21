@@ -28,6 +28,7 @@ export interface IssueState {
   title: string;
   workflowState: string;
   estimate: string | null;
+  subIssueCount: number;
 }
 
 export interface ConvergenceInfo {
@@ -67,7 +68,7 @@ const REMAINING_PHASES: Record<PipelinePhase, string[]> = {
 // Oversized estimate detection
 // ---------------------------------------------------------------------------
 
-const OVERSIZED_ESTIMATES = new Set(["M", "L", "XL"]);
+export const OVERSIZED_ESTIMATES = new Set(["M", "L", "XL"]);
 
 // ---------------------------------------------------------------------------
 // Detection logic
@@ -115,9 +116,9 @@ export function detectPipelinePosition(
     );
   }
 
-  // Step 1: Check for oversized issues needing split
+  // Step 1: Check for oversized issues needing split (skip already-split issues)
   const oversized = issues.filter(
-    (i) => i.estimate !== null && OVERSIZED_ESTIMATES.has(i.estimate),
+    (i) => i.estimate !== null && OVERSIZED_ESTIMATES.has(i.estimate) && i.subIssueCount === 0,
   );
   if (oversized.length > 0) {
     return buildResult(
