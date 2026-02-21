@@ -1173,6 +1173,13 @@ export function registerProjectManagementTools(
         .optional()
         .default(50)
         .describe("Max items to archive per invocation (default 50, cap 200)"),
+      dryRun: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "If true, return matching items without archiving them (default: false)",
+        ),
     },
     async (args) => {
       try {
@@ -1241,8 +1248,24 @@ export function registerProjectManagementTools(
 
         if (matched.length === 0) {
           return toolSuccess({
+            dryRun: args.dryRun,
             archivedCount: 0,
+            wouldArchive: 0,
             items: [],
+            errors: [],
+          });
+        }
+
+        // Dry run: return matched items without archiving
+        if (args.dryRun) {
+          return toolSuccess({
+            dryRun: true,
+            wouldArchive: matched.length,
+            items: matched.map((m) => ({
+              number: m.content?.number,
+              title: m.content?.title,
+              itemId: m.id,
+            })),
             errors: [],
           });
         }
@@ -1281,6 +1304,7 @@ export function registerProjectManagementTools(
         }
 
         return toolSuccess({
+          dryRun: false,
           archivedCount: archived.length,
           items: archived,
           errors,
