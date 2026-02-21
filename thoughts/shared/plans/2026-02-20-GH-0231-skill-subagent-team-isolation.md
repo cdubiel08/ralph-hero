@@ -33,10 +33,10 @@ The root cause is that `context: fork` isolates the context window but does NOT 
 ## Desired End State
 
 ### Verification
-- [ ] `shared/conventions.md` contains a "Sub-Agent Team Isolation" section documenting the rule
-- [ ] All 5 affected SKILL.md files contain inline reminders near their `Task()` call examples
-- [ ] No `team_name` parameter appears in any internal `Task()` call within SKILL.md files (already the case -- the fix is adding explicit instructions to NEVER add it)
-- [ ] The inline reminders reference the conventions.md section for full rationale
+- [x] `shared/conventions.md` contains a "Sub-Agent Team Isolation" section documenting the rule
+- [x] All 5 affected SKILL.md files contain inline reminders near their `Task()` call examples
+- [x] No `team_name` parameter appears in any internal `Task()` call within SKILL.md files (already the case -- the fix is adding explicit instructions to NEVER add it)
+- [x] The inline reminders reference the conventions.md section for full rationale
 
 ## What We're NOT Doing
 
@@ -137,18 +137,18 @@ This applies to all skills that spawn internal sub-agents: ralph-research, ralph
 
 ### Success Criteria
 
-- [ ] Automated: `grep -r "Sub-Agent Team Isolation" plugin/ralph-hero/skills/` returns 6 matches (1 in conventions.md, 5 in SKILL.md files)
-- [ ] Automated: `grep -r "team_name" plugin/ralph-hero/skills/ralph-research/SKILL.md plugin/ralph-hero/skills/ralph-plan/SKILL.md plugin/ralph-hero/skills/ralph-split/SKILL.md plugin/ralph-hero/skills/ralph-triage/SKILL.md plugin/ralph-hero/skills/ralph-review/SKILL.md` returns only the "Do NOT pass `team_name`" instruction lines (no actual `team_name` parameter usage)
-- [ ] Manual: Read each modified file and verify the callout is positioned immediately after the relevant `Task()` examples
-- [ ] Manual: Verify conventions.md section includes correct/incorrect examples
+- [x] Automated: `grep -r "Sub-Agent Team Isolation" plugin/ralph-hero/skills/` returns 6 matches (1 in conventions.md, 5 in SKILL.md files)
+- [x] Automated: `grep -r "team_name" plugin/ralph-hero/skills/ralph-research/SKILL.md plugin/ralph-hero/skills/ralph-plan/SKILL.md plugin/ralph-hero/skills/ralph-split/SKILL.md plugin/ralph-hero/skills/ralph-triage/SKILL.md plugin/ralph-hero/skills/ralph-review/SKILL.md` returns only the "Do NOT pass `team_name`" instruction lines (no actual `team_name` parameter usage)
+- [x] Manual: Read each modified file and verify the callout is positioned immediately after the relevant `Task()` examples
+- [x] Manual: Verify conventions.md section includes correct/incorrect examples
 
 ---
 
 ## Integration Testing
 
-- [ ] Run `npm test` in mcp-server to confirm no TypeScript changes were accidentally introduced
-- [ ] Verify `git diff --stat` shows exactly 6 files changed, all `.md` files under `plugin/ralph-hero/skills/`
-- [ ] Verify no changes to files outside `plugin/ralph-hero/skills/` (except plan/research docs in `thoughts/`)
+- [x] Run `npm test` in mcp-server to confirm no TypeScript changes were accidentally introduced
+- [x] Verify `git diff --stat` shows exactly 6 files changed, all `.md` files under `plugin/ralph-hero/skills/`
+- [x] Verify no changes to files outside `plugin/ralph-hero/skills/` (except plan/research docs in `thoughts/`)
 
 ## References
 

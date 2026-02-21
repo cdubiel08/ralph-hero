@@ -221,6 +221,8 @@ INSTRUCTIONS:
      description="Critique #NNN plan")
 ```
 
+> **Team Isolation**: Do NOT pass `team_name` to this critique `Task()` call or any sub-agent `Task()` calls within it. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+
 **Wait for result**:
 ```
 result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)

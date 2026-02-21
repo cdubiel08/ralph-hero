@@ -279,6 +279,27 @@ This works because the team system provides isolated context windows, identical 
 
 Users invoking skills directly (e.g., `/ralph-research 42`) run inline in their session. This is the expected behavior for interactive use.
 
+## Sub-Agent Team Isolation
+
+Skills that spawn internal sub-agents via `Task()` (e.g., `codebase-locator`, `codebase-analyzer`, `codebase-pattern-finder`) must ensure those sub-agents do NOT inherit team context.
+
+**Rule**: Never pass `team_name` to internal `Task()` calls within skills. Sub-agents are utility workers that return results to the skill -- they are not team members.
+
+**Why**: When a skill runs inside a team worker's session (via `ralph-team`), the `context: fork` setting isolates the context window but does NOT isolate the team session environment. If internal `Task()` calls inherit team context, sub-agents enroll as phantom teammates, generating idle notifications that flood the team lead.
+
+**Correct**:
+```
+Task(subagent_type="codebase-locator", prompt="Find files related to ...")
+Task(subagent_type="codebase-analyzer", prompt="Analyze component ...")
+```
+
+**Incorrect**:
+```
+Task(subagent_type="codebase-locator", team_name=TEAM_NAME, prompt="Find files related to ...")
+```
+
+This applies to all skills that spawn internal sub-agents: ralph-research, ralph-plan, ralph-split, ralph-triage, and ralph-review. See individual SKILL.md files for inline reminders.
+
 ## Artifact Comment Protocol
 
 ### Overview

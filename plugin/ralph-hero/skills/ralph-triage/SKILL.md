@@ -104,6 +104,8 @@ Then STOP.
    Task(subagent_type="codebase-locator", prompt="Search for [keywords from issue title]. Does this feature/fix already exist?")
    ```
 
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+
    Also search GitHub for similar issues:
    ```
    ralph_hero__list_issues

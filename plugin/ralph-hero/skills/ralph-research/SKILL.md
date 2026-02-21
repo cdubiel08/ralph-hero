@@ -79,6 +79,9 @@ If `update_workflow_state` returns an error, read the error message for valid st
    - **codebase-pattern-finder**: Find similar patterns to model after
    - **thoughts-locator**: Find existing research or decisions
    - **web-search-researcher**: External APIs, best practices (if needed)
+
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+
 4. **Wait for ALL sub-tasks** before proceeding
 5. **Synthesize findings** - combine results into coherent understanding
 6. **Document findings unbiasedly** - don't pre-judge the solution
