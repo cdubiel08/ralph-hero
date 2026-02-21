@@ -112,14 +112,14 @@ async function ensureFieldCache(
   owner: string,
   projectNumber: number,
 ): Promise<void> {
-  if (fieldCache.isPopulated()) return;
+  if (fieldCache.isPopulated(projectNumber)) return;
 
   const project = await fetchProject(client, owner, projectNumber);
   if (!project) {
     throw new Error(`Project #${projectNumber} not found for owner "${owner}"`);
   }
 
-  populateFieldCache(fieldCache, project);
+  populateFieldCache(fieldCache, project, projectNumber);
 }
 
 interface ProjectResponse {
@@ -145,8 +145,10 @@ interface ProjectResponse {
 function populateFieldCache(
   fieldCache: FieldOptionCache,
   project: ProjectResponse,
+  projectNumber: number,
 ): void {
   fieldCache.populate(
+    projectNumber,
     project.id,
     project.fields.nodes.map((f) => ({
       id: f.id,
@@ -350,7 +352,7 @@ export function registerProjectTools(
         }
 
         // Populate field cache
-        populateFieldCache(fieldCache, result);
+        populateFieldCache(fieldCache, result, number);
 
         // Format response
         const fields = result.fields.nodes.map((f) => ({

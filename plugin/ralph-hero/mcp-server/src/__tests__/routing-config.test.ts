@@ -86,7 +86,7 @@ describe("validateRulesLive", () => {
     workflowStates: string[],
   ): FieldOptionCache {
     const cache = new FieldOptionCache();
-    cache.populate("project-1", [
+    cache.populate(1, "project-1", [
       {
         id: "field-1",
         name: "Workflow State",

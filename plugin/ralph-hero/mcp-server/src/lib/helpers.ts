@@ -94,7 +94,7 @@ export async function ensureFieldCache(
   owner: string,
   projectNumber: number,
 ): Promise<void> {
-  if (fieldCache.isPopulated()) return;
+  if (fieldCache.isPopulated(projectNumber)) return;
 
   // Fetch project to populate cache - try user first, then org
   const project = await fetchProjectForCache(client, owner, projectNumber);
@@ -103,6 +103,7 @@ export async function ensureFieldCache(
   }
 
   fieldCache.populate(
+    projectNumber,
     project.id,
     project.fields.nodes.map((f) => ({
       id: f.id,
