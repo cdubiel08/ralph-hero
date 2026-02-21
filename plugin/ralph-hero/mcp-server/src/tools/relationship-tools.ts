@@ -34,6 +34,85 @@ import {
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
+// Sub-issue tree helpers (exported for testing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively build the GraphQL selection set for nested sub-issues.
+ * At the leaf level (currentDepth >= maxDepth), returns only base fields.
+ * At inner levels, includes subIssuesSummary and nested subIssues.
+ */
+export function buildSubIssueFragment(
+  currentDepth: number,
+  maxDepth: number,
+): string {
+  const base = "id number title state";
+  if (currentDepth >= maxDepth) return base;
+  return `${base}
+    subIssuesSummary { total completed percentCompleted }
+    subIssues(first: 50) {
+      nodes { ${buildSubIssueFragment(currentDepth + 1, maxDepth)} }
+    }`;
+}
+
+interface SubIssueNode {
+  id: string;
+  number: number;
+  title: string;
+  state: string;
+  subIssues?: SubIssueNode[];
+  subIssuesSummary?: {
+    total: number;
+    completed: number;
+    percentCompleted: number;
+  };
+}
+
+/**
+ * Recursively map raw GraphQL sub-issue nodes into typed SubIssueNode[].
+ * Adds subIssues/subIssuesSummary fields when currentDepth < maxDepth.
+ */
+export function mapSubIssueNodes(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  nodes: any[],
+  currentDepth: number,
+  maxDepth: number,
+): SubIssueNode[] {
+  return nodes.map((node) => {
+    const mapped: SubIssueNode = {
+      id: node.id,
+      number: node.number,
+      title: node.title,
+      state: node.state,
+    };
+    if (currentDepth < maxDepth && node.subIssues?.nodes) {
+      mapped.subIssues = mapSubIssueNodes(
+        node.subIssues.nodes,
+        currentDepth + 1,
+        maxDepth,
+      );
+      mapped.subIssuesSummary = node.subIssuesSummary || {
+        total: node.subIssues.nodes.length,
+        completed: node.subIssues.nodes.filter(
+          (si: { state: string }) => si.state === "CLOSED",
+        ).length,
+        percentCompleted:
+          node.subIssues.nodes.length > 0
+            ? Math.round(
+                (node.subIssues.nodes.filter(
+                  (si: { state: string }) => si.state === "CLOSED",
+                ).length /
+                  node.subIssues.nodes.length) *
+                  100,
+              )
+            : 0,
+      };
+    }
+    return mapped;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Register relationship tools
 // ---------------------------------------------------------------------------
 
@@ -127,7 +206,7 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_sub_issues",
-    "List all sub-issues (children) of a parent GitHub issue, with completion summary",
+    "List all sub-issues (children) of a parent GitHub issue, with completion summary. Use depth parameter (1-3) to fetch nested sub-issue trees in a single call. Default depth=1 returns direct children only.",
     {
       owner: z
         .string()
@@ -138,35 +217,21 @@ export function registerRelationshipTools(
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.coerce.number().describe("Parent issue number"),
+      depth: z.coerce
+        .number()
+        .optional()
+        .default(1)
+        .describe(
+          "How many levels of sub-issues to fetch (1=direct children, 2=children+grandchildren, max 3)",
+        ),
     },
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
+        const depth = Math.min(Math.max(args.depth, 1), 3);
 
-        const result = await client.query<{
-          repository: {
-            issue: {
-              id: string;
-              number: number;
-              title: string;
-              subIssuesSummary: {
-                total: number;
-                completed: number;
-                percentCompleted: number;
-              } | null;
-              subIssues: {
-                nodes: Array<{
-                  id: string;
-                  number: number;
-                  title: string;
-                  state: string;
-                }>;
-                pageInfo: { hasNextPage: boolean; endCursor: string | null };
-              };
-            } | null;
-          } | null;
-        }>(
-          `query($owner: String!, $repo: String!, $number: Int!) {
+        const subIssueFields = buildSubIssueFragment(1, depth);
+        const queryStr = `query($owner: String!, $repo: String!, $number: Int!) {
             repository(owner: $owner, name: $repo) {
               issue(number: $number) {
                 id
@@ -174,12 +239,16 @@ export function registerRelationshipTools(
                 title
                 subIssuesSummary { total completed percentCompleted }
                 subIssues(first: 50) {
-                  nodes { id number title state }
+                  nodes { ${subIssueFields} }
                   pageInfo { hasNextPage endCursor }
                 }
               }
             }
-          }`,
+          }`;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await client.query<any>(
+          queryStr,
           { owner, repo, number: args.number },
         );
 
@@ -190,28 +259,30 @@ export function registerRelationshipTools(
           );
         }
 
+        const mappedSubIssues = mapSubIssueNodes(
+          issue.subIssues.nodes,
+          1,
+          depth,
+        );
+
         return toolSuccess({
           parent: {
             id: issue.id,
             number: issue.number,
             title: issue.title,
           },
-          subIssues: issue.subIssues.nodes.map((si) => ({
-            id: si.id,
-            number: si.number,
-            title: si.title,
-            state: si.state,
-          })),
+          subIssues: mappedSubIssues,
           summary: issue.subIssuesSummary || {
             total: issue.subIssues.nodes.length,
             completed: issue.subIssues.nodes.filter(
-              (si) => si.state === "CLOSED",
+              (si: { state: string }) => si.state === "CLOSED",
             ).length,
             percentCompleted:
               issue.subIssues.nodes.length > 0
                 ? Math.round(
-                    (issue.subIssues.nodes.filter((si) => si.state === "CLOSED")
-                      .length /
+                    (issue.subIssues.nodes.filter(
+                      (si: { state: string }) => si.state === "CLOSED",
+                    ).length /
                       issue.subIssues.nodes.length) *
                       100,
                   )

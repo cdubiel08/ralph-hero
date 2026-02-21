@@ -100,7 +100,7 @@ Phase 1 adds the `depth` parameter to `list_sub_issues` with a dynamic GraphQL q
 - Test `mapSubIssueNodes` produces correct nested structure
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes with new and existing tests
+- [x] Automated: `npm test` passes with new and existing tests
 - [ ] Manual: `list_sub_issues(number=202, depth=2)` returns GH-202's children with their own sub-issue data
 
 **Creates for next phase**: The `buildSubIssueFragment` and `mapSubIssueNodes` helpers establish a pattern for fetching nested sub-issue data. Phase 2 uses a simpler approach (just `subIssuesSummary.total`) but the depth traversal is available for GH-248's orchestrator changes.
