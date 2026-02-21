@@ -1,60 +1,87 @@
 # Ralph Hero - LLM-powered workflow recipes
 #
 # Usage: just <recipe> [params...]
-# Prerequisites: claude CLI, timeout (coreutils)
+# Prerequisites: claude CLI, timeout (coreutils), just >= 1.27
 # Optional: mcptools (https://github.com/f/mcptools) for quick-* recipes
 
 set shell := ["bash", "-euc"]
 set dotenv-load
+set min-version := "1.27.0"
 
-# Show available recipes
+# Aliases for frequently-used recipes
+alias t  := triage
+alias r  := research
+alias p  := plan
+alias i  := impl
+alias s  := status
+alias sp := split
+alias h  := hygiene
+
+# Browse and run a recipe interactively (falls back to --list without fzf)
 default:
-    @just --list
+    #!/usr/bin/env bash
+    if command -v fzf >/dev/null 2>&1; then
+        just --choose
+    else
+        just --list
+    fi
 
-# --- Individual Phase Recipes ---
-
+[group('workflow')]
 # Triage a backlog issue - assess validity, close duplicates, route to research
 triage issue="" budget="1.00" timeout="15m":
     @just _run_skill "triage" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('workflow')]
 # Split a large issue into smaller XS/S sub-issues
 split issue="" budget="1.00" timeout="15m":
     @just _run_skill "split" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('workflow')]
 # Research an issue - investigate codebase, create findings document
 research issue="" budget="2.00" timeout="15m":
     @just _run_skill "research" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('workflow')]
 # Create implementation plan from research findings
 plan issue="" budget="3.00" timeout="15m":
     @just _run_skill "plan" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('workflow')]
 # Review and critique an implementation plan
 review issue="" budget="2.00" timeout="15m":
     @just _run_skill "review" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('workflow')]
 # Implement an issue following its approved plan
 impl issue="" budget="5.00" timeout="15m":
     @just _run_skill "impl" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('workflow')]
 # Run project hygiene check - stale items, archive candidates
 hygiene budget="0.50" timeout="10m":
     @just _run_skill "hygiene" "" "{{budget}}" "{{timeout}}"
 
+[group('workflow')]
 # Display pipeline status dashboard with health indicators
 status budget="0.50" timeout="10m":
     @just _run_skill "status" "" "{{budget}}" "{{timeout}}"
 
-# --- Orchestrator Recipes ---
+[group('workflow')]
+# Generate and post a project status report
+report issue="" budget="1.00" timeout="10m":
+    @just _run_skill "report" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('orchestrate')]
 # Multi-agent team coordinator - spawns specialist workers
 team issue="" timeout="30m":
     TIMEOUT="{{timeout}}" ./scripts/ralph-team-loop.sh {{issue}}
 
+[group('orchestrate')]
 # Tree-expansion orchestrator - drives issue through full lifecycle
 hero issue="" budget="10.00" timeout="30m":
     @just _run_skill "hero" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+[group('orchestrate')]
 # Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
 loop mode="all" review="skip" split="auto" hygiene="auto" timeout="60m":
     #!/usr/bin/env bash
@@ -64,16 +91,12 @@ loop mode="all" review="skip" split="auto" hygiene="auto" timeout="60m":
     args="$args --review={{review}} --split={{split}} --hygiene={{hygiene}}"
     TIMEOUT="{{timeout}}" ./scripts/ralph-loop.sh $args
 
-# --- Utility Recipes ---
-
+[group('setup')]
 # One-time project setup - create GitHub Project V2 with required fields
 setup budget="1.00" timeout="10m":
     @just _run_skill "setup" "" "{{budget}}" "{{timeout}}"
 
-# Generate and post a project status report
-report issue="" budget="1.00" timeout="10m":
-    @just _run_skill "report" "{{issue}}" "{{budget}}" "{{timeout}}"
-
+[group('setup')]
 # Diagnose setup issues - checks env, deps, plugin manifest, and API connectivity
 doctor:
     #!/usr/bin/env bash
@@ -157,6 +180,7 @@ doctor:
     echo "=== Summary: $errors error(s), $warnings warning(s) ==="
     if [ "$errors" -gt 0 ]; then exit 1; fi
 
+[group('setup')]
 # Install global 'ralph' command - run from anywhere after setup
 install-cli:
     #!/usr/bin/env bash
@@ -182,6 +206,7 @@ install-cli:
     echo "  ralph team 42"
     echo "For tab completions: just install-completions bash  (or zsh)"
 
+[group('setup')]
 # Remove global 'ralph' command
 uninstall-cli:
     #!/usr/bin/env bash
@@ -204,6 +229,7 @@ uninstall-cli:
         echo "Nothing to uninstall -- ralph CLI was not installed."
     fi
 
+[group('setup')]
 # Install shell completions for the global 'ralph' command
 install-completions shell="bash":
     #!/usr/bin/env bash
@@ -230,28 +256,36 @@ install-completions shell="bash":
             ;;
     esac
 
-# --- Quick Actions (no LLM, requires mcptools) ---
+[group('setup')]
+# Generate shell tab completions (bash, zsh, fish, powershell, elvish)
+completions shell="bash":
+    @just --completions {{shell}}
 
+[group('quick')]
 # Pipeline status dashboard - instant, no API cost
 quick-status format="markdown":
     @just _mcp_call "ralph_hero__pipeline_dashboard" \
         '{"format":"{{format}}","includeHealth":true}'
 
+[group('quick')]
 # Move issue to a workflow state - instant, no API cost
 quick-move issue state:
     @just _mcp_call "ralph_hero__update_workflow_state" \
         '{"number":{{issue}},"state":"{{state}}","command":"ralph_cli"}'
 
+[group('quick')]
 # Find next actionable issue by workflow state - instant, no API cost
 quick-pick state="Research Needed" max-estimate="S":
     @just _mcp_call "ralph_hero__pick_actionable_issue" \
         '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
 
+[group('quick')]
 # Assign issue to a GitHub user - instant, no API cost
 quick-assign issue user:
     @just _mcp_call "ralph_hero__update_issue" \
         '{"number":{{issue}},"assignees":["{{user}}"]}'
 
+[group('quick')]
 # Create a new issue with project fields - instant, no API cost
 quick-issue title label="" priority="" estimate="" state="Backlog":
     #!/usr/bin/env bash
@@ -263,45 +297,59 @@ quick-issue title label="" priority="" estimate="" state="Backlog":
     params="$params,\"workflowState\":\"{{state}}\"}"
     just _mcp_call "ralph_hero__create_issue" "$params"
 
+[group('quick')]
 # Get full issue details with project fields - instant, no API cost
 quick-info issue:
     @just _mcp_call "ralph_hero__get_issue" \
         '{"number":{{issue}}}'
 
+[group('quick')]
 # Add a comment to an issue - instant, no API cost
 quick-comment issue body:
     @just _mcp_call "ralph_hero__create_comment" \
         '{"number":{{issue}},"body":"{{body}}"}'
 
-# --- Completion & Documentation ---
+[group('quick')]
+# Create a draft issue on the project board (no GitHub issue, just a card)
+quick-draft title priority="" estimate="" state="Backlog":
+    #!/usr/bin/env bash
+    set -eu
+    params='{"title":"{{title}}"'
+    if [ -n "{{priority}}" ]; then params="$params,\"priority\":\"{{priority}}\""; fi
+    if [ -n "{{estimate}}" ]; then params="$params,\"estimate\":\"{{estimate}}\""; fi
+    params="$params,\"workflowState\":\"{{state}}\"}"
+    just _mcp_call "ralph_hero__create_draft_issue" "$params"
 
-# Generate shell tab completions (bash, zsh, fish, powershell, elvish)
-completions shell="bash":
-    @just --completions {{shell}}
-
-# --- Internal Helpers ---
-
+[private]
 _run_skill skill issue budget timeout:
     #!/usr/bin/env bash
     set -eu
     if [ -n "{{issue}}" ]; then
-        cmd="/ralph-{{skill}} {{issue}}"
+        cmd="/ralph-hero:ralph-{{skill}} {{issue}}"
     else
-        cmd="/ralph-{{skill}}"
+        cmd="/ralph-hero:ralph-{{skill}}"
     fi
     echo ">>> Running: $cmd (budget: \${{budget}}, timeout: {{timeout}})"
-    timeout "{{timeout}}" claude -p "$cmd" \
+    if timeout "{{timeout}}" claude -p "$cmd" \
         --max-budget-usd "{{budget}}" \
         --dangerously-skip-permissions \
-        2>&1 || {
+        2>&1; then
+        echo ">>> Completed: $cmd"
+    else
         exit_code=$?
         if [ $exit_code -eq 124 ]; then
             echo ">>> Timed out after {{timeout}}"
+            echo "    The skill did not complete within the time limit."
+            echo "    Try: just {{skill}} timeout=30m   (increase timeout)"
         else
             echo ">>> Exited with code $exit_code"
+            echo "    Check above for error details from the skill output."
+            echo "    Common causes: API token expired, budget exhausted, network error."
+            echo "    Run: just doctor   to diagnose environment issues."
         fi
-    }
+    fi
 
+[private]
 _mcp_call tool params:
     #!/usr/bin/env bash
     set -eu
@@ -311,5 +359,15 @@ _mcp_call tool params:
         echo "   or: go install github.com/f/mcptools/cmd/mcptools@latest"
         exit 1
     fi
-    mcp call "{{tool}}" --params '{{params}}' \
-        npx -y ralph-hero-mcp-server@latest
+    raw=$(mcp call "{{tool}}" --params '{{params}}' \
+        npx -y ralph-hero-mcp-server@2.4.50)
+    if command -v jq &>/dev/null; then
+        if echo "$raw" | jq -e '.isError // false' > /dev/null 2>&1; then
+            echo "$raw" | jq -r '.content[0].text' >&2
+            exit 1
+        fi
+        echo "$raw" | jq -r '.content[0].text // .' | jq '.' 2>/dev/null \
+            || echo "$raw" | jq -r '.content[0].text // .'
+    else
+        echo "$raw"
+    fi

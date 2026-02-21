@@ -3,7 +3,15 @@
 #   source <path>/ralph-completions.bash
 
 _ralph_completions() {
-    local justfile="${RALPH_JUSTFILE:-$HOME/.config/ralph-hero/justfile}"
+    local justfile="${RALPH_JUSTFILE:-}"
+    if [ -z "$justfile" ]; then
+        local cache_dir="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero"
+        if [ -d "$cache_dir" ]; then
+            local latest
+            latest=$(ls "$cache_dir" | sort -V | tail -1)
+            justfile="$cache_dir/$latest/justfile"
+        fi
+    fi
     if [ ! -f "$justfile" ]; then
         return
     fi

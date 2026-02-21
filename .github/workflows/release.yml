@@ -117,6 +117,15 @@ jobs:
           PLUGIN_JSON="../.claude-plugin/plugin.json"
           jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
 
+      - name: Pin version in justfile and .mcp.json
+        working-directory: .
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          sed -i "s/ralph-hero-mcp-server@[0-9][0-9.]*/ralph-hero-mcp-server@${NEW_VERSION}/g" \
+            plugin/ralph-hero/justfile \
+            plugin/ralph-hero/.mcp.json
+
       - name: Commit version bump and tag
         working-directory: .
         env:
@@ -127,6 +136,8 @@ jobs:
           git add plugin/ralph-hero/mcp-server/package.json
           git add plugin/ralph-hero/mcp-server/package-lock.json
           git add plugin/ralph-hero/.claude-plugin/plugin.json
+          git add plugin/ralph-hero/justfile
+          git add plugin/ralph-hero/.mcp.json
           git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
           git tag "v${NEW_VERSION}"
           git pull --rebase origin main

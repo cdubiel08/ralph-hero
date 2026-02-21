@@ -28,9 +28,9 @@ echo "Timeout: $TIMEOUT"
 echo ""
 
 if [ -n "$ISSUE_NUMBER" ]; then
-    COMMAND="/ralph-team $ISSUE_NUMBER"
+    COMMAND="/ralph-hero:ralph-team $ISSUE_NUMBER"
 else
-    COMMAND="/ralph-team"
+    COMMAND="/ralph-hero:ralph-team"
 fi
 
 echo ">>> Running: $COMMAND"

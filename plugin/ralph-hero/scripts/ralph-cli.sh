@@ -8,7 +8,7 @@ RALPH_JUSTFILE="${RALPH_JUSTFILE:-}"
 if [ -z "$RALPH_JUSTFILE" ]; then
     CACHE_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero"
     if [ -d "$CACHE_DIR" ]; then
-        LATEST=$(ls -v "$CACHE_DIR" | tail -1)
+        LATEST=$(ls "$CACHE_DIR" | sort -V | tail -1)
         RALPH_JUSTFILE="$CACHE_DIR/$LATEST/justfile"
     fi
 fi
