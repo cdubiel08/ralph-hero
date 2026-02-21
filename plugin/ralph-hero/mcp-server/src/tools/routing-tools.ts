@@ -159,9 +159,10 @@ export function registerRoutingTools(
                 const optionId = fieldCache.resolveOptionId(
                   "Workflow State",
                   rule.action.workflowState,
+                  projectNumber,
                 );
                 if (optionId === undefined) {
-                  const valid = fieldCache.getOptionNames("Workflow State");
+                  const valid = fieldCache.getOptionNames("Workflow State", projectNumber);
                   errors.push({
                     ruleIndex: i,
                     field: "action.workflowState",

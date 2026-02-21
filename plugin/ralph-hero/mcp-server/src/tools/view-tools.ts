@@ -135,10 +135,10 @@ export function registerViewTools(
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, owner, projectNumber);
 
-        const fieldId = fieldCache.getFieldId(args.fieldName);
+        const fieldId = fieldCache.getFieldId(args.fieldName, projectNumber);
         if (!fieldId) {
           return toolError(
-            `Field "${args.fieldName}" not found. Available fields: ${fieldCache.getFieldNames().join(", ")}`,
+            `Field "${args.fieldName}" not found. Available fields: ${fieldCache.getFieldNames(projectNumber).join(", ")}`,
           );
         }
 

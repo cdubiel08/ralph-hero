@@ -725,6 +725,7 @@ export function registerRelationshipTools(
               repo,
               issueNum,
               "Workflow State",
+              projectNumber,
             );
 
             if (!currentState) {
@@ -756,6 +757,7 @@ export function registerRelationshipTools(
               owner,
               repo,
               issueNum,
+              projectNumber,
             );
             await updateProjectItemField(
               client,
@@ -763,10 +765,11 @@ export function registerRelationshipTools(
               projectItemId,
               "Workflow State",
               args.targetState,
+              projectNumber,
             );
 
             // Sync default Status field (best-effort, one-way)
-            await syncStatusField(client, fieldCache, projectItemId, args.targetState);
+            await syncStatusField(client, fieldCache, projectItemId, args.targetState, projectNumber);
 
             advanced.push({
               number: issueNum,
@@ -933,6 +936,7 @@ export function registerRelationshipTools(
             repo,
             sibling.number,
             "Workflow State",
+            projectNumber,
           );
 
           const state = currentState || "unknown";
@@ -987,6 +991,7 @@ export function registerRelationshipTools(
           repo,
           parentNumber,
           "Workflow State",
+          projectNumber,
         );
 
         // Check if parent is already at or past the target state
@@ -1012,6 +1017,7 @@ export function registerRelationshipTools(
           owner,
           repo,
           parentNumber,
+          projectNumber,
         );
         await updateProjectItemField(
           client,
@@ -1019,8 +1025,9 @@ export function registerRelationshipTools(
           projectItemId,
           "Workflow State",
           minState,
+          projectNumber,
         );
-        await syncStatusField(client, fieldCache, projectItemId, minState);
+        await syncStatusField(client, fieldCache, projectItemId, minState, projectNumber);
 
         return toolSuccess({
           advanced: true,

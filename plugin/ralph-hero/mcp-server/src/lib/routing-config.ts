@@ -97,6 +97,7 @@ export async function loadRoutingConfig(
 export function validateRulesLive(
   config: RoutingConfig,
   fieldCache: FieldOptionCache,
+  projectNumber?: number,
 ): ConfigError[] {
   const errors: ConfigError[] = [];
 
@@ -111,9 +112,10 @@ export function validateRulesLive(
       const optionId = fieldCache.resolveOptionId(
         "Workflow State",
         rule.action.workflowState,
+        projectNumber,
       );
       if (optionId === undefined) {
-        const valid = fieldCache.getOptionNames("Workflow State");
+        const valid = fieldCache.getOptionNames("Workflow State", projectNumber);
         errors.push({
           phase: "live_validation",
           path: ["rules", String(i), "action", "workflowState"],

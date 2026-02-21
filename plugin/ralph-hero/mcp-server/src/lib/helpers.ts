@@ -157,8 +157,9 @@ export async function resolveProjectItemId(
   owner: string,
   repo: string,
   issueNumber: number,
+  projectNumber?: number,
 ): Promise<string> {
-  const projectId = fieldCache.getProjectId();
+  const projectId = fieldCache.getProjectId(projectNumber);
   if (!projectId) {
     throw new Error(
       "Field cache not populated - cannot resolve project item ID",
@@ -226,20 +227,21 @@ export async function updateProjectItemField(
   projectItemId: string,
   fieldName: string,
   optionName: string,
+  projectNumber?: number,
 ): Promise<void> {
-  const projectId = fieldCache.getProjectId();
+  const projectId = fieldCache.getProjectId(projectNumber);
   if (!projectId) {
     throw new Error("Field cache not populated");
   }
 
-  const fieldId = fieldCache.getFieldId(fieldName);
+  const fieldId = fieldCache.getFieldId(fieldName, projectNumber);
   if (!fieldId) {
     throw new Error(`Field "${fieldName}" not found in project`);
   }
 
-  const optionId = fieldCache.resolveOptionId(fieldName, optionName);
+  const optionId = fieldCache.resolveOptionId(fieldName, optionName, projectNumber);
   if (!optionId) {
-    const validOptions = fieldCache.getOptionNames(fieldName);
+    const validOptions = fieldCache.getOptionNames(fieldName, projectNumber);
     throw new Error(
       `Option "${optionName}" not found for field "${fieldName}". ` +
         `Valid options: ${validOptions.join(", ")}`,
@@ -272,6 +274,7 @@ export async function getCurrentFieldValue(
   repo: string,
   issueNumber: number,
   fieldName: string,
+  projectNumber?: number,
 ): Promise<string | undefined> {
   const projectItemId = await resolveProjectItemId(
     client,
@@ -279,6 +282,7 @@ export async function getCurrentFieldValue(
     owner,
     repo,
     issueNumber,
+    projectNumber,
   );
 
   const result = await client.query<{
@@ -509,14 +513,15 @@ export async function syncStatusField(
   fieldCache: FieldOptionCache,
   projectItemId: string,
   workflowState: string,
+  projectNumber?: number,
 ): Promise<void> {
   const targetStatus = WORKFLOW_STATE_TO_STATUS[workflowState];
   if (!targetStatus) return;
 
-  const statusFieldId = fieldCache.getFieldId("Status");
+  const statusFieldId = fieldCache.getFieldId("Status", projectNumber);
   if (!statusFieldId) return;
 
-  const statusOptionId = fieldCache.resolveOptionId("Status", targetStatus);
+  const statusOptionId = fieldCache.resolveOptionId("Status", targetStatus, projectNumber);
   if (!statusOptionId) return;
 
   try {
@@ -526,6 +531,7 @@ export async function syncStatusField(
       projectItemId,
       "Status",
       targetStatus,
+      projectNumber,
     );
   } catch {
     // Best-effort sync - don't fail the primary operation

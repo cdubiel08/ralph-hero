@@ -276,7 +276,7 @@ export function registerBatchTools(
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -284,9 +284,9 @@ export function registerBatchTools(
         // Validate option names up front (before any API calls)
         for (const op of args.operations) {
           const projectFieldName = FIELD_NAME_MAP[op.field as BatchField];
-          const optionId = fieldCache.resolveOptionId(projectFieldName, op.value);
+          const optionId = fieldCache.resolveOptionId(projectFieldName, op.value, projectNumber);
           if (!optionId) {
-            const validOptions = fieldCache.getOptionNames(projectFieldName);
+            const validOptions = fieldCache.getOptionNames(projectFieldName, projectNumber);
             return toolError(
               `Invalid value "${op.value}" for field "${op.field}". ` +
                 `Valid options: ${validOptions.join(", ")}`,
@@ -440,8 +440,8 @@ export function registerBatchTools(
             for (let opIdx = 0; opIdx < args.operations.length; opIdx++) {
               const op = args.operations[opIdx];
               const projectFieldName = FIELD_NAME_MAP[op.field as BatchField];
-              const fieldId = fieldCache.getFieldId(projectFieldName)!;
-              const optionId = fieldCache.resolveOptionId(projectFieldName, op.value)!;
+              const fieldId = fieldCache.getFieldId(projectFieldName, projectNumber)!;
+              const optionId = fieldCache.resolveOptionId(projectFieldName, op.value, projectNumber)!;
 
               updates.push({
                 alias: `u${num}_${opIdx}`,
@@ -457,9 +457,9 @@ export function registerBatchTools(
               if (op.field === "workflow_state") {
                 const targetStatus = WORKFLOW_STATE_TO_STATUS[op.value];
                 if (targetStatus) {
-                  const statusFieldId = fieldCache.getFieldId("Status");
+                  const statusFieldId = fieldCache.getFieldId("Status", projectNumber);
                   const statusOptionId = statusFieldId
-                    ? fieldCache.resolveOptionId("Status", targetStatus)
+                    ? fieldCache.resolveOptionId("Status", targetStatus, projectNumber)
                     : undefined;
                   if (statusFieldId && statusOptionId) {
                     updates.push({
