@@ -239,8 +239,7 @@ jobs:
                 }
               }
             }' -f issueId="$PARENT_NODE_ID" \
-               --jq --arg pid "$PROJECT_ID" \
-               '.data.node.projectItems.nodes[] | select(.project.id == $pid) | .id')
+               --jq ".data.node.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
 
           if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
             echo "::warning::Parent issue #$PARENT_NUMBER is not in project — skipping"

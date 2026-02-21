@@ -207,8 +207,7 @@ jobs:
                   }
                 }
               }' -f issueId="$ISSUE_NODE_ID" \
-                 --jq --arg pid "$PROJECT_ID" \
-                 '.data.node.projectItems.nodes[] | select(.project.id == $pid) | .id' 2>/dev/null || echo "")
+                 --jq ".data.node.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id" 2>/dev/null || echo "")
 
             if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
               echo "::warning::Issue #$ISSUE_NUM is not in project — skipping"
