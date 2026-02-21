@@ -2,6 +2,13 @@
 description: Tree-expansion orchestrator that drives a GitHub issue through the full lifecycle - split, research, plan, review, and sequential implementation using task blocking. Use when you want to process an issue tree end-to-end in hero mode.
 argument-hint: <issue-number>
 model: opus
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
+  - Skill
+  - Task
 env:
   RALPH_COMMAND: "hero"
   RALPH_AUTO_APPROVE: "false"

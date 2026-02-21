@@ -2,6 +2,19 @@
 description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, validator, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
 argument-hint: "[issue-number]"
 model: opus
+allowed_tools:
+  - Read
+  - Glob
+  - Bash
+  - Task
+  - Skill
+  - TeamCreate
+  - TeamDelete
+  - TaskCreate
+  - TaskList
+  - TaskGet
+  - TaskUpdate
+  - SendMessage
 env:
   RALPH_COMMAND: "team"
   RALPH_AUTO_APPROVE: "true"

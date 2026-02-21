@@ -32,6 +32,14 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-postcondition.sh"
+allowed_tools:
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Bash
+  - Task
 env:
   RALPH_COMMAND: "impl"
   RALPH_VALID_OUTPUT_STATES: "In Progress,In Review,Human Needed"
