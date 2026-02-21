@@ -23,10 +23,10 @@ The justfile (`plugin/ralph-hero/justfile`, 139 lines) has 14 LLM-powered recipe
 ## Desired End State
 
 ### Verification
-- [ ] `quick-issue` recipe exists in justfile with title (required), label, priority, estimate, state parameters
-- [ ] `quick-info` recipe exists in justfile for fetching issue details
-- [ ] `quick-comment` recipe exists in justfile for adding comments
-- [ ] All 3 new recipes use `_mcp_call` helper
+- [x] `quick-issue` recipe exists in justfile with title (required), label, priority, estimate, state parameters
+- [x] `quick-info` recipe exists in justfile for fetching issue details
+- [x] `quick-comment` recipe exists in justfile for adding comments
+- [x] All 3 new recipes use `_mcp_call` helper
 - [ ] `just --list` shows all 3 new recipes with descriptions
 
 ## What We're NOT Doing
@@ -96,9 +96,9 @@ quick-comment issue body:
 | `plugin/ralph-hero/justfile` | Add 3 recipes: `quick-issue`, `quick-info`, `quick-comment` |
 
 ### Success Criteria
-- [ ] Automated: `grep -c "^quick-" plugin/ralph-hero/justfile` returns 7 (4 existing + 3 new)
-- [ ] Automated: `grep "quick-issue\|quick-info\|quick-comment" plugin/ralph-hero/justfile | wc -l` returns at least 3 (recipe definitions)
-- [ ] Automated: `grep "_mcp_call" plugin/ralph-hero/justfile | wc -l` returns at least 7 (helper definition + 7 recipe calls)
+- [x] Automated: `grep -c "^quick-" plugin/ralph-hero/justfile` returns 7 (4 existing + 3 new)
+- [x] Automated: `grep "quick-issue\|quick-info\|quick-comment" plugin/ralph-hero/justfile | wc -l` returns at least 3 (recipe definitions)
+- [x] Automated: `grep "_mcp_call" plugin/ralph-hero/justfile | wc -l` returns at least 7 (helper definition + 7 recipe calls)
 - [ ] Manual: `just quick-issue "Test issue" label="enhancement" priority="P2" estimate="XS"` creates an issue
 - [ ] Manual: `just quick-info 72` returns issue details
 - [ ] Manual: `just quick-comment 72 "Test comment"` adds a comment
