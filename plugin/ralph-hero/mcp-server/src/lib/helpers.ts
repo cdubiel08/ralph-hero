@@ -400,6 +400,57 @@ export async function queryProjectRepositories(
 }
 
 // ---------------------------------------------------------------------------
+// Helper: Infer repo from project-linked repositories
+// ---------------------------------------------------------------------------
+
+/**
+ * Infer repo from the project's linked repositories when RALPH_GH_REPO is not set.
+ *
+ * Rules:
+ * - If client.config.repo is already set → return it (env var takes precedence)
+ * - If exactly 1 repo linked → use it, cache in client.config.repo
+ * - If 0 repos linked → throw with bootstrap instructions
+ * - If 2+ repos linked → throw with list of repos and hint to set RALPH_GH_REPO
+ */
+export async function resolveRepoFromProject(client: GitHubClient): Promise<string> {
+  if (client.config.repo) return client.config.repo;
+
+  const projectNumber = client.config.projectNumber;
+  const projectOwner = resolveProjectOwner(client.config);
+
+  if (!projectNumber || !projectOwner) {
+    throw new Error(
+      "Cannot infer repo: RALPH_GH_PROJECT_NUMBER and RALPH_GH_OWNER (or RALPH_GH_PROJECT_OWNER) are required. " +
+      "Set RALPH_GH_REPO explicitly, or configure project settings first."
+    );
+  }
+
+  const result = await queryProjectRepositories(client, projectOwner, projectNumber);
+
+  if (!result || result.totalRepos === 0) {
+    throw new Error(
+      "No repositories linked to project. Cannot infer repo. " +
+      "Bootstrap: run link_repository to link a repo to your project, then restart."
+    );
+  }
+
+  if (result.totalRepos === 1) {
+    const inferred = result.repos[0];
+    client.config.repo = inferred.repo;
+    if (!client.config.owner) {
+      client.config.owner = inferred.owner;
+    }
+    return inferred.repo;
+  }
+
+  const repoList = result.repos.map(r => r.nameWithOwner).join(", ");
+  throw new Error(
+    `Multiple repos linked to project: ${repoList}. ` +
+    "Set RALPH_GH_REPO to select which repo to use as default."
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helper: Resolve required owner/repo with defaults
 // ---------------------------------------------------------------------------
 
@@ -415,7 +466,7 @@ export function resolveConfig(
     );
   if (!repo)
     throw new Error(
-      "repo is required (set RALPH_GH_REPO env var or pass explicitly)",
+      "repo is required. Set RALPH_GH_REPO env var, pass repo explicitly, or link exactly one repo to your project.",
     );
   return { owner, repo };
 }
