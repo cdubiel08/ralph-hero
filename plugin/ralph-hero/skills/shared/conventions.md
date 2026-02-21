@@ -115,6 +115,20 @@ Cross-phase progression is lead-driven: the lead creates next-bough tasks when c
 - **Lead gets visibility** via idle notification DM summaries -- no need to CC the lead on handoffs.
 - **Multiple handoffs are fine** -- if 3 analysts complete and all message the builder, the builder wakes 3 times and claims one task each time.
 
+## Task Description Protocol
+
+Task descriptions are the primary channel for passing context from the lead to teammates. When creating tasks, include GitHub URLs, artifact paths, group membership, and workflow state in the description. Workers read these via `TaskGet` before invoking their skill.
+
+For the full specification of metadata fields, structured format examples, and task ID conventions, see `skills/shared/task-list-guide.md`.
+
+Key metadata fields: `issue_number`, `issue_url`, `command`, `phase`, `estimate`, `group_primary`, `group_members`, `artifact_path`, `worktree`.
+
+## Communication Discipline
+
+TaskUpdate is the primary channel for structured results. SendMessage is for exceptions -- escalations, blocking discoveries, or questions not answerable from the task description. Avoid acknowledging tasks, reporting routine progress, or responding to idle notifications via message.
+
+For the full communication principles including lead behavior, timing patience, and context passing examples, see `skills/shared/team-communication.md`.
+
 ## Spawn Template Protocol
 
 ### Template Location
@@ -204,25 +218,25 @@ All roles use the single `worker.md` template. Role selection is driven by the t
 
 ### Template Authoring Rules
 
-- The single `worker.md` template MUST be under 10 lines (raw, before substitution)
-- Resolved prompts MUST be under 10 lines for every role
-- DO NOT include: conversation history, document contents, code snippets, assignment instructions
+- The single `worker.md` template should be under 10 lines (raw, before substitution)
+- Resolved prompts should be under 10 lines for every role
+- Avoid including: conversation history, document contents, or lengthy code snippets. Brief contextual notes (1-2 lines) are acceptable when they help the worker orient faster.
 - Teammates message the lead using `recipient="team-lead"` exactly
 - Result reporting follows conventions.md Result Format Contracts (via `{REPORT_FORMAT}`)
 
 ### Template Integrity
 
-Resolved template content is the COMPLETE prompt for spawned teammates. Orchestrators MUST NOT add context beyond placeholder substitution.
+The resolved template content is the primary prompt for spawned teammates. Try to keep spawn prompts close to the template output. Additional context like artifact paths and group membership should go in task descriptions (via TaskCreate/TaskUpdate) rather than in the spawn prompt itself. This way teammates discover context through their task metadata rather than having it front-loaded.
 
-**Line-count guardrail**: A correctly resolved prompt is 6-8 lines. If the prompt exceeds 10 lines, the orchestrator has violated template integrity by adding prohibited context.
+**Line-count guideline**: A correctly resolved prompt is typically 6-8 lines. If the prompt exceeds 12-15 lines, consider whether the extra context would be better placed in the task description.
 
-**Prohibited additions**:
+**Context that belongs in task descriptions, not spawn prompts**:
 - Research hints, root cause analysis, or investigation guidance
 - File paths or code snippets not present in the template
 - Custom instructions replacing or augmenting template content
 - "Key files:", "Context:", "Background:" sections
 
-**Why this matters**: Agents invoke skills in isolated context windows. When the orchestrator front-loads context, agents skip skill invocation and work directly, bypassing hook enforcement and postcondition validation.
+**Why this matters**: Agents invoke skills in isolated context windows. When the orchestrator front-loads context, agents may skip skill invocation and work directly, bypassing hook enforcement and postcondition validation.
 
 ## Skill Invocation Convention
 

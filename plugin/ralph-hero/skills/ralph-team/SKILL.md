@@ -19,6 +19,7 @@ env:
   RALPH_COMMAND: "team"
   RALPH_AUTO_APPROVE: "true"
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
+  CLAUDE_PLUGIN_ROOT: "${CLAUDE_PLUGIN_ROOT}"
 hooks:
   TaskCompleted:
     - hooks:
@@ -129,14 +130,45 @@ Based on pipeline position (Section 3), create tasks ONLY for the current phase.
 
 Call `detect_pipeline_position` to determine the current phase and its issues.
 
-**Current-phase task rules**:
-- **SPLIT**: `"Split GH-NNN"` per oversized issue (only if `subIssueCount === 0`)
-- **TRIAGE**: `"Triage GH-NNN"` per untriaged issue
-- **RESEARCH**: `"Research GH-NNN"` per issue (for groups: per-member)
-- **PLAN**: `"Plan GH-NNN"` per group (using GROUP_PRIMARY). For groups, include all issue numbers in description.
-- **REVIEW**: `"Review plan for GH-NNN"` -- only if `RALPH_REVIEW_MODE=interactive`
-- **IMPLEMENT**: `"Implement GH-NNN"`
-- **COMPLETE**: `"Create PR for GH-NNN"` + `"Merge PR for GH-NNN"` (coupled pair, Merge blocked by PR)
+**Current-phase task rules** (include description and metadata for each task):
+
+- **SPLIT**:
+  Subject: `"Split GH-NNN"`
+  Description: Include issue URL, current estimate, and reason for splitting.
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "split", "phase": "split", "estimate": "[current]" }`
+  Only create if `subIssueCount === 0`.
+
+- **TRIAGE**:
+  Subject: `"Triage GH-NNN"`
+  Description: Include issue URL, current estimate.
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "triage", "phase": "triage", "estimate": "[current]" }`
+
+- **RESEARCH**:
+  Subject: `"Research GH-NNN"` per issue (for groups: per-member)
+  Description: Include issue URL, current workflow state, estimate.
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "research", "phase": "research", "estimate": "[XS/S]" }`
+
+- **PLAN**:
+  Subject: `"Plan GH-NNN"` (group: `"Plan group GH-NNN"`)
+  Description: Include issue URL, research document path(s) from artifact comments, group membership if applicable.
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "plan", "phase": "plan", "artifact_path": "[research doc path]", "group_primary": "NNN", "group_members": "NNN,AAA,BBB" }`
+
+- **REVIEW**:
+  Subject: `"Review plan for GH-NNN"` -- only if `RALPH_REVIEW_MODE=interactive`
+  Description: Include issue URL, plan document path from artifact comments.
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "review", "phase": "review", "artifact_path": "[plan doc path]" }`
+
+- **IMPLEMENT**:
+  Subject: `"Implement GH-NNN"`
+  Description: Include issue URL, plan document path from artifact comments, worktree path if already created.
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "impl", "phase": "implement", "artifact_path": "[plan doc path]", "worktree": "worktrees/GH-NNN/" }`
+
+- **COMPLETE**:
+  Subject: `"Create PR for GH-NNN"` + `"Merge PR for GH-NNN"` (coupled pair, Merge blocked by PR)
+  Description: Include issue URL, worktree path, branch name.
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "pr", "phase": "complete", "worktree": "worktrees/GH-NNN/" }`
+
+See `shared/task-list-guide.md` for the full metadata field reference.
 
 **Subject patterns** (workers match on these to self-claim):
 - `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
@@ -163,6 +195,7 @@ The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural de
 Your dispatch responsibilities:
 
 1. **Bough advancement** (primary): When a phase's tasks complete, call `detect_pipeline_position` to check convergence. If `convergence.met === true` and the phase advances: create next-bough tasks per Section 4.2 and assign to idle workers. For groups: wait for ALL group members to converge before creating next-bough tasks. Workers also discover new tasks via the Stop hook.
+   **Carry forward artifact paths**: When creating next-bough tasks, extract artifact paths from completed tasks via `TaskGet` and include them in the new task descriptions. For example, after research converges, include the research doc path in the Plan task description. This saves the planner from having to re-discover artifacts via comments.
 2. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
 3. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
 4. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create new-bough tasks for found issues.
@@ -177,6 +210,9 @@ Only when dispatch loop confirms no more work. Send `shutdown_request` to each t
 - **Delegate everything**: You never research, plan, review, or implement. You manage tasks and spawn workers.
 - **Workers are autonomous**: After their initial pre-assigned task, workers self-claim from TaskList. Your job is ensuring workers exist and pre-assigning their first task at spawn.
 - **Pre-assign at spawn**: Call `TaskUpdate(taskId, owner="[role]")` immediately before spawning each worker. Lead creates and assigns new-bough tasks when convergence is detected. Workers also self-claim unclaimed tasks via Stop hook.
+- **Task descriptions are the context channel**: Put GitHub URLs, artifact paths, and group context in task descriptions. Workers read these via TaskGet before invoking their skill. This is more reliable than SendMessage because it persists and doesn't require the worker to be awake. See `shared/task-list-guide.md` for metadata field conventions.
+- **Don't nudge after assigning**: After creating and assigning a task, let the worker discover it. Avoid sending a follow-up message "just to make sure." The task assignment is the communication. See `shared/team-communication.md` for the full principle.
+- **Patience with idle workers**: Workers go idle after every turn -- this is normal. Avoid reacting to idle notifications unless the pipeline has genuinely drained. See `shared/team-communication.md` for guidance.
 - **Bias toward action**: When in doubt, check TaskList. When idle, query GitHub. Zero-gap lookahead.
 - **Hooks are your safety net**: Stop hook prevents premature shutdown. State hooks prevent invalid transitions. Trust them.
 - **Escalate and move on**: If stuck, escalate via GitHub comment (`__ESCALATE__` intent) and find other work. Never block on user input.
@@ -232,18 +268,20 @@ See `shared/conventions.md` "Spawn Template Protocol" for full placeholder refer
 
 ### Template Integrity
 
-**CRITICAL**: The resolved template content is the COMPLETE spawn prompt. Do NOT add any additional context.
+**Template guidance**: The resolved template content should be the primary spawn prompt. Try to keep the prompt close to the template output -- typically 6-8 lines.
 
-**Rules**:
-- The prompt passed to `Task()` must be the template output and NOTHING else
-- Resolved prompts must be 6-8 lines. If longer than 10 lines, you have violated template integrity
-- The agent discovers all context it needs via skill invocation -- that is the entire point of HOP
+**Where to put additional context**:
+- Task descriptions (via TaskCreate) -- GitHub URLs, artifact paths, group membership, worktree paths
+- Task metadata -- Structured key-value pairs that teammates and hooks can parse
+- Avoid putting lengthy analysis, code snippets, or multi-paragraph instructions in the spawn prompt
 
-**Anti-patterns** (NEVER do these):
-- Prepending root cause analysis, research hints, or investigation guidance
-- Including file paths, code snippets, or architectural context not in the template
-- Replacing template content with custom multi-paragraph instructions
-- Adding "Key files:", "Context:", or "Background:" sections
+**Context that belongs in task descriptions, not spawn prompts**:
+- Root cause analysis or investigation guidance
+- File paths or code snippets
+- Architectural context or background sections
+- Research hints or prior findings
+
+**Why**: Agents invoke skills in isolated context windows. The skill's own discovery process (reading GitHub comments, globbing for artifacts) provides canonical context. Task descriptions supplement this with quick-reference metadata.
 
 ### Per-Role Instance Limits
 
@@ -284,7 +322,7 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 
 ## Section 9 - Known Limitations
 
-- **Idle is NORMAL**: Teammates fire idle notifications every turn. Do NOT shut down or re-send messages. Only worry if task stalled >5 min.
+- **Idle is normal**: Teammates go idle after every turn. This is expected behavior. Avoid shutting down workers or re-sending messages based solely on idle notifications. If a task appears stalled for more than 5 minutes, check the task description for progress updates before escalating.
 - **Task status may lag**: Check work product directly (Glob, git log). If done, mark it yourself. If not, nudge then replace.
 - **Task list scoping**: All tasks MUST be created AFTER TeamCreate (Section 4.1).
 - **State trusts GitHub**: If workflow state is wrong, behavior will be wrong.
@@ -293,7 +331,7 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **Hybrid claiming**: Initial tasks are pre-assigned by the lead before spawning. Subsequent tasks use pull-based self-claim with consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these for self-claim.
 - **Task description = results channel**: Workers embed results via TaskUpdate description (REPLACE operation). Lead reads via TaskGet. If missing, check work product.
 - **Lead name hardcoded**: Always `"team-lead"`. Other names silently dropped.
-- **Fire-and-forget messages**: Wait 2 min, re-send once, then check manually.
+- **Messages are fire-and-forget**: If a message doesn't get a response within 2 minutes, try re-sending once, then check the task list or work product directly.
 - **Peer handoff depends on workers existing**: If a stage has no worker (never spawned or crashed), the handoff falls back to the lead. The lead must then spawn a replacement.
 
 ## Section 10 - Error Handling

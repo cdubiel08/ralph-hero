@@ -45,18 +45,11 @@ EXISTING=$(find "$SEARCH_DIR" -maxdepth 1 -name "*$TICKET_ID*" -type f 2>/dev/nu
 
 if [[ -n "$EXISTING" ]]; then
   cat >&2 <<EOF
-DUPLICATE ARTIFACT BLOCKED
-
 A $ARTIFACT_TYPE document for $TICKET_ID already exists:
   $EXISTING
 
-Actions:
-1. If this is intentional (updating existing): Use Edit tool instead of Write
-2. If this is a retry: Check if ticket already has document attached
-3. If different content needed: Use a unique filename suffix
-
-The $ARTIFACT_TYPE phase may already be complete for this ticket.
-Check the ticket's comments in GitHub before proceeding.
+If updating the existing document, use the Edit tool instead of Write.
+If this is a different artifact, use a unique filename suffix.
 EOF
   exit 2
 fi
