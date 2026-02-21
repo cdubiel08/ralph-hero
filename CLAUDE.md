@@ -79,6 +79,20 @@ Set these in `.claude/settings.local.json` (recommended, gitignored):
 }
 ```
 
+For multi-project setups (cross-project dashboard, multiple boards):
+
+```json
+{
+  "env": {
+    "RALPH_HERO_GITHUB_TOKEN": "ghp_xxx",
+    "RALPH_GH_OWNER": "cdubiel08",
+    "RALPH_GH_REPO": "ralph-hero",
+    "RALPH_GH_PROJECT_NUMBER": "3",
+    "RALPH_GH_PROJECT_NUMBERS": "3,5,7"
+  }
+}
+```
+
 **Do NOT put tokens in `.mcp.json`** — the `env` block can overwrite inherited values with unexpanded `${VAR}` literals, preventing the MCP server from starting. Only non-sensitive defaults with fallbacks belong in `.mcp.json` (e.g., `${RALPH_GH_OWNER:-cdubiel08}`).
 
 | Variable | Required | Where to set | Description |
@@ -87,11 +101,21 @@ Set these in `.claude/settings.local.json` (recommended, gitignored):
 | `RALPH_GH_OWNER` | Yes | `settings.local.json` or `.mcp.json` default | GitHub owner (user or org) |
 | `RALPH_GH_REPO` | No† | `settings.local.json` or `.mcp.json` default | Repository name (inferred from project if omitted) |
 | `RALPH_GH_PROJECT_NUMBER` | Yes | `settings.local.json` or `.mcp.json` default | GitHub Projects V2 number |
+| `RALPH_GH_PROJECT_NUMBERS` | No | `settings.local.json` | Comma-separated project numbers for cross-project dashboard (e.g., `"3,5,7"`) |
 | `RALPH_GH_REPO_TOKEN` | No | `settings.local.json` | Separate repo token (falls back to `RALPH_HERO_GITHUB_TOKEN`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | `settings.local.json` | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | `settings.local.json` | Project owner if different from repo owner |
 
 †`RALPH_GH_REPO` is inferred from the repositories linked to the project via `link_repository`. Only set it explicitly as a tiebreaker when multiple repos are linked. Bootstrap: `setup_project` → `link_repository` → repo is inferred. See #23.
+
+### Multi-Project Configuration
+
+Ralph supports managing multiple GitHub Projects V2 boards from a single instance:
+
+- **`RALPH_GH_PROJECT_NUMBER`** remains the default/primary project for all tools
+- **`RALPH_GH_PROJECT_NUMBERS`** (comma-separated) enables cross-project aggregation -- the `pipeline_dashboard` tool auto-aggregates across all listed projects
+- **Per-call override**: All project-aware tools accept an optional `projectNumber` parameter to target a specific project, regardless of defaults
+- Single-project mode (no `RALPH_GH_PROJECT_NUMBERS`) continues to work unchanged
 
 ### Key Implementation Details
 
