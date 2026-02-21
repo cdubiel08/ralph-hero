@@ -397,12 +397,12 @@ Tests:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm test` passes all new tests
-- [ ] All batch_update error paths tested
-- [ ] advance_children backward compatibility verified
+- [x] `npm test` passes all new tests
+- [x] All batch_update error paths tested
+- [x] advance_children backward compatibility verified
 
 #### Manual Verification
-- [ ] Test output clean with descriptive names
+- [x] Test output clean with descriptive names
 
 **Depends on**: Phase 2 (batch tool), Phase 3 (advance_children extension)
 
