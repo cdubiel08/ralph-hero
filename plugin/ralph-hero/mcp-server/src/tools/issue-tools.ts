@@ -182,7 +182,7 @@ export function registerIssueTools(
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -851,7 +851,7 @@ export function registerIssueTools(
           );
 
         // Step 4: Add to project
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError(
             "Could not resolve project ID for adding issue to project",
@@ -893,6 +893,7 @@ export function registerIssueTools(
             projectItemId,
             "Workflow State",
             args.workflowState,
+            projectNumber,
           );
         }
 
@@ -903,6 +904,7 @@ export function registerIssueTools(
             projectItemId,
             "Estimate",
             args.estimate,
+            projectNumber,
           );
         }
 
@@ -913,6 +915,7 @@ export function registerIssueTools(
             projectItemId,
             "Priority",
             args.priority,
+            projectNumber,
           );
         }
 
@@ -1100,6 +1103,7 @@ export function registerIssueTools(
           repo,
           args.number,
           "Workflow State",
+          projectNumber,
         );
 
         // Resolve project item ID
@@ -1109,6 +1113,7 @@ export function registerIssueTools(
           owner,
           repo,
           args.number,
+          projectNumber,
         );
 
         // Update the field with the resolved state
@@ -1118,10 +1123,11 @@ export function registerIssueTools(
           projectItemId,
           "Workflow State",
           resolvedState,
+          projectNumber,
         );
 
         // Sync default Status field (best-effort, one-way)
-        await syncStatusField(client, fieldCache, projectItemId, resolvedState);
+        await syncStatusField(client, fieldCache, projectItemId, resolvedState, projectNumber);
 
         const result: Record<string, unknown> = {
           number: args.number,
@@ -1177,6 +1183,7 @@ export function registerIssueTools(
           owner,
           repo,
           args.number,
+          projectNumber,
         );
 
         await updateProjectItemField(
@@ -1185,6 +1192,7 @@ export function registerIssueTools(
           projectItemId,
           "Estimate",
           args.estimate,
+          projectNumber,
         );
 
         return toolSuccess({
@@ -1233,6 +1241,7 @@ export function registerIssueTools(
           owner,
           repo,
           args.number,
+          projectNumber,
         );
 
         await updateProjectItemField(
@@ -1241,6 +1250,7 @@ export function registerIssueTools(
           projectItemId,
           "Priority",
           args.priority,
+          projectNumber,
         );
 
         return toolSuccess({
@@ -1618,7 +1628,7 @@ export function registerIssueTools(
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -1871,6 +1881,9 @@ async function getIssueFieldValues(
     owner,
     repo,
     issueNumber,
+    // Note: getIssueFieldValues is an internal helper called from tools that
+    // already resolve the project via ensureFieldCache. The default project
+    // context is correct here since callers already populated the cache.
   );
 
   const result = await client.query<{

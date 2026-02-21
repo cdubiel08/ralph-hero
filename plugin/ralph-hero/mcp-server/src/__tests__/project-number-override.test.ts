@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
+import { FieldOptionCache } from "../lib/cache.js";
 
 // ---------------------------------------------------------------------------
 // Representative tool schemas (replicated from source for pure testing)
@@ -318,5 +319,75 @@ describe("batch_update projectNumber", () => {
     if (result.success) {
       expect(result.data.projectNumber).toBeUndefined();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GH-278: FieldOptionCache returns correct data per project
+// ---------------------------------------------------------------------------
+
+describe("fieldCache calls with projectNumber", () => {
+  it("getProjectId returns correct project when projectNumber is passed", () => {
+    const cache = new FieldOptionCache();
+    cache.populate(3, "PVT_3", [{ id: "F1", name: "Status", options: [{ id: "O1", name: "Todo" }] }]);
+    cache.populate(5, "PVT_5", [{ id: "F2", name: "Status", options: [{ id: "O2", name: "Done" }] }]);
+
+    // Without projectNumber: returns default (first populated = #3)
+    expect(cache.getProjectId()).toBe("PVT_3");
+    // With projectNumber: returns correct project
+    expect(cache.getProjectId(5)).toBe("PVT_5");
+    expect(cache.getProjectId(3)).toBe("PVT_3");
+  });
+
+  it("getFieldId returns correct field for non-default project", () => {
+    const cache = new FieldOptionCache();
+    cache.populate(3, "PVT_3", [{ id: "F1_3", name: "Status", options: [] }]);
+    cache.populate(5, "PVT_5", [{ id: "F1_5", name: "Status", options: [] }]);
+
+    expect(cache.getFieldId("Status")).toBe("F1_3"); // default
+    expect(cache.getFieldId("Status", 5)).toBe("F1_5");
+    expect(cache.getFieldId("Status", 3)).toBe("F1_3");
+  });
+
+  it("resolveOptionId returns correct option for non-default project", () => {
+    const cache = new FieldOptionCache();
+    cache.populate(3, "PVT_3", [
+      { id: "F1", name: "Workflow State", options: [{ id: "WS_3_BP", name: "Backlog" }] },
+    ]);
+    cache.populate(5, "PVT_5", [
+      { id: "F2", name: "Workflow State", options: [{ id: "WS_5_BP", name: "Backlog" }] },
+    ]);
+
+    expect(cache.resolveOptionId("Workflow State", "Backlog")).toBe("WS_3_BP");
+    expect(cache.resolveOptionId("Workflow State", "Backlog", 5)).toBe("WS_5_BP");
+    expect(cache.resolveOptionId("Workflow State", "Backlog", 3)).toBe("WS_3_BP");
+  });
+
+  it("getOptionNames returns correct names for non-default project", () => {
+    const cache = new FieldOptionCache();
+    cache.populate(3, "PVT_3", [
+      { id: "F1", name: "Priority", options: [{ id: "P0_3", name: "P0" }, { id: "P1_3", name: "P1" }] },
+    ]);
+    cache.populate(5, "PVT_5", [
+      { id: "F2", name: "Priority", options: [{ id: "P0_5", name: "P0" }, { id: "P2_5", name: "P2" }] },
+    ]);
+
+    expect(cache.getOptionNames("Priority")).toEqual(["P0", "P1"]);
+    expect(cache.getOptionNames("Priority", 5)).toEqual(["P0", "P2"]);
+  });
+
+  it("getFieldNames returns correct names for non-default project", () => {
+    const cache = new FieldOptionCache();
+    cache.populate(3, "PVT_3", [
+      { id: "F1", name: "Status" },
+      { id: "F2", name: "Priority" },
+    ]);
+    cache.populate(5, "PVT_5", [
+      { id: "F3", name: "Status" },
+      { id: "F4", name: "Estimate" },
+    ]);
+
+    expect(cache.getFieldNames()).toEqual(["Status", "Priority"]);
+    expect(cache.getFieldNames(5)).toEqual(["Status", "Estimate"]);
   });
 });

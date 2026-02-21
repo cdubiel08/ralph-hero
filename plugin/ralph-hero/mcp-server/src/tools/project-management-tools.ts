@@ -62,7 +62,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -73,6 +73,7 @@ export function registerProjectManagementTools(
           owner,
           repo,
           args.number,
+          projectNumber,
         );
 
         if (args.unarchive) {
@@ -135,7 +136,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -146,6 +147,7 @@ export function registerProjectManagementTools(
           owner,
           repo,
           args.number,
+          projectNumber,
         );
 
         await client.projectMutate(
@@ -198,7 +200,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -271,7 +273,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -366,14 +368,14 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
 
-        const fieldId = fieldCache.getFieldId(args.field);
+        const fieldId = fieldCache.getFieldId(args.field, projectNumber);
         if (!fieldId) {
-          const validFields = fieldCache.getFieldNames();
+          const validFields = fieldCache.getFieldNames(projectNumber);
           return toolError(
             `Field "${args.field}" not found in project. ` +
             `Valid fields: ${validFields.join(", ")}`,
@@ -386,6 +388,7 @@ export function registerProjectManagementTools(
           owner,
           repo,
           args.number,
+          projectNumber,
         );
 
         await client.projectMutate(
@@ -439,7 +442,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -465,15 +468,15 @@ export function registerProjectManagementTools(
         const fieldsSet: string[] = [];
 
         if (args.workflowState) {
-          await updateProjectItemField(client, fieldCache, projectItemId, "Workflow State", args.workflowState);
+          await updateProjectItemField(client, fieldCache, projectItemId, "Workflow State", args.workflowState, projectNumber);
           fieldsSet.push("Workflow State");
         }
         if (args.priority) {
-          await updateProjectItemField(client, fieldCache, projectItemId, "Priority", args.priority);
+          await updateProjectItemField(client, fieldCache, projectItemId, "Priority", args.priority, projectNumber);
           fieldsSet.push("Priority");
         }
         if (args.estimate) {
-          await updateProjectItemField(client, fieldCache, projectItemId, "Estimate", args.estimate);
+          await updateProjectItemField(client, fieldCache, projectItemId, "Estimate", args.estimate, projectNumber);
           fieldsSet.push("Estimate");
         }
 
@@ -569,7 +572,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -580,6 +583,7 @@ export function registerProjectManagementTools(
           owner,
           repo,
           args.number,
+          projectNumber,
         );
 
         let afterId: string | undefined;
@@ -590,6 +594,7 @@ export function registerProjectManagementTools(
             owner,
             repo,
             args.afterNumber,
+            projectNumber,
           );
         }
 
@@ -683,7 +688,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -744,14 +749,14 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
 
-        const fieldId = fieldCache.getFieldId(args.field);
+        const fieldId = fieldCache.getFieldId(args.field, projectNumber);
         if (!fieldId) {
-          const validFields = fieldCache.getFieldNames();
+          const validFields = fieldCache.getFieldNames(projectNumber);
           return toolError(
             `Field "${args.field}" not found in project. ` +
             `Valid fields: ${validFields.join(", ")}`,
@@ -828,7 +833,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -946,7 +951,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -1196,7 +1201,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }
@@ -1364,7 +1369,7 @@ export function registerProjectManagementTools(
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }

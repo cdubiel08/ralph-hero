@@ -95,7 +95,7 @@ export function registerHygieneTools(
         // Ensure field cache
         await ensureFieldCache(client, fieldCache, owner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }

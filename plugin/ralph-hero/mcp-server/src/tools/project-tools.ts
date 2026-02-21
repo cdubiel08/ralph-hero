@@ -883,7 +883,7 @@ export function registerProjectTools(
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, owner, projectNumber);
 
-        const projectId = fieldCache.getProjectId();
+        const projectId = fieldCache.getProjectId(projectNumber);
         if (!projectId) {
           return toolError("Could not resolve project ID");
         }

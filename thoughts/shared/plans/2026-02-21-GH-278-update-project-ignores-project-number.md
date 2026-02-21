@@ -26,11 +26,11 @@ The one file that already does this correctly is `dashboard-tools.ts` (line 359:
 
 ## Desired End State
 ### Verification
-- [ ] All `fieldCache` method calls pass `projectNumber` explicitly
-- [ ] Shared helpers in `lib/helpers.ts` accept and thread `projectNumber`
-- [ ] `update_project(projectNumber: 5)` resolves to project #5, not the default
-- [ ] All existing tests pass
-- [ ] New test verifies `fieldCache` calls receive `projectNumber` for a non-default project
+- [x] All `fieldCache` method calls pass `projectNumber` explicitly
+- [x] Shared helpers in `lib/helpers.ts` accept and thread `projectNumber`
+- [x] `update_project(projectNumber: 5)` resolves to project #5, not the default
+- [x] All existing tests pass
+- [x] New test verifies `fieldCache` calls receive `projectNumber` for a non-default project
 
 ## What We're NOT Doing
 - Not changing the `FieldOptionCache` class itself (its API is already correct)
@@ -330,16 +330,16 @@ describe("fieldCache calls with projectNumber", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes with all existing + new tests
-- [ ] Automated: `grep -r 'fieldCache\.\(getProjectId\|getFieldId\|resolveOptionId\|getOptionNames\|getFieldNames\)()' src/` returns 0 matches (no bare calls remain)
+- [x] Automated: `npm test` passes with all existing + new tests
+- [x] Automated: `grep -r 'fieldCache\.\(getProjectId\|getFieldId\|resolveOptionId\|getOptionNames\|getFieldNames\)()' src/` returns 0 matches (no bare calls remain)
 - [ ] Manual: Verify `update_project(projectNumber: N)` resolves to the correct project in the response
 
 ---
 
 ## Integration Testing
-- [ ] All existing tests pass (`npm test`)
-- [ ] Grep audit confirms zero bare `fieldCache.*()` calls remain in `src/` (excluding `__tests__/`)
-- [ ] Build succeeds (`npm run build`)
+- [x] All existing tests pass (`npm test`)
+- [x] Grep audit confirms zero bare `fieldCache.*()` calls remain in `src/` (excluding `__tests__/`)
+- [x] Build succeeds (`npm run build`)
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-21-GH-0278-update-project-ignores-project-number.md
