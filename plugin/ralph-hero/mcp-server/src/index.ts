@@ -78,6 +78,9 @@ function initGitHubClient(): GitHubClient {
         .map((s) => parseInt(s.trim(), 10))
         .filter((n) => !isNaN(n))
     : undefined;
+  const templateProjectNumber = resolveEnv("RALPH_GH_TEMPLATE_PROJECT")
+    ? parseInt(resolveEnv("RALPH_GH_TEMPLATE_PROJECT")!, 10)
+    : undefined;
 
   if (!owner) {
     console.error(
@@ -113,6 +116,7 @@ function initGitHubClient(): GitHubClient {
     projectNumber,
     projectNumbers,
     projectOwner: projectOwner || undefined,
+    templateProjectNumber,
   });
 }
 

@@ -187,8 +187,8 @@ return toolSuccess({
 ```
 
 ### Success Criteria
-- [ ] Automated: `npm run build` passes
-- [ ] Automated: `npm test` passes (all existing tests)
+- [x] Automated: `npm run build` passes
+- [x] Automated: `npm test` passes (all existing tests)
 - [ ] Manual: `setup_project` without template creates blank project (unchanged behavior)
 - [ ] Manual: `setup_project` with `templateProjectNumber` copies the template
 
