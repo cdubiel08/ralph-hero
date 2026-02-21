@@ -96,6 +96,27 @@ quick-assign issue user:
     @just _mcp_call "ralph_hero__update_issue" \
         '{"number":{{issue}},"assignees":["{{user}}"]}'
 
+# Create a new issue with project fields - instant, no API cost
+quick-issue title label="" priority="" estimate="" state="Backlog":
+    #!/usr/bin/env bash
+    set -eu
+    params='{"title":"{{title}}"'
+    if [ -n "{{label}}" ]; then params="$params,\"labels\":[\"{{label}}\"]"; fi
+    if [ -n "{{priority}}" ]; then params="$params,\"priority\":\"{{priority}}\""; fi
+    if [ -n "{{estimate}}" ]; then params="$params,\"estimate\":\"{{estimate}}\""; fi
+    params="$params,\"workflowState\":\"{{state}}\"}"
+    just _mcp_call "ralph_hero__create_issue" "$params"
+
+# Get full issue details with project fields - instant, no API cost
+quick-info issue:
+    @just _mcp_call "ralph_hero__get_issue" \
+        '{"number":{{issue}}}'
+
+# Add a comment to an issue - instant, no API cost
+quick-comment issue body:
+    @just _mcp_call "ralph_hero__create_comment" \
+        '{"number":{{issue}},"body":"{{body}}"}'
+
 # --- Completion & Documentation ---
 
 # Generate shell tab completions (bash, zsh, fish, powershell, elvish)
