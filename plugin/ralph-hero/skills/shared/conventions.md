@@ -139,15 +139,15 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 
 ### Template Location
 
-Spawn templates live at: `${CLAUDE_PLUGIN_ROOT}/templates/spawn/{role}.md`
+A single spawn template lives at: `${CLAUDE_PLUGIN_ROOT}/templates/spawn/worker.md`
 
 To resolve the path at runtime, use Bash to expand the variable first:
 ```
-TEMPLATE_DIR=$(echo $CLAUDE_PLUGIN_ROOT)/templates/spawn
+TEMPLATE_PATH=$(echo $CLAUDE_PLUGIN_ROOT)/templates/spawn/worker.md
 ```
-Then read templates via `Read(file_path="[resolved-path]/researcher.md")`.
+Then read via `Read(file_path="[resolved-path]")`.
 
-Available templates: `triager`, `splitter`, `researcher`, `planner`, `reviewer`, `implementer`, `integrator`
+All roles use this template. Role-specific behavior is driven by placeholder substitution from the spawn table in SKILL.md Section 6.
 
 ### Placeholder Substitution
 
@@ -155,9 +155,10 @@ Available templates: `triager`, `splitter`, `researcher`, `planner`, `reviewer`,
 |-------------|--------|----------|
 | `{ISSUE_NUMBER}` | Issue number from GitHub | Always |
 | `{TITLE}` | Issue title from `get_issue` | Always |
-| `{ESTIMATE}` | Issue estimate from `get_issue` | Triager, Splitter |
-| `{GROUP_CONTEXT}` | See below | Planner, Reviewer (groups only) |
-| `{WORKTREE_CONTEXT}` | See below | Implementer only |
+| `{TASK_VERB}` | Spawn table "Task Verb" column | Always |
+| `{TASK_CONTEXT}` | Role-dependent (see SKILL.md Section 6) | Optional (empty -> line removed) |
+| `{SKILL_INVOCATION}` | Spawn table "Skill" column (integrator uses special instruction) | Always |
+| `{REPORT_FORMAT}` | Result Format Contracts below | Always |
 
 ### Group Context Resolution
 
@@ -187,57 +188,53 @@ If no worktree:
 
 If a placeholder resolves to an empty string, remove the ENTIRE LINE containing that placeholder. Do not leave blank lines where optional context was omitted.
 
-Example -- planner template before substitution:
+Example -- worker.md template before substitution (planner role):
 ```
 Plan GH-42: Add caching.
-{GROUP_CONTEXT}
+{TASK_CONTEXT}
 
 Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
+
+Report via TaskUpdate: "PLAN COMPLETE: ..."
+Then check TaskList for more tasks matching your role. If none, notify team-lead.
 ```
 
-After substitution when IS_GROUP=false (GROUP_CONTEXT is empty):
+After substitution when IS_GROUP=false (TASK_CONTEXT is empty):
 ```
 Plan GH-42: Add caching.
 
 Invoke: Skill(skill="ralph-hero:ralph-plan", args="42")
+
+Report via TaskUpdate: "PLAN COMPLETE: ..."
+Then check TaskList for more tasks matching your role. If none, notify team-lead.
 ```
-The `{GROUP_CONTEXT}` line is removed entirely.
+The `{TASK_CONTEXT}` line is removed entirely.
 
 ### Resolution Procedure (for orchestrator)
 
-1. Determine the role from the task subject (Research -> `researcher.md`, Plan -> `planner.md`, etc.)
-2. Resolve template path: `Bash("echo $CLAUDE_PLUGIN_ROOT")` then append `/templates/spawn/{role}.md`
-3. Read the template file via `Read` tool
-4. Replace all `{PLACEHOLDER}` strings with actual values from `get_issue` response
-5. If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it
-6. Use the result as the `prompt` parameter in `Task()`
+1. Read the template: `Bash("echo $CLAUDE_PLUGIN_ROOT")` then `Read(file_path="[resolved-root]/templates/spawn/worker.md")`
+2. Look up the role in SKILL.md Section 6 spawn table using the task subject keyword
+3. Substitute all `{PLACEHOLDER}` strings with values from `get_issue` response and spawn table
+4. If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it
+5. Use the result as the `prompt` parameter in `Task()`
 
 ### Template Naming Convention
 
-Templates are named by role, selected via task subject keyword:
-
-| Role (task subject) | Template |
-|---------------------|----------|
-| Analyst (triage) | `triager.md` |
-| Analyst (split) | `splitter.md` |
-| Analyst (research) | `researcher.md` |
-| Builder (plan) | `planner.md` |
-| Builder (implement) | `implementer.md` |
-| Validator (review) | `reviewer.md` |
-| Integrator (create PR / merge) | `integrator.md` |
+All roles use the single `worker.md` template. Role selection is driven by the task subject keyword, mapped through the spawn table in SKILL.md Section 6. The template file itself is role-agnostic.
 
 ### Template Authoring Rules
 
-- Templates MUST be under 15 lines
+- The single `worker.md` template MUST be under 10 lines (raw, before substitution)
+- Resolved prompts MUST be under 10 lines for every role
 - DO NOT include: conversation history, document contents, code snippets, assignment instructions
 - Teammates message the lead using `recipient="team-lead"` exactly
-- Result reporting follows the inline format in the spawn template (via `TaskUpdate`)
+- Result reporting follows conventions.md Result Format Contracts (via `{REPORT_FORMAT}`)
 
 ### Template Integrity
 
 Resolved template content is the COMPLETE prompt for spawned teammates. Orchestrators MUST NOT add context beyond placeholder substitution.
 
-**Line-count guardrail**: A correctly resolved prompt is 5-8 lines. If the prompt exceeds 10 lines, the orchestrator has violated template integrity by adding prohibited context.
+**Line-count guardrail**: A correctly resolved prompt is 6-8 lines. If the prompt exceeds 10 lines, the orchestrator has violated template integrity by adding prohibited context.
 
 **Prohibited additions**:
 - Research hints, root cause analysis, or investigation guidance
@@ -267,7 +264,7 @@ This ensures:
 
 ### Note: Team Agents
 
-Team members are spawned as `general-purpose` subagents via `Task()`, so they follow the same isolation pattern as the default. Each team member invokes its skill inline:
+Team members are spawned as subagents via `Task()`, so they follow the same isolation pattern as the default. Each team member invokes its skill inline:
 
 ```
 Skill(skill="ralph-hero:ralph-research", args="42")
