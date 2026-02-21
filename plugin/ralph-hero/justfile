@@ -1,0 +1,98 @@
+# Ralph Hero - LLM-powered workflow recipes
+#
+# Usage: just <recipe> [params...]
+# Prerequisites: claude CLI, timeout (coreutils)
+# Optional: just (https://github.com/casey/just)
+
+set shell := ["bash", "-euc"]
+set dotenv-load
+
+# Show available recipes
+default:
+    @just --list
+
+# --- Individual Phase Recipes ---
+
+# Triage a backlog issue - assess validity, close duplicates, route to research
+triage issue="" budget="1.00" timeout="15m":
+    @just _run_skill "triage" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# Split a large issue into smaller XS/S sub-issues
+split issue="" budget="1.00" timeout="15m":
+    @just _run_skill "split" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# Research an issue - investigate codebase, create findings document
+research issue="" budget="2.00" timeout="15m":
+    @just _run_skill "research" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# Create implementation plan from research findings
+plan issue="" budget="3.00" timeout="15m":
+    @just _run_skill "plan" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# Review and critique an implementation plan
+review issue="" budget="2.00" timeout="15m":
+    @just _run_skill "review" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# Implement an issue following its approved plan
+impl issue="" budget="5.00" timeout="15m":
+    @just _run_skill "impl" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# Run project hygiene check - stale items, archive candidates
+hygiene budget="0.50" timeout="10m":
+    @just _run_skill "hygiene" "" "{{budget}}" "{{timeout}}"
+
+# Display pipeline status dashboard with health indicators
+status budget="0.50" timeout="10m":
+    @just _run_skill "status" "" "{{budget}}" "{{timeout}}"
+
+# --- Orchestrator Recipes ---
+
+# Multi-agent team coordinator - spawns specialist workers
+team issue="" timeout="30m":
+    TIMEOUT="{{timeout}}" ./scripts/ralph-team-loop.sh {{issue}}
+
+# Tree-expansion orchestrator - drives issue through full lifecycle
+hero issue="" budget="10.00" timeout="30m":
+    @just _run_skill "hero" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
+loop mode="all" review="skip" split="auto" hygiene="auto" timeout="60m":
+    #!/usr/bin/env bash
+    set -eu
+    args=""
+    if [ "{{mode}}" != "all" ]; then args="--{{mode}}-only"; fi
+    args="$args --review={{review}} --split={{split}} --hygiene={{hygiene}}"
+    TIMEOUT="{{timeout}}" ./scripts/ralph-loop.sh $args
+
+# --- Utility Recipes ---
+
+# One-time project setup - create GitHub Project V2 with required fields
+setup budget="1.00" timeout="10m":
+    @just _run_skill "setup" "" "{{budget}}" "{{timeout}}"
+
+# Generate and post a project status report
+report issue="" budget="1.00" timeout="10m":
+    @just _run_skill "report" "{{issue}}" "{{budget}}" "{{timeout}}"
+
+# --- Internal Helpers ---
+
+_run_skill skill issue budget timeout:
+    #!/usr/bin/env bash
+    set -eu
+    if [ -n "{{issue}}" ]; then
+        cmd="/ralph-{{skill}} {{issue}}"
+    else
+        cmd="/ralph-{{skill}}"
+    fi
+    echo ">>> Running: $cmd (budget: \${{budget}}, timeout: {{timeout}})"
+    timeout "{{timeout}}" claude -p "$cmd" \
+        --max-budget-usd "{{budget}}" \
+        --dangerously-skip-permissions \
+        2>&1 || {
+        exit_code=$?
+        if [ $exit_code -eq 124 ]; then
+            echo ">>> Timed out after {{timeout}}"
+        else
+            echo ">>> Exited with code $exit_code"
+        fi
+    }
