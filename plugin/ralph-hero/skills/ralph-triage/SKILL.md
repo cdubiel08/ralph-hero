@@ -18,6 +18,13 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-postcondition.sh"
+allowed_tools:
+  - Read
+  - Glob
+  - Grep
+  - Bash
+  - Task
+  - WebSearch
 env:
   RALPH_COMMAND: "triage"
   RALPH_REQUIRED_BRANCH: "main"

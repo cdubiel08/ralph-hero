@@ -176,6 +176,13 @@ export function registerProjectTools(
     {
       owner: z.string().describe("GitHub owner (user or org)"),
       title: z.string().describe("Project title").default("Ralph Workflow"),
+      templateProjectNumber: z
+        .number()
+        .optional()
+        .describe(
+          "Template project number to copy from. Overrides RALPH_GH_TEMPLATE_PROJECT env var. " +
+            "When set, copies the template project (views, fields, automations) instead of creating blank.",
+        ),
     },
     async (args) => {
       try {
@@ -227,70 +234,162 @@ export function registerProjectTools(
           );
         }
 
-        // Step 2: Create project (project operation)
-        const createResult = await client.projectMutate<{
-          createProjectV2: {
-            projectV2: {
-              id: string;
-              number: number;
-              url: string;
-              title: string;
+        // Resolve template project number: arg > config > undefined (blank)
+        const templatePN =
+          args.templateProjectNumber ?? client.config.templateProjectNumber;
+
+        let project: {
+          id: string;
+          number: number;
+          url: string;
+          title: string;
+        };
+        let fieldResults: Record<string, { id: string; options: string[] }>;
+
+        if (templatePN) {
+          // --- Copy path: clone template project ---
+          // 1. Resolve template project node ID
+          const templateProject = await fetchProject(
+            client,
+            owner,
+            templatePN,
+          );
+          if (!templateProject) {
+            return toolError(
+              `Template project #${templatePN} not found for owner "${owner}"`,
+            );
+          }
+
+          // 2. Copy via copyProjectV2
+          const copyResult = await client.projectMutate<{
+            copyProjectV2: {
+              projectV2: {
+                id: string;
+                number: number;
+                url: string;
+                title: string;
+              };
             };
-          };
-        }>(
-          `mutation($ownerId: ID!, $title: String!) {
-            createProjectV2(input: { ownerId: $ownerId, title: $title }) {
-              projectV2 {
-                id
-                number
-                url
-                title
+          }>(
+            `mutation($projectId: ID!, $ownerId: ID!, $title: String!) {
+              copyProjectV2(input: {
+                projectId: $projectId
+                ownerId: $ownerId
+                title: $title
+                includeDraftIssues: false
+              }) {
+                projectV2 { id number url title }
               }
+            }`,
+            {
+              projectId: templateProject.id,
+              ownerId,
+              title: args.title,
+            },
+          );
+          project = copyResult.copyProjectV2.projectV2;
+
+          // 3. Fetch fields from the copied project to build fieldResults
+          const copiedProject = await fetchProject(
+            client,
+            owner,
+            project.number,
+          );
+          if (!copiedProject) {
+            return toolError(
+              `Copied project #${project.number} not found after creation`,
+            );
+          }
+          fieldResults = {};
+          for (const f of copiedProject.fields.nodes) {
+            if (f.options) {
+              fieldResults[f.name] = {
+                id: f.id,
+                options: f.options.map((o) => o.name),
+              };
             }
-          }`,
-          { ownerId, title: args.title },
-        );
+          }
+        } else {
+          // --- Blank path: existing createProjectV2 + field creation ---
+          const createResult = await client.projectMutate<{
+            createProjectV2: {
+              projectV2: {
+                id: string;
+                number: number;
+                url: string;
+                title: string;
+              };
+            };
+          }>(
+            `mutation($ownerId: ID!, $title: String!) {
+              createProjectV2(input: { ownerId: $ownerId, title: $title }) {
+                projectV2 {
+                  id
+                  number
+                  url
+                  title
+                }
+              }
+            }`,
+            { ownerId, title: args.title },
+          );
 
-        const project = createResult.createProjectV2.projectV2;
+          project = createResult.createProjectV2.projectV2;
 
-        // Step 3: Create custom fields
-        const fieldResults: Record<string, { id: string; options: string[] }> =
-          {};
+          fieldResults = {};
 
-        // Workflow State field
-        const wsField = await createSingleSelectField(
-          client,
-          project.id,
-          "Workflow State",
-          WORKFLOW_STATE_OPTIONS,
-        );
-        fieldResults["Workflow State"] = wsField;
+          // Workflow State field
+          const wsField = await createSingleSelectField(
+            client,
+            project.id,
+            "Workflow State",
+            WORKFLOW_STATE_OPTIONS,
+          );
+          fieldResults["Workflow State"] = wsField;
 
-        // Priority field
-        const prioField = await createSingleSelectField(
-          client,
-          project.id,
-          "Priority",
-          PRIORITY_OPTIONS,
-        );
-        fieldResults["Priority"] = prioField;
+          // Priority field
+          const prioField = await createSingleSelectField(
+            client,
+            project.id,
+            "Priority",
+            PRIORITY_OPTIONS,
+          );
+          fieldResults["Priority"] = prioField;
 
-        // Estimate field
-        const estField = await createSingleSelectField(
-          client,
-          project.id,
-          "Estimate",
-          ESTIMATE_OPTIONS,
-        );
-        fieldResults["Estimate"] = estField;
+          // Estimate field
+          const estField = await createSingleSelectField(
+            client,
+            project.id,
+            "Estimate",
+            ESTIMATE_OPTIONS,
+          );
+          fieldResults["Estimate"] = estField;
+        }
 
-        // Populate the field cache for this project
+        // Shared: cache hydration (both paths)
         await ensureFieldCacheForNewProject(
           client,
           fieldCache,
           owner,
           project.number,
         );
+
+        // Link configured repo to new project (best-effort, both paths)
+        let repoLink: { linked: boolean; repository: string } | undefined;
+        const configOwner = client.config.owner;
+        const configRepo = client.config.repo;
+        if (configOwner && configRepo) {
+          try {
+            repoLink = await linkRepoAfterSetup(
+              client,
+              project.id,
+              configOwner,
+              configRepo,
+            );
+          } catch {
+            // Best-effort - don't fail setup if linking fails
+          }
+        }
 
         return toolSuccess({
           project: {
@@ -300,6 +399,10 @@ export function registerProjectTools(
             title: project.title,
           },
           fields: fieldResults,
+          ...(templatePN && {
+            copiedFrom: { templateProjectNumber: templatePN },
+          }),
+          ...(repoLink && { repositoryLink: repoLink }),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1263,8 +1366,44 @@ async function ensureFieldCacheForNewProject(
   owner: string,
   number: number,
 ): Promise<void> {
-  // Clear any stale cache and force refresh
-  fieldCache.clear();
-  client.getCache().clear();
+  // Invalidate query cache to force fresh API responses for the new project.
+  // Do NOT clear fieldCache — other projects' data must be preserved (GH-242).
+  client.getCache().invalidatePrefix("query:");
   await ensureFieldCache(client, fieldCache, owner, number);
+}
+
+async function linkRepoAfterSetup(
+  client: GitHubClient,
+  projectId: string,
+  repoOwner: string,
+  repoName: string,
+): Promise<{ linked: boolean; repository: string }> {
+  const repoResult = await client.query<{
+    repository: { id: string } | null;
+  }>(
+    `query($repoOwner: String!, $repoName: String!) {
+      repository(owner: $repoOwner, name: $repoName) { id }
+    }`,
+    { repoOwner, repoName },
+    { cache: true, cacheTtlMs: 60 * 60 * 1000 },
+  );
+
+  const repoId = repoResult.repository?.id;
+  if (!repoId) {
+    return { linked: false, repository: `${repoOwner}/${repoName}` };
+  }
+
+  await client.projectMutate(
+    `mutation($projectId: ID!, $repositoryId: ID!) {
+      linkProjectV2ToRepository(input: {
+        projectId: $projectId,
+        repositoryId: $repositoryId
+      }) {
+        repository { id }
+      }
+    }`,
+    { projectId, repositoryId: repoId },
+  );
+
+  return { linked: true, repository: `${repoOwner}/${repoName}` };
 }

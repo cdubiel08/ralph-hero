@@ -21,7 +21,7 @@ import {
   isParentGateState,
   stateIndex,
 } from "../lib/workflow-states.js";
-import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+import { toolSuccess, toolError } from "../types.js";
 import {
   ensureFieldCache,
   resolveIssueNodeId,
@@ -29,8 +29,88 @@ import {
   updateProjectItemField,
   getCurrentFieldValue,
   resolveConfig,
+  resolveFullConfig,
   syncStatusField,
 } from "../lib/helpers.js";
+
+// ---------------------------------------------------------------------------
+// Sub-issue tree helpers (exported for testing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively build the GraphQL selection set for nested sub-issues.
+ * At the leaf level (currentDepth >= maxDepth), returns only base fields.
+ * At inner levels, includes subIssuesSummary and nested subIssues.
+ */
+export function buildSubIssueFragment(
+  currentDepth: number,
+  maxDepth: number,
+): string {
+  const base = "id number title state";
+  if (currentDepth >= maxDepth) return base;
+  return `${base}
+    subIssuesSummary { total completed percentCompleted }
+    subIssues(first: 50) {
+      nodes { ${buildSubIssueFragment(currentDepth + 1, maxDepth)} }
+    }`;
+}
+
+interface SubIssueNode {
+  id: string;
+  number: number;
+  title: string;
+  state: string;
+  subIssues?: SubIssueNode[];
+  subIssuesSummary?: {
+    total: number;
+    completed: number;
+    percentCompleted: number;
+  };
+}
+
+/**
+ * Recursively map raw GraphQL sub-issue nodes into typed SubIssueNode[].
+ * Adds subIssues/subIssuesSummary fields when currentDepth < maxDepth.
+ */
+export function mapSubIssueNodes(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  nodes: any[],
+  currentDepth: number,
+  maxDepth: number,
+): SubIssueNode[] {
+  return nodes.map((node) => {
+    const mapped: SubIssueNode = {
+      id: node.id,
+      number: node.number,
+      title: node.title,
+      state: node.state,
+    };
+    if (currentDepth < maxDepth && node.subIssues?.nodes) {
+      mapped.subIssues = mapSubIssueNodes(
+        node.subIssues.nodes,
+        currentDepth + 1,
+        maxDepth,
+      );
+      mapped.subIssuesSummary = node.subIssuesSummary || {
+        total: node.subIssues.nodes.length,
+        completed: node.subIssues.nodes.filter(
+          (si: { state: string }) => si.state === "CLOSED",
+        ).length,
+        percentCompleted:
+          node.subIssues.nodes.length > 0
+            ? Math.round(
+                (node.subIssues.nodes.filter(
+                  (si: { state: string }) => si.state === "CLOSED",
+                ).length /
+                  node.subIssues.nodes.length) *
+                  100,
+              )
+            : 0,
+      };
+    }
+    return mapped;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Register relationship tools
@@ -126,7 +206,7 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_sub_issues",
-    "List all sub-issues (children) of a parent GitHub issue, with completion summary",
+    "List all sub-issues (children) of a parent GitHub issue, with completion summary. Use depth parameter (1-3) to fetch nested sub-issue trees in a single call. Default depth=1 returns direct children only.",
     {
       owner: z
         .string()
@@ -137,35 +217,21 @@ export function registerRelationshipTools(
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
       number: z.coerce.number().describe("Parent issue number"),
+      depth: z.coerce
+        .number()
+        .optional()
+        .default(1)
+        .describe(
+          "How many levels of sub-issues to fetch (1=direct children, 2=children+grandchildren, max 3)",
+        ),
     },
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
+        const depth = Math.min(Math.max(args.depth, 1), 3);
 
-        const result = await client.query<{
-          repository: {
-            issue: {
-              id: string;
-              number: number;
-              title: string;
-              subIssuesSummary: {
-                total: number;
-                completed: number;
-                percentCompleted: number;
-              } | null;
-              subIssues: {
-                nodes: Array<{
-                  id: string;
-                  number: number;
-                  title: string;
-                  state: string;
-                }>;
-                pageInfo: { hasNextPage: boolean; endCursor: string | null };
-              };
-            } | null;
-          } | null;
-        }>(
-          `query($owner: String!, $repo: String!, $number: Int!) {
+        const subIssueFields = buildSubIssueFragment(1, depth);
+        const queryStr = `query($owner: String!, $repo: String!, $number: Int!) {
             repository(owner: $owner, name: $repo) {
               issue(number: $number) {
                 id
@@ -173,12 +239,16 @@ export function registerRelationshipTools(
                 title
                 subIssuesSummary { total completed percentCompleted }
                 subIssues(first: 50) {
-                  nodes { id number title state }
+                  nodes { ${subIssueFields} }
                   pageInfo { hasNextPage endCursor }
                 }
               }
             }
-          }`,
+          }`;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await client.query<any>(
+          queryStr,
           { owner, repo, number: args.number },
         );
 
@@ -189,28 +259,30 @@ export function registerRelationshipTools(
           );
         }
 
+        const mappedSubIssues = mapSubIssueNodes(
+          issue.subIssues.nodes,
+          1,
+          depth,
+        );
+
         return toolSuccess({
           parent: {
             id: issue.id,
             number: issue.number,
             title: issue.title,
           },
-          subIssues: issue.subIssues.nodes.map((si) => ({
-            id: si.id,
-            number: si.number,
-            title: si.title,
-            state: si.state,
-          })),
+          subIssues: mappedSubIssues,
           summary: issue.subIssuesSummary || {
             total: issue.subIssues.nodes.length,
             completed: issue.subIssues.nodes.filter(
-              (si) => si.state === "CLOSED",
+              (si: { state: string }) => si.state === "CLOSED",
             ).length,
             percentCompleted:
               issue.subIssues.nodes.length > 0
                 ? Math.round(
-                    (issue.subIssues.nodes.filter((si) => si.state === "CLOSED")
-                      .length /
+                    (issue.subIssues.nodes.filter(
+                      (si: { state: string }) => si.state === "CLOSED",
+                    ).length /
                       issue.subIssues.nodes.length) *
                       100,
                   )
@@ -518,7 +590,7 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__advance_children",
-    "Advance all child/sub-issues of a parent to match the parent's new state. Only advances children that are in earlier workflow states. Returns what changed, what was skipped, and any errors.",
+    "Advance issues to a target workflow state. Provide either 'number' (parent issue, advances sub-issues) or 'issues' (explicit list of issue numbers). Only advances issues in earlier workflow states. Returns what changed, what was skipped, and any errors.",
     {
       owner: z
         .string()
@@ -528,15 +600,34 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.coerce.number().describe("Parent issue number"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
+      number: z
+        .coerce.number()
+        .optional()
+        .describe("Parent issue number (resolves sub-issues automatically)"),
+      issues: z
+        .array(z.coerce.number())
+        .optional()
+        .describe(
+          "Explicit list of issue numbers to advance (alternative to parent number)",
+        ),
       targetState: z
         .string()
         .describe(
-          "State to advance children to (e.g., 'Research Needed', 'Ready for Plan')",
+          "State to advance issues to (e.g., 'Research Needed', 'Ready for Plan')",
         ),
     },
     async (args) => {
       try {
+        // Validate: at least one of number or issues must be provided
+        if (args.number === undefined && (!args.issues || args.issues.length === 0)) {
+          return toolError(
+            "Either 'number' (parent issue) or 'issues' (explicit list) is required. " +
+              "Recovery: provide one of these parameters.",
+          );
+        }
+
         // Validate target state
         if (!isValidState(args.targetState)) {
           return toolError(
@@ -546,21 +637,7 @@ export function registerRelationshipTools(
           );
         }
 
-        const { owner, repo } = resolveConfig(client, args);
-
-        // Need full config for project operations
-        const projectNumber = client.config.projectNumber;
-        if (!projectNumber) {
-          return toolError(
-            "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)",
-          );
-        }
-        const projectOwner = resolveProjectOwner(client.config);
-        if (!projectOwner) {
-          return toolError(
-            "projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)",
-          );
-        }
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
         // Ensure field cache is populated
         await ensureFieldCache(
@@ -570,46 +647,55 @@ export function registerRelationshipTools(
           projectNumber,
         );
 
-        // Fetch sub-issues
-        const result = await client.query<{
-          repository: {
-            issue: {
-              number: number;
-              title: string;
-              subIssues: {
-                nodes: Array<{
-                  id: string;
-                  number: number;
-                  title: string;
-                  state: string;
-                }>;
-              };
+        // Build issue list: from explicit `issues` param or from parent's sub-issues
+        let issueNumbers: number[];
+
+        if (args.issues && args.issues.length > 0) {
+          // Explicit issue list takes precedence
+          issueNumbers = args.issues;
+        } else {
+          // Fetch sub-issues from parent
+          const result = await client.query<{
+            repository: {
+              issue: {
+                number: number;
+                title: string;
+                subIssues: {
+                  nodes: Array<{
+                    id: string;
+                    number: number;
+                    title: string;
+                    state: string;
+                  }>;
+                };
+              } | null;
             } | null;
-          } | null;
-        }>(
-          `query($owner: String!, $repo: String!, $number: Int!) {
-            repository(owner: $owner, name: $repo) {
-              issue(number: $number) {
-                number
-                title
-                subIssues(first: 50) {
-                  nodes { id number title state }
+          }>(
+            `query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                issue(number: $number) {
+                  number
+                  title
+                  subIssues(first: 50) {
+                    nodes { id number title state }
+                  }
                 }
               }
-            }
-          }`,
-          { owner, repo, number: args.number },
-        );
-
-        const parentIssue = result.repository?.issue;
-        if (!parentIssue) {
-          return toolError(
-            `Issue #${args.number} not found in ${owner}/${repo}`,
+            }`,
+            { owner, repo, number: args.number! },
           );
+
+          const parentIssue = result.repository?.issue;
+          if (!parentIssue) {
+            return toolError(
+              `Issue #${args.number} not found in ${owner}/${repo}`,
+            );
+          }
+
+          issueNumbers = parentIssue.subIssues.nodes.map((si) => si.number);
         }
 
-        const subIssues = parentIssue.subIssues.nodes;
-        if (subIssues.length === 0) {
+        if (issueNumbers.length === 0) {
           return toolSuccess({
             advanced: [],
             skipped: [],
@@ -629,7 +715,7 @@ export function registerRelationshipTools(
         }> = [];
         const errors: Array<{ number: number; error: string }> = [];
 
-        for (const child of subIssues) {
+        for (const issueNum of issueNumbers) {
           try {
             // Get current workflow state
             const currentState = await getCurrentFieldValue(
@@ -637,23 +723,23 @@ export function registerRelationshipTools(
               fieldCache,
               owner,
               repo,
-              child.number,
+              issueNum,
               "Workflow State",
             );
 
             if (!currentState) {
               skipped.push({
-                number: child.number,
+                number: issueNum,
                 currentState: "unknown",
                 reason: "No workflow state set on issue",
               });
               continue;
             }
 
-            // Only advance if child is in an earlier state
+            // Only advance if issue is in an earlier state
             if (!isEarlierState(currentState, args.targetState)) {
               skipped.push({
-                number: child.number,
+                number: issueNum,
                 currentState,
                 reason:
                   currentState === args.targetState
@@ -663,13 +749,13 @@ export function registerRelationshipTools(
               continue;
             }
 
-            // Advance the child
+            // Advance the issue
             const projectItemId = await resolveProjectItemId(
               client,
               fieldCache,
               owner,
               repo,
-              child.number,
+              issueNum,
             );
             await updateProjectItemField(
               client,
@@ -683,7 +769,7 @@ export function registerRelationshipTools(
             await syncStatusField(client, fieldCache, projectItemId, args.targetState);
 
             advanced.push({
-              number: child.number,
+              number: issueNum,
               fromState: currentState,
               toState: args.targetState,
             });
@@ -691,8 +777,8 @@ export function registerRelationshipTools(
             const message =
               error instanceof Error ? error.message : String(error);
             errors.push({
-              number: child.number,
-              error: `Failed to update: ${message}. Recovery: retry advance_children or update this child manually via update_workflow_state.`,
+              number: issueNum,
+              error: `Failed to update: ${message}. Recovery: retry advance_children or update this issue manually.`,
             });
           }
         }
@@ -724,26 +810,15 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z
         .number()
         .describe("Child issue number (any child in the group)"),
     },
     async (args) => {
       try {
-        const { owner, repo } = resolveConfig(client, args);
-
-        const projectNumber = client.config.projectNumber;
-        if (!projectNumber) {
-          return toolError(
-            "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)",
-          );
-        }
-        const projectOwner = resolveProjectOwner(client.config);
-        if (!projectOwner) {
-          return toolError(
-            "projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)",
-          );
-        }
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
         await ensureFieldCache(
           client,

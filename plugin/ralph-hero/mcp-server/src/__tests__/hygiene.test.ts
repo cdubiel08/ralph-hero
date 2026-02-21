@@ -12,6 +12,9 @@ import {
   findOrphanedItems,
   findFieldGaps,
   findWipViolations,
+  findDuplicateCandidates,
+  normalizeTitle,
+  titleSimilarity,
   buildHygieneReport,
   formatHygieneMarkdown,
   DEFAULT_HYGIENE_CONFIG,
@@ -374,5 +377,144 @@ describe("formatHygieneMarkdown", () => {
     expect(md).toContain("## Field Gaps");
     expect(md).toContain("### Missing Estimate");
     expect(md).toContain("### Missing Priority");
+  });
+
+  it("includes duplicate candidates section when present", () => {
+    const items = [
+      makeItem({ number: 1, title: "Add caching to API layer", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Add caching to API layers", workflowState: "Backlog" }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    expect(md).toContain("## Duplicate Candidates");
+    expect(md).toContain("#1");
+    expect(md).toContain("#2");
+    expect(md).toContain("Similarity");
+  });
+
+  it("omits duplicate candidates section when empty", () => {
+    const items = [
+      makeItem({ number: 1, title: "Add caching", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Fix auth bug", workflowState: "Backlog" }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    expect(md).not.toContain("## Duplicate Candidates");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeTitle
+// ---------------------------------------------------------------------------
+
+describe("normalizeTitle", () => {
+  it("strips common prefixes", () => {
+    expect(normalizeTitle("Add caching to API")).toBe("caching to api");
+    expect(normalizeTitle("Create bulk_archive tool")).toBe("bulk_archive tool");
+    expect(normalizeTitle("Fix login bug")).toBe("login bug");
+    expect(normalizeTitle("Implement new feature")).toBe("new feature");
+  });
+
+  it("lowercases and removes punctuation", () => {
+    expect(normalizeTitle('Add `bulk_archive` tool: "v2"')).toBe("bulk_archive tool v2");
+  });
+
+  it("preserves titles without common prefixes", () => {
+    expect(normalizeTitle("Dashboard improvements")).toBe("dashboard improvements");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// titleSimilarity
+// ---------------------------------------------------------------------------
+
+describe("titleSimilarity", () => {
+  it("returns 1 for identical titles", () => {
+    expect(titleSimilarity("caching to API", "caching to API")).toBe(1);
+  });
+
+  it("returns high similarity for minor differences", () => {
+    const sim = titleSimilarity("Add caching to API layer", "Add caching to API layers");
+    expect(sim).toBeGreaterThan(0.8);
+  });
+
+  it("returns low similarity for different titles", () => {
+    const sim = titleSimilarity("Add caching", "Fix auth bug");
+    expect(sim).toBeLessThan(0.5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findDuplicateCandidates
+// ---------------------------------------------------------------------------
+
+describe("findDuplicateCandidates", () => {
+  it("detects similar titles", () => {
+    const items = [
+      makeItem({ number: 1, title: "Add caching to API layer", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Add caching to API layers", workflowState: "Backlog" }),
+    ];
+    const result = findDuplicateCandidates(items, NOW, 0.8);
+    expect(result).toHaveLength(1);
+    expect(result[0].items[0].number).toBe(1);
+    expect(result[0].items[1].number).toBe(2);
+    expect(result[0].similarity).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it("ignores dissimilar titles", () => {
+    const items = [
+      makeItem({ number: 1, title: "Add caching", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Fix auth bug", workflowState: "Backlog" }),
+    ];
+    expect(findDuplicateCandidates(items, NOW, 0.8)).toHaveLength(0);
+  });
+
+  it("normalizes common prefixes", () => {
+    const items = [
+      makeItem({ number: 1, title: "Create bulk_archive tool", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Implement bulk_archive tool", workflowState: "Backlog" }),
+    ];
+    const result = findDuplicateCandidates(items, NOW, 0.8);
+    expect(result).toHaveLength(1);
+  });
+
+  it("skips terminal state items", () => {
+    const items = [
+      makeItem({ number: 1, title: "Add caching to API", workflowState: "Done" }),
+      makeItem({ number: 2, title: "Add caching to the API", workflowState: "Done" }),
+    ];
+    expect(findDuplicateCandidates(items, NOW, 0.8)).toHaveLength(0);
+  });
+
+  it("handles short titles without false positives", () => {
+    const items = [
+      makeItem({ number: 1, title: "Fix login flow", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Fix batch jobs", workflowState: "Backlog" }),
+    ];
+    // These should NOT match — different topics despite same prefix
+    expect(findDuplicateCandidates(items, NOW, 0.8)).toHaveLength(0);
+  });
+
+  it("respects similarity threshold", () => {
+    const items = [
+      makeItem({ number: 1, title: "Add caching to API endpoints", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Add caching to API routes", workflowState: "Backlog" }),
+    ];
+    // Low threshold catches more
+    const low = findDuplicateCandidates(items, NOW, 0.5);
+    expect(low.length).toBeGreaterThanOrEqual(1);
+    // Very high threshold may miss
+    const high = findDuplicateCandidates(items, NOW, 0.99);
+    expect(high).toHaveLength(0);
+  });
+
+  it("includes duplicateCandidates in buildHygieneReport", () => {
+    const items = [
+      makeItem({ number: 1, title: "Add caching to API layer", workflowState: "Backlog" }),
+      makeItem({ number: 2, title: "Add caching to API layers", workflowState: "Backlog" }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    expect(report.duplicateCandidates).toHaveLength(1);
+    expect(report.summary.duplicateCandidateCount).toBe(1);
   });
 });

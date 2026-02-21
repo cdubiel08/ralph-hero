@@ -13,6 +13,7 @@ import { paginateConnection } from "../lib/pagination.js";
 import { detectGroup } from "../lib/group-detection.js";
 import {
   detectPipelinePosition,
+  OVERSIZED_ESTIMATES,
   type IssueState,
 } from "../lib/pipeline-detection.js";
 import {
@@ -62,6 +63,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       profile: z
         .string()
         .optional()
@@ -433,6 +436,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       includeGroup: z
         .boolean()
@@ -445,7 +450,7 @@ export function registerIssueTools(
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
-        const projectNumber = client.config.projectNumber;
+        const projectNumber = args.projectNumber ?? client.config.projectNumber;
 
         const result = await client.query<{
           repository: {
@@ -729,6 +734,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       title: z.string().describe("Issue title"),
       body: z.string().optional().describe("Issue body (Markdown)"),
       labels: z.array(z.string()).optional().describe("Label names to apply"),
@@ -1053,6 +1060,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       state: z
         .string()
@@ -1148,6 +1157,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       estimate: z.string().describe("Estimate value (XS, S, M, L, XL)"),
     },
@@ -1202,6 +1213,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       priority: z.string().describe("Priority value (P0, P1, P2, P3)"),
     },
@@ -1318,6 +1331,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number (seed for group detection)"),
     },
     async (args) => {
@@ -1348,9 +1363,40 @@ export function registerIssueTools(
               title: ticket.title,
               workflowState: state.workflowState || "unknown",
               estimate: state.estimate || null,
+              subIssueCount: 0,
             };
           }),
         );
+
+        // Fetch sub-issue counts for oversized issues (targeted query, not all issues)
+        const oversizedNumbers = issueStates
+          .filter((i) => i.estimate !== null && OVERSIZED_ESTIMATES.has(i.estimate))
+          .map((i) => i.number);
+
+        if (oversizedNumbers.length > 0) {
+          await Promise.all(
+            oversizedNumbers.map(async (num) => {
+              const subResult = await client.query<{
+                repository: {
+                  issue: { subIssuesSummary: { total: number } | null } | null;
+                } | null;
+              }>(
+                `query($owner: String!, $repo: String!, $issueNum: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    issue(number: $issueNum) {
+                      subIssuesSummary { total }
+                    }
+                  }
+                }`,
+                { owner, repo, issueNum: num },
+              );
+              const issueState = issueStates.find((i) => i.number === num);
+              if (issueState && subResult.repository?.issue?.subIssuesSummary) {
+                issueState.subIssueCount = subResult.repository.issue.subIssuesSummary.total;
+              }
+            }),
+          );
+        }
 
         // Detect pipeline position
         const position = detectPipelinePosition(
@@ -1390,6 +1436,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number (any issue in the group)"),
       targetState: z
         .string()
@@ -1525,6 +1573,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       workflowState: z
         .string()
         .describe(

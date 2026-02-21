@@ -26,6 +26,13 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-postcondition.sh"
+allowed_tools:
+  - Read
+  - Write
+  - Glob
+  - Grep
+  - Bash
+  - Task
 env:
   RALPH_COMMAND: "plan"
   RALPH_REQUIRED_BRANCH: "main"

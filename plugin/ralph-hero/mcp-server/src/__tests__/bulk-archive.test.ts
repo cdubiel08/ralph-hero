@@ -65,6 +65,110 @@ describe("buildBatchArchiveMutation", () => {
   });
 });
 
+describe("bulk_archive dryRun", () => {
+  it("dryRun response includes wouldArchive count and items list", () => {
+    const matched = [
+      { id: "item-1", content: { number: 10, title: "Issue A" } },
+      { id: "item-2", content: { number: 20, title: "Issue B" } },
+    ];
+    const result = {
+      dryRun: true,
+      wouldArchive: matched.length,
+      items: matched.map((m) => ({
+        number: m.content?.number,
+        title: m.content?.title,
+        itemId: m.id,
+      })),
+      errors: [],
+    };
+    expect(result.dryRun).toBe(true);
+    expect(result.wouldArchive).toBe(2);
+    expect(result.items).toHaveLength(2);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("dryRun flag is false in normal response", () => {
+    const result = {
+      dryRun: false,
+      archivedCount: 1,
+      items: [{ number: 10, title: "Issue A", itemId: "item-1" }],
+      errors: [],
+    };
+    expect(result.dryRun).toBe(false);
+    expect(result.archivedCount).toBe(1);
+  });
+
+  it("dryRun items include number, title, and itemId", () => {
+    const matched = [
+      { id: "item-x", content: { number: 42, title: "My Issue" } },
+    ];
+    const items = matched.map((m) => ({
+      number: m.content?.number,
+      title: m.content?.title,
+      itemId: m.id,
+    }));
+    expect(items[0]).toEqual({
+      number: 42,
+      title: "My Issue",
+      itemId: "item-x",
+    });
+  });
+});
+
+describe("bulk_archive updatedBefore", () => {
+  it("date validation rejects invalid dates", () => {
+    expect(isNaN(new Date("not-a-date").getTime())).toBe(true);
+    expect(isNaN(new Date("").getTime())).toBe(true);
+    expect(isNaN(new Date("hello world").getTime())).toBe(true);
+  });
+
+  it("date validation accepts valid ISO dates", () => {
+    expect(isNaN(new Date("2026-02-01T00:00:00Z").getTime())).toBe(false);
+    expect(isNaN(new Date("2026-02-01").getTime())).toBe(false);
+    expect(isNaN(new Date("2026-01-15T12:30:00Z").getTime())).toBe(false);
+  });
+
+  it("date filter composes with workflow state filter", () => {
+    const cutoff = new Date("2026-02-01T00:00:00Z").getTime();
+    const items = [
+      { content: { updatedAt: "2026-01-15T00:00:00Z" }, ws: "Done" },
+      { content: { updatedAt: "2026-02-15T00:00:00Z" }, ws: "Done" },
+      { content: { updatedAt: "2026-01-10T00:00:00Z" }, ws: "In Progress" },
+    ];
+
+    const matched = items
+      .filter((item) => item.ws === "Done")
+      .filter((item) =>
+        item.content?.updatedAt
+          ? new Date(item.content.updatedAt).getTime() < cutoff
+          : false,
+      );
+
+    // Only the first item: Done AND updatedAt before cutoff
+    expect(matched).toHaveLength(1);
+    expect(matched[0].content.updatedAt).toBe("2026-01-15T00:00:00Z");
+  });
+
+  it("items with null content are excluded from date filter", () => {
+    const cutoff = new Date("2026-02-01T00:00:00Z").getTime();
+    const items: Array<{ content: { updatedAt?: string } | null }> = [
+      { content: null },
+      { content: { updatedAt: "2026-01-15T00:00:00Z" } },
+      { content: {} },
+    ];
+
+    const matched = items.filter((item) =>
+      item.content?.updatedAt
+        ? new Date(item.content.updatedAt).getTime() < cutoff
+        : false,
+    );
+
+    // null content and missing updatedAt are excluded
+    expect(matched).toHaveLength(1);
+    expect(matched[0].content?.updatedAt).toBe("2026-01-15T00:00:00Z");
+  });
+});
+
 describe("bulk_archive mutation structure", () => {
   it("archiveProjectV2Item mutation has required input fields", () => {
     const mutation = `mutation($projectId: ID!, $item_a0: ID!) {

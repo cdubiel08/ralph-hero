@@ -186,3 +186,106 @@ describe("variable naming safety", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Chunking / large batch tests
+// ---------------------------------------------------------------------------
+
+describe("batch mutation chunking", () => {
+  it("generates correct number of aliases for large batches", () => {
+    // 60 updates should be split into chunks of 50 at the tool level,
+    // but the builder itself handles any size — verify it works
+    const updates = Array.from({ length: 60 }, (_, i) => ({
+      alias: `u${i}_0`,
+      itemId: `item-${i}`,
+      fieldId: "field-ws",
+      optionId: "opt-rn",
+    }));
+
+    const { mutationString, variables } = buildBatchMutationQuery("proj", updates);
+
+    // Should contain all 60 aliases
+    for (let i = 0; i < 60; i++) {
+      expect(mutationString).toContain(`u${i}_0:`);
+    }
+
+    // Should have projectId + 3 variables per update (item, field, opt)
+    expect(Object.keys(variables).length).toBe(1 + 60 * 3);
+  });
+
+  it("generates correct aliases for issues x operations matrix", () => {
+    // Simulate 3 issues x 2 operations = 6 aliases
+    const updates = [
+      { alias: "u10_0", itemId: "item-10", fieldId: "f-ws", optionId: "o-rn" },
+      { alias: "u10_1", itemId: "item-10", fieldId: "f-est", optionId: "o-xs" },
+      { alias: "u20_0", itemId: "item-20", fieldId: "f-ws", optionId: "o-rn" },
+      { alias: "u20_1", itemId: "item-20", fieldId: "f-est", optionId: "o-xs" },
+      { alias: "u30_0", itemId: "item-30", fieldId: "f-ws", optionId: "o-rn" },
+      { alias: "u30_1", itemId: "item-30", fieldId: "f-est", optionId: "o-xs" },
+    ];
+
+    const { mutationString } = buildBatchMutationQuery("proj", updates);
+
+    // All 6 aliases present
+    expect(mutationString).toContain("u10_0:");
+    expect(mutationString).toContain("u10_1:");
+    expect(mutationString).toContain("u20_0:");
+    expect(mutationString).toContain("u20_1:");
+    expect(mutationString).toContain("u30_0:");
+    expect(mutationString).toContain("u30_1:");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Resolve query edge cases
+// ---------------------------------------------------------------------------
+
+describe("buildBatchResolveQuery edge cases", () => {
+  it("handles large issue arrays (50 issues)", () => {
+    const issues = Array.from({ length: 50 }, (_, i) => i + 1);
+    const { queryString, variables } = buildBatchResolveQuery("owner", "repo", issues);
+
+    // Should have 50 aliases (i0 through i49)
+    expect(queryString).toContain("i0:");
+    expect(queryString).toContain("i49:");
+    expect(queryString).not.toContain("i50:");
+
+    // Should have owner, repo + 50 number variables
+    expect(variables.n0).toBe(1);
+    expect(variables.n49).toBe(50);
+  });
+
+  it("preserves exact issue numbers in variables", () => {
+    const { variables } = buildBatchResolveQuery("o", "r", [999, 1, 42]);
+    expect(variables.n0).toBe(999);
+    expect(variables.n1).toBe(1);
+    expect(variables.n2).toBe(42);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Field value query edge cases
+// ---------------------------------------------------------------------------
+
+describe("buildBatchFieldValueQuery edge cases", () => {
+  it("handles single item", () => {
+    const { queryString, variables } = buildBatchFieldValueQuery([
+      { alias: "fv1", itemId: "item-only" },
+    ]);
+    expect(queryString).toContain("fv1:");
+    expect(variables.id_fv1).toBe("item-only");
+  });
+
+  it("handles many items", () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({
+      alias: `fv${i}`,
+      itemId: `item-${i}`,
+    }));
+    const { queryString, variables } = buildBatchFieldValueQuery(items);
+
+    expect(queryString).toContain("fv0:");
+    expect(queryString).toContain("fv19:");
+    expect(variables.id_fv0).toBe("item-0");
+    expect(variables.id_fv19).toBe("item-19");
+  });
+});

@@ -39,10 +39,10 @@ The [prior research on GH-53](https://github.com/cdubiel08/ralph-hero/blob/main/
 ## Desired End State
 
 ### Verification
-- [ ] All 8 workflow skills (triage, split, research, plan, review, impl, hero, team) have `allowed_tools` in their frontmatter
-- [ ] `shared/conventions.md` has a "Result Format Contracts" section specifying per-role output formats
-- [ ] `shared/conventions.md` has an "Architecture Decision: Agent/Skill Separation" section documenting the validated 4-layer pattern
-- [ ] No skill has `Edit` or `Write` in `allowed_tools` unless it genuinely needs file creation (plan, research, review, impl)
+- [x] All 8 workflow skills (triage, split, research, plan, review, impl, hero, team) have `allowed_tools` in their frontmatter
+- [x] `shared/conventions.md` has a "Result Format Contracts" section specifying per-role output formats
+- [x] `shared/conventions.md` has an "Architecture Decision: Agent/Skill Separation" section documenting the validated 4-layer pattern
+- [x] No skill has `Edit` or `Write` in `allowed_tools` unless it genuinely needs file creation (plan, research, review, impl)
 - [ ] GH-132 issue comment links to the architecture decision section
 
 ## What We're NOT Doing
@@ -220,15 +220,15 @@ allowed_tools:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns at least `1`
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-split/SKILL.md` returns at least `1`
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns at least `1`
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns at least `1`
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns at least `1`
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns at least `1`
-- [ ] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns at least `1`
-- [ ] `ralph-impl/SKILL.md` is the ONLY skill with `Edit` in its `allowed_tools`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns at least `1`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-split/SKILL.md` returns at least `1`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns at least `1`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns at least `1`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns at least `1`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns at least `1`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns at least `1`
+- [x] `grep -c 'allowed_tools' plugin/ralph-hero/skills/ralph-team/SKILL.md` returns at least `1`
+- [x] `ralph-impl/SKILL.md` is the ONLY skill with `Edit` in its `allowed_tools`
 
 #### Manual Verification
 - [ ] Each skill's tool list matches its actual operational needs
@@ -398,26 +398,26 @@ State: Done
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -c 'ADR-001' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
-- [ ] `grep -c 'Result Format Contracts' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
-- [ ] `grep -c 'TRIAGE COMPLETE' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
-- [ ] `grep -c 'IMPLEMENTATION COMPLETE' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
-- [ ] `grep -c 'VALIDATION VERDICT' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
+- [x] `grep -c 'ADR-001' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
+- [x] `grep -c 'Result Format Contracts' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
+- [x] `grep -c 'TRIAGE COMPLETE' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
+- [x] `grep -c 'IMPLEMENTATION COMPLETE' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
+- [x] `grep -c 'VALIDATION VERDICT' plugin/ralph-hero/skills/shared/conventions.md` returns at least `1`
 
 #### Manual Verification
-- [ ] ADR-001 accurately reflects the Bowser research findings from GH-132
-- [ ] Result format contracts match what agent definitions already specify
-- [ ] "What NOT to Do" section captures lessons from PR #57 and GH-53
-- [ ] All 5 worker roles have documented result formats
+- [x] ADR-001 accurately reflects the Bowser research findings from GH-132
+- [x] Result format contracts match what agent definitions already specify
+- [x] "What NOT to Do" section captures lessons from PR #57 and GH-53
+- [x] All 5 worker roles have documented result formats
 
 ---
 
 ## Integration Testing
 
-- [ ] All 8 skill SKILL.md files pass `claude skill validate` (if available) or at minimum have valid YAML frontmatter
-- [ ] `conventions.md` renders correctly as markdown (no broken formatting)
-- [ ] Agent definitions' result formats are consistent with the new conventions.md contracts
-- [ ] No existing tests break (`cd plugin/ralph-hero/mcp-server && npm test`)
+- [x] All 8 skill SKILL.md files pass `claude skill validate` (if available) or at minimum have valid YAML frontmatter
+- [x] `conventions.md` renders correctly as markdown (no broken formatting)
+- [x] Agent definitions' result formats are consistent with the new conventions.md contracts
+- [x] No existing tests break (`cd plugin/ralph-hero/mcp-server && npm test`)
 
 ## File Ownership Summary
 
