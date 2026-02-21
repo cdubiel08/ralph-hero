@@ -92,25 +92,31 @@ export class SessionCache {
 // Field Option Cache
 // ---------------------------------------------------------------------------
 
+interface ProjectCacheData {
+  projectId: string;
+  fields: Map<string, Map<string, string>>;
+  fieldIds: Map<string, string>;
+}
+
 /**
  * Maps field names to option names to option IDs for Projects V2
  * single-select fields. Populated by get_project, consumed by tools
  * that need to resolve human-readable names to GraphQL node IDs.
+ *
+ * Supports multiple projects keyed by project number. When projectNumber
+ * is omitted from method calls, the first populated project is used
+ * (backward compatible with single-project callers).
  */
 export class FieldOptionCache {
-  /** fieldName -> optionName -> optionId */
-  private fields = new Map<string, Map<string, string>>();
-
-  /** fieldName -> fieldId */
-  private fieldIds = new Map<string, string>();
-
-  /** projectId for the cached fields */
-  private projectId: string | undefined;
+  private projects = new Map<number, ProjectCacheData>();
+  /** Track the first populated project number for backward compat */
+  private defaultProjectNumber: number | undefined;
 
   /**
    * Populate the cache from project field data.
    */
   populate(
+    projectNumber: number,
     projectId: string,
     fields: Array<{
       id: string;
@@ -118,19 +124,28 @@ export class FieldOptionCache {
       options?: Array<{ id: string; name: string }>;
     }>,
   ): void {
-    this.projectId = projectId;
-    this.fields.clear();
-    this.fieldIds.clear();
+    const fieldMap = new Map<string, Map<string, string>>();
+    const fieldIdMap = new Map<string, string>();
 
     for (const field of fields) {
-      this.fieldIds.set(field.name, field.id);
+      fieldIdMap.set(field.name, field.id);
       if (field.options) {
         const optionMap = new Map<string, string>();
         for (const option of field.options) {
           optionMap.set(option.name, option.id);
         }
-        this.fields.set(field.name, optionMap);
+        fieldMap.set(field.name, optionMap);
       }
+    }
+
+    this.projects.set(projectNumber, {
+      projectId,
+      fields: fieldMap,
+      fieldIds: fieldIdMap,
+    });
+
+    if (this.defaultProjectNumber === undefined) {
+      this.defaultProjectNumber = projectNumber;
     }
   }
 
@@ -138,52 +153,81 @@ export class FieldOptionCache {
    * Resolve an option name to its ID for a given field.
    * Returns undefined if field or option not found.
    */
-  resolveOptionId(fieldName: string, optionName: string): string | undefined {
-    return this.fields.get(fieldName)?.get(optionName);
+  resolveOptionId(
+    fieldName: string,
+    optionName: string,
+    projectNumber?: number,
+  ): string | undefined {
+    const entry = this.resolveEntry(projectNumber);
+    return entry?.fields.get(fieldName)?.get(optionName);
   }
 
   /**
    * Get the field ID for a field name.
    */
-  getFieldId(fieldName: string): string | undefined {
-    return this.fieldIds.get(fieldName);
+  getFieldId(fieldName: string, projectNumber?: number): string | undefined {
+    const entry = this.resolveEntry(projectNumber);
+    return entry?.fieldIds.get(fieldName);
   }
 
   /**
    * Get the project ID for the cached fields.
    */
-  getProjectId(): string | undefined {
-    return this.projectId;
+  getProjectId(projectNumber?: number): string | undefined {
+    const entry = this.resolveEntry(projectNumber);
+    return entry?.projectId;
   }
 
   /**
    * Check if the cache has been populated.
+   * When projectNumber is provided, checks that specific project.
+   * When omitted, checks if any project is populated.
    */
-  isPopulated(): boolean {
-    return this.fields.size > 0;
+  isPopulated(projectNumber?: number): boolean {
+    if (projectNumber !== undefined) {
+      return this.projects.has(projectNumber);
+    }
+    return this.projects.size > 0;
   }
 
   /**
    * Get all option names for a field.
    */
-  getOptionNames(fieldName: string): string[] {
-    const optionMap = this.fields.get(fieldName);
+  getOptionNames(fieldName: string, projectNumber?: number): string[] {
+    const entry = this.resolveEntry(projectNumber);
+    const optionMap = entry?.fields.get(fieldName);
     return optionMap ? Array.from(optionMap.keys()) : [];
   }
 
   /**
    * Get all field names.
    */
-  getFieldNames(): string[] {
-    return Array.from(this.fieldIds.keys());
+  getFieldNames(projectNumber?: number): string[] {
+    const entry = this.resolveEntry(projectNumber);
+    return entry ? Array.from(entry.fieldIds.keys()) : [];
   }
 
   /**
-   * Clear the cache.
+   * Clear the cache (all projects).
    */
   clear(): void {
-    this.fields.clear();
-    this.fieldIds.clear();
-    this.projectId = undefined;
+    this.projects.clear();
+    this.defaultProjectNumber = undefined;
+  }
+
+  /**
+   * Resolve the cache entry for a project number.
+   * Falls back to the first populated project when projectNumber is omitted.
+   */
+  private resolveEntry(
+    projectNumber?: number,
+  ): ProjectCacheData | undefined {
+    if (projectNumber !== undefined) {
+      return this.projects.get(projectNumber);
+    }
+    if (this.defaultProjectNumber !== undefined) {
+      return this.projects.get(this.defaultProjectNumber);
+    }
+    return undefined;
   }
 }

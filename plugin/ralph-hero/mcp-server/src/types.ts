@@ -266,6 +266,7 @@ export interface GitHubClientConfig {
   owner?: string;
   repo?: string;
   projectNumber?: number;
+  projectNumbers?: number[]; // Multiple project numbers for cross-project operations
   projectOwner?: string; // Defaults to owner if unset
 }
 
@@ -273,6 +274,16 @@ export function resolveProjectOwner(
   config: GitHubClientConfig,
 ): string | undefined {
   return config.projectOwner || config.owner;
+}
+
+/**
+ * Return all configured project numbers.
+ * Prefers projectNumbers array; falls back to single projectNumber.
+ */
+export function resolveProjectNumbers(config: GitHubClientConfig): number[] {
+  if (config.projectNumbers?.length) return config.projectNumbers;
+  if (config.projectNumber) return [config.projectNumber];
+  return [];
 }
 
 export interface GraphQLResponse<T = unknown> {

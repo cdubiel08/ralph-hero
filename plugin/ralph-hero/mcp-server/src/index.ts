@@ -72,6 +72,12 @@ function initGitHubClient(): GitHubClient {
   const projectNumber = resolveEnv("RALPH_GH_PROJECT_NUMBER")
     ? parseInt(resolveEnv("RALPH_GH_PROJECT_NUMBER")!, 10)
     : undefined;
+  const projectNumbers = resolveEnv("RALPH_GH_PROJECT_NUMBERS")
+    ? resolveEnv("RALPH_GH_PROJECT_NUMBERS")!
+        .split(",")
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => !isNaN(n))
+    : undefined;
 
   if (!owner) {
     console.error(
@@ -105,6 +111,7 @@ function initGitHubClient(): GitHubClient {
     owner: owner || undefined,
     repo: repo || undefined,
     projectNumber,
+    projectNumbers,
     projectOwner: projectOwner || undefined,
   });
 }

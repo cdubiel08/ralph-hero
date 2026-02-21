@@ -19,7 +19,7 @@ import {
   type HealthConfig,
   DEFAULT_HEALTH_CONFIG,
 } from "../lib/dashboard.js";
-import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+import { toolSuccess, toolError, resolveProjectOwner, resolveProjectNumbers } from "../types.js";
 import {
   calculateMetrics,
   DEFAULT_METRICS_CONFIG,
@@ -36,7 +36,7 @@ async function ensureFieldCache(
   owner: string,
   projectNumber: number,
 ): Promise<void> {
-  if (fieldCache.isPopulated()) return;
+  if (fieldCache.isPopulated(projectNumber)) return;
 
   const project = await fetchProjectForCache(client, owner, projectNumber);
   if (!project) {
@@ -44,6 +44,7 @@ async function ensureFieldCache(
   }
 
   fieldCache.populate(
+    projectNumber,
     project.id,
     project.fields.nodes.map((f) => ({
       id: f.id,
@@ -151,8 +152,14 @@ function getFieldValue(
 
 /**
  * Convert raw GraphQL project items to DashboardItem[].
+ * When projectNumber/projectTitle are provided, they are set on each item
+ * for multi-project dashboard support.
  */
-export function toDashboardItems(raw: RawDashboardItem[]): DashboardItem[] {
+export function toDashboardItems(
+  raw: RawDashboardItem[],
+  projectNumber?: number,
+  projectTitle?: string,
+): DashboardItem[] {
   const items: DashboardItem[] = [];
 
   for (const r of raw) {
@@ -171,6 +178,8 @@ export function toDashboardItems(raw: RawDashboardItem[]): DashboardItem[] {
       assignees:
         r.content.assignees?.nodes?.map((a) => a.login) ?? [],
       blockedBy: [], // blockedBy requires separate queries; omit for now
+      ...(projectNumber !== undefined ? { projectNumber } : {}),
+      ...(projectTitle !== undefined ? { projectTitle } : {}),
     });
   }
 
@@ -243,6 +252,12 @@ export function registerDashboardTools(
         .string()
         .optional()
         .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      projectNumbers: z
+        .array(z.coerce.number())
+        .optional()
+        .describe(
+          "Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.",
+        ),
       format: z
         .enum(["json", "markdown", "ascii"])
         .optional()
@@ -313,34 +328,68 @@ export function registerDashboardTools(
     async (args) => {
       try {
         const owner = args.owner || resolveProjectOwner(client.config);
-        const projectNumber = client.config.projectNumber;
-
         if (!owner) {
           return toolError("owner is required");
         }
-        if (!projectNumber) {
-          return toolError("project number is required");
+
+        // Resolve project numbers
+        const projectNumbers = args.projectNumbers
+          ?? resolveProjectNumbers(client.config);
+
+        if (projectNumbers.length === 0) {
+          return toolError(
+            "No project numbers configured. Set RALPH_GH_PROJECT_NUMBER or RALPH_GH_PROJECT_NUMBERS.",
+          );
         }
 
-        // Ensure field cache
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        // Fetch items from all projects
+        const allItems: DashboardItem[] = [];
+        const fetchWarnings: string[] = [];
 
-        const projectId = fieldCache.getProjectId();
-        if (!projectId) {
-          return toolError("Could not resolve project ID");
+        for (const pn of projectNumbers) {
+          try {
+            await ensureFieldCache(client, fieldCache, owner, pn);
+          } catch (e) {
+            fetchWarnings.push(
+              `Project #${pn}: ${e instanceof Error ? e.message : String(e)}, skipping`,
+            );
+            continue;
+          }
+
+          const projectId = fieldCache.getProjectId(pn);
+          if (!projectId) {
+            fetchWarnings.push(
+              `Project #${pn}: could not resolve project ID, skipping`,
+            );
+            continue;
+          }
+
+          // Fetch project title
+          let projectTitle: string | undefined;
+          try {
+            const titleResult = await client.projectQuery<{
+              node: { title: string } | null;
+            }>(
+              `query($projectId: ID!) { node(id: $projectId) { ... on ProjectV2 { title } } }`,
+              { projectId },
+            );
+            projectTitle = titleResult.node?.title;
+          } catch {
+            // Non-fatal -- proceed without title
+          }
+
+          // Fetch items
+          const result = await paginateConnection<RawDashboardItem>(
+            (q, v) => client.projectQuery(q, v),
+            DASHBOARD_ITEMS_QUERY,
+            { projectId, first: 100 },
+            "node.items",
+            { maxItems: 500 },
+          );
+
+          const items = toDashboardItems(result.nodes, pn, projectTitle);
+          allItems.push(...items);
         }
-
-        // Fetch all project items
-        const result = await paginateConnection<RawDashboardItem>(
-          (q, v) => client.projectQuery(q, v),
-          DASHBOARD_ITEMS_QUERY,
-          { projectId, first: 100 },
-          "node.items",
-          { maxItems: 500 },
-        );
-
-        // Convert to dashboard items
-        const dashboardItems = toDashboardItems(result.nodes);
 
         // Build health config
         const healthConfig: HealthConfig = {
@@ -352,8 +401,8 @@ export function registerDashboardTools(
           archiveThresholdDays: args.archiveThresholdDays ?? 14,
         };
 
-        // Build dashboard
-        const dashboard = buildDashboard(dashboardItems, healthConfig);
+        // Build dashboard from merged items
+        const dashboard = buildDashboard(allItems, healthConfig);
 
         // Strip health if not requested
         if (!args.includeHealth) {
@@ -376,7 +425,7 @@ export function registerDashboardTools(
             offTrackThreshold: args.offTrackThreshold ?? 6,
           };
           metrics = calculateMetrics(
-            dashboardItems,
+            allItems,
             dashboard,
             metricsConfig,
           );
@@ -396,6 +445,7 @@ export function registerDashboardTools(
           ...dashboard,
           ...(formatted !== undefined ? { formatted } : {}),
           ...(metrics !== undefined ? { metrics } : {}),
+          ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

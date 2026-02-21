@@ -27,6 +27,8 @@ export interface DashboardItem {
   estimate: string | null; // XS, S, M, L, XL
   assignees: string[];
   blockedBy: Array<{ number: number; workflowState: string | null }>;
+  projectNumber?: number; // Source project number (multi-project)
+  projectTitle?: string; // Human-readable project title (multi-project)
 }
 
 /** One row in the pipeline snapshot. */

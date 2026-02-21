@@ -18,6 +18,7 @@ import {
   type HealthConfig,
 } from "../lib/dashboard.js";
 import { STATE_ORDER } from "../lib/workflow-states.js";
+import { toDashboardItems, type RawDashboardItem } from "../tools/dashboard-tools.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1175,5 +1176,111 @@ describe("formatAscii archive section", () => {
     const d = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
     const ascii = formatAscii(d);
     expect(ascii).toContain("Archive: 1 eligible (threshold: 14d), 0 recent");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toDashboardItems
+// ---------------------------------------------------------------------------
+
+function makeRawItem(overrides: Partial<RawDashboardItem> = {}): RawDashboardItem {
+  return {
+    id: "item-1",
+    type: "ISSUE",
+    content: {
+      __typename: "Issue",
+      number: 1,
+      title: "Test issue",
+      state: "OPEN",
+      updatedAt: new Date(NOW - 1 * HOUR_MS).toISOString(),
+      closedAt: null,
+      assignees: { nodes: [{ login: "alice" }] },
+    },
+    fieldValues: {
+      nodes: [
+        {
+          __typename: "ProjectV2ItemFieldSingleSelectValue",
+          name: "Backlog",
+          field: { name: "Workflow State" },
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+describe("toDashboardItems", () => {
+  it("sets projectNumber on items when provided", () => {
+    const raw = [makeRawItem()];
+    const items = toDashboardItems(raw, 5);
+    expect(items).toHaveLength(1);
+    expect(items[0].projectNumber).toBe(5);
+  });
+
+  it("does not set projectNumber when not provided (backward compat)", () => {
+    const raw = [makeRawItem()];
+    const items = toDashboardItems(raw);
+    expect(items).toHaveLength(1);
+    expect(items[0].projectNumber).toBeUndefined();
+  });
+
+  it("sets projectTitle on items when provided", () => {
+    const raw = [makeRawItem()];
+    const items = toDashboardItems(raw, 3, "My Board");
+    expect(items[0].projectTitle).toBe("My Board");
+  });
+
+  it("filters out non-Issue content types", () => {
+    const raw = [
+      makeRawItem(),
+      makeRawItem({
+        id: "item-2",
+        content: { __typename: "PullRequest", number: 2, title: "PR" },
+      }),
+      makeRawItem({
+        id: "item-3",
+        content: { __typename: "DraftIssue", title: "Draft" },
+      }),
+    ];
+    const items = toDashboardItems(raw);
+    expect(items).toHaveLength(1);
+    expect(items[0].number).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-project dashboard (buildDashboard integration)
+// ---------------------------------------------------------------------------
+
+describe("multi-project dashboard", () => {
+  it("aggregates items from multiple projects correctly", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", projectNumber: 3, projectTitle: "Board A" }),
+      makeItem({ number: 2, workflowState: "Backlog", projectNumber: 5, projectTitle: "Board B" }),
+      makeItem({ number: 3, workflowState: "In Progress", projectNumber: 3, projectTitle: "Board A" }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.totalIssues).toBe(3);
+    expect(findPhase(data.phases, "Backlog").count).toBe(2);
+    expect(findPhase(data.phases, "In Progress").count).toBe(1);
+  });
+
+  it("items from different projects with same issue number are distinct", () => {
+    const items = [
+      makeItem({ number: 10, workflowState: "Backlog", projectNumber: 3 }),
+      makeItem({ number: 10, workflowState: "In Progress", projectNumber: 5 }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.totalIssues).toBe(2);
+    expect(findPhase(data.phases, "Backlog").count).toBe(1);
+    expect(findPhase(data.phases, "In Progress").count).toBe(1);
+  });
+
+  it("preserves projectNumber and projectTitle through makeItem", () => {
+    const item = makeItem({ number: 7, projectNumber: 3, projectTitle: "My Board" });
+    expect(item.projectNumber).toBe(3);
+    expect(item.projectTitle).toBe("My Board");
   });
 });
