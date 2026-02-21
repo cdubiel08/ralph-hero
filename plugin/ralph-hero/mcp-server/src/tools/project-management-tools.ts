@@ -1180,6 +1180,12 @@ export function registerProjectManagementTools(
         .describe(
           "If true, return matching items without archiving them (default: false)",
         ),
+      updatedBefore: z
+        .string()
+        .optional()
+        .describe(
+          "ISO 8601 date (UTC). Only archive items with updatedAt before this date. Composable with workflowStates (AND logic).",
+        ),
     },
     async (args) => {
       try {
@@ -1213,10 +1219,12 @@ export function registerProjectManagementTools(
                       ... on Issue {
                         number
                         title
+                        updatedAt
                       }
                       ... on PullRequest {
                         number
                         title
+                        updatedAt
                       }
                     }
                     fieldValues(first: 20) {
@@ -1238,11 +1246,27 @@ export function registerProjectManagementTools(
           { maxItems: effectiveMax * 3 },
         );
 
-        // Filter by workflow state
+        // Validate updatedBefore if provided
+        let updatedBeforeCutoff: number | undefined;
+        if (args.updatedBefore) {
+          updatedBeforeCutoff = new Date(args.updatedBefore).getTime();
+          if (isNaN(updatedBeforeCutoff)) {
+            return toolError(
+              "Invalid updatedBefore date. Use ISO 8601 format (e.g., 2026-02-01T00:00:00Z)",
+            );
+          }
+        }
+
+        // Filter by workflow state and optional date
         const matched = itemsResult.nodes
           .filter((item) => {
             const ws = getBulkArchiveFieldValue(item, "Workflow State");
             return ws && args.workflowStates.includes(ws);
+          })
+          .filter((item) => {
+            if (!updatedBeforeCutoff) return true;
+            if (!item.content?.updatedAt) return false;
+            return new Date(item.content.updatedAt).getTime() < updatedBeforeCutoff;
           })
           .slice(0, effectiveMax);
 
@@ -1417,7 +1441,7 @@ export function registerProjectManagementTools(
 interface RawBulkArchiveItem {
   id: string;
   type: string;
-  content: { number?: number; title?: string } | null;
+  content: { number?: number; title?: string; updatedAt?: string } | null;
   fieldValues: {
     nodes: Array<{
       __typename?: string;
