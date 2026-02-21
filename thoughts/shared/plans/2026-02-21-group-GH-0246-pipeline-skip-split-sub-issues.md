@@ -250,9 +250,9 @@ describe("detectPipelinePosition - sub-issue count (SPLIT skip)", () => {
 - Change `const OVERSIZED_ESTIMATES` to `export const OVERSIZED_ESTIMATES` so `issue-tools.ts` can import it for the targeted sub-issue count fetch. Alternatively, inline the set `new Set(["M", "L", "XL"])` in the tool layer to avoid the export.
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes -- all existing SPLIT tests still pass, new sub-issue-count tests pass
-- [ ] Automated: `makeIssue(1, "Backlog", "M", 3)` does NOT trigger SPLIT
-- [ ] Automated: `makeIssue(1, "Backlog", "M", 0)` DOES trigger SPLIT
+- [x] Automated: `npm test` passes -- all existing SPLIT tests still pass, new sub-issue-count tests pass
+- [x] Automated: `makeIssue(1, "Backlog", "M", 3)` does NOT trigger SPLIT
+- [x] Automated: `makeIssue(1, "Backlog", "M", 0)` DOES trigger SPLIT
 - [ ] Manual: `detect_pipeline_position(number=202)` on the parent epic (which is M-sized with 3 children) should NOT return SPLIT
 
 ---
