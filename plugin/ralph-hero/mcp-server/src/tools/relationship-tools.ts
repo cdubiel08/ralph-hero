@@ -21,7 +21,7 @@ import {
   isParentGateState,
   stateIndex,
 } from "../lib/workflow-states.js";
-import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+import { toolSuccess, toolError } from "../types.js";
 import {
   ensureFieldCache,
   resolveIssueNodeId,
@@ -29,6 +29,7 @@ import {
   updateProjectItemField,
   getCurrentFieldValue,
   resolveConfig,
+  resolveFullConfig,
   syncStatusField,
 } from "../lib/helpers.js";
 
@@ -528,6 +529,8 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z
         .coerce.number()
         .optional()
@@ -563,21 +566,7 @@ export function registerRelationshipTools(
           );
         }
 
-        const { owner, repo } = resolveConfig(client, args);
-
-        // Need full config for project operations
-        const projectNumber = client.config.projectNumber;
-        if (!projectNumber) {
-          return toolError(
-            "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)",
-          );
-        }
-        const projectOwner = resolveProjectOwner(client.config);
-        if (!projectOwner) {
-          return toolError(
-            "projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)",
-          );
-        }
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
         // Ensure field cache is populated
         await ensureFieldCache(
@@ -750,26 +739,15 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z
         .number()
         .describe("Child issue number (any child in the group)"),
     },
     async (args) => {
       try {
-        const { owner, repo } = resolveConfig(client, args);
-
-        const projectNumber = client.config.projectNumber;
-        if (!projectNumber) {
-          return toolError(
-            "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)",
-          );
-        }
-        const projectOwner = resolveProjectOwner(client.config);
-        if (!projectOwner) {
-          return toolError(
-            "projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)",
-          );
-        }
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(client, args);
 
         await ensureFieldCache(
           client,

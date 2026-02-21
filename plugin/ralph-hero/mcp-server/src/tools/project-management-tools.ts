@@ -47,6 +47,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       unarchive: z.boolean().optional().default(false)
         .describe("If true, unarchive instead of archive (default: false)"),
@@ -120,6 +122,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
     },
     async (args) => {
@@ -181,6 +185,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
     },
     async (args) => {
@@ -249,6 +255,8 @@ export function registerProjectManagementTools(
     "Link or unlink a repository to/from the project. Linked repositories enable auto-add workflows and issue filtering. Returns: repository, linked.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       repoToLink: z.string()
         .describe("Repository to link, as 'owner/name' or just 'name' (uses default owner)"),
       unlink: z.boolean().optional().default(false)
@@ -344,6 +352,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       field: z.string().describe("Field name to clear (e.g., 'Estimate', 'Priority', 'Workflow State')"),
     },
@@ -412,6 +422,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       title: z.string().describe("Draft issue title"),
       body: z.string().optional().describe("Draft issue body (markdown)"),
       workflowState: z.string().optional().describe("Workflow state to set after creation"),
@@ -486,6 +498,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       draftIssueId: z.string().describe("Draft issue content node ID (DI_...)"),
       title: z.string().optional().describe("New title"),
       body: z.string().optional().describe("New body (markdown)"),
@@ -540,6 +554,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number to reposition"),
       afterNumber: z.coerce.number().optional()
         .describe("Issue number to place after; omit to move to top"),
@@ -610,6 +626,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       title: z.string().optional().describe("New project title"),
       shortDescription: z.string().optional().describe("Short summary for listings"),
       readme: z.string().optional().describe("Full README in markdown"),
@@ -704,6 +722,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       field: z.string().describe("Name of the field to delete"),
       confirm: z.boolean().optional().default(false)
         .describe("Must be true to execute deletion; false for dry-run"),
@@ -786,6 +806,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       collaborators: z.array(z.object({
         username: z.string().optional().describe("GitHub username"),
         teamSlug: z.string().optional().describe("Team slug (org projects only)"),
@@ -907,6 +929,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       status: z.enum(["ON_TRACK", "AT_RISK", "OFF_TRACK", "INACTIVE", "COMPLETE"])
         .describe("Project health designation"),
       body: z.string().optional().describe("Status update body (markdown)"),
@@ -993,6 +1017,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       statusUpdateId: z.string().describe("Node ID of the status update to modify"),
       status: z.enum(["ON_TRACK", "AT_RISK", "OFF_TRACK", "INACTIVE", "COMPLETE"]).optional()
         .describe("Updated project health designation"),
@@ -1086,6 +1112,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       statusUpdateId: z.string().describe("Node ID of the status update to delete"),
     },
     async (args) => {
@@ -1132,6 +1160,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       workflowStates: z
         .array(z.string())
         .min(1)
@@ -1271,6 +1301,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       teamSlug: z.string().describe("Team slug (e.g., 'engineering')"),
       unlink: z.boolean().optional().default(false)
         .describe("If true, unlink instead of link (default: false)"),

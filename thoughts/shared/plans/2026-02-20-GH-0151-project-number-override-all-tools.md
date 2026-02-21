@@ -112,9 +112,9 @@ Add `resolveFullConfig` to this import list.
 **Note**: `resolveProjectOwner` import from `../types.js` can be removed if no other code in the file uses it (only the 2 inline patterns referenced it).
 
 ### Success Criteria
-- [ ] Automated: `npm run build` passes
-- [ ] Automated: `npm test` passes (existing advance_children/advance_parent tests still pass)
-- [ ] Manual: Both tools behave identically to before (same error messages via `resolveFullConfig` throws)
+- [x] Automated: `npm run build` passes
+- [x] Automated: `npm test` passes (existing advance_children/advance_parent tests still pass)
+- [x] Manual: Both tools behave identically to before (same error messages via `resolveFullConfig` throws)
 
 **Creates for Phase 2**: Both tools now use `resolveFullConfig`, making them eligible for the mechanical schema addition.
 
@@ -209,10 +209,10 @@ Add the same schema field to `batch_update`:
 No handler changes needed.
 
 ### Success Criteria
-- [ ] Automated: `npm run build` passes
-- [ ] Automated: `npm test` passes
-- [ ] Manual: Verify `projectNumber` appears in tool schema via MCP introspection for all 28 tools
-- [ ] Manual: Verify backward compatibility (omitting `projectNumber` uses config default)
+- [x] Automated: `npm run build` passes
+- [x] Automated: `npm test` passes
+- [x] Manual: Verify `projectNumber` appears in tool schema via MCP introspection for all 28 tools
+- [x] Manual: Verify backward compatibility (omitting `projectNumber` uses config default)
 
 **Creates for Phase 3**: All tools now accept the override, ready for test coverage.
 
@@ -278,18 +278,18 @@ describe("advance_children/advance_parent projectNumber", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes with all new tests
-- [ ] Automated: No regressions in existing test suites
-- [ ] Manual: Test coverage includes schema validation, `resolveFullConfig` integration, `get_issue` filtering, and advance_* refactor
+- [x] Automated: `npm test` passes with all new tests
+- [x] Automated: No regressions in existing test suites
+- [x] Manual: Test coverage includes schema validation, `resolveFullConfig` integration, `get_issue` filtering, and advance_* refactor
 
 ---
 
 ## Integration Testing
-- [ ] Build passes: `npm run build`
-- [ ] All tests pass: `npm test`
-- [ ] `get_issue` correctly filters `projectItems` when `projectNumber` override is provided
-- [ ] Existing tools work identically when `projectNumber` is omitted (backward compat)
-- [ ] `advance_children` and `advance_parent` work identically after `resolveFullConfig` refactor
+- [x] Build passes: `npm run build`
+- [x] All tests pass: `npm test`
+- [x] `get_issue` correctly filters `projectItems` when `projectNumber` override is provided
+- [x] Existing tools work identically when `projectNumber` is omitted (backward compat)
+- [x] `advance_children` and `advance_parent` work identically after `resolveFullConfig` refactor
 
 ## Known Limitations
 
