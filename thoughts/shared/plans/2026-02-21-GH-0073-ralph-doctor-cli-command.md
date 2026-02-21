@@ -23,14 +23,14 @@ The justfile (`plugin/ralph-hero/justfile`, 139 lines) has LLM-powered recipes v
 ## Desired End State
 
 ### Verification
-- [ ] `doctor` recipe exists in justfile with two-phase check structure
-- [ ] Phase 1 checks env vars (RALPH_HERO_GITHUB_TOKEN, RALPH_GH_OWNER, RALPH_GH_PROJECT_NUMBER)
-- [ ] Phase 1 checks dependencies (just, npx, node required; mcp optional)
-- [ ] Phase 1 checks plugin manifest (`.claude-plugin/plugin.json` exists, valid JSON)
-- [ ] Phase 1 checks MCP config (`.mcp.json` exists, valid JSON)
-- [ ] Phase 2 runs `health_check` via `_mcp_call` when mcptools and token are available
-- [ ] Summary line shows error/warning counts
-- [ ] Exit code 1 if any errors found, 0 otherwise
+- [x] `doctor` recipe exists in justfile with two-phase check structure
+- [x] Phase 1 checks env vars (RALPH_HERO_GITHUB_TOKEN, RALPH_GH_OWNER, RALPH_GH_PROJECT_NUMBER)
+- [x] Phase 1 checks dependencies (just, npx, node required; mcp optional)
+- [x] Phase 1 checks plugin manifest (`.claude-plugin/plugin.json` exists, valid JSON)
+- [x] Phase 1 checks MCP config (`.mcp.json` exists, valid JSON)
+- [x] Phase 2 runs `health_check` via `_mcp_call` when mcptools and token are available
+- [x] Summary line shows error/warning counts
+- [x] Exit code 1 if any errors found, 0 otherwise
 
 ## What We're NOT Doing
 - Subcommand targeting (`doctor env`, `doctor api`) -- single command runs all checks
@@ -158,9 +158,9 @@ doctor:
 | `plugin/ralph-hero/justfile` | Add `doctor` recipe (~55 lines) in Utility Recipes section |
 
 ### Success Criteria
-- [ ] Automated: `grep -c "^doctor" plugin/ralph-hero/justfile` returns 1
-- [ ] Automated: `grep "RALPH_HERO_GITHUB_TOKEN\|RALPH_GH_OWNER\|RALPH_GH_PROJECT_NUMBER" plugin/ralph-hero/justfile | grep -c "var"` returns at least 1 (env var checks)
-- [ ] Automated: `grep "health_check" plugin/ralph-hero/justfile | wc -l` returns at least 1 (API check reference)
+- [x] Automated: `grep -c "^doctor" plugin/ralph-hero/justfile` returns 1
+- [x] Automated: `grep "RALPH_HERO_GITHUB_TOKEN\|RALPH_GH_OWNER\|RALPH_GH_PROJECT_NUMBER" plugin/ralph-hero/justfile | grep -c "var"` returns at least 1 (env var checks)
+- [x] Automated: `grep "health_check" plugin/ralph-hero/justfile | wc -l` returns at least 1 (API check reference)
 - [ ] Manual: `just doctor` runs and shows OK/FAIL/WARN status for each check category
 - [ ] Manual: `just doctor` exits 0 when all required checks pass
 - [ ] Manual: `just doctor` exits 1 when a required env var is missing
