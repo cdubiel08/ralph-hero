@@ -157,6 +157,58 @@ doctor:
     echo "=== Summary: $errors error(s), $warnings warning(s) ==="
     if [ "$errors" -gt 0 ]; then exit 1; fi
 
+# Install global 'ralph' command - run from anywhere after setup
+install-cli:
+    #!/usr/bin/env bash
+    set -eu
+    PLUGIN_DIR="{{justfile_directory()}}"
+    CONFIG_DIR="$HOME/.config/ralph-hero"
+    BIN_DIR="$HOME/.local/bin"
+    mkdir -p "$CONFIG_DIR" "$BIN_DIR"
+    ln -sf "$PLUGIN_DIR/justfile" "$CONFIG_DIR/justfile"
+    cp "$PLUGIN_DIR/scripts/ralph-cli.sh" "$BIN_DIR/ralph"
+    chmod +x "$BIN_DIR/ralph"
+    echo "Installed: $BIN_DIR/ralph"
+    echo "  Justfile: $CONFIG_DIR/justfile -> $PLUGIN_DIR/justfile"
+    if ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
+        echo ""
+        echo "WARNING: $BIN_DIR is not in your PATH."
+        echo "Add to your shell profile (~/.bashrc or ~/.zshrc):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+    echo ""
+    echo "Usage: ralph <recipe> [args...]"
+    echo "  ralph triage 42"
+    echo "  ralph loop"
+    echo "  ralph team 42"
+
+# Remove global 'ralph' command and config
+uninstall-cli:
+    #!/usr/bin/env bash
+    set -eu
+    CONFIG_DIR="$HOME/.config/ralph-hero"
+    BIN_DIR="$HOME/.local/bin"
+    removed=0
+    if [ -f "$BIN_DIR/ralph" ]; then
+        rm "$BIN_DIR/ralph"
+        echo "Removed: $BIN_DIR/ralph"
+        removed=1
+    fi
+    if [ -L "$CONFIG_DIR/justfile" ]; then
+        rm "$CONFIG_DIR/justfile"
+        echo "Removed: $CONFIG_DIR/justfile"
+        removed=1
+    fi
+    if [ -d "$CONFIG_DIR" ] && [ -z "$(ls -A "$CONFIG_DIR")" ]; then
+        rmdir "$CONFIG_DIR"
+        echo "Removed: $CONFIG_DIR/"
+    fi
+    if [ "$removed" -eq 0 ]; then
+        echo "Nothing to uninstall -- ralph CLI was not installed."
+    else
+        echo "Ralph CLI uninstalled."
+    fi
+
 # --- Quick Actions (no LLM, requires mcptools) ---
 
 # Pipeline status dashboard - instant, no API cost

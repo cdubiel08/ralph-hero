@@ -207,8 +207,8 @@ uninstall-cli:
 ```
 
 ### Success Criteria
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-cli` (recipe parses)
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run uninstall-cli` (recipe parses)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-cli` (recipe parses)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run uninstall-cli` (recipe parses)
 - [ ] Manual: `just install-cli` creates symlink and copies script
 - [ ] Manual: `just uninstall-cli` removes everything cleanly
 - [ ] Manual: Running `install-cli` twice works without errors (idempotent)
