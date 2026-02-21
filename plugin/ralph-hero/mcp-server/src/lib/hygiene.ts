@@ -17,6 +17,7 @@ export interface HygieneConfig {
   staleDays: number; // default: 7
   orphanDays: number; // default: 14
   wipLimits: Record<string, number>; // default: {}
+  similarityThreshold: number; // default: 0.8
 }
 
 export const DEFAULT_HYGIENE_CONFIG: HygieneConfig = {
@@ -24,6 +25,7 @@ export const DEFAULT_HYGIENE_CONFIG: HygieneConfig = {
   staleDays: 7,
   orphanDays: 14,
   wipLimits: {},
+  similarityThreshold: 0.8,
 };
 
 export interface HygieneItem {
@@ -31,6 +33,11 @@ export interface HygieneItem {
   title: string;
   workflowState: string | null;
   ageDays: number;
+}
+
+export interface DuplicateCandidate {
+  items: [HygieneItem, HygieneItem];
+  similarity: number; // 0-1
 }
 
 export interface HygieneReport {
@@ -46,12 +53,14 @@ export interface HygieneReport {
     limit: number;
     items: HygieneItem[];
   }>;
+  duplicateCandidates: DuplicateCandidate[];
   summary: {
     archiveCandidateCount: number;
     staleCount: number;
     orphanCount: number;
     fieldCoveragePercent: number;
     wipViolationCount: number;
+    duplicateCandidateCount: number;
   };
 }
 
@@ -189,6 +198,102 @@ export function findWipViolations(
 }
 
 // ---------------------------------------------------------------------------
+// Duplicate detection helpers
+// ---------------------------------------------------------------------------
+
+function levenshteinDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    Array(n + 1).fill(0),
+  );
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost,
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+const COMMON_PREFIXES = [
+  "add",
+  "create",
+  "fix",
+  "update",
+  "remove",
+  "implement",
+  "refactor",
+];
+
+export function normalizeTitle(title: string): string {
+  let normalized = title.toLowerCase();
+  // Strip common action prefixes
+  for (const prefix of COMMON_PREFIXES) {
+    if (normalized.startsWith(prefix + " ")) {
+      normalized = normalized.slice(prefix.length + 1);
+      break;
+    }
+  }
+  // Remove punctuation: backticks, quotes, colons, parentheses
+  normalized = normalized.replace(/[`'"():,]/g, "");
+  return normalized.trim();
+}
+
+export function titleSimilarity(a: string, b: string): number {
+  const na = normalizeTitle(a);
+  const nb = normalizeTitle(b);
+  const maxLen = Math.max(na.length, nb.length);
+  if (maxLen === 0) return 1;
+  return 1 - levenshteinDistance(na, nb) / maxLen;
+}
+
+/**
+ * Non-terminal item pairs with similar titles (fuzzy match).
+ */
+export function findDuplicateCandidates(
+  items: DashboardItem[],
+  now: number,
+  threshold: number,
+): DuplicateCandidate[] {
+  const nonTerminal = items.filter((item) => {
+    const ws = item.workflowState;
+    return !ws || !TERMINAL_STATES.includes(ws);
+  });
+
+  const candidates: DuplicateCandidate[] = [];
+
+  for (let i = 0; i < nonTerminal.length; i++) {
+    for (let j = i + 1; j < nonTerminal.length; j++) {
+      const a = nonTerminal[i];
+      const b = nonTerminal[j];
+      // Skip if normalized length difference > 50%
+      const na = normalizeTitle(a.title);
+      const nb = normalizeTitle(b.title);
+      const maxLen = Math.max(na.length, nb.length);
+      if (maxLen > 0 && Math.abs(na.length - nb.length) / maxLen > 0.5) {
+        continue;
+      }
+      const sim = titleSimilarity(a.title, b.title);
+      if (sim >= threshold) {
+        candidates.push({
+          items: [toHygieneItem(a, now), toHygieneItem(b, now)],
+          similarity: Math.round(sim * 100) / 100,
+        });
+      }
+    }
+  }
+
+  return candidates;
+}
+
+// ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
 
@@ -209,6 +314,11 @@ export function buildHygieneReport(
   const orphanedItems = findOrphanedItems(items, now, config.orphanDays);
   const fieldGaps = findFieldGaps(items, now);
   const wipViolations = findWipViolations(items, now, config.wipLimits);
+  const duplicateCandidates = findDuplicateCandidates(
+    items,
+    now,
+    config.similarityThreshold,
+  );
 
   // Field coverage: % of non-terminal items with both estimate AND priority
   const nonTerminal = items.filter((item) => {
@@ -231,12 +341,14 @@ export function buildHygieneReport(
     orphanedItems,
     fieldGaps,
     wipViolations,
+    duplicateCandidates,
     summary: {
       archiveCandidateCount: archiveCandidates.length,
       staleCount: staleItems.length,
       orphanCount: orphanedItems.length,
       fieldCoveragePercent,
       wipViolationCount: wipViolations.length,
+      duplicateCandidateCount: duplicateCandidates.length,
     },
   };
 }
@@ -268,6 +380,9 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
   lines.push(`- Orphaned items: ${report.summary.orphanCount}`);
   lines.push(`- Field coverage: ${report.summary.fieldCoveragePercent}%`);
   lines.push(`- WIP violations: ${report.summary.wipViolationCount}`);
+  lines.push(
+    `- Duplicate candidates: ${report.summary.duplicateCandidateCount}`,
+  );
   lines.push("");
 
   // Archive candidates
@@ -341,6 +456,20 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
       }
       lines.push("");
     }
+  }
+
+  // Duplicate candidates
+  if (report.duplicateCandidates.length > 0) {
+    lines.push("## Duplicate Candidates");
+    lines.push("| Issue A | Title A | Issue B | Title B | Similarity |");
+    lines.push("|---------|---------|---------|---------|------------|");
+    for (const dup of report.duplicateCandidates) {
+      const [a, b] = dup.items;
+      lines.push(
+        `| #${a.number} | ${a.title} | #${b.number} | ${b.title} | ${dup.similarity.toFixed(2)} |`,
+      );
+    }
+    lines.push("");
   }
 
   return lines.join("\n");

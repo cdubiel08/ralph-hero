@@ -36,7 +36,7 @@ export function registerHygieneTools(
 ): void {
   server.tool(
     "ralph_hero__project_hygiene",
-    "Generate a project board hygiene report. Identifies archive candidates, stale items, orphaned backlog entries, missing fields, and WIP violations. Returns: report with 6 sections + summary stats.",
+    "Generate a project board hygiene report. Identifies archive candidates, stale items, orphaned backlog entries, missing fields, WIP violations, and duplicate candidates. Returns: report with 7 sections + summary stats.",
     {
       owner: z
         .string()
@@ -67,6 +67,13 @@ export function registerHygieneTools(
         .record(z.coerce.number())
         .optional()
         .describe('Per-state WIP limits, e.g. { "In Progress": 3 }'),
+      similarityThreshold: z
+        .number()
+        .optional()
+        .default(0.8)
+        .describe(
+          "Similarity threshold for duplicate detection (0.5-1.0, default: 0.8)",
+        ),
       format: z
         .enum(["json", "markdown"])
         .optional()
@@ -112,6 +119,7 @@ export function registerHygieneTools(
           staleDays: args.staleDays ?? 7,
           orphanDays: args.orphanDays ?? 14,
           wipLimits: args.wipLimits ?? {},
+          similarityThreshold: args.similarityThreshold ?? 0.8,
         };
 
         // Build report
