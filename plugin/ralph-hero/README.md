@@ -125,13 +125,15 @@ For fully autonomous operation:
 | `RALPH_GH_REPO_TOKEN` | No | Separate token for repo operations (issues, PRs, comments) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate token for project operations (fields, workflow state) |
 | `RALPH_GH_OWNER` | Yes | Repository owner (user or org) |
-| `RALPH_GH_REPO` | Yes | Repository name |
+| `RALPH_GH_REPO` | No† | Repository name |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_GH_PROJECT_NUMBER` | Yes | GitHub Project V2 number |
 | `MAX_ITERATIONS` | No | Max loop iterations (default: 10) |
 | `TIMEOUT` | No | Per-task timeout (default: 15m) |
 
 *Either `RALPH_HERO_GITHUB_TOKEN` or `RALPH_GH_REPO_TOKEN` must be set.
+
+†`RALPH_GH_REPO` is inferred from the repositories linked to the project (via `link_repository`). It only needs to be set explicitly as a tiebreaker when multiple repos are linked. Bootstrap: run `setup_project` → `link_repository` → repo is inferred automatically.
 
 ### Token Scopes
 

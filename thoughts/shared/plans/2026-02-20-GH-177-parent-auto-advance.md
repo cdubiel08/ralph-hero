@@ -1,6 +1,6 @@
 ---
 date: 2026-02-20
-status: in_review
+status: complete
 github_issues: [177]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/177
@@ -29,17 +29,17 @@ Single-issue implementation. When all child (sub-issue) issues of a parent issue
 ## Desired End State
 
 ### Verification
-- [ ] `.github/workflows/advance-parent.yml` exists and triggers on `issues: [closed]`
-- [ ] Closed with `state_reason != "completed"` exits early (no advancement)
-- [ ] Issue with no parent exits early (no advancement)
-- [ ] Parent with mixed children (some open, some closed) does not advance
-- [ ] Parent with all children closed as "completed" advances to Done
-- [ ] Parent with a child closed as "not_planned" does not advance (not all COMPLETED)
-- [ ] Parent already at Done is skipped (idempotent)
-- [ ] Parent issue is closed with `--reason completed` after advancement (cascading)
-- [ ] `workflow_dispatch` trigger allows manual testing with issue number input
-- [ ] Concurrency group prevents parallel advancement for same parent
-- [ ] All inputs passed via safe `env:` blocks (no `${{ }}` in `run:` commands)
+- [x] `.github/workflows/advance-parent.yml` exists and triggers on `issues: [closed]`
+- [x] Closed with `state_reason != "completed"` exits early (no advancement)
+- [x] Issue with no parent exits early (no advancement)
+- [x] Parent with mixed children (some open, some closed) does not advance
+- [x] Parent with all children closed as "completed" advances to Done
+- [x] Parent with a child closed as "not_planned" does not advance (not all COMPLETED)
+- [x] Parent already at Done is skipped (idempotent)
+- [x] Parent issue is closed with `--reason completed` after advancement (cascading)
+- [x] `workflow_dispatch` trigger allows manual testing with issue number input
+- [x] Concurrency group prevents parallel advancement for same parent
+- [x] All inputs passed via safe `env:` blocks (no `${{ }}` in `run:` commands)
 
 ## What We're NOT Doing
 - No handling of non-Done gate states (Ready for Plan, In Review) -- that's the MCP tool's domain
@@ -397,8 +397,8 @@ jobs:
 **Concurrency note**: No explicit concurrency group is needed on this workflow. Each `issues: [closed]` event targets a different child issue. The parent update step is idempotent (skips if already Done). The parent close step checks `state == CLOSED` before closing. Multiple children closing simultaneously would each check convergence independently, and the first to update wins -- subsequent runs see "already Done" and no-op.
 
 ### Success Criteria
-- [ ] Automated: workflow YAML is valid (parseable by GitHub Actions)
-- [ ] Automated: shell syntax valid (`bash -n`)
+- [x] Automated: workflow YAML is valid (parseable by GitHub Actions)
+- [x] Automated: shell syntax valid (`bash -n`)
 - [ ] Manual: `workflow_dispatch` with a child issue number triggers parent check
 - [ ] Manual: parent with all children completed advances to Done
 - [ ] Manual: parent with incomplete children does not advance

@@ -231,7 +231,7 @@ export function registerBatchTools(
         .optional()
         .describe("Repository name. Defaults to env var"),
       issues: z
-        .array(z.number())
+        .array(z.coerce.number())
         .min(1)
         .max(MAX_ISSUES)
         .describe("Issue numbers to update (1-50)"),

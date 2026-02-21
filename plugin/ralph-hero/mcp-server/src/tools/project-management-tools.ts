@@ -47,7 +47,7 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       unarchive: z.boolean().optional().default(false)
         .describe("If true, unarchive instead of archive (default: false)"),
     },
@@ -120,7 +120,7 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
     },
     async (args) => {
       try {
@@ -181,7 +181,7 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
     },
     async (args) => {
       try {
@@ -344,7 +344,7 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       field: z.string().describe("Field name to clear (e.g., 'Estimate', 'Priority', 'Workflow State')"),
     },
     async (args) => {
@@ -540,8 +540,8 @@ export function registerProjectManagementTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
-      number: z.number().describe("Issue number to reposition"),
-      afterNumber: z.number().optional()
+      number: z.coerce.number().describe("Issue number to reposition"),
+      afterNumber: z.coerce.number().optional()
         .describe("Issue number to place after; omit to move to top"),
     },
     async (args) => {

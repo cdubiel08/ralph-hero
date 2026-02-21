@@ -85,11 +85,13 @@ Set these in `.claude/settings.local.json` (recommended, gitignored):
 |----------|----------|-------------|-------------|
 | `RALPH_HERO_GITHUB_TOKEN` | **Yes** | `settings.local.json` | GitHub PAT with `repo` + `project` scopes |
 | `RALPH_GH_OWNER` | Yes | `settings.local.json` or `.mcp.json` default | GitHub owner (user or org) |
-| `RALPH_GH_REPO` | Yes | `settings.local.json` or `.mcp.json` default | Repository name |
+| `RALPH_GH_REPO` | No† | `settings.local.json` or `.mcp.json` default | Repository name (inferred from project if omitted) |
 | `RALPH_GH_PROJECT_NUMBER` | Yes | `settings.local.json` or `.mcp.json` default | GitHub Projects V2 number |
 | `RALPH_GH_REPO_TOKEN` | No | `settings.local.json` | Separate repo token (falls back to `RALPH_HERO_GITHUB_TOKEN`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | `settings.local.json` | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | `settings.local.json` | Project owner if different from repo owner |
+
+†`RALPH_GH_REPO` is inferred from the repositories linked to the project via `link_repository`. Only set it explicitly as a tiebreaker when multiple repos are linked. Bootstrap: `setup_project` → `link_repository` → repo is inferred. See #23.
 
 ### Key Implementation Details
 

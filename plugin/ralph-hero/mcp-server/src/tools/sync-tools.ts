@@ -213,7 +213,7 @@ export function registerSyncTools(
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
-      number: z.number().describe("Issue number to sync"),
+      number: z.coerce.number().describe("Issue number to sync"),
       workflowState: z
         .string()
         .describe('Target Workflow State to propagate (e.g., "In Progress")'),
