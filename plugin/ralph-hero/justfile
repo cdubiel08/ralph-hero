@@ -2,7 +2,7 @@
 #
 # Usage: just <recipe> [params...]
 # Prerequisites: claude CLI, timeout (coreutils)
-# Optional: just (https://github.com/casey/just)
+# Optional: mcptools (https://github.com/f/mcptools) for quick-* recipes
 
 set shell := ["bash", "-euc"]
 set dotenv-load
@@ -74,6 +74,34 @@ setup budget="1.00" timeout="10m":
 report issue="" budget="1.00" timeout="10m":
     @just _run_skill "report" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+# --- Quick Actions (no LLM, requires mcptools) ---
+
+# Pipeline status dashboard - instant, no API cost
+quick-status format="markdown":
+    @just _mcp_call "ralph_hero__pipeline_dashboard" \
+        '{"format":"{{format}}","includeHealth":true}'
+
+# Move issue to a workflow state - instant, no API cost
+quick-move issue state:
+    @just _mcp_call "ralph_hero__update_workflow_state" \
+        '{"number":{{issue}},"state":"{{state}}","command":"ralph_cli"}'
+
+# Find next actionable issue by workflow state - instant, no API cost
+quick-pick state="Research Needed" max-estimate="S":
+    @just _mcp_call "ralph_hero__pick_actionable_issue" \
+        '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
+
+# Assign issue to a GitHub user - instant, no API cost
+quick-assign issue user:
+    @just _mcp_call "ralph_hero__update_issue" \
+        '{"number":{{issue}},"assignees":["{{user}}"]}'
+
+# --- Completion & Documentation ---
+
+# Generate shell tab completions (bash, zsh, fish, powershell, elvish)
+completions shell="bash":
+    @just --completions {{shell}}
+
 # --- Internal Helpers ---
 
 _run_skill skill issue budget timeout:
@@ -96,3 +124,15 @@ _run_skill skill issue budget timeout:
             echo ">>> Exited with code $exit_code"
         fi
     }
+
+_mcp_call tool params:
+    #!/usr/bin/env bash
+    set -eu
+    if ! command -v mcp &>/dev/null; then
+        echo "Error: mcptools not installed."
+        echo "Install: brew tap f/mcptools && brew install mcp"
+        echo "   or: go install github.com/f/mcptools/cmd/mcptools@latest"
+        exit 1
+    fi
+    mcp call "{{tool}}" --params '{{params}}' \
+        npx -y ralph-hero-mcp-server@latest

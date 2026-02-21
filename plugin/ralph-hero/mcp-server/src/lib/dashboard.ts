@@ -54,7 +54,8 @@ export interface HealthWarning {
     | "blocked"
     | "pipeline_gap"
     | "lock_collision"
-    | "oversized_in_pipeline";
+    | "oversized_in_pipeline"
+    | "unbalanced_workload";
   severity: "info" | "warning" | "critical";
   message: string;
   issues: number[];
@@ -72,6 +73,12 @@ export interface ArchiveStats {
   archiveThresholdDays: number;
 }
 
+export interface ProjectBreakdown {
+  projectTitle: string;
+  phases: PhaseSnapshot[];
+  health: { ok: boolean; warnings: HealthWarning[] };
+}
+
 export interface DashboardData {
   generatedAt: string; // ISO timestamp
   totalIssues: number;
@@ -81,6 +88,7 @@ export interface DashboardData {
     warnings: HealthWarning[];
   };
   archive: ArchiveStats;
+  projectBreakdowns?: Record<number, ProjectBreakdown>;
 }
 
 export interface HealthConfig {
@@ -360,6 +368,67 @@ export function detectHealthIssues(
 }
 
 // ---------------------------------------------------------------------------
+// detectCrossProjectHealth
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect health issues that span multiple projects.
+ *
+ * Currently detects:
+ * - unbalanced_workload: one project has >3x active items vs another
+ *
+ * "Active" = states in STATE_ORDER that are NOT terminal and NOT "Backlog".
+ */
+export function detectCrossProjectHealth(
+  breakdowns: Record<number, { phases: PhaseSnapshot[] }>,
+): HealthWarning[] {
+  const warnings: HealthWarning[] = [];
+  const projectNumbers = Object.keys(breakdowns).map(Number);
+
+  // Count active items per project
+  const activeCounts: Array<{ projectNumber: number; count: number }> = [];
+  for (const pn of projectNumbers) {
+    const { phases } = breakdowns[pn];
+    let active = 0;
+    for (const phase of phases) {
+      if (
+        phase.state !== "Backlog" &&
+        !TERMINAL_STATES.includes(phase.state) &&
+        STATE_ORDER.includes(phase.state)
+      ) {
+        active += phase.count;
+      }
+    }
+    if (active > 0) {
+      activeCounts.push({ projectNumber: pn, count: active });
+    }
+  }
+
+  // Need at least 2 projects with active items to compare
+  if (activeCounts.length < 2) {
+    return warnings;
+  }
+
+  const maxEntry = activeCounts.reduce((a, b) =>
+    a.count > b.count ? a : b,
+  );
+  const minEntry = activeCounts.reduce((a, b) =>
+    a.count < b.count ? a : b,
+  );
+
+  if (maxEntry.count > 3 * minEntry.count) {
+    warnings.push({
+      type: "unbalanced_workload",
+      severity: "warning",
+      message: `Unbalanced workload: project ${maxEntry.projectNumber} has ${maxEntry.count} active items vs project ${minEntry.projectNumber} with ${minEntry.count}`,
+      issues: [],
+    });
+  }
+
+  return warnings;
+}
+
+// ---------------------------------------------------------------------------
 // computeArchiveStats
 // ---------------------------------------------------------------------------
 
@@ -442,6 +511,51 @@ export function buildDashboard(
     config.doneWindowDays,
   );
 
+  // Per-project breakdown (only when items span multiple projects)
+  const projectGroups = new Map<number, DashboardItem[]>();
+  for (const item of items) {
+    if (item.projectNumber !== undefined) {
+      const group = projectGroups.get(item.projectNumber);
+      if (group) {
+        group.push(item);
+      } else {
+        projectGroups.set(item.projectNumber, [item]);
+      }
+    }
+  }
+
+  let projectBreakdowns: Record<number, ProjectBreakdown> | undefined;
+
+  if (projectGroups.size >= 2) {
+    projectBreakdowns = {};
+    for (const [pn, projectItems] of projectGroups) {
+      const pPhases = aggregateByPhase(projectItems, now, config);
+      const pWarnings = detectHealthIssues(pPhases, config);
+      projectBreakdowns[pn] = {
+        projectTitle: projectItems[0].projectTitle ?? `Project ${pn}`,
+        phases: pPhases,
+        health: { ok: pWarnings.length === 0, warnings: pWarnings },
+      };
+    }
+
+    // Cross-project health detection
+    const crossWarnings = detectCrossProjectHealth(projectBreakdowns);
+    if (crossWarnings.length > 0) {
+      warnings.push(...crossWarnings);
+      // Re-sort by severity
+      const severityRank: Record<string, number> = {
+        critical: 0,
+        warning: 1,
+        info: 2,
+      };
+      warnings.sort(
+        (a, b) =>
+          (severityRank[a.severity] ?? 99) -
+          (severityRank[b.severity] ?? 99),
+      );
+    }
+  }
+
   return {
     generatedAt: new Date(now).toISOString(),
     totalIssues: items.length,
@@ -451,6 +565,7 @@ export function buildDashboard(
       warnings,
     },
     archive,
+    ...(projectBreakdowns ? { projectBreakdowns } : {}),
   };
 }
 
@@ -538,6 +653,51 @@ export function formatMarkdown(
     }
   }
 
+  // Per-project breakdown (only for multi-project)
+  if (
+    data.projectBreakdowns &&
+    Object.keys(data.projectBreakdowns).length > 1
+  ) {
+    lines.push("");
+    lines.push("## Per-Project Breakdown");
+
+    const sortedProjects = Object.entries(data.projectBreakdowns)
+      .map(([pn, bd]) => ({ projectNumber: Number(pn), ...bd }))
+      .sort((a, b) => a.projectNumber - b.projectNumber);
+
+    for (const project of sortedProjects) {
+      lines.push("");
+      lines.push(`### ${project.projectTitle}`);
+      lines.push("");
+
+      const nonZeroPhases = project.phases.filter((p) => p.count > 0);
+      if (nonZeroPhases.length > 0) {
+        lines.push("| Phase | Count |");
+        lines.push("|-------|------:|");
+        for (const phase of nonZeroPhases) {
+          lines.push(`| ${phase.state} | ${phase.count} |`);
+        }
+      } else {
+        lines.push("_No active items_");
+      }
+
+      lines.push("");
+      if (project.health.ok) {
+        lines.push("**Health**: All clear");
+      } else {
+        for (const w of project.health.warnings) {
+          const icon =
+            w.severity === "critical"
+              ? "[CRITICAL]"
+              : w.severity === "warning"
+                ? "[WARNING]"
+                : "[INFO]";
+          lines.push(`- ${icon} ${w.message}`);
+        }
+      }
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -587,6 +747,43 @@ export function formatAscii(data: DashboardData): string {
     lines.push(
       `Archive: ${data.archive.eligibleForArchive} eligible (threshold: ${data.archive.archiveThresholdDays}d), ${data.archive.recentlyCompleted} recent`,
     );
+  }
+
+  // Per-project breakdown (only for multi-project)
+  if (
+    data.projectBreakdowns &&
+    Object.keys(data.projectBreakdowns).length > 1
+  ) {
+    lines.push("");
+    lines.push("--- Per-Project ---");
+
+    const sortedProjects = Object.entries(data.projectBreakdowns)
+      .map(([pn, bd]) => ({ projectNumber: Number(pn), ...bd }))
+      .sort((a, b) => a.projectNumber - b.projectNumber);
+
+    for (const project of sortedProjects) {
+      lines.push("");
+      lines.push(project.projectTitle);
+
+      const nonZeroPhases = project.phases.filter((p) => p.count > 0);
+      if (nonZeroPhases.length > 0) {
+        const projMax = Math.max(1, ...nonZeroPhases.map((p) => p.count));
+        for (const phase of nonZeroPhases) {
+          const label = phase.state.padStart(20);
+          const barLen = Math.round((phase.count / projMax) * 20);
+          const bar = barLen > 0 ? "\u2588".repeat(barLen) : "\u2591";
+          lines.push(`${label} ${bar} ${phase.count}`);
+        }
+      }
+
+      if (project.health.ok) {
+        lines.push("  Health: OK");
+      } else {
+        for (const w of project.health.warnings) {
+          lines.push(`  ${w.severity.toUpperCase()}: ${w.message}`);
+        }
+      }
+    }
   }
 
   return lines.join("\n");

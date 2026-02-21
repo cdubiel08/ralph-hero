@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   aggregateByPhase,
   detectHealthIssues,
+  detectCrossProjectHealth,
   buildDashboard,
   computeArchiveStats,
   formatMarkdown,
@@ -15,6 +16,7 @@ import {
   DEFAULT_HEALTH_CONFIG,
   type DashboardItem,
   type PhaseSnapshot,
+  type ProjectBreakdown,
   type HealthConfig,
 } from "../lib/dashboard.js";
 import { STATE_ORDER } from "../lib/workflow-states.js";
@@ -1282,5 +1284,203 @@ describe("multi-project dashboard", () => {
     const item = makeItem({ number: 7, projectNumber: 3, projectTitle: "My Board" });
     expect(item.projectNumber).toBe(3);
     expect(item.projectTitle).toBe("My Board");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectCrossProjectHealth
+// ---------------------------------------------------------------------------
+
+describe("detectCrossProjectHealth", () => {
+  it("emits unbalanced_workload when one project has > 3x active items vs another", () => {
+    const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
+      3: {
+        phases: [
+          { state: "Backlog", count: 0, issues: [] },
+          { state: "In Progress", count: 8, issues: [] },
+        ],
+      },
+      5: {
+        phases: [
+          { state: "Backlog", count: 0, issues: [] },
+          { state: "In Progress", count: 2, issues: [] },
+        ],
+      },
+    };
+
+    const warnings = detectCrossProjectHealth(breakdowns);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0].type).toBe("unbalanced_workload");
+    expect(warnings[0].severity).toBe("warning");
+    expect(warnings[0].issues).toEqual([]);
+    expect(warnings[0].message).toContain("8");
+    expect(warnings[0].message).toContain("2");
+  });
+
+  it("does not emit warning when projects are balanced", () => {
+    const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
+      3: {
+        phases: [{ state: "In Progress", count: 3, issues: [] }],
+      },
+      5: {
+        phases: [{ state: "In Progress", count: 2, issues: [] }],
+      },
+    };
+
+    const warnings = detectCrossProjectHealth(breakdowns);
+    expect(warnings.length).toBe(0);
+  });
+
+  it("does not emit warning with fewer than 2 active projects", () => {
+    const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
+      3: {
+        phases: [{ state: "In Progress", count: 10, issues: [] }],
+      },
+      5: {
+        phases: [{ state: "Backlog", count: 5, issues: [] }],
+      },
+    };
+
+    const warnings = detectCrossProjectHealth(breakdowns);
+    expect(warnings.length).toBe(0);
+  });
+
+  it("ignores terminal and Backlog items in active count", () => {
+    const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
+      3: {
+        phases: [
+          { state: "Done", count: 20, issues: [] },
+          { state: "Backlog", count: 10, issues: [] },
+          { state: "In Progress", count: 2, issues: [] },
+        ],
+      },
+      5: {
+        phases: [
+          { state: "Done", count: 1, issues: [] },
+          { state: "Backlog", count: 1, issues: [] },
+          { state: "In Progress", count: 2, issues: [] },
+        ],
+      },
+    };
+
+    // Active counts are 2 vs 2 — balanced despite huge Done/Backlog differences
+    const warnings = detectCrossProjectHealth(breakdowns);
+    expect(warnings.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDashboard multi-project breakdown
+// ---------------------------------------------------------------------------
+
+describe("buildDashboard multi-project breakdown", () => {
+  it("omits projectBreakdowns for single-project items (backward compat)", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", projectNumber: 3, projectTitle: "Board A" }),
+      makeItem({ number: 2, workflowState: "In Progress", projectNumber: 3, projectTitle: "Board A" }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.projectBreakdowns).toBeUndefined();
+  });
+
+  it("omits projectBreakdowns when no projectNumber set", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog" }),
+      makeItem({ number: 2, workflowState: "In Progress" }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.projectBreakdowns).toBeUndefined();
+  });
+
+  it("produces projectBreakdowns with correct per-project phase counts", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", projectNumber: 3, projectTitle: "Board A" }),
+      makeItem({ number: 2, workflowState: "Backlog", projectNumber: 3, projectTitle: "Board A" }),
+      makeItem({ number: 3, workflowState: "In Progress", projectNumber: 5, projectTitle: "Board B" }),
+      makeItem({ number: 4, workflowState: "In Progress", projectNumber: 5, projectTitle: "Board B" }),
+      makeItem({ number: 5, workflowState: "In Progress", projectNumber: 5, projectTitle: "Board B" }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.projectBreakdowns).toBeDefined();
+
+    const bdA = data.projectBreakdowns![3];
+    expect(bdA.projectTitle).toBe("Board A");
+    expect(bdA.phases.find((p) => p.state === "Backlog")!.count).toBe(2);
+
+    const bdB = data.projectBreakdowns![5];
+    expect(bdB.projectTitle).toBe("Board B");
+    expect(bdB.phases.find((p) => p.state === "In Progress")!.count).toBe(3);
+  });
+
+  it("merges unbalanced_workload into aggregate health warnings", () => {
+    // Project 3: 10 active items, Project 5: 1 active item => 10 > 3*1
+    const items = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        makeItem({ number: i + 1, workflowState: "In Progress", projectNumber: 3, projectTitle: "Board A" }),
+      ),
+      makeItem({ number: 11, workflowState: "In Progress", projectNumber: 5, projectTitle: "Board B" }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const unbalanced = data.health.warnings.filter((w) => w.type === "unbalanced_workload");
+    expect(unbalanced.length).toBe(1);
+    expect(data.health.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatMarkdown per-project
+// ---------------------------------------------------------------------------
+
+describe("formatMarkdown per-project", () => {
+  it("renders per-project section when projectBreakdowns present", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", projectNumber: 3, projectTitle: "Board A" }),
+      makeItem({ number: 2, workflowState: "In Progress", projectNumber: 5, projectTitle: "Board B" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(data);
+    expect(md).toContain("## Per-Project Breakdown");
+    expect(md).toContain("Board A");
+    expect(md).toContain("Board B");
+  });
+
+  it("omits per-project section when projectBreakdowns absent", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(data);
+    expect(md).not.toContain("## Per-Project Breakdown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatAscii per-project
+// ---------------------------------------------------------------------------
+
+describe("formatAscii per-project", () => {
+  it("renders per-project section when projectBreakdowns present", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", projectNumber: 3, projectTitle: "Board A" }),
+      makeItem({ number: 2, workflowState: "In Progress", projectNumber: 5, projectTitle: "Board B" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const ascii = formatAscii(data);
+    expect(ascii).toContain("--- Per-Project ---");
+    expect(ascii).toContain("Board A");
+    expect(ascii).toContain("Board B");
+  });
+
+  it("omits per-project section when projectBreakdowns absent", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const ascii = formatAscii(data);
+    expect(ascii).not.toContain("--- Per-Project ---");
   });
 });
