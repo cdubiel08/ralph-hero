@@ -329,3 +329,17 @@ describe("copy_project structural", () => {
     expect(projectToolsSrc).toContain("copiedFrom:");
   });
 });
+
+// ---------------------------------------------------------------------------
+// ensureFieldCacheForNewProject structural tests (GH-242)
+// ---------------------------------------------------------------------------
+
+describe("ensureFieldCacheForNewProject structural (GH-242)", () => {
+  it("does NOT call fieldCache.clear()", () => {
+    expect(projectToolsSrc).not.toContain("fieldCache.clear()");
+  });
+
+  it("uses invalidatePrefix for targeted cache invalidation", () => {
+    expect(projectToolsSrc).toContain('invalidatePrefix("query:")');
+  });
+});

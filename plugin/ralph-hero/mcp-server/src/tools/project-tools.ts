@@ -1263,8 +1263,8 @@ async function ensureFieldCacheForNewProject(
   owner: string,
   number: number,
 ): Promise<void> {
-  // Clear any stale cache and force refresh
-  fieldCache.clear();
-  client.getCache().clear();
+  // Invalidate query cache to force fresh API responses for the new project.
+  // Do NOT clear fieldCache — other projects' data must be preserved (GH-242).
+  client.getCache().invalidatePrefix("query:");
   await ensureFieldCache(client, fieldCache, owner, number);
 }
