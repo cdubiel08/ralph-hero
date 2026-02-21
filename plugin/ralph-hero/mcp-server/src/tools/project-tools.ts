@@ -366,13 +366,30 @@ export function registerProjectTools(
           fieldResults["Estimate"] = estField;
         }
 
-        // Shared: cache hydration + return (both paths)
+        // Shared: cache hydration (both paths)
         await ensureFieldCacheForNewProject(
           client,
           fieldCache,
           owner,
           project.number,
         );
+
+        // Link configured repo to new project (best-effort, both paths)
+        let repoLink: { linked: boolean; repository: string } | undefined;
+        const configOwner = client.config.owner;
+        const configRepo = client.config.repo;
+        if (configOwner && configRepo) {
+          try {
+            repoLink = await linkRepoAfterSetup(
+              client,
+              project.id,
+              configOwner,
+              configRepo,
+            );
+          } catch {
+            // Best-effort - don't fail setup if linking fails
+          }
+        }
 
         return toolSuccess({
           project: {
@@ -385,6 +402,7 @@ export function registerProjectTools(
           ...(templatePN && {
             copiedFrom: { templateProjectNumber: templatePN },
           }),
+          ...(repoLink && { repositoryLink: repoLink }),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1352,4 +1370,40 @@ async function ensureFieldCacheForNewProject(
   fieldCache.clear();
   client.getCache().clear();
   await ensureFieldCache(client, fieldCache, owner, number);
+}
+
+async function linkRepoAfterSetup(
+  client: GitHubClient,
+  projectId: string,
+  repoOwner: string,
+  repoName: string,
+): Promise<{ linked: boolean; repository: string }> {
+  const repoResult = await client.query<{
+    repository: { id: string } | null;
+  }>(
+    `query($repoOwner: String!, $repoName: String!) {
+      repository(owner: $repoOwner, name: $repoName) { id }
+    }`,
+    { repoOwner, repoName },
+    { cache: true, cacheTtlMs: 60 * 60 * 1000 },
+  );
+
+  const repoId = repoResult.repository?.id;
+  if (!repoId) {
+    return { linked: false, repository: `${repoOwner}/${repoName}` };
+  }
+
+  await client.projectMutate(
+    `mutation($projectId: ID!, $repositoryId: ID!) {
+      linkProjectV2ToRepository(input: {
+        projectId: $projectId,
+        repositoryId: $repositoryId
+      }) {
+        repository { id }
+      }
+    }`,
+    { projectId, repositoryId: repoId },
+  );
+
+  return { linked: true, repository: `${repoOwner}/${repoName}` };
 }

@@ -363,8 +363,8 @@ describe("GitHubClientConfig templateProjectNumber structural", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `npm run build` passes
-- [ ] Automated: `npm test` passes (all tests including new structural tests)
+- [x] Automated: `npm run build` passes
+- [x] Automated: `npm test` passes (all tests including new structural tests)
 - [ ] Manual: Repo auto-linked after blank project creation
 - [ ] Manual: Repo auto-linked after template copy
 
@@ -378,7 +378,7 @@ describe("GitHubClientConfig templateProjectNumber structural", () => {
 - [ ] Create project from template: verify fields copied, repo linked, cache populated, `copiedFrom` in response
 - [ ] Verify `setup_project` with invalid template number returns clean error
 - [ ] Verify blank creation still works when `RALPH_GH_TEMPLATE_PROJECT` env var is not set
-- [ ] All existing tests pass (regression)
+- [x] All existing tests pass (regression)
 
 ## References
 
