@@ -242,7 +242,27 @@ For **each issue in the group**:
 
 3. **Move to Plan in Review**: `ralph_hero__update_workflow_state(number, state="__COMPLETE__", command="ralph_plan")`
 
-### Step 6: Report Completion
+### Step 6: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "PLAN_COMPLETE",
+    "artifact_path": "thoughts/shared/plans/2026-02-21-group-GH-0042-redis-caching.md",
+    "phase_count": "3",
+    "file_ownership": "config (Phase 1), middleware (Phase 2), tests (Phase 3)",
+    "workflow_state": "Plan in Review"
+  },
+  description="Plan complete for #42, #43, #44. 3 phases: config -> middleware -> tests.")
+```
+
+**Critical for downstream**: `artifact_path` and `phase_count` -- reviewer and implementer need them.
+
+Then check TaskList for more tasks matching your role.
+
+### Step 7: Report Completion
 
 ```
 Plan complete for [N] issue(s):

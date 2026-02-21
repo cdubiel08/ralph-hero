@@ -326,7 +326,25 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
    **Note**: Do NOT use any link attachment mechanism. Reference critique in comment only.
 
-### Step 5: Report Completion
+### Step 5: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "VALIDATION_VERDICT",
+    "verdict": "APPROVED",                # APPROVED | NEEDS_ITERATION
+    "artifact_path": "thoughts/shared/plans/2026-02-21-GH-0042-redis-caching.md"
+  },
+  description="Review of #42 plan: APPROVED. Phases have clear boundaries, criteria testable.")
+```
+
+For `NEEDS_ITERATION`: blocking issues go in `description` (human-readable for builder).
+
+Then check TaskList for more tasks matching your role.
+
+### Step 6: Report Completion
 
 **If APPROVED**:
 ```

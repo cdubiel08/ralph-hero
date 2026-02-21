@@ -396,7 +396,25 @@ ralph_hero__update_workflow_state
 - command: "ralph_split"
 ```
 
-### Step 9: Report
+### Step 9: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "SPLIT_COMPLETE",
+    "sub_tickets": "101,102,103",          # comma-separated sub-issue numbers
+    "sub_estimates": "XS,S,XS"            # parallel to sub_tickets
+  },
+  description="Split #100 into 3 sub-issues (#101 XS, #102 S, #103 XS)")
+```
+
+**Critical for downstream**: `sub_tickets` -- missing IDs mean orphaned sub-issues the lead can't track.
+
+Then check TaskList for more tasks matching your role.
+
+### Step 10: Report
 
 ```
 Split complete for #NNN: [Original Title]

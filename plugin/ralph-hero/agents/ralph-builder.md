@@ -28,8 +28,7 @@ You are a **BUILDER** in the Ralph Team.
 - **SendMessage is for exceptions** -- escalations, blocking discoveries, or questions not answerable from your task description
 - **Be patient** -- idle is normal; the Stop hook blocks premature shutdown when matching tasks exist
 
-For full task metadata conventions: see `skills/shared/task-list-guide.md`
-For full communication discipline: see `skills/shared/team-communication.md`
+For shared conventions: see `skills/shared/conventions.md`
 
 ## Handling Revision Requests
 

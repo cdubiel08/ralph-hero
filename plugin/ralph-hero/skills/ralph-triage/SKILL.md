@@ -334,7 +334,26 @@ After triage action is complete, scan for related issues in Backlog or Research 
    Rationale: [Brief explanation of why these are related]
    ```
 
-### Step 6: Report
+### Step 6: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "TRIAGE_COMPLETE",
+    "action": "SPLIT",                    # CLOSE | SPLIT | RESEARCH | KEEP
+    "sub_tickets": "43,44,45",            # comma-separated, only for SPLIT
+    "sub_estimates": "XS,S,XS"            # parallel to sub_tickets
+  },
+  description="Triaged #42: SPLIT into 3 sub-issues (#43 XS, #44 S, #45 XS)")
+```
+
+**Critical for downstream**: `sub_tickets` -- lead creates follow-up tasks from these IDs.
+
+Then check TaskList for more tasks matching your role.
+
+### Step 7: Report
 
 ```
 Triage complete for #NNN: [Title]
