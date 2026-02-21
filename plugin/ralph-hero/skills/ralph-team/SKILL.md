@@ -185,28 +185,37 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
 
 ### Spawn Procedure
 
-1. **Determine role** from the pending task subject:
+1. **Determine role and skill** from the pending task subject:
 
-   | Task subject contains | Role | Template | Agent type |
-   |----------------------|------|----------|------------|
-   | "Triage" | analyst | `triager.md` | general-purpose |
-   | "Split" | analyst | `splitter.md` | general-purpose |
-   | "Research" | analyst | `researcher.md` | general-purpose |
-   | "Plan" (not "Review") | builder | `planner.md` | general-purpose |
-   | "Review" | validator | `reviewer.md` | general-purpose |
-   | "Implement" | builder | `implementer.md` | general-purpose |
-   | "Create PR" | integrator | `integrator.md` | general-purpose |
-   | "Merge" or "Integrate" | integrator | `integrator.md` | general-purpose |
+   | Task subject contains | Role | Skill | Task Verb | Agent type |
+   |----------------------|------|-------|-----------|------------|
+   | "Triage" | analyst | ralph-triage | Triage | general-purpose |
+   | "Split" | analyst | ralph-split | Split | general-purpose |
+   | "Research" | analyst | ralph-research | Research | general-purpose |
+   | "Plan" (not "Review") | builder | ralph-plan | Plan | general-purpose |
+   | "Review" | validator | ralph-review | Review plan for | general-purpose |
+   | "Implement" | builder | ralph-impl | Implement | general-purpose |
+   | "Create PR" | integrator | (none) | Integration task for | general-purpose |
+   | "Merge" or "Integrate" | integrator | (none) | Integration task for | general-purpose |
 
 2. **Resolve template path**: `Bash("echo $CLAUDE_PLUGIN_ROOT")` to get the plugin root, then read:
-   `Read(file_path="[resolved-root]/templates/spawn/{template}")`
+   `Read(file_path="[resolved-root]/templates/spawn/worker.md")`
 
-3. **Substitute placeholders** from the issue context gathered in Section 2-3:
+3. **Substitute placeholders** from the issue context and spawn table:
    - `{ISSUE_NUMBER}` -> issue number
    - `{TITLE}` -> issue title
-   - `{ESTIMATE}` -> issue estimate
-   - `{GROUP_CONTEXT}` -> group line if IS_GROUP, empty if not
-   - `{WORKTREE_CONTEXT}` -> worktree path if exists, empty if not
+   - `{TASK_VERB}` -> from spawn table "Task Verb" column
+   - `{TASK_CONTEXT}` -> role-dependent context line:
+     - Triage: `Estimate: {ESTIMATE}.`
+     - Split: `Too large for direct implementation (estimate: {ESTIMATE}).`
+     - Plan/Review: `{GROUP_CONTEXT}` (group line if IS_GROUP, empty if not)
+     - Implement: `{WORKTREE_CONTEXT}` (worktree path if exists, empty if not)
+     - Research/Integrator: empty (line removed)
+   - `{SKILL_INVOCATION}` -> `Skill(skill="ralph-hero:[skill]", args="{ISSUE_NUMBER}")` from spawn table Skill column. For integrator (no skill): `Check your task subject to determine the operation (Create PR or Merge PR).\nFollow the corresponding procedure in your agent definition.`
+   - `{REPORT_FORMAT}` -> role-specific result format from conventions.md "Result Format Contracts"
+   - `{ESTIMATE}` -> issue estimate (only used within `{TASK_CONTEXT}` for triage/split)
+   - `{GROUP_CONTEXT}` -> group line if IS_GROUP, empty if not (only used within `{TASK_CONTEXT}` for plan/review)
+   - `{WORKTREE_CONTEXT}` -> worktree path if exists, empty if not (only used within `{TASK_CONTEXT}` for implement)
 
    If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it.
 
@@ -225,7 +234,7 @@ See `shared/conventions.md` "Spawn Template Protocol" for full placeholder refer
 
 **Rules**:
 - The prompt passed to `Task()` must be the template output and NOTHING else
-- Resolved prompts must be under 10 lines. If longer, you have violated template integrity
+- Resolved prompts must be 6-8 lines. If longer than 10 lines, you have violated template integrity
 - The agent discovers all context it needs via skill invocation -- that is the entire point of HOP
 
 **Anti-patterns** (NEVER do these):
