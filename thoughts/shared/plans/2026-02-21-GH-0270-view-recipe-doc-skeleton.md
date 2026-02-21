@@ -87,8 +87,8 @@ Single phase — create the skeleton document synthesizing common patterns from 
 8. **References**: Links to golden-project-views.md, GH-66 guidance, parent #112
 
 ### Success Criteria
-- [ ] Automated: `test -f thoughts/shared/research/view-recipes.md && grep -q "Column Limits" thoughts/shared/research/view-recipes.md && grep -q "Field Sums" thoughts/shared/research/view-recipes.md && grep -q "Slicing" thoughts/shared/research/view-recipes.md && grep -q "Filter Syntax" thoughts/shared/research/view-recipes.md`
-- [ ] Automated: `grep -c "TODO.*#27[1-3]" thoughts/shared/research/view-recipes.md` returns at least 7
+- [x] Automated: `test -f thoughts/shared/research/view-recipes.md && grep -q "Column Limits" thoughts/shared/research/view-recipes.md && grep -q "Field Sums" thoughts/shared/research/view-recipes.md && grep -q "Slicing" thoughts/shared/research/view-recipes.md && grep -q "Filter Syntax" thoughts/shared/research/view-recipes.md`
+- [x] Automated: `grep -c "TODO.*#27[1-3]" thoughts/shared/research/view-recipes.md` returns at least 7
 - [ ] Manual: Document reads as a coherent skeleton ready for downstream issues to fill in
 
 ## File Ownership Summary
