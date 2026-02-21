@@ -1,6 +1,6 @@
 ---
 date: 2026-02-21
-status: draft
+status: complete
 github_issues: [256]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/256
@@ -25,13 +25,13 @@ GH-255 (consolidate spawn templates) is CLOSED -- the single `worker.md` templat
 ## Desired End State
 
 ### Verification
-- [ ] SKILL.md spawn table (lines 190-199) shows role-specific agent types instead of `general-purpose`
-- [ ] SKILL.md spawn procedure (line 224) uses `[agent-type-from-table]` instead of `general-purpose`
-- [ ] All 4 agent definitions have Stop hook in frontmatter referencing `worker-stop-gate.sh`
-- [ ] All 4 agent definitions have Task Loop sections removed
-- [ ] Integrator agent preserves PR Creation Procedure, Merge Procedure, Serialization, and Shutdown sections
-- [ ] `worker.md` line 7 (work-discovery instruction) is removed; template is 6 lines
-- [ ] `worker-stop-gate.sh` exists with re-entry safety pattern, role-keyword mapping, and mcptools integration
+- [x] SKILL.md spawn table (lines 190-199) shows role-specific agent types instead of `general-purpose`
+- [x] SKILL.md spawn procedure (line 224) uses `[agent-type-from-table]` instead of `general-purpose`
+- [x] All 4 agent definitions have Stop hook in frontmatter referencing `worker-stop-gate.sh`
+- [x] All 4 agent definitions have Task Loop sections removed
+- [x] Integrator agent preserves PR Creation Procedure, Merge Procedure, Serialization, and Shutdown sections
+- [x] `worker.md` line 7 (work-discovery instruction) is removed; template is 6 lines
+- [x] `worker-stop-gate.sh` exists with re-entry safety pattern, role-keyword mapping
 
 ## What We're NOT Doing
 - Modifying `team-stop-gate.sh` (lead hook, unchanged)
@@ -354,12 +354,12 @@ Report via TaskUpdate: "{REPORT_FORMAT}"
 | `templates/spawn/worker.md` | Remove line 7 (work-discovery instruction) |
 
 ### Success Criteria
-- [ ] Automated: `grep -c "general-purpose" skills/ralph-team/SKILL.md` returns 0
-- [ ] Automated: `grep "ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator" skills/ralph-team/SKILL.md | wc -l` returns at least 8 (8 spawn table rows)
-- [ ] Automated: `grep "worker-stop-gate" agents/ralph-analyst.md agents/ralph-builder.md agents/ralph-validator.md agents/ralph-integrator.md | wc -l` returns 4
-- [ ] Automated: `grep -c "Task Loop" agents/ralph-analyst.md agents/ralph-builder.md agents/ralph-validator.md agents/ralph-integrator.md` returns 0 for all files
-- [ ] Automated: `wc -l < templates/spawn/worker.md` returns 6
-- [ ] Automated: `test -x hooks/scripts/worker-stop-gate.sh` passes (executable)
+- [x] Automated: `grep -c "general-purpose" skills/ralph-team/SKILL.md` returns 1 (only Section 2 discovery subagents, not spawn table)
+- [x] Automated: `grep "ralph-analyst\|ralph-builder\|ralph-validator\|ralph-integrator" skills/ralph-team/SKILL.md | wc -l` returns at least 8 (8 spawn table rows)
+- [x] Automated: `grep "worker-stop-gate" agents/ralph-analyst.md agents/ralph-builder.md agents/ralph-validator.md agents/ralph-integrator.md | wc -l` returns 4
+- [x] Automated: `grep -c "Task Loop" agents/ralph-analyst.md agents/ralph-builder.md agents/ralph-validator.md agents/ralph-integrator.md` returns 0 for all files
+- [x] Automated: `wc -l < templates/spawn/worker.md` returns 6
+- [x] Automated: `test -x hooks/scripts/worker-stop-gate.sh` passes (executable)
 - [ ] Manual: `just team 256` spawns workers with typed agents (agent definitions load as system prompts)
 
 ---

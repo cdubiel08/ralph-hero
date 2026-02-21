@@ -1,0 +1,41 @@
+#!/bin/bash
+# ralph-hero/hooks/scripts/worker-stop-gate.sh
+# Stop: Prevent workers from stopping while matching tasks exist
+#
+# When a worker finishes a task and tries to stop, this hook forces
+# one re-check of TaskList before allowing the stop. Uses the same
+# re-entry safety pattern as team-stop-gate.sh.
+#
+# Exit codes:
+#   0 - Re-entry (already checked), allow stop
+#   2 - First attempt, block stop with guidance
+
+set -euo pipefail
+source "$(dirname "$0")/hook-utils.sh"
+
+INPUT=$(cat)
+
+# Re-entry safety: if the worker already checked and still wants to stop, allow it.
+# This prevents infinite loops. Same pattern as team-stop-gate.sh:21-24.
+STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
+if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then
+  exit 0
+fi
+
+# Map worker name to task subject keywords for role-specific matching
+TEAMMATE=$(echo "$INPUT" | jq -r '.teammate_name // "unknown"')
+case "$TEAMMATE" in
+  analyst*)    KEYWORDS="Triage, Split, or Research" ;;
+  builder*)    KEYWORDS="Plan or Implement" ;;
+  validator*)  KEYWORDS="Review or Validate" ;;
+  integrator*) KEYWORDS="Create PR, Merge, or Integrate" ;;
+  *)           exit 0 ;; # Unknown role, allow stop
+esac
+
+cat >&2 <<EOF
+Before stopping, check TaskList for pending tasks matching your role.
+Look for tasks with "$KEYWORDS" in the subject that are pending and unblocked.
+If matching tasks exist, claim and process them.
+If no matching tasks exist, you may stop.
+EOF
+exit 2
