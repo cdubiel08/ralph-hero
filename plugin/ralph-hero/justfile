@@ -74,6 +74,12 @@ setup budget="1.00" timeout="10m":
 report issue="" budget="1.00" timeout="10m":
     @just _run_skill "report" "{{issue}}" "{{budget}}" "{{timeout}}"
 
+# --- Completion & Documentation ---
+
+# Generate shell tab completions (bash, zsh, fish, powershell, elvish)
+completions shell="bash":
+    @just --completions {{shell}}
+
 # --- Internal Helpers ---
 
 _run_skill skill issue budget timeout:
