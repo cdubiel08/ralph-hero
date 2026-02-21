@@ -19,6 +19,7 @@ env:
   RALPH_COMMAND: "team"
   RALPH_AUTO_APPROVE: "true"
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
+  CLAUDE_PLUGIN_ROOT: "${CLAUDE_PLUGIN_ROOT}"
 hooks:
   TaskCompleted:
     - hooks:
