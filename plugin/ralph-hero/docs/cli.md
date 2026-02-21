@@ -166,6 +166,25 @@ just completions zsh     # Output zsh completions
 just completions fish    # Output fish completions
 ```
 
+### Global `ralph` Command
+
+After installing the global CLI (`just install-cli`), install completions for the `ralph` command:
+
+```bash
+just install-completions bash   # For bash
+just install-completions zsh    # For zsh
+```
+
+Or source directly:
+
+```bash
+# Bash - add to ~/.bashrc:
+source plugin/ralph-hero/scripts/ralph-completions.bash
+
+# Zsh - add to ~/.zshrc:
+source plugin/ralph-hero/scripts/ralph-completions.zsh
+```
+
 ## Overriding from Project Root
 
 For one-off use from the repository root:

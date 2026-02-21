@@ -181,6 +181,7 @@ install-cli:
     echo "  ralph triage 42"
     echo "  ralph loop"
     echo "  ralph team 42"
+    echo "For tab completions: just install-completions bash  (or zsh)"
 
 # Remove global 'ralph' command and config
 uninstall-cli:
@@ -208,6 +209,32 @@ uninstall-cli:
     else
         echo "Ralph CLI uninstalled."
     fi
+
+# Install shell completions for the global 'ralph' command
+install-completions shell="bash":
+    #!/usr/bin/env bash
+    set -eu
+    PLUGIN_DIR="{{justfile_directory()}}"
+    case "{{shell}}" in
+        bash)
+            COMP_DIR="$HOME/.local/share/bash-completion/completions"
+            mkdir -p "$COMP_DIR"
+            cp "$PLUGIN_DIR/scripts/ralph-completions.bash" "$COMP_DIR/ralph"
+            echo "Installed bash completions: $COMP_DIR/ralph"
+            echo "Restart your shell or run: source $COMP_DIR/ralph"
+            ;;
+        zsh)
+            COMP_DIR="$HOME/.local/share/zsh/site-functions"
+            mkdir -p "$COMP_DIR"
+            cp "$PLUGIN_DIR/scripts/ralph-completions.zsh" "$COMP_DIR/_ralph"
+            echo "Installed zsh completions: $COMP_DIR/_ralph"
+            echo "Restart your shell or run: source $COMP_DIR/_ralph"
+            ;;
+        *)
+            echo "Unsupported shell: {{shell}}. Use 'bash' or 'zsh'."
+            exit 1
+            ;;
+    esac
 
 # --- Quick Actions (no LLM, requires mcptools) ---
 

@@ -409,8 +409,8 @@ source plugin/ralph-hero/scripts/ralph-completions.zsh
 ```
 
 ### Success Criteria
-- [ ] Automated: `bash -n plugin/ralph-hero/scripts/ralph-completions.bash` (syntax check)
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-completions` (recipe parses)
+- [x] Automated: `bash -n plugin/ralph-hero/scripts/ralph-completions.bash` (syntax check)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --dry-run install-completions` (recipe parses)
 - [ ] Manual: `ralph <TAB>` completes recipe names in bash after sourcing
 - [ ] Manual: `ralph <TAB>` completes recipe names in zsh after sourcing
 
