@@ -154,7 +154,7 @@ export function registerIssueTools(
         .default("CREATED_AT")
         .describe("Order by field"),
       limit: z
-        .number()
+        .coerce.number()
         .optional()
         .default(50)
         .describe("Max items to return (default 50)"),
@@ -433,7 +433,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       includeGroup: z
         .boolean()
         .optional()
@@ -943,7 +943,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       title: z.string().optional().describe("New issue title"),
       body: z.string().optional().describe("New issue body (Markdown)"),
       labels: z
@@ -1053,7 +1053,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       state: z
         .string()
         .describe(
@@ -1148,7 +1148,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       estimate: z.string().describe("Estimate value (XS, S, M, L, XL)"),
     },
     async (args) => {
@@ -1202,7 +1202,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       priority: z.string().describe("Priority value (P0, P1, P2, P3)"),
     },
     async (args) => {
@@ -1256,7 +1256,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
       body: z.string().describe("Comment body (Markdown)"),
     },
     async (args) => {
@@ -1318,7 +1318,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number (seed for group detection)"),
+      number: z.coerce.number().describe("Issue number (seed for group detection)"),
     },
     async (args) => {
       try {
@@ -1390,7 +1390,7 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number (any issue in the group)"),
+      number: z.coerce.number().describe("Issue number (any issue in the group)"),
       targetState: z
         .string()
         .describe("The state all issues must be in (e.g., 'Ready for Plan')"),

@@ -64,7 +64,7 @@ export function registerHygieneTools(
           "Days before unassigned Backlog items are flagged as orphaned (default: 14)",
         ),
       wipLimits: z
-        .record(z.number())
+        .record(z.coerce.number())
         .optional()
         .describe('Per-state WIP limits, e.g. { "In Progress": 3 }'),
       format: z

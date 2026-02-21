@@ -259,7 +259,7 @@ export function registerDashboardTools(
         .default(48)
         .describe("Hours before flagging stuck issues (default: 48)"),
       wipLimits: z
-        .record(z.number())
+        .record(z.coerce.number())
         .optional()
         .describe(
           'Per-state WIP limits, e.g. { "In Progress": 3 }',

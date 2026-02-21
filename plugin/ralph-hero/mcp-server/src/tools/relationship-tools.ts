@@ -56,9 +56,9 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      parentNumber: z.number().describe("Parent issue number"),
+      parentNumber: z.coerce.number().describe("Parent issue number"),
       childNumber: z
-        .number()
+        .coerce.number()
         .describe("Child issue number (will become sub-issue of parent)"),
       replaceParent: z
         .boolean()
@@ -136,7 +136,7 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Parent issue number"),
+      number: z.coerce.number().describe("Parent issue number"),
     },
     async (args) => {
       try {
@@ -318,8 +318,8 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      blockedNumber: z.number().describe("Issue number that was blocked"),
-      blockingNumber: z.number().describe("Issue number that was the blocker"),
+      blockedNumber: z.coerce.number().describe("Issue number that was blocked"),
+      blockingNumber: z.coerce.number().describe("Issue number that was the blocker"),
     },
     async (args) => {
       try {
@@ -390,7 +390,7 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Issue number"),
+      number: z.coerce.number().describe("Issue number"),
     },
     async (args) => {
       try {
@@ -528,7 +528,7 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z.number().describe("Parent issue number"),
+      number: z.coerce.number().describe("Parent issue number"),
       targetState: z
         .string()
         .describe(

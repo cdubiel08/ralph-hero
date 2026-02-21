@@ -65,13 +65,13 @@ export function registerRoutingTools(
           }),
           action: z.object({
             workflowState: z.string().optional(),
-            projectNumber: z.number().optional(),
+            projectNumber: z.coerce.number().optional(),
           }),
         })
         .optional()
         .describe("Rule definition (required for add_rule, update_rule)"),
       ruleIndex: z
-        .number()
+        .coerce.number()
         .optional()
         .describe(
           "Zero-based rule index (required for update_rule, remove_rule)",
