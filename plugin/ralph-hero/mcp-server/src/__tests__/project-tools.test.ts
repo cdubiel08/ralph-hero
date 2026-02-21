@@ -87,6 +87,36 @@ describe("list_project_items has/no presence filters structural", () => {
   });
 });
 
+describe("list_project_items repository info structural", () => {
+  it("GraphQL Issue fragment includes repository fields", () => {
+    expect(projectToolsSrc).toContain("repository { nameWithOwner name owner { login } }");
+  });
+
+  it("repository fragment appears in both Issue and PullRequest", () => {
+    const repoMatches = projectToolsSrc.match(/repository \{ nameWithOwner name owner \{ login \} \}/g);
+    expect(repoMatches).toHaveLength(2);
+  });
+
+  it("response mapping includes owner field", () => {
+    expect(projectToolsSrc).toContain("owner: (content?.repository");
+  });
+
+  it("response mapping includes repo field", () => {
+    expect(projectToolsSrc).toContain("repo: (content?.repository");
+  });
+
+  it("response mapping includes nameWithOwner field", () => {
+    expect(projectToolsSrc).toContain("nameWithOwner: (content?.repository");
+  });
+
+  it("DraftIssue items return null for repo fields (no repository fragment)", () => {
+    // DraftIssue content block does NOT include repository - verify graceful null fallback
+    const draftIssueBlock = projectToolsSrc.match(/\.\.\. on DraftIssue \{[^}]+\}/)?.[0];
+    expect(draftIssueBlock).toBeDefined();
+    expect(draftIssueBlock).not.toContain("repository");
+  });
+});
+
 describe("list_project_items exclude negation filters structural", () => {
   it("Zod schema includes excludeWorkflowStates param", () => {
     expect(projectToolsSrc).toContain("excludeWorkflowStates");

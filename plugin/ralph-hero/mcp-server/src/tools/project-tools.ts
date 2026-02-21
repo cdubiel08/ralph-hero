@@ -532,12 +532,14 @@ export function registerProjectTools(
                         updatedAt
                         labels(first: 10) { nodes { name } }
                         assignees(first: 5) { nodes { login } }
+                        repository { nameWithOwner name owner { login } }
                       }
                       ... on PullRequest {
                         number
                         title
                         state
                         url
+                        repository { nameWithOwner name owner { login } }
                       }
                       ... on DraftIssue {
                         title
@@ -679,6 +681,9 @@ export function registerProjectTools(
             state: content?.state,
             url: content?.url,
             updatedAt: content?.updatedAt ?? null,
+            owner: (content?.repository as { owner?: { login?: string } })?.owner?.login ?? null,
+            repo: (content?.repository as { name?: string })?.name ?? null,
+            nameWithOwner: (content?.repository as { nameWithOwner?: string })?.nameWithOwner ?? null,
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),
