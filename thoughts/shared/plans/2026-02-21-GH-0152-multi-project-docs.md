@@ -27,10 +27,10 @@ Single issue implementation: GH-152 -- Add multi-project configuration documenta
 ## Desired End State
 
 ### Verification
-- [ ] `RALPH_GH_PROJECT_NUMBERS` row added to env var table
-- [ ] Multi-project example block added after existing single-project example
-- [ ] "Multi-Project Configuration" subsection added after env var table
-- [ ] No code changes -- docs only
+- [x] `RALPH_GH_PROJECT_NUMBERS` row added to env var table
+- [x] Multi-project example block added after existing single-project example
+- [x] "Multi-Project Configuration" subsection added after env var table
+- [x] No code changes -- docs only
 
 ## What We're NOT Doing
 
@@ -105,13 +105,13 @@ Ralph supports managing multiple GitHub Projects V2 boards from a single instanc
 ### Success Criteria
 
 #### Automated Verification
-- [ ] No build/test impact (docs-only change)
+- [x] No build/test impact (docs-only change)
 
 #### Manual Verification
-- [ ] `RALPH_GH_PROJECT_NUMBERS` appears in env var table with correct description
-- [ ] Multi-project example block shows all 5 env vars including `RALPH_GH_PROJECT_NUMBERS`
-- [ ] Subsection explains single vs multi-project modes and per-call override
-- [ ] Existing documentation is unchanged (no regressions)
+- [x] `RALPH_GH_PROJECT_NUMBERS` appears in env var table with correct description
+- [x] Multi-project example block shows all 5 env vars including `RALPH_GH_PROJECT_NUMBERS`
+- [x] Subsection explains single vs multi-project modes and per-call override
+- [x] Existing documentation is unchanged (no regressions)
 
 ---
 
