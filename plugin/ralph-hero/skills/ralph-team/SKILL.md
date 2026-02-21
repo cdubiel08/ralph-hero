@@ -89,6 +89,8 @@ Call `ralph_hero__detect_pipeline_position(owner=$RALPH_GH_OWNER, repo=$RALPH_GH
 - `convergence`: Whether group is ready for next gate
 - `recommendation`: Suggested next action
 
+**Already-split detection**: The tool automatically accounts for existing sub-issues. Issues with `subIssueCount > 0` are excluded from SPLIT phase triggering. When the response includes `phase: "SPLIT"`, the `issues` array only lists issues that still need splitting (`subIssueCount === 0`).
+
 Use `phase` to determine tasks (Section 4.2) and first teammate (Section 4.3). Trust the tool's convergence assessment -- do not re-check manually.
 
 **TERMINAL**: PR exists or all issues done. The team NEVER moves issues to Done -- that requires PR merge.
@@ -127,6 +129,8 @@ Based on pipeline position (Section 3), create tasks with sequential blocking: R
 
 **Subject patterns** (workers match on these to self-claim):
 - `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
+
+**SPLIT tasks**: Only create split tasks for issues without existing children (`subIssueCount === 0` in the `detect_pipeline_position` response). Issues that already have sub-issues are automatically excluded from the SPLIT phase by the detection tool, so they should not appear in the `issues` array. This is defense-in-depth -- verify before creating tasks.
 
 **Review task creation** depends on `RALPH_REVIEW_MODE`:
 - `interactive`: Create "Review plan for GH-NNN" task. Implement is blocked by Review.

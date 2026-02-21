@@ -101,7 +101,14 @@ Execute the phase indicated by `phase`. Do NOT interpret workflow states yoursel
 
 Split all M/L/XL issues until only XS/S leaves remain.
 
-For each M/L/XL issue, spawn a background split task:
+**Pre-check**: The `detect_pipeline_position` response's `issues` array includes `subIssueCount` for each issue. Only split issues where `subIssueCount === 0`. Issues that already have children have been split previously -- their children will be picked up by later phases (RESEARCH, PLAN, etc.) based on their own workflow state.
+
+If you need to inspect the existing tree before deciding, call:
+```
+ralph_hero__list_sub_issues(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=NNN, depth=2)
+```
+
+For each M/L/XL issue **with `subIssueCount === 0`**, spawn a background split task:
 ```
 Task(subagent_type="general-purpose", run_in_background=true,
      prompt="Use Skill(skill='ralph-hero:ralph-split', args='NNN') to split issue #NNN.",
