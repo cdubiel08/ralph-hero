@@ -90,8 +90,8 @@ Key design decisions from research:
 - `set -euo pipefail` for robustness
 
 ### Success Criteria
-- [ ] Automated: `bash -n plugin/ralph-hero/scripts/ralph-cli.sh` (syntax check passes)
-- [ ] Automated: `test -x plugin/ralph-hero/scripts/ralph-cli.sh` (executable bit set)
+- [x] Automated: `bash -n plugin/ralph-hero/scripts/ralph-cli.sh` (syntax check passes)
+- [x] Automated: `test -x plugin/ralph-hero/scripts/ralph-cli.sh` (executable bit set)
 - [ ] Manual: Script shows error message when justfile symlink is missing
 
 **Creates for next phase**: The script file that `install-cli` will copy/symlink to `~/.local/bin/ralph`.
