@@ -278,18 +278,18 @@ describe("advance_children/advance_parent projectNumber", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `npm test` passes with all new tests
-- [ ] Automated: No regressions in existing test suites
-- [ ] Manual: Test coverage includes schema validation, `resolveFullConfig` integration, `get_issue` filtering, and advance_* refactor
+- [x] Automated: `npm test` passes with all new tests
+- [x] Automated: No regressions in existing test suites
+- [x] Manual: Test coverage includes schema validation, `resolveFullConfig` integration, `get_issue` filtering, and advance_* refactor
 
 ---
 
 ## Integration Testing
-- [ ] Build passes: `npm run build`
-- [ ] All tests pass: `npm test`
-- [ ] `get_issue` correctly filters `projectItems` when `projectNumber` override is provided
-- [ ] Existing tools work identically when `projectNumber` is omitted (backward compat)
-- [ ] `advance_children` and `advance_parent` work identically after `resolveFullConfig` refactor
+- [x] Build passes: `npm run build`
+- [x] All tests pass: `npm test`
+- [x] `get_issue` correctly filters `projectItems` when `projectNumber` override is provided
+- [x] Existing tools work identically when `projectNumber` is omitted (backward compat)
+- [x] `advance_children` and `advance_parent` work identically after `resolveFullConfig` refactor
 
 ## Known Limitations
 
