@@ -478,13 +478,13 @@ export function resolveConfig(
 
 export function resolveFullConfig(
   client: GitHubClient,
-  args: { owner?: string; repo?: string },
+  args: { owner?: string; repo?: string; projectNumber?: number },
 ): ResolvedConfig {
   const { owner, repo } = resolveConfig(client, args);
-  const projectNumber = client.config.projectNumber;
+  const projectNumber = args.projectNumber ?? client.config.projectNumber;
   if (!projectNumber) {
     throw new Error(
-      "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var)",
+      "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var or pass explicitly)",
     );
   }
   const projectOwner = resolveProjectOwner(client.config);
