@@ -1,6 +1,6 @@
 ---
 date: 2026-02-21
-status: draft
+status: complete
 github_issues: [273]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/273
@@ -66,9 +66,9 @@ Single phase: edit `view-recipes.md` to replace the two TODO placeholders with c
 - Tips (zoom levels, timeline planning)
 
 ### Success Criteria
-- [ ] Automated: `grep -c "TODO.*#273" thoughts/shared/research/view-recipes.md` returns 0
-- [ ] Automated: `grep -q "Done Archive" thoughts/shared/research/view-recipes.md && grep -q "Roadmap" thoughts/shared/research/view-recipes.md`
-- [ ] Manual: Both recipes follow the View Recipe Template structure
+- [x] Automated: `grep -c "TODO.*#273" thoughts/shared/research/view-recipes.md` returns 0
+- [x] Automated: `grep -q "Done Archive" thoughts/shared/research/view-recipes.md && grep -q "Roadmap" thoughts/shared/research/view-recipes.md`
+- [x] Manual: Both recipes follow the View Recipe Template structure
 
 ## File Ownership Summary
 

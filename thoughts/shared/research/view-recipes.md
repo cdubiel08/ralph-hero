@@ -364,19 +364,91 @@ Each view recipe below follows this structure:
 
 ### 6. Done Archive
 
-<!-- TODO: #273 — Full recipe with setup steps, configuration table -->
-
 **Layout**: Table
-**Purpose**: Reviewing completed work, release notes, finding recently closed issues
+**Purpose**: Reviewing completed work, historical reference, release notes
+
+| Setting | Value |
+|---------|-------|
+| Layout | Table |
+| Filter | `workflow-state:Done,Canceled` |
+| Sort by | Updated (descending — newest first) |
+| Visible columns | Number, Title, Workflow State, Priority, Estimate, Updated |
+| Field sums | None (optional: enable Count for total completed items) |
+
+**When to use**:
+- Retrospectives — review what was completed in a time period
+- Auditing completed work — verify issues reached Done vs Canceled
+- Release notes — find recently closed issues for changelog generation
+- Historical reference — look up how a past issue was resolved
+
+**Setup Steps**:
+1. Click "+ New view" at the top of the project
+2. Select "Table"
+3. Click the filter icon and set filter to: `workflow-state:Done,Canceled`
+4. Click the sort icon > "Sort by" > select "Updated" > descending (newest first)
+5. Configure visible columns by clicking the `+` header button: Number, Title, Workflow State, Priority, Estimate, Updated. Remove any extra columns.
+6. Rename the view tab to "Done Archive"
+7. Click the view tab dropdown > "Save changes"
+
+**Tips**:
+- The `workflow-state:Done,Canceled` filter captures both successful completions and canceled items. To see only successful completions, use `workflow-state:Done` instead.
+- Sorting by Updated (descending) surfaces the most recently completed work at the top, which is useful for sprint reviews and release notes.
+- Consider enabling Count on the Estimate column to see how many items are in the archive. Enable Sum to see total story points completed.
+- Items in Done Archive are candidates for archiving via `ralph_hero__archive_item` to keep the project board clean. Archived items are hidden from all views but remain in the project.
 
 ---
 
 ### 7. Roadmap
 
-<!-- TODO: #273 — Full recipe with setup steps, date field prerequisite, zoom settings -->
-
 **Layout**: Roadmap
-**Purpose**: Timeline visualization, milestone tracking
+**Purpose**: Timeline planning, milestone tracking, stakeholder visibility
+
+| Setting | Value |
+|---------|-------|
+| Layout | Roadmap |
+| Date field | Target Date |
+| Zoom level | Quarter |
+| Group by | Priority |
+| Filter | `is:open` |
+
+**When to use**:
+- Release planning — visualize when work is expected to complete
+- Stakeholder visibility — share timeline with non-technical stakeholders
+- Timeline communication — see overlapping work and sequencing
+- Milestone tracking — monitor progress toward date-based goals
+
+**Prerequisite — Target Date Field**:
+
+The Roadmap layout requires a date field to position items on the timeline. The "Target Date" field is **not** created by `setup_project` — it must be added manually:
+
+1. Go to your project's Settings (gear icon)
+2. Click "Custom field" > "New field"
+3. Name: `Target Date`
+4. Type: **Date**
+5. Click "Save"
+
+Once created, set Target Date values on individual issues to position them on the roadmap timeline.
+
+**Setup Steps**:
+1. Click "+ New view" at the top of the project
+2. Select "Roadmap"
+3. Click the date field selector (calendar icon) and choose "Target Date"
+4. Set the zoom level to "Quarter" using the zoom controls (magnifying glass icons or dropdown)
+5. Click the group icon > "Group by" > select "Priority"
+6. Click the filter icon and set filter to: `is:open`
+7. Rename the view tab to "Roadmap"
+8. Click the view tab dropdown > "Save changes"
+
+**Known Limitations**:
+- Items without a Target Date value will not appear on the timeline. They show in a "No date" section at the bottom.
+- The Roadmap layout does not support field sums or column-level aggregation.
+- Zoom levels available: Month, Quarter, Year. Quarter provides the best balance of detail and overview for most projects.
+
+**Tips**:
+- Use the Quarter zoom level for sprint-to-sprint planning. Switch to Month for near-term detail or Year for long-range roadmap views.
+- Drag item bars on the timeline to adjust Target Date values directly in the Roadmap view.
+- Grouping by Priority creates swimlanes that help stakeholders see high-priority work at a glance.
+- If an Iteration field is configured later, you can use it as the date field instead of Target Date for sprint-aligned timelines.
 
 ---
 
