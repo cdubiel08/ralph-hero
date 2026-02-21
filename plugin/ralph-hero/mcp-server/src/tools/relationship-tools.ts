@@ -529,6 +529,8 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z
         .coerce.number()
         .optional()
@@ -737,6 +739,8 @@ export function registerRelationshipTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z
         .number()
         .describe("Child issue number (any child in the group)"),

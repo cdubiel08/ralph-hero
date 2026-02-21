@@ -62,6 +62,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       profile: z
         .string()
         .optional()
@@ -433,6 +435,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       includeGroup: z
         .boolean()
@@ -445,7 +449,7 @@ export function registerIssueTools(
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
-        const projectNumber = client.config.projectNumber;
+        const projectNumber = args.projectNumber ?? client.config.projectNumber;
 
         const result = await client.query<{
           repository: {
@@ -729,6 +733,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       title: z.string().describe("Issue title"),
       body: z.string().optional().describe("Issue body (Markdown)"),
       labels: z.array(z.string()).optional().describe("Label names to apply"),
@@ -1053,6 +1059,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       state: z
         .string()
@@ -1148,6 +1156,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       estimate: z.string().describe("Estimate value (XS, S, M, L, XL)"),
     },
@@ -1202,6 +1212,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
       priority: z.string().describe("Priority value (P0, P1, P2, P3)"),
     },
@@ -1318,6 +1330,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number (seed for group detection)"),
     },
     async (args) => {
@@ -1390,6 +1404,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number (any issue in the group)"),
       targetState: z
         .string()
@@ -1525,6 +1541,8 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       workflowState: z
         .string()
         .describe(

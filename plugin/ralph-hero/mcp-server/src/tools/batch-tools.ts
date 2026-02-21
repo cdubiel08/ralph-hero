@@ -230,6 +230,8 @@ export function registerBatchTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
       issues: z
         .array(z.coerce.number())
         .min(1)

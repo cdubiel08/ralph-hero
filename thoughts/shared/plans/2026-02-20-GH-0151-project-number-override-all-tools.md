@@ -209,10 +209,10 @@ Add the same schema field to `batch_update`:
 No handler changes needed.
 
 ### Success Criteria
-- [ ] Automated: `npm run build` passes
-- [ ] Automated: `npm test` passes
-- [ ] Manual: Verify `projectNumber` appears in tool schema via MCP introspection for all 28 tools
-- [ ] Manual: Verify backward compatibility (omitting `projectNumber` uses config default)
+- [x] Automated: `npm run build` passes
+- [x] Automated: `npm test` passes
+- [x] Manual: Verify `projectNumber` appears in tool schema via MCP introspection for all 28 tools
+- [x] Manual: Verify backward compatibility (omitting `projectNumber` uses config default)
 
 **Creates for Phase 3**: All tools now accept the override, ready for test coverage.
 
