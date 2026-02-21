@@ -140,8 +140,8 @@ Response mapping per project:
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with new list_projects tests
-- [ ] Automated: `npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with new list_projects tests
+- [x] Automated: `npm run build` succeeds
 - [ ] Manual: Tool returns projects for a configured owner
 
 **Creates for next phase**: Establishes the dual-type `projectsV2` query pattern that Phase 2 could reference (though Phase 2 uses a different approach -- mutation-based).
@@ -207,8 +207,8 @@ Handler logic:
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with new copy_project tests
-- [ ] Automated: `npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with new copy_project tests
+- [x] Automated: `npm run build` succeeds
 - [ ] Manual: Tool copies a project and returns new project details
 
 **Creates for next phase**: Provides the `copy_project` primitive that GH-111 (enhance `setup_project` with template mode) will use as the underlying mechanism.
@@ -217,8 +217,8 @@ Handler logic:
 
 ## Integration Testing
 
-- [ ] Full test suite passes: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] TypeScript build succeeds: `npm run build`
+- [x] Full test suite passes: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] TypeScript build succeeds: `npm run build`
 - [ ] Both new tools appear in the compiled output (`dist/tools/project-tools.js`)
 - [ ] No regressions in existing project tool tests
 

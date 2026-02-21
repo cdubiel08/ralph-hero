@@ -230,3 +230,102 @@ describe("queryProjectRepositories helper structural", () => {
     expect(helpersSrc).toContain("export interface ProjectRepositoriesResult");
   });
 });
+
+// ---------------------------------------------------------------------------
+// list_projects structural tests
+// ---------------------------------------------------------------------------
+
+describe("list_projects structural", () => {
+  it("tool is registered with correct name", () => {
+    expect(projectToolsSrc).toContain("ralph_hero__list_projects");
+  });
+
+  it("Zod schema includes state param with enum values", () => {
+    expect(projectToolsSrc).toContain('"open", "closed", "all"');
+  });
+
+  it("GraphQL query contains projectsV2 connection", () => {
+    expect(projectToolsSrc).toContain("projectsV2(first:");
+  });
+
+  it("GraphQL query contains expected fields", () => {
+    expect(projectToolsSrc).toContain("shortDescription");
+    expect(projectToolsSrc).toContain("items { totalCount }");
+    expect(projectToolsSrc).toContain("fields { totalCount }");
+    expect(projectToolsSrc).toContain("views { totalCount }");
+  });
+
+  it("response mapping includes itemCount, fieldCount, viewCount", () => {
+    expect(projectToolsSrc).toContain("itemCount:");
+    expect(projectToolsSrc).toContain("fieldCount:");
+    expect(projectToolsSrc).toContain("viewCount:");
+  });
+
+  it("client-side closed filter logic exists", () => {
+    expect(projectToolsSrc).toContain("!p.closed");
+  });
+
+  it("uses OWNER_TYPE replacement for dual-type resolution", () => {
+    expect(projectToolsSrc).toContain('LIST_PROJECTS_QUERY.replace("OWNER_TYPE", ownerType)');
+  });
+
+  it("uses paginateConnection for pagination", () => {
+    // Verify it calls paginateConnection within the list_projects handler
+    expect(projectToolsSrc).toContain("paginateConnection<ListProjectNode>");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// copy_project structural tests
+// ---------------------------------------------------------------------------
+
+describe("copy_project structural", () => {
+  it("tool is registered with correct name", () => {
+    expect(projectToolsSrc).toContain("ralph_hero__copy_project");
+  });
+
+  it("Zod schema includes sourceProjectNumber param", () => {
+    expect(projectToolsSrc).toContain("sourceProjectNumber");
+  });
+
+  it("Zod schema includes title param", () => {
+    // copy_project requires a title for the new project
+    expect(projectToolsSrc).toContain("ralph_hero__copy_project");
+    expect(projectToolsSrc).toContain('title: z.string()');
+  });
+
+  it("Zod schema includes sourceOwner and targetOwner params", () => {
+    expect(projectToolsSrc).toContain("sourceOwner");
+    expect(projectToolsSrc).toContain("targetOwner");
+  });
+
+  it("Zod schema includes includeDraftIssues param", () => {
+    expect(projectToolsSrc).toContain("includeDraftIssues");
+  });
+
+  it("GraphQL mutation contains copyProjectV2", () => {
+    expect(projectToolsSrc).toContain("copyProjectV2(input:");
+  });
+
+  it("mutation input includes projectId, ownerId, title, includeDraftIssues", () => {
+    expect(projectToolsSrc).toContain("projectId: $projectId");
+    expect(projectToolsSrc).toContain("ownerId: $ownerId");
+    expect(projectToolsSrc).toContain("title: $title");
+    expect(projectToolsSrc).toContain("includeDraftIssues: $includeDraftIssues");
+  });
+
+  it("uses fetchProject for source project resolution", () => {
+    expect(projectToolsSrc).toContain("fetchProject(");
+    expect(projectToolsSrc).toContain("sourceProject.id");
+  });
+
+  it("uses owner node ID resolution pattern for target owner", () => {
+    // Verifies the user/org fallback pattern for resolving target owner ID
+    expect(projectToolsSrc).toContain("targetOwnerId");
+    expect(projectToolsSrc).toContain("targetOwnerLogin");
+  });
+
+  it("response includes copiedFrom with source project info", () => {
+    expect(projectToolsSrc).toContain("copiedFrom:");
+  });
+});
