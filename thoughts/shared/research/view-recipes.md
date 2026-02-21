@@ -248,28 +248,117 @@ Each view recipe below follows this structure:
 
 ### 3. Priority Table
 
-<!-- TODO: #272 — Full recipe with setup steps, configuration table, field sum instructions -->
-
 **Layout**: Table
 **Purpose**: Sprint planning, priority review, capacity planning
+
+**When to use**: Sprint planning sessions to assess capacity per priority level, priority reviews to rebalance work, and capacity assessments using Estimate field sums.
+
+| Setting | Value |
+|---------|-------|
+| Layout | Table |
+| Group by | Priority |
+| Sort by | Workflow State (ascending) |
+| Filter | (none) |
+| Visible columns | #, Title, Workflow State, Estimate, Assignees, Labels |
+| Field sums | Estimate — Sum enabled per group |
+
+**Setup Steps**:
+
+1. Click **"+ New view"** at the top of the project, select **"Table"**
+2. Click the **group icon** (≡) > **"Group by"** > select **"Priority"**
+3. Click the **sort icon** (↕) > **"Sort by"** > select **"Workflow State"** > **ascending**
+4. Add visible columns by clicking the **+** button in the header row: #, Title, Workflow State, Estimate, Assignees, Labels. Remove any extra columns by right-clicking the column header > "Hide field"
+5. Click the **Estimate column header** > click the **sum icon** (Σ) > select **"Sum"** to show total estimate points per priority group
+6. Rename the view tab to **"Priority Table"**
+7. Click the view tab dropdown > **"Save changes"**
+
+**Tips**:
+
+- The Estimate sum per group shows total story points at each priority level — use this for capacity planning
+- Items within each priority group are sorted by Workflow State, so you can see progression from Backlog through Done
+- No filter is applied so you see all items (open and closed). Add `is:open` if you only want active work
+- See [Field Sums](#field-sums-table-views) above for more on aggregation options
 
 ---
 
 ### 4. Triage Queue
 
-<!-- TODO: #272 — Full recipe with setup steps, configuration table, filter details -->
-
 **Layout**: Table
 **Purpose**: Backlog grooming, identifying stale issues, triage sessions
+
+**When to use**: Regular triage sessions to review new issues, backlog grooming to prioritize and estimate, and identifying stale issues that have sat in Backlog too long.
+
+| Setting | Value |
+|---------|-------|
+| Layout | Table |
+| Filter | `workflow-state:Backlog` |
+| Sort by | Created (ascending — oldest first) |
+| Group by | (none) |
+| Visible columns | #, Title, Priority, Estimate, Labels, Created |
+| Field sums | (none) |
+
+**Setup Steps**:
+
+1. Click **"+ New view"** at the top of the project, select **"Table"**
+2. Click the **filter icon** (⏚) > type `workflow-state:Backlog` and press Enter
+3. Click the **sort icon** (↕) > **"Sort by"** > select **"Created"** > **ascending** (oldest first)
+4. Add visible columns: #, Title, Priority, Estimate, Labels, Created. Remove extra columns
+5. Rename the view tab to **"Triage Queue"**
+6. Click the view tab dropdown > **"Save changes"**
+
+**Tips**:
+
+- Oldest-first sorting ensures long-standing issues get attention before newer ones
+- Issues disappear from this view automatically when their Workflow State changes from Backlog (e.g., moved to Research Needed or Ready for Plan)
+- During triage, set Priority and Estimate on each issue — blank values indicate untriaged items
+- The `ralph-triage` skill processes issues from this queue programmatically; this view is the manual equivalent
+- See [Filter Syntax Reference](#filter-syntax-reference) above for additional filter options
 
 ---
 
 ### 5. Blocked Items
 
-<!-- TODO: #272 — Full recipe with setup steps, known limitations, workarounds -->
-
 **Layout**: Table
 **Purpose**: Identifying and unblocking stalled work
+
+**When to use**: Standup blockers review to surface stuck items, dependency management to track what's waiting on what, and periodic health checks to find stalled work.
+
+| Setting | Value |
+|---------|-------|
+| Layout | Table |
+| Filter | `is:open` |
+| Sort by | Priority (ascending — P0 first), then Workflow State (ascending) |
+| Group by | (none) |
+| Visible columns | #, Title, Workflow State, Priority, Estimate, Assignees, Labels |
+| Field sums | (none) |
+
+**Setup Steps**:
+
+1. Click **"+ New view"** at the top of the project, select **"Table"**
+2. Click the **filter icon** (⏚) > type `is:open` and press Enter
+3. Click the **sort icon** (↕) > **"Sort by"** > select **"Priority"** > **ascending** (P0 first)
+4. Click **"+ Add sort"** > select **"Workflow State"** > **ascending** as a secondary sort
+5. Add visible columns: #, Title, Workflow State, Priority, Estimate, Assignees, Labels. Remove extra columns
+6. Rename the view tab to **"Blocked Items"**
+7. Click the view tab dropdown > **"Save changes"**
+
+**Known Limitations**:
+
+- **No native blocking dependency filter**: GitHub Projects V2 has no filter syntax for "has blocking dependencies." The `blockedBy` relationship is tracked via GitHub's sub-issue/dependency system, not as a project field. This view cannot directly filter to only blocked items.
+- This view functions as a general **"Open by Priority"** table. Blocked items must be identified by cross-referencing with dependency data.
+
+**Workarounds**:
+
+1. **Label convention**: Add a `blocked` label to blocked issues manually, then add `label:blocked` to the filter to narrow results
+2. **Programmatic check**: Use `ralph_hero__list_dependencies` to query blocked items and cross-reference with this view
+3. **Pipeline dashboard**: Use `ralph_hero__pipeline_dashboard` which reports blocked items as part of its health indicators
+
+**Tips**:
+
+- Highest-priority items appear first, making it easy to focus unblocking efforts where they matter most
+- During standups, scan the top of this view for P0/P1 items and check their dependency status
+- If adopting the `blocked` label convention, update the filter to `is:open label:blocked` for a focused blocked-only view
+- See [Slicing Recommendations](#slicing-recommendations) above for alternative filter/sort combinations
 
 ---
 
