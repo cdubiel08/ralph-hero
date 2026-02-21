@@ -69,18 +69,31 @@ run_claude() {
     echo ""
 
     # Run claude in print mode (non-interactive) with auto-accept permissions
-    timeout "$TIMEOUT" claude -p "$command" --dangerously-skip-permissions 2>&1 || {
+    local output
+    if output=$(timeout "$TIMEOUT" claude -p "$command" --dangerously-skip-permissions 2>&1); then
+        echo "$output"
+    else
         local exit_code=$?
+        echo "$output"
         if [ $exit_code -eq 124 ]; then
             echo ">>> Task timed out after $TIMEOUT"
+            echo "    Continuing to next phase. To increase: TIMEOUT=30m just loop"
         else
             echo ">>> Task exited with code $exit_code"
+            echo "    Continuing to next phase. Check output above for details."
+            echo "    To diagnose: just doctor"
         fi
-    }
+    fi
 
     echo ""
     echo ">>> Completed: $command"
     echo ""
+
+    # Return 1 if queue was empty (no work done)
+    if echo "$output" | grep -qi "Queue empty"; then
+        return 1
+    fi
+    return 0
 }
 
 iteration=0
@@ -98,7 +111,7 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     if [ "$MODE" = "all" ] || [ "$MODE" = "--hygiene-only" ] || [ "$MODE" = "--analyst-only" ]; then
         if [ "$HYGIENE_MODE" != "skip" ]; then
             echo "--- Analyst: Hygiene Phase (mode: $HYGIENE_MODE) ---"
-            run_claude "/ralph-hygiene" "hygiene"
+            run_claude "/ralph-hero:ralph-hygiene" "hygiene"
             work_done=true
         else
             echo "--- Analyst: Hygiene Phase: SKIPPED (--hygiene=skip) ---"
@@ -108,16 +121,18 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     # Triage phase
     if [ "$MODE" = "all" ] || [ "$MODE" = "--triage-only" ] || [ "$MODE" = "--analyst-only" ]; then
         echo "--- Analyst: Triage Phase ---"
-        run_claude "/ralph-triage" "triage"
-        work_done=true
+        if run_claude "/ralph-hero:ralph-triage" "triage"; then
+            work_done=true
+        fi
     fi
 
     # Split phase (after triage, before research)
     if [ "$MODE" = "all" ] || [ "$MODE" = "--split-only" ] || [ "$MODE" = "--analyst-only" ]; then
         if [ "$SPLIT_MODE" != "skip" ]; then
             echo "--- Analyst: Split Phase (mode: $SPLIT_MODE) ---"
-            run_claude "/ralph-split" "split"
-            work_done=true
+            if run_claude "/ralph-hero:ralph-split" "split"; then
+                work_done=true
+            fi
         else
             echo "--- Analyst: Split Phase: SKIPPED (--split=skip) ---"
         fi
@@ -126,8 +141,9 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     # Research phase
     if [ "$MODE" = "all" ] || [ "$MODE" = "--research-only" ] || [ "$MODE" = "--analyst-only" ]; then
         echo "--- Analyst: Research Phase ---"
-        run_claude "/ralph-research" "research"
-        work_done=true
+        if run_claude "/ralph-hero:ralph-research" "research"; then
+            work_done=true
+        fi
     fi
 
     # === BUILDER PHASE ===
@@ -135,8 +151,9 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     # Planning phase
     if [ "$MODE" = "all" ] || [ "$MODE" = "--plan-only" ] || [ "$MODE" = "--builder-only" ]; then
         echo "--- Builder: Planning Phase ---"
-        run_claude "/ralph-plan" "plan"
-        work_done=true
+        if run_claude "/ralph-hero:ralph-plan" "plan"; then
+            work_done=true
+        fi
     fi
 
     # Review phase (optional)
@@ -148,8 +165,9 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
             else
                 export RALPH_INTERACTIVE="false"
             fi
-            run_claude "/ralph-review" "review"
-            work_done=true
+            if run_claude "/ralph-hero:ralph-review" "review"; then
+                work_done=true
+            fi
         else
             echo "--- Review Phase: SKIPPED (--review=skip) ---"
         fi
@@ -158,14 +176,21 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     # Implementation phase
     if [ "$MODE" = "all" ] || [ "$MODE" = "--impl-only" ] || [ "$MODE" = "--builder-only" ]; then
         echo "--- Builder: Implementation Phase ---"
-        run_claude "/ralph-impl" "implement"
-        work_done=true
+        if run_claude "/ralph-hero:ralph-impl" "implement"; then
+            work_done=true
+        fi
     fi
 
     # === INTEGRATOR PHASE ===
     if [ "$MODE" = "all" ] || [ "$MODE" = "--integrator-only" ]; then
         echo "--- Integrator Phase (report only) ---"
-        # Future: run_claude "/ralph-integrate" "integrate"
+        # Future: run_claude "/ralph-hero:ralph-integrate" "integrate"
+    fi
+
+    # Exit early if no work found in any queue
+    if [ "$work_done" = "false" ]; then
+        echo ">>> No work found in any queue. Stopping."
+        break
     fi
 
     # Brief pause between iterations
