@@ -300,6 +300,140 @@ Task(subagent_type="codebase-locator", team_name=TEAM_NAME, prompt="Find files r
 
 This applies to all skills that spawn internal sub-agents: ralph-research, ralph-plan, ralph-split, ralph-triage, and ralph-review. See individual SKILL.md files for inline reminders.
 
+## Architecture Decision: Agent/Skill Separation (ADR-001)
+
+**Status**: Validated (2026-02-19, GH-132)
+**Reference**: Bowser framework (github.com/disler/bowser/)
+
+### Decision
+
+Ralph-hero uses a 4-layer architecture matching Bowser's proven pattern:
+
+| Layer | Name | Role | Location |
+|-------|------|------|----------|
+| 4 | Scripts | Terminal invocation | `scripts/ralph-loop.sh`, `scripts/ralph-team-loop.sh` |
+| 3 | Skills | Capability + workflow logic | `skills/*/SKILL.md` |
+| 2 | Agents | Scale + isolation (team workers) | `agents/*.md` |
+| 1 | MCP Tools | Raw GitHub API operations | `mcp-server/src/tools/` |
+
+### Key Principles
+
+1. **Agents are thin wrappers**: Agent definitions are 20-35 lines. They define a task loop that dispatches to skills. Agents do NOT contain workflow logic.
+2. **Skills own workflow logic**: Each skill defines the complete procedure for one workflow phase (research, plan, review, implement). Skills declare `allowed_tools` to restrict their tool surface.
+3. **MCP tools are primitive operations**: Create issue, update state, add comment. No business logic.
+4. **Orchestrators delegate, never implement**: `ralph-team` and `ralph-hero` skills spawn workers and manage tasks. They never research, plan, review, or implement directly.
+
+### Enforcement Mechanisms
+
+| Mechanism | Type | What it prevents |
+|-----------|------|-----------------|
+| `allowed_tools` in SKILL.md | Declarative constraint | Skills using tools outside their scope |
+| Template integrity rules | Documentation-based | Orchestrator front-loading context into spawn prompts |
+| Line-count guardrail (10-line max) | Behavioral check | Orchestrator adding prohibited context beyond placeholders |
+| `context: fork` on worker skills | Process isolation | Context pollution between skill invocations |
+| Hook-based state gates | Structural enforcement | Invalid workflow state transitions |
+
+**No structural enforcement for skill invocation exists** in Claude Code's plugin system. Both Bowser and ralph-hero rely on LLM compliance with documented patterns. This is an accepted limitation.
+
+### What NOT to Do
+
+- **Do NOT remove MCP tools from agent definitions** (PR #57 proved this breaks skill execution since `Skill()` inherits agent tool restrictions)
+- **Do NOT add workflow logic to agent definitions** (agents dispatch to skills; skills contain the logic)
+- **Do NOT create hook-based skill invocation verification** (hooks cannot inspect conversation history)
+
+## Result Format Contracts
+
+When teammates complete tasks, they report results via `TaskUpdate(description=...)`. The lead and hooks parse these descriptions. Formats MUST follow these contracts exactly.
+
+### Analyst Results
+
+**Triage**:
+```
+TRIAGE COMPLETE: #NNN
+Action: [CLOSE|SPLIT|RESEARCH|KEEP]
+[If SPLIT]: Sub-tickets: #AAA, #BBB
+Estimates: #AAA (XS), #BBB (S)
+```
+
+**Split**:
+```
+SPLIT COMPLETE: #NNN
+Sub-tickets: #AAA, #BBB, #CCC
+Estimates: #AAA (XS), #BBB (S), #CCC (XS)
+```
+
+**Research**:
+```
+RESEARCH COMPLETE: #NNN - [Title]
+Document: [path]
+Key findings: [summary]
+Ticket moved to: Ready for Plan
+```
+
+### Builder Results
+
+**Plan**:
+```
+PLAN COMPLETE: [ticket/group]
+Plan: [path]
+Phases: [N]
+File ownership: [groups]
+Ready for review.
+```
+
+**Implement**:
+```
+IMPLEMENTATION COMPLETE
+Ticket: #NNN
+Phases: [N] of [M]
+Files: [list]
+Tests: [PASSING|FAILING]
+Commit: [hash]
+Worktree: [path]
+```
+
+### Validator Results
+
+**Review**:
+```
+VALIDATION VERDICT
+Ticket: #NNN
+Plan: [path]
+VERDICT: [APPROVED|NEEDS_ITERATION]
+[blocking issues with file:line evidence]
+[warnings]
+[what's good]
+```
+
+### Integrator Results
+
+**PR Creation**:
+```
+PR CREATED
+Ticket: #NNN
+PR: [URL]
+Branch: [branch]
+State: In Review
+```
+
+**Merge**:
+```
+MERGE COMPLETE
+Ticket: #NNN
+PR: [URL] merged
+Branch: deleted
+Worktree: removed
+State: Done
+```
+
+### Contract Rules
+
+1. **First line is the key**: The first line (e.g., `TRIAGE COMPLETE: #NNN`) is the parseable identifier. Always include it.
+2. **Colon-separated fields**: Use `Key: Value` format for structured data.
+3. **Sub-ticket IDs are critical**: Analyst triage/split results MUST include all sub-ticket IDs -- the lead creates follow-up tasks from them.
+4. **VERDICT line is parseable**: Validator results MUST include `VERDICT: APPROVED` or `VERDICT: NEEDS_ITERATION` on its own line.
+5. **File lists use short paths**: Relative to repo root, not absolute paths.
+
 ## Artifact Comment Protocol
 
 ### Overview

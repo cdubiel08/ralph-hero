@@ -18,6 +18,15 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/research-postcondition.sh"
+allowed_tools:
+  - Read
+  - Write
+  - Glob
+  - Grep
+  - Bash
+  - Task
+  - WebSearch
+  - WebFetch
 env:
   RALPH_COMMAND: "research"
   RALPH_REQUIRED_BRANCH: "main"
