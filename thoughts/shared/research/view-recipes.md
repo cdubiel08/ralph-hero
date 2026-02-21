@@ -167,19 +167,82 @@ Each view recipe below follows this structure:
 
 ### 1. Workflow Board
 
-<!-- TODO: #271 — Full recipe with setup steps, configuration table, tips -->
-
 **Layout**: Board
 **Purpose**: Day-to-day workflow tracking, spotting bottlenecks
+
+| Setting | Value |
+|---------|-------|
+| Layout | Board |
+| Column field | Workflow State |
+| Filter | `is:open` |
+| Card fields | Title, Estimate, Priority, Assignees |
+| Field sums | N/A (board layout) |
+
+**When to use**: Daily standups, work-in-progress visibility, spotting bottlenecks where cards pile up in a single column.
+
+**Setup Steps**:
+
+1. Click **"+ New view"** at the top of the project
+2. Select **"Board"**
+3. Click the column header dropdown > **"Column field"** > select **"Workflow State"**
+4. Click the filter icon > set filter: `is:open`
+5. Click the card overflow menu (⋯) > **"Fields"** > enable: Title, Estimate, Priority, Assignees
+6. Optionally hide columns for rarely-used states: click the column header for **Human Needed** > **"Hide column"**; repeat for **Canceled**
+7. Rename the view tab to **"Workflow Board"**
+8. Click the view tab dropdown > **"Save changes"**
+
+**Known Limitations**:
+
+- Workflow State has 11 options, creating 11 columns. This can be wide on smaller screens. Hide unused columns (Human Needed, Canceled) to reduce width.
+- GitHub Projects V2 does not enforce WIP limits. Column sizes must be monitored visually or via `ralph_hero__pipeline_dashboard`.
+
+**Tips**:
+
+- Hide **Human Needed** and **Canceled** columns by default — unhide them only when needed. This keeps the board focused on the active workflow.
+- Cards piling up in a single column indicate a bottleneck. Use `ralph_hero__pipeline_dashboard` to get programmatic WIP counts per state.
+- Column order follows the Workflow State field option order. Reorder options in project settings if the column sequence doesn't match your workflow.
+- Drag cards between columns to change their Workflow State directly from the board.
 
 ---
 
 ### 2. Sprint Board
 
-<!-- TODO: #271 — Full recipe with setup steps, configuration table, tips -->
-
 **Layout**: Board
 **Purpose**: Sprint planning, tracking active vs queued work
+
+| Setting | Value |
+|---------|-------|
+| Layout | Board |
+| Column field | Status (built-in: Todo / In Progress / Done) |
+| Group by | Priority |
+| Filter | `is:open` |
+| Card fields | Title, Workflow State, Estimate, Assignees |
+| Field sums | N/A (board layout) |
+
+**When to use**: Sprint reviews, priority-based work management, seeing at a glance what's queued vs active vs done across priority levels.
+
+**Setup Steps**:
+
+1. Click **"+ New view"** at the top of the project
+2. Select **"Board"**
+3. Click the column header dropdown > **"Column field"** > select **"Status"** (the built-in field with Todo / In Progress / Done)
+4. Click the group icon (▤) > **"Group by"** > select **"Priority"**
+5. Click the filter icon > set filter: `is:open`
+6. Click the card overflow menu (⋯) > **"Fields"** > enable: Title, Workflow State, Estimate, Assignees
+7. Rename the view tab to **"Sprint Board"**
+8. Click the view tab dropdown > **"Save changes"**
+
+**Known Limitations**:
+
+- The default golden project does not include an Iteration field. This board uses the built-in Status field (3 columns) instead of Iteration. If sprints are adopted later, switch the column field to Iteration and add `iteration:@current` filter.
+- Status is auto-synced one-way from Workflow State (see Status Sync Mapping above). Moving a card between Status columns on this board does NOT update Workflow State — use the Workflow Board or `update_workflow_state` for that.
+
+**Tips**:
+
+- Grouping by Priority creates **swimlanes** (horizontal rows). Each priority level (P0–P3) gets its own row, with Todo / In Progress / Done columns within each row.
+- This view gives a compact 3-column layout compared to the Workflow Board's 11 columns. Use it when you care about "is it done?" more than "which workflow step is it in?"
+- If an Iteration field is added later, switch the column field to **Iteration** and add the filter `iteration:@current` to focus on the current sprint only.
+- Cards show Workflow State as a field, so you still see the detailed state (e.g., "In Review" vs "In Progress") even though the column only shows the coarse Status.
 
 ---
 
