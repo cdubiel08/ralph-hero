@@ -155,12 +155,12 @@ All functions keep identical signatures and implementations — this is a pure e
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` compiles with no type errors
-- [ ] `npm test` passes (all existing tests unaffected)
-- [ ] `grep -r "ForRelationships" plugin/ralph-hero/mcp-server/src/` returns zero matches
+- [x] `npm run build` compiles with no type errors
+- [x] `npm test` passes (all existing tests unaffected)
+- [x] `grep -r "ForRelationships" plugin/ralph-hero/mcp-server/src/` returns zero matches
 
 #### Manual Verification
-- [ ] All existing tools behave identically after extraction
+- [x] All existing tools behave identically after extraction
 
 **Dependencies created for Phase 2**: Shared helpers available for batch tools import
 
@@ -246,11 +246,11 @@ Create the `ralph_hero__batch_update` tool in a new `tools/batch-tools.ts` modul
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` compiles with no type errors
-- [ ] `npm test` passes with new batch_update tests
-- [ ] `batch_update` with 5 issues × 1 field uses 2 API calls (1 resolve query + 1 mutation)
-- [ ] `batch_update` with invalid field value returns validation error before any API calls
-- [ ] Partial failures report per-issue status
+- [x] `npm run build` compiles with no type errors
+- [x] `npm test` passes with new batch_update tests
+- [x] `batch_update` with 5 issues × 1 field uses 2 API calls (1 resolve query + 1 mutation)
+- [x] `batch_update` with invalid field value returns validation error before any API calls
+- [x] Partial failures report per-issue status
 
 #### Manual Verification
 - [ ] Batch update 3 issues to "Research Needed" — all update, audit visible on project board
@@ -321,8 +321,8 @@ Update to:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` compiles with no type errors
-- [ ] `npm test` passes
+- [x] `npm run build` compiles with no type errors
+- [x] `npm test` passes
 - [ ] `advance_children` with `number: 5` behaves identically to current (backward compat)
 - [ ] `advance_children` with `issues: [10, 11, 12]` advances those specific issues
 
@@ -397,12 +397,12 @@ Tests:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm test` passes all new tests
-- [ ] All batch_update error paths tested
-- [ ] advance_children backward compatibility verified
+- [x] `npm test` passes all new tests
+- [x] All batch_update error paths tested
+- [x] advance_children backward compatibility verified
 
 #### Manual Verification
-- [ ] Test output clean with descriptive names
+- [x] Test output clean with descriptive names
 
 **Depends on**: Phase 2 (batch tool), Phase 3 (advance_children extension)
 
