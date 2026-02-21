@@ -141,10 +141,10 @@ Wait for all splits, then re-call `detect_pipeline_position` to check if more sp
 ```
 
 ### Success Criteria
-- [ ] Manual: Read `plugin/ralph-hero/skills/ralph-hero/SKILL.md` and confirm the SPLIT phase section includes the pre-check instruction referencing `subIssueCount` and `list_sub_issues(depth=2)`
-- [ ] Manual: Read `plugin/ralph-hero/skills/ralph-team/SKILL.md` Section 3 and confirm it mentions automatic already-split detection
-- [ ] Manual: Read `plugin/ralph-hero/skills/ralph-team/SKILL.md` Section 4.2 and confirm it notes SPLIT task filtering by `subIssueCount`
-- [ ] Manual: Confirm `plugin/ralph-hero/skills/ralph-split/SKILL.md` is unchanged (Step 2.25 already handles existing children)
+- [x] Manual: Read `plugin/ralph-hero/skills/ralph-hero/SKILL.md` and confirm the SPLIT phase section includes the pre-check instruction referencing `subIssueCount` and `list_sub_issues(depth=2)`
+- [x] Manual: Read `plugin/ralph-hero/skills/ralph-team/SKILL.md` Section 3 and confirm it mentions automatic already-split detection
+- [x] Manual: Read `plugin/ralph-hero/skills/ralph-team/SKILL.md` Section 4.2 and confirm it notes SPLIT task filtering by `subIssueCount`
+- [x] Manual: Confirm `plugin/ralph-hero/skills/ralph-split/SKILL.md` is unchanged (Step 2.25 already handles existing children)
 
 ---
 
