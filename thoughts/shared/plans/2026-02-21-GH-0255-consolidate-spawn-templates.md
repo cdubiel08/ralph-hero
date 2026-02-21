@@ -1,6 +1,6 @@
 ---
 date: 2026-02-21
-status: draft
+status: implemented
 github_issues: [255]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/255
@@ -29,12 +29,12 @@ Seven spawn templates in [`templates/spawn/`](https://github.com/cdubiel08/ralph
 ## Desired End State
 
 ### Verification
-- [ ] Single `templates/spawn/worker.md` exists with unified placeholder structure
-- [ ] All 7 old templates deleted from `templates/spawn/`
-- [ ] SKILL.md Section 6 spawn table references `worker.md` with role-specific placeholder values
-- [ ] conventions.md Spawn Template Protocol references single template
-- [ ] Resolved template for every role is under 10 lines (line-count guardrail)
-- [ ] No references to deleted template filenames remain in SKILL.md or conventions.md
+- [x] Single `templates/spawn/worker.md` exists with unified placeholder structure
+- [x] All 7 old templates deleted from `templates/spawn/`
+- [x] SKILL.md Section 6 spawn table references `worker.md` with role-specific placeholder values
+- [x] conventions.md Spawn Template Protocol references single template
+- [x] Resolved template for every role is under 10 lines (line-count guardrail)
+- [x] No references to deleted template filenames remain in SKILL.md or conventions.md
 
 ## What We're NOT Doing
 - Changing agent types from `general-purpose` to typed agents (GH-256)
@@ -292,20 +292,20 @@ All roles use the single `worker.md` template. Role selection is driven by the t
 - `plugin/ralph-hero/templates/spawn/reviewer.md`
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/templates/spawn/` shows only `worker.md`
-- [ ] Automated: `grep -r "researcher.md\|planner.md\|implementer.md\|integrator.md\|splitter.md\|triager.md\|reviewer.md" plugin/ralph-hero/skills/` returns no matches (no stale references)
-- [ ] Manual: Resolve the template for each of the 8 roles (triage, split, research, plan, review, implement, create-pr, merge) and verify each is 6-8 lines
-- [ ] Manual: SKILL.md Section 6 spawn table has Skill and Task Verb columns, no Template column
-- [ ] Manual: conventions.md references single `worker.md`, not 7 role-specific templates
+- [x] Automated: `ls plugin/ralph-hero/templates/spawn/` shows only `worker.md`
+- [x] Automated: `grep -r "researcher.md\|planner.md\|implementer.md\|integrator.md\|splitter.md\|triager.md\|reviewer.md" plugin/ralph-hero/skills/` returns no matches (no stale references)
+- [x] Manual: Resolve the template for each of the 8 roles (triage, split, research, plan, review, implement, create-pr, merge) and verify each is 6-8 lines
+- [x] Manual: SKILL.md Section 6 spawn table has Skill and Task Verb columns, no Template column
+- [x] Manual: conventions.md references single `worker.md`, not 7 role-specific templates
 
 ---
 
 ## Integration Testing
-- [ ] Verify no references to old template filenames in `skills/ralph-team/SKILL.md`
-- [ ] Verify no references to old template filenames in `skills/shared/conventions.md`
-- [ ] Verify `worker.md` placeholder set matches what SKILL.md Section 6 documents
-- [ ] Verify the Result Format Contracts in conventions.md (lines 344-435) are unchanged (this plan does not modify them)
-- [ ] Verify the empty-line-removal rule in conventions.md still applies
+- [x] Verify no references to old template filenames in `skills/ralph-team/SKILL.md`
+- [x] Verify no references to old template filenames in `skills/shared/conventions.md`
+- [x] Verify `worker.md` placeholder set matches what SKILL.md Section 6 documents
+- [x] Verify the Result Format Contracts in conventions.md (lines 344-435) are unchanged (this plan does not modify them)
+- [x] Verify the empty-line-removal rule in conventions.md still applies
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-21-GH-0255-consolidate-spawn-templates.md
