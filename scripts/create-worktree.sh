@@ -28,6 +28,7 @@ mkdir -p "$WORKTREE_BASE"
 
 echo "Fetching latest from origin..."
 git fetch origin main 2>/dev/null || git fetch origin master 2>/dev/null || echo "Warning: Could not fetch from origin"
+git fetch origin "$BRANCH_NAME" 2>/dev/null || true
 
 BASE_BRANCH="origin/main"
 if ! git rev-parse --verify "$BASE_BRANCH" &>/dev/null; then
@@ -47,8 +48,11 @@ if [ -d "$WORKTREE_PATH" ]; then
 fi
 
 if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
-  echo "Branch $BRANCH_NAME exists, checking out..."
+  echo "Branch $BRANCH_NAME exists locally, checking out..."
   git worktree add "$WORKTREE_PATH" "$BRANCH_NAME"
+elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH_NAME"; then
+  echo "Branch $BRANCH_NAME exists on remote, creating local tracking branch..."
+  git worktree add --track -b "$BRANCH_NAME" "$WORKTREE_PATH" "origin/$BRANCH_NAME"
 else
   echo "Creating new branch $BRANCH_NAME from $BASE_BRANCH..."
   git worktree add -b "$BRANCH_NAME" "$WORKTREE_PATH" "$BASE_BRANCH"
@@ -61,3 +65,6 @@ echo "  Branch: $BRANCH_NAME"
 echo ""
 echo "To work in this worktree:"
 echo "  cd $WORKTREE_PATH"
+echo ""
+echo "To remove this worktree:"
+echo "  ./scripts/remove-worktree.sh $TICKET_ID"
