@@ -90,7 +90,7 @@ When referencing code in documents, PRs, or GitHub comments, use GitHub links wi
 
 ## Pipeline Handoff Protocol
 
-Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypassing the lead for routine progression. The lead only handles exceptions and intake.
+Cross-phase progression is lead-driven: the lead creates next-bough tasks when convergence is detected (see SKILL.md Section 4.4). Workers check TaskList for within-phase work and notify the lead when idle.
 
 ### Pipeline Order
 
@@ -105,32 +105,12 @@ Workers hand off to the next pipeline stage via peer-to-peer SendMessage, bypass
 ### Handoff Procedure (after completing a task)
 
 1. Check `TaskList` for more tasks matching your role
-2. If found: self-claim and continue (no handoff needed)
-3. If none available: hand off to the next-stage peer:
-   - Read team config at `~/.claude/teams/[TEAM_NAME]/config.json`
-   - Find the member whose `name` matches your "Next Stage" from the table above
-   - SendMessage using the member's `name` field:
-     ```
-     SendMessage(
-       type="message",
-       recipient="[name from config]",
-       content="Pipeline handoff: check TaskList for newly unblocked work",
-       summary="Handoff: task unblocked"
-     )
-     ```
-4. If the next-stage teammate is NOT found in the config (role not spawned):
-   ```
-   SendMessage(
-     type="message",
-     recipient="team-lead",
-     content="No [next-role] teammate exists. Unblocked tasks may need a new worker.",
-     summary="No peer for handoff"
-   )
-   ```
+2. If found: self-claim and continue
+3. If none available: notify the team-lead that you have no more work. The Stop hook will block shutdown if matching tasks appear later.
 
 ### Rules
 
-- **Lead pre-assigns at spawn only**: The lead sets `owner` via `TaskUpdate` immediately before spawning a worker. After spawn, workers self-claim subsequent tasks. Do NOT assign tasks mid-pipeline via TaskUpdate or SendMessage.
+- **Lead assigns at spawn and bough advancement**: The lead sets `owner` via `TaskUpdate` before spawning a worker and when creating new-bough tasks. Workers also self-claim unclaimed tasks via Stop hook.
 - **SendMessage is fire-and-forget** -- no acknowledgment mechanism. The handoff wakes the peer; they self-claim from TaskList.
 - **Lead gets visibility** via idle notification DM summaries -- no need to CC the lead on handoffs.
 - **Multiple handoffs are fine** -- if 3 analysts complete and all message the builder, the builder wakes 3 times and claims one task each time.
@@ -264,7 +244,7 @@ This ensures:
 
 ### Note: Team Agents
 
-Team members are spawned as subagents via `Task()`, so they follow the same isolation pattern as the default. Each team member invokes its skill inline:
+Team members are spawned as typed subagents (e.g., `ralph-analyst`, `ralph-builder`, `ralph-validator`, `ralph-integrator`) via `Task()`. Each team member invokes its skill inline:
 
 ```
 Skill(skill="ralph-hero:ralph-research", args="42")
