@@ -146,7 +146,7 @@ install-completions shell="bash":
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c "\[confirm(" plugin/ralph-hero/justfile` returns `3` (all three recipes guarded)
+- [x] Automated: `grep -c "\[confirm(" plugin/ralph-hero/justfile` returns `3` (all three recipes guarded)
 - [ ] Automated: `just --list` still shows all recipes correctly
 - [ ] Manual: `just install-cli` prompts for confirmation before proceeding
 - [ ] Manual: `just install-completions` prompts for confirmation before proceeding

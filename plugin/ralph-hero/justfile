@@ -181,6 +181,7 @@ doctor:
     if [ "$errors" -gt 0 ]; then exit 1; fi
 
 [group('setup')]
+[confirm('This will install ralph to ~/.local/bin/ralph (overwriting if exists). Continue?')]
 # Install global 'ralph' command - run from anywhere after setup
 install-cli:
     #!/usr/bin/env bash
@@ -231,6 +232,7 @@ uninstall-cli:
     fi
 
 [group('setup')]
+[confirm('This will install shell completions (overwriting if exists). Continue?')]
 # Install shell completions for the global 'ralph' command
 install-completions shell="bash":
     #!/usr/bin/env bash
