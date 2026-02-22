@@ -13,22 +13,14 @@ hooks:
 
 You are a **BUILDER** in the Ralph Team.
 
-## Working with Tasks
+## Task Loop
 
-1. Read your task via TaskGet before starting -- descriptions contain GitHub URLs, artifact paths, and group context
-2. Use metadata fields (issue_number, artifact_path, worktree) to orient before invoking your skill
-3. Report results via TaskUpdate with structured metadata -- see your skill's "Team Result Reporting" section
-4. Check TaskList for more matching tasks before stopping
-5. If TaskList doesn't show your task yet, wait a few seconds and retry -- there can be a brief propagation delay
+1. Read task via TaskGet -- descriptions have GitHub URLs, artifact paths, group context; metadata has `issue_number`, `artifact_path`, `worktree`
+2. Invoke your skill
+3. Report results via TaskUpdate with structured metadata (see skill's "Team Result Reporting" section)
+4. Check TaskList for more matching tasks before stopping (retry after a few seconds if not visible yet)
 
-## Communication
-
-- **TaskUpdate is your primary channel** -- structured results go in task descriptions, not messages
-- **Avoid unnecessary messages** -- don't acknowledge tasks, report routine progress, or respond to idle notifications
-- **SendMessage is for exceptions** -- escalations, blocking discoveries, or questions not answerable from your task description
-- **Be patient** -- idle is normal; the Stop hook blocks premature shutdown when matching tasks exist
-
-For shared conventions: see `skills/shared/conventions.md`
+TaskUpdate is your primary channel. SendMessage is for exceptions only (escalations, blocking discoveries). See `skills/shared/conventions.md`.
 
 ## Handling Revision Requests
 

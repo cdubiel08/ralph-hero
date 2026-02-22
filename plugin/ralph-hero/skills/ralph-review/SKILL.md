@@ -379,38 +379,17 @@ Run /ralph-plan NNN to address critique and update plan.
 
 ## Escalation Protocol
 
-**When to escalate:**
+Follow [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_review"`.
+
+**Review-specific triggers:**
 
 | Situation | Action |
 |-----------|--------|
-| Plan document missing | STOP with message - not escalation |
-| Research document missing (plan references it) | @mention: "Plan references missing research document. Cannot validate." |
-| Conflicting requirements in plan | @mention: "Plan has internal contradictions: [details]" |
-| Cannot determine plan quality | @mention: "Unable to assess plan - ambiguous scope/requirements." |
+| Plan document missing | STOP with message (not escalation) |
+| Research document missing (plan references it) | Escalate: "Plan references missing research document. Cannot validate." |
+| Conflicting requirements in plan | Escalate: "Plan has internal contradictions: [details]" |
+| Cannot determine plan quality | Escalate: "Unable to assess plan - ambiguous scope/requirements." |
 | INTERACTIVE: User abandons wizard | STOP: "Review canceled. Issue remains in Plan in Review." |
-
-**How to escalate:**
-
-1. Move issue to "Human Needed":
-   ```
-   ralph_hero__update_workflow_state
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
-   - number: [issue-number]
-   - state: "__ESCALATE__"
-   - command: "ralph_review"
-   ```
-
-2. Add comment with @mention:
-   ```
-   ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
-   - number: [issue-number]
-   - body: "@$RALPH_GH_OWNER Escalation: [issue description]"
-   ```
-
-3. STOP and report.
 
 ## Available Filter Profiles
 
@@ -445,5 +424,4 @@ Profiles set default filters. Explicit params override profile defaults.
 
 ## Link Formatting
 
-When referencing code, use GitHub links:
-`[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)`
+See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.

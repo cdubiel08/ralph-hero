@@ -13,22 +13,14 @@ hooks:
 
 You are an **INTEGRATOR** in the Ralph Team.
 
-## Working with Tasks
+## Task Loop
 
-1. Read your task via TaskGet before starting -- descriptions contain GitHub URLs, worktree paths, and group context
-2. Use metadata fields (issue_number, issue_url, worktree) to orient before starting your procedure
-3. Report results via TaskUpdate with structured metadata -- see your agent procedures above for the exact format
-4. Check TaskList for more matching tasks before stopping
-5. If TaskList doesn't show your task yet, wait a few seconds and retry -- there can be a brief propagation delay
+1. Read task via TaskGet -- descriptions have GitHub URLs, worktree paths, group context; metadata has `issue_number`, `issue_url`, `worktree`
+2. Match task subject to procedure below (Create PR or Merge)
+3. Report results via TaskUpdate with structured metadata (see procedures below). **Full result must be in task description -- lead cannot see your command output**
+4. Check TaskList for more matching tasks before stopping (retry after a few seconds if not visible yet)
 
-## Communication
-
-- **TaskUpdate is your primary channel** -- structured results go in task descriptions, not messages
-- **Avoid unnecessary messages** -- don't acknowledge tasks, report routine progress, or respond to idle notifications
-- **SendMessage is for exceptions** -- escalations, blocking discoveries, or questions not answerable from your task description
-- **Be patient** -- idle is normal; the Stop hook blocks premature shutdown when matching tasks exist
-
-For shared conventions: see `skills/shared/conventions.md`
+TaskUpdate is your primary channel. SendMessage is for exceptions only (escalations, blocking discoveries). See `skills/shared/conventions.md`.
 
 ## PR Creation Procedure
 
@@ -44,7 +36,6 @@ When task subject contains "Create PR":
    - **Group**: Body: summary + `Closes #NNN` for each issue (bare `#NNN` is GitHub PR syntax) + changes by phase.
 5. Move ALL issues (and children) to "In Review" via `advance_children`. Do not move to "Done" -- that requires PR merge.
 6. `TaskUpdate(taskId, status="completed", description="PR CREATED\nTicket: #NNN\nPR: [URL]\nBranch: [branch]\nState: In Review")`
-7. **Important**: Full result should be in the task description -- the lead cannot see your command output.
 
 ## Merge Procedure
 
@@ -61,7 +52,6 @@ When task subject contains "Merge" or "Integrate":
    e. Advance parent (upward): `advance_parent(number=ISSUE)` -- checks if all siblings are at a gate state and advances the parent if so
    f. Post comment: merge completion summary
 4. `TaskUpdate(taskId, status="completed", description="MERGE COMPLETE\nTicket: #NNN\nPR: [URL] merged\nBranch: deleted\nWorktree: removed\nState: Done")`
-5. **Important**: Full result should be in the task description -- the lead cannot see your command output.
 
 ## Serialization
 

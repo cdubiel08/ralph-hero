@@ -436,20 +436,16 @@ Next: Run /ralph-research or /ralph-plan on sub-issues as appropriate.
 
 ## Escalation Protocol
 
-**When to escalate:**
+Follow [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_split"`.
+
+**Split-specific triggers:**
 
 | Situation | Action |
 |-----------|--------|
-| Can't identify natural split boundaries | @mention: "Unable to decompose GH-NNN. Scope is atomic or unclear." |
-| Split would create too many issues (>5) | @mention: "GH-NNN decomposes into [N] issues. Confirm this is acceptable." |
-| Circular dependencies in proposed split | @mention: "Proposed split has circular dependency. Need guidance." |
-| Issue is actually XS/Small after research | Update estimate instead of splitting |
-
-**How to escalate:**
-
-1. Move issue to "Human Needed" workflow state
-2. Add comment with @mention explaining the issue
-3. STOP and report
+| Can't identify natural split boundaries | Escalate: "Unable to decompose GH-NNN. Scope is atomic or unclear." |
+| Split would create too many issues (>5) | Escalate: "GH-NNN decomposes into [N] issues. Confirm this is acceptable." |
+| Circular dependencies in proposed split | Escalate: "Proposed split has circular dependency. Need guidance." |
+| Issue is actually XS/Small after research | Update estimate instead of splitting (no escalation needed) |
 
 ## Constraints
 
@@ -476,5 +472,4 @@ Avoid:
 
 ## Link Formatting
 
-When referencing code, use GitHub links:
-`[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)`
+See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.

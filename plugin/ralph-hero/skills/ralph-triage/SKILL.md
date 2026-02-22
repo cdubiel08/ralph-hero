@@ -393,66 +393,20 @@ When uncertain, prefer KEEP with a detailed comment over closing valid work.
 
 ## Escalation Protocol
 
-When encountering complexity, uncertainty, or states that don't align with protocol, **escalate via GitHub issue comment** by @mentioning the appropriate person.
+Follow the escalation procedure in [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_triage"`.
 
-**Escalation priority** (use first available):
-1. **Assigned individual** - If the issue has an assignee
-2. **Project owner** - If the issue belongs to a project with a lead
-3. **Team lead** - Default escalation target
+**Triage-specific escalation triggers:**
 
-**When to escalate:**
+| Situation | @mention message |
+|-----------|-----------------|
+| Can't determine if feature exists | "Unable to confirm if [feature] is implemented. Need human verification." |
+| Multiple potential duplicates | "Found [N] potential duplicates: [list]. Please clarify which to close." |
+| Issue requirements unclear | "Requirements ambiguous: [quote]. Cannot assess scope accurately." |
+| Cross-team dependency | "This issue depends on [external team/system]. Need coordination." |
+| Conflicting information | "Issue says [X] but codebase shows [Y]. Please clarify intent." |
+| Splitting decision unclear | "Multiple valid ways to split this issue. Need guidance on preferred breakdown." |
 
-| Situation | Action |
-|-----------|--------|
-| Can't determine if feature exists | @mention: "Unable to confirm if [feature] is implemented. Need human verification." |
-| Multiple potential duplicates | @mention: "Found [N] potential duplicates: [list]. Please clarify which to close." |
-| Issue requirements unclear | @mention: "Requirements ambiguous: [quote]. Cannot assess scope accurately." |
-| Cross-team dependency | @mention: "This issue depends on [external team/system]. Need coordination." |
-| Conflicting information | @mention: "Issue says [X] but codebase shows [Y]. Please clarify intent." |
-| Splitting decision unclear | @mention: "Multiple valid ways to split this issue. Need guidance on preferred breakdown." |
-
-**How to escalate:**
-
-1. **Move issue to "Human Needed" workflow state**:
-   ```
-   ralph_hero__update_workflow_state
-   - owner: [owner]
-   - repo: [repo]
-   - number: [issue-number]
-   - state: "__ESCALATE__"
-   - command: "ralph_triage"
-   ```
-
-2. **Add comment with @mention**:
-   ```
-   ralph_hero__create_comment
-   - owner: [owner]
-   - repo: [repo]
-   - number: [issue-number]
-   - body: "@[username] Escalation: [issue description]"
-   ```
-
-3. **Apply ralph-triage label** (so it's not re-picked):
-   ```
-   ralph_hero__update_issue
-   - owner: [owner]
-   - repo: [repo]
-   - number: [issue-number]
-   - labels: [existing-labels, "ralph-triage"]
-   ```
-
-4. **STOP and report**:
-   ```
-   Escalated to @[person]: [brief reason]
-
-   Issue: [GitHub Issue URL]
-   Workflow State: Human Needed
-   Issue: [description]
-
-   Waiting for guidance before proceeding.
-   ```
-
-**Note**: The "Human Needed" workflow state must exist in the GitHub Project. If missing, create it via `ralph-setup`.
+**Additional step**: After escalating, apply `ralph-triage` label (preserve existing labels) so the issue is not re-picked.
 
 ## Available Filter Profiles
 
@@ -473,5 +427,4 @@ Profiles set default filters. Explicit params (e.g., `label`) override or compos
 
 ## Link Formatting
 
-When referencing code, use GitHub links:
-`[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)`
+See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.

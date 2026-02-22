@@ -355,7 +355,6 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
 - **Hybrid claiming**: Initial tasks are pre-assigned by the lead before spawning. Subsequent tasks use pull-based self-claim with consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these for self-claim.
-- **Task metadata = results channel**: Workers embed structured results via TaskUpdate metadata (e.g., `result`, `artifact_path`, `sub_tickets`). Lead reads via TaskGet. Description carries human-readable summary. If missing, check work product.
 - **Lead name hardcoded**: Always `"team-lead"`. Other names silently dropped.
 - **Messages are fire-and-forget**: If a message doesn't get a response within 2 minutes, try re-sending once, then check the task list or work product directly.
 - **Peer handoff depends on workers existing**: If a stage has no worker (never spawned or crashed), the handoff falls back to the lead. The lead must then spawn a replacement.
