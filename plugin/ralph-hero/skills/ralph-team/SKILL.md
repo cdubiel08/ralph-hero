@@ -201,10 +201,32 @@ Call `detect_pipeline_position` to determine the current phase and its issues.
   Description: Include issue URL, worktree path, branch name.
   Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "pr", "phase": "complete", "worktree": "worktrees/GH-NNN/" }`
 
+**Stream-aware variants** (use these when `STREAMS[]` is non-empty):
+
+- **PLAN (stream)**:
+  Subject: `"Plan stream-{stream_id} GH-{stream_primary}"`
+  Description: Include issue URLs for all stream members, research doc paths (carried forward from completed research tasks), stream membership.
+  Metadata: `{ "issue_number": "{stream_primary}", "issue_url": "[url]", "command": "plan", "phase": "plan", "stream_id": "{stream_id}", "stream_primary": "{stream_primary}", "stream_members": "{comma-separated}", "epic_issue": "{parent_number}", "artifact_path": "[research doc paths]" }`
+
+- **REVIEW (stream)** (only if `RALPH_REVIEW_MODE=interactive`):
+  Subject: `"Review plan for stream-{stream_id} GH-{stream_primary}"`
+  Metadata: adds `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
+
+- **IMPLEMENT (stream)**:
+  Subject: `"Implement stream-{stream_id} GH-{stream_primary}"`
+  Metadata: `{ "issue_number": "{stream_primary}", "issue_url": "[url]", "command": "impl", "phase": "implement", "stream_id": "{stream_id}", "stream_primary": "{stream_primary}", "stream_members": "{comma-separated}", "epic_issue": "{parent_number}", "artifact_path": "[plan doc path]", "worktree": "worktrees/GH-{epic_issue}-stream-{sorted-issues}/" }`
+
+- **COMPLETE (stream)**:
+  Subject: `"Create PR for stream-{stream_id} GH-{stream_primary}"` + `"Merge PR for stream-{stream_id} GH-{stream_primary}"` (coupled pair)
+  Metadata: adds `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
+
+**Note**: Research tasks remain per-issue (no stream variants) since streams are not detected until after research completes.
+
 See `shared/conventions.md` for the full metadata field reference.
 
 **Subject patterns** (workers match on these to self-claim):
 - `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
+- Stream variants: `"Plan stream-X GH-NNN"` / `"Implement stream-X GH-NNN"` / `"Create PR for stream-X GH-NNN"` / `"Merge PR for stream-X GH-NNN"`
 
 **SPLIT safety check**: Only create split tasks for issues without existing children (`subIssueCount === 0`). The detection tool excludes already-split issues from the `issues` array. This is defense-in-depth -- verify before creating tasks.
 
@@ -227,14 +249,50 @@ The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural de
 
 Your dispatch responsibilities:
 
-1. **Bough advancement** (primary): When a phase's tasks complete, call `detect_pipeline_position` to check convergence. If `convergence.met === true` and the phase advances: create next-bough tasks per Section 4.2 and assign to idle workers. For groups: wait for ALL group members to converge before creating next-bough tasks. Workers also discover new tasks via the Stop hook.
-   **Carry forward artifact paths**: When creating next-bough tasks, read `artifact_path` from completed task metadata via `TaskGet` -- workers set this in their result metadata. Include it in the new task descriptions. For example, after research converges, include the research doc path in the Plan task description.
+1. **Bough advancement** (primary):
+   **If `STREAMS[]` non-empty (stream-aware dispatch)**:
+   For each stream in `STREAMS[]`:
+   - Call `detect_pipeline_position(number=stream.stream_primary)` to get the pipeline position
+   - Filter returned `issues[]` to only those in `stream.stream_members` — `detect_pipeline_position` traverses the full group, but stream convergence considers only stream members
+   - Check `convergence.met` for the filtered subset: all stream members must be at the gate state
+   - If stream-level convergence met: create next-phase tasks for THIS STREAM ONLY using stream-aware templates (Section 4.2) and assign to idle workers
+   - Streams advance independently — one stream finishing plan does not wait for another stream
+
+   **Carry forward artifact paths (per stream)**: When creating next-phase stream tasks, read `artifact_path` from completed task metadata via `TaskGet` — workers set this in their result metadata. Include all stream-member artifact paths in the new task description.
+
+   **Else (bough model, `STREAMS[]` empty or group ≤2)**:
+   When a phase's tasks complete, call `detect_pipeline_position` to check convergence. If `convergence.met === true` and the phase advances: create next-bough tasks per Section 4.2 and assign to idle workers. For groups: wait for ALL group members to converge before creating next-bough tasks.
+   **Carry forward artifact paths**: When creating next-bough tasks, read `artifact_path` from completed task metadata via `TaskGet` — workers set this in their result metadata. Include it in the new task descriptions.
 2. **Exception handling**: When a review task completes, read `verdict` from its metadata via `TaskGet`. If `verdict` is `"NEEDS_ITERATION"`, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
 3. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
 4. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create new-bough tasks for found issues.
 The Stop hook prevents premature shutdown -- you cannot stop while GitHub has processable issues. Trust it.
 
-### 4.5 Shutdown and Cleanup
+### 4.5 Stream Lifecycle
+
+Streams partition a group into independently-advancing subsets. This section documents the stream state machine.
+
+**Creation**: Streams are detected once in Section 3.2 (after ALL research completes, groups with 3+ issues). `STREAMS[]` is immutable for the session — streams are never re-detected or modified.
+
+**Per-stream phase progression**:
+```
+RESEARCH_COMPLETE → PLAN → REVIEW (if interactive) → IMPLEMENT → PR → MERGED
+```
+
+Each stream advances through these phases independently:
+- Stream-1 can be in IMPLEMENT while Stream-2 is still in PLAN
+- Each stream creates its own tasks and worktree (named `GH-{epic}-stream-{sorted-issues}`)
+- Stream convergence = all issues in THAT stream at the gate state (not all group issues)
+
+**Stream completion**: A stream is complete when its `"Merge PR"` task completes.
+
+**Epic completion**: The epic (parent issue) is complete when ALL streams are complete (all Merge PR tasks done).
+
+**Crash recovery**: If the session restarts, re-run Section 3.2 stream detection. `detect_work_streams` is deterministic — the same inputs always produce the same `STREAMS[]`, so stream IDs and memberships are stable.
+
+**STREAMS[] persistence**: `STREAMS[]` is set once in Section 3.2 and referenced throughout dispatch (Section 4.4). It is a session-level variable — not persisted to GitHub. On crash, re-derive from research docs (idempotent).
+
+### 4.6 Shutdown and Cleanup
 
 Only when dispatch loop confirms no more work. Send `shutdown_request` to each teammate, then `TeamDelete()`. Report: issues processed, PRs created.
 
