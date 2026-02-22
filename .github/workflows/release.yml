@@ -118,6 +118,7 @@ jobs:
           jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
 
       - name: Pin version in justfile and .mcp.json
+        if: steps.classify.outputs.mcp_changed == 'true'
         working-directory: .
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
@@ -130,14 +131,17 @@ jobs:
         working-directory: .
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          MCP_CHANGED: ${{ steps.classify.outputs.mcp_changed }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add plugin/ralph-hero/mcp-server/package.json
           git add plugin/ralph-hero/mcp-server/package-lock.json
           git add plugin/ralph-hero/.claude-plugin/plugin.json
-          git add plugin/ralph-hero/justfile
-          git add plugin/ralph-hero/.mcp.json
+          if [ "$MCP_CHANGED" = "true" ]; then
+            git add plugin/ralph-hero/justfile
+            git add plugin/ralph-hero/.mcp.json
+          fi
           git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
           git tag "v${NEW_VERSION}"
           git pull --rebase origin main
