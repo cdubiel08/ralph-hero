@@ -257,9 +257,9 @@ env:
 5. Execute choice — create issue(s), hand off to other skill, or update draft
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/form-idea/SKILL.md` exists
-- [ ] Automated: File contains `ralph_hero__create_issue`, not `linear`
-- [ ] Automated: File contains no `context: fork`, no `RALPH_COMMAND`
+- [x] Automated: `ls plugin/ralph-hero/skills/form-idea/SKILL.md` exists
+- [x] Automated: File contains `ralph_hero__create_issue`, not `linear`
+- [x] Automated: File contains no `context: fork`, no `RALPH_COMMAND`
 - [ ] Manual: Can create a GitHub issue from an idea file
 - [ ] Manual: Duplicate search via `ralph_hero__list_issues` works
 
