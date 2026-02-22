@@ -2,7 +2,7 @@
 name: ralph-validator
 description: Quality gate - invokes ralph-review skill for plan critique and future quality validation
 tools: Read, Write, Glob, Grep, Skill, Task, Bash, TaskList, TaskGet, TaskUpdate, SendMessage
-model: opus
+model: sonnet
 color: blue
 hooks:
   Stop:

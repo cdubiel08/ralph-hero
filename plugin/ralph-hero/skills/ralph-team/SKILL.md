@@ -1,7 +1,7 @@
 ---
 description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, validator, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
 argument-hint: "[issue-number]"
-model: opus
+model: sonnet
 allowed_tools:
   - Read
   - Glob

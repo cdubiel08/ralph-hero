@@ -1,7 +1,7 @@
 ---
 description: Tree-expansion orchestrator that drives a GitHub issue through the full lifecycle - split, research, plan, review, and sequential implementation using task blocking. Use when you want to process an issue tree end-to-end in hero mode.
 argument-hint: <issue-number>
-model: opus
+model: sonnet
 allowed_tools:
   - Read
   - Glob
