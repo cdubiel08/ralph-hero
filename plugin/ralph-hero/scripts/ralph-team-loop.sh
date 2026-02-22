@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run the Ralph GitHub team orchestrator
 #
-# Usage: ./scripts/ralph-team-loop.sh [ISSUE_NUMBER]
+# Usage: ./scripts/ralph-team-loop.sh [ISSUE_NUMBER] [--budget=N]
 #
 # Launches the team coordinator skill which spawns specialized workers
 # for each pipeline phase (analyst, builder, validator, integrator).
@@ -13,7 +13,20 @@
 
 set -e
 
-ISSUE_NUMBER="${1:-}"
+ISSUE_NUMBER=""
+BUDGET="${RALPH_BUDGET:-10.00}"
+for arg in "$@"; do
+    case "$arg" in
+        --budget=*)
+            BUDGET="${arg#*=}"
+            ;;
+        *)
+            if [ -z "$ISSUE_NUMBER" ]; then
+                ISSUE_NUMBER="$arg"
+            fi
+            ;;
+    esac
+done
 TIMEOUT="${TIMEOUT:-30m}"
 
 echo "=========================================="
@@ -25,6 +38,7 @@ else
     echo "Target: Auto-detect eligible work"
 fi
 echo "Timeout: $TIMEOUT"
+echo "Budget: \$${BUDGET}"
 echo ""
 
 if [ -n "$ISSUE_NUMBER" ]; then
@@ -37,7 +51,7 @@ echo ">>> Running: $COMMAND"
 echo ">>> Timeout: $TIMEOUT"
 echo ""
 
-timeout "$TIMEOUT" claude -p "$COMMAND" --dangerously-skip-permissions 2>&1 || {
+timeout "$TIMEOUT" claude -p "$COMMAND" --max-budget-usd "$BUDGET" --dangerously-skip-permissions 2>&1 || {
     exit_code=$?
     if [ $exit_code -eq 124 ]; then
         echo ">>> Team orchestrator timed out after $TIMEOUT"
