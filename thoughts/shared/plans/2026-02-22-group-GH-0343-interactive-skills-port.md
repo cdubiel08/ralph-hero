@@ -321,9 +321,9 @@ env:
 9. Present findings, handle follow-up questions with document updates
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/research-codebase/SKILL.md` exists
-- [ ] Automated: File contains no `LAN-`, `linear`, or `spec_metadata.sh` references
-- [ ] Automated: File contains `GH-NNNN` naming pattern
+- [x] Automated: `ls plugin/ralph-hero/skills/research-codebase/SKILL.md` exists
+- [x] Automated: File contains no `LAN-`, `linear`, or `spec_metadata.sh` references
+- [x] Automated: File contains `GH-NNNN` naming pattern
 - [ ] Manual: Runs inline, spawns sub-agents, saves document to `thoughts/shared/research/`
 - [ ] Manual: Optional issue linking posts `## Research Document` comment
 
