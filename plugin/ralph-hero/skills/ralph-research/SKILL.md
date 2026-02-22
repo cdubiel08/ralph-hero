@@ -156,7 +156,25 @@ git push origin main
    - command: "ralph_research"
    ```
 
-### Step 6: Report Completion
+### Step 6: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "RESEARCH_COMPLETE",
+    "artifact_path": "thoughts/shared/research/2026-02-21-GH-0042-redis-caching.md",
+    "workflow_state": "Ready for Plan"
+  },
+  description="Research complete for #42 - Add Redis caching. Redis with 5min TTL recommended.")
+```
+
+**Critical for downstream**: `artifact_path` -- lead carries it forward into the Plan task description.
+
+Then check TaskList for more tasks matching your role.
+
+### Step 7: Report Completion
 
 **Single-issue group:**
 ```

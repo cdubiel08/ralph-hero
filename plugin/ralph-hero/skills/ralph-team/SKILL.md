@@ -168,7 +168,7 @@ Call `detect_pipeline_position` to determine the current phase and its issues.
   Description: Include issue URL, worktree path, branch name.
   Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "pr", "phase": "complete", "worktree": "worktrees/GH-NNN/" }`
 
-See `shared/task-list-guide.md` for the full metadata field reference.
+See `shared/conventions.md` for the full metadata field reference.
 
 **Subject patterns** (workers match on these to self-claim):
 - `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
@@ -195,8 +195,8 @@ The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural de
 Your dispatch responsibilities:
 
 1. **Bough advancement** (primary): When a phase's tasks complete, call `detect_pipeline_position` to check convergence. If `convergence.met === true` and the phase advances: create next-bough tasks per Section 4.2 and assign to idle workers. For groups: wait for ALL group members to converge before creating next-bough tasks. Workers also discover new tasks via the Stop hook.
-   **Carry forward artifact paths**: When creating next-bough tasks, extract artifact paths from completed tasks via `TaskGet` and include them in the new task descriptions. For example, after research converges, include the research doc path in the Plan task description. This saves the planner from having to re-discover artifacts via comments.
-2. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
+   **Carry forward artifact paths**: When creating next-bough tasks, read `artifact_path` from completed task metadata via `TaskGet` -- workers set this in their result metadata. Include it in the new task descriptions. For example, after research converges, include the research doc path in the Plan task description.
+2. **Exception handling**: When a review task completes, read `verdict` from its metadata via `TaskGet`. If `verdict` is `"NEEDS_ITERATION"`, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
 3. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
 4. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create new-bough tasks for found issues.
 The Stop hook prevents premature shutdown -- you cannot stop while GitHub has processable issues. Trust it.
@@ -210,9 +210,35 @@ Only when dispatch loop confirms no more work. Send `shutdown_request` to each t
 - **Delegate everything**: You never research, plan, review, or implement. You manage tasks and spawn workers.
 - **Workers are autonomous**: After their initial pre-assigned task, workers self-claim from TaskList. Your job is ensuring workers exist and pre-assigning their first task at spawn.
 - **Pre-assign at spawn**: Call `TaskUpdate(taskId, owner="[role]")` immediately before spawning each worker. Lead creates and assigns new-bough tasks when convergence is detected. Workers also self-claim unclaimed tasks via Stop hook.
-- **Task descriptions are the context channel**: Put GitHub URLs, artifact paths, and group context in task descriptions. Workers read these via TaskGet before invoking their skill. This is more reliable than SendMessage because it persists and doesn't require the worker to be awake. See `shared/task-list-guide.md` for metadata field conventions.
-- **Don't nudge after assigning**: After creating and assigning a task, let the worker discover it. Avoid sending a follow-up message "just to make sure." The task assignment is the communication. See `shared/team-communication.md` for the full principle.
-- **Patience with idle workers**: Workers go idle after every turn -- this is normal. Avoid reacting to idle notifications unless the pipeline has genuinely drained. See `shared/team-communication.md` for guidance.
+- **Task metadata is the results channel**: Workers report structured results via TaskUpdate metadata (e.g., `artifact_path`, `result`, `sub_tickets`). Read result metadata from completed tasks via TaskGet -- workers set these in their result metadata. Task descriptions carry human-readable summaries. See `shared/conventions.md` for the TaskUpdate Protocol.
+- **Don't nudge after assigning**: After creating and assigning a task, let the worker discover it. Avoid sending a follow-up message "just to make sure." The task assignment is the communication.
+- **Patience with idle workers**: Workers go idle after every turn -- this is normal. Avoid reacting to idle notifications unless the pipeline has genuinely drained.
+
+**Context passing -- good vs bad**:
+
+Good task creation (context in description + metadata):
+```
+TaskCreate(
+  subject="Research GH-42",
+  description="Research GH-42: Add caching support.\nIssue: https://github.com/owner/repo/issues/42\nState: Research Needed | Estimate: S",
+  metadata={"issue_number": "42", "issue_url": "...", "command": "research", "phase": "research", "estimate": "S"}
+)
+```
+
+Bad pattern (context via message after spawn):
+```
+# Don't do this:
+Task(prompt=..., name="analyst")  # spawn
+SendMessage(recipient="analyst", content="Hey, make sure to check the auth module...")  # unnecessary nudge
+```
+
+Good handoff (let the system handle it):
+```
+TaskUpdate(taskId="3", status="completed",
+  metadata={"result": "RESEARCH_COMPLETE", "artifact_path": "thoughts/shared/research/..."},
+  description="RESEARCH COMPLETE: #42 - Add caching")
+# Stop hook fires -> worker checks TaskList -> claims next task or goes idle
+```
 - **Bias toward action**: When in doubt, check TaskList. When idle, query GitHub. Zero-gap lookahead.
 - **Hooks are your safety net**: Stop hook prevents premature shutdown. State hooks prevent invalid transitions. Trust them.
 - **Escalate and move on**: If stuck, escalate via GitHub comment (`__ESCALATE__` intent) and find other work. Never block on user input.
@@ -250,7 +276,7 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
      - Implement: `{WORKTREE_CONTEXT}` (worktree path if exists, empty if not)
      - Research/Integrator: empty (line removed)
    - `{SKILL_INVOCATION}` -> `Skill(skill="ralph-hero:[skill]", args="{ISSUE_NUMBER}")` from spawn table Skill column. For integrator (no skill): `Check your task subject to determine the operation (Create PR or Merge PR).\nFollow the corresponding procedure in your agent definition.`
-   - `{REPORT_FORMAT}` -> role-specific result format from conventions.md "Result Format Contracts"
+   - `{REPORT_FORMAT}` -> role-specific result format from each worker SKILL.md "Team Result Reporting" section
    - `{ESTIMATE}` -> issue estimate (only used within `{TASK_CONTEXT}` for triage/split)
    - `{GROUP_CONTEXT}` -> group line if IS_GROUP, empty if not (only used within `{TASK_CONTEXT}` for plan/review)
    - `{WORKTREE_CONTEXT}` -> worktree path if exists, empty if not (only used within `{TASK_CONTEXT}` for implement)
@@ -329,7 +355,6 @@ GitHub Projects is source of truth. Hooks enforce valid transitions at the tool 
 - **No external momentum**: Dispatch loop + hooks are the only momentum mechanism.
 - **No session resumption**: Committed work survives; teammates are lost. Recovery: new `/ralph-team` with same issue -- state detection resumes.
 - **Hybrid claiming**: Initial tasks are pre-assigned by the lead before spawning. Subsequent tasks use pull-based self-claim with consistent subjects ("Research", "Plan", "Review", "Implement", "Triage", "Split", "Merge"). Workers match on these for self-claim.
-- **Task description = results channel**: Workers embed results via TaskUpdate description (REPLACE operation). Lead reads via TaskGet. If missing, check work product.
 - **Lead name hardcoded**: Always `"team-lead"`. Other names silently dropped.
 - **Messages are fire-and-forget**: If a message doesn't get a response within 2 minutes, try re-sending once, then check the task list or work product directly.
 - **Peer handoff depends on workers existing**: If a stage has no worker (never spawned or crashed), the handoff falls back to the lead. The lead must then spawn a replacement.

@@ -326,7 +326,25 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
    **Note**: Do NOT use any link attachment mechanism. Reference critique in comment only.
 
-### Step 5: Report Completion
+### Step 5: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "VALIDATION_VERDICT",
+    "verdict": "APPROVED",                # APPROVED | NEEDS_ITERATION
+    "artifact_path": "thoughts/shared/plans/2026-02-21-GH-0042-redis-caching.md"
+  },
+  description="Review of #42 plan: APPROVED. Phases have clear boundaries, criteria testable.")
+```
+
+For `NEEDS_ITERATION`: blocking issues go in `description` (human-readable for builder).
+
+Then check TaskList for more tasks matching your role.
+
+### Step 6: Report Completion
 
 **If APPROVED**:
 ```
@@ -361,38 +379,17 @@ Run /ralph-plan NNN to address critique and update plan.
 
 ## Escalation Protocol
 
-**When to escalate:**
+Follow [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_review"`.
+
+**Review-specific triggers:**
 
 | Situation | Action |
 |-----------|--------|
-| Plan document missing | STOP with message - not escalation |
-| Research document missing (plan references it) | @mention: "Plan references missing research document. Cannot validate." |
-| Conflicting requirements in plan | @mention: "Plan has internal contradictions: [details]" |
-| Cannot determine plan quality | @mention: "Unable to assess plan - ambiguous scope/requirements." |
+| Plan document missing | STOP with message (not escalation) |
+| Research document missing (plan references it) | Escalate: "Plan references missing research document. Cannot validate." |
+| Conflicting requirements in plan | Escalate: "Plan has internal contradictions: [details]" |
+| Cannot determine plan quality | Escalate: "Unable to assess plan - ambiguous scope/requirements." |
 | INTERACTIVE: User abandons wizard | STOP: "Review canceled. Issue remains in Plan in Review." |
-
-**How to escalate:**
-
-1. Move issue to "Human Needed":
-   ```
-   ralph_hero__update_workflow_state
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
-   - number: [issue-number]
-   - state: "__ESCALATE__"
-   - command: "ralph_review"
-   ```
-
-2. Add comment with @mention:
-   ```
-   ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
-   - number: [issue-number]
-   - body: "@$RALPH_GH_OWNER Escalation: [issue description]"
-   ```
-
-3. STOP and report.
 
 ## Available Filter Profiles
 
@@ -427,5 +424,4 @@ Profiles set default filters. Explicit params override profile defaults.
 
 ## Link Formatting
 
-When referencing code, use GitHub links:
-`[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)`
+See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.

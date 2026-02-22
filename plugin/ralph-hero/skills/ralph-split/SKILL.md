@@ -396,7 +396,25 @@ ralph_hero__update_workflow_state
 - command: "ralph_split"
 ```
 
-### Step 9: Report
+### Step 9: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "SPLIT_COMPLETE",
+    "sub_tickets": "101,102,103",          # comma-separated sub-issue numbers
+    "sub_estimates": "XS,S,XS"            # parallel to sub_tickets
+  },
+  description="Split #100 into 3 sub-issues (#101 XS, #102 S, #103 XS)")
+```
+
+**Critical for downstream**: `sub_tickets` -- missing IDs mean orphaned sub-issues the lead can't track.
+
+Then check TaskList for more tasks matching your role.
+
+### Step 10: Report
 
 ```
 Split complete for #NNN: [Original Title]
@@ -418,20 +436,16 @@ Next: Run /ralph-research or /ralph-plan on sub-issues as appropriate.
 
 ## Escalation Protocol
 
-**When to escalate:**
+Follow [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_split"`.
+
+**Split-specific triggers:**
 
 | Situation | Action |
 |-----------|--------|
-| Can't identify natural split boundaries | @mention: "Unable to decompose GH-NNN. Scope is atomic or unclear." |
-| Split would create too many issues (>5) | @mention: "GH-NNN decomposes into [N] issues. Confirm this is acceptable." |
-| Circular dependencies in proposed split | @mention: "Proposed split has circular dependency. Need guidance." |
-| Issue is actually XS/Small after research | Update estimate instead of splitting |
-
-**How to escalate:**
-
-1. Move issue to "Human Needed" workflow state
-2. Add comment with @mention explaining the issue
-3. STOP and report
+| Can't identify natural split boundaries | Escalate: "Unable to decompose GH-NNN. Scope is atomic or unclear." |
+| Split would create too many issues (>5) | Escalate: "GH-NNN decomposes into [N] issues. Confirm this is acceptable." |
+| Circular dependencies in proposed split | Escalate: "Proposed split has circular dependency. Need guidance." |
+| Issue is actually XS/Small after research | Update estimate instead of splitting (no escalation needed) |
 
 ## Constraints
 
@@ -458,5 +472,4 @@ Avoid:
 
 ## Link Formatting
 
-When referencing code, use GitHub links:
-`[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)`
+See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.

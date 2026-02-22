@@ -316,7 +316,29 @@ For each issue in `issues[]` (single: just one; group/epic: all issues):
 
 Note: PR auto-links via "Closes #NNN" in PR body. No explicit link attachment needed.
 
-### Step 11: Final Report
+### Step 11: Team Result Reporting
+
+When running as a team worker, report results via TaskUpdate with structured metadata:
+
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "IMPLEMENTATION_COMPLETE",
+    "phases_done": "3",
+    "phases_total": "3",
+    "files": "src/cache/redis.ts,src/middleware/caching.ts,tests/cache.test.ts",
+    "tests": "PASSING",                   # PASSING | FAILING
+    "commit": "a1b2c3d",
+    "worktree": "worktrees/GH-42/"
+  },
+  description="Implementation complete for #42. 3/3 phases. Tests passing.")
+```
+
+**Critical for downstream**: `worktree` -- integrator needs it. `tests` -- lead won't advance if FAILING.
+
+Then check TaskList for more tasks matching your role.
+
+### Step 12: Final Report
 
 ```
 Implementation complete.
