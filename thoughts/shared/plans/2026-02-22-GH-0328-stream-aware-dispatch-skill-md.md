@@ -34,13 +34,13 @@ The ralph-team orchestrator SKILL.md currently uses a "bough model" where ALL gr
 
 ## Desired End State
 ### Verification
-- [ ] Section 4.2 includes stream-aware task templates with `stream_id`, `stream_primary`, `stream_members`, `epic_issue` metadata
-- [ ] Subject patterns include stream-prefixed variants (`"Plan stream-42-44 GH-42"`)
-- [ ] Section 4.4 dispatch step 1 has `if STREAMS[] non-empty` conditional with per-stream convergence loop
-- [ ] New Section 4.5 "Stream Lifecycle" documents stream state machine, per-stream advancement, completion rules
-- [ ] Current Section 4.5 renumbered to 4.6
-- [ ] Groups with ≤2 members use existing bough model (no regression)
-- [ ] `STREAMS[]` persistence documented (set once in 3.2, used throughout session)
+- [x] Section 4.2 includes stream-aware task templates with `stream_id`, `stream_primary`, `stream_members`, `epic_issue` metadata
+- [x] Subject patterns include stream-prefixed variants (`"Plan stream-42-44 GH-42"`)
+- [x] Section 4.4 dispatch step 1 has `if STREAMS[] non-empty` conditional with per-stream convergence loop
+- [x] New Section 4.5 "Stream Lifecycle" documents stream state machine, per-stream advancement, completion rules
+- [x] Current Section 4.5 renumbered to 4.6
+- [x] Groups with ≤2 members use existing bough model (no regression)
+- [x] `STREAMS[]` persistence documented (set once in 3.2, used throughout session)
 
 ## What We're NOT Doing
 - No MCP server changes — this is SKILL.md only
@@ -165,23 +165,23 @@ Renumber current `### 4.5 Shutdown and Cleanup` to `### 4.6 Shutdown and Cleanup
 | `plugin/ralph-hero/skills/ralph-team/SKILL.md` | MODIFY — Sections 4.2, 4.4, new 4.5, renumber 4.5→4.6 |
 
 ### Success Criteria
-- [ ] Automated: N/A (SKILL.md is a markdown document, no build/test)
-- [ ] Manual: Section 4.2 includes stream-aware task templates with `stream_id`, `stream_primary`, `stream_members`, `epic_issue` metadata
-- [ ] Manual: Subject patterns include `"Plan stream-X GH-NNN"` format and existing keywords ("Plan", "Implement") remain present for worker matching
-- [ ] Manual: Section 4.4 step 1 has `if STREAMS[] non-empty` conditional with per-stream convergence loop
-- [ ] Manual: `detect_pipeline_position` response filtering documented — filter `issues[]` to stream members before checking convergence
-- [ ] Manual: Section 4.5 "Stream Lifecycle" documents creation, per-stream advancement, stream/epic completion, crash recovery
-- [ ] Manual: Old Section 4.5 renumbered to 4.6
-- [ ] Manual: Groups with ≤2 members fall through to existing bough model (no regression)
-- [ ] Manual: `STREAMS[]` persistence and crash recovery documented
+- [x] Automated: N/A (SKILL.md is a markdown document, no build/test)
+- [x] Manual: Section 4.2 includes stream-aware task templates with `stream_id`, `stream_primary`, `stream_members`, `epic_issue` metadata
+- [x] Manual: Subject patterns include `"Plan stream-X GH-NNN"` format and existing keywords ("Plan", "Implement") remain present for worker matching
+- [x] Manual: Section 4.4 step 1 has `if STREAMS[] non-empty` conditional with per-stream convergence loop
+- [x] Manual: `detect_pipeline_position` response filtering documented — filter `issues[]` to stream members before checking convergence
+- [x] Manual: Section 4.5 "Stream Lifecycle" documents creation, per-stream advancement, stream/epic completion, crash recovery
+- [x] Manual: Old Section 4.5 renumbered to 4.6
+- [x] Manual: Groups with ≤2 members fall through to existing bough model (no regression)
+- [x] Manual: `STREAMS[]` persistence and crash recovery documented
 
 ---
 
 ## Integration Testing
-- [ ] Read through Sections 3.2 → 4.2 → 4.4 → 4.5 end-to-end: stream detection → task creation → dispatch → lifecycle forms a coherent narrative
-- [ ] Verify bough model path is unchanged when `STREAMS[]` is empty
-- [ ] Verify stream-prefixed subjects still contain worker-matching keywords
-- [ ] Cross-reference with `shared/conventions.md` stream metadata fields
+- [x] Read through Sections 3.2 → 4.2 → 4.4 → 4.5 end-to-end: stream detection → task creation → dispatch → lifecycle forms a coherent narrative
+- [x] Verify bough model path is unchanged when `STREAMS[]` is empty
+- [x] Verify stream-prefixed subjects still contain worker-matching keywords
+- [x] Cross-reference with `shared/conventions.md` stream metadata fields
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-22-GH-0328-stream-aware-dispatch-skill-md.md
