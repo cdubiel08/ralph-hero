@@ -4,6 +4,7 @@
 # Usage: ./scripts/ralph-loop.sh [--triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only]
 #        ./scripts/ralph-loop.sh [--analyst-only|--builder-only|--validator-only|--integrator-only]
 #        ./scripts/ralph-loop.sh --split=auto|skip --review=auto|skip|interactive --hygiene=auto|skip
+#        ./scripts/ralph-loop.sh --budget=5.00
 #
 # Runs: hygiene (optional) -> triage -> split (optional) -> research -> plan -> review (optional) -> implement in sequence
 # Repeats until no eligible tickets in any queue
@@ -35,6 +36,9 @@ for arg in "$@"; do
         --hygiene=*)
             HYGIENE_MODE="${arg#*=}"
             ;;
+        --budget=*)
+            BUDGET="${arg#*=}"
+            ;;
         --triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only)
             MODE="$arg"
             ;;
@@ -48,6 +52,7 @@ export RALPH_SPLIT_MODE="$SPLIT_MODE"
 export RALPH_HYGIENE_MODE="$HYGIENE_MODE"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
 TIMEOUT="${TIMEOUT:-15m}"
+BUDGET="${RALPH_BUDGET:-5.00}"
 
 echo "=========================================="
 echo "  RALPH GITHUB LOOP - Autonomous Mode"
@@ -58,6 +63,7 @@ echo "Split mode: $SPLIT_MODE"
 echo "Review mode: $REVIEW_MODE"
 echo "Max iterations: $MAX_ITERATIONS"
 echo "Timeout per task: $TIMEOUT"
+echo "Budget per task: \$${BUDGET}"
 echo ""
 
 run_claude() {
@@ -70,7 +76,7 @@ run_claude() {
 
     # Run claude in print mode (non-interactive) with auto-accept permissions
     local output
-    if output=$(timeout "$TIMEOUT" claude -p "$command" --dangerously-skip-permissions 2>&1); then
+    if output=$(timeout "$TIMEOUT" claude -p "$command" --max-budget-usd "$BUDGET" --dangerously-skip-permissions 2>&1); then
         echo "$output"
     else
         local exit_code=$?
