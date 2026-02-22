@@ -83,13 +83,13 @@ hero issue="" budget="10.00" timeout="30m":
 
 [group('orchestrate')]
 # Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
-loop mode="all" review="skip" split="auto" hygiene="auto" timeout="60m":
+loop mode="all" review="skip" split="auto" hygiene="auto" budget="5.00" timeout="60m":
     #!/usr/bin/env bash
     set -eu
     args=""
     if [ "{{mode}}" != "all" ]; then args="--{{mode}}-only"; fi
     args="$args --review={{review}} --split={{split}} --hygiene={{hygiene}}"
-    TIMEOUT="{{timeout}}" ./scripts/ralph-loop.sh $args
+    RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" ./scripts/ralph-loop.sh $args
 
 [group('setup')]
 # One-time project setup - create GitHub Project V2 with required fields
