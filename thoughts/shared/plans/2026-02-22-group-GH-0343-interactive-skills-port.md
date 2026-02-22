@@ -531,10 +531,10 @@ env:
 5. Complete — transition to "In Review", create PR via `gh pr create`, post `## Implementation Complete` comment with PR URL
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/implement-plan/SKILL.md` exists
-- [ ] Automated: File contains `## Implementation Plan`, `## Implementation Started`, `## Implementation Complete` headers
-- [ ] Automated: File contains `scripts/create-worktree.sh` reference
-- [ ] Automated: File contains no `LAN-`, `linear`, or `commit-push-pr` references
+- [x] Automated: `ls plugin/ralph-hero/skills/implement-plan/SKILL.md` exists
+- [x] Automated: File contains `## Implementation Plan`, `## Implementation Started`, `## Implementation Complete` headers
+- [x] Automated: File contains `scripts/create-worktree.sh` reference
+- [x] Automated: File contains no `LAN-`, `linear`, or `commit-push-pr` references
 - [ ] Manual: Plan discovery via Artifact Comment Protocol works end-to-end
 - [ ] Manual: Human verification pause between phases works correctly
 
