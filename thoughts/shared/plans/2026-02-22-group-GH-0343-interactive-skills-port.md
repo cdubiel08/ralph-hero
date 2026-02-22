@@ -196,9 +196,9 @@ No `allowed_tools`, no `env`, no `context: fork`, no hooks. Model is `sonnet` (s
 4. Confirm and suggest next steps
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md` exists
-- [ ] Automated: File contains no `context: fork`, no `RALPH_COMMAND`, no hooks
-- [ ] Automated: File contains no `LAN-` or `linear` references
+- [x] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md` exists
+- [x] Automated: File contains no `context: fork`, no `RALPH_COMMAND`, no hooks
+- [x] Automated: File contains no `LAN-` or `linear` references
 - [ ] Manual: Skill appears as `/ralph-hero:draft-idea` in autocomplete
 - [ ] Manual: Runs inline (user can interact), saves file to `thoughts/shared/ideas/`
 
@@ -257,9 +257,9 @@ env:
 5. Execute choice — create issue(s), hand off to other skill, or update draft
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/form-idea/SKILL.md` exists
-- [ ] Automated: File contains `ralph_hero__create_issue`, not `linear`
-- [ ] Automated: File contains no `context: fork`, no `RALPH_COMMAND`
+- [x] Automated: `ls plugin/ralph-hero/skills/form-idea/SKILL.md` exists
+- [x] Automated: File contains `ralph_hero__create_issue`, not `linear`
+- [x] Automated: File contains no `context: fork`, no `RALPH_COMMAND`
 - [ ] Manual: Can create a GitHub issue from an idea file
 - [ ] Manual: Duplicate search via `ralph_hero__list_issues` works
 
@@ -321,9 +321,9 @@ env:
 9. Present findings, handle follow-up questions with document updates
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/research-codebase/SKILL.md` exists
-- [ ] Automated: File contains no `LAN-`, `linear`, or `spec_metadata.sh` references
-- [ ] Automated: File contains `GH-NNNN` naming pattern
+- [x] Automated: `ls plugin/ralph-hero/skills/research-codebase/SKILL.md` exists
+- [x] Automated: File contains no `LAN-`, `linear`, or `spec_metadata.sh` references
+- [x] Automated: File contains `GH-NNNN` naming pattern
 - [ ] Manual: Runs inline, spawns sub-agents, saves document to `thoughts/shared/research/`
 - [ ] Manual: Optional issue linking posts `## Research Document` comment
 
@@ -387,10 +387,10 @@ env:
 7. Report completion with next steps
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md` exists
-- [ ] Automated: File contains `github_issues`, `primary_issue` frontmatter references
-- [ ] Automated: File contains `## Implementation Plan` Artifact Comment header
-- [ ] Automated: File contains no `LAN-`, `linear`, or `github-repo-manager` references
+- [x] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md` exists
+- [x] Automated: File contains `github_issues`, `primary_issue` frontmatter references
+- [x] Automated: File contains `## Implementation Plan` Artifact Comment header
+- [x] Automated: File contains no `LAN-`, `linear`, or `github-repo-manager` references
 - [ ] Manual: Creates plan document with correct frontmatter and file naming
 - [ ] Manual: Optional GitHub issue linking and state transition work
 
@@ -455,9 +455,9 @@ env:
 7. Update issue — post `## Plan Updated` comment, offer state transition if major changes
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/iterate-plan/SKILL.md` exists
-- [ ] Automated: File contains `## Implementation Plan` header search logic
-- [ ] Automated: File contains no `LAN-`, `linear`, or `thoughts-analyzer` references
+- [x] Automated: `ls plugin/ralph-hero/skills/iterate-plan/SKILL.md` exists
+- [x] Automated: File contains `## Implementation Plan` header search logic
+- [x] Automated: File contains no `LAN-`, `linear`, or `thoughts-analyzer` references
 - [ ] Manual: `#NNN` argument resolves plan via Artifact Comment Protocol
 - [ ] Manual: Surgical edits preserve plan structure; confirmation checkpoint works
 
@@ -531,10 +531,10 @@ env:
 5. Complete — transition to "In Review", create PR via `gh pr create`, post `## Implementation Complete` comment with PR URL
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/implement-plan/SKILL.md` exists
-- [ ] Automated: File contains `## Implementation Plan`, `## Implementation Started`, `## Implementation Complete` headers
-- [ ] Automated: File contains `scripts/create-worktree.sh` reference
-- [ ] Automated: File contains no `LAN-`, `linear`, or `commit-push-pr` references
+- [x] Automated: `ls plugin/ralph-hero/skills/implement-plan/SKILL.md` exists
+- [x] Automated: File contains `## Implementation Plan`, `## Implementation Started`, `## Implementation Complete` headers
+- [x] Automated: File contains `scripts/create-worktree.sh` reference
+- [x] Automated: File contains no `LAN-`, `linear`, or `commit-push-pr` references
 - [ ] Manual: Plan discovery via Artifact Comment Protocol works end-to-end
 - [ ] Manual: Human verification pause between phases works correctly
 
