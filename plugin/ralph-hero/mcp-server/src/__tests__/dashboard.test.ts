@@ -11,6 +11,7 @@ import {
   detectCrossProjectHealth,
   buildDashboard,
   computeArchiveStats,
+  computeStreamSection,
   formatMarkdown,
   formatAscii,
   DEFAULT_HEALTH_CONFIG,
@@ -18,7 +19,9 @@ import {
   type PhaseSnapshot,
   type ProjectBreakdown,
   type HealthConfig,
+  type StreamDashboardSection,
 } from "../lib/dashboard.js";
+import type { WorkStream } from "../lib/work-stream-detection.js";
 import { STATE_ORDER } from "../lib/workflow-states.js";
 import { toDashboardItems, type RawDashboardItem } from "../tools/dashboard-tools.js";
 
@@ -1482,5 +1485,189 @@ describe("formatAscii per-project", () => {
     const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
     const ascii = formatAscii(data);
     expect(ascii).not.toContain("--- Per-Project ---");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeStreamSection
+// ---------------------------------------------------------------------------
+
+describe("computeStreamSection", () => {
+  const streams: WorkStream[] = [
+    { id: "stream-42-44", issues: [42, 44], sharedFiles: ["src/a.ts"], primaryIssue: 42 },
+    { id: "stream-43", issues: [43], sharedFiles: [], primaryIssue: 43 },
+  ];
+
+  it("computes per-stream phase counts from items", () => {
+    const items = [
+      makeItem({ number: 42, workflowState: "In Progress" }),
+      makeItem({ number: 44, workflowState: "In Progress" }),
+      makeItem({ number: 43, workflowState: "Plan in Review" }),
+    ];
+
+    const section = computeStreamSection(streams, items);
+    expect(section.streams).toHaveLength(2);
+
+    const s0 = section.streams[0]; // stream-42-44 (sorted by primaryIssue)
+    expect(s0.streamId).toBe("stream-42-44");
+    expect(s0.currentPhase).toBe("In Progress");
+    expect(s0.phaseCounts).toContainEqual({ state: "In Progress", count: 2 });
+    expect(s0.convergencePercent).toBe(100);
+
+    const s1 = section.streams[1]; // stream-43
+    expect(s1.streamId).toBe("stream-43");
+    expect(s1.currentPhase).toBe("Plan in Review");
+    expect(s1.convergencePercent).toBe(100);
+  });
+
+  it("calculates convergence correctly when members are in different phases", () => {
+    const items = [
+      makeItem({ number: 42, workflowState: "In Progress" }),
+      makeItem({ number: 44, workflowState: "Done" }),
+      makeItem({ number: 43, workflowState: "Backlog" }),
+    ];
+
+    const section = computeStreamSection(streams, items);
+    const s0 = section.streams.find((s) => s.streamId === "stream-42-44")!;
+    expect(s0.convergencePercent).toBe(50); // 1 of 2 at modal state
+  });
+
+  it("handles stream members not in items (filters gracefully)", () => {
+    const items = [
+      makeItem({ number: 42, workflowState: "In Progress" }),
+      // 44 missing from items
+      makeItem({ number: 43, workflowState: "Backlog" }),
+    ];
+
+    const section = computeStreamSection(streams, items);
+    const s0 = section.streams.find((s) => s.streamId === "stream-42-44")!;
+    expect(s0.members).toEqual([42, 44]); // preserves full membership list
+    expect(s0.convergencePercent).toBe(100); // 1/1 found member at modal state
+  });
+
+  it("handles null workflowState as Unknown", () => {
+    const items = [
+      makeItem({ number: 42, workflowState: null }),
+      makeItem({ number: 44, workflowState: null }),
+      makeItem({ number: 43, workflowState: "Backlog" }),
+    ];
+
+    const section = computeStreamSection(streams, items);
+    const s0 = section.streams.find((s) => s.streamId === "stream-42-44")!;
+    expect(s0.currentPhase).toBe("Unknown");
+    expect(s0.convergencePercent).toBe(100);
+  });
+
+  it("returns empty streams array for empty input", () => {
+    const section = computeStreamSection([], []);
+    expect(section.streams).toEqual([]);
+  });
+
+  it("sorts streams by primaryIssue ascending", () => {
+    const unorderedStreams: WorkStream[] = [
+      { id: "stream-99", issues: [99], sharedFiles: [], primaryIssue: 99 },
+      { id: "stream-10", issues: [10], sharedFiles: [], primaryIssue: 10 },
+    ];
+    const items = [
+      makeItem({ number: 99, workflowState: "Backlog" }),
+      makeItem({ number: 10, workflowState: "Backlog" }),
+    ];
+
+    const section = computeStreamSection(unorderedStreams, items);
+    expect(section.streams[0].primaryIssue).toBe(10);
+    expect(section.streams[1].primaryIssue).toBe(99);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDashboard with streams
+// ---------------------------------------------------------------------------
+
+describe("buildDashboard with streams", () => {
+  it("includes streams section when streams provided", () => {
+    const items = [
+      makeItem({ number: 42, workflowState: "In Progress" }),
+      makeItem({ number: 43, workflowState: "Done" }),
+    ];
+    const streams: WorkStream[] = [
+      { id: "stream-42", issues: [42], sharedFiles: [], primaryIssue: 42 },
+      { id: "stream-43", issues: [43], sharedFiles: [], primaryIssue: 43 },
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW, streams);
+    expect(data.streams).toBeDefined();
+    expect(data.streams!.streams).toHaveLength(2);
+  });
+
+  it("omits streams section when no streams provided", () => {
+    const items = [makeItem({ number: 1, workflowState: "Backlog" })];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.streams).toBeUndefined();
+  });
+
+  it("omits streams section when empty array provided", () => {
+    const items = [makeItem({ number: 1, workflowState: "Backlog" })];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW, []);
+    expect(data.streams).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatMarkdown stream section
+// ---------------------------------------------------------------------------
+
+describe("formatMarkdown stream section", () => {
+  it("renders Streams table when streams present", () => {
+    const items = [
+      makeItem({ number: 42, workflowState: "In Progress" }),
+      makeItem({ number: 43, workflowState: "Plan in Review" }),
+    ];
+    const streams: WorkStream[] = [
+      { id: "stream-42", issues: [42], sharedFiles: [], primaryIssue: 42 },
+      { id: "stream-43", issues: [43], sharedFiles: [], primaryIssue: 43 },
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW, streams);
+    const md = formatMarkdown(data);
+    expect(md).toContain("## Streams");
+    expect(md).toContain("| Stream | Phase | Members | Convergence |");
+    expect(md).toContain("stream-42");
+    expect(md).toContain("In Progress");
+    expect(md).toContain("100%");
+  });
+
+  it("omits Streams section when no streams", () => {
+    const items = [makeItem({ number: 1, workflowState: "Backlog" })];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(data);
+    expect(md).not.toContain("## Streams");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatAscii stream section
+// ---------------------------------------------------------------------------
+
+describe("formatAscii stream section", () => {
+  it("renders Streams section when streams present", () => {
+    const items = [
+      makeItem({ number: 42, workflowState: "In Progress" }),
+      makeItem({ number: 43, workflowState: "Done" }),
+    ];
+    const streams: WorkStream[] = [
+      { id: "stream-42", issues: [42], sharedFiles: [], primaryIssue: 42 },
+      { id: "stream-43", issues: [43], sharedFiles: [], primaryIssue: 43 },
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW, streams);
+    const ascii = formatAscii(data);
+    expect(ascii).toContain("--- Streams ---");
+    expect(ascii).toContain("stream-42");
+    expect(ascii).toContain("stream-43");
+  });
+
+  it("omits Streams section when no streams", () => {
+    const items = [makeItem({ number: 1, workflowState: "Backlog" })];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const ascii = formatAscii(data);
+    expect(ascii).not.toContain("--- Streams ---");
   });
 });

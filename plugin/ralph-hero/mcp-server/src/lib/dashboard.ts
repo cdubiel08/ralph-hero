@@ -11,6 +11,16 @@ import {
   TERMINAL_STATES,
   HUMAN_STATES,
 } from "./workflow-states.js";
+/**
+ * WorkStream type matching the shape from work-stream-detection.ts.
+ * Defined here to avoid import dependency until GH-323 merges.
+ */
+export interface WorkStream {
+  id: string;
+  issues: number[];
+  sharedFiles: string[];
+  primaryIssue: number;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,6 +89,24 @@ export interface ProjectBreakdown {
   health: { ok: boolean; warnings: HealthWarning[] };
 }
 
+export interface StreamPhaseCount {
+  state: string;
+  count: number;
+}
+
+export interface StreamSummary {
+  streamId: string;
+  primaryIssue: number;
+  members: number[];
+  currentPhase: string;
+  phaseCounts: StreamPhaseCount[];
+  convergencePercent: number;
+}
+
+export interface StreamDashboardSection {
+  streams: StreamSummary[];
+}
+
 export interface DashboardData {
   generatedAt: string; // ISO timestamp
   totalIssues: number;
@@ -89,6 +117,7 @@ export interface DashboardData {
   };
   archive: ArchiveStats;
   projectBreakdowns?: Record<number, ProjectBreakdown>;
+  streams?: StreamDashboardSection;
 }
 
 export interface HealthConfig {
@@ -490,6 +519,70 @@ export function computeArchiveStats(
 }
 
 // ---------------------------------------------------------------------------
+// Stream section
+// ---------------------------------------------------------------------------
+
+export function computeStreamSection(
+  streams: WorkStream[],
+  items: DashboardItem[],
+): StreamDashboardSection {
+  const itemMap = new Map<number, DashboardItem>();
+  for (const item of items) {
+    itemMap.set(item.number, item);
+  }
+
+  const summaries: StreamSummary[] = [];
+
+  for (const stream of streams) {
+    const memberItems = stream.issues
+      .map((n) => itemMap.get(n))
+      .filter((item): item is DashboardItem => item !== undefined);
+
+    if (memberItems.length === 0) continue;
+
+    const stateCounts = new Map<string, number>();
+    for (const item of memberItems) {
+      const state = item.workflowState ?? "Unknown";
+      stateCounts.set(state, (stateCounts.get(state) ?? 0) + 1);
+    }
+
+    const phaseCounts: StreamPhaseCount[] = [];
+    let modalState = "Unknown";
+    let modalCount = 0;
+    for (const [state, count] of stateCounts) {
+      phaseCounts.push({ state, count });
+      if (count > modalCount) {
+        modalCount = count;
+        modalState = state;
+      }
+    }
+
+    const stateIdx = (s: string) => {
+      const idx = STATE_ORDER.indexOf(s);
+      return idx >= 0 ? idx : STATE_ORDER.length;
+    };
+    phaseCounts.sort((a, b) => stateIdx(a.state) - stateIdx(b.state));
+
+    const convergencePercent = Math.round(
+      (modalCount / memberItems.length) * 100,
+    );
+
+    summaries.push({
+      streamId: stream.id,
+      primaryIssue: stream.primaryIssue,
+      members: stream.issues,
+      currentPhase: modalState,
+      phaseCounts,
+      convergencePercent,
+    });
+  }
+
+  summaries.sort((a, b) => a.primaryIssue - b.primaryIssue);
+
+  return { streams: summaries };
+}
+
+// ---------------------------------------------------------------------------
 // buildDashboard
 // ---------------------------------------------------------------------------
 
@@ -501,6 +594,7 @@ export function buildDashboard(
   items: DashboardItem[],
   config: HealthConfig = DEFAULT_HEALTH_CONFIG,
   now: number = Date.now(),
+  streams?: WorkStream[],
 ): DashboardData {
   const phases = aggregateByPhase(items, now, config);
   const warnings = detectHealthIssues(phases, config);
@@ -556,6 +650,12 @@ export function buildDashboard(
     }
   }
 
+  // Stream section (only when caller provides stream data)
+  let streamSection: StreamDashboardSection | undefined;
+  if (streams && streams.length > 0) {
+    streamSection = computeStreamSection(streams, items);
+  }
+
   return {
     generatedAt: new Date(now).toISOString(),
     totalIssues: items.length,
@@ -566,6 +666,7 @@ export function buildDashboard(
     },
     archive,
     ...(projectBreakdowns ? { projectBreakdowns } : {}),
+    ...(streamSection ? { streams: streamSection } : {}),
   };
 }
 
@@ -698,6 +799,20 @@ export function formatMarkdown(
     }
   }
 
+  // Stream section
+  if (data.streams && data.streams.streams.length > 0) {
+    lines.push("");
+    lines.push("## Streams");
+    lines.push("");
+    lines.push("| Stream | Phase | Members | Convergence |");
+    lines.push("|--------|-------|---------|-------------|");
+    for (const s of data.streams.streams) {
+      lines.push(
+        `| ${s.streamId} | ${s.currentPhase} | ${s.members.length} | ${s.convergencePercent}% |`,
+      );
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -783,6 +898,18 @@ export function formatAscii(data: DashboardData): string {
           lines.push(`  ${w.severity.toUpperCase()}: ${w.message}`);
         }
       }
+    }
+  }
+
+  // Stream section
+  if (data.streams && data.streams.streams.length > 0) {
+    lines.push("");
+    lines.push("--- Streams ---");
+    for (const s of data.streams.streams) {
+      const memberLabel = s.members.length === 1 ? "member" : "members";
+      lines.push(
+        `${s.streamId.padEnd(20)} ${s.currentPhase.padEnd(20)} ${s.members.length} ${memberLabel}  ${s.convergencePercent}%`,
+      );
     }
   }
 
