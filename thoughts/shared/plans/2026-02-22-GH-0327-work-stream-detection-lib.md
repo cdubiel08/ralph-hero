@@ -30,14 +30,14 @@ The plan (Phase 2 of GH-321) specifies exact types: `IssueFileOwnership`, `WorkS
 
 ## Desired End State
 ### Verification
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes with all 8 test cases
-- [ ] `IssueFileOwnership`, `WorkStream`, `WorkStreamResult` types exported
-- [ ] Union-find correctly groups issues with shared `Will Modify` files
-- [ ] `blockedBy` relationships co-cluster issues into same stream
-- [ ] Transitive file sharing (A-B share, B-C share) produces 1 stream
-- [ ] Stream IDs are deterministic content-based strings (`stream-42-44`)
-- [ ] Empty input returns `{ streams: [], totalIssues: 0, totalStreams: 0 }`
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` passes with all 8 test cases
+- [x] `IssueFileOwnership`, `WorkStream`, `WorkStreamResult` types exported
+- [x] Union-find correctly groups issues with shared `Will Modify` files
+- [x] `blockedBy` relationships co-cluster issues into same stream
+- [x] Transitive file sharing (A-B share, B-C share) produces 1 stream
+- [x] Stream IDs are deterministic content-based strings (`stream-42-44`)
+- [x] Empty input returns `{ streams: [], totalIssues: 0, totalStreams: 0 }`
 
 ## What We're NOT Doing
 - No MCP tool registration (that's GH-329)
@@ -214,18 +214,18 @@ describe("detectWorkStreams - edge cases", () => {
 ### Success Criteria
 - [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
 - [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with 8 new test cases
-- [ ] Manual: Types match plan spec exactly (`IssueFileOwnership`, `WorkStream`, `WorkStreamResult`)
-- [ ] Manual: Stream IDs use `stream-` prefix with sorted issue numbers
-- [ ] Manual: `sharedFiles` contains only files appearing in 2+ issues within a component
-- [ ] Manual: `blockedBy` edges only union when both endpoints are in the input set
-- [ ] Manual: Empty input returns valid empty result
+- [x] Manual: Types match plan spec exactly (`IssueFileOwnership`, `WorkStream`, `WorkStreamResult`)
+- [x] Manual: Stream IDs use `stream-` prefix with sorted issue numbers
+- [x] Manual: `sharedFiles` contains only files appearing in 2+ issues within a component
+- [x] Manual: `blockedBy` edges only union when both endpoints are in the input set
+- [x] Manual: Empty input returns valid empty result
 
 ---
 
 ## Integration Testing
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` passes
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + 8 new tests
-- [ ] No regressions in existing test suites
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` passes
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + 8 new tests
+- [x] No regressions in existing test suites
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-22-GH-0327-work-stream-detection-lib.md
