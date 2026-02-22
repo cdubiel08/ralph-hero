@@ -130,9 +130,9 @@ RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" ./scripts/ralph-loop.sh $args
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep 'max-budget-usd' plugin/ralph-hero/scripts/ralph-loop.sh` matches the `claude -p` call
-- [ ] Automated: `grep 'RALPH_BUDGET' plugin/ralph-hero/scripts/ralph-loop.sh` shows env var and banner
-- [ ] Automated: `grep 'budget' plugin/ralph-hero/justfile | grep 'loop'` shows budget parameter on loop recipe
+- [x] Automated: `grep 'max-budget-usd' plugin/ralph-hero/scripts/ralph-loop.sh` matches the `claude -p` call
+- [x] Automated: `grep 'RALPH_BUDGET' plugin/ralph-hero/scripts/ralph-loop.sh` shows env var and banner
+- [x] Automated: `grep 'budget' plugin/ralph-hero/justfile | grep 'loop'` shows budget parameter on loop recipe
 - [ ] Manual: `RALPH_BUDGET=2.00 ./scripts/ralph-loop.sh --triage-only` shows "Budget per task: $2.00" in banner and passes `--max-budget-usd 2.00` to claude
 
 **Creates for next phase**: Budget threading pattern established for `ralph-team-loop.sh` to follow.
@@ -227,9 +227,9 @@ team issue="" budget="10.00" timeout="30m":
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep 'max-budget-usd' plugin/ralph-hero/scripts/ralph-team-loop.sh` matches the `claude -p` call
-- [ ] Automated: `grep 'RALPH_BUDGET' plugin/ralph-hero/scripts/ralph-team-loop.sh` shows env var and banner
-- [ ] Automated: `grep 'budget' plugin/ralph-hero/justfile | grep 'team'` shows budget parameter on team recipe
+- [x] Automated: `grep 'max-budget-usd' plugin/ralph-hero/scripts/ralph-team-loop.sh` matches the `claude -p` call
+- [x] Automated: `grep 'RALPH_BUDGET' plugin/ralph-hero/scripts/ralph-team-loop.sh` shows env var and banner
+- [x] Automated: `grep 'budget' plugin/ralph-hero/justfile | grep 'team'` shows budget parameter on team recipe
 - [ ] Manual: `RALPH_BUDGET=8.00 ./scripts/ralph-team-loop.sh` shows "Budget: $8.00" in banner
 
 ---
