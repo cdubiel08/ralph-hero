@@ -91,9 +91,9 @@ uninstall-cli:
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep "confirm.*uninstall" plugin/ralph-hero/justfile` matches the `[confirm]` attribute
-- [ ] Automated: `grep 'min-version.*1.29' plugin/ralph-hero/justfile` confirms version bump
-- [ ] Automated: `grep 'just >= 1.29' plugin/ralph-hero/justfile` confirms comment update
+- [x] Automated: `grep "confirm.*uninstall" plugin/ralph-hero/justfile` matches the `[confirm]` attribute
+- [x] Automated: `grep 'min-version.*1.29' plugin/ralph-hero/justfile` confirms version bump
+- [x] Automated: `grep 'just >= 1.29' plugin/ralph-hero/justfile` confirms comment update
 - [ ] Automated: `just --list` still shows `uninstall-cli` in the `setup` group (justfile parses correctly)
 - [ ] Manual: `just uninstall-cli` prompts for confirmation before proceeding
 
