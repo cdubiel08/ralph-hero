@@ -360,7 +360,7 @@ _mcp_call tool params:
         exit 1
     fi
     raw=$(mcp call "{{tool}}" --params '{{params}}' \
-        npx -y ralph-hero-mcp-server@2.4.52)
+        npx -y ralph-hero-mcp-server@2.4.53)
     if command -v jq &>/dev/null; then
         if echo "$raw" | jq -e '.isError // false' > /dev/null 2>&1; then
             echo "$raw" | jq -r '.content[0].text' >&2
