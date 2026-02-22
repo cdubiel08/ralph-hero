@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   detectPipelinePosition,
+  detectStreamPipelinePositions,
   type IssueState,
   type PipelinePhase,
+  type StreamPipelineResult,
 } from "../lib/pipeline-detection.js";
+import type { WorkStream } from "../lib/work-stream-detection.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -384,5 +387,81 @@ describe("detectPipelinePosition - sub-issue count (SPLIT skip)", () => {
   it("S issue with children: subIssueCount is irrelevant (not oversized)", () => {
     const result = detectSingle(makeIssue(1, "Backlog", "S", 5));
     expect(result.phase).toBe("TRIAGE"); // S is not oversized, so SPLIT never fires
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stream-level pipeline detection
+// ---------------------------------------------------------------------------
+
+function makeStream(id: string, issues: number[], primaryIssue: number): WorkStream {
+  return { id, issues, sharedFiles: [], primaryIssue };
+}
+
+describe("detectStreamPipelinePositions", () => {
+  it("returns one result per stream", () => {
+    const streams = [
+      makeStream("stream-42-44", [42, 44], 42),
+      makeStream("stream-43", [43], 43),
+    ];
+    const issueStates = [
+      makeIssue(42, "In Progress"),
+      makeIssue(43, "Research Needed"),
+      makeIssue(44, "In Progress"),
+    ];
+    const results = detectStreamPipelinePositions(streams, issueStates);
+    expect(results).toHaveLength(2);
+    expect(results[0].streamId).toBe("stream-42-44");
+    expect(results[1].streamId).toBe("stream-43");
+  });
+
+  it("detects correct phase per stream independently", () => {
+    const streams = [
+      makeStream("stream-42-44", [42, 44], 42),
+      makeStream("stream-43", [43], 43),
+    ];
+    const issueStates = [
+      makeIssue(42, "In Progress"),
+      makeIssue(43, "Research Needed"),
+      makeIssue(44, "In Progress"),
+    ];
+    const results = detectStreamPipelinePositions(streams, issueStates);
+    expect(results[0].position.phase).toBe("IMPLEMENT");
+    expect(results[1].position.phase).toBe("RESEARCH");
+  });
+
+  it("filters issueStates to only stream members", () => {
+    const streams = [makeStream("stream-42", [42], 42)];
+    const issueStates = [
+      makeIssue(42, "Ready for Plan"),
+      makeIssue(43, "Research Needed"), // not in stream
+    ];
+    const results = detectStreamPipelinePositions(streams, issueStates);
+    expect(results[0].issues).toHaveLength(1);
+    expect(results[0].issues[0].number).toBe(42);
+    expect(results[0].position.phase).toBe("PLAN");
+  });
+
+  it("sets isGroup=true for multi-issue streams", () => {
+    const streams = [makeStream("stream-42-44", [42, 44], 42)];
+    const issueStates = [
+      makeIssue(42, "Ready for Plan"),
+      makeIssue(44, "Ready for Plan"),
+    ];
+    const results = detectStreamPipelinePositions(streams, issueStates);
+    expect(results[0].position.isGroup).toBe(true);
+    expect(results[0].position.groupPrimary).toBe(42);
+  });
+
+  it("sets isGroup=false for single-issue streams", () => {
+    const streams = [makeStream("stream-43", [43], 43)];
+    const issueStates = [makeIssue(43, "In Progress")];
+    const results = detectStreamPipelinePositions(streams, issueStates);
+    expect(results[0].position.isGroup).toBe(false);
+  });
+
+  it("returns empty array for empty streams input", () => {
+    const results = detectStreamPipelinePositions([], [makeIssue(42, "In Progress")]);
+    expect(results).toEqual([]);
   });
 });

@@ -14,6 +14,10 @@ import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { detectGroup } from "../lib/group-detection.js";
 import {
+  detectWorkStreams,
+  type IssueFileOwnership,
+} from "../lib/work-stream-detection.js";
+import {
   isValidState,
   isEarlierState,
   VALID_STATES,
@@ -581,6 +585,53 @@ export function registerRelationshipTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to detect group: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__detect_work_streams
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__detect_work_streams",
+    "Cluster GitHub issues into independent work streams based on shared file ownership and blockedBy relationships. Uses union-find to group issues that share Will Modify files or are co-dependent. Returns WorkStreamResult with streams, sharedFiles, and a human-readable rationale.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      issues: z
+        .array(
+          z.object({
+            number: z.number().describe("Issue number"),
+            files: z
+              .array(z.string())
+              .describe("Will Modify file paths from research doc"),
+            blockedBy: z
+              .array(z.number())
+              .describe("GitHub blockedBy issue numbers"),
+          }),
+        )
+        .describe("List of issues with their file ownership and dependencies"),
+    },
+    async (args) => {
+      try {
+        const issueOwnership: IssueFileOwnership[] = args.issues.map((i) => ({
+          number: i.number,
+          files: i.files,
+          blockedBy: i.blockedBy,
+        }));
+
+        const result = detectWorkStreams(issueOwnership);
+
+        return toolSuccess(result);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to detect work streams: ${message}`);
       }
     },
   );
