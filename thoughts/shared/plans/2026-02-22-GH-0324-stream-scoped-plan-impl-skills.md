@@ -265,14 +265,14 @@ PR title for streams: append `[stream-X-Y of GH-EPIC]` (e.g., `feat(auth): Token
 
 ### Success Criteria
 - [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds (no TS changes, verifies nothing broken)
-- [ ] Manual: conventions.md contains "Work Streams" section with stream ID format, naming conventions, context resolution, and lifecycle
-- [ ] Manual: conventions.md standard input metadata includes `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
-- [ ] Manual: Plan skill SKILL.md filename convention includes stream variant
-- [ ] Manual: Plan skill SKILL.md frontmatter template includes conditional stream fields
-- [ ] Manual: Impl skill SKILL.md worktree table has stream row as first entry (most specific match)
-- [ ] Manual: Impl skill SKILL.md has stream glob fallback for plan discovery
-- [ ] Manual: Impl skill SKILL.md PR template includes stream context section
-- [ ] Manual: Existing single-issue and group patterns remain unchanged in all three files
+- [x] Manual: conventions.md contains "Work Streams" section with stream ID format, naming conventions, context resolution, and lifecycle
+- [x] Manual: conventions.md standard input metadata includes `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
+- [x] Manual: Plan skill SKILL.md filename convention includes stream variant
+- [x] Manual: Plan skill SKILL.md frontmatter template includes conditional stream fields
+- [x] Manual: Impl skill SKILL.md worktree table has stream row as first entry (most specific match)
+- [x] Manual: Impl skill SKILL.md has stream glob fallback for plan discovery
+- [x] Manual: Impl skill SKILL.md PR template includes stream context section
+- [x] Manual: Existing single-issue and group patterns remain unchanged in all three files
 
 ---
 

@@ -257,6 +257,8 @@ Query siblings via `ralph_hero__list_sub_issues` on the epic. For each sibling: 
 
 **9.3. Create PR** (single template, adapt sections by context)
 
+For stream PRs, append stream context to the title: `[Title] [stream-X-Y of GH-EPIC]` (e.g., `feat(auth): Token refresh [stream-42-44 of GH-40]`).
+
 ```bash
 gh pr create --title "[Title]" --body "$(cat <<'EOF'
 ## Summary
