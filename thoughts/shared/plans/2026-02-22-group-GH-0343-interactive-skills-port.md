@@ -196,9 +196,9 @@ No `allowed_tools`, no `env`, no `context: fork`, no hooks. Model is `sonnet` (s
 4. Confirm and suggest next steps
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md` exists
-- [ ] Automated: File contains no `context: fork`, no `RALPH_COMMAND`, no hooks
-- [ ] Automated: File contains no `LAN-` or `linear` references
+- [x] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md` exists
+- [x] Automated: File contains no `context: fork`, no `RALPH_COMMAND`, no hooks
+- [x] Automated: File contains no `LAN-` or `linear` references
 - [ ] Manual: Skill appears as `/ralph-hero:draft-idea` in autocomplete
 - [ ] Manual: Runs inline (user can interact), saves file to `thoughts/shared/ideas/`
 
