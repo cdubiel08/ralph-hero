@@ -455,9 +455,9 @@ env:
 7. Update issue — post `## Plan Updated` comment, offer state transition if major changes
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/iterate-plan/SKILL.md` exists
-- [ ] Automated: File contains `## Implementation Plan` header search logic
-- [ ] Automated: File contains no `LAN-`, `linear`, or `thoughts-analyzer` references
+- [x] Automated: `ls plugin/ralph-hero/skills/iterate-plan/SKILL.md` exists
+- [x] Automated: File contains `## Implementation Plan` header search logic
+- [x] Automated: File contains no `LAN-`, `linear`, or `thoughts-analyzer` references
 - [ ] Manual: `#NNN` argument resolves plan via Artifact Comment Protocol
 - [ ] Manual: Surgical edits preserve plan structure; confirmation checkpoint works
 
