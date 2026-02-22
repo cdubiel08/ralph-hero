@@ -146,7 +146,7 @@ See shared/conventions.md for error handling.
 
 ### Step 4: Create Implementation Plan
 
-**Filename**: `thoughts/shared/plans/YYYY-MM-DD-group-GH-NNN-description.md` (use primary issue number; for single issues: `YYYY-MM-DD-GH-NNN-description.md`)
+**Filename**: `thoughts/shared/plans/YYYY-MM-DD-group-GH-NNN-description.md` (use primary issue number; for single issues: `YYYY-MM-DD-GH-NNN-description.md`; for stream plans: `YYYY-MM-DD-stream-GH-NNN-NNN-description.md` using sorted issue numbers from the stream)
 
 **Template** (works for both single issues and groups; for N=1 omit "Why grouped" and simplify):
 
@@ -158,6 +158,10 @@ github_issues: [123, 124, 125]
 github_urls:
   - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/123
 primary_issue: 123
+# Stream fields (include only when planning a work stream):
+stream_id: "stream-123-125"
+stream_issues: [123, 125]
+epic_issue: 40
 ---
 
 # [Description] - Atomic Implementation Plan
