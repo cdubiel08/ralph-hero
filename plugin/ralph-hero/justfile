@@ -1,12 +1,12 @@
 # Ralph Hero - LLM-powered workflow recipes
 #
 # Usage: just <recipe> [params...]
-# Prerequisites: claude CLI, timeout (coreutils), just >= 1.27
+# Prerequisites: claude CLI, timeout (coreutils), just >= 1.29
 # Optional: mcptools (https://github.com/f/mcptools) for quick-* recipes
 
 set shell := ["bash", "-euc"]
 set dotenv-load
-set min-version := "1.27.0"
+set min-version := "1.29.0"
 
 # Aliases for frequently-used recipes
 alias t  := triage
@@ -207,6 +207,7 @@ install-cli:
     echo "For tab completions: just install-completions bash  (or zsh)"
 
 [group('setup')]
+[confirm('Are you sure you want to uninstall the ralph CLI?')]
 # Remove global 'ralph' command
 uninstall-cli:
     #!/usr/bin/env bash
