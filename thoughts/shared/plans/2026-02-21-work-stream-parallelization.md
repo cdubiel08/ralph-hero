@@ -123,8 +123,8 @@ Rules:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -q "## Files Affected" thoughts/shared/research/*.md` finds the section in new research docs
-- [ ] Research postcondition hook blocks stop if `## Files Affected` is missing
+- [x] `grep -q "## Files Affected" thoughts/shared/research/*.md` finds the section in new research docs
+- [x] Research postcondition hook blocks stop if `## Files Affected` is missing
 
 #### Manual Verification:
 - [ ] Research docs produced by `/ralph-research` include the section with actual file paths (not placeholders)

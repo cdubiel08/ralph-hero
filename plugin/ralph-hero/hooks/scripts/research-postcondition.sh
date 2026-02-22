@@ -29,6 +29,17 @@ The research command must create a research document.
 Check the command output for errors."
 fi
 
+if ! grep -q "## Files Affected" "$doc"; then
+  block "Research postcondition failed
+
+Expected: '## Files Affected' section in research document
+Found: Section missing in $doc
+
+The research document must include a '## Files Affected' section with
+'### Will Modify' and '### Will Read (Dependencies)' subsections.
+See the research skill SKILL.md for the required format."
+fi
+
 if ! git log --oneline -1 --all -- "$doc" 2>/dev/null | grep -q .; then
   warn "Research doc exists but may not be committed: $doc"
 fi
