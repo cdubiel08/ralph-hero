@@ -196,7 +196,7 @@ Your dispatch responsibilities:
 
 1. **Bough advancement** (primary): When a phase's tasks complete, call `detect_pipeline_position` to check convergence. If `convergence.met === true` and the phase advances: create next-bough tasks per Section 4.2 and assign to idle workers. For groups: wait for ALL group members to converge before creating next-bough tasks. Workers also discover new tasks via the Stop hook.
    **Carry forward artifact paths**: When creating next-bough tasks, read `artifact_path` from completed task metadata via `TaskGet` -- workers set this in their result metadata. Include it in the new task descriptions. For example, after research converges, include the research doc path in the Plan task description.
-2. **Exception handling**: When a review task completes with NEEDS_ITERATION, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
+2. **Exception handling**: When a review task completes, read `verdict` from its metadata via `TaskGet`. If `verdict` is `"NEEDS_ITERATION"`, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
 3. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
 4. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create new-bough tasks for found issues.
 The Stop hook prevents premature shutdown -- you cannot stop while GitHub has processable issues. Trust it.
@@ -276,7 +276,7 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
      - Implement: `{WORKTREE_CONTEXT}` (worktree path if exists, empty if not)
      - Research/Integrator: empty (line removed)
    - `{SKILL_INVOCATION}` -> `Skill(skill="ralph-hero:[skill]", args="{ISSUE_NUMBER}")` from spawn table Skill column. For integrator (no skill): `Check your task subject to determine the operation (Create PR or Merge PR).\nFollow the corresponding procedure in your agent definition.`
-   - `{REPORT_FORMAT}` -> role-specific result format from conventions.md "Result Format Contracts"
+   - `{REPORT_FORMAT}` -> role-specific result format from each worker SKILL.md "Team Result Reporting" section
    - `{ESTIMATE}` -> issue estimate (only used within `{TASK_CONTEXT}` for triage/split)
    - `{GROUP_CONTEXT}` -> group line if IS_GROUP, empty if not (only used within `{TASK_CONTEXT}` for plan/review)
    - `{WORKTREE_CONTEXT}` -> worktree path if exists, empty if not (only used within `{TASK_CONTEXT}` for implement)

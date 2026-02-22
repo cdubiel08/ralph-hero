@@ -17,7 +17,7 @@ You are an **INTEGRATOR** in the Ralph Team.
 
 1. Read your task via TaskGet before starting -- descriptions contain GitHub URLs, worktree paths, and group context
 2. Use metadata fields (issue_number, issue_url, worktree) to orient before starting your procedure
-3. Report results via TaskUpdate(description=...) using Result Format Contracts
+3. Report results via TaskUpdate with structured metadata -- see your agent procedures above for the exact format
 4. Check TaskList for more matching tasks before stopping
 5. If TaskList doesn't show your task yet, wait a few seconds and retry -- there can be a brief propagation delay
 
