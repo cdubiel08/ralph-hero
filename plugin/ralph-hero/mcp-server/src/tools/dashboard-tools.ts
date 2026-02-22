@@ -20,6 +20,8 @@ import {
   DEFAULT_HEALTH_CONFIG,
 } from "../lib/dashboard.js";
 import { toolSuccess, toolError, resolveProjectOwner, resolveProjectNumbers } from "../types.js";
+import { detectWorkStreams, type IssueFileOwnership } from "../lib/work-stream-detection.js";
+import { detectStreamPipelinePositions, type IssueState } from "../lib/pipeline-detection.js";
 import {
   calculateMetrics,
   DEFAULT_METRICS_CONFIG,
@@ -450,6 +452,78 @@ export function registerDashboardTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to generate dashboard: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__detect_stream_positions
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__detect_stream_positions",
+    "Combined work-stream detection + per-stream pipeline position detection. Takes issue file ownership data and issue workflow states, clusters issues into streams, then detects the pipeline phase for each stream independently.",
+    {
+      issues: z
+        .array(
+          z.object({
+            number: z.number().describe("Issue number"),
+            files: z
+              .array(z.string())
+              .describe("Will Modify file paths from research doc"),
+            blockedBy: z
+              .array(z.number())
+              .describe("GitHub blockedBy issue numbers"),
+          }),
+        )
+        .describe("List of issues with their file ownership and dependencies"),
+      issueStates: z
+        .array(
+          z.object({
+            number: z.number().describe("Issue number"),
+            title: z.string().describe("Issue title"),
+            workflowState: z.string().describe("Current workflow state"),
+            estimate: z.string().nullable().describe("Estimate (XS/S/M/L/XL)"),
+            subIssueCount: z
+              .number()
+              .optional()
+              .default(0)
+              .describe("Number of sub-issues"),
+          }),
+        )
+        .describe("Workflow state data for each issue"),
+    },
+    async (args) => {
+      try {
+        const ownership: IssueFileOwnership[] = args.issues.map((i) => ({
+          number: i.number,
+          files: i.files,
+          blockedBy: i.blockedBy,
+        }));
+
+        const streamResult = detectWorkStreams(ownership);
+
+        const states: IssueState[] = args.issueStates.map((s) => ({
+          number: s.number,
+          title: s.title,
+          workflowState: s.workflowState,
+          estimate: s.estimate,
+          subIssueCount: s.subIssueCount ?? 0,
+        }));
+
+        const positions = detectStreamPipelinePositions(
+          streamResult.streams,
+          states,
+        );
+
+        return toolSuccess({
+          streams: positions,
+          totalStreams: streamResult.totalStreams,
+          totalIssues: streamResult.totalIssues,
+          rationale: streamResult.rationale,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to detect stream positions: ${message}`);
       }
     },
   );
