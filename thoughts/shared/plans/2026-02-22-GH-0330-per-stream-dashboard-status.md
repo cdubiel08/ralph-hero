@@ -33,11 +33,11 @@ Key file references:
 
 ## Desired End State
 ### Verification
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + new tests
-- [ ] Dashboard with `streams` input shows "Streams" section in markdown and ASCII
-- [ ] Dashboard without `streams` input renders identically (no regression)
-- [ ] `computeStreamSection()` correctly computes convergence % and modal phase
+- [x]`cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x]`cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + new tests
+- [x]Dashboard with `streams` input shows "Streams" section in markdown and ASCII
+- [x]Dashboard without `streams` input renders identically (no regression)
+- [x]`computeStreamSection()` correctly computes convergence % and modal phase
 
 ## What We're NOT Doing
 - No new MCP tool (that's GH-332 `detect_stream_positions`)
@@ -446,20 +446,20 @@ import type { WorkStream } from "../lib/work-stream-detection.js";
 | `plugin/ralph-hero/mcp-server/src/__tests__/dashboard.test.ts` | MODIFY — import computeStreamSection + WorkStream, 4 new describe blocks (~12 test cases) |
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + ~12 new tests
-- [ ] Manual: `computeStreamSection()` returns correct convergence % (100% for fully converged, 67% for 2-of-3)
-- [ ] Manual: `formatMarkdown()` renders "## Streams" table with stream ID, phase, members, convergence
-- [ ] Manual: `formatAscii()` renders "--- Streams ---" section with aligned columns
-- [ ] Manual: Dashboard without `streams` input produces identical output to current (no regression)
-- [ ] Manual: `pipeline_dashboard` tool accepts optional `streams` array matching `WorkStream` shape
+- [x]Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x]Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + ~12 new tests
+- [x]Manual: `computeStreamSection()` returns correct convergence % (100% for fully converged, 67% for 2-of-3)
+- [x]Manual: `formatMarkdown()` renders "## Streams" table with stream ID, phase, members, convergence
+- [x]Manual: `formatAscii()` renders "--- Streams ---" section with aligned columns
+- [x]Manual: Dashboard without `streams` input produces identical output to current (no regression)
+- [x]Manual: `pipeline_dashboard` tool accepts optional `streams` array matching `WorkStream` shape
 
 ---
 
 ## Integration Testing
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` passes
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + new tests
-- [ ] No regressions in existing dashboard test suites (77 existing tests)
+- [x]`cd plugin/ralph-hero/mcp-server && npm run build` passes
+- [x]`cd plugin/ralph-hero/mcp-server && npm test` passes with all existing + new tests
+- [x]No regressions in existing dashboard test suites (77 existing tests)
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-22-GH-0330-per-stream-dashboard-status.md
