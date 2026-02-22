@@ -264,7 +264,7 @@ PR title for streams: append `[stream-X-Y of GH-EPIC]` (e.g., `feat(auth): Token
 | `plugin/ralph-hero/skills/ralph-impl/SKILL.md` | Add stream worktree row, add stream glob fallback, add stream PR template |
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds (no TS changes, verifies nothing broken)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds (no TS changes, verifies nothing broken)
 - [ ] Manual: conventions.md contains "Work Streams" section with stream ID format, naming conventions, context resolution, and lifecycle
 - [ ] Manual: conventions.md standard input metadata includes `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
 - [ ] Manual: Plan skill SKILL.md filename convention includes stream variant

@@ -24,7 +24,7 @@ TaskUpdate is the primary channel for structured results between workers and the
 - `description`: Human-readable summary of what happened. The lead uses this for quick orientation and fallback.
 
 **Standard input metadata** (set by lead at TaskCreate):
-`issue_number`, `issue_url`, `command`, `phase`, `estimate`, `group_primary`, `group_members`, `artifact_path`, `worktree`
+`issue_number`, `issue_url`, `command`, `phase`, `estimate`, `group_primary`, `group_members`, `artifact_path`, `worktree`, `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
 
 **When to avoid SendMessage**:
 - Acknowledging receipt of a task (just start working)
@@ -130,6 +130,13 @@ If `IS_GROUP=false`: `{GROUP_CONTEXT} = ""`
 If worktree exists: `{WORKTREE_CONTEXT} = "Worktree: worktrees/GH-{ISSUE_NUMBER}/ (exists, reuse it)"`
 If no worktree: `{WORKTREE_CONTEXT} = ""`
 
+### Stream Context Resolution
+
+If `IS_STREAM=true`: `{STREAM_CONTEXT} = "Stream stream-42-44: GH-42, GH-44 (shared: src/auth/). Plan covers stream issues only. Epic: GH-40."`
+If `IS_STREAM=false`: `{STREAM_CONTEXT} = ""`
+
+When `STREAM_CONTEXT` is non-empty, it replaces `GROUP_CONTEXT` (a stream IS a group subset).
+
 ### Empty Placeholder Line Removal
 
 If a placeholder resolves to an empty string, remove the ENTIRE LINE containing that placeholder. Do not leave blank lines where optional context was omitted.
@@ -141,6 +148,27 @@ If a placeholder resolves to an empty string, remove the ENTIRE LINE containing 
 3. Substitute all `{PLACEHOLDER}` strings with values from `get_issue` response and spawn table
 4. If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it
 5. Use the result as the `prompt` parameter in `Task()`
+
+## Work Streams
+
+Work streams partition a group of issues into independent subsets based on file overlap and `blockedBy` relationships. Each stream flows through plan -> implement -> PR independently.
+
+### Stream ID Format
+Deterministic, content-based: `stream-[sorted-issue-numbers]` (e.g., `stream-42-44`, `stream-43`).
+
+### Naming Conventions
+
+| Artifact | Single Issue | Group | Stream |
+|----------|-------------|-------|--------|
+| Plan filename | `YYYY-MM-DD-GH-NNNN-desc.md` | `YYYY-MM-DD-group-GH-NNNN-desc.md` | `YYYY-MM-DD-stream-GH-NNN-NNN-desc.md` |
+| Worktree ID | `GH-[number]` | `GH-[primary]` | `GH-[EPIC]-stream-[SORTED-ISSUES]` |
+| PR title | `[Title]` | `[Title]` | `[Title] [stream-X-Y of GH-EPIC]` |
+
+### Lifecycle
+- Streams are detected once (after all research completes) and are immutable for the session
+- Research is per-issue (pre-stream); plans and PRs are per-stream
+- Each stream tracks its own phase independently
+- For epics with <=2 children, stream detection is skipped (single group, same as current behavior)
 
 ## Skill Invocation Convention
 
@@ -240,6 +268,7 @@ GitHub issue comments are the **primary source of truth** for all artifacts prod
 | Research | `thoughts/shared/research/YYYY-MM-DD-GH-NNNN-description.md` | `2026-02-17-GH-0042-auth-flow.md` |
 | Plan | `thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-description.md` | `2026-02-17-GH-0042-auth-refresh.md` |
 | Group Plan | `thoughts/shared/plans/YYYY-MM-DD-group-GH-NNNN-description.md` | `2026-02-17-group-GH-0042-auth-suite.md` |
+| Stream Plan | `thoughts/shared/plans/YYYY-MM-DD-stream-GH-NNN-NNN-description.md` | `2026-02-17-stream-GH-0042-0044-auth-refresh.md` |
 | Review | `thoughts/shared/reviews/YYYY-MM-DD-GH-NNNN-critique.md` | `2026-02-17-GH-0042-critique.md` |
 
 **Note on zero-padding**: Filenames use zero-padded 4-digit issue numbers (e.g., `GH-0042`). When constructing glob patterns, try BOTH padded and unpadded forms.
@@ -250,8 +279,9 @@ If a comment search fails:
 
 1. **Glob fallback**: Search `thoughts/shared/{type}/*GH-{number}*`. Try both unpadded and zero-padded patterns.
 2. **Group glob fallback**: Try `*group*GH-{primary}*` where `{primary}` is the primary issue number.
-3. **If found, self-heal**: Post the missing comment to the issue using the correct section header.
-4. **If not found**: Block and report the missing artifact.
+3. **Stream glob fallback**: Try `*stream*GH-{number}*` to find stream plans containing this issue.
+4. **If found, self-heal**: Post the missing comment to the issue using the correct section header.
+5. **If not found**: Block and report the missing artifact.
 
 ### Self-Healing
 

@@ -105,6 +105,7 @@ After fetching the issue, check its current state:
       - `thoughts/shared/plans/*GH-$(printf '%04d' ${number})*`
       Use the most recent match if multiple found.
    6. **Group fallback**: If standard glob fails, try `thoughts/shared/plans/*group*GH-{primary}*` where `{primary}` is the primary issue number from the issue's group context.
+   6b. **Stream fallback**: If group fallback also fails, try `thoughts/shared/plans/*stream*GH-{number}*` to find stream plans containing this issue.
    7. **If fallback found, self-heal**: Post the missing comment to the issue:
       ```
       ralph_hero__create_comment(owner, repo, number, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
@@ -161,9 +162,12 @@ Choose the worktree identifier based on context:
 
 | Condition | WORKTREE_ID |
 |-----------|-------------|
+| Stream member (epic) | `GH-[EPIC_NUMBER]-stream-[SORTED-ISSUES]` (e.g., "GH-40-stream-42-44") |
 | Epic member | `GH-[EPIC_NUMBER]` (e.g., "GH-42") |
 | Group plan (not epic) | `GH-[primary_issue]` from plan frontmatter |
 | Single issue | `GH-[issue-number]` |
+
+Stream detection: if plan frontmatter contains `stream_id`, use the stream worktree naming. This takes precedence over the generic epic member row.
 
 **5.3. Check for Existing Worktree and Sync**
 
@@ -269,7 +273,13 @@ gh pr create --title "[Title]" --body "$(cat <<'EOF'
 ## Test Plan
 [From plan document - automated verification + integration testing]
 
-[If epic, add:]
+[If stream, add:]
+## Stream Context
+- Epic: #[EPIC_NUMBER]
+- Stream: [STREAM_ID] ([N] of [TOTAL_STREAMS] streams)
+- Stream issues: [list of #NNN]
+
+[If epic (non-stream), add:]
 ## Epic
 - Parent: #[EPIC_NUMBER]
 
