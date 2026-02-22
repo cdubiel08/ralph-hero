@@ -2,7 +2,7 @@
 name: ralph-integrator
 description: Integration specialist - handles PR creation, merge, worktree cleanup, and git operations for completed implementations
 tools: Read, Glob, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment, ralph_hero__advance_children, ralph_hero__advance_parent, ralph_hero__list_sub_issues
-model: sonnet
+model: haiku
 color: orange
 hooks:
   Stop:

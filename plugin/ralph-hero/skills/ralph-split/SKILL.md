@@ -2,7 +2,7 @@
 description: Split large GitHub issues (M/L/XL) into smaller XS/S sub-issues for atomic implementation. Use when you want to split issues, break down tickets, decompose epics, or make large work items implementable.
 argument-hint: [optional-issue-number]
 context: fork
-model: opus
+model: sonnet
 hooks:
   PreToolUse:
     - matcher: "Bash"
