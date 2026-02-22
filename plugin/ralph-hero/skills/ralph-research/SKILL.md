@@ -122,6 +122,28 @@ type: research
 
 Include: problem statement, current state analysis, key discoveries with file:line references, potential approaches (pros/cons), risks, and recommended next steps.
 
+The document **must** include a `## Files Affected` section with two subsections:
+
+```markdown
+## Files Affected
+
+### Will Modify
+- `src/auth/middleware.ts` - Add token refresh logic
+- `src/auth/types.ts` - New RefreshToken type
+
+### Will Read (Dependencies)
+- `src/config/auth-config.ts` - Token expiry settings
+- `src/lib/http-client.ts` - Existing request interceptor pattern
+```
+
+Rules:
+- Paths are relative to repo root
+- `Will Modify` = files this issue needs to create or change
+- `Will Read` = files this issue depends on but won't change
+- Each path must be backtick-wrapped (parseable via regex `` `[^`]+` ``)
+- Both subsections are required even if empty (use "None" if no files apply)
+- This section is validated by the research postcondition hook
+
 ### Step 4.5: Commit and Push
 
 ```bash
