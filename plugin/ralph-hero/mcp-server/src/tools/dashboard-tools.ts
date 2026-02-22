@@ -326,6 +326,19 @@ export function registerDashboardTools(
         .describe(
           "Days in Done/Canceled before eligible for archive (default: 14)",
         ),
+      streams: z
+        .array(
+          z.object({
+            id: z.string(),
+            issues: z.array(z.number()),
+            sharedFiles: z.array(z.string()),
+            primaryIssue: z.number(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Pre-computed stream assignments from detect_work_streams. When provided, dashboard includes a Streams section.",
+        ),
     },
     async (args) => {
       try {
@@ -404,7 +417,7 @@ export function registerDashboardTools(
         };
 
         // Build dashboard from merged items
-        const dashboard = buildDashboard(allItems, healthConfig);
+        const dashboard = buildDashboard(allItems, healthConfig, undefined, args.streams);
 
         // Strip health if not requested
         if (!args.includeHealth) {
