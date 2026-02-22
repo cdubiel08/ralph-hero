@@ -212,8 +212,8 @@ describe("detectWorkStreams - edge cases", () => {
 | `plugin/ralph-hero/mcp-server/src/__tests__/work-stream-detection.test.ts` | NEW — 8 test cases |
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with 8 new test cases
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes with 8 new test cases
 - [ ] Manual: Types match plan spec exactly (`IssueFileOwnership`, `WorkStream`, `WorkStreamResult`)
 - [ ] Manual: Stream IDs use `stream-` prefix with sorted issue numbers
 - [ ] Manual: `sharedFiles` contains only files appearing in 2+ issues within a component
