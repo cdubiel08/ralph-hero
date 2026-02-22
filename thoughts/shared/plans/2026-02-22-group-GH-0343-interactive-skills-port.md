@@ -387,10 +387,10 @@ env:
 7. Report completion with next steps
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md` exists
-- [ ] Automated: File contains `github_issues`, `primary_issue` frontmatter references
-- [ ] Automated: File contains `## Implementation Plan` Artifact Comment header
-- [ ] Automated: File contains no `LAN-`, `linear`, or `github-repo-manager` references
+- [x] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md` exists
+- [x] Automated: File contains `github_issues`, `primary_issue` frontmatter references
+- [x] Automated: File contains `## Implementation Plan` Artifact Comment header
+- [x] Automated: File contains no `LAN-`, `linear`, or `github-repo-manager` references
 - [ ] Manual: Creates plan document with correct frontmatter and file naming
 - [ ] Manual: Optional GitHub issue linking and state transition work
 
