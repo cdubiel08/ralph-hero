@@ -106,7 +106,7 @@ Use `phase` to determine tasks (Section 4.2) and first teammate (Section 4.3). T
 - **Child state advancement**: Lead MUST advance children via `ralph_hero__advance_children` when parent advances
 - **Parent state advancement**: When all children of an epic reach a gate state (Ready for Plan, In Review, Done), the parent advances automatically via `ralph_hero__advance_parent`. The integrator calls this after merge; the lead should call it at convergence gates (e.g., after all research tasks complete for a group).
 
-After detecting pipeline position, check for fast-track eligibility (Section 3.1), then proceed to Section 4.
+After detecting pipeline position, check for fast-track eligibility (Section 3.1). When all research tasks have converged, run stream detection (Section 3.2). Then proceed to Section 4.
 
 ### 3.1 XS Issue Fast-Track
 
@@ -115,6 +115,39 @@ For XS issues (estimate=1) with specific, actionable descriptions: skip research
 **Fast-track criteria**: XS estimate, specific file paths or unambiguous changes, no architectural decisions, 1-3 file change.
 
 **Do NOT fast-track**: vague descriptions, shared infrastructure changes, complex business logic.
+
+**Epic exception**: XS fast-track is **disabled** for issues that are members of an epic with 3 or more children. These issues must go through the full research pipeline so that `## Files Affected` data is available for stream clustering.
+
+### 3.2 Stream Detection (Post-Research)
+
+**When to run**: After ALL research tasks for the group have completed (all members at "Ready for Plan"), AND the group has 3 or more issues.
+
+**Skip if**: Group has ≤2 members — preserve existing bough model behavior unchanged.
+
+**Procedure** (lead executes directly, not delegated):
+
+1. For each group member, use the `thoughts-locator` agent to find its research doc:
+   ```
+   Task(subagent_type="ralph-hero:thoughts-locator",
+        prompt="Find research doc for GH-NNN")
+   ```
+2. Read each research doc via `Read` tool; parse `## Files Affected` > `### Will Modify` paths
+3. Collect `blockedBy` arrays from `get_issue` responses (available from earlier group detection)
+4. Call `detect_work_streams` with pre-parsed ownership tuples:
+   ```
+   detect_work_streams(issues=[
+     { number: NNN, files: ["path/a.ts", "path/b.ts"], blockedBy: [] },
+     ...
+   ])
+   ```
+5. Store the result as `STREAMS[]` — each stream has `stream_id`, `stream_primary`, `stream_members`
+
+**Output fields** used in downstream task metadata:
+- `stream_id` — deterministic ID e.g. `"stream-42-44"` (sorted issue numbers, joined by `-`)
+- `stream_primary` — first issue number in the stream (for naming)
+- `stream_members` — comma-separated issue numbers in the stream
+
+**After stream detection**: partition the group by stream membership and call `detect_pipeline_position` on each partition independently. Create next-phase tasks per stream (see Sections 4.2 and 4.4).
 
 ## Section 4 - Team Lifecycle & Dispatch Loop
 
