@@ -95,23 +95,14 @@ When encountering complexity, uncertainty, or states that don't align with proto
 
 ## Pipeline Handoff Protocol
 
-Cross-phase progression is lead-driven: the lead creates next-bough tasks when convergence is detected. Workers check TaskList for within-phase work and notify the lead when idle.
+Workers self-navigate the pipeline via the upfront task list:
 
-### Pipeline Order
+1. Worker completes task → `TaskUpdate(status="completed", metadata={...})`
+2. Stop hook fires → checks TaskList for unblocked, unclaimed tasks matching role
+3. If found → blocks stop (exit 2), worker self-claims and executes
+4. If not found → allows stop (exit 0), worker goes idle
 
-| Current Worker | Next Stage | Worker to find |
-|---|---|---|
-| `analyst` | Builder | `builder` |
-| `builder` (plan done) | Validator | `validator` (if `RALPH_REVIEW_MODE=interactive`) |
-| `builder` (impl done) | Integrator | `integrator` |
-| `validator` (approved) | Builder | `builder` |
-| `validator` (rejected) | Builder (re-plan) | `builder` |
-
-### Handoff Procedure
-
-1. Check `TaskList` for more tasks matching your role
-2. If found: self-claim and continue
-3. If none available: notify the team-lead. The Stop hook blocks shutdown if matching tasks appear later.
+**Key**: `blockedBy` chains enforce phase ordering. Workers only work on unblocked tasks.
 
 ## Spawn Template Protocol
 

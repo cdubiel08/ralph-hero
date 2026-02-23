@@ -269,9 +269,9 @@ EOF
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c "Bough Model" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
-- [ ] Automated: `grep -c "blockedBy" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 3
-- [ ] Manual: Section 4.2 describes full upfront task graph with `TaskCreate` + `TaskUpdate(addBlockedBy)` pattern
+- [x] Automated: `grep -c "Bough Model" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
+- [x] Automated: `grep -c "blockedBy" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 3
+- [x] Manual: Section 4.2 describes full upfront task graph with `TaskCreate` + `TaskUpdate(addBlockedBy)` pattern
 
 **Creates for next phase**: Upfront task list model that Phase 4's roster spawning builds upon.
 
