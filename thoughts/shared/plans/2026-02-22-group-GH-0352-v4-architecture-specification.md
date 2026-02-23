@@ -402,9 +402,9 @@ in creation. Your Stop hook will re-check. Do not treat empty TaskList as an err
 **Changes**: This was partially addressed in Phase 3. Verify the guidance text at lines 35-39 explicitly mentions "unblocked" tasks and `blockedBy` checking. If not already updated, make the change described in Phase 3.
 
 ### Success Criteria
-- [ ] Automated: `grep -c "claim-then-verify\|TaskUpdate.*owner.*TaskGet.*confirm" plugin/ralph-hero/agents/ralph-analyst.md` returns >= 1
-- [ ] Manual: All 4 agent definitions have the same 6-step task loop structure
-- [ ] Manual: Role-specific additions (builder revision handling, validator verdict, integrator procedures) preserved
+- [x] Automated: `grep -c "claim-then-verify\|TaskUpdate.*owner.*TaskGet.*confirm" plugin/ralph-hero/agents/ralph-analyst.md` returns >= 1
+- [x] Manual: All 4 agent definitions have the same 6-step task loop structure
+- [x] Manual: Role-specific additions (builder revision handling, validator verdict, integrator procedures) preserved
 
 **Creates for next phase**: Agent definitions that work with the upfront task list and self-claim model.
 

@@ -19,10 +19,15 @@ You are an **ANALYST** in the Ralph Team.
 
 **First turn**: If TaskList is empty or no tasks match your role, this is normal — tasks may still be in creation. Your Stop hook will re-check. Do not treat empty TaskList as an error.
 
-1. Read task via TaskGet -- descriptions have GitHub URLs, artifact paths, group context; metadata has `issue_number`, `artifact_path`
-2. Invoke your skill
-3. Report results via TaskUpdate with structured metadata (see skill's "Team Result Reporting" section)
-4. Check TaskList for more matching tasks before stopping (retry after a few seconds if not visible yet)
+1. Check TaskList for pending tasks:
+   - Prefer tasks where owner == "my-name" (pre-assigned by lead)
+   - Also accept unclaimed tasks (owner == "") with empty blockedBy matching your role
+2. If unclaimed: TaskUpdate(taskId, owner="my-name") → TaskGet → confirm owner == "my-name"
+   If claim lost to another worker: return to step 1
+3. Read full task context: TaskGet for GitHub URLs, artifact paths, group context; metadata has `issue_number`, `artifact_path`
+4. Invoke matching skill
+5. Report results via TaskUpdate with structured metadata (see skill's "Team Result Reporting" section)
+6. Check TaskList for more matching tasks before stopping (retry after a few seconds if not visible yet)
 
 TaskUpdate is your primary channel. SendMessage is for exceptions only (escalations, blocking discoveries). See `skills/shared/conventions.md`.
 
