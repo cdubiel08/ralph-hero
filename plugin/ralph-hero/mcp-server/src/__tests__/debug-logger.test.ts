@@ -134,19 +134,25 @@ describe("DebugLogger", () => {
       expect(parsed.cat).toBeDefined();
     }
 
-    // Check tool events
-    const toolEvent = JSON.parse(lines[0]);
-    expect(toolEvent.cat).toBe("tool");
-    expect(toolEvent.tool).toBe("tool_a");
-    expect(toolEvent.ok).toBe(true);
+    // Parse all events (order not guaranteed with fire-and-forget writes)
+    const events = lines.map((l: string) => JSON.parse(l));
+    const toolEvents = events.filter((e: Record<string, unknown>) => e.cat === "tool");
+    const gqlEvents = events.filter((e: Record<string, unknown>) => e.cat === "graphql");
 
-    const errorEvent = JSON.parse(lines[1]);
-    expect(errorEvent.ok).toBe(false);
-    expect(errorEvent.error).toBe("fail");
+    expect(toolEvents).toHaveLength(2);
+    expect(gqlEvents).toHaveLength(1);
+
+    // Check tool events by content
+    const toolA = toolEvents.find((e: Record<string, unknown>) => e.tool === "tool_a");
+    const toolB = toolEvents.find((e: Record<string, unknown>) => e.tool === "tool_b");
+    expect(toolA).toBeDefined();
+    expect(toolA!.ok).toBe(true);
+    expect(toolB).toBeDefined();
+    expect(toolB!.ok).toBe(false);
+    expect(toolB!.error).toBe("fail");
 
     // Check GraphQL event
-    const gqlEvent = JSON.parse(lines[2]);
-    expect(gqlEvent.cat).toBe("graphql");
+    const gqlEvent = gqlEvents[0];
     expect(gqlEvent.operation).toBe("GetIssue");
     expect(gqlEvent.rateLimitRemaining).toBe(4900);
   });
