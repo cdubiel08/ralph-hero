@@ -531,7 +531,7 @@ export function registerProjectManagementTools(
               title: $title,
               body: $body
             }) {
-              projectItem { id }
+              draftIssue { id title }
             }
           }`,
           vars,

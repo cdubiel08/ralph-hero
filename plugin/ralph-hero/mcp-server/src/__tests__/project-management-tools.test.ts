@@ -176,7 +176,7 @@ describe("project management mutations", () => {
         title: $title,
         body: $body
       }) {
-        projectItem { id }
+        draftIssue { id title }
       }
     }`;
     expect(mutation).toContain("updateProjectV2DraftIssue");
