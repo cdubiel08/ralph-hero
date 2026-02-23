@@ -72,11 +72,11 @@ Single phase: create `docs/cli.md` with content derived from the justfile recipe
   - `quick-draft` — create draft issue, `title` + optional `priority`/`estimate`/`state` params
 
 ### Success Criteria
-- [ ] Automated: `test -f docs/cli.md` exits 0
-- [ ] Automated: `grep -q "doctor" docs/cli.md` exits 0
-- [ ] Automated: `grep -c "quick-" docs/cli.md` returns >= 8 (all recipes mentioned)
-- [ ] Automated: `grep -q "mcptools" docs/cli.md` exits 0
-- [ ] Manual: Each recipe entry has purpose, usage example, and parameters
+- [x] Automated: `test -f docs/cli.md` exits 0
+- [x] Automated: `grep -q "doctor" docs/cli.md` exits 0
+- [x] Automated: `grep -c "quick-" docs/cli.md` returns >= 8 (all recipes mentioned)
+- [x] Automated: `grep -q "mcptools" docs/cli.md` exits 0
+- [x] Manual: Each recipe entry has purpose, usage example, and parameters
 
 ---
 
