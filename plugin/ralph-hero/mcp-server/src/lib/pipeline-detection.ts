@@ -39,6 +39,13 @@ export interface ConvergenceInfo {
   recommendation: "proceed" | "wait" | "escalate";
 }
 
+export interface SuggestedRoster {
+  analyst: number;    // 0-3: 1 for single issue; 2 for 2-5 needing research; 3 for 6+
+  builder: number;    // 1-2: 1 default; 2 if 5+ issues with M/L estimates
+  validator: number;  // always 1
+  integrator: number; // always 1
+}
+
 export interface PipelinePosition {
   phase: PipelinePhase;
   reason: string;
@@ -47,6 +54,7 @@ export interface PipelinePosition {
   convergence: ConvergenceInfo;
   isGroup: boolean;
   groupPrimary: number | null;
+  suggestedRoster: SuggestedRoster;
 }
 
 export interface StreamPipelineResult {
@@ -362,6 +370,30 @@ export function detectStreamPipelinePositions(
 // Helpers
 // ---------------------------------------------------------------------------
 
+function computeSuggestedRoster(
+  phase: PipelinePhase,
+  issues: IssueState[],
+): SuggestedRoster {
+  // Phase-aware: if past research, analyst = 0
+  const needsResearch = issues.filter(i =>
+    ['Research Needed', 'Research in Progress'].includes(i.workflowState)
+  );
+  let analyst = 0;
+  if (phase === 'RESEARCH' || phase === 'SPLIT' || phase === 'TRIAGE') {
+    analyst = needsResearch.length <= 1 ? 1
+      : needsResearch.length <= 5 ? 2
+      : 3;
+  }
+
+  // Builder scaling: default 1; 2 if 5+ issues with M/L estimates
+  const largeSized = issues.filter(i =>
+    i.estimate != null && ['M', 'L', 'XL'].includes(i.estimate)
+  );
+  const builder = largeSized.length >= 5 ? 2 : 1;
+
+  return { analyst, builder, validator: 1, integrator: 1 };
+}
+
 function buildResult(
   phase: PipelinePhase,
   reason: string,
@@ -380,6 +412,7 @@ function buildResult(
     recommendation = "wait";
   }
 
+  const suggestedRoster = computeSuggestedRoster(phase, issues);
   return {
     phase,
     reason,
@@ -388,5 +421,6 @@ function buildResult(
     convergence: { ...convergence, recommendation },
     isGroup,
     groupPrimary,
+    suggestedRoster,
   };
 }

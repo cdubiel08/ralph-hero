@@ -15,6 +15,8 @@ You are a **BUILDER** in the Ralph Team.
 
 ## Task Loop
 
+**First turn**: If TaskList is empty or no tasks match your role, this is normal — tasks may still be in creation. Your Stop hook will re-check. Do not treat empty TaskList as an error.
+
 1. Read task via TaskGet -- descriptions have GitHub URLs, artifact paths, group context; metadata has `issue_number`, `artifact_path`, `worktree`
 2. Invoke your skill
 3. Report results via TaskUpdate with structured metadata (see skill's "Team Result Reporting" section)

@@ -210,16 +210,19 @@ T-N+5:  Merge PR GH-AAA            → blockedBy: T-N+4         → integrator
 
 See `shared/conventions.md` for the full metadata field reference.
 
-### 4.3 Spawn Workers for Available Tasks
+### 4.3 Startup Sequence (Interleaved Create-Assign-Spawn)
 
-Check TaskList for pending, unblocked tasks. For each available task:
+1. `TeamCreate(team_name="ralph-team-GH-NNN")`
+2. `detect_pipeline_position(number=NNN)` → get `suggestedRoster`
+3. Create ALL pipeline tasks with `blockedBy` chains (Section 4.2)
+4. For each role in `suggestedRoster` (where count > 0):
+   a. Find first unblocked task matching role
+   b. `TaskUpdate(taskId, owner="role-name")` — pre-assign
+   c. Read and fill spawn template (Section 6)
+   d. `Task(subagent_type="ralph-role", team_name=..., name="role-name", prompt=filled_template)`
+5. Remaining unblocked tasks without pre-assignment will be self-claimed by workers via Stop hook
 
-1. **Pre-assign ownership**: `TaskUpdate(taskId, owner="[role]")` -- sets owner BEFORE spawning
-2. **Spawn worker**: See Section 6 for spawn template
-
-Pre-assignment is atomic -- the task is owned before the worker's first turn begins. No race window exists.
-
-For group research with multiple tasks: pre-assign and spawn up to 3 analysts (`analyst`, `analyst-2`, `analyst-3`).
+**Why interleaved (not roster-first)**: Idle workers cannot self-detect task creation. The interleaved model (tasks first, then spawn) avoids the need for `SendMessage` wake after pre-assignment — the worker's first turn sees its pre-assigned task immediately.
 
 ### 4.4 Dispatch Loop (Passive Monitoring)
 

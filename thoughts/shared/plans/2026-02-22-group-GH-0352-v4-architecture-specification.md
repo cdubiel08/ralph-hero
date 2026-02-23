@@ -360,10 +360,10 @@ in creation. Your Stop hook will re-check. Do not treat empty TaskList as an err
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `grep -c "suggestedRoster" plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns >= 3
-- [ ] Manual: `detect_pipeline_position` response includes `suggestedRoster` with analyst/builder/validator/integrator counts
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `grep -c "suggestedRoster" plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns >= 3
+- [x] Manual: `detect_pipeline_position` response includes `suggestedRoster` with analyst/builder/validator/integrator counts
 
 **Creates for next phase**: `suggestedRoster` heuristic that SKILL.md uses for roster sizing; agent definitions that handle empty TaskList.
 
