@@ -126,7 +126,7 @@ All roles use this template. Role-specific behavior is driven by placeholder sub
 | `{TITLE}` | Issue title from `get_issue` | Always |
 | `{TASK_VERB}` | Spawn table "Task Verb" column | Always |
 | `{TASK_CONTEXT}` | Role-dependent (see SKILL.md Section 6) | Optional (empty -> line removed) |
-| `{SKILL_INVOCATION}` | Spawn table "Skill" column | Always |
+| `{SKILL_INVOCATION}` | Spawn table "Skill" column. Artifact path flags (see Artifact Passthrough Protocol) may be appended to `args` when available. | Always |
 | `{REPORT_FORMAT}` | Role-specific result format from each SKILL.md "Team Result Reporting" section | Always |
 
 ### Group Context Resolution
@@ -157,6 +157,10 @@ If a placeholder resolves to an empty string, remove the ENTIRE LINE containing 
 3. Substitute all `{PLACEHOLDER}` strings with values from `get_issue` response and spawn table
 4. If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it
 5. Use the result as the `prompt` parameter in `Task()`
+6. If artifact paths are available from prior phase results, append flags to `{SKILL_INVOCATION}` args:
+   ```
+   Skill(skill="ralph-hero:ralph-plan", args="42 --research-doc thoughts/shared/research/2026-02-21-GH-0042-auth-flow.md")
+   ```
 
 ## Work Streams
 
@@ -300,3 +304,68 @@ When an artifact is found via glob fallback but the expected comment is missing,
 
 - **10-comment limit**: `get_issue` returns only the last 10 comments. The glob fallback provides a reliable secondary discovery path.
 - **Group glob for non-primary issues**: Group plans use the primary issue number in filenames. Non-primary group members won't match `*GH-43*`. Try `*group*GH-{primary}*` after `*GH-{number}*` fails.
+
+## Artifact Passthrough Protocol
+
+When the team lead or orchestrator already knows an artifact's local path (from a prior phase's result), it can pass the path directly to the next skill via argument flags, skipping the Artifact Comment Protocol's discovery steps.
+
+### Flags
+
+| Flag | Value | Consumed By |
+|------|-------|-------------|
+| `--research-doc` | Local path to research `.md` file | `ralph-plan` |
+| `--plan-doc` | Local path to plan `.md` file | `ralph-impl`, `ralph-review` |
+
+### Argument Format
+
+```
+{issue-number} --{flag} {local-path}
+```
+
+Examples:
+```
+42 --research-doc thoughts/shared/research/2026-02-21-GH-0042-auth-flow.md
+42 --plan-doc thoughts/shared/plans/2026-02-21-GH-0042-auth-refresh.md
+313 --plan-doc thoughts/shared/plans/2026-02-21-group-GH-0312-artifact-path-passthrough.md
+```
+
+Without flags (backward compatible):
+```
+42
+```
+
+### Parsing Rules
+
+1. **First token** is always the issue number (required)
+2. **Flags are optional** — presence of `--research-doc` or `--plan-doc` followed by a path
+3. **Validate file exists**: If the path does not exist on disk, log a warning and fall back to standard Artifact Comment Protocol discovery
+4. **Multiple flags**: Both flags may appear in the same invocation if a skill needs both artifacts (currently no skill does)
+
+### Lead Extraction Rules
+
+Orchestrators (ralph-team, ralph-hero) extract artifact paths from completed task descriptions or metadata:
+
+| Result Line | Extracted Flag |
+|-------------|---------------|
+| `Document: [path]` (from RESEARCH COMPLETE) | `--research-doc [path]` |
+| `Plan: [path]` (from PLAN COMPLETE) | `--plan-doc [path]` |
+| `Plan: [path]` (from VALIDATION VERDICT) | `--plan-doc [path]` |
+| `artifact_path` metadata key | Use value with appropriate flag based on phase |
+
+### Consumer Skill Behavior
+
+When a flag is provided with a valid path:
+1. **Skip** the Artifact Comment Protocol discovery (comment search, URL conversion, glob fallback, self-healing)
+2. **Read the file directly** from the provided path
+3. **Continue** with the rest of the skill workflow
+
+When a flag is missing, has an invalid path, or the file does not exist:
+1. **Fall back** to standard Artifact Comment Protocol discovery
+2. **Log**: `"Artifact flag path not found, falling back to discovery: [path]"` (if flag was provided but invalid)
+
+### Relationship to Artifact Comment Protocol
+
+Artifact Passthrough is an **optimization layer** on top of the Artifact Comment Protocol. It does not replace it:
+- Comments remain the source of truth for artifact linking
+- Passthrough skips the discovery steps when the path is already known
+- Skills still post artifact comments when producing new artifacts

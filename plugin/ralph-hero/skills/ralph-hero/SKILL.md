@@ -192,6 +192,15 @@ Task(subagent_type="general-purpose",
 After all research completes, run Stream Detection (Step 2.5) if applicable.
 
 #### PLAN tasks
+
+Before spawning, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, append `--research-doc {path}` to args (see Artifact Passthrough Protocol in `shared/conventions.md`):
+
+```
+Task(subagent_type="general-purpose",
+     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN --research-doc thoughts/shared/research/...') to create a plan for GH-NNN.",
+     description="Plan GH-NNN")
+```
+If no `artifact_path` in research task metadata, omit the flag:
 ```
 Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create a plan for GH-NNN.",
@@ -200,14 +209,17 @@ Task(subagent_type="general-purpose",
 For multi-issue groups:
 ```
 Task(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY]') to create a GROUP plan. Group: GH-AAA, GH-BBB, GH-CCC.",
+     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY] --research-doc {path}') to create a GROUP plan. Group: GH-AAA, GH-BBB, GH-CCC.",
      description="Plan group GH-[PRIMARY]")
 ```
 
 #### REVIEW tasks (if RALPH_REVIEW_MODE == "auto")
+
+Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
+
 ```
 Task(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-review', args='NNN') to review the plan. Return: APPROVED or NEEDS_ITERATION.",
+     prompt="Use Skill(skill='ralph-hero:ralph-review', args='NNN --plan-doc thoughts/shared/plans/...') to review the plan. Return: APPROVED or NEEDS_ITERATION.",
      description="Review GH-NNN")
 ```
 **Routing**: ALL APPROVED → continue. ANY NEEDS_ITERATION → STOP with critique links.
@@ -218,6 +230,15 @@ Instruct user to: (1) Review plans in GitHub, (2) Move to "In Progress", (3) Re-
 Then STOP.
 
 #### IMPLEMENT tasks
+
+Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
+
+```
+Task(subagent_type="general-purpose",
+     prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN --plan-doc thoughts/shared/plans/...') to implement GH-NNN. Follow the plan exactly.",
+     description="Implement GH-NNN")
+```
+If no `artifact_path` available, omit the flag:
 ```
 Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN') to implement GH-NNN. Follow the plan exactly.",
