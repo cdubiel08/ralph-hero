@@ -534,8 +534,8 @@ After all research tasks complete, if `isGroup=true` and `issues.length >= 3`:
 **This phase is a verification pass only.** If all checks pass, close GH-359 as Done with no code changes needed.
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md plugin/ralph-hero/skills/iterate-plan/SKILL.md plugin/ralph-hero/skills/implement-plan/SKILL.md` succeeds
-- [ ] Manual: Each skill passes acceptance criteria from research doc
+- [x] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md plugin/ralph-hero/skills/iterate-plan/SKILL.md plugin/ralph-hero/skills/implement-plan/SKILL.md` succeeds
+- [x] Manual: Each skill passes acceptance criteria — no context:fork, no RALPH_COMMAND, model:opus, ralph_hero__ tools, no Linear, Artifact Comment Protocol, state transitions offered, manual verification pauses
 
 **Creates for next phase**: Confirmed complete set of all 6 interactive skills.
 
