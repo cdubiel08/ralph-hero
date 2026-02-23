@@ -242,6 +242,12 @@ The lead does NOT:
 
 **Exception handling**: When a review task completes, check `verdict` from its metadata via `TaskGet`. If `verdict` is `"NEEDS_ITERATION"`, create a revision task with "Plan" in subject and wire it as `blockedBy` the failed review. The builder will self-claim. Terminal state is "In Review", never "Done".
 
+**Artifact path extraction**: When creating new-bough tasks (e.g., plan task after research completes, implement task after plan is approved), extract artifact paths from completed upstream task metadata and inject them into the new task's `artifact_path` metadata field. Read the completed task via `TaskGet` to find:
+- Research task `artifact_path` → use as `--research-doc` when spawning planner
+- Plan task `artifact_path` → use as `--plan-doc` when spawning implementer/reviewer
+
+These paths are appended to `{SKILL_INVOCATION}` args at spawn time per the Artifact Passthrough Protocol in `shared/conventions.md`. Extraction is best-effort — if `artifact_path` is absent, omit the flag and let the consumer skill fall back to standard discovery.
+
 **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
 
 **Intake**: When all pipeline tasks complete and TaskList is empty, pull new issues from GitHub via `pick_actionable_issue` and create a new upfront task graph (Section 4.2) for found issues.
@@ -353,7 +359,12 @@ No prescribed roster -- spawn what's needed. Each teammate receives a minimal pr
      - Plan/Review: `{GROUP_CONTEXT}` (group line if IS_GROUP, empty if not)
      - Implement: `{WORKTREE_CONTEXT}` (worktree path if exists, empty if not)
      - Research/Integrator: empty (line removed)
-   - `{SKILL_INVOCATION}` -> `Skill(skill="ralph-hero:[skill]", args="{ISSUE_NUMBER}")` from spawn table Skill column. For integrator (no skill): `Check your task subject to determine the operation (Create PR or Merge PR).\nFollow the corresponding procedure in your agent definition.`
+   - `{SKILL_INVOCATION}` -> `Skill(skill="ralph-hero:[skill]", args="{ISSUE_NUMBER}")` from spawn table Skill column, with artifact path flags appended when available (see Artifact Passthrough Protocol in `shared/conventions.md`):
+     - Plan: `args="{ISSUE_NUMBER} --research-doc {RESEARCH_PATH}"` (omit flag if no path)
+     - Implement: `args="{ISSUE_NUMBER} --plan-doc {PLAN_PATH}"` (omit flag if no path)
+     - Review: `args="{ISSUE_NUMBER} --plan-doc {PLAN_PATH}"` (omit flag if no path)
+     - Research/Triage/Split: `args="{ISSUE_NUMBER}"` (no artifact flag)
+     - For integrator (no skill): `Check your task subject to determine the operation (Create PR or Merge PR).\nFollow the corresponding procedure in your agent definition.`
    - `{REPORT_FORMAT}` -> role-specific result format from each worker SKILL.md "Team Result Reporting" section
    - `{ESTIMATE}` -> issue estimate (only used within `{TASK_CONTEXT}` for triage/split)
    - `{GROUP_CONTEXT}` -> group line if IS_GROUP, empty if not (only used within `{TASK_CONTEXT}` for plan/review)

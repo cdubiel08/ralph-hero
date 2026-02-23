@@ -106,10 +106,10 @@ Phase 1 defines the protocol. Phases 2-4 are producer/consumer pairs that refere
 - Omit flag if no path extracted (best-effort)
 
 ### Success Criteria
-- [ ] Automated: `grep -c "\-\-research-doc" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c "\-\-plan-doc" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
-- [ ] Manual: Section 4.4 describes path extraction from task results
-- [ ] Manual: Section 6 shows artifact flag construction for all downstream roles
+- [x] Automated: `grep -c "\-\-research-doc" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
+- [x] Automated: `grep -c "\-\-plan-doc" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
+- [x] Manual: Section 4.4 describes path extraction from task results
+- [x] Manual: Section 6 shows artifact flag construction for all downstream roles
 
 **Creates for next phase**: Orchestrator produces flags that consumer skills (Phase 3) accept
 
