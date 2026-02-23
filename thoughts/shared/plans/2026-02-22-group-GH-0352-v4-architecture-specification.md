@@ -57,7 +57,7 @@ Both modes suffer from documented failures: redundant messaging (30+ per session
 ## Desired End State
 
 ### Verification
-- [ ] Research doc for GH-352 committed and linked (Phase 0 findings documented)
+- [x] Research doc for GH-352 committed and linked (Phase 0 findings documented)
 - [ ] `conventions.md` has "Communication Discipline" section with Assignment/Reporting/Nudge Rules
 - [ ] `SKILL.md` Section 5 has FORBIDDEN rules for SendMessage misuse
 - [ ] Hook scripts produce at most one line of stderr guidance
@@ -106,8 +106,8 @@ Phases 1-5 are documentation/skill/agent changes that build a new orchestration 
 - `suggestedRoster` feasible → Phase 4 adds to `PipelinePosition` interface
 
 ### Success Criteria
-- [ ] Automated: Research doc exists at expected path and is committed
-- [ ] Manual: Research findings cover all 5 areas (0a-0e) with status/action for each
+- [x] Automated: Research doc exists at expected path and is committed
+- [x] Manual: Research findings cover all 5 areas (0a-0e) with status/action for each
 
 **Creates for next phase**: Validated primitive behavior findings that inform all subsequent phase designs.
 
