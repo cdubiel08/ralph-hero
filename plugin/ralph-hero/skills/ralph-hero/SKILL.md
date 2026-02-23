@@ -22,10 +22,11 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 
 1. **GitHub IS the tree** - No separate data structure; use sub-issues + blocking/blockedBy dependencies
 2. **State drives action** - Query GitHub project field state to determine what to do next
-3. **Parallel where independent** - Research tasks run concurrently via background Tasks
-4. **Sequential where dependent** - Implementation respects blocking relationships
-5. **Convergence before planning** - All leaves must reach "Ready for Plan"
-6. **Human gates preserved** - Plan approval required before implementation
+3. **Upfront task list** - All pipeline tasks created at session start with `blockedBy` chains for progress visibility
+4. **Parallel where independent** - Unblocked tasks execute simultaneously
+5. **Sequential where dependent** - `blockedBy` chains enforce implementation ordering
+6. **Convergence before planning** - All leaves must reach "Ready for Plan"
+7. **Human gates preserved** - Plan approval required before implementation
 
 ## State Machine
 
@@ -93,60 +94,109 @@ The result provides:
 
 Execute the phase indicated by `phase`. Do NOT interpret workflow states yourself -- trust the tool's decision.
 
-### Step 2: Execute Appropriate Phase
+### Step 1.5: Resumability Check
 
----
+1. Call `TaskList()` to check if tasks already exist for this session
+2. If tasks exist (non-empty TaskList with tasks matching the pipeline): skip task creation, resume from the Execution Loop (Step 3)
+3. If no tasks: proceed to create upfront task list (Step 2)
 
-## PHASE: ANALYST - SPLIT
+### Step 2: Create Upfront Task List
 
-Split all M/L/XL issues until only XS/S leaves remain.
+Based on the `phase` from `detect_pipeline_position`, create ALL remaining pipeline tasks with `blockedBy` dependencies using `TaskCreate` + `TaskUpdate(addBlockedBy=[...])`.
 
-**Pre-check**: The `detect_pipeline_position` response's `issues` array includes `subIssueCount` for each issue. Only split issues where `subIssueCount === 0`. Issues that already have children have been split previously -- their children will be picked up by later phases (RESEARCH, PLAN, etc.) based on their own workflow state.
+**Task graph by starting phase:**
 
-If you need to inspect the existing tree before deciding, call:
+**Starting from SPLIT:**
 ```
-ralph_hero__list_sub_issues(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=NNN, depth=2)
+T-1..K: Split GH-NNN (for each M/L/XL issue)  → unblocked
+  After splits complete, re-detect pipeline position and rebuild task list for remaining phases.
 ```
 
-For each M/L/XL issue **with `subIssueCount === 0`**, spawn a background split task:
+**Starting from RESEARCH:**
 ```
-Task(subagent_type="general-purpose", run_in_background=true,
+T-1..N: Research GH-AAA … GH-ZZZ              → unblocked (parallel)
+T-N+1:  Plan group GH-[PRIMARY]               → blockedBy: [all research task IDs]
+T-N+2:  Review plan GH-[PRIMARY] (if auto)     → blockedBy: [plan task]
+    OR  Human gate (if interactive/skip)        → blockedBy: [plan task]
+T-N+3..M: Implement GH-AAA … GH-ZZZ           → blockedBy: [review/gate task], each impl blockedBy prior impl
+T-M+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+```
+
+**Starting from PLAN:**
+```
+T-1:  Plan group GH-[PRIMARY]                 → unblocked
+T-2:  Review plan GH-[PRIMARY] (if auto)       → blockedBy: [plan task]
+   OR Human gate (if interactive/skip)          → blockedBy: [plan task]
+T-3..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
+T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+```
+
+**Starting from REVIEW/HUMAN_GATE:**
+```
+T-1:  Review plan / Human gate                → unblocked
+T-2..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
+T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+```
+
+**Starting from IMPLEMENT:**
+```
+T-1..N: Implement GH-AAA … GH-ZZZ             → each impl blockedBy prior impl (first is unblocked)
+T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+```
+
+**Task creation pattern** (two-step: create then set dependencies):
+```
+taskId = TaskCreate(subject="Research GH-NNN", description="...", activeForm="Researching GH-NNN")
+TaskUpdate(taskId, addBlockedBy=[dependency_task_ids])
+```
+
+Include `metadata.issue_number` in each task's description for traceability.
+
+### Step 2.5: Stream Detection (Groups >= 3)
+
+After all research tasks complete (detectable when plan tasks become unblocked), if `isGroup=true` and `issues.length >= 3`:
+
+1. Call `ralph_hero__detect_work_streams(issues=[issue-numbers])` to cluster by file overlap
+2. If `totalStreams > 1`: restructure implementation tasks into per-stream parallel chains
+   - Issues within the same stream: sequential `blockedBy` chain
+   - Streams independent of each other: no cross-stream `blockedBy`
+3. If `totalStreams == 1`: single sequential implementation chain (unchanged)
+
+### Step 3: Execution Loop
+
+Loop until pipeline is complete:
+
+1. `TaskList()` → filter to tasks with `status=pending` AND `blockedBy=[]` (empty/all resolved)
+2. If no pending unblocked tasks: check for `in_progress` tasks — if all tasks are `completed`, STOP (pipeline complete)
+3. Execute all unblocked tasks simultaneously (multiple `Task()` calls in a single message, foreground)
+4. Wait for all to complete
+5. `TaskUpdate(status="completed")` for each completed task
+6. Repeat from step 1
+
+**Phase-specific execution details:**
+
+#### SPLIT tasks
+```
+Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-split', args='NNN') to split issue #NNN.",
      description="Split #NNN")
 ```
+After all splits complete, re-call `detect_pipeline_position` and rebuild remaining task list.
 
-Wait for all splits, then re-call `detect_pipeline_position` to check if more splitting is needed. Loop until no M/L/XL issues remain.
-
----
-
-## PHASE: ANALYST - RESEARCH
-
-Research all leaf issues in "Research Needed" state in parallel.
-
-Spawn ALL research tasks in a SINGLE message for true parallelism:
+#### RESEARCH tasks
 ```
-Task(subagent_type="general-purpose", run_in_background=true,
+Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-research', args='NNN') to research issue GH-NNN: [title].",
      description="Research GH-NNN")
 ```
+After all research completes, run Stream Detection (Step 2.5) if applicable.
 
-Wait for all research to complete, then re-call `detect_pipeline_position`. If phase == PLAN, proceed to planning.
-
----
-
-## PHASE: BUILDER - PLAN
-
-Create unified plans for issue groups.
-
-Issues are in the SAME GROUP if they share the same parent or are connected via blocks/blockedBy.
-
-For single-issue groups:
+#### PLAN tasks
 ```
 Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create a plan for GH-NNN.",
      description="Plan GH-NNN")
 ```
-
 For multi-issue groups:
 ```
 Task(subagent_type="general-purpose",
@@ -154,48 +204,28 @@ Task(subagent_type="general-purpose",
      description="Plan group GH-[PRIMARY]")
 ```
 
-After planning, check `RALPH_REVIEW_MODE`:
-- `"skip"` (default): Proceed to HUMAN GATE
-- `"auto"` or `"interactive"`: Proceed to REVIEWING
-
----
-
-## PHASE: BUILDER - REVIEW / VALIDATOR - REVIEW (Optional)
-
-Spawn parallel review tasks for all plan groups:
+#### REVIEW tasks (if RALPH_REVIEW_MODE == "auto")
 ```
-Task(subagent_type="general-purpose", run_in_background=true,
+Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-review', args='NNN') to review the plan. Return: APPROVED or NEEDS_ITERATION.",
      description="Review GH-NNN")
 ```
+**Routing**: ALL APPROVED → continue. ANY NEEDS_ITERATION → STOP with critique links.
 
-**Routing**:
-- ALL APPROVED: Skip HUMAN GATE, proceed to IMPLEMENTING
-- ANY NEEDS_ITERATION: STOP with critique document links for iteration
-
----
-
-## PHASE: VALIDATOR - HUMAN GATE (When review is skipped)
-
+#### HUMAN GATE tasks
 Report planned groups with plan URLs. All issues are in "Plan in Review".
 Instruct user to: (1) Review plans in GitHub, (2) Move to "In Progress", (3) Re-run `/ralph-hero [ROOT-NUMBER]`.
 Then STOP.
 
----
-
-## PHASE: BUILDER - IMPLEMENT
-
-Execute implementation sequentially respecting dependency order from `detect_group` topological sort.
-
-For each issue in order (wait for each to complete before starting next):
+#### IMPLEMENT tasks
 ```
 Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN') to implement GH-NNN. Follow the plan exactly.",
      description="Implement GH-NNN")
 ```
-
 If any implementation fails, STOP immediately. Do NOT continue to next issue.
 
+#### PR tasks
 After all implementations complete, report all issue numbers with PR URLs and "In Review" status.
 
 ---
@@ -221,7 +251,12 @@ For escalation procedures (Human Needed state, @mention patterns), see [shared/c
 
 ## Resumption
 
-Ralph Hero is **resumable** -- each invocation queries current tree state via `detect_pipeline_position`, skips completed phases, and continues from the appropriate phase.
+Ralph Hero is **resumable** across context windows:
+
+1. `detect_pipeline_position` determines the current phase from GitHub state
+2. `TaskList()` restores progress from the session task list
+3. If TaskList is empty (new session): rebuild upfront task list from current phase
+4. If TaskList has tasks: resume from first pending unblocked task
 
 ```bash
 /ralph-hero [ROOT-NUMBER]
@@ -230,10 +265,10 @@ Ralph Hero is **resumable** -- each invocation queries current tree state via `d
 ## Constraints
 
 - One root issue per invocation
-- XS/S issues only for implementation (M+ triggers EXPANDING)
+- XS/S issues only for implementation (M+ triggers SPLIT)
 - Plan approval required before implementation
-- Sequential implementation respecting dependency order
-- Parallel research only
+- Sequential implementation respecting `blockedBy` order
+- All pipeline tasks created upfront (no mid-pipeline task creation)
 
 ## Environment Variables
 
