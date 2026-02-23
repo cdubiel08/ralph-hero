@@ -245,6 +245,8 @@ For group research with multiple tasks: pre-assign and spawn up to 3 analysts (`
 
 ### 4.4 Dispatch Loop
 
+**Design principle**: The dispatch loop is passive. The lead monitors lifecycle hooks (TaskCompleted, TeammateIdle, Stop) and responds to events. The lead does NOT actively poll workers, send progress check messages, or create tasks mid-pipeline. All tasks are created upfront (Section 4.2) and workers self-claim via the Stop hook.
+
 The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural decision points and tell you what to check. Follow their guidance.
 
 Your dispatch responsibilities:
@@ -333,6 +335,13 @@ TaskUpdate(taskId="3", status="completed",
 - **Bias toward action**: When in doubt, check TaskList. When idle, query GitHub. Zero-gap lookahead.
 - **Hooks are your safety net**: Stop hook prevents premature shutdown. State hooks prevent invalid transitions. Trust them.
 - **Escalate and move on**: If stuck, escalate via GitHub comment (`__ESCALATE__` intent) and find other work. Never block on user input.
+
+### FORBIDDEN Communication Patterns
+- SendMessage immediately after TaskUpdate(owner=...) — task assignment IS the communication
+- SendMessage with task details in content — put context in TaskCreate description
+- broadcast for anything other than critical blocking issues
+- SendMessage to acknowledge receipt of a task — just start working
+- Creating tasks mid-pipeline — all tasks created upfront (see Section 4.2)
 
 ## Section 6 - Teammate Spawning
 

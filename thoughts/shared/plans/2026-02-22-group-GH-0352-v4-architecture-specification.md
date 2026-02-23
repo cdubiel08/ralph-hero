@@ -175,9 +175,9 @@ Non-review path: `Task completed by $TEAMMATE: "$TASK_SUBJECT"`
 **Changes**: Already compliant — line 21 outputs a single line. No change.
 
 ### Success Criteria
-- [ ] Automated: `grep -c "FORBIDDEN" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c "Communication Discipline" plugin/ralph-hero/skills/shared/conventions.md` returns >= 1
-- [ ] Manual: `team-task-completed.sh` outputs exactly one line per path (review/non-review)
+- [x] Automated: `grep -c "FORBIDDEN" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
+- [x] Automated: `grep -c "Communication Discipline" plugin/ralph-hero/skills/shared/conventions.md` returns >= 1
+- [x] Manual: `team-task-completed.sh` outputs exactly one line per path (review/non-review)
 
 **Creates for next phase**: Communication rules that Phase 3's upfront task list model and Phase 5's agent definitions reference.
 
@@ -471,9 +471,9 @@ After all research tasks complete, if `isGroup=true` and `issues.length >= 3`:
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c "TaskCreate\|TaskList\|blockedBy" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns >= 5
-- [ ] Automated: `grep -c "run_in_background" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns 0
-- [ ] Manual: Hero mode SKILL.md has resumability check, upfront task list creation, and unified execution loop
+- [x] Automated: `grep -c "TaskCreate\|TaskList\|blockedBy" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns >= 5 (27)
+- [x] Automated: `grep -c "run_in_background" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns 0
+- [x] Manual: Hero mode SKILL.md has resumability check, upfront task list creation, and unified execution loop
 
 **Creates for next phase**: Hero mode using the same upfront task list pattern as team mode.
 

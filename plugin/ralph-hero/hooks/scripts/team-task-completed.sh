@@ -19,18 +19,8 @@ TEAMMATE=$(echo "$INPUT" | jq -r '.teammate_name // "unknown"')
 
 # Check if this is a review task (may need exception handling)
 if echo "$TASK_SUBJECT" | grep -qi "review"; then
-  cat >&2 <<EOF
-Review task completed by $TEAMMATE: "$TASK_SUBJECT"
-Consider checking the verdict via TaskGet:
-- APPROVED: peer handoff will wake builder. Verify worker exists.
-- NEEDS_ITERATION: Create revision task with "Plan" in subject for builder.
-EOF
+  echo "Task completed by $TEAMMATE: \"$TASK_SUBJECT\" (review task)" >&2
 else
-  cat >&2 <<EOF
-Task completed by $TEAMMATE: "$TASK_SUBJECT"
-Consider checking pipeline convergence via detect_pipeline_position.
-If the phase has converged, create next-bough tasks (Section 4.2).
-If not converged, no action needed -- wait for remaining tasks.
-EOF
+  echo "Task completed by $TEAMMATE: \"$TASK_SUBJECT\"" >&2
 fi
 exit 0
