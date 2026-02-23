@@ -504,8 +504,8 @@ After all research tasks complete, if `isGroup=true` and `issues.length >= 3`:
 **Note**: `form-idea/SKILL.md` already exists on main — compare with GH-343 version before overwriting.
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md plugin/ralph-hero/skills/research-codebase/SKILL.md` succeeds
-- [ ] Manual: Each skill passes the verification checklist from the research doc
+- [x] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md plugin/ralph-hero/skills/research-codebase/SKILL.md` succeeds
+- [x] Manual: Each skill passes the verification checklist from the research doc (no context:fork, no RALPH_COMMAND, correct models, GitHub tools only, no Linear, team_name convention notes only)
 
 **Creates for next phase**: Complete set of 3 interactive skills with GitHub integration.
 
