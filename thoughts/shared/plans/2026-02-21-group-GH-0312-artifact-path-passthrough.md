@@ -159,8 +159,8 @@ Phase 1 defines the protocol. Phases 2-4 are producer/consumer pairs that refere
 **Changes**: Where ralph-hero invokes skills via `Skill()` for PLAN, REVIEW, and IMPLEMENT phases, update to pass artifact paths from prior phase results through args. Follow same pattern as ralph-team (Phase 2). Reference conventions.md Artifact Passthrough Protocol.
 
 ### Success Criteria
-- [ ] Automated: `grep -c "\-\-research-doc\|--plan-doc" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns >= 1
-- [ ] Manual: PLAN phase passes `--research-doc`, IMPLEMENT/REVIEW phases pass `--plan-doc`
+- [x] Automated: `grep -c "\-\-research-doc\|--plan-doc" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns >= 1
+- [x] Manual: PLAN phase passes `--research-doc`, IMPLEMENT/REVIEW phases pass `--plan-doc`
 
 ---
 
