@@ -928,6 +928,7 @@ export function registerProjectTools(
                         repository { nameWithOwner name owner { login } }
                       }
                       ... on DraftIssue {
+                        id
                         title
                         body
                       }
@@ -1062,6 +1063,7 @@ export function registerProjectTools(
           return {
             itemId: item.id,
             type: item.type,
+            draftIssueId: item.type === "DRAFT_ISSUE" ? (content?.id as string) ?? null : null,
             number: content?.number,
             title: content?.title,
             state: content?.state,

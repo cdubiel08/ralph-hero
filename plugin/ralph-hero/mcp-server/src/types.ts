@@ -131,6 +131,7 @@ export interface ProjectV2Item {
 
 export interface DraftIssue {
   __typename: "DraftIssue";
+  id: string;
   title: string;
   body: string;
 }
