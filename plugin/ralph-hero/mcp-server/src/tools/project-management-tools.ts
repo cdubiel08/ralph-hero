@@ -43,18 +43,27 @@ export function registerProjectManagementTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__archive_item",
-    "Archive or unarchive a project item. Archived items are hidden from default views but not deleted. Returns: number, archived, projectItemId.",
+    "Archive or unarchive a project item. Archived items are hidden from default views but not deleted. Accepts either number (for issues) or projectItemId (for draft items). Returns: number, archived, projectItemId.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
       projectNumber: z.coerce.number().optional()
         .describe("Project number override (defaults to configured project)"),
-      number: z.coerce.number().describe("Issue number"),
+      number: z.coerce.number().optional().describe("Issue number (provide this or projectItemId)"),
+      projectItemId: z.string().optional()
+        .describe("Project item node ID (PVTI_...) — use instead of number for draft items"),
       unarchive: z.boolean().optional().default(false)
         .describe("If true, unarchive instead of archive (default: false)"),
     },
     async (args) => {
       try {
+        if (!args.number && !args.projectItemId) {
+          return toolError("Either number or projectItemId must be provided");
+        }
+        if (args.number && args.projectItemId) {
+          return toolError("Provide either number or projectItemId, not both");
+        }
+
         const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
           client,
           args,
@@ -67,14 +76,16 @@ export function registerProjectManagementTools(
           return toolError("Could not resolve project ID");
         }
 
-        const projectItemId = await resolveProjectItemId(
-          client,
-          fieldCache,
-          owner,
-          repo,
-          args.number,
-          projectNumber,
-        );
+        const itemId = args.projectItemId
+          ? args.projectItemId
+          : await resolveProjectItemId(
+              client,
+              fieldCache,
+              owner,
+              repo,
+              args.number!,
+              projectNumber,
+            );
 
         if (args.unarchive) {
           await client.projectMutate(
@@ -86,7 +97,7 @@ export function registerProjectManagementTools(
                 item { id }
               }
             }`,
-            { projectId, itemId: projectItemId },
+            { projectId, itemId },
           );
         } else {
           await client.projectMutate(
@@ -98,14 +109,14 @@ export function registerProjectManagementTools(
                 item { id }
               }
             }`,
-            { projectId, itemId: projectItemId },
+            { projectId, itemId },
           );
         }
 
         return toolSuccess({
-          number: args.number,
+          number: args.number ?? null,
           archived: !args.unarchive,
-          projectItemId,
+          projectItemId: itemId,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -119,16 +130,25 @@ export function registerProjectManagementTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__remove_from_project",
-    "Remove an issue from the project. This deletes the project item (not the issue itself). Returns: number, removed.",
+    "Remove an item from the project. This deletes the project item (not the issue itself). Accepts either number (for issues) or projectItemId (for draft items). WARNING: For draft issues, this permanently destroys the draft content — there is no undo. Returns: number, removed, projectItemId.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
       projectNumber: z.coerce.number().optional()
         .describe("Project number override (defaults to configured project)"),
-      number: z.coerce.number().describe("Issue number"),
+      number: z.coerce.number().optional().describe("Issue number (provide this or projectItemId)"),
+      projectItemId: z.string().optional()
+        .describe("Project item node ID (PVTI_...) — use instead of number for draft items"),
     },
     async (args) => {
       try {
+        if (!args.number && !args.projectItemId) {
+          return toolError("Either number or projectItemId must be provided");
+        }
+        if (args.number && args.projectItemId) {
+          return toolError("Provide either number or projectItemId, not both");
+        }
+
         const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
           client,
           args,
@@ -141,14 +161,16 @@ export function registerProjectManagementTools(
           return toolError("Could not resolve project ID");
         }
 
-        const projectItemId = await resolveProjectItemId(
-          client,
-          fieldCache,
-          owner,
-          repo,
-          args.number,
-          projectNumber,
-        );
+        const itemId = args.projectItemId
+          ? args.projectItemId
+          : await resolveProjectItemId(
+              client,
+              fieldCache,
+              owner,
+              repo,
+              args.number!,
+              projectNumber,
+            );
 
         await client.projectMutate(
           `mutation($projectId: ID!, $itemId: ID!) {
@@ -159,17 +181,20 @@ export function registerProjectManagementTools(
               deletedItemId
             }
           }`,
-          { projectId, itemId: projectItemId },
+          { projectId, itemId },
         );
 
         // Invalidate cached project item ID since it no longer exists
-        client.getCache().invalidate(
-          `project-item-id:${owner}/${repo}#${args.number}`,
-        );
+        if (args.number) {
+          client.getCache().invalidate(
+            `project-item-id:${owner}/${repo}#${args.number}`,
+          );
+        }
 
         return toolSuccess({
-          number: args.number,
+          number: args.number ?? null,
           removed: true,
+          projectItemId: itemId,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -480,8 +505,33 @@ export function registerProjectManagementTools(
           fieldsSet.push("Estimate");
         }
 
+        // Fetch the DI_ content node ID so callers can use update_draft_issue
+        let draftIssueId: string | null = null;
+        try {
+          const itemResult = await client.projectQuery<{
+            node: {
+              content: { id: string } | null;
+            } | null;
+          }>(
+            `query($itemId: ID!) {
+              node(id: $itemId) {
+                ... on ProjectV2Item {
+                  content {
+                    ... on DraftIssue { id }
+                  }
+                }
+              }
+            }`,
+            { itemId: projectItemId },
+          );
+          draftIssueId = itemResult.node?.content?.id ?? null;
+        } catch {
+          // Best-effort: if the query fails, return without draftIssueId
+        }
+
         return toolSuccess({
           projectItemId,
+          draftIssueId,
           title: args.title,
           fieldsSet,
         });
@@ -544,6 +594,72 @@ export function registerProjectManagementTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to update draft issue: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__convert_draft_issue
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__convert_draft_issue",
+    "Convert a draft issue to a real repository issue. Requires the project item ID (PVTI_...) returned by create_draft_issue. CAVEAT: This mutation fails with fine-grained PATs (known GitHub bug, unresolved as of early 2026). Use a classic PAT with repo+project scopes. Returns: projectItemId, converted.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
+      projectItemId: z.string().describe("Project item node ID (PVTI_...) of the draft issue"),
+      repositoryId: z.string().optional()
+        .describe("Repository node ID (R_...). Auto-fetched from configured repo if omitted"),
+    },
+    async (args) => {
+      try {
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
+          client,
+          args,
+        );
+
+        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        // Resolve repository node ID if not provided
+        let repoId = args.repositoryId;
+        if (!repoId) {
+          const repoResult = await client.query<{
+            repository: { id: string } | null;
+          }>(
+            `query($repoOwner: String!, $repoName: String!) {
+              repository(owner: $repoOwner, name: $repoName) { id }
+            }`,
+            { repoOwner: owner, repoName: repo },
+            { cache: true, cacheTtlMs: 60 * 60 * 1000 },
+          );
+
+          repoId = repoResult.repository?.id;
+          if (!repoId) {
+            return toolError(`Repository ${owner}/${repo} not found`);
+          }
+        }
+
+        await client.projectMutate(
+          `mutation($itemId: ID!, $repositoryId: ID!) {
+            convertProjectV2DraftIssueItemToIssue(input: {
+              itemId: $itemId,
+              repositoryId: $repositoryId
+            }) {
+              item { id }
+            }
+          }`,
+          { itemId: args.projectItemId, repositoryId: repoId },
+        );
+
+        return toolSuccess({
+          projectItemId: args.projectItemId,
+          converted: true,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to convert draft issue: ${message}`);
       }
     },
   );

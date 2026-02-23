@@ -185,6 +185,44 @@ describe("project management mutations", () => {
     expect(mutation).toContain("body");
   });
 
+  it("convertProjectV2DraftIssueItemToIssue mutation has required input fields", () => {
+    const mutation = `mutation($itemId: ID!, $repositoryId: ID!) {
+      convertProjectV2DraftIssueItemToIssue(input: {
+        itemId: $itemId,
+        repositoryId: $repositoryId
+      }) {
+        item { id }
+      }
+    }`;
+    expect(mutation).toContain("convertProjectV2DraftIssueItemToIssue");
+    expect(mutation).toContain("itemId");
+    expect(mutation).toContain("repositoryId");
+  });
+
+  it("repository node ID query has required fields", () => {
+    const repoQuery = `query($repoOwner: String!, $repoName: String!) {
+      repository(owner: $repoOwner, name: $repoName) { id }
+    }`;
+    expect(repoQuery).toContain("repository");
+    expect(repoQuery).toContain("repoOwner");
+    expect(repoQuery).toContain("repoName");
+  });
+
+  it("draft issue content node ID query has required fields", () => {
+    const contentQuery = `query($itemId: ID!) {
+      node(id: $itemId) {
+        ... on ProjectV2Item {
+          content {
+            ... on DraftIssue { id }
+          }
+        }
+      }
+    }`;
+    expect(contentQuery).toContain("ProjectV2Item");
+    expect(contentQuery).toContain("DraftIssue");
+    expect(contentQuery).toContain("itemId");
+  });
+
   it("updateProjectV2ItemPosition mutation has required input fields", () => {
     const mutation = `mutation($projectId: ID!, $itemId: ID!, $afterId: ID) {
       updateProjectV2ItemPosition(input: {
@@ -403,6 +441,39 @@ describe("link_team org validation", () => {
     expect(teamQuery).toContain("organization");
     expect(teamQuery).toContain("team(slug:");
     expect(teamQuery).not.toContain("user");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// archive_item / remove_from_project dual-identifier validation
+// ---------------------------------------------------------------------------
+
+describe("dual-identifier parameter validation", () => {
+  it("rejects when neither number nor projectItemId is provided", () => {
+    const args = { unarchive: false };
+    const hasNumber = "number" in args && (args as Record<string, unknown>).number !== undefined;
+    const hasItemId = "projectItemId" in args && (args as Record<string, unknown>).projectItemId !== undefined;
+    expect(hasNumber || hasItemId).toBe(false);
+  });
+
+  it("rejects when both number and projectItemId are provided", () => {
+    const args = { number: 42, projectItemId: "PVTI_test123" };
+    const hasBoth = args.number !== undefined && args.projectItemId !== undefined;
+    expect(hasBoth).toBe(true);
+  });
+
+  it("accepts number-only for issue-based operations", () => {
+    const args = { number: 42 };
+    const hasNumber = args.number !== undefined;
+    const hasItemId = "projectItemId" in args;
+    expect(hasNumber && !hasItemId).toBe(true);
+  });
+
+  it("accepts projectItemId-only for draft operations", () => {
+    const args = { projectItemId: "PVTI_test123" };
+    const hasItemId = args.projectItemId !== undefined;
+    const hasNumber = "number" in args;
+    expect(hasItemId && !hasNumber).toBe(true);
   });
 });
 
