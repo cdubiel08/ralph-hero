@@ -57,7 +57,7 @@ Both modes suffer from documented failures: redundant messaging (30+ per session
 ## Desired End State
 
 ### Verification
-- [ ] Research doc for GH-352 committed and linked (Phase 0 findings documented)
+- [x] Research doc for GH-352 committed and linked (Phase 0 findings documented)
 - [ ] `conventions.md` has "Communication Discipline" section with Assignment/Reporting/Nudge Rules
 - [ ] `SKILL.md` Section 5 has FORBIDDEN rules for SendMessage misuse
 - [ ] Hook scripts produce at most one line of stderr guidance
@@ -106,8 +106,8 @@ Phases 1-5 are documentation/skill/agent changes that build a new orchestration 
 - `suggestedRoster` feasible → Phase 4 adds to `PipelinePosition` interface
 
 ### Success Criteria
-- [ ] Automated: Research doc exists at expected path and is committed
-- [ ] Manual: Research findings cover all 5 areas (0a-0e) with status/action for each
+- [x] Automated: Research doc exists at expected path and is committed
+- [x] Manual: Research findings cover all 5 areas (0a-0e) with status/action for each
 
 **Creates for next phase**: Validated primitive behavior findings that inform all subsequent phase designs.
 
@@ -175,9 +175,9 @@ Non-review path: `Task completed by $TEAMMATE: "$TASK_SUBJECT"`
 **Changes**: Already compliant — line 21 outputs a single line. No change.
 
 ### Success Criteria
-- [ ] Automated: `grep -c "FORBIDDEN" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c "Communication Discipline" plugin/ralph-hero/skills/shared/conventions.md` returns >= 1
-- [ ] Manual: `team-task-completed.sh` outputs exactly one line per path (review/non-review)
+- [x] Automated: `grep -c "FORBIDDEN" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 1
+- [x] Automated: `grep -c "Communication Discipline" plugin/ralph-hero/skills/shared/conventions.md` returns >= 1
+- [x] Manual: `team-task-completed.sh` outputs exactly one line per path (review/non-review)
 
 **Creates for next phase**: Communication rules that Phase 3's upfront task list model and Phase 5's agent definitions reference.
 
@@ -269,9 +269,9 @@ EOF
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c "Bough Model" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
-- [ ] Automated: `grep -c "blockedBy" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 3
-- [ ] Manual: Section 4.2 describes full upfront task graph with `TaskCreate` + `TaskUpdate(addBlockedBy)` pattern
+- [x] Automated: `grep -c "Bough Model" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns 0
+- [x] Automated: `grep -c "blockedBy" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns >= 3
+- [x] Manual: Section 4.2 describes full upfront task graph with `TaskCreate` + `TaskUpdate(addBlockedBy)` pattern
 
 **Creates for next phase**: Upfront task list model that Phase 4's roster spawning builds upon.
 
@@ -360,10 +360,10 @@ in creation. Your Stop hook will re-check. Do not treat empty TaskList as an err
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Automated: `grep -c "suggestedRoster" plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns >= 3
-- [ ] Manual: `detect_pipeline_position` response includes `suggestedRoster` with analyst/builder/validator/integrator counts
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `grep -c "suggestedRoster" plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns >= 3
+- [x] Manual: `detect_pipeline_position` response includes `suggestedRoster` with analyst/builder/validator/integrator counts
 
 **Creates for next phase**: `suggestedRoster` heuristic that SKILL.md uses for roster sizing; agent definitions that handle empty TaskList.
 
@@ -402,9 +402,9 @@ in creation. Your Stop hook will re-check. Do not treat empty TaskList as an err
 **Changes**: This was partially addressed in Phase 3. Verify the guidance text at lines 35-39 explicitly mentions "unblocked" tasks and `blockedBy` checking. If not already updated, make the change described in Phase 3.
 
 ### Success Criteria
-- [ ] Automated: `grep -c "claim-then-verify\|TaskUpdate.*owner.*TaskGet.*confirm" plugin/ralph-hero/agents/ralph-analyst.md` returns >= 1
-- [ ] Manual: All 4 agent definitions have the same 6-step task loop structure
-- [ ] Manual: Role-specific additions (builder revision handling, validator verdict, integrator procedures) preserved
+- [x] Automated: `grep -c "claim-then-verify\|TaskUpdate.*owner.*TaskGet.*confirm" plugin/ralph-hero/agents/ralph-analyst.md` returns >= 1
+- [x] Manual: All 4 agent definitions have the same 6-step task loop structure
+- [x] Manual: Role-specific additions (builder revision handling, validator verdict, integrator procedures) preserved
 
 **Creates for next phase**: Agent definitions that work with the upfront task list and self-claim model.
 
@@ -471,9 +471,9 @@ After all research tasks complete, if `isGroup=true` and `issues.length >= 3`:
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c "TaskCreate\|TaskList\|blockedBy" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns >= 5
-- [ ] Automated: `grep -c "run_in_background" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns 0
-- [ ] Manual: Hero mode SKILL.md has resumability check, upfront task list creation, and unified execution loop
+- [x] Automated: `grep -c "TaskCreate\|TaskList\|blockedBy" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns >= 5 (27)
+- [x] Automated: `grep -c "run_in_background" plugin/ralph-hero/skills/ralph-hero/SKILL.md` returns 0
+- [x] Manual: Hero mode SKILL.md has resumability check, upfront task list creation, and unified execution loop
 
 **Creates for next phase**: Hero mode using the same upfront task list pattern as team mode.
 
@@ -504,8 +504,8 @@ After all research tasks complete, if `isGroup=true` and `issues.length >= 3`:
 **Note**: `form-idea/SKILL.md` already exists on main — compare with GH-343 version before overwriting.
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md plugin/ralph-hero/skills/research-codebase/SKILL.md` succeeds
-- [ ] Manual: Each skill passes the verification checklist from the research doc
+- [x] Automated: `ls plugin/ralph-hero/skills/draft-idea/SKILL.md plugin/ralph-hero/skills/research-codebase/SKILL.md` succeeds
+- [x] Manual: Each skill passes the verification checklist from the research doc (no context:fork, no RALPH_COMMAND, correct models, GitHub tools only, no Linear, team_name convention notes only)
 
 **Creates for next phase**: Complete set of 3 interactive skills with GitHub integration.
 
@@ -534,8 +534,8 @@ After all research tasks complete, if `isGroup=true` and `issues.length >= 3`:
 **This phase is a verification pass only.** If all checks pass, close GH-359 as Done with no code changes needed.
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md plugin/ralph-hero/skills/iterate-plan/SKILL.md plugin/ralph-hero/skills/implement-plan/SKILL.md` succeeds
-- [ ] Manual: Each skill passes acceptance criteria from research doc
+- [x] Automated: `ls plugin/ralph-hero/skills/create-plan/SKILL.md plugin/ralph-hero/skills/iterate-plan/SKILL.md plugin/ralph-hero/skills/implement-plan/SKILL.md` succeeds
+- [x] Manual: Each skill passes acceptance criteria — no context:fork, no RALPH_COMMAND, model:opus, ralph_hero__ tools, no Linear, Artifact Comment Protocol, state transitions offered, manual verification pauses
 
 **Creates for next phase**: Confirmed complete set of all 6 interactive skills.
 
@@ -654,8 +654,8 @@ if [[ "${RALPH_DEBUG:-}" != "true" ]]; then exit 0; fi
 - `withLogging` calls handler and logs timing
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (including new tests)
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (including new tests)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
 - [ ] Manual: `RALPH_DEBUG=true` produces `~/.ralph-hero/logs/session-*.jsonl` with valid events
 
 **Creates for next phase**: JSONL capture infrastructure that Phase 10's collation tools read.
@@ -705,9 +705,9 @@ if (process.env.RALPH_DEBUG === 'true') {
 - `dryRun=true` skips GitHub writes
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (including new tests)
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Manual: `ralph_hero__debug_stats` returns valid aggregation over test JSONL data
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (711 tests, 32 files, including 24 new debug-tools tests)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Manual: `ralph_hero__debug_stats` returns valid aggregation over test JSONL data (verified via unit tests)
 
 **Creates for next phase**: Complete observability layer (capture + collation + metrics).
 

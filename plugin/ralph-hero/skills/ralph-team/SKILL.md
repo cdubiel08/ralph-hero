@@ -157,115 +157,95 @@ For XS issues (estimate=1) with specific, actionable descriptions: skip research
 
 Team name must be unique: `TEAM_NAME = "ralph-team-GH-NNN"` (e.g., `ralph-team-GH-42`; use issue number or group primary). Use for ALL subsequent `team_name` parameters.
 
-### 4.2 Create Tasks for Current Phase Only (Bough Model)
+### 4.2 Create Upfront Task List
 
-Based on pipeline position (Section 3), create tasks ONLY for the current phase. Do NOT create downstream tasks -- they will be created when the current phase converges (see Section 4.4).
+**Resumability check**: Before creating tasks, call `TaskList()`. If incomplete tasks exist for the target issue(s) (matching `metadata.issue_number`), resume from the first incomplete task instead of creating new ones.
 
-Call `detect_pipeline_position` to determine the current phase and its issues.
+Create the full pipeline task graph upfront using `TaskCreate` + `TaskUpdate(addBlockedBy)`. Workers self-claim tasks as they become unblocked.
 
-**Current-phase task rules** (include description and metadata for each task):
+**Task graph for single issue**:
+```
+T-1: Research GH-NNN       → unblocked         → analyst
+T-2: Plan GH-NNN           → blockedBy: T-1    → builder
+T-3: Review plan GH-NNN    → blockedBy: T-2    → validator
+T-4: Implement GH-NNN      → blockedBy: T-3    → builder
+T-5: Create PR GH-NNN      → blockedBy: T-4    → integrator
+T-6: Merge PR GH-NNN       → blockedBy: T-5    → integrator
+```
 
-- **SPLIT**:
-  Subject: `"Split GH-NNN"`
-  Description: Include issue URL, current estimate, and reason for splitting.
-  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "split", "phase": "split", "estimate": "[current]" }`
-  Only create if `subIssueCount === 0`.
+**Task graph for group of N issues**:
+```
+T-1..N: Research GH-AAA … GH-ZZZ  → unblocked (parallel)     → analyst(s)
+T-N+1:  Plan group GH-AAA          → blockedBy: T-1..N        → builder
+T-N+2:  Review plan GH-AAA         → blockedBy: T-N+1         → validator
+T-N+3:  Implement GH-AAA           → blockedBy: T-N+2         → builder
+T-N+4:  Create PR GH-AAA           → blockedBy: T-N+3         → integrator
+T-N+5:  Merge PR GH-AAA            → blockedBy: T-N+4         → integrator
+```
 
-- **TRIAGE**:
-  Subject: `"Triage GH-NNN"`
-  Description: Include issue URL, current estimate.
-  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "triage", "phase": "triage", "estimate": "[current]" }`
+**Task metadata** (include description and metadata for each task):
 
-- **RESEARCH**:
-  Subject: `"Research GH-NNN"` per issue (for groups: per-member)
-  Description: Include issue URL, current workflow state, estimate.
+- **RESEARCH**: Subject: `"Research GH-NNN"` per issue
   Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "research", "phase": "research", "estimate": "[XS/S]" }`
 
-- **PLAN**:
-  Subject: `"Plan GH-NNN"` (group: `"Plan group GH-NNN"`)
-  Description: Include issue URL, research document path(s) from artifact comments, group membership if applicable.
-  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "plan", "phase": "plan", "artifact_path": "[research doc path]", "group_primary": "NNN", "group_members": "NNN,AAA,BBB" }`
+- **PLAN**: Subject: `"Plan GH-NNN"` (group: `"Plan group GH-NNN"`)
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "plan", "phase": "plan", "group_primary": "NNN", "group_members": "NNN,AAA,BBB" }`
 
-- **REVIEW**:
-  Subject: `"Review plan for GH-NNN"` -- only if `RALPH_REVIEW_MODE=interactive`
-  Description: Include issue URL, plan document path from artifact comments.
-  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "review", "phase": "review", "artifact_path": "[plan doc path]" }`
+- **REVIEW**: Subject: `"Review plan for GH-NNN"` -- only if `RALPH_REVIEW_MODE=interactive`
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "review", "phase": "review" }`
 
-- **IMPLEMENT**:
-  Subject: `"Implement GH-NNN"`
-  Description: Include issue URL, plan document path from artifact comments, worktree path if already created.
-  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "impl", "phase": "implement", "artifact_path": "[plan doc path]", "worktree": "worktrees/GH-NNN/" }`
+- **IMPLEMENT**: Subject: `"Implement GH-NNN"`
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "impl", "phase": "implement" }`
 
-- **COMPLETE**:
-  Subject: `"Create PR for GH-NNN"` + `"Merge PR for GH-NNN"` (coupled pair, Merge blocked by PR)
-  Description: Include issue URL, worktree path, branch name.
-  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "pr", "phase": "complete", "worktree": "worktrees/GH-NNN/" }`
+- **COMPLETE**: Subject: `"Create PR for GH-NNN"` + `"Merge PR for GH-NNN"` (coupled pair)
+  Metadata: `{ "issue_number": "NNN", "issue_url": "[url]", "command": "pr", "phase": "complete" }`
 
-**Stream-aware variants** (use these when `STREAMS[]` is non-empty):
-
-- **PLAN (stream)**:
-  Subject: `"Plan stream-{stream_id} GH-{stream_primary}"`
-  Description: Include issue URLs for all stream members, research doc paths (carried forward from completed research tasks), stream membership.
-  Metadata: `{ "issue_number": "{stream_primary}", "issue_url": "[url]", "command": "plan", "phase": "plan", "stream_id": "{stream_id}", "stream_primary": "{stream_primary}", "stream_members": "{comma-separated}", "epic_issue": "{parent_number}", "artifact_path": "[research doc paths]" }`
-
-- **REVIEW (stream)** (only if `RALPH_REVIEW_MODE=interactive`):
-  Subject: `"Review plan for stream-{stream_id} GH-{stream_primary}"`
-  Metadata: adds `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
-
-- **IMPLEMENT (stream)**:
-  Subject: `"Implement stream-{stream_id} GH-{stream_primary}"`
-  Metadata: `{ "issue_number": "{stream_primary}", "issue_url": "[url]", "command": "impl", "phase": "implement", "stream_id": "{stream_id}", "stream_primary": "{stream_primary}", "stream_members": "{comma-separated}", "epic_issue": "{parent_number}", "artifact_path": "[plan doc path]", "worktree": "worktrees/GH-{epic_issue}-stream-{sorted-issues}/" }`
-
-- **COMPLETE (stream)**:
-  Subject: `"Create PR for stream-{stream_id} GH-{stream_primary}"` + `"Merge PR for stream-{stream_id} GH-{stream_primary}"` (coupled pair)
-  Metadata: adds `stream_id`, `stream_primary`, `stream_members`, `epic_issue`
-
-**Note**: Research tasks remain per-issue (no stream variants) since streams are not detected until after research completes.
-
-See `shared/conventions.md` for the full metadata field reference.
+**blockedBy wiring procedure**:
+1. Create all tasks via `TaskCreate` (captures returned task IDs)
+2. Wire dependencies via `TaskUpdate(taskId, addBlockedBy=[T-N, T-M])`
+3. Pre-assign T-1 (first unblocked task) to an analyst before spawning
 
 **Subject patterns** (workers match on these to self-claim):
 - `"Research GH-NNN"` / `"Plan GH-NNN"` / `"Review plan for GH-NNN"` / `"Implement GH-NNN"` / `"Create PR for GH-NNN"` / `"Merge PR for GH-NNN"`
-- Stream variants: `"Plan stream-X GH-NNN"` / `"Implement stream-X GH-NNN"` / `"Create PR for stream-X GH-NNN"` / `"Merge PR for stream-X GH-NNN"`
 
-**SPLIT safety check**: Only create split tasks for issues without existing children (`subIssueCount === 0`). The detection tool excludes already-split issues from the `issues` array. This is defense-in-depth -- verify before creating tasks.
+See `shared/conventions.md` for the full metadata field reference.
 
-**XS fast-track exception** (Section 3.1): For XS issues, create Implement + PR + Merge as a single bough (all three tasks at once). This is the only case where multiple phases are created together.
+### 4.3 Startup Sequence (Interleaved Create-Assign-Spawn)
 
-### 4.3 Spawn Workers for Available Tasks
+1. `TeamCreate(team_name="ralph-team-GH-NNN")`
+2. `detect_pipeline_position(number=NNN)` → get `suggestedRoster`
+3. Create ALL pipeline tasks with `blockedBy` chains (Section 4.2)
+4. For each role in `suggestedRoster` (where count > 0):
+   a. Find first unblocked task matching role
+   b. `TaskUpdate(taskId, owner="role-name")` — pre-assign
+   c. Read and fill spawn template (Section 6)
+   d. `Task(subagent_type="ralph-role", team_name=..., name="role-name", prompt=filled_template)`
+5. Remaining unblocked tasks without pre-assignment will be self-claimed by workers via Stop hook
 
-Check TaskList for pending, unblocked tasks. For each available task:
+**Why interleaved (not roster-first)**: Idle workers cannot self-detect task creation. The interleaved model (tasks first, then spawn) avoids the need for `SendMessage` wake after pre-assignment — the worker's first turn sees its pre-assigned task immediately.
 
-1. **Pre-assign ownership**: `TaskUpdate(taskId, owner="[role]")` -- sets owner BEFORE spawning
-2. **Spawn worker**: See Section 6 for spawn template
+### 4.4 Dispatch Loop (Passive Monitoring)
 
-Pre-assignment is atomic -- the task is owned before the worker's first turn begins. No race window exists.
+**Design principle**: The dispatch loop is passive. The lead monitors lifecycle hooks (TaskCompleted, TeammateIdle, Stop) and responds to events. The lead does NOT actively poll workers, send progress check messages, or create tasks mid-pipeline. All tasks are created upfront (Section 4.2) and workers self-claim via the Stop hook.
 
-For group research with multiple tasks: pre-assign and spawn up to 3 analysts (`analyst`, `analyst-2`, `analyst-3`).
+The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural decision points:
 
-### 4.4 Dispatch Loop
+**On TaskCompleted**: Check if all pipeline tasks are completed. If yes, initiate shutdown sequence (Section 4.6).
+**On TeammateIdle**: Normal — workers go idle between tasks. The Stop hook handles work discovery. Do NOT nudge.
+**On escalation (SendMessage from worker)**: Read the message, resolve the issue (create clarifying task, provide context), respond.
 
-The lifecycle hooks (`TaskCompleted`, `TeammateIdle`, `Stop`) fire at natural decision points and tell you what to check. Follow their guidance.
+The lead does NOT:
+- Call `detect_pipeline_position` for convergence checking
+- Create new tasks mid-pipeline
+- Send nudge messages to idle workers
+- Manually advance phases
 
-Your dispatch responsibilities:
+**Exception handling**: When a review task completes, check `verdict` from its metadata via `TaskGet`. If `verdict` is `"NEEDS_ITERATION"`, create a revision task with "Plan" in subject and wire it as `blockedBy` the failed review. The builder will self-claim. Terminal state is "In Review", never "Done".
 
-1. **Bough advancement** (primary):
-   **If `STREAMS[]` non-empty (stream-aware dispatch)**:
-   For each stream in `STREAMS[]`:
-   - Call `detect_pipeline_position(number=stream.stream_primary)` to get the pipeline position
-   - Filter returned `issues[]` to only those in `stream.stream_members` — `detect_pipeline_position` traverses the full group, but stream convergence considers only stream members
-   - Check `convergence.met` for the filtered subset: all stream members must be at the gate state
-   - If stream-level convergence met: create next-phase tasks for THIS STREAM ONLY using stream-aware templates (Section 4.2) and assign to idle workers
-   - Streams advance independently — one stream finishing plan does not wait for another stream
+**Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
 
-   **Carry forward artifact paths (per stream)**: When creating next-phase stream tasks, read `artifact_path` from completed task metadata via `TaskGet` — workers set this in their result metadata. Include all stream-member artifact paths in the new task description.
+**Intake**: When all pipeline tasks complete and TaskList is empty, pull new issues from GitHub via `pick_actionable_issue` and create a new upfront task graph (Section 4.2) for found issues.
 
-   **Else (bough model, `STREAMS[]` empty or group ≤2)**:
-   When a phase's tasks complete, call `detect_pipeline_position` to check convergence. If `convergence.met === true` and the phase advances: create next-bough tasks per Section 4.2 and assign to idle workers. For groups: wait for ALL group members to converge before creating next-bough tasks.
-   **Carry forward artifact paths**: When creating next-bough tasks, read `artifact_path` from completed task metadata via `TaskGet` — workers set this in their result metadata. Include it in the new task descriptions.
-2. **Exception handling**: When a review task completes, read `verdict` from its metadata via `TaskGet`. If `verdict` is `"NEEDS_ITERATION"`, create a revision task with "Plan" in subject. The builder will self-claim. Terminal state is "In Review", never "Done".
-3. **Worker gaps**: If a role has unblocked tasks but no active worker (never spawned, or crashed), spawn one (Section 6). Workers self-claim.
-4. **Intake**: When idle notifications arrive and TaskList shows no pending tasks, pull new issues from GitHub via `pick_actionable_issue` for each idle role (Analyst->"Backlog", Analyst->"Research Needed", Builder->"Ready for Plan", Validator->"Plan in Review" (interactive mode only), Builder->"In Progress", Integrator->"In Review"). Create new-bough tasks for found issues.
 The Stop hook prevents premature shutdown -- you cannot stop while GitHub has processable issues. Trust it.
 
 ### 4.5 Stream Lifecycle
@@ -333,6 +313,13 @@ TaskUpdate(taskId="3", status="completed",
 - **Bias toward action**: When in doubt, check TaskList. When idle, query GitHub. Zero-gap lookahead.
 - **Hooks are your safety net**: Stop hook prevents premature shutdown. State hooks prevent invalid transitions. Trust them.
 - **Escalate and move on**: If stuck, escalate via GitHub comment (`__ESCALATE__` intent) and find other work. Never block on user input.
+
+### FORBIDDEN Communication Patterns
+- SendMessage immediately after TaskUpdate(owner=...) — task assignment IS the communication
+- SendMessage with task details in content — put context in TaskCreate description
+- broadcast for anything other than critical blocking issues
+- SendMessage to acknowledge receipt of a task — just start working
+- Creating tasks mid-pipeline — all tasks created upfront (see Section 4.2)
 
 ## Section 6 - Teammate Spawning
 

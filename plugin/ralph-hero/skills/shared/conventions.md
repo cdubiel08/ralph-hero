@@ -34,6 +34,24 @@ TaskUpdate is the primary channel for structured results between workers and the
 
 **Lead communication**: Prefer tasks over messages. Don't nudge after assigning. Be patient with idle workers (>2 min before nudging). Update tasks, not messages, for redirection.
 
+## Communication Discipline
+
+### The Assignment Rule
+After TaskUpdate(owner=...) for a worker's FIRST task (before spawn), do NOT SendMessage.
+After TaskUpdate(owner=...) for a NEWLY ASSIGNED task to an IDLE worker, SendMessage to wake them.
+After TaskUpdate(owner=...) in any other case, do NOT SendMessage.
+
+### The Reporting Rule
+Workers report via TaskUpdate(metadata={...}). SendMessage is for:
+- Escalations (blocking discoveries, unanswerable questions)
+- Responses to direct questions from teammates
+Never for: acknowledgments, progress updates, task confirmations.
+
+### The Nudge Rule
+If a worker is idle with an assigned task, the problem is TaskList visibility, not communication.
+Check the task exists in the team scope. Do NOT send a nudge message.
+If the task is correctly scoped and the worker is still idle after 2 minutes, send ONE wake message.
+
 ## Escalation Protocol
 
 When encountering complexity, uncertainty, or states that don't align with protocol, **escalate via GitHub issue comment** by @mentioning the appropriate person.
@@ -77,23 +95,14 @@ When encountering complexity, uncertainty, or states that don't align with proto
 
 ## Pipeline Handoff Protocol
 
-Cross-phase progression is lead-driven: the lead creates next-bough tasks when convergence is detected. Workers check TaskList for within-phase work and notify the lead when idle.
+Workers self-navigate the pipeline via the upfront task list:
 
-### Pipeline Order
+1. Worker completes task → `TaskUpdate(status="completed", metadata={...})`
+2. Stop hook fires → checks TaskList for unblocked, unclaimed tasks matching role
+3. If found → blocks stop (exit 2), worker self-claims and executes
+4. If not found → allows stop (exit 0), worker goes idle
 
-| Current Worker | Next Stage | Worker to find |
-|---|---|---|
-| `analyst` | Builder | `builder` |
-| `builder` (plan done) | Validator | `validator` (if `RALPH_REVIEW_MODE=interactive`) |
-| `builder` (impl done) | Integrator | `integrator` |
-| `validator` (approved) | Builder | `builder` |
-| `validator` (rejected) | Builder (re-plan) | `builder` |
-
-### Handoff Procedure
-
-1. Check `TaskList` for more tasks matching your role
-2. If found: self-claim and continue
-3. If none available: notify the team-lead. The Stop hook blocks shutdown if matching tasks appear later.
+**Key**: `blockedBy` chains enforce phase ordering. Workers only work on unblocked tasks.
 
 ## Spawn Template Protocol
 

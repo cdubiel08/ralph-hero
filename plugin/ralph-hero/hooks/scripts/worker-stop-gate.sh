@@ -33,8 +33,9 @@ case "$TEAMMATE" in
 esac
 
 cat >&2 <<EOF
-Before stopping, check TaskList for pending tasks matching your role ($KEYWORDS).
-If matching tasks exist, try claiming and processing them.
+Before stopping, check TaskList for pending UNBLOCKED tasks matching your role ($KEYWORDS).
+Only tasks with empty blockedBy count as available work.
+If matching unblocked tasks exist, claim one and process it.
 If none are available, you may stop.
 EOF
 exit 2
