@@ -104,7 +104,7 @@ export interface DraftIssue {
 **Changes**: If a DraftIssue structural test exists, verify `id` field is present. Otherwise follow existing pattern.
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build && npm test`
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build && npm test`
 - [ ] Manual: Call `list_project_items` with `itemType: "DRAFT_ISSUE"` and verify `draftIssueId` (DI_*) appears in response
 - [ ] Manual: Verify non-draft items have `draftIssueId: null`
 

@@ -115,6 +115,20 @@ describe("list_project_items repository info structural", () => {
     expect(draftIssueBlock).toBeDefined();
     expect(draftIssueBlock).not.toContain("repository");
   });
+
+  it("DraftIssue GraphQL fragment includes id field for DI_* content node ID", () => {
+    const draftIssueBlock = projectToolsSrc.match(/\.\.\. on DraftIssue \{[^}]+\}/)?.[0];
+    expect(draftIssueBlock).toBeDefined();
+    expect(draftIssueBlock).toContain("id");
+  });
+
+  it("response mapping includes draftIssueId field", () => {
+    expect(projectToolsSrc).toContain("draftIssueId:");
+  });
+
+  it("draftIssueId is conditional on DRAFT_ISSUE type", () => {
+    expect(projectToolsSrc).toContain('item.type === "DRAFT_ISSUE"');
+  });
 });
 
 describe("list_project_items exclude negation filters structural", () => {
