@@ -1,6 +1,6 @@
 ---
 description: Autonomous implementation of a GitHub issue following its approved plan - executes one phase per invocation in an isolated worktree. Use when you want to implement an issue, execute a plan, code a ticket, or address PR review feedback.
-argument-hint: [optional-issue-number]
+argument-hint: [optional-issue-number] [--plan-doc path]
 context: fork
 model: opus
 hooks:
@@ -95,7 +95,11 @@ After fetching the issue, check its current state:
    - number: [issue-number]
    ```
 
-2. **Find linked plan document** (per Artifact Comment Protocol in shared/conventions.md):
+2. **Find linked plan document**:
+
+   **Artifact shortcut** (see [Artifact Passthrough Protocol](../shared/conventions.md#artifact-passthrough-protocol)): If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
+
+   Per Artifact Comment Protocol in shared/conventions.md:
    1. Search issue comments for `## Implementation Plan` or `## Group Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
    2. Extract the GitHub URL from the line after the header
    3. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix

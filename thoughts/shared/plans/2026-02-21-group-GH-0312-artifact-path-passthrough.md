@@ -140,10 +140,10 @@ Phase 1 defines the protocol. Phases 2-4 are producer/consumer pairs that refere
 - Add **Artifact shortcut** block before plan discovery: if flag provided and file exists, use directly and skip discovery
 
 ### Success Criteria
-- [ ] Automated: `grep -c "\-\-research-doc" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c "\-\-plan-doc" plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c "\-\-plan-doc" plugin/ralph-hero/skills/ralph-review/SKILL.md` returns >= 1
-- [ ] Manual: Each skill's artifact shortcut validates file exists before using, falls back to discovery if not
+- [x] Automated: `grep -c "\-\-research-doc" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
+- [x] Automated: `grep -c "\-\-plan-doc" plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns >= 1
+- [x] Automated: `grep -c "\-\-plan-doc" plugin/ralph-hero/skills/ralph-review/SKILL.md` returns >= 1
+- [x] Manual: Each skill's artifact shortcut validates file exists before using, falls back to discovery if not
 
 **Creates for next phase**: Consumer skills ready to receive flags from orchestrators
 
