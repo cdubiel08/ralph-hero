@@ -12,6 +12,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { createGitHubClient, type GitHubClient } from "./github-client.js";
 import { FieldOptionCache } from "./lib/cache.js";
+import { createDebugLogger, wrapServerToolWithLogging, type DebugLogger } from "./lib/debug-logger.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "./types.js";
 import { resolveRepoFromProject } from "./lib/helpers.js";
 import { registerProjectTools } from "./tools/project-tools.js";
@@ -35,7 +36,7 @@ function resolveEnv(name: string): string | undefined {
   return val;
 }
 
-function initGitHubClient(): GitHubClient {
+function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
   // Repo token: for repository operations (issues, PRs, comments)
   const repoToken =
     resolveEnv("RALPH_GH_REPO_TOKEN") || resolveEnv("RALPH_HERO_GITHUB_TOKEN");
@@ -117,7 +118,7 @@ function initGitHubClient(): GitHubClient {
     projectNumbers,
     projectOwner: projectOwner || undefined,
     templateProjectNumber,
-  });
+  }, debugLogger);
 }
 
 /**
@@ -288,7 +289,12 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
 async function main(): Promise<void> {
   console.error("[ralph-hero] Starting MCP server...");
 
-  const client = initGitHubClient();
+  const debugLogger = createDebugLogger();
+  if (debugLogger) {
+    console.error("[ralph-hero] Debug logging enabled (RALPH_DEBUG=true)");
+  }
+
+  const client = initGitHubClient(debugLogger);
 
   // Attempt lazy repo inference from project (non-fatal)
   try {
@@ -311,6 +317,11 @@ async function main(): Promise<void> {
 
   // Shared field option cache for project field lookups
   const fieldCache = new FieldOptionCache();
+
+  // Wrap server.tool with debug logging when RALPH_DEBUG=true
+  if (debugLogger) {
+    wrapServerToolWithLogging(server, debugLogger);
+  }
 
   // Register core tools
   registerCoreTools(server, client);

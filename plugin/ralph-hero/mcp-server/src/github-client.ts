@@ -9,6 +9,8 @@
 import { graphql } from "@octokit/graphql";
 import { RateLimiter } from "./lib/rate-limiter.js";
 import { SessionCache } from "./lib/cache.js";
+import type { DebugLogger } from "./lib/debug-logger.js";
+import { extractOperationName, sanitize } from "./lib/debug-logger.js";
 import type { RateLimitInfo, GitHubClientConfig } from "./types.js";
 
 /**
@@ -74,6 +76,7 @@ export interface GitHubClient {
  */
 export function createGitHubClient(
   clientConfig: GitHubClientConfig,
+  debugLogger?: DebugLogger | null,
 ): GitHubClient {
   const graphqlWithAuth = graphql.defaults({
     headers: {
@@ -123,6 +126,7 @@ export function createGitHubClient(
       }
     }
 
+    const t0 = Date.now();
     try {
       const response = await graphqlFn<T & { rateLimit?: RateLimitInfo }>(
         fullQuery,
@@ -137,8 +141,27 @@ export function createGitHubClient(
         }
       }
 
+      debugLogger?.logGraphQL({
+        operation: extractOperationName(fullQuery),
+        variables: sanitize(variables),
+        durationMs: Date.now() - t0,
+        status: 200,
+        rateLimitRemaining: (response as { rateLimit?: RateLimitInfo }).rateLimit?.remaining,
+        rateLimitCost: (response as { rateLimit?: RateLimitInfo }).rateLimit?.cost,
+      });
+
       return response as T;
     } catch (error: unknown) {
+      debugLogger?.logGraphQL({
+        operation: extractOperationName(fullQuery),
+        variables: sanitize(variables),
+        durationMs: Date.now() - t0,
+        status: error && typeof error === "object" && "status" in error
+          ? (error as { status: number }).status
+          : 500,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
       // Handle rate limit errors (403)
       if (
         error &&

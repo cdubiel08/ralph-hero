@@ -654,8 +654,8 @@ if [[ "${RALPH_DEBUG:-}" != "true" ]]; then exit 0; fi
 - `withLogging` calls handler and logs timing
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (including new tests)
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (including new tests)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
 - [ ] Manual: `RALPH_DEBUG=true` produces `~/.ralph-hero/logs/session-*.jsonl` with valid events
 
 **Creates for next phase**: JSONL capture infrastructure that Phase 10's collation tools read.
