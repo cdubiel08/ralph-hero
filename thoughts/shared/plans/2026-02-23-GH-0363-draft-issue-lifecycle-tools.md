@@ -165,7 +165,7 @@ query($itemId: ID!) {
 - Repository ID query has required fields (`owner`, `name`)
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build && npm test`
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build && npm test`
 - [ ] Manual: Verify `archive_item` with `projectItemId` param archives a draft issue
 - [ ] Manual: Verify `remove_from_project` with `projectItemId` param removes a draft issue
 - [ ] Manual: Verify `convert_draft_issue` converts a draft to a real issue (with classic PAT)
