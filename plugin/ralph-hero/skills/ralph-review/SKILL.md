@@ -1,6 +1,6 @@
 ---
 description: Review and critique implementation plans before coding begins. INTERACTIVE mode for human review, AUTO mode for automated critique. Use when you want to review a plan, approve or reject a spec, or run quality gates on plans.
-argument-hint: <issue-number> [--interactive]
+argument-hint: <issue-number> [--interactive] [--plan-doc path]
 context: fork
 model: opus
 hooks:
@@ -94,7 +94,11 @@ Then STOP.
    - number: [issue-number]
    ```
 
-2. **Find linked plan document** (per Artifact Comment Protocol in shared/conventions.md):
+2. **Find linked plan document**:
+
+   **Artifact shortcut** (see [Artifact Passthrough Protocol](../shared/conventions.md#artifact-passthrough-protocol)): If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
+
+   Per Artifact Comment Protocol in shared/conventions.md:
    1. Search issue comments for `## Implementation Plan` or `## Group Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
    2. Extract the GitHub URL from the line after the header
    3. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix

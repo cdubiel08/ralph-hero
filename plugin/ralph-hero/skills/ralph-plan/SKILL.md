@@ -1,6 +1,6 @@
 ---
 description: Create implementation plan for a GitHub issue from research findings - phased plan with file ownership, success criteria, and verification steps. Use when you want to plan an issue, create a spec, or write an implementation plan.
-argument-hint: [optional-issue-number]
+argument-hint: [optional-issue-number] [--research-doc path]
 context: fork
 model: opus
 hooks:
@@ -116,6 +116,9 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 ### Step 2: Gather Group Context
 
 1. **For each issue** (dependency order):
+
+   **Artifact shortcut** (see [Artifact Passthrough Protocol](../shared/conventions.md#artifact-passthrough-protocol)): If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-7 below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
+
    1. Read issue via `ralph_hero__get_issue(owner, repo, number)` — response includes comments
    2. Search comments for `## Research Document` header. If multiple matches, use the **most recent** (last) match.
    3. Extract the URL from the line after the header
