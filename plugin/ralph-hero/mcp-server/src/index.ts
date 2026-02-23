@@ -25,6 +25,7 @@ import { registerProjectManagementTools } from "./tools/project-management-tools
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
 import { registerRoutingTools } from "./tools/routing-tools.js";
 import { registerSyncTools } from "./tools/sync-tools.js";
+import { registerDebugTools } from "./tools/debug-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -353,6 +354,11 @@ async function main(): Promise<void> {
 
   // Cross-project sync tools
   registerSyncTools(server, client, fieldCache);
+
+  // Debug tools (only when RALPH_DEBUG=true)
+  if (process.env.RALPH_DEBUG === 'true') {
+    registerDebugTools(server, client);
+  }
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

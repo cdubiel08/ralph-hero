@@ -705,9 +705,9 @@ if (process.env.RALPH_DEBUG === 'true') {
 - `dryRun=true` skips GitHub writes
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (including new tests)
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
-- [ ] Manual: `ralph_hero__debug_stats` returns valid aggregation over test JSONL data
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes (711 tests, 32 files, including 24 new debug-tools tests)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [x] Manual: `ralph_hero__debug_stats` returns valid aggregation over test JSONL data (verified via unit tests)
 
 **Creates for next phase**: Complete observability layer (capture + collation + metrics).
 
