@@ -82,10 +82,10 @@ Append `## Autonomous Recording: Hook Integration Design` section containing:
 Add `recordings/` line to prevent ephemeral `.cast` and `.gif` files from being committed.
 
 ### Success Criteria
-- [ ] Automated: `test -f plugin/ralph-hero/skills/record-demo/SKILL.md && head -3 plugin/ralph-hero/skills/record-demo/SKILL.md | grep -q "^---"`
-- [ ] Automated: `grep -q "## Autonomous Recording: Hook Integration Design" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
-- [ ] Automated: `grep -q "recordings/" plugin/ralph-hero/.gitignore`
-- [ ] Manual: Skill frontmatter matches inline/sonnet pattern, workflow steps are clear
+- [x] Automated: `test -f plugin/ralph-hero/skills/record-demo/SKILL.md && head -3 plugin/ralph-hero/skills/record-demo/SKILL.md | grep -q "^---"`
+- [x] Automated: `grep -q "## Autonomous Recording: Hook Integration Design" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
+- [x] Automated: `grep -q "recordings/" plugin/ralph-hero/.gitignore`
+- [x] Manual: Skill frontmatter matches inline/sonnet pattern, workflow steps are clear
 
 ---
 

@@ -299,3 +299,93 @@ Add to `.gitignore`:
 ```
 recordings/
 ```
+
+## Autonomous Recording: Hook Integration Design
+
+### Concept
+
+Autonomous recording wraps skill execution inside an asciinema session.
+This is NOT a standalone skill — it's a recording layer activated by environment variable.
+
+### Environment Variable
+
+```bash
+export RALPH_RECORD=true        # Enable recording
+export RALPH_RECORD_IDLE=2.5    # Idle compression threshold (seconds)
+export RALPH_RECORD_THEME=monokai  # agg theme for GIF conversion
+```
+
+### Integration Point: Shell Script Wrapper
+
+The simplest integration is a wrapper script that existing loop scripts
+(`ralph-loop.sh`, `ralph-team-loop.sh`) can optionally invoke:
+
+**`plugin/ralph-hero/scripts/ralph-record-wrap.sh`**:
+```bash
+#!/usr/bin/env bash
+# Wrap a command in an asciinema recording session
+# Usage: ralph-record-wrap.sh <issue-number> <skill-name> -- <command...>
+
+ISSUE_NUM="$1"; shift
+SKILL_NAME="$1"; shift
+shift  # skip --
+
+CAST_FILE="recordings/GH-$(printf '%04d' "$ISSUE_NUM")-${SKILL_NAME}.cast"
+GIF_FILE="${CAST_FILE%.cast}.gif"
+
+mkdir -p recordings
+
+# Record the command
+asciinema rec \
+  -c "$*" \
+  -i "${RALPH_RECORD_IDLE:-2.5}" \
+  -t "ralph-${SKILL_NAME} #${ISSUE_NUM}" \
+  --overwrite \
+  "$CAST_FILE"
+
+# Convert to GIF
+agg \
+  --theme "${RALPH_RECORD_THEME:-monokai}" \
+  --cols 120 --rows 35 \
+  "$CAST_FILE" "$GIF_FILE"
+
+echo "Recording: $CAST_FILE"
+echo "GIF: $GIF_FILE"
+```
+
+### Future: Hook-Based Auto-Recording
+
+A more sophisticated approach uses PreToolUse/PostToolUse hooks on the `Skill` tool
+to automatically wrap skill invocations. This is deferred to a future implementation plan
+once the basic wrapper script is validated.
+
+### Upload Script
+
+**`plugin/ralph-hero/scripts/ralph-record-upload.sh`**:
+```bash
+#!/usr/bin/env bash
+# Upload a recording GIF to a GitHub issue
+# Usage: ralph-record-upload.sh <issue-number> <gif-path> <skill-name>
+
+ISSUE_NUM="$1"
+GIF_PATH="$2"
+SKILL_NAME="$3"
+
+# GitHub doesn't have a CLI for issue attachment upload directly.
+# Workaround: use the gh api to create a comment with the GIF.
+# For now, we upload to a "demos" release and link it.
+
+RELEASE_TAG="demos"
+
+# Ensure release exists
+gh release view "$RELEASE_TAG" 2>/dev/null || \
+  gh release create "$RELEASE_TAG" --title "Demo Recordings" --notes "Auto-generated demo recordings"
+
+# Upload
+gh release upload "$RELEASE_TAG" "$GIF_PATH" --clobber
+
+# Get URL
+ASSET_URL="https://github.com/${RALPH_GH_OWNER}/${RALPH_GH_REPO}/releases/download/${RELEASE_TAG}/$(basename "$GIF_PATH")"
+
+echo "$ASSET_URL"
+```
