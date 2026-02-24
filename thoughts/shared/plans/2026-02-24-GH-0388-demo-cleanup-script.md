@@ -28,16 +28,16 @@ Existing script conventions are well-established:
 ## Desired End State
 
 ### Verification
-- [ ] `plugin/ralph-hero/scripts/demo-cleanup.sh` exists and is executable
-- [ ] Script closes umbrella issue and all sub-issues via `gh issue close`
-- [ ] Script deletes demo branches (`feature/demo-*`) via `git push origin --delete`
-- [ ] Script archives issues from the project board via `gh project item-archive`
-- [ ] Script accepts issue numbers as CLI positional args
-- [ ] Script auto-detects demo issues by `demo` label when no args provided
-- [ ] `--hard` flag enables full deletion via `gh issue delete --yes`
-- [ ] Script prints a confirmation summary on completion
-- [ ] Script is idempotent (safe to run multiple times)
-- [ ] Script is pipe-compatible with `demo-seed.sh` output
+- [x] `plugin/ralph-hero/scripts/demo-cleanup.sh` exists and is executable
+- [x] Script closes umbrella issue and all sub-issues via `gh issue close`
+- [x] Script deletes demo branches (`feature/demo-*`) via `git push origin --delete`
+- [x] Script archives issues from the project board via `gh project item-archive`
+- [x] Script accepts issue numbers as CLI positional args
+- [x] Script auto-detects demo issues by `demo` label when no args provided
+- [x] `--hard` flag enables full deletion via `gh issue delete --yes`
+- [x] Script prints a confirmation summary on completion
+- [x] Script is idempotent (safe to run multiple times)
+- [x] Script is pipe-compatible with `demo-seed.sh` output
 
 ## What We're NOT Doing
 - Modifying `demo-seed.sh` or any other existing script
@@ -167,9 +167,9 @@ chmod +x plugin/ralph-hero/scripts/demo-cleanup.sh
 ```
 
 ### Success Criteria
-- [ ] Automated: `bash -n plugin/ralph-hero/scripts/demo-cleanup.sh` passes (syntax check)
-- [ ] Automated: `shellcheck plugin/ralph-hero/scripts/demo-cleanup.sh` passes (if shellcheck available)
-- [ ] Manual: `./demo-cleanup.sh --help` or no-args-no-stdin prints usage
+- [x] Automated: `bash -n plugin/ralph-hero/scripts/demo-cleanup.sh` passes (syntax check)
+- [x] Automated: `shellcheck plugin/ralph-hero/scripts/demo-cleanup.sh` passes (if shellcheck available)
+- [x] Manual: `./demo-cleanup.sh --help` or no-args-no-stdin prints usage
 - [ ] Manual: `echo "42 43 44" | ./demo-cleanup.sh --yes` processes piped input
 - [ ] Manual: `./demo-cleanup.sh --hard --yes 42 43` closes, archives, and deletes issues 42 and 43
 - [ ] Manual: Running the script twice on the same issues produces no errors (idempotency)
