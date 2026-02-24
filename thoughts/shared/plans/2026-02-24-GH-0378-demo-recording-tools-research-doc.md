@@ -78,8 +78,8 @@ Write the complete research document with:
 **Important**: End the file cleanly after `## References` with no trailing content, so sibling issues (#379, #380, #381) can append new `##` sections without conflicts.
 
 ### Success Criteria
-- [ ] Automated: `test -f thoughts/shared/research/2026-02-22-demo-recording-tools.md && head -5 thoughts/shared/research/2026-02-22-demo-recording-tools.md | grep -q "^date:"`
-- [ ] Manual: All 5 tools covered with consistent depth and accurate automation matrix
+- [x] Automated: `test -f thoughts/shared/research/2026-02-22-demo-recording-tools.md && head -5 thoughts/shared/research/2026-02-22-demo-recording-tools.md | grep -q "^date:"`
+- [x] Manual: All 5 tools covered with consistent depth and accurate automation matrix
 
 ---
 
