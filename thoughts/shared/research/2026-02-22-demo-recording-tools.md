@@ -211,3 +211,91 @@ Duration: 3m 42s | Phases completed: 3/3
 | (hook integration) | Autonomous | fork | haiku | Bash |
 
 The autonomous mode is NOT a standalone skill — it's a recording wrapper integrated via hooks into existing skills. The interactive mode is a new standalone skill.
+
+## Artifact Pipeline Specification
+
+### File Lifecycle
+
+```
+[Recording] -> [Local File] -> [Conversion] -> [Upload] -> [Comment Link]
+```
+
+#### Autonomous Mode Pipeline
+```
+asciinema rec -c "..." -i 2.5 recordings/GH-NNNN.cast
+    |
+    v
+agg --theme monokai --cols 120 --rows 35 recordings/GH-NNNN.cast recordings/GH-NNNN.gif
+    |
+    v
+gh api graphql (upload GIF as issue comment attachment)
+    |
+    v
+ralph_hero__create_comment(number=NNN, body="## Demo Recording\n\n![...](URL)\n\n...")
+```
+
+#### Interactive Mode Pipeline
+```
+obs-cli recording start
+    ... user records ...
+obs-cli recording stop
+    |
+    v
+ffmpeg -i input.mp4 -ss 00:00:02 -to END -c copy trimmed.mp4  (optional trim)
+    |
+    v
+ffmpeg -i trimmed.mp4 -vf "select=eq(n\,0)" -q:v 2 thumb.jpg  (optional thumbnail)
+    |
+    v
+gh release upload v0.0.0-demos trimmed.mp4 thumb.jpg
+    |
+    v
+ralph_hero__create_comment(number=NNN, body="## Demo Recording\n\n[Watch demo](URL)\n\n...")
+```
+
+### Artifact Comment Protocol: `## Demo Recording`
+
+New section header added to the protocol:
+
+| Phase | Header | Content |
+|-------|--------|---------|
+| Recording | `## Demo Recording` | Video URL (GIF embed or MP4 link) + metadata |
+
+**Comment format (autonomous)**:
+```
+## Demo Recording
+
+![Terminal recording of ralph-impl #42](https://user-images.githubusercontent.com/.../GH-0042.gif)
+
+- **Mode**: Autonomous (asciinema)
+- **Skill**: ralph-impl
+- **Duration**: 3m 42s
+- **Phases**: 3/3 completed
+```
+
+**Comment format (interactive)**:
+```
+## Demo Recording
+
+[Watch demo recording](https://github.com/OWNER/REPO/releases/download/demos/GH-0042-demo.mp4)
+
+- **Mode**: Interactive (OBS)
+- **Duration**: 8m 15s
+- **Narrator**: @username
+- **Covers**: Full lifecycle from issue to merged PR
+```
+
+### Storage & Cleanup
+
+| Artifact | Location | Lifecycle |
+|---|---|---|
+| `.cast` files | `recordings/` (gitignored) | Ephemeral — delete after GIF conversion |
+| `.gif` files | `recordings/` (gitignored) | Ephemeral — delete after upload |
+| `.mp4` files | OBS output dir | User manages |
+| Uploaded GIF | GitHub issue attachment | Permanent |
+| Uploaded MP4 | GitHub release asset | Permanent |
+
+Add to `.gitignore`:
+```
+recordings/
+```
