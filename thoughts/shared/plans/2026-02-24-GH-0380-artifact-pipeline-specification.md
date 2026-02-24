@@ -66,10 +66,10 @@ Append the `## Artifact Pipeline Specification` section containing:
 **Important**: Append cleanly so #381 can continue appending.
 
 ### Success Criteria
-- [ ] Automated: `grep -q "## Artifact Pipeline Specification" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
-- [ ] Automated: `grep -q "Autonomous Mode Pipeline" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
-- [ ] Automated: `grep -q "## Demo Recording" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
-- [ ] Manual: Pipeline flows are clear, comment templates are consistent with existing protocol
+- [x] Automated: `grep -q "## Artifact Pipeline Specification" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
+- [x] Automated: `grep -q "Autonomous Mode Pipeline" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
+- [x] Automated: `grep -q "## Demo Recording" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
+- [x] Manual: Pipeline flows are clear, comment templates are consistent with existing protocol
 
 ---
 
