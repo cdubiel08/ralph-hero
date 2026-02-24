@@ -10,6 +10,7 @@ on:
       - 'plugin/ralph-hero/mcp-server/package-lock.json'
       - 'plugin/ralph-hero/mcp-server/tsconfig.json'
       - 'plugin/ralph-hero/.claude-plugin/plugin.json'
+      - 'plugin/ralph-hero/.mcp.json'
       # Plugin content (new)
       - 'plugin/ralph-hero/agents/**'
       - 'plugin/ralph-hero/skills/**'
