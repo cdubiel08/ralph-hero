@@ -28,7 +28,6 @@ allowed_tools:
 env:
   RALPH_COMMAND: "triage"
   RALPH_REQUIRED_BRANCH: "main"
-  CLAUDE_CODE_TASK_LIST_ID: "ralph-workflow"
 ---
 
 # Ralph GitHub Triage - Backlog Groomer
@@ -37,7 +36,7 @@ You are a triage specialist. You assess ONE Backlog issue, determine if it's sti
 
 ## Workflow
 
-### Step 0: Verify Branch
+### Step 1: Verify Branch
 
 Before starting, check that you're on the main branch:
 
@@ -56,7 +55,7 @@ Please switch to main first:
 
 Then STOP. Do not proceed.
 
-### Step 1: Select Issue
+### Step 2: Select Issue
 
 **If issue number provided**: Fetch it directly:
 ```
@@ -100,7 +99,7 @@ No untriaged issues in Backlog. Triage complete.
 ```
 Then STOP.
 
-### Step 2: Assess Issue
+### Step 3: Assess Issue
 
 1. **Read issue description and comments thoroughly**
 
@@ -129,7 +128,7 @@ Then STOP.
    - Are there duplicate issues?
    - What's the realistic scope (XS/S/M/L/XL)?
 
-### Step 3: Determine Recommendation
+### Step 4: Determine Recommendation
 
 Choose ONE action:
 
@@ -155,7 +154,7 @@ Choose ONE action:
 - Leave in Backlog for prioritization
 - Add clarifying comment if helpful
 
-### Step 4: Take Action
+### Step 5: Take Action
 
 **If CLOSE:**
 ```
@@ -241,7 +240,7 @@ Add comment: "Moved to Research Needed for investigation."
 Add comment with any clarifications or context discovered.
 Leave workflow state as Backlog.
 
-### Step 4.5: Mark Issue as Triaged
+### Step 6: Mark Issue as Triaged
 
 After completing any action (CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP), apply the `ralph-triage` label:
 
@@ -255,7 +254,7 @@ ralph_hero__update_issue
 
 **Important**: Preserve existing labels when adding `ralph-triage`. Read the issue's current labels first, then include them all plus `ralph-triage` in the update.
 
-### Step 5: Find and Link Related Issues
+### Step 7: Find and Link Related Issues
 
 After triage action is complete, scan for related issues in Backlog or Research Needed:
 
@@ -334,26 +333,11 @@ After triage action is complete, scan for related issues in Backlog or Research 
    Rationale: [Brief explanation of why these are related]
    ```
 
-### Step 6: Team Result Reporting
+### Step 8: Team Result Reporting
 
-When running as a team worker, report results via TaskUpdate with structured metadata:
+When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (action taken, sub-ticket IDs if split) and a human-readable summary in the description. Then check TaskList for more work matching your role.
 
-```
-TaskUpdate(taskId, status="completed",
-  metadata={
-    "result": "TRIAGE_COMPLETE",
-    "action": "SPLIT",                    # CLOSE | SPLIT | RESEARCH | KEEP
-    "sub_tickets": "43,44,45",            # comma-separated, only for SPLIT
-    "sub_estimates": "XS,S,XS"            # parallel to sub_tickets
-  },
-  description="Triaged #42: SPLIT into 3 sub-issues (#43 XS, #44 S, #45 XS)")
-```
-
-**Critical for downstream**: `sub_tickets` -- lead creates follow-up tasks from these IDs.
-
-Then check TaskList for more tasks matching your role.
-
-### Step 7: Report
+### Step 9: Report
 
 ```
 Triage complete for #NNN: [Title]

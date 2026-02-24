@@ -30,7 +30,6 @@ allowed_tools:
 env:
   RALPH_COMMAND: "research"
   RALPH_REQUIRED_BRANCH: "main"
-  CLAUDE_CODE_TASK_LIST_ID: "ralph-workflow"
 ---
 
 # Ralph GitHub Research - Naive Hero Mode
@@ -39,7 +38,7 @@ You are a naive hero researcher. You pick ONE issue, research it thoroughly, doc
 
 ## Workflow
 
-### Step 0: Verify Branch
+### Step 1: Verify Branch
 
 ```bash
 git branch --show-current
@@ -47,7 +46,7 @@ git branch --show-current
 
 If NOT on `main`, STOP: "Cannot run /ralph-research from branch: [branch-name]. Please switch to main first."
 
-### Step 1: Select Issue
+### Step 2: Select Issue
 
 **If issue number provided**: Call `ralph_hero__get_issue(owner, repo, number)`. Response includes group data (sub-issues, dependencies, parent).
 
@@ -65,7 +64,7 @@ If NOT on `main`, STOP: "Cannot run /ralph-research from branch: [branch-name]. 
 
 If no eligible issues, respond: "No XS/Small issues need research. Queue empty." Then STOP.
 
-### Step 2: Transition to Research in Progress
+### Step 3: Transition to Research in Progress
 
 ```
 ralph_hero__update_workflow_state
@@ -78,7 +77,7 @@ ralph_hero__update_workflow_state
 
 If `update_workflow_state` returns an error, read the error message for valid states/intents and retry with corrected parameters.
 
-### Step 3: Conduct Research
+### Step 4: Conduct Research
 
 1. **Read issue thoroughly** - understand the problem from user perspective
 2. **Review any linked documents** - prior research, related issues
@@ -95,7 +94,7 @@ If `update_workflow_state` returns an error, read the error message for valid st
 5. **Synthesize findings** - combine results into coherent understanding
 6. **Document findings unbiasedly** - don't pre-judge the solution
 
-### Step 3.5: Refine Group Dependencies
+### Step 5: Refine Group Dependencies
 
 **Skip if single-issue group** (no blocking relationships or shared parent).
 
@@ -105,7 +104,7 @@ After researching, refine dependency relationships based on code analysis:
 2. **Update GitHub relationships** if order differs from initial triage using `ralph_hero__add_dependency` / `ralph_hero__remove_dependency`
 3. **Add research comment** with implementation order analysis
 
-### Step 4: Create Research Document
+### Step 6: Create Research Document
 
 Write to: `thoughts/shared/research/YYYY-MM-DD-GH-NNNN-description.md`
 
@@ -144,7 +143,7 @@ Rules:
 - Both subsections are required even if empty (use "None" if no files apply)
 - This section is validated by the research postcondition hook
 
-### Step 4.5: Commit and Push
+### Step 7: Commit and Push
 
 ```bash
 git add thoughts/shared/research/YYYY-MM-DD-GH-NNNN-*.md
@@ -152,7 +151,7 @@ git commit -m "docs(research): GH-NNN research findings"
 git push origin main
 ```
 
-### Step 5: Update GitHub Issue
+### Step 8: Update GitHub Issue
 
 1. **Add research document link** as comment with the `## Research Document` header (per Artifact Comment Protocol in shared/conventions.md):
    ```
@@ -178,25 +177,11 @@ git push origin main
    - command: "ralph_research"
    ```
 
-### Step 6: Team Result Reporting
+### Step 9: Team Result Reporting
 
-When running as a team worker, report results via TaskUpdate with structured metadata:
+When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (artifact path, workflow state) and a human-readable summary in the description. Then check TaskList for more work matching your role.
 
-```
-TaskUpdate(taskId, status="completed",
-  metadata={
-    "result": "RESEARCH_COMPLETE",
-    "artifact_path": "thoughts/shared/research/2026-02-21-GH-0042-redis-caching.md",
-    "workflow_state": "Ready for Plan"
-  },
-  description="Research complete for #42 - Add Redis caching. Redis with 5min TTL recommended.")
-```
-
-**Critical for downstream**: `artifact_path` -- lead carries it forward into the Plan task description.
-
-Then check TaskList for more tasks matching your role.
-
-### Step 7: Report Completion
+### Step 10: Report Completion
 
 **Single-issue group:**
 ```

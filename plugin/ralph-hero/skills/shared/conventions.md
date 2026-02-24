@@ -11,7 +11,7 @@ Task list IDs and GitHub issue numbers use different prefixes to avoid confusion
 | Task list item | `T-` | T-7 | Session-local, ephemeral |
 | GitHub issue | `GH-` | GH-49 | Repository-scoped, permanent |
 
-- **Task subjects and spawn templates** use `GH-NNN` when referencing GitHub issues (e.g., `"Research GH-42"`)
+- **Task subjects** use `GH-NNN` when referencing GitHub issues (e.g., `"Research GH-42"`)
 - **Task list IDs** (from TaskCreate/TaskList) are referenced as `T-N` in lead messages and instructions
 - **Exception**: GitHub PR body `Closes #NNN` syntax uses bare `#NNN` because GitHub requires it
 
@@ -103,85 +103,6 @@ Workers self-navigate the pipeline via the upfront task list:
 4. If not found → allows stop (exit 0), worker goes idle
 
 **Key**: `blockedBy` chains enforce phase ordering. Workers only work on unblocked tasks.
-
-## Spawn Template Protocol
-
-### Template Location
-
-A single spawn template lives at: `${CLAUDE_PLUGIN_ROOT}/templates/spawn/worker.md`
-
-To resolve the path at runtime:
-```
-TEMPLATE_PATH=$(echo $CLAUDE_PLUGIN_ROOT)/templates/spawn/worker.md
-```
-Then read via `Read(file_path="[resolved-path]")`.
-
-All roles use this template. Role-specific behavior is driven by placeholder substitution from the spawn table in SKILL.md Section 6.
-
-### Placeholder Substitution
-
-| Placeholder | Source | Required |
-|-------------|--------|----------|
-| `{ISSUE_NUMBER}` | Issue number from GitHub | Always |
-| `{TITLE}` | Issue title from `get_issue` | Always |
-| `{TASK_VERB}` | Spawn table "Task Verb" column | Always |
-| `{TASK_CONTEXT}` | Role-dependent (see SKILL.md Section 6) | Optional (empty -> line removed) |
-| `{SKILL_INVOCATION}` | Spawn table "Skill" column. Artifact path flags (see Artifact Passthrough Protocol) may be appended to `args` when available. | Always |
-| `{REPORT_FORMAT}` | Role-specific result format from each SKILL.md "Team Result Reporting" section | Always |
-
-### Group Context Resolution
-
-If `IS_GROUP=true`: `{GROUP_CONTEXT} = "Group: GH-{PRIMARY} (GH-{A}, GH-{B}, GH-{C}). Plan covers all group issues."`
-If `IS_GROUP=false`: `{GROUP_CONTEXT} = ""`
-
-### Worktree Context Resolution
-
-If worktree exists: `{WORKTREE_CONTEXT} = "Worktree: worktrees/GH-{ISSUE_NUMBER}/ (exists, reuse it)"`
-If no worktree: `{WORKTREE_CONTEXT} = ""`
-
-### Stream Context Resolution
-
-If `IS_STREAM=true`: `{STREAM_CONTEXT} = "Stream stream-42-44: GH-42, GH-44 (shared: src/auth/). Plan covers stream issues only. Epic: GH-40."`
-If `IS_STREAM=false`: `{STREAM_CONTEXT} = ""`
-
-When `STREAM_CONTEXT` is non-empty, it replaces `GROUP_CONTEXT` (a stream IS a group subset).
-
-### Empty Placeholder Line Removal
-
-If a placeholder resolves to an empty string, remove the ENTIRE LINE containing that placeholder. Do not leave blank lines where optional context was omitted.
-
-### Resolution Procedure
-
-1. Read the template: `Bash("echo $CLAUDE_PLUGIN_ROOT")` then `Read(file_path="[resolved-root]/templates/spawn/worker.md")`
-2. Look up the role in SKILL.md Section 6 spawn table
-3. Substitute all `{PLACEHOLDER}` strings with values from `get_issue` response and spawn table
-4. If a placeholder resolves to an empty string, remove the ENTIRE LINE containing it
-5. Use the result as the `prompt` parameter in `Task()`
-6. If artifact paths are available from prior phase results, append flags to `{SKILL_INVOCATION}` args:
-   ```
-   Skill(skill="ralph-hero:ralph-plan", args="42 --research-doc thoughts/shared/research/2026-02-21-GH-0042-auth-flow.md")
-   ```
-
-## Work Streams
-
-Work streams partition a group of issues into independent subsets based on file overlap and `blockedBy` relationships. Each stream flows through plan -> implement -> PR independently.
-
-### Stream ID Format
-Deterministic, content-based: `stream-[sorted-issue-numbers]` (e.g., `stream-42-44`, `stream-43`).
-
-### Naming Conventions
-
-| Artifact | Single Issue | Group | Stream |
-|----------|-------------|-------|--------|
-| Plan filename | `YYYY-MM-DD-GH-NNNN-desc.md` | `YYYY-MM-DD-group-GH-NNNN-desc.md` | `YYYY-MM-DD-stream-GH-NNN-NNN-desc.md` |
-| Worktree ID | `GH-[number]` | `GH-[primary]` | `GH-[EPIC]-stream-[SORTED-ISSUES]` |
-| PR title | `[Title]` | `[Title]` | `[Title] [stream-X-Y of GH-EPIC]` |
-
-### Lifecycle
-- Streams are detected once (after all research completes) and are immutable for the session
-- Research is per-issue (pre-stream); plans and PRs are per-stream
-- Each stream tracks its own phase independently
-- For epics with <=2 children, stream detection is skipped (single group, same as current behavior)
 
 ## Skill Invocation Convention
 
