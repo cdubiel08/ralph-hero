@@ -37,7 +37,6 @@ env:
   RALPH_REQUIRED_BRANCH: "main"
   RALPH_MIN_ESTIMATE: "M"
   RALPH_MAX_SUBTICKET_ESTIMATE: "S"
-  CLAUDE_CODE_TASK_LIST_ID: "ralph-workflow"
 ---
 
 # Ralph GitHub Split - Issue Decomposition
@@ -108,7 +107,7 @@ Then STOP.
      ```
      Then STOP.
 
-### Step 2.25: Discover Existing Children
+### Step 3: Discover Existing Children
 
 Query for any existing sub-issues of the parent:
 
@@ -120,46 +119,12 @@ ralph_hero__list_sub_issues
 ```
 
 Record the results:
-- **No children found**: Proceed to Step 3 (research scope) and Step 5 (create all new)
-- **Children found**: Read each child's title, description, estimate, and state. Carry this list forward to Step 4 for scope comparison.
+- **No children found**: Proceed to Step 4 (research scope) and Step 6 (create all new)
+- **Children found**: Read each child's title, description, estimate, and state. Carry this list forward to Step 5 for scope comparison.
 
 If children exist, add a note to the analysis: "Found [N] existing children. Will compare against proposed split before creating new issues."
 
-### Step 2.5: Create Split Tasks
-
-After verifying issue needs splitting:
-
-```
-analyze_task = TaskCreate(
-  subject: "GH-NNN: Analyze scope",
-  description: "Research scope and identify split boundaries for GH-NNN",
-  activeForm: "Analyzing scope for GH-NNN...",
-  metadata: {
-    "issue_number": "NNN",
-    "command": "split",
-    "phase": "analyze",
-    "original_estimate": "[M/L/XL]"
-  }
-)
-
-create_task = TaskCreate(
-  subject: "GH-NNN: Create sub-issues",
-  description: "Create XS/S sub-issues from GH-NNN",
-  activeForm: "Creating sub-issues...",
-  addBlockedBy: [analyze_task],
-  metadata: {
-    "issue_number": "NNN",
-    "command": "split",
-    "phase": "create"
-  }
-)
-```
-
-### Step 3: Research Scope
-
-```
-TaskUpdate(taskId: analyze_task, status: "in_progress")
-```
+### Step 4: Research Scope
 
 Spawn parallel sub-tasks to understand the full scope:
 
@@ -177,12 +142,7 @@ Task(subagent_type="codebase-analyzer", prompt="Analyze [primary component]. Wha
 - Separate concerns (extraction vs loading vs transformation)
 - Sequential dependencies (schema before data, data before queries)
 
-```
-TaskUpdate(taskId: analyze_task, status: "completed",
-           metadata: { ...existing, "split_count": [proposed count] })
-```
-
-### Step 4: Propose Split
+### Step 5: Propose Split
 
 Design sub-issues that are:
 - **XS**: < 2 hours work, single file or trivial multi-file
@@ -198,7 +158,7 @@ Design sub-issues that are:
 | Multi-state feature | One issue per state |
 | Frontend feature | Component, State, Integration as separate issues |
 
-**If existing children were found in Step 2.25**, compare proposed sub-issues against them:
+**If existing children were found in Step 3**, compare proposed sub-issues against them:
 
 For each proposed sub-issue, check if an existing child covers the same scope:
 - **Match found**: Mark the existing child for reuse (update its estimate/description/dependencies if needed)
@@ -214,19 +174,9 @@ Produce a split plan summary:
 | Update | #BB | [adjusted title] | XS |
 | Create | (new) | [new title] | XS |
 
-### Step 5: Create or Update Sub-Issues
+### Step 6: Create or Update Sub-Issues
 
-```
-TaskUpdate(taskId: create_task, status: "in_progress")
-```
-
-For each sub-issue created or updated:
-```
-TaskUpdate(taskId: create_task,
-           activeForm: "Processing sub-issue [N] of [M]...")
-```
-
-**For each sub-issue in the split plan from Step 4:**
+**For each sub-issue in the split plan from Step 5:**
 
 **If reusing an existing child** (match found):
 ```
@@ -309,16 +259,7 @@ ralph_hero__update_estimate
 - [What's handled by sibling issues]
 ```
 
-```
-TaskUpdate(taskId: create_task, status: "completed",
-           metadata: {
-             ...existing,
-             "sub_issues": ["#AA", "#BB", ...],
-             "total_points": [sum]
-           })
-```
-
-### Step 6: Establish Dependencies
+### Step 7: Establish Dependencies
 
 Set up blocking relationships between sub-issues using per-pair calls:
 
@@ -337,7 +278,7 @@ ralph_hero__add_dependency
 - Backend issues block frontend issues
 - Config/setup issues block implementation issues
 
-### Step 7: Update Original Issue
+### Step 8: Update Original Issue
 
 1. **Add split summary comment**:
    ```
@@ -379,7 +320,7 @@ ralph_hero__add_dependency
 
    **Do NOT** set workflow state to Done or Canceled. The parent remains active as an epic/umbrella.
 
-### Step 8: Move Sub-Issues to Appropriate State
+### Step 9: Move Sub-Issues to Appropriate State
 
 Based on research done during splitting:
 
@@ -396,25 +337,11 @@ ralph_hero__update_workflow_state
 - command: "ralph_split"
 ```
 
-### Step 9: Team Result Reporting
+### Step 10: Team Result Reporting
 
-When running as a team worker, report results via TaskUpdate with structured metadata:
+When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (sub-ticket IDs, estimates) and a human-readable summary in the description. Then check TaskList for more work matching your role.
 
-```
-TaskUpdate(taskId, status="completed",
-  metadata={
-    "result": "SPLIT_COMPLETE",
-    "sub_tickets": "101,102,103",          # comma-separated sub-issue numbers
-    "sub_estimates": "XS,S,XS"            # parallel to sub_tickets
-  },
-  description="Split #100 into 3 sub-issues (#101 XS, #102 S, #103 XS)")
-```
-
-**Critical for downstream**: `sub_tickets` -- missing IDs mean orphaned sub-issues the lead can't track.
-
-Then check TaskList for more tasks matching your role.
-
-### Step 10: Report
+### Step 11: Report
 
 ```
 Split complete for #NNN: [Original Title]

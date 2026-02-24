@@ -1,6 +1,0 @@
-{TASK_VERB} GH-{ISSUE_NUMBER}: {TITLE}.
-{TASK_CONTEXT}
-
-Invoke: {SKILL_INVOCATION}
-
-Report via TaskUpdate: "{REPORT_FORMAT}"

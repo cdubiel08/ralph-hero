@@ -37,7 +37,6 @@ env:
   RALPH_COMMAND: "plan"
   RALPH_REQUIRED_BRANCH: "main"
   RALPH_REQUIRES_RESEARCH: "true"
-  CLAUDE_CODE_TASK_LIST_ID: "ralph-workflow"
 ---
 
 # Ralph GitHub Plan - Naive Hero Mode
@@ -46,7 +45,7 @@ You are a naive hero planner. You pick ONE issue group (or single issue), create
 
 ## Workflow
 
-### Step 0: Verify Branch
+### Step 1: Verify Branch
 
 Before starting, check that you're on the main branch:
 
@@ -65,7 +64,7 @@ Please switch to main first:
 
 Then STOP. Do not proceed.
 
-### Step 1: Select Issue Group for Planning
+### Step 2: Select Issue Group for Planning
 
 **If issue number provided**: Fetch it and plan its entire group (1a)
 **If no issue number**: Pick highest-priority unblocked group in "Ready for Plan" (1b)
@@ -83,7 +82,7 @@ Then STOP. Do not proceed.
    - If some not ready, STOP and report which need research first
    - If any is Medium+, STOP and report it needs splitting
 
-3. **Order the group** by topological order from the response, then **skip to Step 2**
+3. **Order the group** by topological order from the response, then **skip to Step 3**
 
 #### 1b. No Issue Number
 
@@ -113,7 +112,7 @@ Then STOP. Do not proceed.
 
 If no eligible groups: respond "No XS/Small issues ready for planning. Queue empty." then STOP.
 
-### Step 2: Gather Group Context
+### Step 3: Gather Group Context
 
 1. **For each issue** (dependency order):
 
@@ -141,13 +140,13 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 
 4. **Wait for sub-tasks** before proceeding
 
-### Step 3: Transition to Plan in Progress
+### Step 4: Transition to Plan in Progress
 
 Update **all group issues**: `ralph_hero__update_workflow_state(number, state="__LOCK__", command="ralph_plan")`
 
 See shared/conventions.md for error handling.
 
-### Step 4: Create Implementation Plan
+### Step 5: Create Implementation Plan
 
 **Filename**: `thoughts/shared/plans/YYYY-MM-DD-group-GH-NNN-description.md` (use primary issue number; for single issues: `YYYY-MM-DD-GH-NNN-description.md`; for stream plans: `YYYY-MM-DD-stream-GH-NNN-NNN-description.md` using sorted issue numbers from the stream)
 
@@ -217,7 +216,7 @@ epic_issue: 40
 - Related issues: [URLs]
 ```
 
-### Step 4.5: Commit and Push
+### Step 6: Commit and Push
 
 ```bash
 git add thoughts/shared/plans/YYYY-MM-DD-*.md
@@ -225,7 +224,7 @@ git commit -m "docs(plan): GH-NNN implementation plan"  # or "GH-123, GH-124, GH
 git push origin main
 ```
 
-### Step 5: Update All Group Issues
+### Step 7: Update All Group Issues
 
 For **each issue in the group**:
 
@@ -249,27 +248,11 @@ For **each issue in the group**:
 
 3. **Move to Plan in Review**: `ralph_hero__update_workflow_state(number, state="__COMPLETE__", command="ralph_plan")`
 
-### Step 6: Team Result Reporting
+### Step 8: Team Result Reporting
 
-When running as a team worker, report results via TaskUpdate with structured metadata:
+When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (artifact path, phase count, workflow state) and a human-readable summary in the description. Then check TaskList for more work matching your role.
 
-```
-TaskUpdate(taskId, status="completed",
-  metadata={
-    "result": "PLAN_COMPLETE",
-    "artifact_path": "thoughts/shared/plans/2026-02-21-group-GH-0042-redis-caching.md",
-    "phase_count": "3",
-    "file_ownership": "config (Phase 1), middleware (Phase 2), tests (Phase 3)",
-    "workflow_state": "Plan in Review"
-  },
-  description="Plan complete for #42, #43, #44. 3 phases: config -> middleware -> tests.")
-```
-
-**Critical for downstream**: `artifact_path` and `phase_count` -- reviewer and implementer need them.
-
-Then check TaskList for more tasks matching your role.
-
-### Step 7: Report Completion
+### Step 9: Report Completion
 
 ```
 Plan complete for [N] issue(s):
