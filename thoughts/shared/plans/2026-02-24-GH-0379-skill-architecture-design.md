@@ -66,10 +66,10 @@ Append the `## Skill Architecture Design` section containing:
 **Important**: Append cleanly after existing content with a blank line separator, so #380 and #381 can continue appending.
 
 ### Success Criteria
-- [ ] Automated: `grep -q "## Skill Architecture Design" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
-- [ ] Automated: `grep -q "Mode 1: Autonomous Recording" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
-- [ ] Automated: `grep -q "Mode 2: Interactive Recording" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
-- [ ] Manual: Both modes have clear flows, dependencies are explicit, Artifact Comment Protocol extension is consistent
+- [x] Automated: `grep -q "## Skill Architecture Design" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
+- [x] Automated: `grep -q "Mode 1: Autonomous Recording" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
+- [x] Automated: `grep -q "Mode 2: Interactive Recording" thoughts/shared/research/2026-02-22-demo-recording-tools.md`
+- [x] Manual: Both modes have clear flows, dependencies are explicit, Artifact Comment Protocol extension is consistent
 
 ---
 
