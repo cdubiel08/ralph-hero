@@ -219,8 +219,8 @@ set -euo pipefail
 **Make executable**: `chmod +x plugin/ralph-hero/scripts/demo-seed.sh`
 
 ### Success Criteria
-- [ ] Automated: `bash -n plugin/ralph-hero/scripts/demo-seed.sh` passes syntax check (no parse errors)
-- [ ] Automated: `shellcheck plugin/ralph-hero/scripts/demo-seed.sh` passes with no errors (if shellcheck available)
+- [x] Automated: `bash -n plugin/ralph-hero/scripts/demo-seed.sh` passes syntax check (no parse errors)
+- [x] Automated: `shellcheck plugin/ralph-hero/scripts/demo-seed.sh` passes with no errors (if shellcheck available)
 - [ ] Manual: Running the script creates 4 issues on GitHub with correct titles and labels
 - [ ] Manual: Sub-issues appear as children of the umbrella issue in GitHub's sub-issue UI
 - [ ] Manual: All 4 issues appear on GitHub Project #3
