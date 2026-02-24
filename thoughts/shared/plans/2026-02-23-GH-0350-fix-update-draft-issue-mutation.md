@@ -36,8 +36,8 @@ The GraphQL mutation selects `projectItem { id }` but `UpdateProjectV2DraftIssue
 
 ### Automated Verification
 
-- [x] `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [x] `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
+- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` succeeds
 
 ### Success Criteria
 

@@ -29,14 +29,14 @@ Single issue implementation: GH-146 -- Add per-project breakdown and cross-proje
 ## Desired End State
 
 ### Verification
-- [ ] `DashboardData` has optional `projectBreakdowns` field
-- [ ] `HealthWarning.type` includes `unbalanced_workload`
-- [ ] `buildDashboard` produces `projectBreakdowns` when items span multiple projects
-- [ ] `buildDashboard` omits `projectBreakdowns` for single-project mode (backward compat)
-- [ ] `detectCrossProjectHealth` emits `unbalanced_workload` when 3x threshold exceeded
-- [ ] `formatMarkdown` renders per-project sections when `projectBreakdowns` is present
-- [ ] `formatAscii` renders per-project sections when `projectBreakdowns` is present
-- [ ] `npm run build` and `npm test` pass
+- [x] `DashboardData` has optional `projectBreakdowns` field
+- [x] `HealthWarning.type` includes `unbalanced_workload`
+- [x] `buildDashboard` produces `projectBreakdowns` when items span multiple projects
+- [x] `buildDashboard` omits `projectBreakdowns` for single-project mode (backward compat)
+- [x] `detectCrossProjectHealth` emits `unbalanced_workload` when 3x threshold exceeded
+- [x] `formatMarkdown` renders per-project sections when `projectBreakdowns` is present
+- [x] `formatAscii` renders per-project sections when `projectBreakdowns` is present
+- [x] `npm run build` and `npm test` pass
 
 ## What We're NOT Doing
 
@@ -178,17 +178,17 @@ Add new `describe` blocks:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npm run build` passes
-- [ ] `npm test` passes
-- [ ] New `detectCrossProjectHealth` tests pass
-- [ ] New `buildDashboard` multi-project tests pass
-- [ ] New formatter tests pass
+- [x] `npm run build` passes
+- [x] `npm test` passes
+- [x] New `detectCrossProjectHealth` tests pass
+- [x] New `buildDashboard` multi-project tests pass
+- [x] New formatter tests pass
 
 #### Manual Verification
-- [ ] Single-project `buildDashboard` output unchanged (no `projectBreakdowns` key)
-- [ ] Multi-project `buildDashboard` output includes `projectBreakdowns` with per-project phases and health
-- [ ] `formatMarkdown` shows per-project section only for multi-project data
-- [ ] `unbalanced_workload` warning surfaces when one project has > 3x active items
+- [x] Single-project `buildDashboard` output unchanged (no `projectBreakdowns` key)
+- [x] Multi-project `buildDashboard` output includes `projectBreakdowns` with per-project phases and health
+- [x] `formatMarkdown` shows per-project section only for multi-project data
+- [x] `unbalanced_workload` warning surfaces when one project has > 3x active items
 
 ---
 

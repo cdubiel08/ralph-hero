@@ -106,9 +106,10 @@ Manual date field for Roadmap view positioning. Not created by `setup_project` -
 2. Click the group icon > "Group by" > select "Priority"
 3. Click the sort icon > "Sort by" > select "Workflow State" > ascending
 4. Configure visible columns: Number, Title, Workflow State, Estimate, Assignees, Labels
-5. Click the Estimate column header > enable "Sum" to show total estimate per priority group
-6. Rename to "Priority Table"
-7. Save changes
+5. Rename to "Priority Table"
+6. Save changes
+
+**Note**: "Sum" aggregation is not available for Estimate because it is a Single Select field (XS/S/M/L/XL), not a Number field. If numeric capacity planning is needed later, add a "Points" Number field (XS=1, S=2, M=3, L=5, XL=8).
 
 ### 4. Triage Queue
 
@@ -118,10 +119,12 @@ Manual date field for Roadmap view positioning. Not created by `setup_project` -
 **Steps**:
 1. Click "+ New view" > "Table"
 2. Set filter: `workflow-state:Backlog`
-3. Click sort icon > "Sort by" > "Created" > ascending (oldest first)
-4. Configure visible columns: Number, Title, Priority, Estimate, Labels, Created
+3. Click sort icon > "Sort by" > "Priority" > ascending
+4. Configure visible columns: Number, Title, Priority, Estimate, Labels
 5. Rename to "Triage Queue"
 6. Save changes
+
+**Note**: "Created" and "Updated" are not available as project table columns — GitHub Projects V2 does not expose these as project fields. Sort by Priority instead.
 
 ### 5. Blocked Items
 
@@ -130,16 +133,12 @@ Manual date field for Roadmap view positioning. Not created by `setup_project` -
 
 **Steps**:
 1. Click "+ New view" > "Table"
-2. Set filter: `is:open`
+2. Set filter: `is:blocked`
 3. Click sort icon > "Sort by" > "Priority" > ascending (P0 first)
 4. Add secondary sort: "Workflow State" > ascending
 5. Configure visible columns: Number, Title, Workflow State, Priority, Estimate, Assignees, Labels
 6. Rename to "Blocked Items"
 7. Save changes
-
-**Known Limitation**: GitHub Projects V2 has no native filter for "has blocking dependencies". The blocking relationship is tracked via GitHub's sub-issue/dependency system, not as a project field. This view functions as a general "Open by Priority" table. To identify blocked items programmatically, use `ralph_hero__list_dependencies`.
-
-**Workaround**: If a `blocked` label convention is adopted, add `label:blocked` filter to narrow results.
 
 ### 6. Done Archive
 
@@ -149,10 +148,12 @@ Manual date field for Roadmap view positioning. Not created by `setup_project` -
 **Steps**:
 1. Click "+ New view" > "Table"
 2. Set filter: `workflow-state:Done,Canceled`
-3. Click sort icon > "Sort by" > "Updated" > descending (newest first)
-4. Configure visible columns: Number, Title, Workflow State, Priority, Estimate, Updated
+3. Click sort icon > "Sort by" > "Priority" > ascending
+4. Configure visible columns: Number, Title, Workflow State, Priority, Estimate
 5. Rename to "Done Archive"
 6. Save changes
+
+**Note**: "Updated" is not available as a project table column. Sort by Priority instead.
 
 ### 7. Roadmap
 
@@ -182,13 +183,13 @@ Expected result:
 
 | # | Name | Layout |
 |---|------|--------|
-| 1 | Workflow Board | BOARD_LAYOUT |
-| 2 | Sprint Board | BOARD_LAYOUT |
-| 3 | Priority Table | TABLE_LAYOUT |
-| 4 | Triage Queue | TABLE_LAYOUT |
-| 5 | Blocked Items | TABLE_LAYOUT |
-| 6 | Done Archive | TABLE_LAYOUT |
-| 7 | Roadmap | ROADMAP_LAYOUT |
+| 2 | Workflow Board | BOARD_LAYOUT |
+| 3 | Sprint Board | BOARD_LAYOUT |
+| 4 | Priority Table | TABLE_LAYOUT |
+| 5 | Triage Queue | TABLE_LAYOUT |
+| 6 | Blocked Items | TABLE_LAYOUT |
+| 7 | Done Archive | TABLE_LAYOUT |
+| 8 | Roadmap | ROADMAP_LAYOUT |
 
 **Note**: The API can verify view names and layout types but cannot verify filters, sorts, or grouping. Visual inspection is required for those settings.
 
@@ -254,6 +255,7 @@ To create a new Ralph-managed project from this golden template:
 | `-field:value` | Exclude items with field value |
 | `label:name` | Filter by label |
 | `@today` | Current date (for date fields) |
+| `is:blocked` | Items with blocking dependencies |
 | `@current` | Current iteration |
 
 ## References

@@ -90,30 +90,24 @@ Each skill handles one phase of the workflow:
 | `/ralph-hero` | Tree-expansion orchestrator with task blocking for sequential execution |
 | `/ralph-team` | Multi-agent coordinator that spawns specialists for each pipeline phase |
 
-### Loop Scripts
+### CLI (`just` recipes)
 
-For fully autonomous operation:
+Ralph also provides a `just`-based CLI for running workflows from the terminal with budget and timeout controls, plus zero-cost quick actions via [mcptools](https://github.com/f/mcptools):
 
 ```bash
-# Full autonomous loop (sequential phases)
-./scripts/ralph-loop.sh
+cd plugin/ralph-hero
 
-# Individual phases only
-./scripts/ralph-loop.sh --triage-only
-./scripts/ralph-loop.sh --research-only
-./scripts/ralph-loop.sh --plan-only
-./scripts/ralph-loop.sh --impl-only
-
-# Control split and review behavior
-./scripts/ralph-loop.sh --split=auto     # Auto-split large issues (default)
-./scripts/ralph-loop.sh --split=skip     # Skip splitting
-./scripts/ralph-loop.sh --review=auto    # Enable auto-review of plans
-./scripts/ralph-loop.sh --review=skip    # Skip review (default)
-
-# Team orchestrator (parallel multi-agent)
-./scripts/ralph-team-loop.sh             # Auto-detect work
-./scripts/ralph-team-loop.sh 42          # Process issue #42
+just                    # List all recipes
+just triage 42          # Triage issue #42
+just impl 42 budget=8   # Implement with higher budget
+just loop               # Full autonomous loop
+just team 42            # Multi-agent team on #42
+just doctor             # Diagnose setup issues
+just quick-status       # Instant pipeline dashboard (no LLM)
+just quick-move 42 "In Progress"  # Move issue state (no LLM)
 ```
+
+See the full **[CLI Reference](docs/cli.md)** for all recipes, parameters, and shell completions.
 
 ## Configuration
 
