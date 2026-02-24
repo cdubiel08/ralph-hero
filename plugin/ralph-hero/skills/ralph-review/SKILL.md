@@ -52,7 +52,7 @@ You are a plan reviewer. You assess ONE plan, determine if it's ready for implem
 
 ## Workflow
 
-### Step 1: Detect Execution Mode
+### Step 0: Detect Execution Mode
 
 Parse arguments for mode flag:
 - If `--interactive` flag present OR `RALPH_INTERACTIVE=true` -> INTERACTIVE mode
@@ -63,7 +63,7 @@ Report mode:
 Starting ralph-review in [INTERACTIVE/AUTO] mode
 ```
 
-### Step 2: Select Issue
+### Step 1: Select Issue
 
 **If issue number provided**: Fetch it directly
 **If no issue number**: Find highest-priority XS/Small issue in "Plan in Review"
@@ -84,7 +84,7 @@ No XS/Small issues in Plan in Review. Queue empty.
 ```
 Then STOP.
 
-### Step 3: Validate Plan Exists
+### Step 2: Validate Plan Exists
 
 1. Fetch the issue with full context:
    ```
@@ -122,7 +122,7 @@ Then STOP.
 4. Store issue number for postcondition hook:
    - Set `RALPH_TICKET_ID` environment context (format: `GH-NNN`)
 
-### Step 4A: INTERACTIVE Mode - Wizard Review
+### Step 3A: INTERACTIVE Mode - Wizard Review
 
 **Read plan document** into context (needed for inline review).
 
@@ -147,7 +147,7 @@ AskUserQuestion(
 **Route based on response**:
 
 **If "Approve"**:
--> Proceed to Step 5 (approve flow)
+-> Proceed to Step 4 (approve flow)
 
 **If "Minor Changes"**:
 ```
@@ -166,7 +166,7 @@ AskUserQuestion(
 )
 ```
 -> Note the requested changes in GitHub comment
--> Proceed to Step 5 (approve flow with notes)
+-> Proceed to Step 4 (approve flow with notes)
 
 **If "Major Changes" or "Reject"**:
 ```
@@ -184,9 +184,9 @@ AskUserQuestion(
   }]
 )
 ```
--> Proceed to Step 5 (rejection flow with issues)
+-> Proceed to Step 4 (rejection flow with issues)
 
-### Step 4B: AUTO Mode - Delegated Critique
+### Step 3B: AUTO Mode - Delegated Critique
 
 **Spawn critique in separate context window**:
 
@@ -240,10 +240,10 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 ```
 
 **Parse JSON result** and route:
-- If `result.result == "APPROVED"` -> Step 5 (approve flow)
-- If `result.result == "NEEDS_ITERATION"` -> Step 5 (rejection flow with `result.issues`)
+- If `result.result == "APPROVED"` -> Step 4 (approve flow)
+- If `result.result == "NEEDS_ITERATION"` -> Step 4 (rejection flow with `result.issues`)
 
-### Step 5: Execute Transition
+### Step 4: Execute Transition
 
 #### Approval Flow (APPROVED)
 
@@ -330,11 +330,25 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
    **Note**: Do NOT use any link attachment mechanism. Reference critique in comment only.
 
-### Step 6: Team Result Reporting
+### Step 5: Team Result Reporting
 
-When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (verdict, artifact path) and a human-readable summary in the description. Then check TaskList for more work matching your role.
+When running as a team worker, report results via TaskUpdate with structured metadata:
 
-### Step 7: Report Completion
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "VALIDATION_VERDICT",
+    "verdict": "APPROVED",                # APPROVED | NEEDS_ITERATION
+    "artifact_path": "thoughts/shared/plans/2026-02-21-GH-0042-redis-caching.md"
+  },
+  description="Review of #42 plan: APPROVED. Phases have clear boundaries, criteria testable.")
+```
+
+For `NEEDS_ITERATION`: blocking issues go in `description` (human-readable for builder).
+
+Then check TaskList for more tasks matching your role.
+
+### Step 6: Report Completion
 
 **If APPROVED**:
 ```

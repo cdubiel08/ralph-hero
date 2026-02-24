@@ -73,7 +73,7 @@ No XS/Small issues ready for implementation. Queue empty.
 ```
 Then STOP.
 
-### Step 2: Detect Mode
+### Step 1.5: Detect Mode
 
 After fetching the issue, check its current state:
 
@@ -83,9 +83,9 @@ After fetching the issue, check its current state:
 3. If open PR exists with review comments -> **ADDRESS MODE** (jump to Step A1)
 4. If no PR found -> Error: "Issue is In Review but no PR found." STOP.
 
-**Otherwise** -> Continue normal implementation flow (Step 3).
+**Otherwise** -> Continue normal implementation flow (Step 2).
 
-### Step 3: Gather Context and Build Issue List
+### Step 2: Gather Context and Build Issue List
 
 1. **Read issue and all comments**:
    ```
@@ -134,12 +134,12 @@ After fetching the issue, check its current state:
    - Check if worktree exists: `ls "$GIT_ROOT/worktrees/GH-NNN"`
    - If exists, use it; if not, create it
 
-### Step 4: Verify Readiness (First Phase Only)
+### Step 3: Verify Readiness (First Phase Only)
 
 For each issue in `issues[]`, verify workflow state is "In Progress" via `get_issue`.
 If any issue is in wrong state, STOP: "Implementation blocked. #NNN: [state] (expected: In Progress)"
 
-### Step 5: Transition to In Progress
+### Step 4: Transition to In Progress
 
 Skip if already "In Progress". For each issue in `issues[]`:
 ```
@@ -152,15 +152,15 @@ ralph_hero__update_workflow_state
 ```
 On error: read message for valid states/recovery action, retry with corrected parameters.
 
-### Step 6: Set Up or Reuse Worktree
+### Step 5: Set Up or Reuse Worktree
 
-**6.1. Detect Epic Membership** (from Step 3's `get_issue` response)
+**5.1. Detect Epic Membership** (from Step 2's `get_issue` response)
 
 If issue has `parent` with estimate in {"M", "L", "XL"}:
 - `IS_EPIC_MEMBER = true`, `EPIC_NUMBER = parent.number`
 Otherwise: `IS_EPIC_MEMBER = false`
 
-**6.2. Determine Worktree ID**
+**5.2. Determine Worktree ID**
 
 Choose the worktree identifier based on context:
 
@@ -173,7 +173,7 @@ Choose the worktree identifier based on context:
 
 Stream detection: if plan frontmatter contains `stream_id`, use the stream worktree naming. This takes precedence over the generic epic member row.
 
-**6.3. Check for Existing Worktree and Sync**
+**5.3. Check for Existing Worktree and Sync**
 
 ```bash
 # Resolve paths from git root (works from any directory)
@@ -183,14 +183,14 @@ WORKTREE_PATH="$GIT_ROOT/worktrees/$WORKTREE_ID"
 if [ -d "$WORKTREE_PATH" ]; then
     cd "$WORKTREE_PATH"
     git fetch origin main && git pull origin "$(git branch --show-current)" --no-edit
-    # If merge conflict -> escalate (6.4)
+    # If merge conflict -> escalate (5.4)
 else
     "$GIT_ROOT/scripts/create-worktree.sh" "$WORKTREE_ID"
     cd "$WORKTREE_PATH"
 fi
 ```
 
-**6.4. Handle Merge Conflict Escalation**
+**5.4. Handle Merge Conflict Escalation**
 
 If `git pull` fails with merge conflicts: escalate per `shared/conventions.md` (use `__ESCALATE__` state, comment with conflicted files list, STOP).
 
@@ -198,9 +198,9 @@ If `git pull` fails with merge conflicts: escalate per `shared/conventions.md` (
 must use paths relative to the worktree OR absolute paths within the worktree.
 The impl-worktree-gate hook will BLOCK any Write/Edit outside the worktree directory.
 
-### Step 7: Implement ONE Phase
+### Step 6: Implement ONE Phase
 
-Current phase = first unchecked phase from Step 3.
+Current phase = first unchecked phase from Step 2.5.
 
 1. Announce: `Starting Phase [N]: #NNN - [Title]`
 2. Read phase requirements from plan
@@ -209,7 +209,7 @@ Current phase = first unchecked phase from Step 3.
 5. **If fails**: attempt fix once. If still failing, commit what works, comment on issue, STOP with error details.
 6. **If succeeds**: mark plan checkboxes as `- [x]`
 
-### Step 8: Commit and Push
+### Step 7: Commit and Push
 
 1. Review all changes in the working directory:
    ```bash
@@ -238,28 +238,28 @@ Current phase = first unchecked phase from Step 3.
    git push -u origin [branch-name]
    ```
 
-### Step 9: Check if All Phases Complete
+### Step 8: Check if All Phases Complete
 
-Re-read plan. If ALL automated verification checkboxes are checked -> continue to Step 10.
+Re-read plan. If ALL automated verification checkboxes are checked -> continue to Step 9.
 
 **If NOT final phase**, STOP:
 ```
 Phase [N]/[M] complete. Next: Phase [N+1]. Run /ralph-impl NNN to continue.
 ```
 
-### Step 10: Create PR (Final Phase Only)
+### Step 9: Create PR (Final Phase Only)
 
 Only execute this step when ALL phases are complete.
 
-**10.1. Check for Epic Membership**
+**9.1. Check for Epic Membership**
 
-If `IS_EPIC_MEMBER` was set to `true` in Step 6, this is an epic issue.
+If `IS_EPIC_MEMBER` was set to `true` in Step 5, this is an epic issue.
 
-**10.2. Verify Epic Completion (Epic Issues Only)**
+**9.2. Verify Epic Completion (Epic Issues Only)**
 
 Query siblings via `ralph_hero__list_sub_issues` on the epic. For each sibling: verify "In Progress" state AND all plan checkboxes checked. If any incomplete, STOP: list status per issue, suggest `/ralph-impl [incomplete-issue]`.
 
-**10.3. Create PR** (single template, adapt sections by context)
+**9.3. Create PR** (single template, adapt sections by context)
 
 ```bash
 gh pr create --title "[Title]" --body "$(cat <<'EOF'
@@ -293,11 +293,11 @@ EOF
 )"
 ```
 
-### Step 11: PR Gate
+### Step 9.5: PR Gate
 
 Output PR URL and key changes summary. Execution pauses for review.
 
-### Step 12: Update GitHub Issues (Final Phase Only)
+### Step 10: Update GitHub Issues (Final Phase Only)
 
 Only execute when ALL phases are complete and PR is created.
 
@@ -330,11 +330,29 @@ For each issue in `issues[]` (single: just one; group/epic: all issues):
 
 Note: PR auto-links via "Closes #NNN" in PR body. No explicit link attachment needed.
 
-### Step 13: Team Result Reporting
+### Step 11: Team Result Reporting
 
-When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (worktree path, test status, commit, files changed) and a human-readable summary in the description. Then check TaskList for more work matching your role.
+When running as a team worker, report results via TaskUpdate with structured metadata:
 
-### Step 14: Final Report
+```
+TaskUpdate(taskId, status="completed",
+  metadata={
+    "result": "IMPLEMENTATION_COMPLETE",
+    "phases_done": "3",
+    "phases_total": "3",
+    "files": "src/cache/redis.ts,src/middleware/caching.ts,tests/cache.test.ts",
+    "tests": "PASSING",                   # PASSING | FAILING
+    "commit": "a1b2c3d",
+    "worktree": "worktrees/GH-42/"
+  },
+  description="Implementation complete for #42. 3/3 phases. Tests passing.")
+```
+
+**Critical for downstream**: `worktree` -- integrator needs it. `tests` -- lead won't advance if FAILING.
+
+Then check TaskList for more tasks matching your role.
+
+### Step 12: Final Report
 
 ```
 Implementation complete.
@@ -350,7 +368,7 @@ Run ./scripts/remove-worktree.sh [WORKTREE_ID] after PR is merged.
 
 ## Address Mode (PR Review Feedback)
 
-Activated when issue is "In Review" with an open PR (detected in Step 2).
+Activated when issue is "In Review" with an open PR (detected in Step 1.5).
 
 **A1. Gather feedback**: `gh pr view [number] --json reviews,comments` + `gh api repos/$RALPH_GH_OWNER/$RALPH_GH_REPO/pulls/[number]/comments`. Skip resolved/outdated comments.
 

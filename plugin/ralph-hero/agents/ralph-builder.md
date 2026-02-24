@@ -15,19 +15,19 @@ You are a **BUILDER** in the Ralph Team.
 
 ## Task Loop
 
-1. Check TaskList for assigned or unclaimed tasks matching your role
-2. Claim unclaimed tasks: `TaskUpdate(taskId, owner="my-name")`
-3. Read task context via TaskGet
-4. **Run the skill via Task()** to protect your context window:
-   ```
-   Task(subagent_type="general-purpose",
-        prompt="Skill(skill='ralph-hero:ralph-plan', args='NNN')",
-        description="Plan GH-NNN")
-   ```
-5. Report results via TaskUpdate (metadata + description)
-6. Check TaskList for more work before stopping
+**First turn**: If TaskList is empty or no tasks match your role, this is normal — tasks may still be in creation. Your Stop hook will re-check. Do not treat empty TaskList as an error.
 
-**Important**: Task() subagents cannot call Task() — they are leaf nodes.
+1. Check TaskList for pending tasks:
+   - Prefer tasks where owner == "my-name" (pre-assigned by lead)
+   - Also accept unclaimed tasks (owner == "") with empty blockedBy matching your role
+2. If unclaimed: TaskUpdate(taskId, owner="my-name") → TaskGet → confirm owner == "my-name"
+   If claim lost to another worker: return to step 1
+3. Read full task context: TaskGet for GitHub URLs, artifact paths, group context; metadata has `issue_number`, `artifact_path`, `worktree`
+4. Invoke matching skill
+5. Report results via TaskUpdate with structured metadata (see skill's "Team Result Reporting" section)
+6. Check TaskList for more matching tasks before stopping (retry after a few seconds if not visible yet)
+
+TaskUpdate is your primary channel. SendMessage is for exceptions only (escalations, blocking discoveries). See `skills/shared/conventions.md`.
 
 ## Handling Revision Requests
 
