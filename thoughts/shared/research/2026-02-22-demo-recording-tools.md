@@ -112,3 +112,102 @@ Two target modes: autonomous (terminal-only, headless) and interactive (screen +
 - [Loom Record SDK](https://dev.loom.com/docs/record-sdk/details/api)
 - [Descript API](https://docs.descriptapi.com/)
 - [Headless OBS on Debian](https://binblog.de/2025/04/03/headless-obs-on-debian/)
+
+## Skill Architecture Design
+
+### Mode 1: Autonomous Recording (asciinema)
+
+**Trigger**: Hook-based. A `PostToolUse` or skill-level hook starts recording when certain skills begin and stops when they complete.
+
+**Flow**:
+1. Skill starts (e.g., `ralph-impl`, `ralph-team`)
+2. Pre-hook: `asciinema rec -c "$SKILL_COMMAND" recordings/GH-NNNN-impl.cast`
+   - Wraps the actual skill execution inside an asciinema recording
+3. Skill executes normally (all terminal output captured)
+4. Skill completes -> recording stops automatically (command exit)
+5. Post-hook: Convert `.cast` to GIF via `agg`
+6. Post-hook: Upload GIF as GitHub issue comment attachment
+7. Post-hook: Post comment with `## Demo Recording` header + embedded image
+
+**Artifact Comment Protocol Extension**:
+```
+## Demo Recording
+
+![Terminal recording](https://github.com/OWNER/REPO/assets/NNNN/recording.gif)
+
+Recording of `ralph-impl #42` execution.
+Duration: 3m 42s | Phases completed: 3/3
+```
+
+**Key Design Decisions**:
+- Recordings are opt-in via environment variable: `RALPH_RECORD=true`
+- `.cast` files stored in `recordings/` directory (gitignored) — ephemeral
+- GIF is the durable artifact (uploaded to GitHub, linked in comment)
+- Idle time compression (`-i 2.5`) keeps recordings concise
+- No audio in autonomous mode (terminal only)
+
+**Dependencies**:
+- `asciinema` CLI installed
+- `agg` binary installed (Rust, available via cargo or GitHub releases)
+- `gh` CLI for asset upload (already available in ralph-hero workflows)
+
+### Mode 2: Interactive Recording (OBS + obs-cli)
+
+**Trigger**: Explicit skill invocation: `/ralph-hero:record-demo`
+
+**Flow**:
+1. User invokes `/ralph-hero:record-demo #NNN`
+2. Skill checks OBS is running and WebSocket is reachable (via `obs-cli recording status`)
+3. Skill prompts user: "Ready to record. Set up your screen layout, then confirm to start."
+4. User confirms -> skill calls `obs-cli recording start`
+5. Skill provides guided walkthrough prompts:
+   - "Show the GitHub issue in your browser"
+   - "Run the command now"
+   - "Narrate what's happening"
+   - "When done, confirm to stop recording"
+6. User confirms -> skill calls `obs-cli recording stop`
+7. Skill locates the output file (OBS default recording path)
+8. Skill offers post-processing options:
+   - Upload as-is to GitHub release asset
+   - Trim start/end (via ffmpeg)
+   - Generate thumbnail (via ffmpeg)
+9. Skill posts `## Demo Recording` comment on the issue
+
+**Key Design Decisions**:
+- OBS must be pre-configured by the user (scenes, audio sources, output format)
+- Skill does NOT configure OBS — only controls start/stop and provides prompts
+- Interactive mode requires user presence (narration, manual triggers)
+- Output format: MP4 (OBS default, widely compatible)
+- Skill uses AskUserQuestion for pacing and confirmation
+
+**Dependencies**:
+- OBS Studio installed and running
+- `obs-cli` installed (Go binary, `go install github.com/muesli/obs-cli@latest`)
+- WebSocket server enabled in OBS settings (on by default since OBS 28)
+
+### Shared: Video Artifact Pipeline
+
+**Upload Path** (both modes):
+1. Recording produced locally (`.cast`/`.gif` or `.mp4`)
+2. Upload to GitHub release asset via `gh release upload` or issue attachment
+3. Get public URL for the uploaded asset
+4. Post issue comment with `## Demo Recording` header + asset link/embedded image
+
+**GitHub Attachment Options**:
+| Method | Pros | Cons |
+|---|---|---|
+| Issue comment drag-drop upload | GitHub hosts it, permanent URL | Requires browser or API workaround |
+| Release asset (`gh release upload`) | CLI-friendly, versioned | Requires a release to exist |
+| Git LFS | Versioned in repo | Adds repo weight, LFS quota |
+| External hosting (asciinema.org, S3) | No GitHub limits | External dependency |
+
+**Recommended**: Use `gh api` to upload via the issue comment attachment API for autonomous mode. For interactive mode, release assets via `gh release upload` since the user can verify before publishing.
+
+### Skill File Inventory
+
+| Skill | Mode | Context | Model | Key Tools |
+|---|---|---|---|---|
+| `record-demo` | Interactive | inline | sonnet | Bash, AskUserQuestion, Read |
+| (hook integration) | Autonomous | fork | haiku | Bash |
+
+The autonomous mode is NOT a standalone skill — it's a recording wrapper integrated via hooks into existing skills. The interactive mode is a new standalone skill.
