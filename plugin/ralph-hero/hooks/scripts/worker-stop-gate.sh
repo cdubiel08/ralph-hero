@@ -25,10 +25,9 @@ fi
 # Map worker name to task subject keywords for role-specific matching
 TEAMMATE=$(echo "$INPUT" | jq -r '.teammate_name // "unknown"')
 case "$TEAMMATE" in
-  analyst*)    KEYWORDS="Triage, Split, or Research" ;;
-  builder*)    KEYWORDS="Plan or Implement" ;;
-  validator*)  KEYWORDS="Review or Validate" ;;
-  integrator*) KEYWORDS="Create PR, Merge, or Integrate" ;;
+  analyst*)    KEYWORDS="Triage, Split, Research, or Plan" ;;
+  builder*)    KEYWORDS="Review or Implement" ;;
+  integrator*) KEYWORDS="Validate, Create PR, Merge, or Integrate" ;;
   *)           exit 0 ;; # Unknown role, allow stop
 esac
 

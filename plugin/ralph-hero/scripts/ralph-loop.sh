@@ -2,7 +2,7 @@
 # Run the Ralph GitHub workflow loop until all queues are empty
 #
 # Usage: ./scripts/ralph-loop.sh [--triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only]
-#        ./scripts/ralph-loop.sh [--analyst-only|--builder-only|--validator-only|--integrator-only]
+#        ./scripts/ralph-loop.sh [--analyst-only|--builder-only|--integrator-only]
 #        ./scripts/ralph-loop.sh --split=auto|skip --review=auto|skip|interactive --hygiene=auto|skip
 #        ./scripts/ralph-loop.sh --budget=5.00
 #
@@ -42,7 +42,7 @@ for arg in "$@"; do
         --triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only)
             MODE="$arg"
             ;;
-        --analyst-only|--builder-only|--validator-only|--integrator-only)
+        --analyst-only|--builder-only|--integrator-only)
             MODE="$arg"
             ;;
     esac
@@ -163,7 +163,7 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     fi
 
     # Review phase (optional)
-    if [ "$MODE" = "all" ] || [ "$MODE" = "--review-only" ] || [ "$MODE" = "--builder-only" ] || [ "$MODE" = "--validator-only" ]; then
+    if [ "$MODE" = "all" ] || [ "$MODE" = "--review-only" ] || [ "$MODE" = "--builder-only" ]; then
         if [ "$REVIEW_MODE" != "skip" ]; then
             echo "--- Review Phase (mode: $REVIEW_MODE) ---"
             if [ "$REVIEW_MODE" = "interactive" ]; then

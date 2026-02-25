@@ -182,11 +182,11 @@ ralph-hero/
 │   ├── ralph-impl/
 │   ├── ralph-hero/
 │   ├── ralph-team/
+│   ├── ralph-val/
 │   └── ralph-setup/
 ├── agents/                   # Scope-bounded worker definitions
 │   ├── ralph-analyst.md
 │   ├── ralph-builder.md
-│   ├── ralph-validator.md
 │   └── ralph-integrator.md
 ├── hooks/                    # State machine enforcement
 │   ├── hooks.json
