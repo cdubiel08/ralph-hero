@@ -1,5 +1,5 @@
 ---
-description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, validator, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
+description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
 argument-hint: "[issue-number]"
 model: sonnet
 allowed_tools:
@@ -72,12 +72,11 @@ Task(subagent_type="ralph-analyst", team_name="ralph-team-GH-NNN", name="analyst
 
 | Role | Agent type | Handles |
 |------|-----------|---------|
-| analyst | ralph-analyst | Research, Triage, Split |
-| builder | ralph-builder | Plan, Implement |
-| validator | ralph-validator | Review |
-| integrator | ralph-integrator | Create PR, Merge PR |
+| analyst | ralph-analyst | Triage, Split, Research, Plan |
+| builder | ralph-builder | Review, Implement |
+| integrator | ralph-integrator | Validate, Create PR, Merge PR |
 
-Multiple analysts/builders allowed (append `-2`, `-3`). One validator, one integrator.
+Max 2 per station (append `-2` for the second). Example: `analyst`, `analyst-2`.
 
 ## Step 3: Build Task Graph
 
@@ -86,11 +85,12 @@ Create the full pipeline as tasks with `blockedBy` chains. Assign owners on unbl
 **Single issue example**:
 ```
 T-1: Research GH-42       → unblocked      → owner: analyst
-T-2: Plan GH-42           → blockedBy: T-1 → owner: (none, claimed later)
-T-3: Review plan GH-42    → blockedBy: T-2
-T-4: Implement GH-42      → blockedBy: T-3
-T-5: Create PR for GH-42  → blockedBy: T-4
-T-6: Merge PR for GH-42   → blockedBy: T-5
+T-2: Plan GH-42           → blockedBy: T-1 → owner: (analyst, claimed later)
+T-3: Review plan GH-42    → blockedBy: T-2 → owner: (builder, claimed later)
+T-4: Implement GH-42      → blockedBy: T-3 → owner: (builder, claimed later)
+T-5: Validate GH-42       → blockedBy: T-4 → owner: (integrator, claimed later)
+T-6: Create PR for GH-42  → blockedBy: T-5 → owner: (integrator, claimed later)
+T-7: Merge PR for GH-42   → blockedBy: T-6 → owner: (integrator, claimed later)
 ```
 
 **Group** (N issues): N parallel research tasks, then plan/review/implement/PR as a group.
@@ -116,7 +116,9 @@ The dispatch loop is passive. Hooks fire at decision points:
 - **TeammateIdle**: Normal — don't nudge. Workers self-claim via Stop hook.
 - **Escalation (SendMessage)**: Respond and unblock.
 
-When a review completes with `verdict: "NEEDS_ITERATION"`, create a new "Plan GH-NNN" task blocked by the failed review. Builder self-claims.
+When a review completes with `verdict: "NEEDS_ITERATION"`, create a new "Plan GH-NNN" task blocked by the failed review, assigned to an analyst. Builder re-reviews after the revised plan.
+
+When a validation completes with `verdict: "FAIL"`, create a new "Implement GH-NNN" task blocked by the failed validation, assigned to a builder. Integrator re-validates after the fix.
 
 When all tasks complete, `shutdown_request` each teammate, then `TeamDelete()`.
 
