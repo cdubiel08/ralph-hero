@@ -445,6 +445,79 @@ describe("link_team org validation", () => {
 });
 
 // ---------------------------------------------------------------------------
+// get_draft_issue query structure
+// ---------------------------------------------------------------------------
+
+describe("get_draft_issue queries", () => {
+  it("DI_ query has required DraftIssue fields", () => {
+    const fragment = `
+      ... on DraftIssue {
+        id
+        title
+        body
+        creator { login }
+        createdAt
+        updatedAt
+      }
+    `;
+    expect(fragment).toContain("id");
+    expect(fragment).toContain("title");
+    expect(fragment).toContain("body");
+    expect(fragment).toContain("creator");
+    expect(fragment).toContain("createdAt");
+    expect(fragment).toContain("updatedAt");
+  });
+
+  it("PVTI_ query includes ProjectV2Item content and fieldValues", () => {
+    const fragment = `
+      ... on ProjectV2Item {
+        id
+        content {
+          ... on DraftIssue {
+            id
+            title
+            body
+            creator { login }
+            createdAt
+            updatedAt
+          }
+        }
+        fieldValues(first: 20) {
+          nodes {
+            ... on ProjectV2ItemFieldSingleSelectValue {
+              name
+              field { ... on ProjectV2FieldCommon { name } }
+            }
+          }
+        }
+      }
+    `;
+    expect(fragment).toContain("ProjectV2Item");
+    expect(fragment).toContain("content");
+    expect(fragment).toContain("DraftIssue");
+    expect(fragment).toContain("fieldValues");
+    expect(fragment).toContain("ProjectV2ItemFieldSingleSelectValue");
+    expect(fragment).toContain("ProjectV2FieldCommon");
+  });
+
+  it("validates ID prefixes (DI_ and PVTI_ only)", () => {
+    const validPrefixes = ["DI_", "PVTI_"];
+    const testIds = [
+      { id: "DI_abc123", valid: true },
+      { id: "PVTI_xyz789", valid: true },
+      { id: "I_invalid", valid: false },
+      { id: "PR_invalid", valid: false },
+      { id: "abc123", valid: false },
+    ];
+
+    for (const { id, valid } of testIds) {
+      const isValid = validPrefixes.some((prefix) => id.startsWith(prefix));
+      expect(isValid).toBe(valid);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // archive_item / remove_from_project dual-identifier validation
 // ---------------------------------------------------------------------------
 

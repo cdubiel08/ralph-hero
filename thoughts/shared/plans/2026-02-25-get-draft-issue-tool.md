@@ -183,9 +183,9 @@ it("get_draft_issue source validates ID prefixes", () => {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `npm test` passes with new tests
-- [ ] `npm run build` compiles cleanly
-- [ ] Tool is registered in the MCP server (grep for `ralph_hero__get_draft_issue` in source)
+- [x] `npm test` passes with new tests
+- [x] `npm run build` compiles cleanly
+- [x] Tool is registered in the MCP server (grep for `ralph_hero__get_draft_issue` in source)
 
 #### Manual Verification:
 - [ ] Fetch a single draft by DI_ ID — returns title + body

@@ -665,6 +665,217 @@ export function registerProjectManagementTools(
   );
 
   // -------------------------------------------------------------------------
+  // ralph_hero__get_draft_issue
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__get_draft_issue",
+    "Get the full content of one or more draft issues. Accepts DI_ (content node) or PVTI_ (project item) IDs — auto-detected by prefix. PVTI_ IDs also return project field values. Returns: array of { draftIssueId, projectItemId, title, body, creator, createdAt, updatedAt, workflowState?, estimate?, priority? }.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to env var"),
+      projectNumber: z.coerce.number().optional()
+        .describe("Project number override (defaults to configured project)"),
+      ids: z.union([
+        z.string().describe("Single draft issue ID (DI_... or PVTI_...)"),
+        z.array(z.string()).describe("Array of draft issue IDs"),
+      ]).describe("One or more draft issue IDs. DI_ prefix fetches content only. PVTI_ prefix also fetches project field values."),
+    },
+    async (args) => {
+      try {
+        const idList = Array.isArray(args.ids) ? args.ids : [args.ids];
+
+        if (idList.length === 0) {
+          return toolError("At least one ID must be provided");
+        }
+
+        // Validate all IDs have valid prefixes
+        const invalidIds = idList.filter(
+          (id) => !id.startsWith("DI_") && !id.startsWith("PVTI_"),
+        );
+        if (invalidIds.length > 0) {
+          return toolError(
+            `Invalid ID prefix(es): ${invalidIds.join(", ")}. IDs must start with DI_ or PVTI_.`,
+          );
+        }
+
+        // Partition into DI_ and PVTI_ groups
+        const diIds: { id: string; index: number }[] = [];
+        const pvtiIds: { id: string; index: number }[] = [];
+        for (let i = 0; i < idList.length; i++) {
+          if (idList[i].startsWith("DI_")) {
+            diIds.push({ id: idList[i], index: i });
+          } else {
+            pvtiIds.push({ id: idList[i], index: i });
+          }
+        }
+
+        // Build aliased GraphQL query
+        const queryParts: string[] = [];
+        const variables: Record<string, string> = {};
+        const variableDecls: string[] = [];
+
+        for (let i = 0; i < diIds.length; i++) {
+          const varName = `diId${i}`;
+          variableDecls.push(`$${varName}: ID!`);
+          variables[varName] = diIds[i].id;
+          queryParts.push(`
+            draft${i}: node(id: $${varName}) {
+              ... on DraftIssue {
+                id
+                title
+                body
+                creator { login }
+                createdAt
+                updatedAt
+              }
+            }
+          `);
+        }
+
+        for (let i = 0; i < pvtiIds.length; i++) {
+          const varName = `pvtiId${i}`;
+          variableDecls.push(`$${varName}: ID!`);
+          variables[varName] = pvtiIds[i].id;
+          queryParts.push(`
+            item${i}: node(id: $${varName}) {
+              ... on ProjectV2Item {
+                id
+                content {
+                  ... on DraftIssue {
+                    id
+                    title
+                    body
+                    creator { login }
+                    createdAt
+                    updatedAt
+                  }
+                }
+                fieldValues(first: 20) {
+                  nodes {
+                    ... on ProjectV2ItemFieldSingleSelectValue {
+                      name
+                      field { ... on ProjectV2FieldCommon { name } }
+                    }
+                  }
+                }
+              }
+            }
+          `);
+        }
+
+        const fullQuery = `query(${variableDecls.join(", ")}) {\n${queryParts.join("\n")}\n}`;
+
+        const result = await client.projectQuery<Record<string, unknown>>(
+          fullQuery,
+          variables,
+        );
+
+        // Map results into uniform response array
+        type DraftResult = {
+          draftIssueId: string;
+          projectItemId: string | null;
+          title: string;
+          body: string | null;
+          creator: string | null;
+          createdAt: string | null;
+          updatedAt: string | null;
+          workflowState?: string;
+          estimate?: string;
+          priority?: string;
+          error?: string;
+        };
+
+        const drafts: (DraftResult | { id: string; error: string })[] = [];
+
+        // Process DI_ results
+        for (let i = 0; i < diIds.length; i++) {
+          const node = result[`draft${i}`] as {
+            id?: string;
+            title?: string;
+            body?: string;
+            creator?: { login: string };
+            createdAt?: string;
+            updatedAt?: string;
+          } | null;
+
+          if (!node || !node.id) {
+            drafts.push({ id: diIds[i].id, error: "Not found" });
+          } else {
+            drafts.push({
+              draftIssueId: node.id,
+              projectItemId: null,
+              title: node.title ?? "",
+              body: node.body ?? null,
+              creator: node.creator?.login ?? null,
+              createdAt: node.createdAt ?? null,
+              updatedAt: node.updatedAt ?? null,
+            });
+          }
+        }
+
+        // Process PVTI_ results
+        for (let i = 0; i < pvtiIds.length; i++) {
+          const node = result[`item${i}`] as {
+            id?: string;
+            content?: {
+              id?: string;
+              title?: string;
+              body?: string;
+              creator?: { login: string };
+              createdAt?: string;
+              updatedAt?: string;
+            } | null;
+            fieldValues?: {
+              nodes: Array<{
+                name?: string;
+                field?: { name?: string };
+              }>;
+            };
+          } | null;
+
+          if (!node || !node.id) {
+            drafts.push({ id: pvtiIds[i].id, error: "Not found" });
+          } else if (!node.content || !node.content.id) {
+            drafts.push({ id: pvtiIds[i].id, error: "Not a draft issue" });
+          } else {
+            // Extract field values
+            let workflowState: string | undefined;
+            let estimate: string | undefined;
+            let priority: string | undefined;
+
+            if (node.fieldValues?.nodes) {
+              for (const fv of node.fieldValues.nodes) {
+                const fieldName = fv.field?.name;
+                if (fieldName === "Workflow State") workflowState = fv.name;
+                else if (fieldName === "Estimate") estimate = fv.name;
+                else if (fieldName === "Priority") priority = fv.name;
+              }
+            }
+
+            drafts.push({
+              draftIssueId: node.content.id,
+              projectItemId: pvtiIds[i].id,
+              title: node.content.title ?? "",
+              body: node.content.body ?? null,
+              creator: node.content.creator?.login ?? null,
+              createdAt: node.content.createdAt ?? null,
+              updatedAt: node.content.updatedAt ?? null,
+              ...(workflowState !== undefined && { workflowState }),
+              ...(estimate !== undefined && { estimate }),
+              ...(priority !== undefined && { priority }),
+            });
+          }
+        }
+
+        return toolSuccess({ drafts });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to get draft issue(s): ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // ralph_hero__reorder_item
   // -------------------------------------------------------------------------
   server.tool(
