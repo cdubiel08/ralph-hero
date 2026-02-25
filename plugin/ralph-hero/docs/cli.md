@@ -117,7 +117,7 @@ just loop mode=all review=skip split=auto hygiene=auto timeout=60m
 
 | Parameter | Values | Default | Description |
 |-----------|--------|---------|-------------|
-| `mode` | `all`, `triage`, `split`, `research`, `plan`, `review`, `impl`, `hygiene`, `analyst`, `builder`, `validator`, `integrator` | `all` | Run specific phase only |
+| `mode` | `all`, `triage`, `split`, `research`, `plan`, `review`, `impl`, `hygiene`, `analyst`, `builder`, `integrator` | `all` | Run specific phase only |
 | `review` | `skip`, `auto`, `interactive` | `skip` | Review mode |
 | `split` | `auto`, `skip` | `auto` | Split mode |
 | `hygiene` | `auto`, `skip` | `auto` | Hygiene mode |
