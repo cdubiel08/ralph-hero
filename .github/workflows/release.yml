@@ -17,6 +17,7 @@ on:
       - 'plugin/ralph-hero/hooks/**'
       - 'plugin/ralph-hero/scripts/**'
       - 'plugin/ralph-hero/templates/**'
+      - 'plugin/ralph-hero/justfile'
   workflow_dispatch:
     inputs:
       bump:
