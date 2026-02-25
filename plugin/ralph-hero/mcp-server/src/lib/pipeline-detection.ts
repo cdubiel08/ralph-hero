@@ -42,8 +42,7 @@ export interface ConvergenceInfo {
 export interface SuggestedRoster {
   analyst: number;    // 0-3: 1 for single issue; 2 for 2-5 needing research; 3 for 6+
   builder: number;    // 1-2: 1 default; 2 if 5+ issues with M/L estimates
-  validator: number;  // always 1
-  integrator: number; // always 1
+  integrator: number; // 1-2: 1 default; 2 if 5+ issues
 }
 
 export interface PipelinePosition {
@@ -379,7 +378,7 @@ function computeSuggestedRoster(
     ['Research Needed', 'Research in Progress'].includes(i.workflowState)
   );
   let analyst = 0;
-  if (phase === 'RESEARCH' || phase === 'SPLIT' || phase === 'TRIAGE') {
+  if (phase === 'RESEARCH' || phase === 'SPLIT' || phase === 'TRIAGE' || phase === 'PLAN') {
     analyst = needsResearch.length <= 1 ? 1
       : needsResearch.length <= 5 ? 2
       : 3;
@@ -391,7 +390,9 @@ function computeSuggestedRoster(
   );
   const builder = largeSized.length >= 5 ? 2 : 1;
 
-  return { analyst, builder, validator: 1, integrator: 1 };
+  const integrator = issues.length >= 5 ? 2 : 1;
+
+  return { analyst, builder, integrator };
 }
 
 function buildResult(
