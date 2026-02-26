@@ -4,19 +4,20 @@ argument-hint: <issue-number> [--plan-doc path]
 context: fork
 model: sonnet
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=val RALPH_REQUIRES_PLAN=true"
   Stop:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/val-postcondition.sh"
-allowed_tools:
+allowed-tools:
   - Read
   - Glob
   - Grep
   - Bash
   - Task
-env:
-  RALPH_COMMAND: "val"
-  RALPH_REQUIRES_PLAN: "true"
 ---
 
 # Ralph Val

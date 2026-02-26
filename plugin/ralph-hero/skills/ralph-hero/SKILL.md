@@ -2,16 +2,18 @@
 description: Tree-expansion orchestrator that drives a GitHub issue through the full lifecycle - split, research, plan, review, and sequential implementation using task blocking. Use when you want to process an issue tree end-to-end in hero mode.
 argument-hint: <issue-number>
 model: sonnet
-allowed_tools:
+allowed-tools:
   - Read
   - Glob
   - Grep
   - Bash
   - Skill
   - Task
-env:
-  RALPH_COMMAND: "hero"
-  RALPH_AUTO_APPROVE: "false"
+hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=hero RALPH_AUTO_APPROVE=false"
 ---
 
 # Ralph GitHub Hero - Tree Expansion Orchestrator

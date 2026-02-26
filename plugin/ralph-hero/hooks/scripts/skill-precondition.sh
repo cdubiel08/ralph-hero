@@ -27,7 +27,7 @@ if [[ -z "$command" ]]; then
   block "Skill precondition failed: RALPH_COMMAND not set
 
 This hook validates that skills have required context.
-Ensure the skill frontmatter sets RALPH_COMMAND in env."
+Ensure the skill has a SessionStart hook that calls set-skill-env.sh with RALPH_COMMAND."
 fi
 
 owner="${RALPH_GH_OWNER:-}"

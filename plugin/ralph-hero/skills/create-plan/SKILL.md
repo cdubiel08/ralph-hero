@@ -2,7 +2,7 @@
 description: Create detailed implementation plans through interactive research and iteration. Collaboratively explores codebase, proposes phased structure, and writes a plan document. Optionally links to a GitHub issue and transitions to Plan in Review.
 argument-hint: "[optional: #NNN issue number, file path, or description]"
 model: opus
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Edit
@@ -12,10 +12,6 @@ allowed_tools:
   - Task
   - WebSearch
   - WebFetch
-env:
-  RALPH_GH_OWNER: "${RALPH_GH_OWNER}"
-  RALPH_GH_REPO: "${RALPH_GH_REPO}"
-  RALPH_GH_PROJECT_NUMBER: "${RALPH_GH_PROJECT_NUMBER}"
 ---
 
 # Implementation Plan

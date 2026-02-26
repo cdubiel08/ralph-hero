@@ -2,8 +2,11 @@
 description: Generate and post a project status report. Queries pipeline dashboard with velocity metrics, composes a markdown report, auto-determines health status (ON_TRACK/AT_RISK/OFF_TRACK), and posts via GitHub Projects V2 status updates.
 argument-hint: "[optional: --dry-run] [optional: --window N] [optional: --status ON_TRACK|AT_RISK|OFF_TRACK]"
 model: sonnet
-env:
-  RALPH_COMMAND: "report"
+hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=report"
 ---
 
 # Ralph Project Report

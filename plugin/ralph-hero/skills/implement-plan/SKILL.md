@@ -2,7 +2,7 @@
 description: Implement an approved plan for a GitHub issue, phase by phase with manual verification pauses. Finds plan via Artifact Comment Protocol, sets up worktree, tracks progress. Use when you want to implement a planned issue interactively.
 argument-hint: "<#NNN issue number or plan-path>"
 model: opus
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Edit
@@ -12,10 +12,6 @@ allowed_tools:
   - Task
   - WebSearch
   - WebFetch
-env:
-  RALPH_GH_OWNER: "${RALPH_GH_OWNER}"
-  RALPH_GH_REPO: "${RALPH_GH_REPO}"
-  RALPH_GH_PROJECT_NUMBER: "${RALPH_GH_PROJECT_NUMBER}"
 ---
 
 # Implement Plan

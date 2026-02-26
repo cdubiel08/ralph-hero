@@ -4,6 +4,10 @@ argument-hint: <issue-number> [--interactive] [--plan-doc path]
 context: fork
 model: opus
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=review RALPH_REQUIRED_BRANCH=main RALPH_VALID_INPUT_STATES='Plan in Review' RALPH_VALID_OUTPUT_STATES='In Progress,Ready for Plan,Human Needed' RALPH_ARTIFACT_DIR=thoughts/shared/reviews RALPH_MAX_ESTIMATE=S RALPH_REQUIRES_PLAN=true"
   PreToolUse:
     - matcher: "Bash"
       hooks:
@@ -26,21 +30,13 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-postcondition.sh"
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Glob
   - Grep
   - Bash
   - Task
-env:
-  RALPH_COMMAND: "review"
-  RALPH_REQUIRED_BRANCH: "main"
-  RALPH_VALID_INPUT_STATES: "Plan in Review"
-  RALPH_VALID_OUTPUT_STATES: "In Progress,Ready for Plan,Human Needed"
-  RALPH_ARTIFACT_DIR: "thoughts/shared/reviews"
-  RALPH_MAX_ESTIMATE: "S"
-  RALPH_REQUIRES_PLAN: "true"
 ---
 
 # Ralph GitHub Review - Plan Quality Gate

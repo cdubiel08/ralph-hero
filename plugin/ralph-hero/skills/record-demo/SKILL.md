@@ -2,7 +2,7 @@
 description: Record a product demo with narration and attach to a GitHub issue
 context: inline
 model: sonnet
-allowed_tools:
+allowed-tools:
   - Bash
   - Read
   - Write

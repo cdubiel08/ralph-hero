@@ -2,8 +2,11 @@
 description: Display pipeline status dashboard with health indicators. Shows issue counts per workflow phase, identifies stuck issues, WIP violations, and blocked dependencies. First read-only skill - no state changes.
 argument-hint: "[optional: markdown|ascii|json]"
 model: haiku
-env:
-  RALPH_COMMAND: "status"
+hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=status"
 ---
 
 # Ralph Pipeline Status

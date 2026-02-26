@@ -2,7 +2,7 @@
 description: Crystallize draft ideas into structured GitHub issues, implementation plans, or research topics. Reads idea files, researches codebase context, finds duplicates, and creates well-scoped tickets.
 argument-hint: "<idea-path-or-description>"
 model: opus
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Edit
@@ -12,10 +12,6 @@ allowed_tools:
   - Task
   - WebSearch
   - WebFetch
-env:
-  RALPH_GH_OWNER: "${RALPH_GH_OWNER}"
-  RALPH_GH_REPO: "${RALPH_GH_REPO}"
-  RALPH_GH_PROJECT_NUMBER: "${RALPH_GH_PROJECT_NUMBER}"
 ---
 
 # Form Idea
