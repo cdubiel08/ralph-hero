@@ -32,11 +32,11 @@ The ralph-review AUTO mode critique prompt (`SKILL.md:196-200`) uses 4 named dim
 ## Desired End State
 
 ### Verification
-- [ ] `plugin/ralph-hero/skills/shared/quality-standards.md` exists with canonical quality dimensions
-- [ ] `ralph-plan/SKILL.md` Quality section references shared standard
-- [ ] `ralph-review/SKILL.md` Quality section references shared standard
-- [ ] `ralph-research/SKILL.md` Quality section references shared standard
-- [ ] All 4 files are syntactically valid markdown
+- [x] `plugin/ralph-hero/skills/shared/quality-standards.md` exists with canonical quality dimensions
+- [x] `ralph-plan/SKILL.md` Quality section references shared standard
+- [x] `ralph-review/SKILL.md` Quality section references shared standard
+- [x] `ralph-research/SKILL.md` Quality section references shared standard
+- [x] All 4 files are syntactically valid markdown
 
 ## What We're NOT Doing
 
@@ -213,20 +213,20 @@ See [shared/quality-standards.md](../shared/quality-standards.md) for canonical 
 
 ### Success Criteria
 
-- [ ] Automated: `test -f plugin/ralph-hero/skills/shared/quality-standards.md` exits 0
-- [ ] Automated: `grep -q "quality-standards.md" plugin/ralph-hero/skills/ralph-plan/SKILL.md` exits 0
-- [ ] Automated: `grep -q "quality-standards.md" plugin/ralph-hero/skills/ralph-review/SKILL.md` exits 0
-- [ ] Automated: `grep -q "quality-standards.md" plugin/ralph-hero/skills/ralph-research/SKILL.md` exits 0
-- [ ] Automated: `grep -c "Completeness" plugin/ralph-hero/skills/shared/quality-standards.md` returns at least 1
-- [ ] Automated: `grep -c "Feasibility" plugin/ralph-hero/skills/shared/quality-standards.md` returns at least 1
-- [ ] Manual: ralph-review AUTO mode inline prompt (lines 196-200) is unchanged
-- [ ] Manual: No other skill files are modified
+- [x] Automated: `test -f plugin/ralph-hero/skills/shared/quality-standards.md` exits 0
+- [x] Automated: `grep -q "quality-standards.md" plugin/ralph-hero/skills/ralph-plan/SKILL.md` exits 0
+- [x] Automated: `grep -q "quality-standards.md" plugin/ralph-hero/skills/ralph-review/SKILL.md` exits 0
+- [x] Automated: `grep -q "quality-standards.md" plugin/ralph-hero/skills/ralph-research/SKILL.md` exits 0
+- [x] Automated: `grep -c "Completeness" plugin/ralph-hero/skills/shared/quality-standards.md` returns at least 1
+- [x] Automated: `grep -c "Feasibility" plugin/ralph-hero/skills/shared/quality-standards.md` returns at least 1
+- [x] Manual: ralph-review AUTO mode inline prompt (lines 196-200) is unchanged
+- [x] Manual: No other skill files are modified
 
 ## Integration Testing
 
-- [ ] Verify `quality-standards.md` relative links work from each skill file's location (`../shared/quality-standards.md`)
-- [ ] Verify the ralph-review AUTO critique prompt (lines 196-200) still contains the 4 inline dimensions
-- [ ] Verify `ralph-impl` checkpoint consumption is unaffected (no changes to that file)
+- [x] Verify `quality-standards.md` relative links work from each skill file's location (`../shared/quality-standards.md`)
+- [x] Verify the ralph-review AUTO critique prompt (lines 196-200) still contains the 4 inline dimensions
+- [x] Verify `ralph-impl` checkpoint consumption is unaffected (no changes to that file)
 
 ## References
 

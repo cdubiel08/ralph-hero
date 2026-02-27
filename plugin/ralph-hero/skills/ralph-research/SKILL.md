@@ -221,9 +221,7 @@ Profiles set default filters. Explicit params override profile defaults.
 
 ## Research Quality
 
-Focus on: understanding the problem deeply, finding existing codebase patterns to leverage, identifying risks and edge cases, providing actionable recommendations.
-
-Avoid: premature solutioning, over-engineering suggestions, ignoring existing patterns, vague findings.
+See [shared/quality-standards.md](../shared/quality-standards.md) for canonical research quality dimensions (Depth, Feasibility, Risk, Actionability) and anti-patterns.
 
 ## Escalation & Link Formatting
 
