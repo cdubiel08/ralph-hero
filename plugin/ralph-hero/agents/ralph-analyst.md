@@ -5,6 +5,11 @@ tools: Read, Write, Glob, Grep, Skill, Bash, TaskList, TaskGet, TaskUpdate, Send
 model: sonnet
 color: green
 hooks:
+  PreToolUse:
+    - matcher: "ralph_hero__update_workflow_state|ralph_hero__update_issue|ralph_hero__update_estimate|ralph_hero__update_priority|ralph_hero__create_issue|ralph_hero__create_comment|ralph_hero__add_sub_issue|ralph_hero__add_dependency|ralph_hero__remove_dependency"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
   Stop:
     - hooks:
         - type: command

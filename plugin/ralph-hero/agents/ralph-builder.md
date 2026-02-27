@@ -5,6 +5,11 @@ tools: Read, Write, Edit, Bash, Glob, Grep, Skill, TaskList, TaskGet, TaskUpdate
 model: sonnet
 color: cyan
 hooks:
+  PreToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
   Stop:
     - hooks:
         - type: command
