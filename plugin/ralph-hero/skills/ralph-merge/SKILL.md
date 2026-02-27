@@ -9,7 +9,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=merge RALPH_VALID_OUTPUT_STATES='Done,Human Needed'"
   PreToolUse:
-    - matcher: "ralph_hero__update_workflow_state|ralph_hero__advance_children|ralph_hero__advance_parent"
+    - matcher: "ralph_hero__save_issue|ralph_hero__advance_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/merge-state-gate.sh"
@@ -23,9 +23,8 @@ allowed-tools:
   - Bash
   - ralph_hero__get_issue
   - ralph_hero__list_sub_issues
-  - ralph_hero__advance_children
-  - ralph_hero__advance_parent
-  - ralph_hero__update_workflow_state
+  - ralph_hero__advance_issue
+  - ralph_hero__save_issue
   - ralph_hero__create_comment
 ---
 
@@ -116,13 +115,13 @@ Run from the project root. If cleanup fails, warn but continue — the merge was
 ## Step 7: Move Issues to Done
 
 ```
-ralph_hero__advance_children(parentNumber=NNN, targetState="Done")
+ralph_hero__advance_issue(direction="children", number=NNN, targetState="Done")
 ```
 
 Or for a standalone issue:
 
 ```
-ralph_hero__update_workflow_state(number=NNN, state="Done")
+ralph_hero__save_issue(number=NNN, workflowState="Done", command="ralph_merge")
 ```
 
 ## Step 8: Advance Parent
@@ -130,7 +129,7 @@ ralph_hero__update_workflow_state(number=NNN, state="Done")
 If applicable:
 
 ```
-ralph_hero__advance_parent(childNumber=NNN)
+ralph_hero__advance_issue(direction="parent", number=NNN)
 ```
 
 ## Step 9: Post Completion Comment

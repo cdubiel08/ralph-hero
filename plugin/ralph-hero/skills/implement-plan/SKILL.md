@@ -92,7 +92,7 @@ git pull origin "$(git branch --show-current)" --no-edit
 If a linked issue exists and is not already "In Progress":
 
 ```
-ralph_hero__update_workflow_state(number=NNN, state="In Progress", command="implement_plan")
+ralph_hero__save_issue(number=NNN, workflowState="In Progress", command="implement_plan")
 ```
 
 ### 3.3 Post Start Comment
@@ -188,7 +188,7 @@ PR body must use `Closes #NNN` syntax (bare `#NNN` per GitHub convention, not `G
 ### 5.2 Transition to In Review
 
 ```
-ralph_hero__update_workflow_state(number=NNN, state="In Review", command="implement_plan")
+ralph_hero__save_issue(number=NNN, workflowState="In Review", command="implement_plan")
 ```
 
 ### 5.3 Post Completion Comment

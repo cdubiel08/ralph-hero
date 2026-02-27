@@ -15,7 +15,7 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-plan-required.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-worktree-gate.sh"
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-state-gate.sh"
@@ -143,11 +143,9 @@ If any issue is in wrong state, STOP: "Implementation blocked. #NNN: [state] (ex
 
 Skip if already "In Progress". For each issue in `issues[]`:
 ```
-ralph_hero__update_workflow_state
-- owner: $RALPH_GH_OWNER
-- repo: $RALPH_GH_REPO
+ralph_hero__save_issue
 - number: [issue-number]
-- state: "__LOCK__"
+- workflowState: "__LOCK__"
 - command: "ralph_impl"
 ```
 On error: read message for valid states/recovery action, retry with corrected parameters.
@@ -320,11 +318,9 @@ For each issue in `issues[]` (single: just one; group/epic: all issues):
 
 2. **Move to "In Review"**:
    ```
-   ralph_hero__update_workflow_state
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
+   ralph_hero__save_issue
    - number: [issue-number]
-   - state: "__COMPLETE__"
+   - workflowState: "__COMPLETE__"
    - command: "ralph_impl"
    ```
 

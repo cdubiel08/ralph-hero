@@ -68,7 +68,7 @@ When encountering complexity, uncertainty, or states that don't align with proto
 
 1. **Move issue to "Human Needed"**:
    ```
-   ralph_hero__update_workflow_state(number, state="__ESCALATE__", command="[current-command]")
+   ralph_hero__save_issue(number=N, workflowState="__ESCALATE__", command="[current-command]")
    ```
    For group plans, move ALL group issues to "Human Needed".
 
@@ -89,7 +89,7 @@ When encountering complexity, uncertainty, or states that don't align with proto
 
 ## Error Handling
 
-- **Tool call failures**: If `update_workflow_state` returns an error, read the error message -- it contains valid states/intents and a Recovery action. Retry with corrected parameters.
+- **Tool call failures**: If `save_issue` returns an error, read the error message -- it contains valid states/intents and a Recovery action. Retry with corrected parameters.
 - **State gate blocks**: Hooks enforce valid state transitions. Check the current workflow state and re-evaluate.
 - **Postcondition failures**: Stop hooks verify expected outputs. Satisfy the requirement before retrying.
 

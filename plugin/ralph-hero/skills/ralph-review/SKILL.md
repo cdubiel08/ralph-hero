@@ -17,7 +17,7 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-no-dup.sh"
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-state-gate.sh"
@@ -245,15 +245,13 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
 1. **Move issue to "In Progress"**:
    ```
-   ralph_hero__update_workflow_state
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
+   ralph_hero__save_issue
    - number: [issue-number]
-   - state: "__COMPLETE__"
+   - workflowState: "__COMPLETE__"
    - command: "ralph_review"
    ```
 
-   **Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+   **Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 2. **Add approval comment** (per Artifact Comment Protocol in shared/conventions.md):
    ```
@@ -282,9 +280,7 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
 1. **Add `needs-iteration` label**:
    ```
-   ralph_hero__update_issue
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
+   ralph_hero__save_issue
    - number: [issue-number]
    - labels: [existing_labels..., "needs-iteration"]
    ```
@@ -293,11 +289,9 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
 2. **Move issue to "Ready for Plan"**:
    ```
-   ralph_hero__update_workflow_state
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
+   ralph_hero__save_issue
    - number: [issue-number]
-   - state: "Ready for Plan"
+   - workflowState: "Ready for Plan"
    - command: "ralph_review"
    ```
 

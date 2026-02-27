@@ -14,7 +14,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
   PostToolUse:
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-state-gate.sh"
@@ -159,16 +159,14 @@ Choose ONE action:
 
 **If CLOSE:**
 ```
-ralph_hero__update_workflow_state
-- owner: [owner]
-- repo: [repo]
+ralph_hero__save_issue
 - number: [issue-number]
-- state: "Done"
+- workflowState: "Done"
 - command: "ralph_triage"
 ```
 Add comment explaining why closed.
 
-**Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+**Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **If SPLIT:**
 
@@ -205,9 +203,7 @@ ralph_hero__list_sub_issues
 
 3. Set estimate:
    ```
-   ralph_hero__update_estimate
-   - owner: [owner]
-   - repo: [repo]
+   ralph_hero__save_issue
    - number: [new-issue-number]
    - estimate: "XS"
    ```
@@ -218,9 +214,7 @@ Add comment to original listing sub-issues (reused and/or created).
 
 **If RE-ESTIMATE:**
 ```
-ralph_hero__update_estimate
-- owner: [owner]
-- repo: [repo]
+ralph_hero__save_issue
 - number: [issue-number]
 - estimate: "[new estimate: XS/S/M/L/XL]"
 ```
@@ -228,11 +222,9 @@ Add comment explaining estimate reasoning.
 
 **If RESEARCH:**
 ```
-ralph_hero__update_workflow_state
-- owner: [owner]
-- repo: [repo]
+ralph_hero__save_issue
 - number: [issue-number]
-- state: "Research Needed"
+- workflowState: "Research Needed"
 - command: "ralph_triage"
 ```
 Add comment: "Moved to Research Needed for investigation."
@@ -246,9 +238,7 @@ Leave workflow state as Backlog.
 After completing any action (CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP), apply the `ralph-triage` label:
 
 ```
-ralph_hero__update_issue
-- owner: [owner]
-- repo: [repo]
+ralph_hero__save_issue
 - number: [issue-number]
 - labels: [existing-labels, "ralph-triage"]
 ```

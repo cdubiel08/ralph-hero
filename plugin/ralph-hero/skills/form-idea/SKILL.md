@@ -166,9 +166,7 @@ If the user chose "GitHub issue":
 
    Then set the estimate:
    ```
-   ralph_hero__update_estimate
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
+   ralph_hero__save_issue
    - number: [created issue number]
    - estimate: "XS"  (or S/M/L/XL as appropriate)
    ```
@@ -216,14 +214,14 @@ If the user chose "Ticket tree":
    a. Create the parent issue:
    ```
    ralph_hero__create_issue(title=..., body=...)
-   ralph_hero__update_estimate(number=..., estimate="L")
+   ralph_hero__save_issue(number=..., estimate="L")
    ```
 
    b. Create each child issue:
    ```
    ralph_hero__create_issue(title=..., body=...)
    ralph_hero__add_sub_issue(parentNumber=..., childNumber=...)
-   ralph_hero__update_estimate(number=..., estimate="XS")
+   ralph_hero__save_issue(number=..., estimate="XS")
    ```
 
    c. Add ordering dependencies between children if sequential:

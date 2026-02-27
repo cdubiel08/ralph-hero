@@ -9,7 +9,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=pr RALPH_VALID_OUTPUT_STATES='In Review,Human Needed'"
   PreToolUse:
-    - matcher: "ralph_hero__update_workflow_state|ralph_hero__advance_children"
+    - matcher: "ralph_hero__save_issue|ralph_hero__advance_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pr-state-gate.sh"
@@ -28,8 +28,8 @@ allowed-tools:
   - Bash
   - ralph_hero__get_issue
   - ralph_hero__list_sub_issues
-  - ralph_hero__advance_children
-  - ralph_hero__update_workflow_state
+  - ralph_hero__advance_issue
+  - ralph_hero__save_issue
   - ralph_hero__create_comment
 ---
 
@@ -99,13 +99,13 @@ Capture the PR URL from the output.
 ## Step 6: Move Issues to In Review
 
 ```
-ralph_hero__advance_children(parentNumber=NNN, targetState="In Review")
+ralph_hero__advance_issue(direction="children", number=NNN, targetState="In Review")
 ```
 
 Or for a standalone issue:
 
 ```
-ralph_hero__update_workflow_state(number=NNN, state="In Review")
+ralph_hero__save_issue(number=NNN, workflowState="In Review", command="ralph_pr")
 ```
 
 ## Step 7: Post Comment

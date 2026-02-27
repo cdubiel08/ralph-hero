@@ -79,12 +79,11 @@ Read configuration from environment:
 **If dry-run mode** (default): Report what would be archived. Do not call any archive tools.
 
 **If NOT dry-run AND eligible count exceeds threshold**:
-1. Check if `ralph_hero__bulk_archive` tool is available
+1. Check if `ralph_hero__archive_items` tool is available
 2. If available, call it with the eligible workflow states and threshold
-3. If NOT available (expected until #153 is implemented), output:
+3. If NOT available, output:
    ```
-   Auto-archive requires the bulk_archive tool (GH-153).
-   To archive manually, use: ralph_hero__archive_item for each item.
+   Auto-archive requires the archive_items tool.
    ```
 
 ### Step 5: Summary
