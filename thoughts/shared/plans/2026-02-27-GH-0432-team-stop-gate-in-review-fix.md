@@ -30,10 +30,10 @@ STATES=("Backlog" "Research Needed" "Ready for Plan" "Plan in Review" "In Progre
 ## Desired End State
 
 ### Verification
-- [ ] `team-stop-gate.sh` STATES array includes "In Review"
-- [ ] Team stays alive when issues are in "In Review" state
-- [ ] Existing re-entry guard still works (stop_hook_active bypass)
-- [ ] No other workflow states are accidentally excluded
+- [x] `team-stop-gate.sh` STATES array includes "In Review"
+- [x] Team stays alive when issues are in "In Review" state
+- [x] Existing re-entry guard still works (stop_hook_active bypass)
+- [x] No other workflow states are accidentally excluded
 
 ## What We're NOT Doing
 
@@ -69,16 +69,16 @@ STATES=("Backlog" "Research Needed" "Ready for Plan" "Plan in Review" "In Progre
 
 ### Success Criteria
 
-- [ ] Automated: `grep -q '"In Review"' plugin/ralph-hero/hooks/scripts/team-stop-gate.sh` exits 0
-- [ ] Automated: `bash -n plugin/ralph-hero/hooks/scripts/team-stop-gate.sh` exits 0 (syntax valid)
-- [ ] Manual: STATES array contains exactly 6 entries: Backlog, Research Needed, Ready for Plan, Plan in Review, In Progress, In Review
-- [ ] Manual: No other lines in the file are changed
+- [x] Automated: `grep -q '"In Review"' plugin/ralph-hero/hooks/scripts/team-stop-gate.sh` exits 0
+- [x] Automated: `bash -n plugin/ralph-hero/hooks/scripts/team-stop-gate.sh` exits 0 (syntax valid)
+- [x] Manual: STATES array contains exactly 6 entries: Backlog, Research Needed, Ready for Plan, Plan in Review, In Progress, In Review
+- [x] Manual: No other lines in the file are changed
 
 ## Integration Testing
 
-- [ ] Run `bash -n plugin/ralph-hero/hooks/scripts/team-stop-gate.sh` to verify syntax
-- [ ] Verify the script still sources `hook-utils.sh` correctly
-- [ ] Confirm the re-entry guard (lines 19-24) is untouched
+- [x] Run `bash -n plugin/ralph-hero/hooks/scripts/team-stop-gate.sh` to verify syntax
+- [x] Verify the script still sources `hook-utils.sh` correctly
+- [x] Confirm the re-entry guard (lines 19-24) is untouched
 
 ## References
 
