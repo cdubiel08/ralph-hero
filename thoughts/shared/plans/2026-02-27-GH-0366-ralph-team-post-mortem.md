@@ -19,7 +19,7 @@ primary_issue: 366
 
 ## Current State Analysis
 
-`ralph-team/SKILL.md` is 63 lines. Shutdown is a single line (line 63): "When all tasks are complete, shut down each teammate and delete the team." No durable artifact is produced. The lead has `TaskList`, `TaskGet`, and `Write` in its allowed-tools — all required for data collection. Task metadata includes `issue_number`, `artifact_path`, `result`, and worker-specific fields (PR URLs, review verdicts). The idea-hunt skill demonstrates the same pattern: "Read generated data → summarize → shutdown."
+`ralph-team/SKILL.md` is 63 lines. Shutdown is a single line (line 63): "When all tasks are complete, shut down each teammate and delete the team." No durable artifact is produced. The lead has `TaskList` and `TaskGet` in its allowed-tools but is missing `Write` — which must be added for post-mortem file creation. Task metadata includes `issue_number`, `artifact_path`, `result`, and worker-specific fields (PR URLs, review verdicts). The idea-hunt skill demonstrates the same pattern: "Read generated data → summarize → shutdown."
 
 ## Desired End State
 
@@ -28,7 +28,7 @@ primary_issue: 366
 - [ ] Post-mortem template specifies `thoughts/shared/reports/` as output directory
 - [ ] Post-mortem collects: issues processed, PRs created, worker summary, errors
 - [ ] TeamDelete is called AFTER post-mortem is written
-- [ ] `Write` tool is already in allowed-tools (confirmed at line 6 — no change needed)
+- [ ] `Write` tool is present in allowed-tools (must be added — not present in current version)
 
 ## What We're NOT Doing
 
@@ -50,7 +50,21 @@ Single file change: replace the one-liner shutdown instruction in `ralph-team/SK
 
 ### Changes Required
 
-#### 1. Replace shutdown instruction with structured Shut Down section
+#### 1. Add `Write` to allowed-tools
+**File**: `plugin/ralph-hero/skills/ralph-team/SKILL.md`
+**Lines**: 5-17 (frontmatter allowed-tools list)
+**Change**: Add `- Write` after `- Read` (line 6):
+
+```yaml
+allowed-tools:
+  - Read
+  - Write
+  - Glob
+```
+
+This is required for the team lead to create the post-mortem report file.
+
+#### 2. Replace shutdown instruction with structured Shut Down section
 **File**: `plugin/ralph-hero/skills/ralph-team/SKILL.md`
 **Lines**: 63 (replace single line with new section)
 **Change**: Replace:
@@ -122,7 +136,7 @@ Call `TeamDelete()`. This removes the task list and team config.
 
 | File | Action |
 |------|--------|
-| `plugin/ralph-hero/skills/ralph-team/SKILL.md` | MODIFY (line 63 → expanded section) |
+| `plugin/ralph-hero/skills/ralph-team/SKILL.md` | MODIFY (frontmatter: add Write to allowed-tools; line 63: replace with Shut Down section) |
 
 ### Success Criteria
 
@@ -130,8 +144,9 @@ Call `TeamDelete()`. This removes the task list and team config.
 - [ ] Automated: `grep -q "thoughts/shared/reports/" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
 - [ ] Automated: `grep -q "TeamDelete" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
 - [ ] Automated: `grep -c "Shut Down" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns at least 1
+- [ ] Automated: `grep -q "Write" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
+- [ ] Manual: `Write` is present in the `allowed-tools` frontmatter list
 - [ ] Manual: Post-mortem step appears BEFORE TeamDelete in the document
-- [ ] Manual: The `allowed-tools` section is unchanged (Write is already at line 6)
 - [ ] Manual: No other skill or agent files are modified
 
 ## Integration Testing
