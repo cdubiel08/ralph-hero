@@ -243,7 +243,14 @@ export function registerBatchTools(
             field: z
               .enum(["workflow_state", "estimate", "priority"])
               .describe("Field to update"),
-            value: z.string().describe("Target value (e.g., 'Research Needed', 'XS', 'P1')"),
+            value: z.string().describe(
+              "Target value. " +
+              "For workflow_state: Backlog, Research Needed, Research in Progress, Ready for Plan, " +
+              "Plan in Progress, Plan in Review, In Progress, In Review, Done, Human Needed, Canceled. " +
+              "For estimate: XS, S, M, L, XL. " +
+              "For priority: P0, P1, P2, P3. " +
+              "Note: 'Todo' is a Status field value, NOT a valid workflow state.",
+            ),
           }),
         )
         .min(1)
