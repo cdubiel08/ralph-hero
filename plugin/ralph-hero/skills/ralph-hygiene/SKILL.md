@@ -8,6 +8,10 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=hygiene RALPH_REQUIRED_BRANCH=main"
+  Stop:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hygiene-postcondition.sh"
 ---
 
 # Ralph GitHub Hygiene - Board Cleanup

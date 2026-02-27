@@ -1,12 +1,17 @@
 ---
 description: One-time setup for Ralph GitHub workflow - creates GitHub Project V2 with required custom fields, workflow states, priorities, estimates, and configuration. Use when setting up a new repository for Ralph, configuring GitHub Projects, or troubleshooting missing workflow states.
 argument-hint: "[project-number]"
+context: fork
 model: haiku
 hooks:
   SessionStart:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=setup"
+  Stop:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/setup-postcondition.sh"
 ---
 
 # Ralph GitHub Setup
