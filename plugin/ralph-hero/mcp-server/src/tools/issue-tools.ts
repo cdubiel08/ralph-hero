@@ -21,7 +21,10 @@ import {
   isEarlierState,
   VALID_STATES,
   LOCK_STATES,
+  TERMINAL_STATES,
+  WORKFLOW_STATE_TO_STATUS,
 } from "../lib/workflow-states.js";
+import { buildBatchMutationQuery } from "./batch-tools.js";
 import { resolveState } from "../lib/state-resolution.js";
 import { parseDateMath } from "../lib/date-math.js";
 import { expandProfile } from "../lib/filter-profiles.js";
@@ -959,6 +962,278 @@ export function registerIssueTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to create issue: ${message}`);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__save_issue
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__save_issue",
+    "Unified issue mutation: update any combination of issue properties (title, body, labels, assignees, open/close) " +
+      "and project field values (workflow state, estimate, priority) in a single call. " +
+      "Supports semantic intents (__LOCK__, __COMPLETE__, etc.) for workflowState. " +
+      "Auto-closes the GitHub issue when workflowState resolves to a terminal state (Done, Canceled) unless issueState is explicitly set. " +
+      "Set estimate or priority to null to clear the field. " +
+      "Returns: number, url, changes.",
+    {
+      owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z.string().optional().describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce.number().optional().describe("Project number override (defaults to configured project)"),
+      number: z.coerce.number().describe("Issue number"),
+      // Issue object fields (GitHub Issue API)
+      title: z.string().optional().describe("New issue title"),
+      body: z.string().optional().describe("New issue body (Markdown)"),
+      labels: z.array(z.string()).optional().describe("Label names (replaces existing labels)"),
+      assignees: z.array(z.string()).optional().describe("GitHub usernames to assign (replaces existing)"),
+      issueState: z.enum(["OPEN", "CLOSED", "CLOSED_NOT_PLANNED"]).optional()
+        .describe("Close or reopen the issue. CLOSED = completed, CLOSED_NOT_PLANNED = not planned, OPEN = reopen"),
+      // Project field values (ProjectV2Item API)
+      workflowState: z.string().optional()
+        .describe("Workflow state: semantic intent (__LOCK__, __COMPLETE__, etc.) or direct name. Requires command when using semantic intents."),
+      estimate: z.enum(["XS", "S", "M", "L", "XL"]).nullable().optional()
+        .describe("Estimate. Set to null to clear."),
+      priority: z.enum(["P0", "P1", "P2", "P3"]).nullable().optional()
+        .describe("Priority. Set to null to clear."),
+      command: z.string().optional()
+        .describe("Ralph command for semantic intent resolution (e.g., 'ralph_impl'). Required when workflowState is a semantic intent."),
+    },
+    async (args) => {
+      try {
+        const { owner, repo } = resolveConfig(client, args);
+        const hasIssueFields = args.title !== undefined || args.body !== undefined ||
+          args.labels !== undefined || args.assignees !== undefined || args.issueState !== undefined;
+        const hasProjectFields = args.workflowState !== undefined ||
+          args.estimate !== undefined || args.priority !== undefined;
+
+        if (!hasIssueFields && !hasProjectFields) {
+          return toolError("No fields to update. Provide at least one field.");
+        }
+
+        const changes: Record<string, unknown> = {};
+        let resolvedWorkflowState: string | undefined;
+
+        // 1. Resolve workflow state early (needed for auto-close logic)
+        if (args.workflowState !== undefined) {
+          if (args.command) {
+            const resolution = resolveState(args.workflowState, args.command);
+            resolvedWorkflowState = resolution.resolvedState;
+            if (resolution.wasIntent) {
+              changes.resolvedFrom = resolution.originalState;
+            }
+          } else {
+            // Direct state name without command — validate it's a known state
+            if (!isValidState(args.workflowState)) {
+              return toolError(
+                `Unknown workflow state "${args.workflowState}". ` +
+                `Valid states: ${VALID_STATES.join(", ")}. ` +
+                `For semantic intents (__LOCK__, __COMPLETE__, etc.), provide the command parameter.`,
+              );
+            }
+            resolvedWorkflowState = args.workflowState;
+          }
+        }
+
+        // 2. Determine if we need to close/reopen the issue
+        let targetState: "OPEN" | "CLOSED" | undefined;
+        let stateReason: "COMPLETED" | "NOT_PLANNED" | "REOPENED" | undefined;
+
+        if (args.issueState === "CLOSED") {
+          targetState = "CLOSED";
+          stateReason = "COMPLETED";
+        } else if (args.issueState === "CLOSED_NOT_PLANNED") {
+          targetState = "CLOSED";
+          stateReason = "NOT_PLANNED";
+        } else if (args.issueState === "OPEN") {
+          targetState = "OPEN";
+          stateReason = "REOPENED";
+        }
+
+        // Auto-close: if workflowState is terminal and issueState not explicitly set
+        if (!args.issueState && resolvedWorkflowState && TERMINAL_STATES.includes(resolvedWorkflowState)) {
+          targetState = "CLOSED";
+          stateReason = resolvedWorkflowState === "Canceled" ? "NOT_PLANNED" : "COMPLETED";
+          changes.autoClose = true;
+        }
+
+        // 3. Issue-object mutation (title, body, labels, assignees, state)
+        const needsIssueMutation = hasIssueFields || targetState !== undefined;
+        if (needsIssueMutation) {
+          const issueId = await resolveIssueNodeId(client, owner, repo, args.number);
+
+          // Resolve label IDs if provided
+          let labelIds: string[] | undefined;
+          if (args.labels) {
+            const labelResult = await client.query<{
+              repository: {
+                labels: { nodes: Array<{ id: string; name: string }> };
+              };
+            }>(
+              `query($owner: String!, $repo: String!) {
+                repository(owner: $owner, name: $repo) {
+                  labels(first: 100) {
+                    nodes { id name }
+                  }
+                }
+              }`,
+              { owner, repo },
+              { cache: true, cacheTtlMs: 5 * 60 * 1000 },
+            );
+            const allLabels = labelResult.repository.labels.nodes;
+            labelIds = args.labels
+              .map((name) => allLabels.find((l) => l.name === name)?.id)
+              .filter((id): id is string => id !== undefined);
+          }
+
+          await client.mutate<{
+            updateIssue: {
+              issue: { number: number; title: string; url: string; state: string; stateReason: string | null };
+            };
+          }>(
+            `mutation($issueId: ID!, $title: String, $body: String, $labelIds: [ID!], $assigneeIds: [ID!], $state: IssueState, $stateReason: IssueClosedStateReason) {
+              updateIssue(input: {
+                id: $issueId,
+                title: $title,
+                body: $body,
+                labelIds: $labelIds,
+                assigneeIds: $assigneeIds,
+                state: $state,
+                stateReason: $stateReason
+              }) {
+                issue { number title url state stateReason }
+              }
+            }`,
+            {
+              issueId,
+              title: args.title ?? null,
+              body: args.body ?? null,
+              labelIds: labelIds ?? null,
+              assigneeIds: null, // Would need username -> ID resolution
+              state: targetState ?? null,
+              stateReason: stateReason ?? null,
+            },
+          );
+
+          if (args.title !== undefined) changes.title = args.title;
+          if (args.body !== undefined) changes.body = "(updated)";
+          if (args.labels !== undefined) changes.labels = args.labels;
+          if (args.assignees !== undefined) changes.assignees = args.assignees;
+          if (args.issueState !== undefined) changes.issueState = args.issueState;
+        }
+
+        // 4. Project-field mutations (aliased batch for workflow state + status sync + estimate + priority)
+        if (hasProjectFields) {
+          const { projectNumber, projectOwner } = resolveFullConfig(client, args);
+          await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+          const projectItemId = await resolveProjectItemId(
+            client, fieldCache, owner, repo, args.number, projectNumber,
+          );
+          const projectId = fieldCache.getProjectId(projectNumber);
+          if (!projectId) {
+            return toolError("Could not resolve project ID");
+          }
+
+          // Collect field updates for aliased batch mutation
+          const updates: Array<{ alias: string; itemId: string; fieldId: string; optionId: string }> = [];
+          // Collect fields to clear (separate mutations)
+          const fieldsToClear: Array<{ fieldName: string; fieldId: string }> = [];
+          let opIdx = 0;
+
+          // 4a. Workflow state
+          if (resolvedWorkflowState) {
+            const fieldId = fieldCache.getFieldId("Workflow State", projectNumber);
+            const optionId = fieldId ? fieldCache.resolveOptionId("Workflow State", resolvedWorkflowState, projectNumber) : undefined;
+            if (fieldId && optionId) {
+              updates.push({ alias: `ws_${opIdx}`, itemId: projectItemId, fieldId, optionId });
+              opIdx++;
+
+              // Status sync (inline, same pattern as batch-tools.ts)
+              const targetStatus = WORKFLOW_STATE_TO_STATUS[resolvedWorkflowState];
+              if (targetStatus) {
+                const statusFieldId = fieldCache.getFieldId("Status", projectNumber);
+                const statusOptionId = statusFieldId
+                  ? fieldCache.resolveOptionId("Status", targetStatus, projectNumber)
+                  : undefined;
+                if (statusFieldId && statusOptionId) {
+                  updates.push({ alias: `ss_${opIdx}`, itemId: projectItemId, fieldId: statusFieldId, optionId: statusOptionId });
+                  opIdx++;
+                }
+              }
+            }
+            changes.workflowState = resolvedWorkflowState;
+          }
+
+          // 4b. Estimate (set or clear)
+          if (args.estimate !== undefined) {
+            if (args.estimate === null) {
+              const fieldId = fieldCache.getFieldId("Estimate", projectNumber);
+              if (fieldId) {
+                fieldsToClear.push({ fieldName: "Estimate", fieldId });
+              }
+              changes.estimate = null;
+            } else {
+              const fieldId = fieldCache.getFieldId("Estimate", projectNumber);
+              const optionId = fieldId ? fieldCache.resolveOptionId("Estimate", args.estimate, projectNumber) : undefined;
+              if (fieldId && optionId) {
+                updates.push({ alias: `est_${opIdx}`, itemId: projectItemId, fieldId, optionId });
+                opIdx++;
+              }
+              changes.estimate = args.estimate;
+            }
+          }
+
+          // 4c. Priority (set or clear)
+          if (args.priority !== undefined) {
+            if (args.priority === null) {
+              const fieldId = fieldCache.getFieldId("Priority", projectNumber);
+              if (fieldId) {
+                fieldsToClear.push({ fieldName: "Priority", fieldId });
+              }
+              changes.priority = null;
+            } else {
+              const fieldId = fieldCache.getFieldId("Priority", projectNumber);
+              const optionId = fieldId ? fieldCache.resolveOptionId("Priority", args.priority, projectNumber) : undefined;
+              if (fieldId && optionId) {
+                updates.push({ alias: `pri_${opIdx}`, itemId: projectItemId, fieldId, optionId });
+                opIdx++;
+              }
+              changes.priority = args.priority;
+            }
+          }
+
+          // 4d. Execute aliased batch mutation for non-null field updates
+          if (updates.length > 0) {
+            const { mutationString, variables } = buildBatchMutationQuery(projectId, updates);
+            await client.projectMutate(mutationString, variables);
+          }
+
+          // 4e. Execute clear mutations for null fields (separate calls)
+          for (const { fieldId } of fieldsToClear) {
+            await client.projectMutate(
+              `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+                clearProjectV2ItemFieldValue(input: {
+                  projectId: $projectId,
+                  itemId: $itemId,
+                  fieldId: $fieldId
+                }) {
+                  projectV2Item { id }
+                }
+              }`,
+              { projectId, itemId: projectItemId, fieldId },
+            );
+          }
+        }
+
+        return toolSuccess({
+          number: args.number,
+          url: `https://github.com/${owner}/${repo}/issues/${args.number}`,
+          changes,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to save issue: ${message}`);
       }
     },
   );

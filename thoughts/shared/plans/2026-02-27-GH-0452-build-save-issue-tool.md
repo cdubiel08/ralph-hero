@@ -42,14 +42,14 @@ A single `save_issue` tool that:
 5. Supports field clearing by setting values to `null`
 
 ### Verification
-- [ ] `save_issue` registered and discoverable via MCP
-- [ ] Issue-only, project-only, and combined updates all work in one call
-- [ ] Close/reopen via `issueState` parameter
-- [ ] Auto-close on terminal workflow state
-- [ ] Semantic intents resolve correctly
-- [ ] Field clearing via null
-- [ ] All existing tests pass
-- [ ] New unit tests cover all parameter combinations
+- [x] `save_issue` registered and discoverable via MCP
+- [x] Issue-only, project-only, and combined updates all work in one call
+- [x] Close/reopen via `issueState` parameter
+- [x] Auto-close on terminal workflow state
+- [x] Semantic intents resolve correctly
+- [x] Field clearing via null
+- [x] All existing tests pass
+- [x] New unit tests cover all parameter combinations
 
 ## What We're NOT Doing
 
@@ -342,11 +342,11 @@ Check: if `buildBatchMutationQuery` is already exported, no change needed. If no
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes in `plugin/ralph-hero/mcp-server/`
-- [ ] `npm test` passes in `plugin/ralph-hero/mcp-server/`
-- [ ] New test file `save-issue.test.ts` exists with schema, auto-close, semantic intent, and structural tests
-- [ ] `buildBatchMutationQuery` is exported from `batch-tools.ts`
-- [ ] `save_issue` tool description mentions all key capabilities (fields, workflow state, close/reopen, null clearing)
+- [x] `npm run build` passes in `plugin/ralph-hero/mcp-server/`
+- [x] `npm test` passes in `plugin/ralph-hero/mcp-server/`
+- [x] New test file `save-issue.test.ts` exists with schema, auto-close, semantic intent, and structural tests
+- [x] `buildBatchMutationQuery` is exported from `batch-tools.ts`
+- [x] `save_issue` tool description mentions all key capabilities (fields, workflow state, close/reopen, null clearing)
 
 #### Manual Verification:
 - [ ] `save_issue(number: N, workflowState: "Canceled")` closes the issue AND updates the project field
