@@ -208,3 +208,103 @@ describe("resolveRepoFromProject structural", () => {
     );
   });
 });
+
+describe("resolveConfigOptionalRepo", () => {
+  let mockClient: GitHubClient;
+  let mockConfig: GitHubClientConfig;
+
+  beforeEach(() => {
+    mockConfig = {
+      token: "tok",
+      owner: "test-owner",
+      projectNumber: 3,
+      projectOwner: "test-owner",
+    };
+
+    mockClient = {
+      config: mockConfig,
+    } as unknown as GitHubClient;
+
+    vi.resetModules();
+  });
+
+  it("returns owner and repo when both available", async () => {
+    mockConfig.owner = "test-owner";
+    mockConfig.repo = "test-repo";
+    const { resolveConfigOptionalRepo } = await import(helpersPath);
+    const result = resolveConfigOptionalRepo(mockClient, {});
+    expect(result).toEqual({ owner: "test-owner", repo: "test-repo" });
+  });
+
+  it("returns owner with undefined repo when repo not set", async () => {
+    mockConfig.owner = "test-owner";
+    mockConfig.repo = undefined;
+    const { resolveConfigOptionalRepo } = await import(helpersPath);
+    const result = resolveConfigOptionalRepo(mockClient, {});
+    expect(result).toEqual({ owner: "test-owner", repo: undefined });
+  });
+
+  it("prefers args over config", async () => {
+    mockConfig.owner = "config-owner";
+    mockConfig.repo = "config-repo";
+    const { resolveConfigOptionalRepo } = await import(helpersPath);
+    const result = resolveConfigOptionalRepo(mockClient, { owner: "arg-owner", repo: "arg-repo" });
+    expect(result).toEqual({ owner: "arg-owner", repo: "arg-repo" });
+  });
+
+  it("throws when owner is missing", async () => {
+    mockConfig.owner = undefined;
+    const { resolveConfigOptionalRepo } = await import(helpersPath);
+    expect(() => resolveConfigOptionalRepo(mockClient, {})).toThrow("owner is required");
+  });
+});
+
+describe("resolveFullConfigOptionalRepo", () => {
+  let mockClient: GitHubClient;
+  let mockConfig: GitHubClientConfig;
+
+  beforeEach(() => {
+    mockConfig = {
+      token: "tok",
+      owner: "test-owner",
+      projectNumber: 3,
+      projectOwner: "test-owner",
+    };
+
+    mockClient = {
+      config: mockConfig,
+    } as unknown as GitHubClient;
+
+    vi.resetModules();
+  });
+
+  it("returns full config with optional repo undefined", async () => {
+    mockConfig.owner = "test-owner";
+    mockConfig.repo = undefined;
+    mockConfig.projectNumber = 3;
+    const { resolveFullConfigOptionalRepo } = await import(helpersPath);
+    const result = resolveFullConfigOptionalRepo(mockClient, {});
+    expect(result.owner).toBe("test-owner");
+    expect(result.repo).toBeUndefined();
+    expect(result.projectNumber).toBe(3);
+    expect(result.projectOwner).toBeDefined();
+  });
+
+  it("returns full config with repo when available", async () => {
+    mockConfig.owner = "test-owner";
+    mockConfig.repo = "test-repo";
+    mockConfig.projectNumber = 3;
+    const { resolveFullConfigOptionalRepo } = await import(helpersPath);
+    const result = resolveFullConfigOptionalRepo(mockClient, {});
+    expect(result.owner).toBe("test-owner");
+    expect(result.repo).toBe("test-repo");
+    expect(result.projectNumber).toBe(3);
+  });
+
+  it("throws when projectNumber is missing", async () => {
+    mockConfig.owner = "test-owner";
+    mockConfig.projectNumber = undefined;
+    const { resolveFullConfigOptionalRepo } = await import(helpersPath);
+    expect(() => resolveFullConfigOptionalRepo(mockClient, {})).toThrow("projectNumber is required");
+  });
+});

@@ -26,11 +26,11 @@ All 11 `resolveConfig()` callers genuinely need repo in their queries (they use 
 ## Desired End State
 
 ### Verification
-- [ ] `resolveConfigOptionalRepo()` exported from `helpers.ts` — returns `{ owner: string; repo?: string }`
-- [ ] `resolveFullConfigOptionalRepo()` exported from `helpers.ts` — returns `ResolvedConfigOptionalRepo`
-- [ ] `list_issues` uses `resolveFullConfigOptionalRepo()` instead of `resolveFullConfig()`
-- [ ] Multi-repo project can call `list_issues` without `RALPH_GH_REPO` set
-- [ ] All existing `resolveConfig()` and `resolveFullConfig()` callers unchanged
+- [x] `resolveConfigOptionalRepo()` exported from `helpers.ts` — returns `{ owner: string; repo?: string }`
+- [x] `resolveFullConfigOptionalRepo()` exported from `helpers.ts` — returns `ResolvedConfigOptionalRepo`
+- [x] `list_issues` uses `resolveFullConfigOptionalRepo()` instead of `resolveFullConfig()`
+- [x] Multi-repo project can call `list_issues` without `RALPH_GH_REPO` set
+- [x] All existing `resolveConfig()` and `resolveFullConfig()` callers unchanged
 
 ## What We're NOT Doing
 
@@ -210,20 +210,20 @@ describe("resolveFullConfigOptionalRepo", () => {
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `grep -q "resolveConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
-- [ ] Automated: `grep -q "resolveFullConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
-- [ ] Automated: `grep -q "resolveFullConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` exits 0
-- [ ] Automated: `grep -q "ResolvedConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
-- [ ] Manual: `resolveConfig()` and `resolveFullConfig()` are unchanged (no modifications to existing functions)
-- [ ] Manual: All 11 `resolveConfig()` call sites unchanged (still strict)
-- [ ] Manual: `list_issues` is the only tool updated to use the optional variant
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `grep -q "resolveConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
+- [x] Automated: `grep -q "resolveFullConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
+- [x] Automated: `grep -q "resolveFullConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` exits 0
+- [x] Automated: `grep -q "ResolvedConfigOptionalRepo" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
+- [x] Manual: `resolveConfig()` and `resolveFullConfig()` are unchanged (no modifications to existing functions)
+- [x] Manual: All 11 `resolveConfig()` call sites unchanged (still strict)
+- [x] Manual: `list_issues` is the only tool updated to use the optional variant
 
 ## Integration Testing
 
-- [ ] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] Verify `list_issues` tests still pass (existing tests won't break because the function still returns repo when config has it)
-- [ ] Verify new tests cover: owner+repo defined, owner-only (repo undefined), args override config, missing owner throws, missing projectNumber throws
+- [x] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] Verify `list_issues` tests still pass (existing tests won't break because the function still returns repo when config has it)
+- [x] Verify new tests cover: owner+repo defined, owner-only (repo undefined), args override config, missing owner throws, missing projectNumber throws
 
 ## References
 
