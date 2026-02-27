@@ -415,9 +415,9 @@ export async function queryProjectRepositories(
  * - If client.config.repo is already set → return it (env var takes precedence)
  * - If exactly 1 repo linked → use it, cache in client.config.repo
  * - If 0 repos linked → throw with bootstrap instructions
- * - If 2+ repos linked → throw with list of repos and hint to set RALPH_GH_REPO
+ * - If 2+ repos linked → warn and return undefined, leaving client.config.repo unset
  */
-export async function resolveRepoFromProject(client: GitHubClient): Promise<string> {
+export async function resolveRepoFromProject(client: GitHubClient): Promise<string | undefined> {
   if (client.config.repo) return client.config.repo;
 
   const projectNumber = client.config.projectNumber;
@@ -449,10 +449,12 @@ export async function resolveRepoFromProject(client: GitHubClient): Promise<stri
   }
 
   const repoList = result.repos.map(r => r.nameWithOwner).join(", ");
-  throw new Error(
-    `Multiple repos linked to project: ${repoList}. ` +
-    "Set RALPH_GH_REPO to select which repo to use as default."
+  console.error(
+    `[ralph-hero] Multiple repos linked to project: ${repoList}. ` +
+    `Set RALPH_GH_REPO to select the default repo. ` +
+    `Read-only tools will work; write tools require an explicit repo param.`
   );
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

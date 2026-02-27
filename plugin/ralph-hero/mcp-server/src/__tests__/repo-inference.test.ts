@@ -118,7 +118,9 @@ describe("resolveRepoFromProject", () => {
     );
   });
 
-  it("throws when multiple repos are linked without tiebreaker", async () => {
+  it("warns and returns undefined when multiple repos are linked", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
     (mockClient.projectQuery as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       user: {
         projectV2: {
@@ -135,10 +137,15 @@ describe("resolveRepoFromProject", () => {
     });
 
     const { resolveRepoFromProject } = await import(helpersPath);
+    const result = await resolveRepoFromProject(mockClient);
 
-    await expect(resolveRepoFromProject(mockClient)).rejects.toThrow(
-      "Multiple repos linked to project: owner/repo-a, owner/repo-b",
+    expect(result).toBeUndefined();
+    expect(mockClient.config.repo).toBeUndefined();
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Multiple repos linked to project: owner/repo-a, owner/repo-b"),
     );
+
+    consoleSpy.mockRestore();
   });
 
   it("throws when projectNumber is missing", async () => {
