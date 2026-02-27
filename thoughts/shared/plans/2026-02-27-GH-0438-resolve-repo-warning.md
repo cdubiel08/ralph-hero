@@ -24,11 +24,11 @@ primary_issue: 438
 ## Desired End State
 
 ### Verification
-- [ ] `resolveRepoFromProject()` returns `undefined` (not throws) when 2+ repos linked
-- [ ] A warning is logged listing the linked repos
-- [ ] Function return type is `Promise<string | undefined>`
-- [ ] Startup completes without error for multi-repo projects
-- [ ] Existing test updated to verify warning + undefined return
+- [x] `resolveRepoFromProject()` returns `undefined` (not throws) when 2+ repos linked
+- [x] A warning is logged listing the linked repos
+- [x] Function return type is `Promise<string | undefined>`
+- [x] Startup completes without error for multi-repo projects
+- [x] Existing test updated to verify warning + undefined return
 
 ## What We're NOT Doing
 
@@ -145,19 +145,19 @@ With:
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `grep -q "return undefined" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
-- [ ] Automated: `grep -q "Promise<string | undefined>" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
-- [ ] Automated: `grep -q "warns and returns undefined" plugin/ralph-hero/mcp-server/src/__tests__/repo-inference.test.ts` exits 0
-- [ ] Manual: The 0-repos and 1-repo branches are unchanged
-- [ ] Manual: No changes to `index.ts`, `resolveConfig()`, or any tool files
-- [ ] Manual: Console warning includes the repo list and guidance about RALPH_GH_REPO
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `grep -q "return undefined" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
+- [x] Automated: `grep -q "Promise<string | undefined>" plugin/ralph-hero/mcp-server/src/lib/helpers.ts` exits 0
+- [x] Automated: `grep -q "warns and returns undefined" plugin/ralph-hero/mcp-server/src/__tests__/repo-inference.test.ts` exits 0
+- [x] Manual: The 0-repos and 1-repo branches are unchanged
+- [x] Manual: No changes to `index.ts`, `resolveConfig()`, or any tool files
+- [x] Manual: Console warning includes the repo list and guidance about RALPH_GH_REPO
 
 ## Integration Testing
 
-- [ ] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] Verify existing tests for 0-repos and 1-repo branches still pass unchanged
-- [ ] Verify the new test correctly checks both the return value and the console.error call
+- [x] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] Verify existing tests for 0-repos and 1-repo branches still pass unchanged
+- [x] Verify the new test correctly checks both the return value and the console.error call
 
 ## References
 
