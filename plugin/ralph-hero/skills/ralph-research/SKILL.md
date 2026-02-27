@@ -68,15 +68,13 @@ If no eligible issues, respond: "No XS/Small issues need research. Queue empty."
 ### Step 3: Transition to Research in Progress
 
 ```
-ralph_hero__update_workflow_state
-- owner: $RALPH_GH_OWNER
-- repo: $RALPH_GH_REPO
+ralph_hero__save_issue
 - number: [issue-number]
-- state: "__LOCK__"
+- workflowState: "__LOCK__"
 - command: "ralph_research"
 ```
 
-If `update_workflow_state` returns an error, read the error message for valid states/intents and retry with corrected parameters.
+If `save_issue` returns an error, read the error message for valid states/intents and retry with corrected parameters.
 
 ### Step 4: Conduct Research
 
@@ -170,11 +168,9 @@ git push origin main
 2. **Add summary comment** with key findings, recommended approach, and group context (if multi-issue group)
 3. **Move to "Ready for Plan"**:
    ```
-   ralph_hero__update_workflow_state
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
+   ralph_hero__save_issue
    - number: [issue-number]
-   - state: "__COMPLETE__"
+   - workflowState: "__COMPLETE__"
    - command: "ralph_research"
    ```
 

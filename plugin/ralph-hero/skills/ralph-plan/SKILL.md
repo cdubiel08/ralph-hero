@@ -13,7 +13,7 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/convergence-gate.sh"
@@ -22,7 +22,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-research-required.sh"
   PostToolUse:
-    - matcher: "ralph_hero__update_workflow_state"
+    - matcher: "ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-state-gate.sh"
@@ -142,7 +142,7 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 
 ### Step 4: Transition to Plan in Progress
 
-Update **all group issues**: `ralph_hero__update_workflow_state(number, state="__LOCK__", command="ralph_plan")`
+Update **all group issues**: `ralph_hero__save_issue(number=N, workflowState="__LOCK__", command="ralph_plan")`
 
 See shared/conventions.md for error handling.
 
@@ -246,7 +246,7 @@ For **each issue in the group**:
    ```
    For single issues, omit "Phase N of M" and just list phases.
 
-3. **Move to Plan in Review**: `ralph_hero__update_workflow_state(number, state="__COMPLETE__", command="ralph_plan")`
+3. **Move to Plan in Review**: `ralph_hero__save_issue(number=N, workflowState="__COMPLETE__", command="ralph_plan")`
 
 ### Step 8: Team Result Reporting
 

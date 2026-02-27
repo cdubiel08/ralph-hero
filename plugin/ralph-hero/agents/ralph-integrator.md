@@ -1,12 +1,12 @@
 ---
 name: ralph-integrator
 description: Integration specialist - validates implementation against plan requirements, handles PR creation, merge, worktree cleanup, and git operations
-tools: Read, Glob, Bash, Skill, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__update_issue, ralph_hero__update_workflow_state, ralph_hero__create_comment, ralph_hero__advance_children, ralph_hero__advance_parent, ralph_hero__list_sub_issues
+tools: Read, Glob, Bash, Skill, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__save_issue, ralph_hero__create_comment, ralph_hero__advance_issue, ralph_hero__list_sub_issues
 model: haiku
 color: orange
 hooks:
   PreToolUse:
-    - matcher: "ralph_hero__update_workflow_state|ralph_hero__update_issue|ralph_hero__advance_children|ralph_hero__advance_parent|ralph_hero__create_comment"
+    - matcher: "ralph_hero__save_issue|ralph_hero__advance_issue|ralph_hero__create_comment"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"

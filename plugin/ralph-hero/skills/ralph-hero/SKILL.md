@@ -84,7 +84,7 @@ Then STOP.
 Query the pipeline position tool to determine what phase to execute:
 
 ```
-ralph_hero__detect_pipeline_position(owner=$RALPH_GH_OWNER, repo=$RALPH_GH_REPO, number=[issue-number])
+ralph_hero__get_issue(number=[issue-number], includePipeline=true)
 ```
 
 The result provides:
@@ -104,7 +104,7 @@ Execute the phase indicated by `phase`. Do NOT interpret workflow states yoursel
 
 ### Step 2: Create Upfront Task List
 
-Based on the `phase` from `detect_pipeline_position`, create ALL remaining pipeline tasks with `blockedBy` dependencies using `TaskCreate` + `TaskUpdate(addBlockedBy=[...])`.
+Based on the `phase` from `get_issue(includePipeline=true)`, create ALL remaining pipeline tasks with `blockedBy` dependencies using `TaskCreate` + `TaskUpdate(addBlockedBy=[...])`.
 
 **Task graph by starting phase:**
 
@@ -158,7 +158,7 @@ Include `metadata.issue_number` in each task's description for traceability.
 
 After all research tasks complete (detectable when plan tasks become unblocked), if `isGroup=true` and `issues.length >= 3`:
 
-1. Call `ralph_hero__detect_work_streams(issues=[issue-numbers])` to cluster by file overlap
+1. Call `ralph_hero__detect_stream_positions(issues=[issue-numbers])` to cluster by file overlap
 2. If `totalStreams > 1`: restructure implementation tasks into per-stream parallel chains
    - Issues within the same stream: sequential `blockedBy` chain
    - Streams independent of each other: no cross-stream `blockedBy`
@@ -183,7 +183,7 @@ Task(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-split', args='NNN') to split issue #NNN.",
      description="Split #NNN")
 ```
-After all splits complete, re-call `detect_pipeline_position` and rebuild remaining task list.
+After all splits complete, re-call `get_issue(includePipeline=true)` and rebuild remaining task list.
 
 #### RESEARCH tasks
 ```
@@ -276,7 +276,7 @@ For escalation procedures (Human Needed state, @mention patterns), see [shared/c
 
 Ralph Hero is **resumable** across context windows:
 
-1. `detect_pipeline_position` determines the current phase from GitHub state
+1. `get_issue(includePipeline=true)` determines the current phase from GitHub state
 2. `TaskList()` restores progress from the session task list
 3. If TaskList is empty (new session): rebuild upfront task list from current phase
 4. If TaskList has tasks: resume from first pending unblocked task

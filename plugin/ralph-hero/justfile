@@ -289,8 +289,8 @@ quick-status format="markdown":
 # Move issue to a workflow state - instant, no API cost
 [group('quick')]
 quick-move issue state:
-    @just _mcp_call "ralph_hero__update_workflow_state" \
-        '{"number":{{issue}},"state":"{{state}}","command":"ralph_cli"}'
+    @just _mcp_call "ralph_hero__save_issue" \
+        '{"number":{{issue}},"workflowState":"{{state}}","command":"ralph_cli"}'
 
 # Find next actionable issue by workflow state - instant, no API cost
 [group('quick')]
@@ -301,7 +301,7 @@ quick-pick state="Research Needed" max-estimate="S":
 # Assign issue to a GitHub user - instant, no API cost
 [group('quick')]
 quick-assign issue user:
-    @just _mcp_call "ralph_hero__update_issue" \
+    @just _mcp_call "ralph_hero__save_issue" \
         '{"number":{{issue}},"assignees":["{{user}}"]}'
 
 # Create a new issue with project fields - instant, no API cost

@@ -344,11 +344,11 @@ After the plan is finalized and the user is satisfied:
      ```
      Would you like to move #NNN to "Plan in Review"?
      ```
-     If yes: `ralph_hero__update_workflow_state(number=NNN, state="Plan in Review", command="create_plan")`
+     If yes: `ralph_hero__save_issue(number=NNN, workflowState="Plan in Review", command="create_plan")`
 
 3. **If creating new issue**:
    - Use `ralph_hero__create_issue(title=..., body=...)` with plan summary as body
-   - Use `ralph_hero__update_estimate(number=..., estimate="XS|S|M|L|XL")` to set estimate
+   - Use `ralph_hero__save_issue(number=..., estimate="XS|S|M|L|XL")` to set estimate
    - Post plan link comment (same Artifact Comment Protocol as above)
    - Update plan frontmatter with new issue reference
    - Offer state transition to "Plan in Review"

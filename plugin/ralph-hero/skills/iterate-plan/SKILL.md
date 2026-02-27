@@ -60,11 +60,9 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
 
 If issue is in "Plan in Review" or "Ready for Plan", offer to transition:
 ```
-ralph_hero__update_workflow_state
-- owner: $RALPH_GH_OWNER
-- repo: $RALPH_GH_REPO
+ralph_hero__save_issue
 - number: [issue-number]
-- state: "Plan in Progress"
+- workflowState: "Plan in Progress"
 - command: "iterate_plan"
 ```
 
@@ -244,11 +242,9 @@ After changes are made, update the GitHub issue if linked:
 2. **Consider state transition**:
    - If plan was in "Plan in Review" and major changes were made, offer to move back to "Plan in Progress":
      ```
-     ralph_hero__update_workflow_state
-     - owner: $RALPH_GH_OWNER
-     - repo: $RALPH_GH_REPO
+     ralph_hero__save_issue
      - number: [issue-number]
-     - state: "Plan in Progress"
+     - workflowState: "Plan in Progress"
      - command: "iterate_plan"
      ```
 

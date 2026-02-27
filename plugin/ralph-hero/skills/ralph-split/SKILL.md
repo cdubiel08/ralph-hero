@@ -179,17 +179,13 @@ Produce a split plan summary:
 
 **If reusing an existing child** (match found):
 ```
-ralph_hero__update_issue
-- owner: [owner]
-- repo: [repo]
+ralph_hero__save_issue
 - number: [existing-child-number]
 - body: [updated description if scope refined]
 ```
 
 ```
-ralph_hero__update_estimate
-- owner: [owner]
-- repo: [repo]
+ralph_hero__save_issue
 - number: [existing-child-number]
 - estimate: "[adjusted estimate if changed]"
 ```
@@ -219,24 +215,20 @@ ralph_hero__update_estimate
 
 3. **Set estimate**:
    ```
-   ralph_hero__update_estimate
-   - owner: [owner]
-   - repo: [repo]
+   ralph_hero__save_issue
    - number: [new-issue-number]
    - estimate: "XS"
    ```
 
 4. **Set initial workflow state**:
    ```
-   ralph_hero__update_workflow_state
-   - owner: [owner]
-   - repo: [repo]
+   ralph_hero__save_issue
    - number: [new-issue-number]
-   - state: "__COMPLETE__"
+   - workflowState: "__COMPLETE__"
    - command: "ralph_split"
    ```
 
-   **Error handling**: If `update_workflow_state` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+   **Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **Sub-issue description template**:
 ```markdown
@@ -310,9 +302,7 @@ ralph_hero__add_dependency
    The parent issue stays in its current state (typically Backlog). It only reaches Done when all children are Done, which happens naturally through the pipeline.
 
    ```
-   ralph_hero__update_issue
-   - owner: [owner]
-   - repo: [repo]
+   ralph_hero__save_issue
    - number: [original-issue-number]
    - body: [Prepend "## Split into Sub-Issues\nThis issue has been decomposed. See children and comments for details.\n\n" to existing body]
    ```
@@ -328,11 +318,9 @@ Based on research done during splitting:
 - **If blocked by external issue** -> Keep in "Backlog" with blocker set
 
 ```
-ralph_hero__update_workflow_state
-- owner: [owner]
-- repo: [repo]
+ralph_hero__save_issue
 - number: [sub-issue-number]
-- state: [appropriate state]
+- workflowState: [appropriate state]
 - command: "ralph_split"
 ```
 

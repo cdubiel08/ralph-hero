@@ -194,7 +194,11 @@ Then restart Claude Code and run /ralph-setup again.
 
 ### Step 4: Update Field Colors and Descriptions
 
-Use `ralph_hero__update_field_options` to apply color coding and descriptions to all custom fields (Workflow State, Priority, Estimate). The setup_project tool creates fields with the correct colors, but this step can be used to adjust them after creation.
+Use `gh api graphql` to update field option colors and descriptions if needed. Example:
+```
+gh api graphql -f query='mutation { updateProjectV2FieldOptionValue(input: { projectId: "PVT_xxx", fieldId: "PVTSSF_xxx", optionId: "xxx", color: "GREEN", description: "..." }) { projectV2FieldOption { id name } } }'
+```
+Or use the GitHub Projects UI to adjust field option colors after creation. The `setup_project` tool creates fields with the correct colors, so this step is usually not needed.
 
 ### Step 4b: Create Default Views (Manual)
 
@@ -433,7 +437,16 @@ Ask using AskUserQuestion:
 
 **Question**: "Would you like to create a starter `.ralph-routing.yml` config?"
 **Options**:
-- **"Yes, create a starter config"** — Call `ralph_hero__configure_routing(operation: "add_rule", rule: { match: { labels: ["enhancement"] }, action: { workflowState: "Backlog", projectNumber: [project-number] } })` to create a minimal stub, then display:
+- **"Yes, create a starter config"** — Create or edit `.ralph-routing.yml` directly using the Write tool:
+  ```yaml
+  rules:
+    - match:
+        labels: ["enhancement"]
+      action:
+        workflowState: "Backlog"
+        projectNumber: [project-number]
+  ```
+  Then display:
   ```
   Created .ralph-routing.yml with a starter rule:
   - Issues labeled "enhancement" → Project #[N], Workflow State: Backlog

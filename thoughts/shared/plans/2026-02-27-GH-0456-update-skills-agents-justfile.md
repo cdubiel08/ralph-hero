@@ -53,7 +53,7 @@ After Phases 1-4 (GH-452, GH-453, GH-454, GH-455), the MCP server has consolidat
 - Justfile recipes functional with new tool names
 
 ### Verification
-- [ ] Grep for all 30+ old tool names returns empty across skills/agents/justfile
+- [x] Grep for all 30+ old tool names returns empty across skills/agents/justfile
 - [ ] `just info 1` works
 - [ ] `just move 1 "Backlog"` works
 - [ ] `just where 1` works
@@ -282,8 +282,8 @@ Use a text editor or Write tool to create this file.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -rE "update_workflow_state|update_issue|update_estimate|update_priority|clear_field|detect_group|check_convergence|detect_pipeline_position|list_project_items|detect_work_streams|archive_item|advance_children|advance_parent|list_dependencies|list_projects|copy_project|update_project|list_views|list_project_repos|remove_from_project|reorder_item|link_team|delete_field|update_collaborators|add_to_project|link_repository|update_status_update|delete_status_update|sync_across_projects|configure_routing|update_field_options" plugin/ralph-hero/skills/ plugin/ralph-hero/agents/ plugin/ralph-hero/justfile` returns empty
-- [ ] No broken YAML frontmatter in any SKILL.md (check `matcher:` and `tools:` fields parse correctly)
+- [x] `grep -rE "update_workflow_state|update_issue|update_estimate|update_priority|clear_field|detect_group|check_convergence|detect_pipeline_position|list_project_items|detect_work_streams|archive_item|advance_children|advance_parent|list_dependencies|list_projects|copy_project|update_project|list_views|list_project_repos|remove_from_project|reorder_item|link_team|delete_field|update_collaborators|add_to_project|link_repository|update_status_update|delete_status_update|sync_across_projects|configure_routing|update_field_options" plugin/ralph-hero/skills/ plugin/ralph-hero/agents/ plugin/ralph-hero/justfile` returns empty
+- [x] No broken YAML frontmatter in any SKILL.md (check `matcher:` and `tools:` fields parse correctly)
 
 #### Manual Verification:
 - [ ] `just info 1` works (get_issue — unchanged)
