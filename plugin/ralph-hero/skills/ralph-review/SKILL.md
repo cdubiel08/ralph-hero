@@ -396,17 +396,7 @@ Profiles set default filters. Explicit params override profile defaults.
 
 ## Quality Guidelines
 
-**Focus on**:
-- Plan completeness (all phases defined)
-- Success criteria specificity (testable)
-- Scope boundaries (what we're NOT doing)
-- Technical feasibility (files exist, patterns valid)
-
-**Avoid**:
-- Rubber-stamping without analysis
-- Over-critiquing minor style issues
-- Blocking on subjective preferences
-- Creating critique without actionable feedback
+See [shared/quality-standards.md](../shared/quality-standards.md) for canonical plan quality dimensions and review anti-patterns.
 
 ## Link Formatting
 

@@ -284,20 +284,7 @@ Profiles set default filters. Explicit params override profile defaults.
 
 ## Planning Quality Guidelines
 
-Good plans have:
-- Clear phases with specific file changes
-- Testable success criteria for each phase
-- Explicit scope boundaries (what we're NOT doing)
-- References to existing code patterns to follow
-- For groups: explicit dependencies between phases
-- For groups: integration testing section
-
-Avoid:
-- Vague descriptions like "update the code"
-- Missing success criteria
-- Unbounded scope
-- Ignoring existing patterns in the codebase
-- For groups: unclear phase ordering or dependencies
+See [shared/quality-standards.md](../shared/quality-standards.md) for canonical plan quality dimensions (Completeness, Feasibility, Clarity, Scope) and group-specific requirements.
 
 ## Link Formatting
 
