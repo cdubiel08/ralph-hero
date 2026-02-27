@@ -210,12 +210,12 @@ c. **Preserve** existing tests for `advance_children` schema if they exist — m
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test` passes
-- [ ] `grep -r "list_projects\|copy_project\|update_project\|list_views\|list_project_repos\|remove_from_project\|reorder_item\|link_team\|delete_field\|update_collaborators\|add_to_project\|link_repository\|update_status_update\|delete_status_update\|sync_across_projects\|configure_routing\|update_field_options\|advance_children\|advance_parent\|list_dependencies" plugin/ralph-hero/mcp-server/src/tools/` returns no tool registrations
-- [ ] Files `sync-tools.ts`, `routing-tools.ts`, `view-tools.ts` do not exist
-- [ ] `index.ts` has no imports from deleted files
-- [ ] `advance_issue` tool registered with `direction` enum
+- [x] `npm run build` passes
+- [x] `npm test` passes
+- [x] `grep -r "list_projects\|copy_project\|update_project\|list_views\|list_project_repos\|remove_from_project\|reorder_item\|link_team\|delete_field\|update_collaborators\|add_to_project\|link_repository\|update_status_update\|delete_status_update\|sync_across_projects\|configure_routing\|update_field_options\|advance_children\|advance_parent\|list_dependencies" plugin/ralph-hero/mcp-server/src/tools/` returns no tool registrations
+- [x] Files `sync-tools.ts`, `routing-tools.ts`, `view-tools.ts` do not exist
+- [x] `index.ts` has no imports from deleted files
+- [x] `advance_issue` tool registered with `direction` enum
 
 #### Manual Verification:
 - [ ] `advance_issue(direction: "children", number: N, targetState: "Ready for Plan")` advances sub-issues
