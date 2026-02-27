@@ -2,7 +2,7 @@
 description: Interactive codebase research - asks for a research question, spawns parallel sub-agents, synthesizes findings into a research document. Documents what IS, not what SHOULD BE.
 argument-hint: "[optional: research question or #NNN issue number]"
 model: opus
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Edit
@@ -12,10 +12,6 @@ allowed_tools:
   - Task
   - WebSearch
   - WebFetch
-env:
-  RALPH_GH_OWNER: "${RALPH_GH_OWNER}"
-  RALPH_GH_REPO: "${RALPH_GH_REPO}"
-  RALPH_GH_PROJECT_NUMBER: "${RALPH_GH_PROJECT_NUMBER}"
 ---
 
 # Research Codebase

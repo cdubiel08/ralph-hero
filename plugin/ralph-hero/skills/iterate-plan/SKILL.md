@@ -2,7 +2,7 @@
 description: Iterate on an existing implementation plan - reads the linked plan, understands your feedback, confirms approach, and makes surgical updates. Use when you want to refine, extend, or correct an approved plan.
 argument-hint: "[#NNN or plan-path] [optional: feedback]"
 model: opus
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Edit
@@ -12,10 +12,6 @@ allowed_tools:
   - Task
   - WebSearch
   - WebFetch
-env:
-  RALPH_GH_OWNER: "${RALPH_GH_OWNER}"
-  RALPH_GH_REPO: "${RALPH_GH_REPO}"
-  RALPH_GH_PROJECT_NUMBER: "${RALPH_GH_PROJECT_NUMBER}"
 ---
 
 # Iterate Implementation Plan

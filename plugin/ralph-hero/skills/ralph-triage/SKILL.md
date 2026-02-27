@@ -4,6 +4,10 @@ argument-hint: [optional-issue-number]
 context: fork
 model: sonnet
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=triage RALPH_REQUIRED_BRANCH=main"
   PreToolUse:
     - matcher: "Bash"
       hooks:
@@ -18,16 +22,13 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-postcondition.sh"
-allowed_tools:
+allowed-tools:
   - Read
   - Glob
   - Grep
   - Bash
   - Task
   - WebSearch
-env:
-  RALPH_COMMAND: "triage"
-  RALPH_REQUIRED_BRANCH: "main"
 ---
 
 # Ralph GitHub Triage - Backlog Groomer

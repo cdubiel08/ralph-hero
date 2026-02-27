@@ -4,6 +4,10 @@ argument-hint: [optional-issue-number] [--research-doc path]
 context: fork
 model: opus
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=plan RALPH_REQUIRED_BRANCH=main RALPH_REQUIRES_RESEARCH=true"
   PreToolUse:
     - matcher: "Bash"
       hooks:
@@ -26,17 +30,13 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-postcondition.sh"
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Glob
   - Grep
   - Bash
   - Task
-env:
-  RALPH_COMMAND: "plan"
-  RALPH_REQUIRED_BRANCH: "main"
-  RALPH_REQUIRES_RESEARCH: "true"
 ---
 
 # Ralph GitHub Plan - Naive Hero Mode

@@ -4,6 +4,10 @@ argument-hint: [optional-issue-number] [--plan-doc path]
 context: fork
 model: opus
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=impl RALPH_VALID_OUTPUT_STATES='In Progress,In Review,Human Needed' RALPH_REQUIRES_PLAN=true"
   PreToolUse:
     - matcher: "Write|Edit"
       hooks:
@@ -32,7 +36,7 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-postcondition.sh"
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Edit
@@ -40,10 +44,6 @@ allowed_tools:
   - Grep
   - Bash
   - Task
-env:
-  RALPH_COMMAND: "impl"
-  RALPH_VALID_OUTPUT_STATES: "In Progress,In Review,Human Needed"
-  RALPH_REQUIRES_PLAN: "true"
 ---
 
 # Ralph GitHub Implement - Naive Hero Mode

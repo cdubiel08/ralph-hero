@@ -4,6 +4,10 @@ argument-hint: [optional-issue-number]
 context: fork
 model: sonnet
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=research RALPH_REQUIRED_BRANCH=main"
   PreToolUse:
     - matcher: "Bash"
       hooks:
@@ -18,7 +22,7 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/research-postcondition.sh"
-allowed_tools:
+allowed-tools:
   - Read
   - Write
   - Glob
@@ -27,9 +31,6 @@ allowed_tools:
   - Task
   - WebSearch
   - WebFetch
-env:
-  RALPH_COMMAND: "research"
-  RALPH_REQUIRED_BRANCH: "main"
 ---
 
 # Ralph GitHub Research - Naive Hero Mode

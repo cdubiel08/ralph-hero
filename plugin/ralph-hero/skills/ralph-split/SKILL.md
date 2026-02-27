@@ -4,6 +4,10 @@ argument-hint: [optional-issue-number]
 context: fork
 model: sonnet
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=split RALPH_REQUIRED_BRANCH=main RALPH_MIN_ESTIMATE=M RALPH_MAX_SUBTICKET_ESTIMATE=S"
   PreToolUse:
     - matcher: "Bash"
       hooks:
@@ -26,17 +30,12 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-postcondition.sh"
-allowed_tools:
+allowed-tools:
   - Read
   - Glob
   - Grep
   - Bash
   - Task
-env:
-  RALPH_COMMAND: "split"
-  RALPH_REQUIRED_BRANCH: "main"
-  RALPH_MIN_ESTIMATE: "M"
-  RALPH_MAX_SUBTICKET_ESTIMATE: "S"
 ---
 
 # Ralph GitHub Split - Issue Decomposition

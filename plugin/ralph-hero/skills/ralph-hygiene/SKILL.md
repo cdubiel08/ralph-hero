@@ -3,9 +3,11 @@ description: Run project hygiene check - identify archive candidates, stale item
 argument-hint: ""
 context: fork
 model: sonnet
-env:
-  RALPH_COMMAND: "hygiene"
-  RALPH_REQUIRED_BRANCH: "main"
+hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=hygiene RALPH_REQUIRED_BRANCH=main"
 ---
 
 # Ralph GitHub Hygiene - Board Cleanup

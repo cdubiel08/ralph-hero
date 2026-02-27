@@ -2,7 +2,7 @@
 description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
 argument-hint: "[issue-number]"
 model: sonnet
-allowed_tools:
+allowed-tools:
   - Read
   - Glob
   - Bash
@@ -15,12 +15,11 @@ allowed_tools:
   - TaskGet
   - TaskUpdate
   - SendMessage
-env:
-  RALPH_COMMAND: "team"
-  RALPH_AUTO_APPROVE: "true"
-  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"
-  CLAUDE_PLUGIN_ROOT: "${CLAUDE_PLUGIN_ROOT}"
 hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=team RALPH_AUTO_APPROVE=true"
   TaskCompleted:
     - hooks:
         - type: command
