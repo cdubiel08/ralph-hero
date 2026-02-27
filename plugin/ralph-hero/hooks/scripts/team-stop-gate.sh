@@ -24,7 +24,7 @@ if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then
 fi
 
 # Check GitHub for processable issues across all pipeline stages
-STATES=("Backlog" "Research Needed" "Ready for Plan" "Plan in Review" "In Progress")
+STATES=("Backlog" "Research Needed" "Ready for Plan" "Plan in Review" "In Progress" "In Review")
 TOTAL_FOUND=0
 SUMMARY=""
 
