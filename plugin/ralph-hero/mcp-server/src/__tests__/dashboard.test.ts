@@ -1555,6 +1555,76 @@ describe("formatAscii per-project", () => {
 });
 
 // ---------------------------------------------------------------------------
+// buildDashboard multi-repo breakdown
+// ---------------------------------------------------------------------------
+
+describe("buildDashboard multi-repo breakdown", () => {
+  it("omits repoBreakdowns for single-repo items", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", repository: "owner/repo-a" }),
+      makeItem({ number: 2, workflowState: "In Progress", repository: "owner/repo-a" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.repoBreakdowns).toBeUndefined();
+  });
+
+  it("omits repoBreakdowns when no repository set", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog" }),
+      makeItem({ number: 2, workflowState: "In Progress" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.repoBreakdowns).toBeUndefined();
+  });
+
+  it("produces repoBreakdowns with correct per-repo phase counts", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", repository: "owner/repo-a" }),
+      makeItem({ number: 2, workflowState: "Backlog", repository: "owner/repo-a" }),
+      makeItem({ number: 3, workflowState: "In Progress", repository: "owner/repo-b" }),
+      makeItem({ number: 4, workflowState: "In Progress", repository: "owner/repo-b" }),
+      makeItem({ number: 5, workflowState: "In Progress", repository: "owner/repo-b" }),
+    ];
+
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.repoBreakdowns).toBeDefined();
+
+    const bdA = data.repoBreakdowns!["owner/repo-a"];
+    expect(bdA.repoName).toBe("owner/repo-a");
+    expect(bdA.phases.find((p) => p.state === "Backlog")!.count).toBe(2);
+
+    const bdB = data.repoBreakdowns!["owner/repo-b"];
+    expect(bdB.repoName).toBe("owner/repo-b");
+    expect(bdB.phases.find((p) => p.state === "In Progress")!.count).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatMarkdown per-repo
+// ---------------------------------------------------------------------------
+
+describe("formatMarkdown per-repo", () => {
+  it("renders per-repo section when repoBreakdowns present", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", repository: "owner/repo-a" }),
+      makeItem({ number: 2, workflowState: "In Progress", repository: "owner/repo-b" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(data);
+    expect(md).toContain("## Per-Repository Breakdown");
+    expect(md).toContain("owner/repo-a");
+    expect(md).toContain("owner/repo-b");
+  });
+
+  it("omits per-repo section when repoBreakdowns absent", () => {
+    const items = [makeItem({ number: 1, workflowState: "Backlog" })];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(data);
+    expect(md).not.toContain("## Per-Repository Breakdown");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // computeStreamSection
 // ---------------------------------------------------------------------------
 
