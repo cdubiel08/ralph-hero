@@ -21,11 +21,14 @@ ralph-hero/
 │       │   ├── types.ts            # Shared types
 │       │   ├── lib/                # Cache, pagination, rate limiter, group detection
 │       │   ├── tools/              # MCP tool implementations
-│       │   │   ├── issue-tools.ts  # Issue CRUD + workflow state + estimates
-│       │   │   ├── project-tools.ts
-│       │   │   ├── project-management-tools.ts  # Archive, remove, add, link, clear
-│       │   │   ├── relationship-tools.ts
-│       │   │   └── view-tools.ts
+│       │   │   ├── issue-tools.ts  # Issue CRUD, save_issue, get_issue
+│       │   │   ├── project-tools.ts  # setup_project, get_project
+│       │   │   ├── project-management-tools.ts  # archive_items, create_status_update
+│       │   │   ├── relationship-tools.ts  # Sub-issues, dependencies, advance_issue
+│       │   │   ├── batch-tools.ts  # batch_update
+│       │   │   ├── dashboard-tools.ts  # pipeline_dashboard, detect_stream_positions, project_hygiene
+│       │   │   ├── hygiene-tools.ts  # pick_actionable_issue
+│       │   │   └── debug-tools.ts  # health_check
 │       │   └── __tests__/          # Vitest tests
 │       ├── dist/                   # Compiled JS (gitignored, published to npm)
 │       ├── package.json
@@ -106,7 +109,7 @@ For multi-project setups (cross-project dashboard, multiple boards):
 | `RALPH_GH_PROJECT_TOKEN` | No | `settings.local.json` | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | `settings.local.json` | Project owner if different from repo owner |
 
-†`RALPH_GH_REPO` is inferred from the repositories linked to the project via `link_repository`. Only set it explicitly as a tiebreaker when multiple repos are linked. Bootstrap: `setup_project` → `link_repository` → repo is inferred. See #23.
+†`RALPH_GH_REPO` is inferred from the repositories linked to the project. Only set it explicitly as a tiebreaker when multiple repos are linked. Bootstrap: `setup_project` → link repo via `gh` CLI → repo is inferred. See #23.
 
 ### Multi-Project Configuration
 
@@ -123,5 +126,5 @@ Ralph supports managing multiple GitHub Projects V2 boards from a single instanc
 - **`SessionCache` vs `FieldOptionCache`**: `SessionCache` stores API response caches (keyed with `query:` prefix) and stable node ID lookups (`issue-node-id:*`, `project-item-id:*`). `FieldOptionCache` is a separate in-memory structure for project field option IDs. Mutations invalidate `query:` prefixed entries only — node ID lookups are stable across mutations.
 - **Split-owner support**: Repo and project can have different owners (e.g., personal repo with org project). `resolveProjectOwner()` handles this. `fetchProjectForCache()` tries both `user` and `organization` GraphQL types.
 - **Rate limiting**: Every non-mutation query auto-injects a `rateLimit` fragment for proactive tracking. The `RateLimiter` class tracks remaining quota and pauses before requests when low.
-- **Status sync (one-way)**: `update_workflow_state` automatically syncs the default Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping in `workflow-states.ts`. The sync is best-effort: if the Status field is missing or has custom options, the sync silently skips. Mapping: queue states -> Todo, lock/active states -> In Progress, terminal states -> Done. `batch_update` and `advance_children` also sync Status.
-- **Project management tools**: 5 tools in `project-management-tools.ts` for project operations: `archive_item`, `remove_from_project`, `add_to_project`, `link_repository`, `clear_field`. See `thoughts/shared/research/2026-02-18-GH-0066-github-projects-v2-docs-guidance.md` for full tool reference and setup guide.
+- **Status sync (one-way)**: `save_issue` automatically syncs the default Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping in `workflow-states.ts` when setting `workflowState`. The sync is best-effort: if the Status field is missing or has custom options, the sync silently skips. Mapping: queue states -> Todo, lock/active states -> In Progress, terminal states -> Done. `batch_update` and `advance_issue` also sync Status.
+- **Project management tools**: `project-management-tools.ts` contains `archive_items` (single + bulk archiving) and `create_status_update`. See `thoughts/shared/research/2026-02-18-GH-0066-github-projects-v2-docs-guidance.md` for full tool reference and setup guide.

@@ -41,10 +41,10 @@ After Phases 1-5 (GH-452 through GH-456), the MCP toolspace has been consolidate
 - `npm test` and `npm run build` pass (no source changes, just verification)
 
 ### Verification
-- [ ] `CLAUDE.md` structure tree matches actual `src/tools/` directory listing
-- [ ] No removed tool names appear in `CLAUDE.md`
-- [ ] `npm run build` passes (verification only)
-- [ ] `npm test` passes (verification only)
+- [x] `CLAUDE.md` structure tree matches actual `src/tools/` directory listing
+- [x] No removed tool names appear in `CLAUDE.md`
+- [x] `npm run build` passes (verification only)
+- [x] `npm test` passes (verification only)
 
 ## What We're NOT Doing
 
