@@ -68,9 +68,9 @@ _Generated: {generatedAt}_
 
 ## Pipeline Summary
 
-| Phase | Count |
-|-------|------:|
-| {state} | {count} |
+| Phase | Count | Points |
+|-------|------:|-------:|
+| {state} | {count} | {estimatePoints} |
 
 **Total**: {totalIssues} issues
 

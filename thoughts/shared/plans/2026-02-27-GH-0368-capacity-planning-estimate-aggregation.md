@@ -24,10 +24,10 @@ primary_issue: 368
 ## Desired End State
 
 ### Verification
-- [ ] Each `PhaseSnapshot` includes `estimatePoints: number` summing point values of all issues in that phase
-- [ ] `formatMarkdown()` output includes a "Points" column in the pipeline table
-- [ ] Unknown/null estimates contribute 0 points (safe default)
-- [ ] `ralph-report/SKILL.md` pipeline template references estimate points
+- [x] Each `PhaseSnapshot` includes `estimatePoints: number` summing point values of all issues in that phase
+- [x] `formatMarkdown()` output includes a "Points" column in the pipeline table
+- [x] Unknown/null estimates contribute 0 points (safe default)
+- [x] `ralph-report/SKILL.md` pipeline template references estimate points
 
 ## What We're NOT Doing
 
@@ -214,20 +214,20 @@ With:
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `grep -q "estimatePoints" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
-- [ ] Automated: `grep -q "ESTIMATE_POINTS" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
-- [ ] Automated: `grep -q "Points" plugin/ralph-hero/skills/ralph-report/SKILL.md` exits 0
-- [ ] Manual: `PhaseSnapshot` interface includes `estimatePoints: number` field
-- [ ] Manual: `buildSnapshot()` sums points using `ESTIMATE_POINTS` mapping
-- [ ] Manual: `formatMarkdown()` pipeline table includes "Points" column
-- [ ] Manual: Null/unknown estimates contribute 0 points (no errors)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `grep -q "estimatePoints" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
+- [x] Automated: `grep -q "ESTIMATE_POINTS" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
+- [x] Automated: `grep -q "Points" plugin/ralph-hero/skills/ralph-report/SKILL.md` exits 0
+- [x] Manual: `PhaseSnapshot` interface includes `estimatePoints: number` field
+- [x] Manual: `buildSnapshot()` sums points using `ESTIMATE_POINTS` mapping
+- [x] Manual: `formatMarkdown()` pipeline table includes "Points" column
+- [x] Manual: Null/unknown estimates contribute 0 points (no errors)
 
 ## Integration Testing
 
-- [ ] Run `npm test` in `plugin/ralph-hero/mcp-server/` — all existing + new tests pass
-- [ ] Verify `formatMarkdown()` output includes Points column with correct alignment
-- [ ] Verify `buildDashboard()` end-to-end test includes `estimatePoints` in phase snapshots
+- [x] Run `npm test` in `plugin/ralph-hero/mcp-server/` — all existing + new tests pass
+- [x] Verify `formatMarkdown()` output includes Points column with correct alignment
+- [x] Verify `buildDashboard()` end-to-end test includes `estimatePoints` in phase snapshots
 
 ## References
 
