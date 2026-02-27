@@ -45,6 +45,7 @@ export interface DashboardItem {
 export interface PhaseSnapshot {
   state: string;
   count: number;
+  estimatePoints: number;
   issues: Array<{
     number: number;
     title: string;
@@ -158,6 +159,14 @@ function priorityRank(p: string | null): number {
 
 const OVERSIZED_ESTIMATES = new Set(["M", "L", "XL"]);
 
+const ESTIMATE_POINTS: Record<string, number> = {
+  XS: 1,
+  S: 2,
+  M: 3,
+  L: 4,
+  XL: 5,
+};
+
 // ---------------------------------------------------------------------------
 // Phase ordering: STATE_ORDER + extras (Human Needed, Canceled)
 // ---------------------------------------------------------------------------
@@ -257,6 +266,10 @@ function buildSnapshot(
   return {
     state,
     count: sorted.length,
+    estimatePoints: sorted.reduce(
+      (sum, item) => sum + (item.estimate ? (ESTIMATE_POINTS[item.estimate] ?? 0) : 0),
+      0,
+    ),
     issues: sorted.map((item) => ({
       number: item.number,
       title: item.title,
@@ -690,8 +703,8 @@ export function formatMarkdown(
   lines.push("");
 
   // Phase table
-  lines.push("| Phase | Count | Issues |");
-  lines.push("|-------|------:|--------|");
+  lines.push("| Phase | Count | Points | Issues |");
+  lines.push("|-------|------:|-------:|--------|");
 
   for (const phase of data.phases) {
     const issueList = phase.issues
@@ -709,7 +722,7 @@ export function formatMarkdown(
         ? `${issueList}; ... +${phase.issues.length - issuesPerPhase} more`
         : issueList;
 
-    lines.push(`| ${phase.state} | ${phase.count} | ${truncated} |`);
+    lines.push(`| ${phase.state} | ${phase.count} | ${phase.estimatePoints} | ${truncated} |`);
   }
 
   // Health section

@@ -479,7 +479,7 @@ describe("detectHealthIssues", () => {
   // Pipeline gap
   it("pipeline_gap: flags empty non-terminal phases", () => {
     const phases: PhaseSnapshot[] = [
-      { state: "Research Needed", count: 0, issues: [] },
+      { state: "Research Needed", count: 0, estimatePoints: 0, issues: [] },
     ];
 
     const warnings = detectHealthIssues(phases);
@@ -490,7 +490,7 @@ describe("detectHealthIssues", () => {
 
   it("pipeline_gap: does not flag empty Backlog", () => {
     const phases: PhaseSnapshot[] = [
-      { state: "Backlog", count: 0, issues: [] },
+      { state: "Backlog", count: 0, estimatePoints: 0, issues: [] },
     ];
 
     const warnings = detectHealthIssues(phases);
@@ -499,7 +499,7 @@ describe("detectHealthIssues", () => {
 
   it("pipeline_gap: does not flag empty Human Needed", () => {
     const phases: PhaseSnapshot[] = [
-      { state: "Human Needed", count: 0, issues: [] },
+      { state: "Human Needed", count: 0, estimatePoints: 0, issues: [] },
     ];
 
     const warnings = detectHealthIssues(phases);
@@ -713,7 +713,7 @@ describe("detectHealthIssues", () => {
 
   it("sorts warnings by severity (critical first)", () => {
     const phases: PhaseSnapshot[] = [
-      { state: "Research Needed", count: 0, issues: [] }, // pipeline_gap (info)
+      { state: "Research Needed", count: 0, estimatePoints: 0, issues: [] }, // pipeline_gap (info)
       {
         state: "In Progress",
         count: 2,
@@ -766,10 +766,10 @@ describe("formatMarkdown", () => {
     NOW,
   );
 
-  it("produces table with Phase/Count/Issues columns", () => {
+  it("produces table with Phase/Count/Points/Issues columns", () => {
     const md = formatMarkdown(dashboard);
-    expect(md).toContain("| Phase | Count | Issues |");
-    expect(md).toContain("|-------|------:|--------|");
+    expect(md).toContain("| Phase | Count | Points | Issues |");
+    expect(md).toContain("|-------|------:|-------:|--------|");
   });
 
   it("includes health warnings section when warnings exist", () => {
@@ -793,7 +793,7 @@ describe("formatMarkdown", () => {
     const healthy: import("../lib/dashboard.js").DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
       totalIssues: 1,
-      phases: [{ state: "Backlog", count: 1, issues: [] }],
+      phases: [{ state: "Backlog", count: 1, estimatePoints: 0, issues: [] }],
       health: { ok: true, warnings: [] },
       archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
     };
@@ -810,7 +810,7 @@ describe("formatMarkdown", () => {
   it("handles 0-count phases", () => {
     const md = formatMarkdown(dashboard);
     // Research Needed has 0 items
-    expect(md).toContain("| Research Needed | 0 |");
+    expect(md).toContain("| Research Needed | 0 | 0 |");
   });
 
   it("truncates long issue lists with more indicator", () => {
@@ -885,7 +885,7 @@ describe("formatAscii", () => {
     const healthy: import("../lib/dashboard.js").DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
       totalIssues: 1,
-      phases: [{ state: "Backlog", count: 1, issues: [] }],
+      phases: [{ state: "Backlog", count: 1, estimatePoints: 0, issues: [] }],
       health: { ok: true, warnings: [] },
       archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
     };
@@ -990,6 +990,53 @@ describe("buildDashboard", () => {
     expect(data.archive.eligibleForArchive).toBe(1);
     expect(data.archive.eligibleItems[0].number).toBe(1);
     expect(data.archive.recentlyCompleted).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// estimatePoints aggregation
+// ---------------------------------------------------------------------------
+
+describe("estimatePoints aggregation", () => {
+  it("sums estimate points per phase", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress", estimate: "XS" }),
+      makeItem({ number: 2, workflowState: "In Progress", estimate: "S" }),
+      makeItem({ number: 3, workflowState: "In Progress", estimate: "M" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const phase = findPhase(data.phases, "In Progress");
+    expect(phase.estimatePoints).toBe(6); // 1 + 2 + 3
+  });
+
+  it("treats null estimates as 0 points", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", estimate: "S" }),
+      makeItem({ number: 2, workflowState: "Backlog", estimate: null }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const phase = findPhase(data.phases, "Backlog");
+    expect(phase.estimatePoints).toBe(2); // 2 + 0
+  });
+
+  it("returns 0 points for empty phase", () => {
+    const data = buildDashboard([], DEFAULT_HEALTH_CONFIG, NOW);
+    for (const phase of data.phases) {
+      expect(phase.estimatePoints).toBe(0);
+    }
+  });
+
+  it("sums all estimate sizes correctly", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", estimate: "XS" }),
+      makeItem({ number: 2, workflowState: "Backlog", estimate: "S" }),
+      makeItem({ number: 3, workflowState: "Backlog", estimate: "M" }),
+      makeItem({ number: 4, workflowState: "Backlog", estimate: "L" }),
+      makeItem({ number: 5, workflowState: "Backlog", estimate: "XL" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const phase = findPhase(data.phases, "Backlog");
+    expect(phase.estimatePoints).toBe(15); // 1+2+3+4+5
   });
 });
 
@@ -1299,14 +1346,14 @@ describe("detectCrossProjectHealth", () => {
     const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
       3: {
         phases: [
-          { state: "Backlog", count: 0, issues: [] },
-          { state: "In Progress", count: 8, issues: [] },
+          { state: "Backlog", count: 0, estimatePoints: 0, issues: [] },
+          { state: "In Progress", count: 8, estimatePoints: 0, issues: [] },
         ],
       },
       5: {
         phases: [
-          { state: "Backlog", count: 0, issues: [] },
-          { state: "In Progress", count: 2, issues: [] },
+          { state: "Backlog", count: 0, estimatePoints: 0, issues: [] },
+          { state: "In Progress", count: 2, estimatePoints: 0, issues: [] },
         ],
       },
     };
@@ -1323,10 +1370,10 @@ describe("detectCrossProjectHealth", () => {
   it("does not emit warning when projects are balanced", () => {
     const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
       3: {
-        phases: [{ state: "In Progress", count: 3, issues: [] }],
+        phases: [{ state: "In Progress", count: 3, estimatePoints: 0, issues: [] }],
       },
       5: {
-        phases: [{ state: "In Progress", count: 2, issues: [] }],
+        phases: [{ state: "In Progress", count: 2, estimatePoints: 0, issues: [] }],
       },
     };
 
@@ -1337,10 +1384,10 @@ describe("detectCrossProjectHealth", () => {
   it("does not emit warning with fewer than 2 active projects", () => {
     const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
       3: {
-        phases: [{ state: "In Progress", count: 10, issues: [] }],
+        phases: [{ state: "In Progress", count: 10, estimatePoints: 0, issues: [] }],
       },
       5: {
-        phases: [{ state: "Backlog", count: 5, issues: [] }],
+        phases: [{ state: "Backlog", count: 5, estimatePoints: 0, issues: [] }],
       },
     };
 
@@ -1352,16 +1399,16 @@ describe("detectCrossProjectHealth", () => {
     const breakdowns: Record<number, { phases: PhaseSnapshot[] }> = {
       3: {
         phases: [
-          { state: "Done", count: 20, issues: [] },
-          { state: "Backlog", count: 10, issues: [] },
-          { state: "In Progress", count: 2, issues: [] },
+          { state: "Done", count: 20, estimatePoints: 0, issues: [] },
+          { state: "Backlog", count: 10, estimatePoints: 0, issues: [] },
+          { state: "In Progress", count: 2, estimatePoints: 0, issues: [] },
         ],
       },
       5: {
         phases: [
-          { state: "Done", count: 1, issues: [] },
-          { state: "Backlog", count: 1, issues: [] },
-          { state: "In Progress", count: 2, issues: [] },
+          { state: "Done", count: 1, estimatePoints: 0, issues: [] },
+          { state: "Backlog", count: 1, estimatePoints: 0, issues: [] },
+          { state: "In Progress", count: 2, estimatePoints: 0, issues: [] },
         ],
       },
     };
