@@ -34,6 +34,7 @@ import {
   getCurrentFieldValue,
   resolveConfig,
   resolveFullConfig,
+  resolveFullConfigOptionalRepo,
   syncStatusField,
 } from "../lib/helpers.js";
 
@@ -181,7 +182,7 @@ export function registerIssueTools(
           }
         }
 
-        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
+        const { owner, repo, projectNumber, projectOwner } = resolveFullConfigOptionalRepo(
           client,
           args,
         );

@@ -34,6 +34,13 @@ export interface ResolvedConfig {
   projectOwner: string;
 }
 
+export interface ResolvedConfigOptionalRepo {
+  owner: string;
+  repo?: string;
+  projectNumber: number;
+  projectOwner: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helper: Fetch project data for field cache population
 // ---------------------------------------------------------------------------
@@ -479,6 +486,27 @@ export function resolveConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Helper: Resolve owner (required) and repo (optional) with defaults
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve owner (required) and repo (optional) from args or config.
+ * Use for tools that work without a default repo (project-scoped reads).
+ */
+export function resolveConfigOptionalRepo(
+  client: GitHubClient,
+  args: { owner?: string; repo?: string },
+): { owner: string; repo?: string } {
+  const owner = args.owner || client.config.owner;
+  if (!owner)
+    throw new Error(
+      "owner is required (set RALPH_GH_OWNER env var or pass explicitly)",
+    );
+  const repo = args.repo || client.config.repo;
+  return { owner, repo };
+}
+
+// ---------------------------------------------------------------------------
 // Helper: Resolve full config including project details
 // ---------------------------------------------------------------------------
 
@@ -487,6 +515,34 @@ export function resolveFullConfig(
   args: { owner?: string; repo?: string; projectNumber?: number },
 ): ResolvedConfig {
   const { owner, repo } = resolveConfig(client, args);
+  const projectNumber = args.projectNumber ?? client.config.projectNumber;
+  if (!projectNumber) {
+    throw new Error(
+      "projectNumber is required (set RALPH_GH_PROJECT_NUMBER env var or pass explicitly)",
+    );
+  }
+  const projectOwner = resolveProjectOwner(client.config);
+  if (!projectOwner) {
+    throw new Error(
+      "projectOwner is required (set RALPH_GH_PROJECT_OWNER or RALPH_GH_OWNER env var)",
+    );
+  }
+  return { owner, repo, projectNumber, projectOwner };
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Resolve full config with optional repo
+// ---------------------------------------------------------------------------
+
+/**
+ * Full config resolution with optional repo.
+ * Use for project-scoped tools that don't need a default repo.
+ */
+export function resolveFullConfigOptionalRepo(
+  client: GitHubClient,
+  args: { owner?: string; repo?: string; projectNumber?: number },
+): ResolvedConfigOptionalRepo {
+  const { owner, repo } = resolveConfigOptionalRepo(client, args);
   const projectNumber = args.projectNumber ?? client.config.projectNumber;
   if (!projectNumber) {
     throw new Error(
