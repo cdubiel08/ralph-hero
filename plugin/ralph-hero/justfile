@@ -6,6 +6,7 @@
 
 set shell := ["bash", "-euc"]
 set dotenv-load
+set tempdir := "/tmp"
 
 # Aliases for frequently-used recipes
 alias t  := triage
@@ -15,6 +16,7 @@ alias i  := impl
 alias s  := status
 alias sp := split
 alias h  := hygiene
+alias issue := quick-info
 
 # Browse and run a recipe interactively (falls back to --list without fzf)
 default:
@@ -176,6 +178,21 @@ doctor:
         echo "SKIP: mcptools or RALPH_HERO_GITHUB_TOKEN not available"
         echo ""
     fi
+    echo "--- WSL2 Compatibility ---"
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo "  WSL2 detected"
+        tempdir="${JUST_TEMPDIR:-/tmp}"
+        if mount | grep -q "on $tempdir.*noexec"; then
+            echo "WARN: $tempdir is mounted noexec — shebang recipes will fail"
+            echo "      Fix: export JUST_TEMPDIR=/tmp"
+            warnings=$((warnings + 1))
+        else
+            echo "  OK: tempdir ($tempdir) supports exec"
+        fi
+    else
+        echo "  OK: Not WSL2 (no shebang restrictions)"
+    fi
+    echo ""
     echo "=== Summary: $errors error(s), $warnings warning(s) ==="
     if [ "$errors" -gt 0 ]; then exit 1; fi
 
