@@ -184,3 +184,55 @@ describe("bulk_archive mutation structure", () => {
     expect(mutation).toContain("item_a0");
   });
 });
+
+// ---------------------------------------------------------------------------
+// archive_items structural tests (GH-454: merged archive_item + bulk_archive)
+// ---------------------------------------------------------------------------
+
+import * as fs from "fs";
+import * as path from "path";
+
+const pmToolsSrc = fs.readFileSync(
+  path.resolve(__dirname, "../tools/project-management-tools.ts"),
+  "utf-8",
+);
+
+describe("archive_items tool registration (GH-454)", () => {
+  it("tool is registered as ralph_hero__archive_items", () => {
+    expect(pmToolsSrc).toContain("ralph_hero__archive_items");
+  });
+
+  it("standalone archive_item tool is removed", () => {
+    expect(pmToolsSrc).not.toContain("ralph_hero__archive_item\"");
+    expect(pmToolsSrc).not.toContain("ralph_hero__archive_item'");
+  });
+
+  it("standalone bulk_archive tool is removed", () => {
+    expect(pmToolsSrc).not.toContain("ralph_hero__bulk_archive");
+  });
+
+  it("schema includes number param for single-item mode", () => {
+    // Verify the archive_items tool has number param
+    expect(pmToolsSrc).toContain("Archive a single issue by number");
+  });
+
+  it("schema includes projectItemId param for draft items", () => {
+    expect(pmToolsSrc).toContain("Archive by project item ID");
+  });
+
+  it("schema includes unarchive param", () => {
+    expect(pmToolsSrc).toContain("Unarchive instead of archive");
+  });
+
+  it("schema includes workflowStates param for bulk mode", () => {
+    expect(pmToolsSrc).toContain("Workflow states to archive");
+  });
+
+  it("validates mutually exclusive modes", () => {
+    expect(pmToolsSrc).toContain("Cannot combine number/projectItemId with workflowStates");
+  });
+
+  it("rejects unarchive in bulk mode", () => {
+    expect(pmToolsSrc).toContain("Unarchive is only supported for single items");
+  });
+});

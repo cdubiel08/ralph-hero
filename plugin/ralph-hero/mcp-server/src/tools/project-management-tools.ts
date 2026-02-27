@@ -39,93 +39,6 @@ export function registerProjectManagementTools(
   fieldCache: FieldOptionCache,
 ): void {
   // -------------------------------------------------------------------------
-  // ralph_hero__archive_item
-  // -------------------------------------------------------------------------
-  server.tool(
-    "ralph_hero__archive_item",
-    "Archive or unarchive a project item. Archived items are hidden from default views but not deleted. Accepts either number (for issues) or projectItemId (for draft items). Returns: number, archived, projectItemId.",
-    {
-      owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
-      repo: z.string().optional().describe("Repository name. Defaults to env var"),
-      projectNumber: z.coerce.number().optional()
-        .describe("Project number override (defaults to configured project)"),
-      number: z.coerce.number().optional().describe("Issue number (provide this or projectItemId)"),
-      projectItemId: z.string().optional()
-        .describe("Project item node ID (PVTI_...) — use instead of number for draft items"),
-      unarchive: z.boolean().optional().default(false)
-        .describe("If true, unarchive instead of archive (default: false)"),
-    },
-    async (args) => {
-      try {
-        if (!args.number && !args.projectItemId) {
-          return toolError("Either number or projectItemId must be provided");
-        }
-        if (args.number && args.projectItemId) {
-          return toolError("Provide either number or projectItemId, not both");
-        }
-
-        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
-          client,
-          args,
-        );
-
-        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
-
-        const projectId = fieldCache.getProjectId(projectNumber);
-        if (!projectId) {
-          return toolError("Could not resolve project ID");
-        }
-
-        const itemId = args.projectItemId
-          ? args.projectItemId
-          : await resolveProjectItemId(
-              client,
-              fieldCache,
-              owner,
-              repo,
-              args.number!,
-              projectNumber,
-            );
-
-        if (args.unarchive) {
-          await client.projectMutate(
-            `mutation($projectId: ID!, $itemId: ID!) {
-              unarchiveProjectV2Item(input: {
-                projectId: $projectId,
-                itemId: $itemId
-              }) {
-                item { id }
-              }
-            }`,
-            { projectId, itemId },
-          );
-        } else {
-          await client.projectMutate(
-            `mutation($projectId: ID!, $itemId: ID!) {
-              archiveProjectV2Item(input: {
-                projectId: $projectId,
-                itemId: $itemId
-              }) {
-                item { id }
-              }
-            }`,
-            { projectId, itemId },
-          );
-        }
-
-        return toolSuccess({
-          number: args.number ?? null,
-          archived: !args.unarchive,
-          projectItemId: itemId,
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to ${args.unarchive ? "unarchive" : "archive"} item: ${message}`);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
   // ralph_hero__remove_from_project
   // -------------------------------------------------------------------------
   server.tool(
@@ -1412,43 +1325,126 @@ export function registerProjectManagementTools(
   );
 
   // -------------------------------------------------------------------------
-  // ralph_hero__bulk_archive
+  // ralph_hero__archive_items
   // -------------------------------------------------------------------------
   server.tool(
-    "ralph_hero__bulk_archive",
-    "Archive multiple project items matching workflow state filter. Uses aliased GraphQL mutations for efficiency (chunked at 50). Archived items are hidden from views but not deleted. Returns: archivedCount, items, errors.",
+    "ralph_hero__archive_items",
+    "Archive or unarchive project items. Single-item mode: provide number or projectItemId (supports unarchive). Bulk mode: provide workflowStates filter to archive multiple items matching those states. Uses aliased GraphQL mutations for efficiency (chunked at 50). Archived items are hidden from views but not deleted.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
       projectNumber: z.coerce.number().optional()
         .describe("Project number override (defaults to configured project)"),
+      number: z.coerce.number().optional()
+        .describe("Archive a single issue by number. Mutually exclusive with workflowStates filter."),
+      projectItemId: z.string().optional()
+        .describe("Archive by project item ID (for draft issues). Mutually exclusive with number and workflowStates."),
+      unarchive: z.boolean().optional().default(false)
+        .describe("Unarchive instead of archive. Only works with number or projectItemId (single-item mode)."),
       workflowStates: z
         .array(z.string())
-        .min(1)
+        .optional()
         .describe(
-          'Workflow states to archive (e.g., ["Done", "Canceled"])',
+          'Workflow states to archive (e.g., ["Done", "Canceled"]). Required unless number or projectItemId is provided.',
         ),
       maxItems: z
         .number()
         .optional()
         .default(50)
-        .describe("Max items to archive per invocation (default 50, cap 200)"),
+        .describe("Max items to archive per invocation (default 50, cap 200). Bulk mode only."),
       dryRun: z
         .boolean()
         .optional()
         .default(false)
         .describe(
-          "If true, return matching items without archiving them (default: false)",
+          "If true, return matching items without archiving them (default: false). Bulk mode only.",
         ),
       updatedBefore: z
         .string()
         .optional()
         .describe(
-          "ISO 8601 date (UTC). Only archive items with updatedAt before this date. Composable with workflowStates (AND logic).",
+          "ISO 8601 date (UTC). Only archive items with updatedAt before this date. Composable with workflowStates (AND logic). Bulk mode only.",
         ),
     },
     async (args) => {
       try {
+        // Determine mode
+        const isSingleItem = args.number !== undefined || args.projectItemId !== undefined;
+        const isBulk = args.workflowStates && args.workflowStates.length > 0;
+
+        if (!isSingleItem && !isBulk) {
+          return toolError("Provide either 'number'/'projectItemId' (single item) or 'workflowStates' (bulk filter).");
+        }
+        if (isSingleItem && isBulk) {
+          return toolError("Cannot combine number/projectItemId with workflowStates. Use one mode.");
+        }
+        if (args.unarchive && isBulk) {
+          return toolError("Unarchive is only supported for single items (number or projectItemId).");
+        }
+
+        // Single-item mode
+        if (isSingleItem) {
+          if (args.number && args.projectItemId) {
+            return toolError("Provide either number or projectItemId, not both");
+          }
+
+          const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
+            client,
+            args,
+          );
+
+          await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+          const projectId = fieldCache.getProjectId(projectNumber);
+          if (!projectId) {
+            return toolError("Could not resolve project ID");
+          }
+
+          const itemId = args.projectItemId
+            ? args.projectItemId
+            : await resolveProjectItemId(
+                client,
+                fieldCache,
+                owner,
+                repo,
+                args.number!,
+                projectNumber,
+              );
+
+          if (args.unarchive) {
+            await client.projectMutate(
+              `mutation($projectId: ID!, $itemId: ID!) {
+                unarchiveProjectV2Item(input: {
+                  projectId: $projectId,
+                  itemId: $itemId
+                }) {
+                  item { id }
+                }
+              }`,
+              { projectId, itemId },
+            );
+          } else {
+            await client.projectMutate(
+              `mutation($projectId: ID!, $itemId: ID!) {
+                archiveProjectV2Item(input: {
+                  projectId: $projectId,
+                  itemId: $itemId
+                }) {
+                  item { id }
+                }
+              }`,
+              { projectId, itemId },
+            );
+          }
+
+          return toolSuccess({
+            number: args.number ?? null,
+            archived: !args.unarchive,
+            projectItemId: itemId,
+          });
+        }
+
+        // Bulk mode (workflowStates filter)
         const { projectNumber, projectOwner } = resolveFullConfig(
           client,
           args,
@@ -1521,7 +1517,7 @@ export function registerProjectManagementTools(
         const matched = itemsResult.nodes
           .filter((item) => {
             const ws = getBulkArchiveFieldValue(item, "Workflow State");
-            return ws && args.workflowStates.includes(ws);
+            return ws && args.workflowStates!.includes(ws);
           })
           .filter((item) => {
             if (!updatedBeforeCutoff) return true;

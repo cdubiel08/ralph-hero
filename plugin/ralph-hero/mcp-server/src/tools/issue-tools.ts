@@ -474,6 +474,13 @@ export function registerIssueTools(
         .describe(
           "Include group detection results (default: true). Set to false to skip group detection and save API calls when group context is not needed.",
         ),
+      includePipeline: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Include pipeline position: phase, convergence, member states, remaining phases. Auto-enables includeGroup.",
+        ),
     },
     async (args) => {
       try {
@@ -661,7 +668,10 @@ export function registerIssueTools(
           totalTickets: number;
         } | null = null;
 
-        if (args.includeGroup !== false) {
+        // Force includeGroup when includePipeline is requested
+        const shouldIncludeGroup = args.includePipeline || args.includeGroup !== false;
+
+        if (shouldIncludeGroup) {
           try {
             const { owner: cfgOwner, repo: cfgRepo } = resolveConfig(
               client,
@@ -690,6 +700,117 @@ export function registerIssueTools(
           } catch {
             // Group detection is best-effort; don't fail the whole request
             group = null;
+          }
+        }
+
+        // Optionally detect pipeline position
+        let pipeline: {
+          phase: string;
+          reason: string;
+          remainingPhases: string[];
+          convergence: unknown;
+          memberStates: unknown[];
+          suggestedRoster: unknown;
+        } | null = null;
+
+        if (args.includePipeline) {
+          try {
+            // Need resolveFullConfig for project field lookups
+            const { owner: cfgOwner, repo: cfgRepo } = resolveConfig(client, args);
+            const { projectNumber: pn, projectOwner: po } = resolveFullConfig(client, args);
+            await ensureFieldCache(client, fieldCache, po, pn);
+
+            // Force group if not already detected
+            if (!group) {
+              const groupResult = await detectGroup(client, cfgOwner, cfgRepo, args.number);
+              group = {
+                isGroup: groupResult.isGroup,
+                primary: {
+                  number: groupResult.groupPrimary.number,
+                  title: groupResult.groupPrimary.title,
+                },
+                members: groupResult.groupTickets.map((t) => ({
+                  number: t.number,
+                  title: t.title,
+                  state: t.state,
+                  order: t.order,
+                })),
+                totalTickets: groupResult.totalTickets,
+              };
+            }
+
+            // Build IssueState[] from group members
+            const issueStates: IssueState[] = await Promise.all(
+              (group.members || []).map(async (member) => {
+                if (member.number === args.number) {
+                  // Use already-fetched values for the seed issue
+                  return {
+                    number: member.number,
+                    title: member.title,
+                    workflowState: workflowState || "unknown",
+                    estimate: estimate || null,
+                    subIssueCount: 0,
+                  };
+                }
+                // Fetch field values for non-seed members
+                const state = await getIssueFieldValues(client, fieldCache, cfgOwner, cfgRepo, member.number);
+                return {
+                  number: member.number,
+                  title: member.title,
+                  workflowState: state.workflowState || "unknown",
+                  estimate: state.estimate || null,
+                  subIssueCount: 0,
+                };
+              }),
+            );
+
+            // Fetch sub-issue counts for M/L/XL estimates
+            const oversized = issueStates.filter(
+              (s) => s.estimate && OVERSIZED_ESTIMATES.has(s.estimate),
+            );
+            if (oversized.length > 0) {
+              await Promise.all(
+                oversized.map(async (s) => {
+                  try {
+                    const subResult = await client.query<{
+                      repository: {
+                        issue: { subIssuesSummary: { total: number } | null } | null;
+                      } | null;
+                    }>(
+                      `query($owner: String!, $repo: String!, $issueNum: Int!) {
+                        repository(owner: $owner, name: $repo) {
+                          issue(number: $issueNum) { subIssuesSummary { total } }
+                        }
+                      }`,
+                      { owner: cfgOwner, repo: cfgRepo, issueNum: s.number },
+                    );
+                    if (subResult.repository?.issue?.subIssuesSummary) {
+                      s.subIssueCount = subResult.repository.issue.subIssuesSummary.total;
+                    }
+                  } catch {
+                    // Best-effort, leave at 0
+                  }
+                }),
+              );
+            }
+
+            // Run pipeline detection
+            const pipelineResult = detectPipelinePosition(
+              issueStates,
+              group.isGroup,
+              group.primary?.number ?? null,
+            );
+
+            pipeline = {
+              phase: pipelineResult.phase,
+              reason: pipelineResult.reason,
+              remainingPhases: pipelineResult.remainingPhases,
+              convergence: pipelineResult.convergence,
+              memberStates: pipelineResult.issues,
+              suggestedRoster: pipelineResult.suggestedRoster,
+            };
+          } catch {
+            pipeline = null; // Best-effort, same as includeGroup
           }
         }
 
@@ -739,6 +860,7 @@ export function registerIssueTools(
             createdAt: c.createdAt,
           })),
           group,
+          ...(pipeline !== null ? { pipeline } : {}),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1301,248 +1423,6 @@ export function registerIssueTools(
   );
 
   // -------------------------------------------------------------------------
-  // ralph_hero__detect_pipeline_position
-  // -------------------------------------------------------------------------
-  server.tool(
-    "ralph_hero__detect_pipeline_position",
-    "Determine which workflow phase to execute next for an issue or its group. Returns: phase (SPLIT/TRIAGE/RESEARCH/PLAN/REVIEW/IMPLEMENT/COMPLETE/HUMAN_GATE/TERMINAL), convergence status with recommendation (proceed/wait/escalate), all group member states, and remaining phases. Call this INSTEAD of separate detect_group + check_convergence calls. Recovery: if issue not found, verify the issue number and that it has been added to the project.",
-    {
-      owner: z
-        .string()
-        .optional()
-        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z
-        .string()
-        .optional()
-        .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      projectNumber: z.coerce.number().optional()
-        .describe("Project number override (defaults to configured project)"),
-      number: z.coerce.number().describe("Issue number (seed for group detection)"),
-    },
-    async (args) => {
-      try {
-        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
-          client,
-          args,
-        );
-
-        // Ensure field cache is populated
-        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
-
-        // Detect group from seed issue
-        const group = await detectGroup(client, owner, repo, args.number);
-
-        // Fetch workflow state and estimate for each group member
-        const issueStates: IssueState[] = await Promise.all(
-          group.groupTickets.map(async (ticket) => {
-            const state = await getIssueFieldValues(
-              client,
-              fieldCache,
-              owner,
-              repo,
-              ticket.number,
-            );
-            return {
-              number: ticket.number,
-              title: ticket.title,
-              workflowState: state.workflowState || "unknown",
-              estimate: state.estimate || null,
-              subIssueCount: 0,
-            };
-          }),
-        );
-
-        // Fetch sub-issue counts for oversized issues (targeted query, not all issues)
-        const oversizedNumbers = issueStates
-          .filter((i) => i.estimate !== null && OVERSIZED_ESTIMATES.has(i.estimate))
-          .map((i) => i.number);
-
-        if (oversizedNumbers.length > 0) {
-          await Promise.all(
-            oversizedNumbers.map(async (num) => {
-              const subResult = await client.query<{
-                repository: {
-                  issue: { subIssuesSummary: { total: number } | null } | null;
-                } | null;
-              }>(
-                `query($owner: String!, $repo: String!, $issueNum: Int!) {
-                  repository(owner: $owner, name: $repo) {
-                    issue(number: $issueNum) {
-                      subIssuesSummary { total }
-                    }
-                  }
-                }`,
-                { owner, repo, issueNum: num },
-              );
-              const issueState = issueStates.find((i) => i.number === num);
-              if (issueState && subResult.repository?.issue?.subIssuesSummary) {
-                issueState.subIssueCount = subResult.repository.issue.subIssuesSummary.total;
-              }
-            }),
-          );
-        }
-
-        // Detect pipeline position
-        const position = detectPipelinePosition(
-          issueStates,
-          group.isGroup,
-          group.groupPrimary.number,
-        );
-
-        return toolSuccess(position);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        // Check if it's a "not found" error
-        if (message.includes("not found")) {
-          return toolError(
-            `Issue #${args.number} not found in project. ` +
-              `Recovery: verify the issue number is correct and the issue has been added to the project ` +
-              `via ralph_hero__create_issue or ralph_hero__get_issue.`,
-          );
-        }
-        return toolError(`Failed to detect pipeline position: ${message}`);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
-  // ralph_hero__check_convergence
-  // -------------------------------------------------------------------------
-  server.tool(
-    "ralph_hero__check_convergence",
-    "Check if all issues in a group have reached the required state for the next phase. Returns: converged, targetState, total, ready, blocking (with distanceToTarget), recommendation (proceed/wait/escalate). Note: detect_pipeline_position already includes convergence data; use this only when checking convergence against a specific target state not covered by pipeline detection.",
-    {
-      owner: z
-        .string()
-        .optional()
-        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z
-        .string()
-        .optional()
-        .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      projectNumber: z.coerce.number().optional()
-        .describe("Project number override (defaults to configured project)"),
-      number: z.coerce.number().describe("Issue number (any issue in the group)"),
-      targetState: z
-        .string()
-        .describe("The state all issues must be in (e.g., 'Ready for Plan')"),
-    },
-    async (args) => {
-      try {
-        // Validate target state
-        if (!isValidState(args.targetState)) {
-          return toolError(
-            `Unknown target state '${args.targetState}'. ` +
-              `Valid states: ${VALID_STATES.join(", ")}. ` +
-              `Recovery: retry with a valid state name.`,
-          );
-        }
-
-        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
-          client,
-          args,
-        );
-
-        // Ensure field cache is populated
-        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
-
-        // Detect group from seed issue
-        const group = await detectGroup(client, owner, repo, args.number);
-
-        // Single issue trivially converges
-        if (!group.isGroup) {
-          const state = await getIssueFieldValues(
-            client,
-            fieldCache,
-            owner,
-            repo,
-            args.number,
-          );
-          const atTarget = state.workflowState === args.targetState;
-          return toolSuccess({
-            converged: atTarget,
-            targetState: args.targetState,
-            total: 1,
-            ready: atTarget ? 1 : 0,
-            blocking: atTarget
-              ? []
-              : [
-                  {
-                    number: args.number,
-                    title: group.groupPrimary.title,
-                    currentState: state.workflowState || "unknown",
-                    distanceToTarget: computeDistance(
-                      state.workflowState || "unknown",
-                      args.targetState,
-                    ),
-                  },
-                ],
-            recommendation: atTarget ? "proceed" : "wait",
-          });
-        }
-
-        // Check each group member
-        const blocking: Array<{
-          number: number;
-          title: string;
-          currentState: string;
-          distanceToTarget: number;
-        }> = [];
-
-        let readyCount = 0;
-
-        for (const ticket of group.groupTickets) {
-          const state = await getIssueFieldValues(
-            client,
-            fieldCache,
-            owner,
-            repo,
-            ticket.number,
-          );
-          const currentState = state.workflowState || "unknown";
-
-          if (currentState === args.targetState) {
-            readyCount++;
-          } else {
-            blocking.push({
-              number: ticket.number,
-              title: ticket.title,
-              currentState,
-              distanceToTarget: computeDistance(currentState, args.targetState),
-            });
-          }
-        }
-
-        const converged = blocking.length === 0;
-        const hasHumanNeeded = blocking.some(
-          (b) => b.currentState === "Human Needed",
-        );
-
-        let recommendation: "proceed" | "wait" | "escalate";
-        if (converged) {
-          recommendation = "proceed";
-        } else if (hasHumanNeeded) {
-          recommendation = "escalate";
-        } else {
-          recommendation = "wait";
-        }
-
-        return toolSuccess({
-          converged,
-          targetState: args.targetState,
-          total: group.totalTickets,
-          ready: readyCount,
-          blocking,
-          recommendation,
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to check convergence: ${message}`);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
   // ralph_hero__pick_actionable_issue
   // -------------------------------------------------------------------------
   server.tool(
@@ -1912,15 +1792,3 @@ async function getIssueFieldValues(
   return { workflowState, estimate, priority };
 }
 
-// ---------------------------------------------------------------------------
-// Helper: Compute "distance" between two states in the pipeline
-// ---------------------------------------------------------------------------
-
-import { stateIndex } from "../lib/workflow-states.js";
-
-function computeDistance(currentState: string, targetState: string): number {
-  const currentIdx = stateIndex(currentState);
-  const targetIdx = stateIndex(targetState);
-  if (currentIdx === -1 || targetIdx === -1) return -1;
-  return targetIdx - currentIdx;
-}

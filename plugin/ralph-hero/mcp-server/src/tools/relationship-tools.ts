@@ -12,11 +12,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { detectGroup } from "../lib/group-detection.js";
-import {
-  detectWorkStreams,
-  type IssueFileOwnership,
-} from "../lib/work-stream-detection.js";
 import {
   isValidState,
   isEarlierState,
@@ -552,86 +547,6 @@ export function registerRelationshipTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to list dependencies: ${message}`);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
-  // ralph_hero__detect_group
-  // -------------------------------------------------------------------------
-  server.tool(
-    "ralph_hero__detect_group",
-    "Detect the group of related issues by traversing sub-issues and dependencies transitively from a seed issue. Returns all group members in topological order (blockers first). Used by Ralph workflow to discover atomic implementation groups.",
-    {
-      owner: z
-        .string()
-        .optional()
-        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z
-        .string()
-        .optional()
-        .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      number: z
-        .number()
-        .describe("Seed issue number to start group detection from"),
-    },
-    async (args) => {
-      try {
-        const { owner, repo } = resolveConfig(client, args);
-
-        const result = await detectGroup(client, owner, repo, args.number);
-
-        return toolSuccess(result);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to detect group: ${message}`);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
-  // ralph_hero__detect_work_streams
-  // -------------------------------------------------------------------------
-  server.tool(
-    "ralph_hero__detect_work_streams",
-    "Cluster GitHub issues into independent work streams based on shared file ownership and blockedBy relationships. Uses union-find to group issues that share Will Modify files or are co-dependent. Returns WorkStreamResult with streams, sharedFiles, and a human-readable rationale.",
-    {
-      owner: z
-        .string()
-        .optional()
-        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      repo: z
-        .string()
-        .optional()
-        .describe("Repository name. Defaults to GITHUB_REPO env var"),
-      issues: z
-        .array(
-          z.object({
-            number: z.number().describe("Issue number"),
-            files: z
-              .array(z.string())
-              .describe("Will Modify file paths from research doc"),
-            blockedBy: z
-              .array(z.number())
-              .describe("GitHub blockedBy issue numbers"),
-          }),
-        )
-        .describe("List of issues with their file ownership and dependencies"),
-    },
-    async (args) => {
-      try {
-        const issueOwnership: IssueFileOwnership[] = args.issues.map((i) => ({
-          number: i.number,
-          files: i.files,
-          blockedBy: i.blockedBy,
-        }));
-
-        const result = detectWorkStreams(issueOwnership);
-
-        return toolSuccess(result);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to detect work streams: ${message}`);
       }
     },
   );
