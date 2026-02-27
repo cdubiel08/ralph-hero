@@ -115,8 +115,8 @@ fi
 ```
 
 ### Success Criteria
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --evaluate 2>&1` exits 0 (justfile parses correctly)
-- [ ] Automated: `just --justfile plugin/ralph-hero/justfile --list 2>&1 | grep -q issue` (issue alias appears in list)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --evaluate 2>&1` exits 0 (justfile parses correctly)
+- [x] Automated: `just --justfile plugin/ralph-hero/justfile --list 2>&1 | grep -q issue` (issue alias appears in list)
 - [ ] Manual: Run `ralph hero` on WSL2 — should not get "Permission denied (os error 13)"
 - [ ] Manual: Run `ralph issue 410` — should return issue details
 - [ ] Manual: Run `ralph doctor` on WSL2 — should show WSL2 compatibility section
@@ -124,8 +124,8 @@ fi
 ---
 
 ## Integration Testing
-- [ ] `just --justfile plugin/ralph-hero/justfile --list` shows all recipes including `issue` alias
-- [ ] `just --justfile plugin/ralph-hero/justfile --evaluate` parses without errors
+- [x] `just --justfile plugin/ralph-hero/justfile --list` shows all recipes including `issue` alias
+- [x] `just --justfile plugin/ralph-hero/justfile --evaluate` parses without errors
 - [ ] Workflow recipes (`triage`, `research`, `plan`, `impl`, `hero`) still work via `_run_skill`
 - [ ] Quick recipes (`quick-status`, `quick-issue`) still work via `_mcp_call`
 - [ ] `doctor` recipe runs to completion and shows WSL2 section
