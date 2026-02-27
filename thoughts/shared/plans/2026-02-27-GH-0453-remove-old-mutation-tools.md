@@ -46,10 +46,10 @@ All 5 tools' capabilities are now handled by `save_issue`:
 - `npm test` and `npm run build` pass
 
 ### Verification
-- [ ] 5 tool registrations gone from source
-- [ ] No broken imports or references
-- [ ] All tests pass
-- [ ] Build succeeds
+- [x] 5 tool registrations gone from source
+- [x] No broken imports or references
+- [x] All tests pass
+- [x] Build succeeds
 
 ## What We're NOT Doing
 
@@ -138,10 +138,10 @@ d. **Schema validation tests** (like `project-number-override.test.ts`):
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes in `plugin/ralph-hero/mcp-server/`
-- [ ] `npm test` passes in `plugin/ralph-hero/mcp-server/`
-- [ ] `grep -r "ralph_hero__update_issue\|ralph_hero__update_workflow_state\|ralph_hero__update_estimate\|ralph_hero__update_priority\|ralph_hero__clear_field" plugin/ralph-hero/mcp-server/src/tools/` returns empty (no tool registrations)
-- [ ] No orphaned imports in modified files
+- [x] `npm run build` passes in `plugin/ralph-hero/mcp-server/`
+- [x] `npm test` passes in `plugin/ralph-hero/mcp-server/`
+- [x] `grep -r "ralph_hero__update_issue\|ralph_hero__update_workflow_state\|ralph_hero__update_estimate\|ralph_hero__update_priority\|ralph_hero__clear_field" plugin/ralph-hero/mcp-server/src/tools/` returns empty (no tool registrations)
+- [x] No orphaned imports in modified files
 
 #### Manual Verification:
 - [ ] MCP server starts cleanly
