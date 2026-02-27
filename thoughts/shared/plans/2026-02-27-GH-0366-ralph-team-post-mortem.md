@@ -24,11 +24,11 @@ primary_issue: 366
 ## Desired End State
 
 ### Verification
-- [ ] `ralph-team/SKILL.md` includes a "Write Post-Mortem" section before shutdown
-- [ ] Post-mortem template specifies `thoughts/shared/reports/` as output directory
-- [ ] Post-mortem collects: issues processed, PRs created, worker summary, errors
-- [ ] TeamDelete is called AFTER post-mortem is written
-- [ ] `Write` tool is present in allowed-tools (must be added — not present in current version)
+- [x] `ralph-team/SKILL.md` includes a "Write Post-Mortem" section before shutdown
+- [x] Post-mortem template specifies `thoughts/shared/reports/` as output directory
+- [x] Post-mortem collects: issues processed, PRs created, worker summary, errors
+- [x] TeamDelete is called AFTER post-mortem is written
+- [x] `Write` tool is present in allowed-tools (must be added — not present in current version)
 
 ## What We're NOT Doing
 
@@ -140,20 +140,20 @@ Call `TeamDelete()`. This removes the task list and team config.
 
 ### Success Criteria
 
-- [ ] Automated: `grep -q "Write Post-Mortem" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
-- [ ] Automated: `grep -q "thoughts/shared/reports/" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
-- [ ] Automated: `grep -q "TeamDelete" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
-- [ ] Automated: `grep -c "Shut Down" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns at least 1
-- [ ] Automated: `grep -q "Write" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
-- [ ] Manual: `Write` is present in the `allowed-tools` frontmatter list
-- [ ] Manual: Post-mortem step appears BEFORE TeamDelete in the document
-- [ ] Manual: No other skill or agent files are modified
+- [x] Automated: `grep -q "Write Post-Mortem" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
+- [x] Automated: `grep -q "thoughts/shared/reports/" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
+- [x] Automated: `grep -q "TeamDelete" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
+- [x] Automated: `grep -c "Shut Down" plugin/ralph-hero/skills/ralph-team/SKILL.md` returns at least 1
+- [x] Automated: `grep -q "Write" plugin/ralph-hero/skills/ralph-team/SKILL.md` exits 0
+- [x] Manual: `Write` is present in the `allowed-tools` frontmatter list
+- [x] Manual: Post-mortem step appears BEFORE TeamDelete in the document
+- [x] Manual: No other skill or agent files are modified
 
 ## Integration Testing
 
-- [ ] Verify `ralph-team/SKILL.md` is valid markdown (no broken code fences)
-- [ ] Verify the post-mortem template in the plan uses standard markdown table syntax
-- [ ] Verify the shutdown sequence is: Write Post-Mortem → Shut Down Teammates → Delete Team (correct ordering)
+- [x] Verify `ralph-team/SKILL.md` is valid markdown (no broken code fences)
+- [x] Verify the post-mortem template in the plan uses standard markdown table syntax
+- [x] Verify the shutdown sequence is: Write Post-Mortem → Shut Down Teammates → Delete Team (correct ordering)
 
 ## References
 
