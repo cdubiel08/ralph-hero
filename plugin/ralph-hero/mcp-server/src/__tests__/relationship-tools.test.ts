@@ -20,6 +20,20 @@ const relationshipToolsSrc = fs.readFileSync(
 );
 
 // ---------------------------------------------------------------------------
+// Removed tools verification (GH-454)
+// ---------------------------------------------------------------------------
+
+describe("removed tools verification (GH-454)", () => {
+  it("detect_group tool registration is removed", () => {
+    expect(relationshipToolsSrc).not.toContain("ralph_hero__detect_group");
+  });
+
+  it("detect_work_streams tool registration is removed", () => {
+    expect(relationshipToolsSrc).not.toContain("ralph_hero__detect_work_streams");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Structural: list_sub_issues depth parameter
 // ---------------------------------------------------------------------------
 

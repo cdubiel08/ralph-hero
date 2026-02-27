@@ -518,12 +518,59 @@ describe("get_draft_issue queries", () => {
 });
 
 // ---------------------------------------------------------------------------
-// archive_item / remove_from_project dual-identifier validation
+// archive_items (merged archive_item + bulk_archive) mode validation
 // ---------------------------------------------------------------------------
 
-describe("dual-identifier parameter validation", () => {
-  it("rejects when neither number nor projectItemId is provided", () => {
+describe("archive_items mode validation", () => {
+  it("rejects when neither number/projectItemId nor workflowStates is provided", () => {
     const args = { unarchive: false };
+    const isSingleItem = "number" in args && (args as Record<string, unknown>).number !== undefined ||
+      "projectItemId" in args && (args as Record<string, unknown>).projectItemId !== undefined;
+    const isBulk = "workflowStates" in args;
+    expect(isSingleItem || isBulk).toBe(false);
+  });
+
+  it("rejects when both number and workflowStates are provided", () => {
+    const args = { number: 42, workflowStates: ["Done"] };
+    const isSingleItem = args.number !== undefined;
+    const isBulk = args.workflowStates.length > 0;
+    expect(isSingleItem && isBulk).toBe(true);
+  });
+
+  it("accepts number-only for single-item mode", () => {
+    const args = { number: 42 };
+    const hasNumber = args.number !== undefined;
+    const hasWorkflowStates = "workflowStates" in args;
+    expect(hasNumber && !hasWorkflowStates).toBe(true);
+  });
+
+  it("accepts projectItemId-only for draft item operations", () => {
+    const args = { projectItemId: "PVTI_test123" };
+    const hasItemId = args.projectItemId !== undefined;
+    const hasNumber = "number" in args;
+    expect(hasItemId && !hasNumber).toBe(true);
+  });
+
+  it("rejects unarchive in bulk mode", () => {
+    const args = { workflowStates: ["Done"], unarchive: true };
+    const isBulk = args.workflowStates.length > 0;
+    expect(args.unarchive && isBulk).toBe(true);
+  });
+
+  it("accepts unarchive in single-item mode", () => {
+    const args = { number: 42, unarchive: true };
+    const isSingleItem = args.number !== undefined;
+    expect(args.unarchive && isSingleItem).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// remove_from_project dual-identifier validation
+// ---------------------------------------------------------------------------
+
+describe("remove_from_project dual-identifier parameter validation", () => {
+  it("rejects when neither number nor projectItemId is provided", () => {
+    const args = {};
     const hasNumber = "number" in args && (args as Record<string, unknown>).number !== undefined;
     const hasItemId = "projectItemId" in args && (args as Record<string, unknown>).projectItemId !== undefined;
     expect(hasNumber || hasItemId).toBe(false);

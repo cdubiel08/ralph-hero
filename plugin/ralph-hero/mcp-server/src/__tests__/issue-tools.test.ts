@@ -144,3 +144,57 @@ describe("list_issues repoFilter structural", () => {
     expect(issueToolsSrc).toContain('rf.includes("/")');
   });
 });
+
+// ---------------------------------------------------------------------------
+// get_issue includePipeline structural tests (GH-454)
+// ---------------------------------------------------------------------------
+
+describe("get_issue includePipeline structural", () => {
+  it("has includePipeline param in Zod schema", () => {
+    expect(issueToolsSrc).toContain("includePipeline: z");
+  });
+
+  it("includePipeline defaults to false", () => {
+    expect(issueToolsSrc).toContain('.default(false)');
+  });
+
+  it("handler imports detectPipelinePosition", () => {
+    expect(issueToolsSrc).toContain("detectPipelinePosition");
+  });
+
+  it("handler imports OVERSIZED_ESTIMATES", () => {
+    expect(issueToolsSrc).toContain("OVERSIZED_ESTIMATES");
+  });
+
+  it("handler calls getIssueFieldValues for non-seed members", () => {
+    expect(issueToolsSrc).toContain("getIssueFieldValues(client, fieldCache,");
+  });
+
+  it("pipeline result includes phase, convergence, memberStates", () => {
+    expect(issueToolsSrc).toContain("phase: pipelineResult.phase");
+    expect(issueToolsSrc).toContain("convergence: pipelineResult.convergence");
+    expect(issueToolsSrc).toContain("memberStates: pipelineResult.issues");
+  });
+
+  it("pipeline is conditionally included in response", () => {
+    expect(issueToolsSrc).toContain("pipeline !== null");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Removed tools verification (GH-454)
+// ---------------------------------------------------------------------------
+
+describe("removed tools verification (GH-454)", () => {
+  it("detect_pipeline_position tool registration is removed", () => {
+    expect(issueToolsSrc).not.toContain("ralph_hero__detect_pipeline_position");
+  });
+
+  it("check_convergence tool registration is removed", () => {
+    expect(issueToolsSrc).not.toContain("ralph_hero__check_convergence");
+  });
+
+  it("computeDistance helper is removed", () => {
+    expect(issueToolsSrc).not.toContain("function computeDistance");
+  });
+});

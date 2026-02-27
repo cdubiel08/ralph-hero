@@ -273,11 +273,11 @@ c. **Add tests** for merged `bulk_archive`/`archive_items`:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test` passes
-- [ ] `grep -r "detect_group\|detect_pipeline_position\|check_convergence\|list_project_items\|detect_work_streams\|archive_item" plugin/ralph-hero/mcp-server/src/tools/` returns no tool registrations (library functions preserved)
-- [ ] `get_issue` schema includes `includePipeline` parameter
-- [ ] `bulk_archive` (or `archive_items`) schema includes `number` and `unarchive` parameters
+- [x] `npm run build` passes
+- [x] `npm test` passes
+- [x] `grep -r "detect_group\|detect_pipeline_position\|check_convergence\|list_project_items\|detect_work_streams\|archive_item" plugin/ralph-hero/mcp-server/src/tools/` returns no tool registrations (library functions preserved)
+- [x] `get_issue` schema includes `includePipeline` parameter
+- [x] `bulk_archive` (or `archive_items`) schema includes `number` and `unarchive` parameters
 
 #### Manual Verification:
 - [ ] `get_issue(number: N, includePipeline: true)` returns `pipeline` object with `phase`, `convergence`, `memberStates`

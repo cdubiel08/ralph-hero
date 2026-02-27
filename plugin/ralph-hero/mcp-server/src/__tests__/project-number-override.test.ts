@@ -63,13 +63,15 @@ const advanceParentSchema = z.object({
   number: z.number(),
 });
 
-// Category A: project-management-tools (e.g., archive_item)
-const archiveItemSchema = z.object({
+// Category A: project-management-tools (archive_items, merged from archive_item + bulk_archive)
+const archiveItemsSchema = z.object({
   owner: z.string().optional(),
   repo: z.string().optional(),
   projectNumber: z.coerce.number().optional(),
-  number: z.coerce.number(),
+  number: z.coerce.number().optional(),
+  projectItemId: z.string().optional(),
   unarchive: z.boolean().optional().default(false),
+  workflowStates: z.array(z.string()).optional(),
 });
 
 // Category A: batch_update
@@ -274,9 +276,9 @@ describe("advance_parent projectNumber", () => {
 // project-management-tools and batch_update projectNumber
 // ---------------------------------------------------------------------------
 
-describe("archive_item projectNumber", () => {
-  it("schema accepts projectNumber", () => {
-    const result = archiveItemSchema.safeParse({
+describe("archive_items projectNumber (merged from archive_item + bulk_archive)", () => {
+  it("schema accepts projectNumber in single-item mode", () => {
+    const result = archiveItemsSchema.safeParse({
       number: 10,
       projectNumber: 3,
     });
@@ -286,13 +288,24 @@ describe("archive_item projectNumber", () => {
     }
   });
 
-  it("schema valid without projectNumber", () => {
-    const result = archiveItemSchema.safeParse({
+  it("schema valid without projectNumber in single-item mode", () => {
+    const result = archiveItemsSchema.safeParse({
       number: 10,
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.projectNumber).toBeUndefined();
+    }
+  });
+
+  it("schema accepts projectNumber in bulk mode", () => {
+    const result = archiveItemsSchema.safeParse({
+      workflowStates: ["Done"],
+      projectNumber: 5,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.projectNumber).toBe(5);
     }
   });
 });
