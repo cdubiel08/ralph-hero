@@ -126,3 +126,21 @@ describe("list_issues exclude negation filters structural", () => {
     expect(issueToolsSrc).toContain('?? ""');
   });
 });
+
+describe("list_issues repoFilter structural", () => {
+  it("Zod schema includes repoFilter param", () => {
+    expect(issueToolsSrc).toContain("repoFilter: z");
+  });
+
+  it("GraphQL query fetches repository data", () => {
+    expect(issueToolsSrc).toContain("repository { name nameWithOwner }");
+  });
+
+  it("filter logic uses case-insensitive comparison", () => {
+    expect(issueToolsSrc).toContain("args.repoFilter.toLowerCase()");
+  });
+
+  it("supports both name and nameWithOwner formats", () => {
+    expect(issueToolsSrc).toContain('rf.includes("/")');
+  });
+});

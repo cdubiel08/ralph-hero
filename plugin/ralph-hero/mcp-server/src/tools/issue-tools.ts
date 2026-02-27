@@ -85,6 +85,13 @@ export function registerIssueTools(
         .optional()
         .describe("Filter by Priority (P0, P1, P2, P3)"),
       label: z.string().optional().describe("Filter by label name"),
+      repoFilter: z
+        .string()
+        .optional()
+        .describe(
+          "Filter items to only those from the specified repository. " +
+            "Accepts 'name' or 'owner/name' format. Case-insensitive.",
+        ),
       query: z.string().optional().describe("Additional search query string"),
       state: z
         .enum(["OPEN", "CLOSED"])
@@ -211,6 +218,7 @@ export function registerIssueTools(
                         updatedAt
                         labels(first: 10) { nodes { name } }
                         assignees(first: 5) { nodes { login } }
+                        repository { name nameWithOwner }
                       }
                     }
                     fieldValues(first: 20) {
@@ -285,6 +293,22 @@ export function registerIssueTools(
               (content?.labels as { nodes: Array<{ name: string }> })?.nodes ||
               [];
             return labels.some((l) => l.name === args.label);
+          });
+        }
+
+        // Filter by repository
+        if (args.repoFilter) {
+          const rf = args.repoFilter.toLowerCase();
+          const useFullName = rf.includes("/");
+          items = items.filter((item) => {
+            const content = item.content as Record<string, unknown> | null;
+            const repo = content?.repository as
+              | { name?: string; nameWithOwner?: string }
+              | undefined;
+            const repoName = useFullName
+              ? repo?.nameWithOwner?.toLowerCase()
+              : repo?.name?.toLowerCase();
+            return repoName === rf;
           });
         }
 
