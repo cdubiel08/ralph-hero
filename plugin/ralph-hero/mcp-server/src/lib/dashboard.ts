@@ -39,6 +39,7 @@ export interface DashboardItem {
   blockedBy: Array<{ number: number; workflowState: string | null }>;
   projectNumber?: number; // Source project number (multi-project)
   projectTitle?: string; // Human-readable project title (multi-project)
+  repository?: string; // "owner/repo" nameWithOwner format
 }
 
 /** One row in the pipeline snapshot. */

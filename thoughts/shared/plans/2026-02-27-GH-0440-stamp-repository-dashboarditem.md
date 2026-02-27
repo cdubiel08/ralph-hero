@@ -24,11 +24,11 @@ primary_issue: 440
 ## Desired End State
 
 ### Verification
-- [ ] `DashboardItem` has `repository?: string` field in `nameWithOwner` format
-- [ ] `DASHBOARD_ITEMS_QUERY` fetches `repository { nameWithOwner name }` for Issue type
-- [ ] `toDashboardItems()` stamps `repository` when present using conditional spread
-- [ ] All existing dashboard tests still pass (field is optional)
-- [ ] New test verifies repository stamping from raw item
+- [x] `DashboardItem` has `repository?: string` field in `nameWithOwner` format
+- [x] `DASHBOARD_ITEMS_QUERY` fetches `repository { nameWithOwner name }` for Issue type
+- [x] `toDashboardItems()` stamps `repository` when present using conditional spread
+- [x] All existing dashboard tests still pass (field is optional)
+- [x] New test verifies repository stamping from raw item
 
 ## What We're NOT Doing
 
@@ -136,21 +136,21 @@ The first test verifies that `repository` is stamped as `nameWithOwner` string. 
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `grep -q "repository?: string" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
-- [ ] Automated: `grep -q "repository { nameWithOwner name }" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` exits 0
-- [ ] Automated: `grep -q "r.content.repository" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` exits 0
-- [ ] Manual: `DashboardItem` interface has `repository?: string` after `projectTitle`
-- [ ] Manual: `toDashboardItems()` stamps `repository` using same conditional spread pattern as `projectNumber`/`projectTitle`
-- [ ] Manual: `DASHBOARD_ITEMS_QUERY` fetches `repository { nameWithOwner name }` only in Issue fragment (not PR/DraftIssue)
-- [ ] Manual: Existing `makeItem()` helper tests unmodified — all downstream tests pass unchanged
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `grep -q "repository?: string" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
+- [x] Automated: `grep -q "repository { nameWithOwner name }" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` exits 0
+- [x] Automated: `grep -q "r.content.repository" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` exits 0
+- [x] Manual: `DashboardItem` interface has `repository?: string` after `projectTitle`
+- [x] Manual: `toDashboardItems()` stamps `repository` using same conditional spread pattern as `projectNumber`/`projectTitle`
+- [x] Manual: `DASHBOARD_ITEMS_QUERY` fetches `repository { nameWithOwner name }` only in Issue fragment (not PR/DraftIssue)
+- [x] Manual: Existing `makeItem()` helper tests unmodified — all downstream tests pass unchanged
 
 ## Integration Testing
 
-- [ ] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] Verify existing `toDashboardItems` tests still pass (projectNumber, projectTitle, non-Issue filtering)
-- [ ] Verify new tests cover: repository present → stamped as nameWithOwner, repository absent → undefined
-- [ ] Verify `buildDashboard` and `formatMarkdown` tests still pass (repository is optional, no behavior change)
+- [x] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] Verify existing `toDashboardItems` tests still pass (projectNumber, projectTitle, non-Issue filtering)
+- [x] Verify new tests cover: repository present → stamped as nameWithOwner, repository absent → undefined
+- [x] Verify `buildDashboard` and `formatMarkdown` tests still pass (repository is optional, no behavior change)
 
 ## References
 
