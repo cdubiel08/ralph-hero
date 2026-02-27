@@ -4,6 +4,7 @@ argument-hint: "[issue-number]"
 model: sonnet
 allowed-tools:
   - Read
+  - Write
   - Glob
   - Bash
   - Task
@@ -60,4 +61,57 @@ Hooks fire when tasks complete or teammates go idle. When a task completes, deci
 
 Workers going idle between turns is normal — don't nudge them. Task assignment is the communication mechanism.
 
-When all tasks are complete, shut down each teammate and delete the team.
+## Shut Down
+
+When all tasks are complete:
+
+### 1. Write Post-Mortem
+
+Before shutting down teammates or deleting the team, collect session results and write a report.
+
+**Collect data**: Call `TaskList`, then `TaskGet` on each task. Extract from task metadata and descriptions:
+- Issues processed (issue_number, title, estimate, final workflow state)
+- PRs created (artifact_path or PR URLs from integrator tasks)
+- Worker assignments (task owner → task subjects)
+- Errors or escalations (tasks with failed results, Human Needed states)
+
+**Write report** to `thoughts/shared/reports/YYYY-MM-DD-ralph-team-{team-name}.md`:
+
+```markdown
+# Ralph Team Session Report: {team-name}
+
+**Date**: YYYY-MM-DD
+
+## Issues Processed
+
+| Issue | Title | Estimate | Outcome | PR |
+|-------|-------|----------|---------|-----|
+| #NNN | [title] | XS | Done | #PR |
+
+## Worker Summary
+
+| Worker | Tasks Completed |
+|--------|----------------|
+| analyst | [task subjects] |
+| builder | [task subjects] |
+| integrator | [task subjects] |
+
+## Notes
+
+[Escalations, errors, or anything notable from the session]
+```
+
+Commit and push the report:
+```bash
+git add thoughts/shared/reports/YYYY-MM-DD-ralph-team-*.md
+git commit -m "docs(report): {team-name} session post-mortem"
+git push origin main
+```
+
+### 2. Shut Down Teammates
+
+Send shutdown to each teammate. Wait for all to confirm.
+
+### 3. Delete Team
+
+Call `TeamDelete()`. This removes the task list and team config.
