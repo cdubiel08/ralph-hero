@@ -130,6 +130,7 @@ export interface RawDashboardItem {
     closedAt?: string | null;
     assignees?: { nodes: Array<{ login: string }> };
     trackedInIssues?: { nodes: Array<{ number: number; state: string }> };
+    repository?: { nameWithOwner: string; name: string } | null;
   } | null;
   fieldValues: {
     nodes: Array<{
@@ -182,6 +183,7 @@ export function toDashboardItems(
       blockedBy: [], // blockedBy requires separate queries; omit for now
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(projectTitle !== undefined ? { projectTitle } : {}),
+      ...(r.content.repository ? { repository: r.content.repository.nameWithOwner } : {}),
     });
   }
 
@@ -210,6 +212,7 @@ export const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $f
               updatedAt
               closedAt
               assignees(first: 5) { nodes { login } }
+              repository { nameWithOwner name }
             }
             ... on PullRequest {
               __typename

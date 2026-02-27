@@ -1282,6 +1282,25 @@ describe("toDashboardItems", () => {
     expect(items[0].projectTitle).toBe("My Board");
   });
 
+  it("stamps repository from content when present", () => {
+    const raw = [
+      makeRawItem({
+        content: {
+          ...makeRawItem().content,
+          repository: { nameWithOwner: "owner/my-repo", name: "my-repo" },
+        },
+      }),
+    ];
+    const items = toDashboardItems(raw);
+    expect(items[0].repository).toBe("owner/my-repo");
+  });
+
+  it("omits repository when content.repository is null", () => {
+    const raw = [makeRawItem()];
+    const items = toDashboardItems(raw);
+    expect(items[0].repository).toBeUndefined();
+  });
+
   it("filters out non-Issue content types", () => {
     const raw = [
       makeRawItem(),
