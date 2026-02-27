@@ -91,6 +91,12 @@ export interface ProjectBreakdown {
   health: { ok: boolean; warnings: HealthWarning[] };
 }
 
+export interface RepoBreakdown {
+  repoName: string;
+  phases: PhaseSnapshot[];
+  health: { ok: boolean; warnings: HealthWarning[] };
+}
+
 export interface StreamPhaseCount {
   state: string;
   count: number;
@@ -119,6 +125,7 @@ export interface DashboardData {
   };
   archive: ArchiveStats;
   projectBreakdowns?: Record<number, ProjectBreakdown>;
+  repoBreakdowns?: Record<string, RepoBreakdown>;
   streams?: StreamDashboardSection;
 }
 
@@ -664,6 +671,34 @@ export function buildDashboard(
     }
   }
 
+  // Repo breakdown (only for multi-repo projects)
+  const repoGroups = new Map<string, DashboardItem[]>();
+  for (const item of items) {
+    if (item.repository) {
+      const group = repoGroups.get(item.repository);
+      if (group) {
+        group.push(item);
+      } else {
+        repoGroups.set(item.repository, [item]);
+      }
+    }
+  }
+
+  let repoBreakdowns: Record<string, RepoBreakdown> | undefined;
+
+  if (repoGroups.size >= 2) {
+    repoBreakdowns = {};
+    for (const [repoName, repoItems] of repoGroups) {
+      const rPhases = aggregateByPhase(repoItems, now, config);
+      const rWarnings = detectHealthIssues(rPhases, config);
+      repoBreakdowns[repoName] = {
+        repoName,
+        phases: rPhases,
+        health: { ok: rWarnings.length === 0, warnings: rWarnings },
+      };
+    }
+  }
+
   // Stream section (only when caller provides stream data)
   let streamSection: StreamDashboardSection | undefined;
   if (streams && streams.length > 0) {
@@ -680,6 +715,7 @@ export function buildDashboard(
     },
     archive,
     ...(projectBreakdowns ? { projectBreakdowns } : {}),
+    ...(repoBreakdowns ? { repoBreakdowns } : {}),
     ...(streamSection ? { streams: streamSection } : {}),
   };
 }
@@ -801,6 +837,51 @@ export function formatMarkdown(
         lines.push("**Health**: All clear");
       } else {
         for (const w of project.health.warnings) {
+          const icon =
+            w.severity === "critical"
+              ? "[CRITICAL]"
+              : w.severity === "warning"
+                ? "[WARNING]"
+                : "[INFO]";
+          lines.push(`- ${icon} ${w.message}`);
+        }
+      }
+    }
+  }
+
+  // Per-repository breakdown (only for multi-repo)
+  if (
+    data.repoBreakdowns &&
+    Object.keys(data.repoBreakdowns).length > 1
+  ) {
+    lines.push("");
+    lines.push("## Per-Repository Breakdown");
+
+    const sortedRepos = Object.values(data.repoBreakdowns).sort((a, b) =>
+      a.repoName.localeCompare(b.repoName),
+    );
+
+    for (const repo of sortedRepos) {
+      lines.push("");
+      lines.push(`### ${repo.repoName}`);
+      lines.push("");
+
+      const nonZeroPhases = repo.phases.filter((p) => p.count > 0);
+      if (nonZeroPhases.length > 0) {
+        lines.push("| Phase | Count |");
+        lines.push("|-------|------:|");
+        for (const phase of nonZeroPhases) {
+          lines.push(`| ${phase.state} | ${phase.count} |`);
+        }
+      } else {
+        lines.push("_No active items_");
+      }
+
+      lines.push("");
+      if (repo.health.ok) {
+        lines.push("**Health**: All clear");
+      } else {
+        for (const w of repo.health.warnings) {
           const icon =
             w.severity === "critical"
               ? "[CRITICAL]"

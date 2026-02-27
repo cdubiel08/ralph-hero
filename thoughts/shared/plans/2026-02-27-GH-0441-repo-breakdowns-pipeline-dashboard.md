@@ -24,12 +24,12 @@ primary_issue: 441
 ## Desired End State
 
 ### Verification
-- [ ] `RepoBreakdown` interface defined in `dashboard.ts`
-- [ ] `DashboardData` has `repoBreakdowns?: Record<string, RepoBreakdown>`
-- [ ] `buildDashboard()` groups items by `item.repository` and builds `repoBreakdowns` when 2+ repos present
-- [ ] `formatMarkdown()` renders "## Per-Repository Breakdown" section when `repoBreakdowns` populated
-- [ ] Single-repo projects: `repoBreakdowns` is `undefined` (no extra output)
-- [ ] Tests cover: multi-repo produces breakdowns, single-repo produces none, formatMarkdown renders/omits section
+- [x] `RepoBreakdown` interface defined in `dashboard.ts`
+- [x] `DashboardData` has `repoBreakdowns?: Record<string, RepoBreakdown>`
+- [x] `buildDashboard()` groups items by `item.repository` and builds `repoBreakdowns` when 2+ repos present
+- [x] `formatMarkdown()` renders "## Per-Repository Breakdown" section when `repoBreakdowns` populated
+- [x] Single-repo projects: `repoBreakdowns` is `undefined` (no extra output)
+- [x] Tests cover: multi-repo produces breakdowns, single-repo produces none, formatMarkdown renders/omits section
 
 ## What We're NOT Doing
 
@@ -264,23 +264,23 @@ describe("formatMarkdown per-repo", () => {
 
 ### Success Criteria
 
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] Automated: `grep -q "RepoBreakdown" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
-- [ ] Automated: `grep -q "repoBreakdowns" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
-- [ ] Automated: `grep -q "Per-Repository Breakdown" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
-- [ ] Manual: `RepoBreakdown` interface mirrors `ProjectBreakdown` structure with `repoName` instead of `projectTitle`
-- [ ] Manual: `repoGroups` uses `Map<string, DashboardItem[]>` (string key, not numeric)
-- [ ] Manual: `repoBreakdowns` only populated when `repoGroups.size >= 2` (single-repo = undefined)
-- [ ] Manual: `formatMarkdown()` sorts repos alphabetically via `localeCompare`
-- [ ] Manual: Per-repo phase table uses Phase/Count columns only (matching per-project table)
-- [ ] Manual: `dashboard-tools.ts` is unmodified (repoBreakdowns flows through DashboardData automatically)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] Automated: `grep -q "RepoBreakdown" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
+- [x] Automated: `grep -q "repoBreakdowns" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
+- [x] Automated: `grep -q "Per-Repository Breakdown" plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` exits 0
+- [x] Manual: `RepoBreakdown` interface mirrors `ProjectBreakdown` structure with `repoName` instead of `projectTitle`
+- [x] Manual: `repoGroups` uses `Map<string, DashboardItem[]>` (string key, not numeric)
+- [x] Manual: `repoBreakdowns` only populated when `repoGroups.size >= 2` (single-repo = undefined)
+- [x] Manual: `formatMarkdown()` sorts repos alphabetically via `localeCompare`
+- [x] Manual: Per-repo phase table uses Phase/Count columns only (matching per-project table)
+- [x] Manual: `dashboard-tools.ts` is unmodified (repoBreakdowns flows through DashboardData automatically)
 
 ## Integration Testing
 
-- [ ] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] Verify existing `projectBreakdowns` tests still pass unchanged
-- [ ] Verify new tests cover: multi-repo breakdowns with correct per-repo counts, single-repo (undefined), no-repo (undefined), formatMarkdown renders/omits section
-- [ ] Verify `buildDashboard` and `formatMarkdown` existing tests pass (repoBreakdowns is optional, no behavior change for existing callers)
+- [x] Run full test suite: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] Verify existing `projectBreakdowns` tests still pass unchanged
+- [x] Verify new tests cover: multi-repo breakdowns with correct per-repo counts, single-repo (undefined), no-repo (undefined), formatMarkdown renders/omits section
+- [x] Verify `buildDashboard` and `formatMarkdown` existing tests pass (repoBreakdowns is optional, no behavior change for existing callers)
 
 ## References
 
