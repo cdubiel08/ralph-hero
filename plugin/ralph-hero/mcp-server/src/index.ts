@@ -16,15 +16,12 @@ import { createDebugLogger, wrapServerToolWithLogging, type DebugLogger } from "
 import { toolSuccess, toolError, resolveProjectOwner } from "./types.js";
 import { resolveRepoFromProject } from "./lib/helpers.js";
 import { registerProjectTools } from "./tools/project-tools.js";
-import { registerViewTools } from "./tools/view-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
-import { registerRoutingTools } from "./tools/routing-tools.js";
-import { registerSyncTools } from "./tools/sync-tools.js";
 import { registerDebugTools } from "./tools/debug-tools.js";
 
 /**
@@ -327,9 +324,8 @@ async function main(): Promise<void> {
   // Register core tools
   registerCoreTools(server, client);
 
-  // Phase 2: Project and view management tools
+  // Phase 2: Project management tools
   registerProjectTools(server, client, fieldCache);
-  registerViewTools(server, client, fieldCache);
 
   // Phase 3: Issue management tools
   registerIssueTools(server, client, fieldCache);
@@ -348,12 +344,6 @@ async function main(): Promise<void> {
 
   // Hygiene reporting tools
   registerHygieneTools(server, client, fieldCache);
-
-  // Routing config management tools
-  registerRoutingTools(server, client, fieldCache);
-
-  // Cross-project sync tools
-  registerSyncTools(server, client, fieldCache);
 
   // Debug tools (only when RALPH_DEBUG=true)
   if (process.env.RALPH_DEBUG === 'true') {
