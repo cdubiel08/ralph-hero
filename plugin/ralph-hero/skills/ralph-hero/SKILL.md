@@ -55,7 +55,7 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 |    |- IMPLEMENT (sequential) -- execute plan phases                |
 |    | all "In Review"                                               |
 |    v                                                               |
-|  VALIDATOR PHASE (if RALPH_REVIEW_MODE == "interactive")           |
+|  REVIEW PHASE (if RALPH_REVIEW_MODE == "interactive")              |
 |    |- HUMAN GATE: report and STOP                                  |
 |    v                                                               |
 |  INTEGRATOR PHASE                                                  |

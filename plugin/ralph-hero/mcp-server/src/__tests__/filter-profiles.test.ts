@@ -35,8 +35,8 @@ describe("FILTER_PROFILES", () => {
     });
   });
 
-  it("validator-review filters to Plan in Review", () => {
-    expect(FILTER_PROFILES["validator-review"]).toEqual({
+  it("review-queue filters to Plan in Review", () => {
+    expect(FILTER_PROFILES["review-queue"]).toEqual({
       workflowState: "Plan in Review",
     });
   });
@@ -67,7 +67,7 @@ describe("VALID_PROFILE_NAMES", () => {
         "analyst-research",
         "builder-active",
         "builder-planned",
-        "validator-review",
+        "review-queue",
         "integrator-merge",
       ]),
     );

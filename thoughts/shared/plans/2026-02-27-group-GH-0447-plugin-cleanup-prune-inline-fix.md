@@ -287,23 +287,23 @@ Replace with inline rule text or drop the reference where the context is already
 **No changes needed**: `val-postcondition.sh` exists and is correctly wired via skill frontmatter. Research confirmed this is a live, functional hook.
 
 ### Success Criteria
-- [ ] Automated: `grep -r "VALIDATOR PHASE\|ralph-validator\|validator-review" plugin/ralph-hero/` (excluding dist/) returns 0 results
-- [ ] Automated: `npm test` passes (filter-profiles.test.ts)
-- [ ] Automated: `npm run build` passes (dist/ regenerates cleanly)
-- [ ] Manual: `record-demo/SKILL.md` description includes a "Use when" clause
+- [x] Automated: `grep -r "VALIDATOR PHASE\|ralph-validator\|validator-review" plugin/ralph-hero/` (excluding dist/) returns 0 results
+- [x] Automated: `npm test` passes (filter-profiles.test.ts)
+- [x] Automated: `npm run build` passes (dist/ regenerates cleanly)
+- [x] Manual: `record-demo/SKILL.md` description includes a "Use when" clause
 
 **Creates for next phase**: N/A (final phase)
 
 ---
 
 ## Integration Testing
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` - all tests pass (filter profile rename)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` - clean TypeScript compilation
-- [ ] `ls plugin/ralph-hero/hooks/scripts/*.sh | wc -l` returns 42
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` - all tests pass (filter profile rename)
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` - clean TypeScript compilation
+- [x] `ls plugin/ralph-hero/hooks/scripts/*.sh | wc -l` returns 42
 - [ ] `grep -r "conventions.md" plugin/ralph-hero/skills/` returns 0 results
-- [ ] `grep -r "VALIDATOR PHASE\|ralph-validator\|validator-review" plugin/ralph-hero/` (excluding dist/) returns 0 results
-- [ ] No SKILL.md frontmatter references a non-existent script in `hooks/scripts/`
-- [ ] All 9 scripts in `hooks.json` still exist on disk
+- [x] `grep -r "VALIDATOR PHASE\|ralph-validator\|validator-review" plugin/ralph-hero/` (excluding dist/) returns 0 results
+- [x] No SKILL.md frontmatter references a non-existent script in `hooks/scripts/`
+- [x] All 9 scripts in `hooks.json` still exist on disk
 
 ## References
 - Research (GH-447): https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-02-27-GH-0447-plugin-cleanup-phase1-delete-orphaned-info-only-hooks.md
