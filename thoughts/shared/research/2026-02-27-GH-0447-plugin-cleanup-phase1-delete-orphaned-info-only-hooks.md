@@ -170,3 +170,46 @@ Upgrade info-only postconditions to actually block (add `exit 2` for failure cas
 - `plugin/ralph-hero/agents/ralph-builder.md` - Same as above
 - `plugin/ralph-hero/agents/ralph-integrator.md` - Same as above
 - `plugin/ralph-hero/mcp-server/package.json` - Verify npm test / build pass after changes
+
+---
+
+## Reaudit: 2026-03-01
+
+**Trigger**: Concern that recent work (GH-417, GH-471, GH-477) changed the hook inventory since original research.
+
+### Count Discrepancy Resolved
+
+The team-lead reported 60 scripts; the issue says 58. Both are accurate depending on what you count:
+
+| What you count | Count |
+|----------------|-------|
+| All files in `hooks/scripts/` | **60** |
+| Shell scripts (`.sh`) only | **58** |
+| Non-shell config files (`ralph-command-contracts.json`, `ralph-state-machine.json`) | **2** |
+
+The issue's acceptance criteria targets `.sh` scripts only. **The original 58 count is correct and unchanged.**
+
+### All 16 Deletion Candidates Confirmed Valid
+
+Re-audit on 2026-03-01 confirmed:
+- **8 orphaned scripts**: Same as original research. All still unreferenced. 7 carry explicit `# ORPHANED:` markers; `debug-hook-counter.sh` does not but is still unregistered.
+- **8 info-only registered scripts**: All still referenced in their respective SKILL.md files. GH-471 inlined conventions.md content but did **not** touch SKILL.md `hooks:` frontmatter blocks.
+
+No new `.sh` scripts were added by GH-471, GH-417 (post-original-research), or GH-477. The count remains 58.
+
+### Impact of Recent Work
+
+| PR | Impact on GH-447 |
+|----|-----------------|
+| GH-471 (shared fragments refactor) | Inlined conventions.md → completed Phase 2 (#448). Hook registrations in SKILL.md unchanged. |
+| GH-417 (enforce skill context) | Added 9 scripts to bring count from 49→58. Already reflected in original research. |
+| GH-477 (cli-dispatch fix) | No hooks/scripts changes. |
+
+### Plan Status
+
+The existing plan (`2026-02-27-group-GH-0447-plugin-cleanup-prune-inline-fix.md`) remains **accurate and implementable**:
+- Phase 1 (GH-447): Delete 16 scripts, update 8 SKILL.md files — ✅ unchanged
+- Phase 2 (GH-448): Inline conventions.md — ✅ **DONE** (GH-471 completed; #448 closed)
+- Phase 3 (GH-449): Fix stale validator references — ✅ unchanged
+
+**Conclusion: No changes to original findings or plan required. Proceed with Phase 1 implementation as specified.**
