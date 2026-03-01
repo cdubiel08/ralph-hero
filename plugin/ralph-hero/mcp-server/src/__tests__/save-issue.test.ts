@@ -236,9 +236,33 @@ describe("save_issue structural", () => {
     expect(issueToolsSrc).toContain("WORKFLOW_STATE_TO_STATUS");
   });
 
-  it("supports issueState with state and stateReason in mutation", () => {
-    expect(issueToolsSrc).toContain("$state: IssueState");
+  it("uses closeIssue mutation with stateReason for closing", () => {
+    expect(issueToolsSrc).toContain("closeIssue(input:");
     expect(issueToolsSrc).toContain("$stateReason: IssueClosedStateReason");
+  });
+
+  it("uses reopenIssue mutation for reopening (no stateReason)", () => {
+    expect(issueToolsSrc).toContain("reopenIssue(input:");
+    // reopenIssue should NOT reference stateReason
+    const reopenBlock = issueToolsSrc.slice(
+      issueToolsSrc.indexOf("reopenIssue(input:"),
+      issueToolsSrc.indexOf("reopenIssue(input:") + 200,
+    );
+    expect(reopenBlock).not.toContain("stateReason");
+  });
+
+  it("updateIssue mutation does not include state or stateReason", () => {
+    // Find the updateIssue mutation input block
+    const updateIdx = issueToolsSrc.indexOf("updateIssue(input:");
+    expect(updateIdx).toBeGreaterThan(-1);
+    const updateBlock = issueToolsSrc.slice(updateIdx, updateIdx + 300);
+    expect(updateBlock).not.toContain("stateReason");
+    // state should not be in updateIssue input (it's handled by closeIssue/reopenIssue)
+    expect(updateBlock).not.toContain("$state");
+  });
+
+  it("does not assign REOPENED as stateReason", () => {
+    expect(issueToolsSrc).not.toContain('"REOPENED"');
   });
 
   it("supports field clearing via clearProjectV2ItemFieldValue", () => {

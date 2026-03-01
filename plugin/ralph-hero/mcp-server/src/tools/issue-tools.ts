@@ -1160,7 +1160,7 @@ export function registerIssueTools(
 
         // 2. Determine if we need to close/reopen the issue
         let targetState: "OPEN" | "CLOSED" | undefined;
-        let stateReason: "COMPLETED" | "NOT_PLANNED" | "REOPENED" | undefined;
+        let stateReason: "COMPLETED" | "NOT_PLANNED" | undefined;
 
         if (args.issueState === "CLOSED") {
           targetState = "CLOSED";
@@ -1170,7 +1170,7 @@ export function registerIssueTools(
           stateReason = "NOT_PLANNED";
         } else if (args.issueState === "OPEN") {
           targetState = "OPEN";
-          stateReason = "REOPENED";
+          // reopenIssue mutation has no stateReason parameter
         }
 
         // Auto-close: if workflowState is terminal and issueState not explicitly set
@@ -1180,69 +1180,104 @@ export function registerIssueTools(
           changes.autoClose = true;
         }
 
-        // 3. Issue-object mutation (title, body, labels, assignees, state)
-        const needsIssueMutation = hasIssueFields || targetState !== undefined;
+        // 3. Issue state mutations (close/reopen) - use dedicated mutations
+        const hasMetadataFields = args.title !== undefined || args.body !== undefined ||
+          args.labels !== undefined || args.assignees !== undefined;
+        const needsIssueMutation = hasMetadataFields || targetState !== undefined;
+
         if (needsIssueMutation) {
           const issueId = await resolveIssueNodeId(client, owner, repo, args.number);
 
-          // Resolve label IDs if provided
-          let labelIds: string[] | undefined;
-          if (args.labels) {
-            const labelResult = await client.query<{
-              repository: {
-                labels: { nodes: Array<{ id: string; name: string }> };
+          // 3a. Close issue (uses closeIssue mutation which accepts stateReason)
+          if (targetState === "CLOSED") {
+            await client.mutate<{
+              closeIssue: {
+                issue: { number: number; state: string; stateReason: string | null };
               };
             }>(
-              `query($owner: String!, $repo: String!) {
-                repository(owner: $owner, name: $repo) {
-                  labels(first: 100) {
-                    nodes { id name }
-                  }
+              `mutation($issueId: ID!, $stateReason: IssueClosedStateReason) {
+                closeIssue(input: { issueId: $issueId, stateReason: $stateReason }) {
+                  issue { number state stateReason }
                 }
               }`,
-              { owner, repo },
-              { cache: true, cacheTtlMs: 5 * 60 * 1000 },
+              { issueId, stateReason: stateReason ?? null },
             );
-            const allLabels = labelResult.repository.labels.nodes;
-            labelIds = args.labels
-              .map((name) => allLabels.find((l) => l.name === name)?.id)
-              .filter((id): id is string => id !== undefined);
+            if (args.issueState !== undefined) changes.issueState = args.issueState;
           }
 
-          await client.mutate<{
-            updateIssue: {
-              issue: { number: number; title: string; url: string; state: string; stateReason: string | null };
-            };
-          }>(
-            `mutation($issueId: ID!, $title: String, $body: String, $labelIds: [ID!], $assigneeIds: [ID!], $state: IssueState, $stateReason: IssueClosedStateReason) {
-              updateIssue(input: {
-                id: $issueId,
-                title: $title,
-                body: $body,
-                labelIds: $labelIds,
-                assigneeIds: $assigneeIds,
-                state: $state,
-                stateReason: $stateReason
-              }) {
-                issue { number title url state stateReason }
-              }
-            }`,
-            {
-              issueId,
-              title: args.title ?? null,
-              body: args.body ?? null,
-              labelIds: labelIds ?? null,
-              assigneeIds: null, // Would need username -> ID resolution
-              state: targetState ?? null,
-              stateReason: stateReason ?? null,
-            },
-          );
+          // 3b. Reopen issue (uses reopenIssue mutation, no stateReason)
+          if (targetState === "OPEN") {
+            await client.mutate<{
+              reopenIssue: {
+                issue: { number: number; state: string };
+              };
+            }>(
+              `mutation($issueId: ID!) {
+                reopenIssue(input: { issueId: $issueId }) {
+                  issue { number state }
+                }
+              }`,
+              { issueId },
+            );
+            if (args.issueState !== undefined) changes.issueState = args.issueState;
+          }
 
-          if (args.title !== undefined) changes.title = args.title;
-          if (args.body !== undefined) changes.body = "(updated)";
-          if (args.labels !== undefined) changes.labels = args.labels;
-          if (args.assignees !== undefined) changes.assignees = args.assignees;
-          if (args.issueState !== undefined) changes.issueState = args.issueState;
+          // 3c. Metadata update (uses updateIssue, NO state/stateReason fields)
+          if (hasMetadataFields) {
+            // Resolve label IDs if provided
+            let labelIds: string[] | undefined;
+            if (args.labels) {
+              const labelResult = await client.query<{
+                repository: {
+                  labels: { nodes: Array<{ id: string; name: string }> };
+                };
+              }>(
+                `query($owner: String!, $repo: String!) {
+                  repository(owner: $owner, name: $repo) {
+                    labels(first: 100) {
+                      nodes { id name }
+                    }
+                  }
+                }`,
+                { owner, repo },
+                { cache: true, cacheTtlMs: 5 * 60 * 1000 },
+              );
+              const allLabels = labelResult.repository.labels.nodes;
+              labelIds = args.labels
+                .map((name) => allLabels.find((l) => l.name === name)?.id)
+                .filter((id): id is string => id !== undefined);
+            }
+
+            await client.mutate<{
+              updateIssue: {
+                issue: { number: number; title: string; url: string };
+              };
+            }>(
+              `mutation($issueId: ID!, $title: String, $body: String, $labelIds: [ID!], $assigneeIds: [ID!]) {
+                updateIssue(input: {
+                  id: $issueId,
+                  title: $title,
+                  body: $body,
+                  labelIds: $labelIds,
+                  assigneeIds: $assigneeIds
+                }) {
+                  issue { number title url }
+                }
+              }`,
+              {
+                issueId,
+                title: args.title ?? null,
+                body: args.body ?? null,
+                labelIds: labelIds ?? null,
+                assigneeIds: null, // Would need username -> ID resolution
+              },
+            );
+
+            if (args.title !== undefined) changes.title = args.title;
+            if (args.body !== undefined) changes.body = "(updated)";
+            if (args.labels !== undefined) changes.labels = args.labels;
+            if (args.assignees !== undefined) changes.assignees = args.assignees;
+          }
         }
 
         // 4. Project-field mutations (aliased batch for workflow state + status sync + estimate + priority)

@@ -269,8 +269,8 @@ it("does not assign REOPENED as stateReason", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds with no errors
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` -- all tests pass including new structural tests
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` succeeds with no errors
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` -- all tests pass including new structural tests
 - [ ] Manual: Call `save_issue(number=<test-issue>, workflowState="Done", command="ralph_impl")` -- issue closes with `stateReason: COMPLETED` in GitHub UI
 - [ ] Manual: Call `save_issue(number=<test-issue>, issueState="OPEN")` -- issue reopens successfully
 - [ ] Manual: Call `save_issue(number=<test-issue>, issueState="CLOSED_NOT_PLANNED")` -- issue closes with `stateReason: NOT_PLANNED` in GitHub UI
@@ -278,8 +278,8 @@ it("does not assign REOPENED as stateReason", () => {
 ---
 
 ## Integration Testing
-- [ ] Build passes: `npm run build` in `plugin/ralph-hero/mcp-server`
-- [ ] All tests pass: `npm test` in `plugin/ralph-hero/mcp-server`
+- [x] Build passes: `npm run build` in `plugin/ralph-hero/mcp-server`
+- [x] All tests pass: `npm test` in `plugin/ralph-hero/mcp-server`
 - [ ] End-to-end: `save_issue` with terminal `workflowState` succeeds (previously failed)
 - [ ] End-to-end: `save_issue` with metadata + terminal state succeeds (combined operation)
 - [ ] No regression: `save_issue` with only metadata fields (title, labels) still works
