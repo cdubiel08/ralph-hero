@@ -315,6 +315,15 @@ async function main(): Promise<void> {
     version: "1.0.0",
   });
 
+  // mcptools 0.7.1 strips empty `{}` params to `undefined` before sending to
+  // the MCP server. Normalize args here so tools with all-optional or no
+  // parameters receive `{}` instead of `undefined`, which Zod's z.object()
+  // rejects with "expected object, received undefined".
+  // validateToolInput is private but safe to patch: only the default arg changes.
+  const _origValidate = (server as any).validateToolInput.bind(server);
+  (server as any).validateToolInput = (tool: unknown, args: unknown, toolName: string) =>
+    _origValidate(tool, args ?? {}, toolName);
+
   // Shared field option cache for project field lookups
   const fieldCache = new FieldOptionCache();
 
