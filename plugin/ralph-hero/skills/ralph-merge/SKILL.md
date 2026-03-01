@@ -13,10 +13,6 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/merge-state-gate.sh"
-  Stop:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/merge-postcondition.sh"
 allowed-tools:
   - Read
   - Glob

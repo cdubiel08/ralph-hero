@@ -93,9 +93,9 @@ Phase 1 deletes 16 dead scripts and cleans their SKILL.md frontmatter references
 **Action**: Read and confirm all 9 registered scripts still exist. No changes needed (confirmed by research).
 
 ### Success Criteria
-- [ ] Automated: `ls plugin/ralph-hero/hooks/scripts/*.sh | wc -l` returns 42 (down from 58, minus 16 deleted)
-- [ ] Automated: `grep -r "hygiene-postcondition\|report-postcondition\|setup-postcondition\|status-postcondition\|merge-postcondition\|pr-postcondition\|convergence-gate\|impl-verify-pr" plugin/ralph-hero/skills/` returns 0 results
-- [ ] Manual: No orphaned script headers reference deleted files
+- [x] Automated: `ls plugin/ralph-hero/hooks/scripts/*.sh | wc -l` returns 42 (down from 58, minus 16 deleted)
+- [x] Automated: `grep -r "hygiene-postcondition\|report-postcondition\|setup-postcondition\|status-postcondition\|merge-postcondition\|pr-postcondition\|convergence-gate\|impl-verify-pr" plugin/ralph-hero/skills/` returns 0 results
+- [x] Manual: No orphaned script headers reference deleted files
 
 **Creates for next phase**: Clean SKILL.md files with accurate hook sections, ready for conventions.md inlining.
 
