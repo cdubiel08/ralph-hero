@@ -54,7 +54,7 @@ Use a subagent to find candidates:
 Task(subagent_type="codebase-locator", prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first.")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 
 Or query directly:
 ```
@@ -133,7 +133,7 @@ Task(subagent_type="codebase-locator", prompt="Find all files related to [issue 
 Task(subagent_type="codebase-analyzer", prompt="Analyze [primary component]. What are the distinct pieces of work?")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 
 **Goal**: Identify natural boundaries for splitting:
 - Separate layers (database, API, frontend)
@@ -350,7 +350,9 @@ Next: Run /ralph-research or /ralph-plan on sub-issues as appropriate.
 
 ## Escalation Protocol
 
-Follow [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_split"`.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/escalation-steps.md
+
+Use `command="ralph_split"` in state transitions.
 
 **Split-specific triggers:**
 
@@ -386,4 +388,8 @@ Avoid:
 
 ## Link Formatting
 
-See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.
+| Reference type | Format |
+|---------------|--------|
+| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
+| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
+| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |

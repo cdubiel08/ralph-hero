@@ -97,9 +97,9 @@ After fetching the issue, check its current state:
 
 2. **Find linked plan document**:
 
-   **Artifact shortcut** (see [Artifact Passthrough Protocol](../shared/conventions.md#artifact-passthrough-protocol)): If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
+   **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
 
-   Per Artifact Comment Protocol in shared/conventions.md:
+   Find the plan using the Artifact Comment Protocol:
    1. Search issue comments for `## Implementation Plan` or `## Group Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
    2. Extract the GitHub URL from the line after the header
    3. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
@@ -190,7 +190,7 @@ fi
 
 **6.4. Handle Merge Conflict Escalation**
 
-If `git pull` fails with merge conflicts: escalate per `shared/conventions.md` (use `__ESCALATE__` state, comment with conflicted files list, STOP).
+If `git pull` fails with merge conflicts: use `__ESCALATE__` state, comment with conflicted files list, STOP.
 
 **CRITICAL**: After `cd "$WORKTREE_PATH"`, ALL subsequent file operations (Read, Write, Edit, Bash)
 must use paths relative to the worktree OR absolute paths within the worktree.
@@ -301,7 +301,7 @@ Only execute when ALL phases are complete and PR is created.
 
 For each issue in `issues[]` (single: just one; group/epic: all issues):
 
-1. **Add completion comment** (per Artifact Comment Protocol in shared/conventions.md):
+1. **Add completion comment**:
    ```
    ralph_hero__create_comment
    - owner: $RALPH_GH_OWNER
@@ -393,7 +393,17 @@ Resumable across context windows. Progress tracked by plan checkbox state (`- [x
 
 ## Escalation Protocol
 
-See `shared/conventions.md` for full escalation protocol. Use `command: "ralph_impl"` when escalating.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/escalation-steps.md
+
+Use `command="ralph_impl"` in state transitions.
+
+**Impl-specific triggers:**
+
+| Situation | Action |
+|-----------|--------|
+| Merge conflict on git pull | Escalate: "Merge conflict in [files]. Cannot proceed automatically." |
+| Plan phase verification fails twice | Escalate: "Phase [N] verification failing: [error]. Need guidance." |
+| Unexpected files outside phase scope | Warn and skip; do not stage. Report in commit message. |
 
 ## Constraints
 
@@ -405,4 +415,8 @@ See `shared/conventions.md` for full escalation protocol. Use `command: "ralph_i
 
 ## Link Formatting
 
-See `shared/conventions.md` for GitHub link format patterns.
+| Reference type | Format |
+|---------------|--------|
+| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
+| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
+| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |

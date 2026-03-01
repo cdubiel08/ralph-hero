@@ -111,7 +111,7 @@ Then STOP.
    Task(subagent_type="codebase-locator", prompt="Search for [keywords from issue title]. Does this feature/fix already exist?")
    ```
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 
    Also search GitHub for similar issues:
    ```
@@ -368,7 +368,9 @@ When uncertain, prefer KEEP with a detailed comment over closing valid work.
 
 ## Escalation Protocol
 
-Follow the escalation procedure in [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_triage"`.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/escalation-steps.md
+
+Use `command="ralph_triage"` in state transitions.
 
 **Triage-specific escalation triggers:**
 
@@ -402,4 +404,8 @@ Profiles set default filters. Explicit params (e.g., `label`) override or compos
 
 ## Link Formatting
 
-See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.
+| Reference type | Format |
+|---------------|--------|
+| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
+| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
+| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
