@@ -799,6 +799,7 @@ export function registerIssueTools(
               issueStates,
               group.isGroup,
               group.primary?.number ?? null,
+              { autoMode: client.config.autoMode },
             );
 
             pipeline = {

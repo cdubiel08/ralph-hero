@@ -20,9 +20,15 @@ export type PipelinePhase =
   | "PLAN"
   | "REVIEW"
   | "IMPLEMENT"
+  | "INTEGRATE"
   | "COMPLETE"
   | "HUMAN_GATE"
   | "TERMINAL";
+
+export interface DetectionOptions {
+  /** When true, "In Review" maps to INTEGRATE instead of TERMINAL */
+  autoMode?: boolean;
+}
 
 export interface IssueState {
   number: number;
@@ -73,6 +79,7 @@ const REMAINING_PHASES: Record<PipelinePhase, string[]> = {
   PLAN: ["plan", "review", "implement", "pr"],
   REVIEW: ["review", "implement", "pr"],
   IMPLEMENT: ["implement", "pr"],
+  INTEGRATE: ["integrate"],
   COMPLETE: ["pr"],
   HUMAN_GATE: [],
   TERMINAL: [],
@@ -114,6 +121,7 @@ export function detectPipelinePosition(
   issues: IssueState[],
   isGroup: boolean,
   groupPrimary: number | null,
+  options: DetectionOptions = {},
 ): PipelinePosition {
   if (issues.length === 0) {
     return buildResult(
@@ -273,9 +281,20 @@ export function detectPipelinePosition(
     );
   }
 
-  // Step 9: All issues terminal (In Review or Done or Canceled) -> TERMINAL
+  // Step 9: All issues terminal (In Review or Done or Canceled)
   const terminal = inReview.length + done.length + canceled.length;
   if (terminal === issues.length) {
+    // In auto mode, "In Review" issues are actionable (integrator can merge)
+    if (options.autoMode && inReview.length > 0 && done.length + canceled.length < issues.length) {
+      return buildResult(
+        "INTEGRATE",
+        `${inReview.length} issue(s) awaiting integration`,
+        issues,
+        isGroup,
+        groupPrimary,
+        { required: false, met: true, blocking: [] },
+      );
+    }
     return buildResult(
       "TERMINAL",
       "All issues in review or done",
@@ -344,6 +363,7 @@ export function detectPipelinePosition(
 export function detectStreamPipelinePositions(
   streams: WorkStream[],
   issueStates: IssueState[],
+  options: DetectionOptions = {},
 ): StreamPipelineResult[] {
   const stateByNumber = new Map<number, IssueState>();
   for (const state of issueStates) {
@@ -360,7 +380,7 @@ export function detectStreamPipelinePositions(
     return {
       streamId: stream.id,
       issues: filteredIssues,
-      position: detectPipelinePosition(filteredIssues, isGroup, groupPrimary),
+      position: detectPipelinePosition(filteredIssues, isGroup, groupPrimary, options),
     };
   });
 }
@@ -373,6 +393,15 @@ function computeSuggestedRoster(
   phase: PipelinePhase,
   issues: IssueState[],
 ): SuggestedRoster {
+  // TERMINAL: no workers needed
+  if (phase === 'TERMINAL') {
+    return { analyst: 0, builder: 0, integrator: 0 };
+  }
+  // INTEGRATE: only integrator needed
+  if (phase === 'INTEGRATE') {
+    return { analyst: 0, builder: 0, integrator: 1 };
+  }
+
   // Phase-aware: if past research, analyst = 0
   const needsResearch = issues.filter(i =>
     ['Research Needed', 'Research in Progress'].includes(i.workflowState)

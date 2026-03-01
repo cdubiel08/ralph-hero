@@ -270,6 +270,7 @@ export interface GitHubClientConfig {
   projectNumbers?: number[]; // Multiple project numbers for cross-project operations
   projectOwner?: string; // Defaults to owner if unset
   templateProjectNumber?: number; // Default template project for setup_project copy mode
+  autoMode?: boolean; // When true, "In Review" maps to INTEGRATE instead of TERMINAL (RALPH_HERO_AUTO)
 }
 
 export function resolveProjectOwner(
