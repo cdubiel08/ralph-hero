@@ -128,6 +128,8 @@ jobs:
           sed -i "s/ralph-hero-mcp-server@[0-9][0-9.]*/ralph-hero-mcp-server@${NEW_VERSION}/g" \
             plugin/ralph-hero/justfile \
             plugin/ralph-hero/.mcp.json
+          sed -i "s/MCP_VERSION=\"[0-9][0-9.]*\"/MCP_VERSION=\"${NEW_VERSION}\"/g" \
+            plugin/ralph-hero/scripts/cli-dispatch.sh
 
       - name: Commit version bump and tag
         working-directory: .
@@ -143,6 +145,7 @@ jobs:
           if [ "$MCP_CHANGED" = "true" ]; then
             git add plugin/ralph-hero/justfile
             git add plugin/ralph-hero/.mcp.json
+            git add plugin/ralph-hero/scripts/cli-dispatch.sh
           fi
           git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
           git tag "v${NEW_VERSION}"
