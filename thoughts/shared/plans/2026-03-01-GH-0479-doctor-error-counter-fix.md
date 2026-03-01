@@ -17,8 +17,8 @@ estimate: XS
 
 ### Automated Verification
 
-- [ ] `just doctor` with valid env vars completes and shows health check output
-- [ ] Modifying `_mcp_call` to test invalid response: `echo "not json" | jq -e '.' > /dev/null 2>&1` returns non-zero
+- [x] `just doctor` with valid env vars completes and shows health check output
+- [x] Modifying `_mcp_call` to test invalid response: `echo "not json" | jq -e '.' > /dev/null 2>&1` returns non-zero
 
 ## File Ownership Summary
 

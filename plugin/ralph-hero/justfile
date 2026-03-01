@@ -381,6 +381,11 @@ _mcp_call tool params:
     raw=$(mcp call "{{tool}}" --params '{{params}}' \
         npx -y ralph-hero-mcp-server@2.4.97)
     if command -v jq &>/dev/null; then
+        if ! echo "$raw" | jq -e '.' > /dev/null 2>&1; then
+            echo "Error: MCP server returned invalid response" >&2
+            echo "$raw" >&2
+            exit 1
+        fi
         if echo "$raw" | jq -e '.isError // false' > /dev/null 2>&1; then
             echo "$raw" | jq -r '.content[0].text' >&2
             exit 1
