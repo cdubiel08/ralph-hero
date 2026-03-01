@@ -38,9 +38,9 @@ The test file should:
 
 ### Automated Verification
 
-- [ ] `npm run build` succeeds
-- [ ] `npm test` passes (all tests including new empty-params.test.ts)
-- [ ] New tests cover: undefined args with no-param tool, undefined args with all-optional tool, undefined args with required-param tool (should fail with field-level error, not object-level error)
+- [x] `npm run build` succeeds
+- [x] `npm test` passes (all tests including new empty-params.test.ts)
+- [x] New tests cover: undefined args with no-param tool, undefined args with all-optional tool, undefined args with required-param tool (should fail with field-level error, not object-level error)
 
 ## File Ownership Summary
 
