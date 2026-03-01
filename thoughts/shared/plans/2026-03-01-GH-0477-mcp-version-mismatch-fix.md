@@ -22,10 +22,10 @@ primary_issue: 477
 
 ## Desired End State
 ### Verification
-- [ ] `cli-dispatch.sh` line 5 reads `MCP_VERSION="2.4.95"`
-- [ ] `release.yml` has a sed targeting `MCP_VERSION="X.Y.Z"` format in `cli-dispatch.sh`
-- [ ] `release.yml` git add step includes `cli-dispatch.sh` (conditionally, when MCP changed)
-- [ ] All three version locations (`cli-dispatch.sh`, `justfile`, `.mcp.json`) report the same version
+- [x] `cli-dispatch.sh` line 5 reads `MCP_VERSION="2.4.95"`
+- [x] `release.yml` has a sed targeting `MCP_VERSION="X.Y.Z"` format in `cli-dispatch.sh`
+- [x] `release.yml` git add step includes `cli-dispatch.sh` (conditionally, when MCP changed)
+- [x] All three version locations (`cli-dispatch.sh`, `justfile`, `.mcp.json`) report the same version
 
 ## What We're NOT Doing
 - Not unifying the version format across files (Option B from research) — preserving the named `MCP_VERSION` variable is preferable for readability
@@ -64,16 +64,16 @@ git add plugin/ralph-hero/scripts/cli-dispatch.sh
 After line 145 (`git add plugin/ralph-hero/.mcp.json`).
 
 ### Success Criteria
-- [ ] Automated: `grep -q 'MCP_VERSION="2.4.95"' plugin/ralph-hero/scripts/cli-dispatch.sh`
-- [ ] Automated: `grep -q 'MCP_VERSION=\\"' .github/workflows/release.yml` (new sed pattern present)
-- [ ] Automated: `grep -q 'cli-dispatch.sh' .github/workflows/release.yml` (file in git add list)
-- [ ] Manual: All three version locations agree: `grep -oP '(?<=@|=")[0-9.]+' plugin/ralph-hero/scripts/cli-dispatch.sh plugin/ralph-hero/justfile plugin/ralph-hero/.mcp.json`
+- [x] Automated: `grep -q 'MCP_VERSION="2.4.95"' plugin/ralph-hero/scripts/cli-dispatch.sh`
+- [x] Automated: `grep -q 'MCP_VERSION=\\"' .github/workflows/release.yml` (new sed pattern present)
+- [x] Automated: `grep -q 'cli-dispatch.sh' .github/workflows/release.yml` (file in git add list)
+- [x] Manual: All three version locations agree: `grep -oP '(?<=@|=")[0-9.]+' plugin/ralph-hero/scripts/cli-dispatch.sh plugin/ralph-hero/justfile plugin/ralph-hero/.mcp.json`
 
 ---
 
 ## Integration Testing
-- [ ] Verify `ralph doctor -q` works with the updated version
-- [ ] Verify release workflow YAML is syntactically valid: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
+- [x] Verify `ralph doctor -q` works with the updated version
+- [x] Verify release workflow YAML is syntactically valid: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"`
 
 ## References
 - Research: [GH-0477 research](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-01-GH-0477-mcp-version-mismatch-cli-dispatch.md)
