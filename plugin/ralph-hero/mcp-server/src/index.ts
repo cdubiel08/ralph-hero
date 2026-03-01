@@ -80,6 +80,7 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
   const templateProjectNumber = resolveEnv("RALPH_GH_TEMPLATE_PROJECT")
     ? parseInt(resolveEnv("RALPH_GH_TEMPLATE_PROJECT")!, 10)
     : undefined;
+  const autoMode = resolveEnv("RALPH_HERO_AUTO") === "true";
 
   if (!owner) {
     console.error(
@@ -116,6 +117,7 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
     projectNumbers,
     projectOwner: projectOwner || undefined,
     templateProjectNumber,
+    autoMode,
   }, debugLogger);
 }
 

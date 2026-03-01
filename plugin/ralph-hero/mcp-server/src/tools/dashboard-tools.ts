@@ -529,6 +529,7 @@ export function registerDashboardTools(
         const positions = detectStreamPipelinePositions(
           streamResult.streams,
           states,
+          { autoMode: client.config.autoMode },
         );
 
         return toolSuccess({

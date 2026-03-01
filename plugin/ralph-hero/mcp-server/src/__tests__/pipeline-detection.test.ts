@@ -5,6 +5,7 @@ import {
   type IssueState,
   type PipelinePhase,
   type StreamPipelineResult,
+  type DetectionOptions,
 } from "../lib/pipeline-detection.js";
 import type { WorkStream } from "../lib/work-stream-detection.js";
 
@@ -29,14 +30,16 @@ function makeIssue(
 
 function detectSingle(
   issue: IssueState,
+  options?: DetectionOptions,
 ): ReturnType<typeof detectPipelinePosition> {
-  return detectPipelinePosition([issue], false, issue.number);
+  return detectPipelinePosition([issue], false, issue.number, options);
 }
 
 function detectGroup(
   issues: IssueState[],
+  options?: DetectionOptions,
 ): ReturnType<typeof detectPipelinePosition> {
-  return detectPipelinePosition(issues, true, issues[0]?.number ?? null);
+  return detectPipelinePosition(issues, true, issues[0]?.number ?? null, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -463,5 +466,73 @@ describe("detectStreamPipelinePositions", () => {
   it("returns empty array for empty streams input", () => {
     const results = detectStreamPipelinePositions([], [makeIssue(42, "In Progress")]);
     expect(results).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auto mode (RALPH_HERO_AUTO): INTEGRATE phase
+// ---------------------------------------------------------------------------
+
+describe("detectPipelinePosition - auto mode (RALPH_HERO_AUTO)", () => {
+  const auto: DetectionOptions = { autoMode: true };
+
+  it("returns INTEGRATE for In Review (single issue)", () => {
+    const result = detectSingle(makeIssue(1, "In Review"), auto);
+    expect(result.phase).toBe("INTEGRATE");
+    expect(result.remainingPhases).toEqual(["integrate"]);
+  });
+
+  it("returns INTEGRATE for group with all In Review", () => {
+    const result = detectGroup([
+      makeIssue(1, "In Review"),
+      makeIssue(2, "In Review"),
+    ], auto);
+    expect(result.phase).toBe("INTEGRATE");
+  });
+
+  it("returns INTEGRATE for mixed In Review + Done (some still need integration)", () => {
+    const result = detectGroup([
+      makeIssue(1, "In Review"),
+      makeIssue(2, "Done"),
+    ], auto);
+    expect(result.phase).toBe("INTEGRATE");
+  });
+
+  it("returns TERMINAL for all Done even in auto mode", () => {
+    const result = detectGroup([
+      makeIssue(1, "Done"),
+      makeIssue(2, "Done"),
+    ], auto);
+    expect(result.phase).toBe("TERMINAL");
+  });
+
+  it("returns TERMINAL for Done + Canceled (no In Review) in auto mode", () => {
+    const result = detectGroup([
+      makeIssue(1, "Done"),
+      makeIssue(2, "Canceled"),
+    ], auto);
+    expect(result.phase).toBe("TERMINAL");
+  });
+
+  it("without autoMode, In Review still returns TERMINAL (backward compat)", () => {
+    const result = detectSingle(makeIssue(1, "In Review"));
+    expect(result.phase).toBe("TERMINAL");
+  });
+
+  it("INTEGRATE roster is integrator-only", () => {
+    const result = detectSingle(makeIssue(1, "In Review"), auto);
+    expect(result.suggestedRoster).toEqual({ analyst: 0, builder: 0, integrator: 1 });
+  });
+
+  it("TERMINAL roster is empty (no workers needed)", () => {
+    const result = detectSingle(makeIssue(1, "Done"));
+    expect(result.suggestedRoster).toEqual({ analyst: 0, builder: 0, integrator: 0 });
+  });
+
+  it("detectStreamPipelinePositions threads autoMode through", () => {
+    const streams = [{ id: "stream-1", issues: [1], sharedFiles: [], primaryIssue: 1 }];
+    const states = [makeIssue(1, "In Review")];
+    const results = detectStreamPipelinePositions(streams, states, auto);
+    expect(results[0].position.phase).toBe("INTEGRATE");
   });
 });
