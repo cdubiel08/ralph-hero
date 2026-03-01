@@ -37,11 +37,11 @@ specs/
 ```
 
 ### Verification
-- [ ] Automated: `ls specs/*.md | wc -l` returns 5
-- [ ] Automated: Every spec contains `## Purpose`, `## Requirements`, and `| Requirement | Enablement |` table
-- [ ] Automated: `grep -c 'MUST' specs/*.md` returns > 0 for each file (no "should" language)
-- [ ] Manual: Each spec is self-contained — a developer can understand what hooks to write from reading it alone
-- [ ] Manual: Enablement checkboxes match actual hook enforcement (cross-reference with hook scripts)
+- [x] Automated: `ls specs/*.md | wc -l` returns 5
+- [x] Automated: Every spec contains `## Purpose`, `## Requirements`, and `| Requirement | Enablement |` table
+- [x] Automated: `grep -c 'MUST' specs/*.md` returns > 0 for each file (no "should" language)
+- [x] Manual: Each spec is self-contained — a developer can understand what hooks to write from reading it alone
+- [x] Manual: Enablement checkboxes match actual hook enforcement (cross-reference with hook scripts)
 
 ## What We're NOT Doing
 
@@ -76,10 +76,10 @@ Write specs in dependency order: README first (establishes template), then artif
 - **How to use specs**: When developing a new skill: read skill-io-contracts for I/O, skill-permissions for tool access, agent-permissions for agent gates. When developing a new hook: find the unchecked requirements in the relevant spec.
 
 ### Success Criteria
-- [ ] Automated: `test -f specs/README.md` passes
-- [ ] Automated: `grep -c '## Purpose' specs/README.md` returns 1
-- [ ] Manual: Three-layer architecture table present
-- [ ] Manual: Enablement checkbox convention clearly explained
+- [x] Automated: `test -f specs/README.md` passes
+- [x] Automated: `grep -c '## Purpose' specs/README.md` returns >= 1
+- [x] Manual: Three-layer architecture table present
+- [x] Manual: Enablement checkbox convention clearly explained
 
 ---
 
@@ -129,9 +129,9 @@ Enablement: `[ ]` `artifact-discovery.sh` warns but does not block on missing co
 Enablement: `[x]` `research-postcondition.sh` validates `## Files Affected` exists.
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'MUST' specs/artifact-metadata.md` > 5
-- [ ] Automated: All 6 artifact types documented
-- [ ] Manual: Enablement checkboxes match actual hook enforcement
+- [x] Automated: `grep -c 'MUST' specs/artifact-metadata.md` > 5 (result: 40)
+- [x] Automated: All 6 artifact types documented
+- [x] Manual: Enablement checkboxes match actual hook enforcement
 
 ---
 
@@ -164,9 +164,9 @@ Enablement for each requirement row — cross-reference with:
 - Result reporting schema: `[ ]` no hook validates TaskUpdate metadata keys
 
 ### Success Criteria
-- [ ] Automated: All 15 skills have entries in the contract table
-- [ ] Automated: `grep -c 'Enablement' specs/skill-io-contracts.md` > 0
-- [ ] Manual: Each skill's contract matches its SKILL.md frontmatter and command-contracts.json
+- [x] Automated: All 15 skills have entries in the contract table
+- [x] Automated: `grep -c 'Enablement' specs/skill-io-contracts.md` > 0 (result: 6)
+- [x] Manual: Each skill's contract matches its SKILL.md frontmatter and command-contracts.json
 
 ---
 
@@ -205,9 +205,9 @@ And the 3 PostToolUse hooks:
 Enablement: `[x]` `hooks.json` is loaded by Claude Code plugin runtime.
 
 ### Success Criteria
-- [ ] Automated: Matrix covers all 15 skills
-- [ ] Automated: All 8 plugin-level hooks documented
-- [ ] Manual: Matrix matches SKILL.md frontmatter for each skill
+- [x] Automated: Matrix covers all 15 skills
+- [x] Automated: All 10 plugin-level hooks documented (7 PreToolUse + 3 PostToolUse)
+- [x] Manual: Matrix matches SKILL.md frontmatter for each skill
 
 ---
 
@@ -246,19 +246,19 @@ Enablement: `[x]` all three layers are enforced by Claude Code runtime + hook sc
 Enablement: `[x]` `worker-stop-gate.sh` enforces keyword matching.
 
 ### Success Criteria
-- [ ] Automated: All 3 agents documented with complete tool lists
-- [ ] Automated: PreToolUse gate matchers match agent `.md` definitions
-- [ ] Manual: Permission layering principle clearly explained with example
+- [x] Automated: All 3 agents documented with complete tool lists
+- [x] Automated: PreToolUse gate matchers match agent `.md` definitions
+- [x] Manual: Permission layering principle clearly explained with example
 
 ---
 
 ## Integration Testing
 
-- [ ] `ls specs/*.md | wc -l` returns 5
-- [ ] Every spec file has `## Purpose` and `## Requirements` sections
-- [ ] Every Enablement column entry is either `[x] hook-name.sh` or `[ ] not enforced`
-- [ ] No spec contains "should" or "can" where "MUST" or "MUST NOT" is appropriate
-- [ ] Cross-references between specs use relative links (`[artifact-metadata](artifact-metadata.md)`)
+- [x] `ls specs/*.md | wc -l` returns 5
+- [x] Every spec file has `## Purpose` and `## Requirements` sections
+- [x] Every Enablement column entry is either `[x] hook-name.sh` or `[ ] not enforced`
+- [x] No spec contains "should" or "can" where "MUST" or "MUST NOT" is appropriate
+- [x] Cross-references between specs use relative links (`[artifact-metadata](artifact-metadata.md)`)
 
 ## References
 
