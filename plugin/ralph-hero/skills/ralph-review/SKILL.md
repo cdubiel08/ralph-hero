@@ -92,9 +92,9 @@ Then STOP.
 
 2. **Find linked plan document**:
 
-   **Artifact shortcut** (see [Artifact Passthrough Protocol](../shared/conventions.md#artifact-passthrough-protocol)): If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
+   **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
 
-   Per Artifact Comment Protocol in shared/conventions.md:
+   Find the plan using the Artifact Comment Protocol:
    1. Search issue comments for `## Implementation Plan` or `## Group Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
    2. Extract the GitHub URL from the line after the header
    3. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
@@ -228,7 +228,7 @@ INSTRUCTIONS:
      description="Critique #NNN plan")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to this critique `Task()` call or any sub-agent `Task()` calls within it. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+> **Team Isolation**: Do NOT pass `team_name` to this critique `Task()` call or any sub-agent `Task()` calls within it. Sub-agents must run outside any team context.
 
 **Wait for result**:
 ```
@@ -253,7 +253,7 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
    **Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
-2. **Add approval comment** (per Artifact Comment Protocol in shared/conventions.md):
+2. **Add approval comment**:
    ```
    ralph_hero__create_comment
    - owner: $RALPH_GH_OWNER
@@ -295,7 +295,7 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
    - command: "ralph_review"
    ```
 
-3. **Add feedback comment** (per Artifact Comment Protocol in shared/conventions.md):
+3. **Add feedback comment**:
    ```
    ralph_hero__create_comment
    - owner: $RALPH_GH_OWNER
@@ -359,7 +359,9 @@ Run /ralph-plan NNN to address critique and update plan.
 
 ## Escalation Protocol
 
-Follow [shared/conventions.md](../shared/conventions.md#escalation-protocol) with `command="ralph_review"`.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/escalation-steps.md
+
+Use `command="ralph_review"` in state transitions.
 
 **Review-specific triggers:**
 
@@ -394,4 +396,8 @@ See [shared/quality-standards.md](../shared/quality-standards.md) for canonical 
 
 ## Link Formatting
 
-See [shared/conventions.md](../shared/conventions.md) for GitHub link formatting patterns.
+| Reference type | Format |
+|---------------|--------|
+| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
+| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
+| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |

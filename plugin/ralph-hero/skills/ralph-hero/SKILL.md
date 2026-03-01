@@ -195,7 +195,7 @@ After all research completes, run Stream Detection (Step 2.5) if applicable.
 
 #### PLAN tasks
 
-Before spawning, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, append `--research-doc {path}` to args (see Artifact Passthrough Protocol in `shared/conventions.md`):
+Before spawning, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, append `--research-doc {path}` to args:
 
 ```
 Task(subagent_type="general-purpose",
@@ -270,7 +270,7 @@ Future: When `RALPH_AUTO_MERGE=true`, automatically merge approved PRs via `gh p
 | Implementation failure | STOP immediately, preserve worktree, do NOT continue |
 | Circular dependencies | Report the cycle, suggest manual cleanup, STOP |
 
-For escalation procedures (Human Needed state, @mention patterns), see [shared/conventions.md](../shared/conventions.md#escalation-protocol).
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/escalation-steps.md
 
 ## Resumption
 
@@ -306,4 +306,8 @@ Ralph Hero is **resumable** across context windows:
 
 ## Link Formatting
 
-See [shared/conventions.md](../shared/conventions.md#link-formatting) for GitHub link patterns.
+| Reference type | Format |
+|---------------|--------|
+| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
+| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
+| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |

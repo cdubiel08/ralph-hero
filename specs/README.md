@@ -101,3 +101,21 @@ Requirements use RFC 2119 language: **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 2. Define the agent's tool whitelist (maximum surface)
 3. Add PreToolUse gates for mutating tools via `require-skill-context.sh`
 4. Define stop gate keywords for the worker-stop-gate
+
+## Maturity Baseline
+
+Enforcement coverage as of 2026-03-01. Each `[x]` requirement is enforced by a hook; each `[ ]` is a gap forming the backlog for future enforcement work.
+
+| Spec | Enforced (`[x]`) | Gap (`[ ]`) | % Enforced |
+|------|-----------------|------------|------------|
+| artifact-metadata.md | 11 | 32 | 26% |
+| skill-io-contracts.md | 31 | 5 | 86% |
+| skill-permissions.md | 6 | 5 | 55% |
+| agent-permissions.md | 13 | 0 | 100% |
+| issue-lifecycle.md | 18 | 7 | 72% |
+| document-protocols.md | 10 | 14 | 42% |
+| task-schema.md | 3 | 12 | 20% |
+| team-schema.md | 3 | 15 | 17% |
+| **Total** | **95** | **90** | **51%** |
+
+Largest gap areas: artifact-metadata.md (file naming, frontmatter field validation, artifact comment linking), task-schema.md and team-schema.md (coordination protocol is convention-only). These gaps form the backlog for Phase 5+ enforcement issues.

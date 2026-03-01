@@ -87,7 +87,7 @@ If `save_issue` returns an error, read the error message for valid states/intent
    - **thoughts-locator**: Find existing research or decisions
    - **web-search-researcher**: External APIs, best practices (if needed)
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 
 4. **Wait for ALL sub-tasks** before proceeding
 5. **Synthesize findings** - combine results into coherent understanding
@@ -152,7 +152,7 @@ git push origin main
 
 ### Step 8: Update GitHub Issue
 
-1. **Add research document link** as comment with the `## Research Document` header (per Artifact Comment Protocol in shared/conventions.md):
+1. **Add research document link** as comment with the `## Research Document` header:
    ```
    ralph_hero__create_comment
    - owner: $RALPH_GH_OWNER
@@ -219,6 +219,22 @@ Profiles set default filters. Explicit params override profile defaults.
 
 See [shared/quality-standards.md](../shared/quality-standards.md) for canonical research quality dimensions (Depth, Feasibility, Risk, Actionability) and anti-patterns.
 
-## Escalation & Link Formatting
+## Escalation Protocol
 
-See [shared/conventions.md](../shared/conventions.md) for escalation protocol and link formatting rules.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/escalation-steps.md
+
+**Research-specific triggers:**
+
+| Situation | Action |
+|-----------|--------|
+| Issue scope larger than XS/S | Escalate: "This is [M/L/XL] complexity. Needs re-estimation or splitting." |
+| Cannot find relevant codebase patterns | Escalate: "Unable to locate relevant code for [topic]. Need guidance." |
+| Conflicting implementations found | Escalate: "Found conflicting patterns: [A] vs [B]. Which to follow?" |
+
+## Link Formatting
+
+| Reference type | Format |
+|---------------|--------|
+| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
+| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
+| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |

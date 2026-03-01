@@ -116,7 +116,7 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 
 1. **For each issue** (dependency order):
 
-   **Artifact shortcut** (see [Artifact Passthrough Protocol](../shared/conventions.md#artifact-passthrough-protocol)): If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-7 below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
+   **Artifact shortcut**: If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-7 below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
 
    1. Read issue via `ralph_hero__get_issue(owner, repo, number)` — response includes comments
    2. Search comments for `## Research Document` header. If multiple matches, use the **most recent** (last) match.
@@ -136,7 +136,7 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
    - `Task(subagent_type="codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
    - `Task(subagent_type="codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context. See [shared/conventions.md](../shared/conventions.md#sub-agent-team-isolation).
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 
 4. **Wait for sub-tasks** before proceeding
 
@@ -144,7 +144,7 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 
 Update **all group issues**: `ralph_hero__save_issue(number=N, workflowState="__LOCK__", command="ralph_plan")`
 
-See shared/conventions.md for error handling.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/error-handling.md
 
 ### Step 5: Create Implementation Plan
 
@@ -228,7 +228,7 @@ git push origin main
 
 For **each issue in the group**:
 
-1. **Add plan link comment** (per Artifact Comment Protocol in shared/conventions.md): `ralph_hero__create_comment` with body:
+1. **Add plan link comment**: `ralph_hero__create_comment` with body:
    ```
    ## Implementation Plan
 
@@ -264,7 +264,17 @@ Ready for human review.
 
 ## Escalation Protocol
 
-See shared/conventions.md for full escalation protocol. Use `command="ralph_plan"` in state transitions.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/escalation-steps.md
+
+Use `command="ralph_plan"` in state transitions.
+
+**Plan-specific triggers:**
+
+| Situation | Action |
+|-----------|--------|
+| Research document missing | STOP: "Issue #NNN has no research document. Run /ralph-research first." |
+| Group issues in conflicting states | Escalate: "Group issues not all in Ready for Plan: [status per issue]." |
+| Circular dependencies in group | Escalate: "Circular dependency detected in group. Need manual resolution." |
 
 ## Available Filter Profiles
 
@@ -288,7 +298,11 @@ See [shared/quality-standards.md](../shared/quality-standards.md) for canonical 
 
 ## Link Formatting
 
-See shared/conventions.md for GitHub link formatting patterns.
+| Reference type | Format |
+|---------------|--------|
+| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
+| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
+| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
 
 ## Edge Cases
 
