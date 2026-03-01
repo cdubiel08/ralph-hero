@@ -68,7 +68,7 @@ Starting ralph-review in [INTERACTIVE/AUTO] mode
 ralph_hero__list_issues
 - owner: $RALPH_GH_OWNER
 - repo: $RALPH_GH_REPO
-- profile: "validator-review"
+- profile: "review-queue"
 # Profile expands to: workflowState: "Plan in Review"
 - orderBy: "priority"
 - limit: 1
@@ -377,7 +377,7 @@ Use `command="ralph_review"` in state transitions.
 
 | Profile | Expands To | Use Case |
 |---------|-----------|----------|
-| `validator-review` | `workflowState: "Plan in Review"` | Find plans awaiting review |
+| `review-queue` | `workflowState: "Plan in Review"` | Find plans awaiting review |
 
 Profiles set default filters. Explicit params override profile defaults.
 

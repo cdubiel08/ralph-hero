@@ -13,10 +13,6 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
-    - matcher: "ralph_hero__save_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/convergence-gate.sh"
     - matcher: "Write"
       hooks:
         - type: command

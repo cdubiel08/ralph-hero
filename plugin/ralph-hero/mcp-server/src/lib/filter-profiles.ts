@@ -40,7 +40,7 @@ export const FILTER_PROFILES: Record<string, ProfileFilterParams> = {
   "builder-planned": {
     workflowState: "Plan in Review",
   },
-  "validator-review": {
+  "review-queue": {
     workflowState: "Plan in Review",
     // TODO: multi-value workflowState for "Plan in Review" OR "In Review" when supported
   },
