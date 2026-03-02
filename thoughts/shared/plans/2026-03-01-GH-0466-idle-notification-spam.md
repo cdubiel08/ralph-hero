@@ -32,9 +32,9 @@ With GH-231 and GH-353 already addressed, this plan targets the two remaining ca
 Workers produce fewer idle notifications during normal operation and shutdown. The stop gate is removed (workers already have agent-level instructions to check TaskList before stopping), and workers detect and skip self-completion notification turns.
 
 ### Verification
-- [ ] Workers no longer trigger 2 idle notifications during shutdown (stop gate cascade eliminated)
-- [ ] Workers detect and skip self-completion notification turns (GH-52 workaround active)
-- [ ] No regression: workers still check TaskList before stopping (agent instructions preserved)
+- [x] Workers no longer trigger 2 idle notifications during shutdown (stop gate cascade eliminated)
+- [x] Workers detect and skip self-completion notification turns (GH-52 workaround active)
+- [x] No regression: workers still check TaskList before stopping (agent instructions preserved)
 
 ## What We're NOT Doing
 - Modifying the `TeammateIdle` hook ([`team-teammate-idle.sh`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/hooks/scripts/team-teammate-idle.sh)) — it's already minimal and correct
@@ -92,9 +92,9 @@ If you receive a notification about a task you just completed yourself (self-not
 **Changes**: Add the same self-notification detection paragraph after "Check TaskList again for more work before stopping."
 
 ### Success Criteria
-- [ ] Automated: `worker-stop-gate.sh` file no longer exists — `test ! -f plugin/ralph-hero/hooks/scripts/worker-stop-gate.sh`
-- [ ] Automated: No agent definitions reference `worker-stop-gate.sh` — `grep -r "worker-stop-gate" plugin/ralph-hero/agents/ | wc -l` returns 0
-- [ ] Automated: All three agent definitions contain self-notification guidance — `grep -l "self-notification" plugin/ralph-hero/agents/ralph-{analyst,builder,integrator}.md | wc -l` returns 3
+- [x] Automated: `worker-stop-gate.sh` file no longer exists — `test ! -f plugin/ralph-hero/hooks/scripts/worker-stop-gate.sh`
+- [x] Automated: No agent definitions reference `worker-stop-gate.sh` — `grep -r "worker-stop-gate" plugin/ralph-hero/agents/ | wc -l` returns 0
+- [x] Automated: All three agent definitions contain self-notification guidance — `grep -l "self-notification" plugin/ralph-hero/agents/ralph-{analyst,builder,integrator}.md | wc -l` returns 3
 - [ ] Manual: Run a `ralph-team` session and observe reduced idle notifications during worker shutdown (expect ~1 per worker instead of ~2)
 
 ---
