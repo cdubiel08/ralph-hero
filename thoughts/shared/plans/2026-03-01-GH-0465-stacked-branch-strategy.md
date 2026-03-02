@@ -25,11 +25,11 @@ The stream detection infrastructure already exists — `detect_stream_positions`
 ## Desired End State
 
 ### Verification
-- [ ] `create-worktree.sh` accepts an optional 3rd argument (`BASE_BRANCH_OVERRIDE`) and creates worktrees from that branch when provided
-- [ ] `ralph-impl` reads `base_branch` from task context and passes it to `create-worktree.sh`
-- [ ] `ralph-impl` runs `git rebase origin/main` when starting a stream-sequential issue whose predecessor has merged
-- [ ] Integrator agent documentation includes rebase guidance for stacked branches
-- [ ] Existing behavior (branching from `origin/main`) unchanged when no base branch is specified
+- [x] `create-worktree.sh` accepts an optional 3rd argument (`BASE_BRANCH_OVERRIDE`) and creates worktrees from that branch when provided
+- [x] `ralph-impl` reads `base_branch` from task context and passes it to `create-worktree.sh`
+- [x] `ralph-impl` runs `git rebase origin/main` when starting a stream-sequential issue whose predecessor has merged
+- [x] Integrator agent documentation includes rebase guidance for stacked branches
+- [x] Existing behavior (branching from `origin/main`) unchanged when no base branch is specified
 
 ## What We're NOT Doing
 - Stream detection in `ralph-team` — that's GH-488
@@ -170,13 +170,13 @@ When creating implementation tasks for issues within the same work stream (detec
 This is a lightweight touch — GH-488 will add the full stream detection logic. This note ensures the contract between team lead and builder is documented now.
 
 ### Success Criteria
-- [ ] Automated: `./scripts/create-worktree.sh GH-test-stacked "" feature/main` creates a worktree from `origin/main` (override resolves to the branch)
-- [ ] Automated: `./scripts/create-worktree.sh GH-test-default` creates from `origin/main` (no override, backward compatible)
-- [ ] Automated: `./scripts/create-worktree.sh GH-test-missing "" nonexistent-branch` falls back to `origin/main` with a warning
-- [ ] Manual: `ralph-impl` SKILL.md contains base_branch detection in Step 6.2 and passes it in Step 6.3
-- [ ] Manual: `ralph-impl` SKILL.md contains Step 6.3a rebase-on-predecessor-merged logic
-- [ ] Manual: `ralph-integrator.md` contains stacked branch rebase guidance
-- [ ] Manual: `ralph-team/SKILL.md` documents `base_branch` metadata contract
+- [x] Automated: `./scripts/create-worktree.sh GH-test-stacked "" feature/main` creates a worktree from `origin/main` (override resolves to the branch)
+- [x] Automated: `./scripts/create-worktree.sh GH-test-default` creates from `origin/main` (no override, backward compatible)
+- [x] Automated: `./scripts/create-worktree.sh GH-test-missing "" nonexistent-branch` falls back to `origin/main` with a warning
+- [x] Manual: `ralph-impl` SKILL.md contains base_branch detection in Step 6.2 and passes it in Step 6.3
+- [x] Manual: `ralph-impl` SKILL.md contains Step 6.3a rebase-on-predecessor-merged logic
+- [x] Manual: `ralph-integrator.md` contains stacked branch rebase guidance
+- [x] Manual: `ralph-team/SKILL.md` documents `base_branch` metadata contract
 
 ---
 
