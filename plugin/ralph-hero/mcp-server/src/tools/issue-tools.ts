@@ -1248,29 +1248,62 @@ export function registerIssueTools(
                 .filter((id): id is string => id !== undefined);
             }
 
+            // Resolve assignee IDs if provided
+            let assigneeIds: string[] | undefined;
+            if (args.assignees) {
+              assigneeIds = [];
+              for (const username of args.assignees) {
+                const userResult = await client.query<{
+                  user: { id: string } | null;
+                }>(
+                  `query($login: String!) { user(login: $login) { id } }`,
+                  { login: username },
+                  { cache: true, cacheTtlMs: 5 * 60 * 1000 },
+                );
+                if (userResult.user) {
+                  assigneeIds.push(userResult.user.id);
+                }
+              }
+            }
+
+            // Build mutation dynamically to avoid sending null for unprovided fields
+            // (GitHub treats null as "clear" not "leave unchanged")
+            const varDefs: string[] = ["$issueId: ID!"];
+            const inputFields: string[] = ["id: $issueId"];
+            const variables: Record<string, unknown> = { issueId };
+
+            if (args.title !== undefined) {
+              varDefs.push("$title: String");
+              inputFields.push("title: $title");
+              variables.title = args.title;
+            }
+            if (args.body !== undefined) {
+              varDefs.push("$body: String");
+              inputFields.push("body: $body");
+              variables.body = args.body;
+            }
+            if (labelIds !== undefined) {
+              varDefs.push("$labelIds: [ID!]");
+              inputFields.push("labelIds: $labelIds");
+              variables.labelIds = labelIds;
+            }
+            if (assigneeIds !== undefined) {
+              varDefs.push("$assigneeIds: [ID!]");
+              inputFields.push("assigneeIds: $assigneeIds");
+              variables.assigneeIds = assigneeIds;
+            }
+
             await client.mutate<{
               updateIssue: {
                 issue: { number: number; title: string; url: string };
               };
             }>(
-              `mutation($issueId: ID!, $title: String, $body: String, $labelIds: [ID!], $assigneeIds: [ID!]) {
-                updateIssue(input: {
-                  id: $issueId,
-                  title: $title,
-                  body: $body,
-                  labelIds: $labelIds,
-                  assigneeIds: $assigneeIds
-                }) {
+              `mutation(${varDefs.join(", ")}) {
+                updateIssue(input: { ${inputFields.join(", ")} }) {
                   issue { number title url }
                 }
               }`,
-              {
-                issueId,
-                title: args.title ?? null,
-                body: args.body ?? null,
-                labelIds: labelIds ?? null,
-                assigneeIds: null, // Would need username -> ID resolution
-              },
+              variables,
             );
 
             if (args.title !== undefined) changes.title = args.title;

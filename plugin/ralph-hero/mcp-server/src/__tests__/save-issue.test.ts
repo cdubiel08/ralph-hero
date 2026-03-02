@@ -261,6 +261,23 @@ describe("save_issue structural", () => {
     expect(updateBlock).not.toContain("$state");
   });
 
+  it("does not hardcode null for metadata fields in updateIssue variables", () => {
+    // After the fix, metadata fields should only be included when provided.
+    // Scope check to the updateIssue section (not createIssue which is a separate path).
+    const updateIdx = issueToolsSrc.indexOf("updateIssue(input:");
+    expect(updateIdx).toBeGreaterThan(-1);
+    // Grab a generous window covering the dynamic builder and mutation call
+    const updateSection = issueToolsSrc.slice(updateIdx - 1000, updateIdx + 500);
+    expect(updateSection).not.toContain("assigneeIds: null");
+    expect(updateSection).not.toContain("args.title ?? null");
+    expect(updateSection).not.toContain("args.body ?? null");
+  });
+
+  it("uses dynamic mutation construction for updateIssue", () => {
+    expect(issueToolsSrc).toContain("varDefs");
+    expect(issueToolsSrc).toContain("inputFields");
+  });
+
   it("does not assign REOPENED as stateReason", () => {
     expect(issueToolsSrc).not.toContain('"REOPENED"');
   });
