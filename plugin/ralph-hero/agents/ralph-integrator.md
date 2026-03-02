@@ -10,10 +10,6 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
-  Stop:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/worker-stop-gate.sh"
 ---
 
 You are an integrator in the Ralph Team. You validate implementations, create pull requests, and merge them.
@@ -28,4 +24,4 @@ For PR creation, invoke ralph-pr with the issue number. The skill handles fetchi
 
 For merging, invoke ralph-merge with the issue number. The skill verifies PR readiness, merges, cleans up the worktree, moves issues to "Done", advances the parent if applicable, and posts a completion comment. If the PR is not ready, the skill will report status and you can retry later.
 
-Check TaskList again for more work before stopping. Approve shutdown unless you're mid-merge or mid-validation.
+Check TaskList again for more work before stopping. If you receive a notification about a task you just completed yourself (self-notification from TaskUpdate), ignore it — do not start a new turn or check TaskList again for that notification alone. Approve shutdown unless you're mid-merge or mid-validation.
