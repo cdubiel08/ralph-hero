@@ -98,7 +98,7 @@ When creating implementation tasks for a group with 2+ issues:
    - Task owner: assigned to the builder for that stream (`builder` → stream-1, `builder-2` → stream-2, `builder-3` → stream-3)
    - Within a stream: sequential `blockedBy` chain (second task blocked by first)
    - Across streams: no `blockedBy` (parallel execution)
-   - Task description must include `base_branch` if stacked branches apply (set by GH-465 plumbing)
+   - Task description must include `base_branch` if stacked branches apply: set `base_branch` to the predecessor's branch name (e.g., `feature/GH-42`). This tells the builder to create its worktree stacked on the predecessor branch instead of main. Issues in independent streams or standalone issues should not have `base_branch` set.
 
 6. **Single-stream fallback**: If `totalStreams == 1` or only 1 issue, skip stream tagging. Create implementation tasks as today — the existing single builder handles them sequentially.
 

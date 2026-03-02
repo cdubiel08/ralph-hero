@@ -1,16 +1,18 @@
 #!/bin/bash
 # Create a git worktree for isolated feature development
 #
-# Usage: ./scripts/create-worktree.sh TICKET-ID [branch-name]
+# Usage: ./scripts/create-worktree.sh TICKET-ID [branch-name] [base-branch-override]
 #
 # Examples:
 #   ./scripts/create-worktree.sh GH-42
 #   ./scripts/create-worktree.sh GH-42 my-custom-branch
+#   ./scripts/create-worktree.sh GH-43 "" feature/GH-42  # Stack on GH-42's branch
 
 set -e
 
 TICKET_ID="${1:?Usage: $0 TICKET_ID [BRANCH_NAME]}"
 BRANCH_NAME="${2:-feature/$TICKET_ID}"
+BASE_BRANCH_OVERRIDE="${3:-}"
 
 # Always resolve from git root to handle being called from any directory
 PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -36,6 +38,19 @@ if ! git rev-parse --verify "$BASE_BRANCH" &>/dev/null; then
   if ! git rev-parse --verify "$BASE_BRANCH" &>/dev/null; then
     echo "Error: Could not find origin/main or origin/master"
     exit 1
+  fi
+fi
+
+# Apply base branch override if specified (for stacked branches)
+if [[ -n "$BASE_BRANCH_OVERRIDE" ]]; then
+  echo "Using base branch override: $BASE_BRANCH_OVERRIDE"
+  git fetch origin "$BASE_BRANCH_OVERRIDE" 2>/dev/null || true
+  if git rev-parse --verify "origin/$BASE_BRANCH_OVERRIDE" &>/dev/null; then
+    BASE_BRANCH="origin/$BASE_BRANCH_OVERRIDE"
+  elif git rev-parse --verify "$BASE_BRANCH_OVERRIDE" &>/dev/null; then
+    BASE_BRANCH="$BASE_BRANCH_OVERRIDE"
+  else
+    echo "Warning: Base branch override '$BASE_BRANCH_OVERRIDE' not found, using $BASE_BRANCH"
   fi
 fi
 

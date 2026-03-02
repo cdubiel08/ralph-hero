@@ -169,6 +169,10 @@ Choose the worktree identifier based on context:
 
 Stream detection: if plan frontmatter contains `stream_id`, use the stream worktree naming. This takes precedence over the generic epic member row.
 
+**Base branch detection**: If the task description or plan frontmatter contains a `base_branch` value (set by the team lead via stream detection), store it:
+- `BASE_BRANCH_ARG="$base_branch"` (e.g., `feature/GH-42`)
+- If no `base_branch` found: `BASE_BRANCH_ARG=""` (default to origin/main)
+
 **6.3. Check for Existing Worktree and Sync**
 
 ```bash
@@ -181,10 +185,26 @@ if [ -d "$WORKTREE_PATH" ]; then
     git fetch origin main && git pull origin "$(git branch --show-current)" --no-edit
     # If merge conflict -> escalate (6.4)
 else
-    "$GIT_ROOT/scripts/create-worktree.sh" "$WORKTREE_ID"
+    "$GIT_ROOT/scripts/create-worktree.sh" "$WORKTREE_ID" "" "$BASE_BRANCH_ARG"
     cd "$WORKTREE_PATH"
 fi
 ```
+
+**6.3a. Rebase onto main if predecessor merged**
+
+When `BASE_BRANCH_ARG` is set (stacked branch), check if the predecessor branch has been merged to main:
+```bash
+if [[ -n "$BASE_BRANCH_ARG" ]]; then
+  git fetch origin main
+  # Check if predecessor's commits are already in main
+  if git merge-base --is-ancestor "origin/$BASE_BRANCH_ARG" origin/main 2>/dev/null; then
+    echo "Predecessor branch $BASE_BRANCH_ARG merged to main. Rebasing..."
+    git rebase origin/main
+  fi
+fi
+```
+
+This handles the case where the team lead created a stacked task but the predecessor merged before implementation started. The worktree was created from the predecessor branch, but since that's now in main, rebase to avoid a redundant merge base.
 
 **6.4. Handle Merge Conflict Escalation**
 

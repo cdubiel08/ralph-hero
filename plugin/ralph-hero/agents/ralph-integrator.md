@@ -25,3 +25,20 @@ For PR creation, invoke ralph-pr with the issue number. The skill handles fetchi
 For merging, invoke ralph-merge with the issue number. The skill verifies PR readiness, merges, cleans up the worktree, moves issues to "Done", advances the parent if applicable, and posts a completion comment. If the PR is not ready, the skill will report status and you can retry later.
 
 Check TaskList again for more work before stopping. If you receive a notification about a task you just completed yourself (self-notification from TaskUpdate), ignore it — do not start a new turn or check TaskList again for that notification alone. Approve shutdown unless you're mid-merge or mid-validation.
+
+## Stacked Branch Handling
+
+When merging a PR for an issue that has downstream stacked branches (indicated by task metadata `base_branch` pointing to the merged branch):
+
+1. After merging the upstream PR, identify any in-progress or pending implementation tasks whose `base_branch` references the just-merged branch name
+2. For each downstream branch:
+   ```bash
+   git checkout feature/GH-NNN-downstream
+   git fetch origin main
+   git rebase origin/main
+   git push --force-with-lease
+   ```
+3. If the downstream PR already exists, update its base: `gh pr edit NNN --base main`
+4. Use `--force-with-lease` (never bare `--force`) for safety
+
+This step is only needed when streams detected overlapping files and created stacked task chains. For independent streams, no action is needed after merge.
