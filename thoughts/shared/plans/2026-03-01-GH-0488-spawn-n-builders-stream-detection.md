@@ -27,12 +27,12 @@ After GH-487, `detect_stream_positions` will return a top-level `suggestedRoster
 ## Desired End State
 
 ### Verification
-- [ ] ralph-team spawns N builders where N = `suggestedRoster.builder` from `detect_stream_positions` (1–3)
-- [ ] Each builder's spawn prompt includes its assigned stream issue numbers
-- [ ] Implementation tasks are tagged with `[stream-N]` and pre-assigned to specific builders
-- [ ] Single-stream sessions (N=1) produce identical behavior to current
-- [ ] Roster table in SKILL.md documents naming convention and per-station caps
-- [ ] Post-mortem worker table handles multiple builders dynamically
+- [x] ralph-team spawns N builders where N = `suggestedRoster.builder` from `detect_stream_positions` (1–3)
+- [x] Each builder's spawn prompt includes its assigned stream issue numbers
+- [x] Implementation tasks are tagged with `[stream-N]` and pre-assigned to specific builders
+- [x] Single-stream sessions (N=1) produce identical behavior to current
+- [x] Roster table in SKILL.md documents naming convention and per-station caps
+- [x] Post-mortem worker table handles multiple builders dynamically
 
 ## What We're NOT Doing
 - MCP server TypeScript changes — handled by GH-487
@@ -153,15 +153,15 @@ Give each worker a spawn prompt that includes the issue number, title, current p
 Add a note: *Include one row per spawned worker. Omit workers that were not spawned (e.g., builder-2 when only 1 builder was used).*
 
 ### Success Criteria
-- [ ] Automated: grep `ralph-team/SKILL.md` for "Roster Table" heading → found
-- [ ] Automated: grep `ralph-team/SKILL.md` for "Stream Detection Before Implementation Tasks" heading → found
-- [ ] Automated: grep `ralph-team/SKILL.md` for "`[stream-N]`" pattern → found
-- [ ] Automated: grep `ralph-team/SKILL.md` for "builder-2" and "builder-3" naming → found
-- [ ] Manual: SKILL.md "Create Team and Spawn Workers" section has roster table with 3 station rows (analyst, builder, integrator) with caps
-- [ ] Manual: "Build the Task List" section includes stream detection step with `detect_stream_positions` call pattern, file path extraction, and per-builder task assignment
-- [ ] Manual: spawn prompt guidance includes stream-scoped builder prompt example
-- [ ] Manual: post-mortem template handles multiple builders
-- [ ] Manual: single-stream fallback documented (no stream tags when N=1)
+- [x] Automated: grep `ralph-team/SKILL.md` for "Roster Table" heading → found
+- [x] Automated: grep `ralph-team/SKILL.md` for "Stream Detection Before Implementation Tasks" heading → found
+- [x] Automated: grep `ralph-team/SKILL.md` for "`[stream-N]`" pattern → found
+- [x] Automated: grep `ralph-team/SKILL.md` for "builder-2" and "builder-3" naming → found
+- [x] Manual: SKILL.md "Create Team and Spawn Workers" section has roster table with 3 station rows (analyst, builder, integrator) with caps
+- [x] Manual: "Build the Task List" section includes stream detection step with `detect_stream_positions` call pattern, file path extraction, and per-builder task assignment
+- [x] Manual: spawn prompt guidance includes stream-scoped builder prompt example
+- [x] Manual: post-mortem template handles multiple builders
+- [x] Manual: single-stream fallback documented (no stream tags when N=1)
 
 ---
 

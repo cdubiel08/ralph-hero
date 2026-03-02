@@ -45,13 +45,64 @@ Fetch the issue and detect its pipeline position. If no issue number is given, s
 
 ## Create Team and Spawn Workers
 
-Create a team named after the issue. Spawn one worker per role needed based on the suggested roster from pipeline detection.
+Create a team named after the issue. Spawn workers based on the suggested roster from pipeline detection.
+
+### Roster Table
+
+| Station | Agent Type | Names | Cap | Scaling Rule |
+|---------|-----------|-------|-----|-------------|
+| Analyst | ralph-analyst | `analyst`, `analyst-2`, `analyst-3` | 3 | `suggestedRoster.analyst` (0 after research phase) |
+| Builder | ralph-builder | `builder`, `builder-2`, `builder-3` | 3 | `suggestedRoster.builder` (stream count, see below) |
+| Integrator | ralph-integrator | `integrator`, `integrator-2` | 2 | `suggestedRoster.integrator` (1 default, 2 if 5+ issues) |
+
+**Initial spawn**: At session start, spawn workers using `suggestedRoster` from the initial `pipeline_dashboard` / `detect_pipeline_position` result. Typically 1 builder is appropriate at this stage — stream count is unknown until research completes.
+
+**Builder scaling at implementation phase**: When creating implementation tasks (after research/plan completes), call `detect_stream_positions` to determine independent stream count. If `suggestedRoster.builder` > current builder count, spawn additional builders at that point. See "Stream Detection Before Implementation Tasks" below.
 
 Give each worker a spawn prompt that includes the issue number, title, current pipeline state, and what kinds of tasks they should look for. Analysts handle triage, splitting, research, and planning. Builders handle plan review and implementation. Integrators handle validation, PR creation, and merging. Workers are autonomous — they check TaskList, self-assign unblocked tasks, invoke the appropriate skills, and report results.
+
+**Stream-scoped builder prompts**: When multiple builders are spawned for different streams, each builder's prompt must specify its stream assignment: issue numbers it covers and the `[stream-N]` tag to look for in task subjects. Example: `"You are builder-2. Your stream covers issues #44, #45. Only claim tasks tagged [stream-2]."` This prevents cross-stream task stealing.
 
 ## Build the Task List
 
 Create tasks for the current and upcoming pipeline phases. Enrich each task description with issue context — number, title, estimate, group membership, and any artifact paths from prior phases. Assign an owner to every task. Use task metadata to pass information between phases, such as research document paths, plan document paths, and review verdicts.
+
+### Stream Detection Before Implementation Tasks
+
+When creating implementation tasks for a group with 2+ issues:
+
+1. **Extract "Will Modify" file paths** from each issue's research document:
+   - Glob: `thoughts/shared/research/*GH-NNN*` for each issue
+   - Parse backtick-wrapped paths under `### Will Modify` heading (regex: `` `[^`]+` ``)
+
+2. **Call `detect_stream_positions`** with file paths and blockedBy relationships:
+   ```
+   ralph_hero__detect_stream_positions(
+     issues: [
+       { number: 42, files: ["src/auth.ts"], blockedBy: [] },
+       { number: 43, files: ["src/auth.ts", "src/db.ts"], blockedBy: [42] },
+       { number: 44, files: ["src/config.ts"], blockedBy: [] }
+     ],
+     issueStates: [...]
+   )
+   ```
+
+3. **Read `suggestedRoster.builder`** from the response (1–3, capped at stream count).
+
+4. **Spawn additional builders** if needed:
+   - If `suggestedRoster.builder` > 1 and only 1 builder exists: spawn `builder-2` (and `builder-3` if needed)
+   - Each new builder's spawn prompt: `"You are builder-N on team {team-name}. Your stream covers issues #A, #B. Only claim tasks tagged [stream-N]. Check TaskList for unblocked implementation tasks matching your stream."`
+
+5. **Create implementation tasks with stream tags**:
+   - Task subject: `"Implement GH-NNN: title [stream-N]"`
+   - Task owner: assigned to the builder for that stream (`builder` → stream-1, `builder-2` → stream-2, `builder-3` → stream-3)
+   - Within a stream: sequential `blockedBy` chain (second task blocked by first)
+   - Across streams: no `blockedBy` (parallel execution)
+   - Task description must include `base_branch` if stacked branches apply (set by GH-465 plumbing)
+
+6. **Single-stream fallback**: If `totalStreams == 1` or only 1 issue, skip stream tagging. Create implementation tasks as today — the existing single builder handles them sequentially.
+
+7. **Overflow assignment** (4+ streams with 3 builders): Assign stream-4 tasks to the least-loaded builder (fewest assigned tasks). Document the assignment in the task description.
 
 Add tasks incrementally as phases complete rather than predicting the entire pipeline upfront. When a task completes, check if follow-up tasks for the next phase should be created.
 
@@ -94,7 +145,10 @@ Before shutting down teammates or deleting the team, collect session results and
 |--------|----------------|
 | analyst | [task subjects] |
 | builder | [task subjects] |
+| builder-2 | [task subjects] |
 | integrator | [task subjects] |
+
+*Include one row per spawned worker. Omit workers that were not spawned (e.g., builder-2 when only 1 builder was used).*
 
 ## Notes
 

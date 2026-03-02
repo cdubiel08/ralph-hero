@@ -28,6 +28,8 @@ export type PipelinePhase =
 export interface DetectionOptions {
   /** When true, "In Review" maps to INTEGRATE instead of TERMINAL */
   autoMode?: boolean;
+  /** Total number of independent work streams (drives builder scaling) */
+  streamCount?: number;
 }
 
 export interface IssueState {
@@ -47,7 +49,7 @@ export interface ConvergenceInfo {
 
 export interface SuggestedRoster {
   analyst: number;    // 0-3: 1 for single issue; 2 for 2-5 needing research; 3 for 6+
-  builder: number;    // 1-2: 1 default; 2 if 5+ issues with M/L estimates
+  builder: number;    // 1-3: 1 per independent stream, capped at 3; falls back to 1 when no stream data
   integrator: number; // 1-2: 1 default; 2 if 5+ issues
 }
 
@@ -135,6 +137,7 @@ export function detectPipelinePosition(
         met: true,
         blocking: [],
       },
+      options.streamCount,
     );
   }
 
@@ -150,6 +153,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -165,6 +169,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -214,6 +219,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       convergence,
+      options.streamCount,
     );
   }
 
@@ -226,6 +232,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: isGroup, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -242,6 +249,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -254,6 +262,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -266,6 +275,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -278,6 +288,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -293,6 +304,7 @@ export function detectPipelinePosition(
         isGroup,
         groupPrimary,
         { required: false, met: true, blocking: [] },
+        options.streamCount,
       );
     }
     return buildResult(
@@ -302,6 +314,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -314,6 +327,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -326,6 +340,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: false, met: true, blocking: [] },
+      options.streamCount,
     );
   }
 
@@ -342,6 +357,7 @@ export function detectPipelinePosition(
       isGroup,
       groupPrimary,
       { required: isGroup, met: false, blocking },
+      options.streamCount,
     );
   }
 
@@ -353,6 +369,7 @@ export function detectPipelinePosition(
     isGroup,
     groupPrimary,
     { required: false, met: true, blocking: [] },
+    options.streamCount,
   );
 }
 
@@ -380,7 +397,10 @@ export function detectStreamPipelinePositions(
     return {
       streamId: stream.id,
       issues: filteredIssues,
-      position: detectPipelinePosition(filteredIssues, isGroup, groupPrimary, options),
+      position: detectPipelinePosition(filteredIssues, isGroup, groupPrimary, {
+        ...options,
+        streamCount: streams.length,
+      }),
     };
   });
 }
@@ -392,6 +412,7 @@ export function detectStreamPipelinePositions(
 function computeSuggestedRoster(
   phase: PipelinePhase,
   issues: IssueState[],
+  streamCount?: number,
 ): SuggestedRoster {
   // TERMINAL: no workers needed
   if (phase === 'TERMINAL') {
@@ -413,11 +434,8 @@ function computeSuggestedRoster(
       : 3;
   }
 
-  // Builder scaling: default 1; 2 if 5+ issues with M/L estimates
-  const largeSized = issues.filter(i =>
-    i.estimate != null && ['M', 'L', 'XL'].includes(i.estimate)
-  );
-  const builder = largeSized.length >= 5 ? 2 : 1;
+  // Builder scaling: 1 per independent stream, capped at 3
+  const builder = Math.min(streamCount || 1, 3);
 
   const integrator = issues.length >= 5 ? 2 : 1;
 
@@ -431,6 +449,7 @@ function buildResult(
   isGroup: boolean,
   groupPrimary: number | null,
   convergence: Omit<ConvergenceInfo, "recommendation">,
+  streamCount?: number,
 ): PipelinePosition {
   // Derive recommendation from convergence state
   let recommendation: ConvergenceInfo["recommendation"];
@@ -442,7 +461,7 @@ function buildResult(
     recommendation = "wait";
   }
 
-  const suggestedRoster = computeSuggestedRoster(phase, issues);
+  const suggestedRoster = computeSuggestedRoster(phase, issues, streamCount);
   return {
     phase,
     reason,
