@@ -25,11 +25,11 @@ The builder count should be driven by the number of independent work streams det
 ## Desired End State
 
 ### Verification
-- [ ] `computeSuggestedRoster()` uses stream count (when available) for builder scaling instead of the M/L estimate heuristic
-- [ ] `detect_stream_positions` response includes a top-level `suggestedRoster` field
-- [ ] All existing tests pass unchanged
-- [ ] 4 new tests verify stream-based builder scaling (1, 2, 4 streams, and no-stream fallback)
-- [ ] No breaking changes: callers that omit stream data get `builder = 1` (same as before for typical single-stream cases)
+- [x] `computeSuggestedRoster()` uses stream count (when available) for builder scaling instead of the M/L estimate heuristic
+- [x] `detect_stream_positions` response includes a top-level `suggestedRoster` field
+- [x] All existing tests pass unchanged
+- [x] 4 new tests verify stream-based builder scaling (1, 2, 4 streams, and no-stream fallback)
+- [x] No breaking changes: callers that omit stream data get `builder = 1` (same as before for typical single-stream cases)
 
 ## What We're NOT Doing
 - Changing `work-stream-detection.ts` — no changes needed to stream detection itself
@@ -242,9 +242,9 @@ describe("stream-based builder scaling", () => {
 ```
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` — all existing + 4 new tests pass
-- [ ] Automated: `grep -c 'largeSized' plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns 0 (old heuristic removed)
-- [ ] Automated: `grep -c 'streamCount' plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns 4+ (new param threaded)
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` — all existing + 4 new tests pass
+- [x] Automated: `grep -c 'largeSized' plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns 0 (old heuristic removed)
+- [x] Automated: `grep -c 'streamCount' plugin/ralph-hero/mcp-server/src/lib/pipeline-detection.ts` returns 4+ (new param threaded)
 - [ ] Manual: Verify `detect_stream_positions` response includes top-level `suggestedRoster` with `builder = min(totalStreams, 3)`
 
 ---

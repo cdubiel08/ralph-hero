@@ -536,3 +536,47 @@ describe("detectPipelinePosition - auto mode (RALPH_HERO_AUTO)", () => {
     expect(results[0].position.phase).toBe("INTEGRATE");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stream-based builder scaling
+// ---------------------------------------------------------------------------
+
+describe("stream-based builder scaling", () => {
+  it("1 stream -> builder = 1", () => {
+    const streams: WorkStream[] = [{ id: "s-1", issues: [1], sharedFiles: [], primaryIssue: 1 }];
+    const states = [makeIssue(1, "Research Needed")];
+    const results = detectStreamPipelinePositions(streams, states);
+    expect(results[0].position.suggestedRoster.builder).toBe(1);
+  });
+
+  it("2 streams -> builder = 2", () => {
+    const streams: WorkStream[] = [
+      { id: "s-1", issues: [1], sharedFiles: [], primaryIssue: 1 },
+      { id: "s-2", issues: [2], sharedFiles: [], primaryIssue: 2 },
+    ];
+    const states = [makeIssue(1, "Research Needed"), makeIssue(2, "Research Needed")];
+    const results = detectStreamPipelinePositions(streams, states);
+    expect(results[0].position.suggestedRoster.builder).toBe(2);
+    expect(results[1].position.suggestedRoster.builder).toBe(2);
+  });
+
+  it("4 streams -> builder = 3 (capped)", () => {
+    const streams: WorkStream[] = [
+      { id: "s-1", issues: [1], sharedFiles: [], primaryIssue: 1 },
+      { id: "s-2", issues: [2], sharedFiles: [], primaryIssue: 2 },
+      { id: "s-3", issues: [3], sharedFiles: [], primaryIssue: 3 },
+      { id: "s-4", issues: [4], sharedFiles: [], primaryIssue: 4 },
+    ];
+    const states = [
+      makeIssue(1, "Research Needed"), makeIssue(2, "Research Needed"),
+      makeIssue(3, "Research Needed"), makeIssue(4, "Research Needed"),
+    ];
+    const results = detectStreamPipelinePositions(streams, states);
+    expect(results[0].position.suggestedRoster.builder).toBe(3);
+  });
+
+  it("no stream context (single-issue path) -> builder = 1 (fallback)", () => {
+    const result = detectSingle(makeIssue(1, "Research Needed"));
+    expect(result.suggestedRoster.builder).toBe(1);
+  });
+});

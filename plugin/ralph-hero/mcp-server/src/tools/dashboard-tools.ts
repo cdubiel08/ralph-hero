@@ -532,11 +532,21 @@ export function registerDashboardTools(
           { autoMode: client.config.autoMode },
         );
 
+        // Aggregate roster: max analyst/integrator across streams, stream-count-based builder
+        const suggestedRoster = positions.length > 0
+          ? {
+              analyst: Math.max(...positions.map(p => p.position.suggestedRoster.analyst)),
+              builder: Math.min(streamResult.totalStreams, 3),
+              integrator: Math.max(...positions.map(p => p.position.suggestedRoster.integrator)),
+            }
+          : { analyst: 0, builder: 0, integrator: 0 };
+
         return toolSuccess({
           streams: positions,
           totalStreams: streamResult.totalStreams,
           totalIssues: streamResult.totalIssues,
           rationale: streamResult.rationale,
+          suggestedRoster,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
