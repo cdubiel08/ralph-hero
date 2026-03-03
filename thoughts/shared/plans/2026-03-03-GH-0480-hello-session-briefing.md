@@ -176,12 +176,12 @@ Session briefing complete. [N] insight(s) acted on.
 ```
 
 ### Success Criteria
-- [ ] Automated: `test -f plugin/ralph-hero/skills/ralph-hello/SKILL.md` — file exists
-- [ ] Automated: `grep -q 'RALPH_COMMAND=hello' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — hook configured
-- [ ] Automated: `grep -q 'pipeline_dashboard' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses dashboard tool
-- [ ] Automated: `grep -q 'project_hygiene' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses hygiene tool
-- [ ] Automated: `grep -q 'gh pr list' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses PR CLI
-- [ ] Automated: `grep -q 'AskUserQuestion' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — has routing
+- [x] Automated: `test -f plugin/ralph-hero/skills/ralph-hello/SKILL.md` — file exists
+- [x] Automated: `grep -q 'RALPH_COMMAND=hello' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — hook configured
+- [x] Automated: `grep -q 'pipeline_dashboard' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses dashboard tool
+- [x] Automated: `grep -q 'project_hygiene' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses hygiene tool
+- [x] Automated: `grep -q 'gh pr list' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses PR CLI
+- [x] Automated: `grep -q 'AskUserQuestion' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — has routing
 - [ ] Manual: Invoke `/ralph-hero:ralph-hello` — produces 3 insights and offers routing
 
 ---
