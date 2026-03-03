@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/triage-state-gate.sh
-# PreToolUse (ralph_hero__update_workflow_state): Validate triage state transitions
+# PreToolUse (ralph_hero__save_issue): Validate triage state transitions
 #
 # Environment:
 #   RALPH_VALID_OUTPUT_STATES - Valid target states
@@ -14,7 +14,7 @@ source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-new_state=$(get_field '.tool_input.state')
+new_state=$(get_field '.tool_input.workflowState')
 if [[ -z "$new_state" ]]; then
   allow  # Not a state update
 fi

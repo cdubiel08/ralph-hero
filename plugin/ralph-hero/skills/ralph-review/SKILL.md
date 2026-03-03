@@ -30,6 +30,8 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-postcondition.sh"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
 allowed-tools:
   - Read
   - Write

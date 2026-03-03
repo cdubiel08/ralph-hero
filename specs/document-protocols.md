@@ -35,7 +35,7 @@ Defines content structure, quality criteria, and enforcement status for document
 | Research documents MUST be committed and pushed before linking | `[x]` `research-postcondition.sh` |
 | Research documents MUST NOT duplicate an existing research artifact for the same issue | `[x]` `pre-artifact-validator.sh` |
 | Research documents MUST contain frontmatter with `github_issue` and `status` fields | `[ ]` not enforced (declared in `artifact_types.research.validates` but no hook validates schema) |
-| Research documents MUST contain all required sections (problem statement, analysis, discoveries, approaches, risks, next steps) | `[ ]` not enforced |
+| Research documents MUST contain all required sections (problem statement, analysis, discoveries, approaches, risks, next steps) | `[x]` `doc-structure-validator.sh` |
 | An Artifact Comment with `## Research Document` header MUST be posted after creation | `[ ]` not enforced (`artifact-discovery.sh` warns only, does not block) |
 
 **Quality criteria** (from quality-standards.md):
@@ -70,8 +70,8 @@ Defines content structure, quality criteria, and enforcement status for document
 | Plan documents MUST be committed before the skill completes | `[x]` `plan-postcondition.sh` |
 | A research document MUST exist before plan creation | `[x]` `plan-research-required.sh` |
 | Plan documents MUST NOT duplicate an existing plan artifact for the same issue | `[x]` `pre-artifact-validator.sh` |
-| Plan documents MUST use `## Phase N:` header pattern for each phase | `[ ]` not enforced (`plan-verify-doc.sh` is ORPHANED — not registered in any hooks.json or SKILL.md) |
-| Each phase MUST have success criteria in `- [ ] Automated:` / `- [ ] Manual:` format | `[ ]` not enforced |
+| Plan documents MUST use `## Phase N:` header pattern for each phase | `[x]` `doc-structure-validator.sh` |
+| Each phase MUST have success criteria in `- [ ] Automated:` / `- [ ] Manual:` format | `[x]` `doc-structure-validator.sh` |
 | Plan documents MUST contain frontmatter with required fields | `[ ]` not enforced |
 | An Artifact Comment with `## Implementation Plan` header MUST be posted after creation | `[ ]` not enforced (`artifact-discovery.sh` warns only) |
 
@@ -104,8 +104,8 @@ Defines content structure, quality criteria, and enforcement status for document
 |-------------|------------|
 | In AUTO mode, a critique document MUST be created and committed | `[x]` `review-postcondition.sh` |
 | Critique documents MUST NOT duplicate an existing critique for the same issue | `[x]` `review-no-dup.sh` |
-| Critique frontmatter SHOULD include `status`, `github_issue`, and `type` fields | `[x]` `review-verify-doc.sh` (warns on missing fields, does not block — partial enforcement) |
-| Critique documents MUST contain a verdict section (APPROVED or NEEDS_ITERATION) | `[ ]` not enforced |
+| Critique frontmatter MUST include `status`, `github_issue`, and `type: critique` fields | `[x]` `review-verify-doc.sh` (blocks on missing fields) |
+| Critique documents MUST contain a verdict section (APPROVED or NEEDS_ITERATION) | `[x]` `doc-structure-validator.sh` |
 | An Artifact Comment with `## Plan Critique` header MUST be posted after creation | `[ ]` not enforced |
 
 ### 4. Convergence Verification (Group Plans)

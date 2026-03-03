@@ -157,9 +157,9 @@ The `worker-stop-gate.sh` matches the `$TEAMMATE` environment variable prefix ag
 
 | Requirement | Enablement |
 |-------------|------------|
-| Workers MUST check TaskList for remaining work matching their keywords before stopping | [x] `worker-stop-gate.sh` |
-| `worker-stop-gate.sh` MUST match `$TEAMMATE` prefix to determine role keywords | [x] `worker-stop-gate.sh` |
-| Workers MUST be allowed one TaskList check before the stop gate enforces keyword matching | [x] `worker-stop-gate.sh` |
+| Workers MUST check TaskList for remaining work matching their keywords before stopping | `[ ]` `worker-stop-gate.sh` (script not yet on main branch) |
+| `worker-stop-gate.sh` MUST match `$TEAMMATE` prefix to determine role keywords | `[ ]` `worker-stop-gate.sh` (script not yet on main branch) |
+| Workers MUST be allowed one TaskList check before the stop gate enforces keyword matching | `[ ]` `worker-stop-gate.sh` (script not yet on main branch) |
 
 ## Cross-References
 

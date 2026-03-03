@@ -12,7 +12,7 @@ if [[ "$tool_name" == *"advance_parent"* ]]; then
   allow
 fi
 
-new_state=$(get_field ".tool_input.state" 2>/dev/null || get_field ".tool_input.targetState" 2>/dev/null || echo "")
+new_state=$(get_field ".tool_input.workflowState" 2>/dev/null || get_field ".tool_input.targetState" 2>/dev/null || echo "")
 if [[ -z "$new_state" ]]; then
   allow
 fi

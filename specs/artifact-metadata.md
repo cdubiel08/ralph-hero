@@ -79,9 +79,9 @@ Skills link artifacts to issues by posting a GitHub comment with a standardized 
 
 | Requirement | Enablement |
 |-------------|------------|
-| Research artifacts MUST be linked with a `## Research Document` comment header | [ ] `artifact-discovery.sh` warns but does not block |
-| Plan artifacts MUST be linked with a `## Implementation Plan` comment header | [ ] `artifact-discovery.sh` warns but does not block |
-| The artifact URL MUST appear on the line immediately after the header | [ ] not enforced |
+| Research artifacts MUST be linked with a `## Research Document` comment header | [x] `artifact-discovery.sh` blocks if research doc missing on disk |
+| Plan artifacts MUST be linked with a `## Implementation Plan` comment header | [x] `artifact-discovery.sh` blocks if plan doc missing on disk |
+| The artifact URL MUST appear on the line immediately after the header | [x] `artifact-comment-validator.sh` |
 | Artifact discovery MUST search issue comments for the header, then extract the URL | [ ] not enforced (implemented in skill prompts, not hooks) |
 | When multiple comments match a header, the MOST RECENT (last) match MUST be used | [ ] not enforced |
 
@@ -104,8 +104,7 @@ When a skill needs to locate a linked artifact:
 
 | Requirement | Enablement |
 |-------------|------------|
-| `RALPH_ARTIFACT_CACHE` env var MUST cache validation results between hook calls | [x] `artifact-discovery.sh` |
-| Hooks MUST check `RALPH_ARTIFACT_CACHE` before making redundant API calls | [x] `artifact-discovery.sh` |
+| `artifact-discovery.sh` MUST validate required artifacts exist on disk before state transitions | [x] `artifact-discovery.sh` (filesystem check, no API call needed) |
 
 ### Research Document Content Requirements
 

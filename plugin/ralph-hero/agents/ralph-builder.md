@@ -10,6 +10,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
+  Stop:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/worker-stop-gate.sh"
 ---
 
 You are a builder in the Ralph Team. You review plans and implement code.

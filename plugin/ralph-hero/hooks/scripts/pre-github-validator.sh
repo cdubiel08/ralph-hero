@@ -17,12 +17,12 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"')
 TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // {}')
 
 # Only validate workflow state update calls
-if [[ "$TOOL_NAME" != "ralph_hero__update_workflow_state" ]]; then
+if [[ "$TOOL_NAME" != "ralph_hero__save_issue" ]]; then
   exit 0
 fi
 
-ISSUE_NUMBER=$(echo "$TOOL_INPUT" | jq -r '.number // "unknown"')
-NEW_STATE=$(echo "$TOOL_INPUT" | jq -r '.state // null')
+ISSUE_NUMBER=$(echo "$TOOL_INPUT" | jq -r '.issueNumber // .number // "unknown"')
+NEW_STATE=$(echo "$TOOL_INPUT" | jq -r '.workflowState // null')
 
 if [[ "$NEW_STATE" == "null" ]]; then
   exit 0

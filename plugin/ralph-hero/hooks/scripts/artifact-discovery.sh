@@ -1,15 +1,14 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/artifact-discovery.sh
-# PreToolUse (ralph_hero__update_workflow_state): Verify required artifacts exist
+# PreToolUse (ralph_hero__save_issue): Verify required artifacts exist on disk
 #
-# Checks that prior-phase artifacts are linked to the issue via comments
-# before allowing state transitions that depend on them.
+# Checks that prior-phase artifacts are present before allowing state
+# transitions that depend on them.
 #
 # Environment:
 #   RALPH_COMMAND - Current command
-#   RALPH_REQUIRES_RESEARCH - If "true", research doc comment required
-#   RALPH_REQUIRES_PLAN - If "true", plan doc comment required
-#   RALPH_ARTIFACT_CACHE - File path for cached artifact check (optional)
+#   RALPH_REQUIRES_RESEARCH - If "true", research doc required
+#   RALPH_REQUIRES_PLAN - If "true", plan doc required
 #
 # Exit codes:
 #   0 - Required artifacts found (or no requirements for this command)
@@ -22,7 +21,7 @@ read_input > /dev/null
 
 # Only check state transition calls
 tool_name=$(get_tool_name)
-if [[ "$tool_name" != "ralph_hero__update_workflow_state" ]]; then
+if [[ "$tool_name" != "ralph_hero__save_issue" ]]; then
   allow
 fi
 
@@ -35,33 +34,48 @@ if [[ "$requires_research" != "true" ]] && [[ "$requires_plan" != "true" ]]; the
 fi
 
 # Extract issue number from tool input
-number=$(get_field '.tool_input.number')
+number=$(get_field '.tool_input.issueNumber')
 if [[ -z "$number" ]]; then
   allow  # Can't validate without issue number
 fi
 
-# Check for cached artifact validation (set by the skill after reading comments)
-cache_file="${RALPH_ARTIFACT_CACHE:-/tmp/ralph-artifact-cache-$$}"
-if [[ -f "$cache_file" ]]; then
-  # Cache exists - prior skill step already validated artifacts
-  allow
-fi
+project_root="$(get_project_root)"
+padded=$(printf '%04d' "$number")
 
-# If no cache, warn (don't block - the skill should validate via comments)
-# The skill itself is responsible for checking comments per the Artifact Comment Protocol
-# This hook serves as a reminder, not the primary enforcement
 if [[ "$requires_research" == "true" ]]; then
-  padded=$(printf '%04d' "$number")
-  warn "Reminder: Verify research document is linked to issue #$number before proceeding.
-Check issue comments for '## Research Document' header.
-If missing, search: thoughts/shared/research/*GH-${number}* or *GH-${padded}*"
+  research_dir="$project_root/thoughts/shared/research"
+  research_doc=$(find_existing_artifact "$research_dir" "GH-${padded}")
+  if [[ -z "$research_doc" ]]; then
+    research_doc=$(find_existing_artifact "$research_dir" "GH-${number}")
+  fi
+  if [[ -z "$research_doc" ]]; then
+    block "Missing research document for issue #$number
+
+Expected: Research document in $research_dir
+Search patterns: *GH-${padded}* or *GH-${number}*
+Found: None
+
+The planning command requires a research document before transitioning state.
+Run /ralph-research $number first."
+  fi
 fi
 
 if [[ "$requires_plan" == "true" ]]; then
-  padded=$(printf '%04d' "$number")
-  warn "Reminder: Verify plan document is linked to issue #$number before proceeding.
-Check issue comments for '## Implementation Plan' header.
-If missing, search: thoughts/shared/plans/*GH-${number}* or *GH-${padded}*"
+  plans_dir="$project_root/thoughts/shared/plans"
+  plan_doc=$(find_existing_artifact "$plans_dir" "GH-${padded}")
+  if [[ -z "$plan_doc" ]]; then
+    plan_doc=$(find_existing_artifact "$plans_dir" "GH-${number}")
+  fi
+  if [[ -z "$plan_doc" ]]; then
+    block "Missing plan document for issue #$number
+
+Expected: Plan document in $plans_dir
+Search patterns: *GH-${padded}* or *GH-${number}*
+Found: None
+
+The review command requires a plan document before transitioning state.
+Run /ralph-plan $number first."
+  fi
 fi
 
 allow

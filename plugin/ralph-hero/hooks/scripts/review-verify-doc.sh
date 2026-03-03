@@ -3,7 +3,8 @@
 # PostToolUse (Write): Verify critique document was created correctly
 #
 # Exit codes:
-#   0 - Always (warnings only, never blocks)
+#   0 - Verified OK
+#   2 - Missing frontmatter fields, block
 
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
@@ -22,15 +23,15 @@ if [[ ! -f "$file_path" ]]; then
 fi
 
 if ! head -20 "$file_path" | grep -q "^status:"; then
-  echo "WARNING: Critique missing 'status' in frontmatter" >&2
+  block "Critique missing 'status' in frontmatter: $file_path"
 fi
 
 if ! head -20 "$file_path" | grep -q "^github_issue:"; then
-  echo "WARNING: Critique missing 'github_issue' in frontmatter" >&2
+  block "Critique missing 'github_issue' in frontmatter: $file_path"
 fi
 
 if ! head -20 "$file_path" | grep -q "^type: critique"; then
-  echo "WARNING: Critique missing 'type: critique' in frontmatter" >&2
+  block "Critique missing 'type: critique' in frontmatter: $file_path"
 fi
 
 echo "Critique document verified: $file_path"

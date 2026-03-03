@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/hook-utils.sh"
 read_input
 
-new_state=$(get_field ".tool_input.state" 2>/dev/null || get_field ".tool_input.targetState" 2>/dev/null || echo "")
+new_state=$(get_field ".tool_input.workflowState" 2>/dev/null || get_field ".tool_input.targetState" 2>/dev/null || echo "")
 if [[ -z "$new_state" ]]; then
   allow
 fi

@@ -21,8 +21,8 @@ Defines the schema for team creation, worker spawning, role contracts, and shutd
 
 | Requirement | Enablement |
 |-------------|------------|
-| TeamCreate MUST be called before any TaskCreate | `[ ]` not enforced (convention enforced by ralph-team skill prompt only) |
-| Workers are spawned as part of team creation; tasks are assigned after the team exists | `[ ]` not enforced |
+| TeamCreate MUST be called before any TaskCreate | `[x]` `team-protocol-validator.sh` (blocks TaskCreate if no TeamCreate marker exists) |
+| Workers are spawned as part of team creation; tasks are assigned after the team exists | `[x]` `team-protocol-validator.sh` |
 
 ### 2. Roster Sizing
 
@@ -80,9 +80,9 @@ The `name` field MUST use a role prefix (`analyst*`, `builder*`, `integrator*`) 
 
 | Requirement | Enablement |
 |-------------|------------|
-| Worker `name` MUST use a role prefix (analyst*, builder*, integrator*) | `[ ]` not enforced (convention only) |
+| Worker `name` MUST use a role prefix (analyst*, builder*, integrator*) | `[x]` `team-protocol-validator.sh` (blocks Agent spawn if name lacks role prefix) |
 | Spawn prompts MUST include all 6 required fields | `[ ]` not enforced |
-| `team_name` MUST be set to bind the worker to the team's TaskList scope | `[ ]` not enforced |
+| `team_name` MUST be set to bind the worker to the team's TaskList scope | `[x]` `team-protocol-validator.sh` (blocks Agent spawn if team_name is missing) |
 
 ### 4. Worker Role Contracts
 
@@ -140,7 +140,7 @@ Step-by-step shutdown sequence for the team lead:
 | Requirement | Enablement |
 |-------------|------------|
 | The team lead MUST NOT stop while processable issues remain on the board | `[x]` `team-stop-gate.sh` (blocks lead stop if processable issues remain) |
-| Post-mortem MUST be written and committed BEFORE TeamDelete is called | `[ ]` not enforced (convention only — task data is ephemeral, destroyed by TeamDelete) |
+| Post-mortem MUST be written and committed BEFORE TeamDelete is called | `[x]` `team-shutdown-validator.sh` (blocks TeamDelete if no post-mortem found in thoughts/shared/reports/) |
 | Shutdown requests MUST be sent to all teammates before TeamDelete | `[ ]` not enforced |
 
 ### 7. Post-Mortem Requirements

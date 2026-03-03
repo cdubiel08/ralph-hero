@@ -8,6 +8,9 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=report"
+allowed-tools:
+  - Read
+  - Bash
 ---
 
 # Ralph Project Report

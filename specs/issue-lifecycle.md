@@ -58,7 +58,7 @@ Every non-terminal state has a defined set of allowed outbound transitions. No t
 
 | Requirement | Enablement |
 |-------------|------------|
-| State transitions MUST follow the allowed transition table | `[x]` `auto-state.sh` via `ralph-state-machine.json` lookup |
+| State transitions MUST follow the allowed transition table | `[ ]` `auto-state.sh` (script not yet on main branch) via `ralph-state-machine.json` lookup |
 | Transitions not listed in the table MUST be rejected | `[x]` per-command state gate hooks |
 
 ### 3. State Ownership by Skill
@@ -110,10 +110,10 @@ Lock states prevent concurrent claim by multiple agents. Three lock states exist
 
 | Requirement | Enablement |
 |-------------|------------|
-| Agents MUST NOT claim an issue that is in a lock state | `[ ]` not enforced (convention: agents check lock states before claiming) |
-| Lock acquisition MUST transition from the correct source state | `[x]` `auto-state.sh` |
+| Agents MUST NOT claim an issue that is in a lock state | `[x]` `lock-claim-validator.sh` (blocks save_issue when RALPH_CURRENT_STATE is a lock state) |
+| Lock acquisition MUST transition from the correct source state | `[ ]` `auto-state.sh` (script not yet on main branch) |
 | Lock release on success MUST transition to the correct target state | `[x]` per-command state gate hooks |
-| Lock release on failure MUST return to the pre-lock state (except In Progress) | `[ ]` not enforced (skill-level convention) |
+| Lock release on failure MUST return to the pre-lock state (except In Progress) | `[x]` `lock-release-on-failure.sh` Stop hook on ralph-research, ralph-plan, ralph-impl |
 
 ### 5. Semantic Intents
 
@@ -182,7 +182,7 @@ One-way, best-effort mapping from workflow states to the GitHub Projects default
 |-------------|------------|
 | Done and Canceled are terminal states — no outbound transitions are valid | `[x]` `ralph-state-machine.json` (empty `allowed_transitions`) |
 | Human Needed is NOT terminal — it can return to Backlog, Research Needed, Ready for Plan, or In Progress | `[x]` `ralph-state-machine.json` |
-| Only a human MAY transition issues out of Human Needed | `[ ]` not enforced (convention only) |
+| Only a human MAY transition issues out of Human Needed | `[x]` `human-needed-outbound-block.sh` (blocks save_issue when RALPH_CURRENT_STATE is Human Needed and RALPH_COMMAND is set) |
 
 ### 9. Parent Gate States
 

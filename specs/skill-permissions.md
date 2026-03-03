@@ -37,7 +37,7 @@ Each cell: **allow** = tool is in `allowed-tools`, **—** = tool is not listed 
 
 | Requirement | Enablement |
 |-------------|------------|
-| Every `ralph-*` skill MUST declare `allowed-tools` in its SKILL.md frontmatter | [ ] not enforced (4 skills missing: status, report, hygiene, setup) |
+| Every `ralph-*` skill MUST declare `allowed-tools` in its SKILL.md frontmatter | [x] all skills declare allowed-tools |
 | `allowed-tools` MUST be enforced by Claude Code's skill runtime | [x] Claude Code runtime (built-in) |
 | Skills MUST NOT access tools outside their `allowed-tools` whitelist | [x] Claude Code runtime (built-in) |
 
@@ -54,10 +54,10 @@ The following skills currently have no `allowed-tools` declaration. These permis
 
 | Requirement | Enablement |
 |-------------|------------|
-| `ralph-status` MUST have `allowed-tools: [Read, Bash]` | [ ] not enforced |
-| `ralph-report` MUST have `allowed-tools: [Read, Bash]` | [ ] not enforced |
-| `ralph-hygiene` MUST have `allowed-tools: [Read, Glob, Bash]` | [ ] not enforced |
-| `ralph-setup` MUST have `allowed-tools: [Bash]` | [ ] not enforced |
+| `ralph-status` MUST have `allowed-tools: [Read, Bash]` | [x] SKILL.md frontmatter |
+| `ralph-report` MUST have `allowed-tools: [Read, Bash]` | [x] SKILL.md frontmatter |
+| `ralph-hygiene` MUST have `allowed-tools: [Read, Glob, Bash]` | [x] SKILL.md frontmatter |
+| `ralph-setup` MUST have `allowed-tools: [Bash]` | [x] SKILL.md frontmatter |
 
 ### Plugin-Level Hook Overlay
 
@@ -67,8 +67,8 @@ These hooks are registered in `hooks.json` and apply across ALL skills, regardle
 
 | Tool Matcher | Hook Script | Purpose |
 |-------------|-------------|---------|
-| `ralph_hero__update_workflow_state` | `pre-github-validator.sh` | Validates state transition is valid for current command |
-| `ralph_hero__update_workflow_state` | `artifact-discovery.sh` | Warns if expected artifact comment is missing |
+| `ralph_hero__save_issue` | `pre-github-validator.sh` | Validates state transition is valid for current command |
+| `ralph_hero__save_issue` | `artifact-discovery.sh` | Warns if expected artifact comment is missing |
 | `ralph_hero__get_issue` | `pre-ticket-lock-validator.sh` | Validates ticket is not locked by another command |
 | `ralph_hero__get_issue` | `skill-precondition.sh` | Validates skill preconditions (state, estimate, branch) |
 | `ralph_hero__list_issues` | `skill-precondition.sh` | Validates skill preconditions |
@@ -79,7 +79,7 @@ These hooks are registered in `hooks.json` and apply across ALL skills, regardle
 
 | Tool Matcher | Hook Script | Purpose |
 |-------------|-------------|---------|
-| `ralph_hero__update_workflow_state` | `post-github-validator.sh` | Validates state transition completed correctly |
+| `ralph_hero__save_issue` | `post-github-validator.sh` | Validates state transition completed correctly |
 | `ralph_hero__get_issue` | `post-blocker-reminder.sh` | Reminds about blocked issues |
 | `Bash` | `post-git-validator.sh` | Validates git operations (staging, commit messages) |
 

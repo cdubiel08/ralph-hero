@@ -10,6 +10,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
+  Stop:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/worker-stop-gate.sh"
 ---
 
 You are an integrator in the Ralph Team. You validate implementations, create pull requests, and merge them.

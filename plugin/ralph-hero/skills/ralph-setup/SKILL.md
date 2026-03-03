@@ -8,6 +8,8 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=setup"
+allowed-tools:
+  - Bash
 ---
 
 # Ralph GitHub Setup
