@@ -115,7 +115,7 @@ Invoke the corresponding skill based on the insight type:
 | Issue ready for research | `/ralph-hero:ralph-research` with issue number |
 | Issue ready for planning | `/ralph-hero:ralph-plan` with issue number |
 | Hygiene or cleanup needed | `/ralph-hero:ralph-hygiene` |
-| Board healthy, pick next work | `/ralph-hero:ralph-hero` for autonomous processing |
+| Board healthy, pick next work | `/ralph-hero:ralph-triage` to pick from backlog |
 
 Invoke the skill using the Skill tool with the appropriate arguments.
 

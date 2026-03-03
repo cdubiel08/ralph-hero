@@ -164,7 +164,7 @@ Routing map (instruct model to invoke the corresponding skill):
 | Issue ready for research | `/ralph-hero:ralph-research` with issue number |
 | Issue ready for planning | `/ralph-hero:ralph-plan` with issue number |
 | Hygiene/cleanup needed | `/ralph-hero:ralph-hygiene` |
-| Board healthy, pick next work | `/ralph-hero:ralph-hero` for autonomous processing |
+| Board healthy, pick next work | `/ralph-hero:ralph-triage` to pick from backlog |
 
 For "All" selection: invoke skills sequentially in numbered order (1 → 2 → 3). Warn that earlier actions may change state affecting later insights.
 
@@ -192,6 +192,18 @@ Session briefing complete. [N] insight(s) acted on.
 - [ ] Test with empty board (no issues) — graceful "nothing urgent" message
 - [ ] Test insight selection routing — each option invokes correct skill
 - [ ] Test "Other"/skip path — displays briefing and stops cleanly
+
+## Code Review Findings (v1 follow-ups)
+
+Issues identified during code review that scored 75/100 confidence. Not blocking for v1 but should be addressed:
+
+1. **`Skill` tool missing from `allowed-tools`** — Step 4 routes to sub-skills via the `Skill` tool, but `allowed-tools` only lists `Read` and `Bash`. Other orchestrating skills (`ralph-hero`, `ralph-team`) explicitly list `Skill`. If Claude Code enforces `allowed-tools` as a strict allowlist, routing will be blocked at runtime. **Fix**: add `- Skill` to `allowed-tools`.
+
+2. **MCP tools missing from `allowed-tools`** — Step 1 calls `ralph_hero__pipeline_dashboard` and `ralph_hero__project_hygiene` directly, but neither is listed in `allowed-tools`. Skills that call MCP tools directly (`ralph-merge`, `ralph-pr`) enumerate them explicitly. **Fix**: add both MCP tool names to `allowed-tools`.
+
+3. **`AskUserQuestion` missing from `allowed-tools`** — Step 3 uses `AskUserQuestion` for routing, but it's not listed. No existing skill lists it either (may be exempt as a built-in), but if enforcement applies, the routing prompt will be blocked. **Fix**: add `- AskUserQuestion` to `allowed-tools`, or verify it is exempt from enforcement.
+
+4. **`specs/skill-permissions.md` not updated** — The permission matrix and `specs/skill-io-contracts.md` I/O contract table do not include a `ralph-hello` column/row. Previous PRs that added skills (PR #462, #504) updated these spec files. **Fix**: add `ralph-hello` to both spec tables.
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-03-GH-0480-hello-session-briefing.md
