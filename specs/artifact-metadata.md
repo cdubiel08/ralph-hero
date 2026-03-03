@@ -18,17 +18,17 @@ Defines file naming patterns, frontmatter schemas, and the Artifact Comment Prot
 
 | Requirement | Enablement |
 |-------------|------------|
-| Research artifacts MUST be named `YYYY-MM-DD-GH-{NNNN}-{slug}.md` | [ ] not enforced |
+| Research artifacts MUST be named `YYYY-MM-DD-GH-{NNNN}-{slug}.md` | [x] `artifact-metadata-validator.sh` |
 | Research artifacts MUST be placed in `thoughts/shared/research/` | [x] `research-postcondition.sh` |
-| Plan (single) artifacts MUST be named `YYYY-MM-DD-GH-{NNNN}-{slug}.md` | [ ] not enforced |
-| Plan (group) artifacts MUST be named `YYYY-MM-DD-group-GH-{NNNN}-{slug}.md` | [ ] not enforced |
-| Plan (stream) artifacts MUST be named `YYYY-MM-DD-stream-GH-{NNN}-{NNN}-{slug}.md` | [ ] not enforced |
+| Plan (single) artifacts MUST be named `YYYY-MM-DD-GH-{NNNN}-{slug}.md` | [x] `artifact-metadata-validator.sh` |
+| Plan (group) artifacts MUST be named `YYYY-MM-DD-group-GH-{NNNN}-{slug}.md` | [x] `artifact-metadata-validator.sh` |
+| Plan (stream) artifacts MUST be named `YYYY-MM-DD-stream-GH-{NNN}-{NNN}-{slug}.md` | [x] `artifact-metadata-validator.sh` |
 | Plan artifacts MUST be placed in `thoughts/shared/plans/` | [x] `plan-postcondition.sh` |
-| Critique artifacts MUST be named `YYYY-MM-DD-GH-{NNNN}-critique.md` | [ ] not enforced |
+| Critique artifacts MUST be named `YYYY-MM-DD-GH-{NNNN}-critique.md` | [x] `artifact-metadata-validator.sh` |
 | Critique artifacts MUST be placed in `thoughts/shared/reviews/` | [x] `review-postcondition.sh` |
-| Report artifacts MUST be named `YYYY-MM-DD-{slug}.md` | [ ] not enforced |
+| Report artifacts MUST be named `YYYY-MM-DD-{slug}.md` | [x] `artifact-metadata-validator.sh` |
 | Report artifacts MUST be placed in `thoughts/shared/reports/` | [x] `report-postcondition.sh` |
-| Issue numbers in filenames MUST use 4-digit zero-padding (`GH-0019`) | [ ] not enforced (convention only) |
+| Issue numbers in filenames MUST use 4-digit zero-padding (`GH-0019`) | [x] `artifact-metadata-validator.sh` |
 | There MUST NOT be duplicate research artifacts for the same issue | [x] `pre-artifact-validator.sh` |
 | There MUST NOT be duplicate plan artifacts for the same issue | [x] `pre-artifact-validator.sh` |
 | There MUST NOT be duplicate review artifacts for the same issue | [x] `pre-artifact-validator.sh` |
@@ -39,27 +39,27 @@ Defines file naming patterns, frontmatter schemas, and the Artifact Comment Prot
 
 | Requirement | Enablement |
 |-------------|------------|
-| Research docs MUST include `date` field (YYYY-MM-DD) | [ ] not enforced |
-| Research docs MUST include `github_issue` field (integer) | [ ] not enforced (declared in `ralph-command-contracts.json` but no hook validates) |
-| Research docs MUST include `github_url` field (full issue URL) | [ ] not enforced |
-| Research docs MUST include `status` field (`draft` or `complete`) | [ ] not enforced |
-| Research docs MUST include `type: research` field | [ ] not enforced |
+| Research docs MUST include `date` field (YYYY-MM-DD) | [x] `artifact-metadata-validator.sh` |
+| Research docs MUST include `github_issue` field (integer) | [x] `artifact-metadata-validator.sh` |
+| Research docs MUST include `github_url` field (full issue URL) | [x] `artifact-metadata-validator.sh` |
+| Research docs MUST include `status` field (`draft` or `complete`) | [x] `artifact-metadata-validator.sh` |
+| Research docs MUST include `type: research` field | [x] `artifact-metadata-validator.sh` |
 
 #### Plan Documents (Single Issue)
 
 | Requirement | Enablement |
 |-------------|------------|
-| Plan docs MUST include `date` field (YYYY-MM-DD) | [ ] not enforced |
-| Plan docs MUST include `status` field (`draft` or `complete`) | [ ] not enforced |
-| Plan docs MUST include `github_issues` field (array of integers) | [ ] not enforced |
-| Plan docs MUST include `github_urls` field (array of full issue URLs) | [ ] not enforced |
-| Plan docs MUST include `primary_issue` field (integer) | [ ] not enforced |
+| Plan docs MUST include `date` field (YYYY-MM-DD) | [x] `artifact-metadata-validator.sh` |
+| Plan docs MUST include `status` field (`draft` or `complete`) | [x] `artifact-metadata-validator.sh` |
+| Plan docs MUST include `github_issues` field (array of integers) | [x] `artifact-metadata-validator.sh` |
+| Plan docs MUST include `github_urls` field (array of full issue URLs) | [x] `artifact-metadata-validator.sh` |
+| Plan docs MUST include `primary_issue` field (integer) | [x] `artifact-metadata-validator.sh` |
 
 #### Plan Documents (Group)
 
 | Requirement | Enablement |
 |-------------|------------|
-| Group plan docs MUST include all single-plan fields | [ ] not enforced |
+| Group plan docs MUST include all single-plan fields | [x] `artifact-metadata-validator.sh` |
 | Group plan docs MAY include `stream_id` field (when part of a stream) | [ ] not enforced |
 | Group plan docs MAY include `stream_issues` field (array, when part of a stream) | [ ] not enforced |
 | Group plan docs MAY include `epic_issue` field (integer, when under an epic) | [ ] not enforced |
@@ -68,10 +68,10 @@ Defines file naming patterns, frontmatter schemas, and the Artifact Comment Prot
 
 | Requirement | Enablement |
 |-------------|------------|
-| Critique docs MUST include `date` field (YYYY-MM-DD) | [ ] not enforced |
-| Critique docs MUST include `github_issue` field (integer) | [ ] not enforced |
-| Critique docs MUST include `status` field (`approved` or `needs-iteration`) | [ ] not enforced |
-| Critique docs MUST include `type: critique` field | [ ] not enforced |
+| Critique docs MUST include `date` field (YYYY-MM-DD) | [x] `artifact-metadata-validator.sh` |
+| Critique docs MUST include `github_issue` field (integer) | [x] `artifact-metadata-validator.sh` |
+| Critique docs MUST include `status` field (`approved` or `needs-iteration`) | [x] `artifact-metadata-validator.sh` |
+| Critique docs MUST include `type: critique` field | [x] `artifact-metadata-validator.sh` |
 
 ### Artifact Comment Protocol
 
