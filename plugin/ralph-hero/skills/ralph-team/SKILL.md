@@ -21,6 +21,19 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=team RALPH_AUTO_APPROVE=true"
+  PreToolUse:
+    - matcher: "TeamCreate|Agent|TaskCreate"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-protocol-validator.sh"
+    - matcher: "TeamDelete"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-shutdown-validator.sh"
+    - matcher: "TaskCreate|TaskUpdate"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/task-schema-validator.sh"
   TaskCompleted:
     - hooks:
         - type: command

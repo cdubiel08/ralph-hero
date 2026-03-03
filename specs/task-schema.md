@@ -27,8 +27,8 @@ Defines the schema for TaskCreate/TaskUpdate operations in the Ralph multi-agent
 
 | Requirement | Enablement |
 |-------------|------------|
-| TaskCreate MUST include all four required fields (subject, description, activeForm, metadata) | `[ ]` not enforced (convention only) |
-| Subject MUST be in imperative form | `[ ]` not enforced |
+| TaskCreate MUST include all four required fields (subject, description, activeForm, metadata) | `[x]` `task-schema-validator.sh` (registered in ralph-team and ralph-hero PreToolUse hooks) |
+| Subject MUST be in imperative form | `[x]` `task-schema-validator.sh` (proxy: role keyword check enforces imperative phrasing) |
 
 ### 2. Standard Input Metadata
 
@@ -52,7 +52,7 @@ Keys set by the team lead at TaskCreate time. Provides context workers need for 
 
 | Requirement | Enablement |
 |-------------|------------|
-| Input metadata MUST include `issue_number`, `issue_url`, `command`, `phase`, and `estimate` for all tasks | `[ ]` not enforced (convention only) |
+| Input metadata MUST include `issue_number`, `issue_url`, `command`, `phase`, and `estimate` for all tasks | `[x]` `task-schema-validator.sh` (validates all five keys at TaskCreate time) |
 | Group-specific keys MUST be set when processing grouped issues | `[ ]` not enforced |
 
 ### 3. TaskUpdate Result Schema
@@ -73,8 +73,8 @@ Metadata keys that workers MUST set when marking a task complete via `TaskUpdate
 
 | Requirement | Enablement |
 |-------------|------------|
-| Workers MUST set phase-appropriate metadata keys when completing a task | `[ ]` not enforced (convention only) |
-| Workers MUST include a meaningful description summarizing results | `[ ]` not enforced |
+| Workers MUST set phase-appropriate metadata keys when completing a task | `[x]` `task-schema-validator.sh` (blocks TaskUpdate(status=completed) without metadata) |
+| Workers MUST include a meaningful description summarizing results | `[x]` `task-schema-validator.sh` (blocks TaskUpdate(status=completed) without description) |
 | TaskUpdate is the primary reporting channel — workers MUST NOT use SendMessage for routine reporting | `[ ]` not enforced (convention only) |
 
 ### 4. Blocking and Dependency Patterns
@@ -112,8 +112,8 @@ Task subjects MUST include role-specific keywords for stop-gate matching to work
 
 | Requirement | Enablement |
 |-------------|------------|
-| Task subjects MUST include the role-specific keyword for the target worker | `[ ]` not enforced (convention only — `worker-stop-gate.sh` depends on this but does not validate naming) |
-| Task subjects MUST include the issue number (GH-NNN or #NNN format) | `[ ]` not enforced |
+| Task subjects MUST include the role-specific keyword for the target worker | `[x]` `task-schema-validator.sh` (blocks TaskCreate with subject missing Triage/Split/Research/Plan/Review/Implement/Validate/Create PR/Merge) |
+| Task subjects MUST include the issue number (GH-NNN or #NNN format) | `[x]` `task-schema-validator.sh` (blocks TaskCreate with subject missing GH-NNN or #NNN pattern) |
 
 ### 6. Worker Stop Gate Integration
 

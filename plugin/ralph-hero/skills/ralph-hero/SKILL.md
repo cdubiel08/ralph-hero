@@ -14,6 +14,11 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=hero RALPH_AUTO_APPROVE=false"
+  PreToolUse:
+    - matcher: "TaskCreate|TaskUpdate"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/task-schema-validator.sh"
 ---
 
 # Ralph GitHub Hero - Tree Expansion Orchestrator
