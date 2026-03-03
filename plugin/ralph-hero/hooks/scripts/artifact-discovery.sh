@@ -34,7 +34,7 @@ if [[ "$requires_research" != "true" ]] && [[ "$requires_plan" != "true" ]]; the
 fi
 
 # Extract issue number from tool input
-number=$(get_field '.tool_input.issueNumber')
+number=$(get_field '.tool_input.number')
 if [[ -z "$number" ]]; then
   allow  # Can't validate without issue number
 fi

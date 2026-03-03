@@ -20,16 +20,16 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
-INPUT=$(cat)
+read_input > /dev/null
 
 # Safety: if already nudged once, allow stop to prevent infinite loop
-STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false')
+STOP_HOOK_ACTIVE=$(get_field '.stop_hook_active')
 if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then
   exit 0
 fi
 
-# Determine role from $TEAMMATE env var prefix
-TEAMMATE="${TEAMMATE:-}"
+# Determine role from teammate name in the Stop hook JSON payload
+TEAMMATE=$(get_field '.teammate_name')
 
 if [[ -z "$TEAMMATE" ]]; then
   exit 0
@@ -52,14 +52,10 @@ else
   exit 0
 fi
 
-cat >&2 <<EOF
-Remaining tasks for your role may exist. Check TaskList.
+block "Remaining tasks for your role may exist. Check TaskList.
 
-You are a ${ROLE} worker (TEAMMATE=${TEAMMATE}).
+You are a ${ROLE} worker (${TEAMMATE}).
 Before stopping, verify there are no unblocked tasks matching: ${KEYWORDS}
 
 Run TaskList to check for pending tasks matching your role keywords.
-If no unblocked tasks exist, you may stop.
-EOF
-
-exit 2
+If no unblocked tasks exist, you may stop."

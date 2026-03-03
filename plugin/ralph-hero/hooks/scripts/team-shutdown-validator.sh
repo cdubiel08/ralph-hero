@@ -29,7 +29,7 @@ fi
 
 PROJECT_ROOT=$(get_project_root)
 REPORTS_DIR="${PROJECT_ROOT}/thoughts/shared/reports"
-TEAM_MARKER="/tmp/ralph-team-created-$$"
+TEAM_MARKER="/tmp/ralph-team-created-$(echo "$(get_project_root)" | md5sum | cut -d' ' -f1)"
 TODAY=$(date +%Y-%m-%d)
 
 # Check for post-mortem file matching the ralph-team pattern

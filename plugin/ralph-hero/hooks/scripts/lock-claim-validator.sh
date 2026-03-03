@@ -34,8 +34,8 @@ if [[ -z "$target_state" ]]; then
   allow  # Not a state change
 fi
 
-# Check if target is a lock state
-is_lock_target=$(jq -r --arg state "$target_state" '.states[$state].is_lock_state // false' "$STATE_MACHINE")
+# Check if target is a lock state (use the lock_states.states array as source of truth)
+is_lock_target=$(jq -r --arg state "$target_state" '.lock_states.states | index($state) != null' "$STATE_MACHINE")
 if [[ "$is_lock_target" != "true" ]]; then
   allow  # Not trying to acquire a lock
 fi
@@ -46,7 +46,7 @@ if [[ -z "$current_state" ]]; then
   allow  # Can't validate without current state
 fi
 
-is_currently_locked=$(jq -r --arg state "$current_state" '.states[$state].is_lock_state // false' "$STATE_MACHINE")
+is_currently_locked=$(jq -r --arg state "$current_state" '.lock_states.states | index($state) != null' "$STATE_MACHINE")
 if [[ "$is_currently_locked" == "true" ]]; then
   issue_number=$(get_field '.tool_input.issueNumber')
   lock_states=$(jq -r '.lock_states.states | join(", ")' "$STATE_MACHINE")

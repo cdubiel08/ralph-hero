@@ -24,8 +24,8 @@ fi
 read_input > /dev/null
 TOOL=$(get_tool_name)
 
-# Marker file keyed to this shell session ($$)
-TEAM_MARKER="/tmp/ralph-team-created-$$"
+# Marker file keyed to project dir (stable across hook invocations within a session)
+TEAM_MARKER="/tmp/ralph-team-created-$(echo "$(get_project_root)" | md5sum | cut -d' ' -f1)"
 
 case "$TOOL" in
   TeamCreate)
