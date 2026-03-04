@@ -36,6 +36,7 @@ export interface DashboardItem {
   priority: string | null; // P0, P1, P2, P3
   estimate: string | null; // XS, S, M, L, XL
   assignees: string[];
+  subIssueCount: number;
   blockedBy: Array<{ number: number; workflowState: string | null }>;
   projectNumber?: number; // Source project number (multi-project)
   projectTitle?: string; // Human-readable project title (multi-project)
@@ -56,6 +57,7 @@ export interface PhaseSnapshot {
     ageHours: number;
     isLocked: boolean;
     blockedBy: Array<{ number: number; workflowState: string | null }>;
+    subIssueCount: number;
   }>;
 }
 
@@ -290,6 +292,7 @@ function buildSnapshot(
       ),
       isLocked: LOCK_STATES.includes(state),
       blockedBy: item.blockedBy,
+      subIssueCount: item.subIssueCount,
     })),
   };
 }
@@ -385,10 +388,11 @@ export function detectHealthIssues(
         });
       }
 
-      // Oversized in pipeline: M/L/XL estimate past Backlog
+      // Oversized in pipeline: M/L/XL estimate past Backlog (skip already-split parents)
       if (
         issue.estimate &&
         OVERSIZED_ESTIMATES.has(issue.estimate) &&
+        issue.subIssueCount === 0 &&
         phase.state !== "Backlog" &&
         !TERMINAL_STATES.includes(phase.state) &&
         phase.state !== "Human Needed"
