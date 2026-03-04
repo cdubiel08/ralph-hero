@@ -11,6 +11,9 @@ hooks:
 allowed-tools:
   - Read
   - Bash
+  - Skill
+  - ralph_hero__pipeline_dashboard
+  - ralph_hero__project_hygiene
 ---
 
 # Ralph Session Briefing

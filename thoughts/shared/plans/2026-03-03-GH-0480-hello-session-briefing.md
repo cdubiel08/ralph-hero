@@ -195,15 +195,15 @@ Session briefing complete. [N] insight(s) acted on.
 
 ## Code Review Findings (v1 follow-ups)
 
-Issues identified during code review that scored 75/100 confidence. Not blocking for v1 but should be addressed:
+Issues identified during code review that scored 75/100 confidence. All addressed:
 
-1. **`Skill` tool missing from `allowed-tools`** — Step 4 routes to sub-skills via the `Skill` tool, but `allowed-tools` only lists `Read` and `Bash`. Other orchestrating skills (`ralph-hero`, `ralph-team`) explicitly list `Skill`. If Claude Code enforces `allowed-tools` as a strict allowlist, routing will be blocked at runtime. **Fix**: add `- Skill` to `allowed-tools`.
+1. ~~**`Skill` tool missing from `allowed-tools`**~~ — Fixed: added `Skill` to `allowed-tools` in SKILL.md.
 
-2. **MCP tools missing from `allowed-tools`** — Step 1 calls `ralph_hero__pipeline_dashboard` and `ralph_hero__project_hygiene` directly, but neither is listed in `allowed-tools`. Skills that call MCP tools directly (`ralph-merge`, `ralph-pr`) enumerate them explicitly. **Fix**: add both MCP tool names to `allowed-tools`.
+2. ~~**MCP tools missing from `allowed-tools`**~~ — Fixed: added `ralph_hero__pipeline_dashboard` and `ralph_hero__project_hygiene` to `allowed-tools`.
 
-3. **`AskUserQuestion` missing from `allowed-tools`** — Step 3 uses `AskUserQuestion` for routing, but it's not listed. No existing skill lists it either (may be exempt as a built-in), but if enforcement applies, the routing prompt will be blocked. **Fix**: add `- AskUserQuestion` to `allowed-tools`, or verify it is exempt from enforcement.
+3. **`AskUserQuestion` missing from `allowed-tools`** — Not added. `AskUserQuestion` is a Claude Code built-in tool exempt from `allowed-tools` enforcement (no existing skill lists it, including `ralph-review` and `ralph-setup` which both use it). Verified as non-issue.
 
-4. **`specs/skill-permissions.md` not updated** — The permission matrix and `specs/skill-io-contracts.md` I/O contract table do not include a `ralph-hello` column/row. Previous PRs that added skills (PR #462, #504) updated these spec files. **Fix**: add `ralph-hello` to both spec tables.
+4. ~~**`specs/skill-permissions.md` not updated**~~ — Fixed: added `hello` column to permission matrix and `ralph-hello` row to I/O contracts table.
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-03-GH-0480-hello-session-briefing.md
