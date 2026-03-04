@@ -1,5 +1,6 @@
 ---
 description: Triage GitHub issues from backlog - assess validity, close duplicates, split large tickets, route to research. Use when you want to triage issues, groom the backlog, assess tickets, or clean up issues.
+user-invocable: false
 argument-hint: [optional-issue-number]
 context: fork
 model: sonnet

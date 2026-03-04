@@ -1,5 +1,6 @@
 ---
 description: Merge an approved pull request — checks PR readiness, merges, cleans up worktree, moves issues to Done. Use when you want to merge a PR for a completed issue.
+user-invocable: false
 argument-hint: <issue-number> [--pr-url url]
 context: fork
 model: haiku

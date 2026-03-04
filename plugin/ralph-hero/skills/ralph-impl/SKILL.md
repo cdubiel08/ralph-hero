@@ -1,5 +1,6 @@
 ---
 description: Autonomous implementation of a GitHub issue following its approved plan - executes one phase per invocation in an isolated worktree. Use when you want to implement an issue, execute a plan, code a ticket, or address PR review feedback.
+user-invocable: false
 argument-hint: [optional-issue-number] [--plan-doc path]
 context: fork
 model: opus

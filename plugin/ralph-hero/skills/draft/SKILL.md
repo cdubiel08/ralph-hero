@@ -1,5 +1,5 @@
 ---
-description: Quickly capture an idea or thought for later refinement. Runs inline, asks 2-3 clarifying questions, saves to thoughts/shared/ideas/. Suggest /ralph-hero:form-idea as next step.
+description: Quickly capture an idea or thought for later refinement. Runs inline, asks 2-3 clarifying questions, saves to thoughts/shared/ideas/. Suggest /ralph-hero:form as next step.
 argument-hint: "[optional: topic or idea to capture]"
 model: sonnet
 ---
@@ -109,16 +109,16 @@ Captured your idea at:
 `thoughts/shared/ideas/YYYY-MM-DD-description.md`
 
 When you're ready to develop this further:
-- `/ralph-hero:form-idea thoughts/shared/ideas/YYYY-MM-DD-description.md` - Crystallize into a structured ticket or plan
-- `/ralph-hero:research-codebase` - Deep dive into the relevant area
-- `/ralph-hero:create-plan` - Jump straight to planning if the idea is clear enough
+- `/ralph-hero:form thoughts/shared/ideas/YYYY-MM-DD-description.md` - Crystallize into a structured ticket or plan
+- `/ralph-hero:research` - Deep dive into the relevant area
+- `/ralph-hero:plan` - Jump straight to planning if the idea is clear enough
 ```
 
 ## Guidelines
 
 1. **Speed over polish** - This is a draft, not a spec. Capture intent, not perfection.
-2. **Don't over-research** - A quick grounding check is fine; deep analysis belongs in `/ralph-hero:form-idea` or `/ralph-hero:research-codebase`.
+2. **Don't over-research** - A quick grounding check is fine; deep analysis belongs in `/ralph-hero:form` or `/ralph-hero:research`.
 3. **Preserve the user's voice** - Use their language and framing, don't over-formalize.
 4. **Keep it short** - The draft should be scannable in under a minute.
-5. **Tag generously** - Tags help `/ralph-hero:form-idea` find and connect ideas later.
-6. **No GitHub integration** - Drafts are pre-ticket. GitHub issues come later via `/ralph-hero:form-idea`.
+5. **Tag generously** - Tags help `/ralph-hero:form` find and connect ideas later.
+6. **No GitHub integration** - Drafts are pre-ticket. GitHub issues come later via `/ralph-hero:form`.

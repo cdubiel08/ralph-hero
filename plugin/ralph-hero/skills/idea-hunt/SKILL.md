@@ -1,5 +1,6 @@
 ---
 description: Spawn a team of GitHub listers and analyzers to hunt for interesting ideas, trends, and inspiration across GitHub. Use when you want to explore what's new, find inspiration, or scout emerging patterns.
+user-invocable: false
 argument-hint: "[topic or area to explore, e.g. 'AI agents', 'developer tools', 'rust CLI tools']"
 model: sonnet
 allowed-tools:

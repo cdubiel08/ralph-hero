@@ -44,7 +44,7 @@ If you don't have a project number yet, omit it — this skill will create one f
 
 ### 3. Restart Claude Code
 
-The MCP server reads environment variables at startup. After changing settings, restart Claude Code, then run `/ralph-setup` again.
+The MCP server reads environment variables at startup. After changing settings, restart Claude Code, then run `/ralph-hero:setup` again.
 
 ### Where NOT to put tokens
 
@@ -164,7 +164,7 @@ Add both to .claude/settings.local.json:
   }
 }
 
-Then restart Claude Code and run /ralph-setup again.
+Then restart Claude Code and run /ralph-hero:setup again.
 ```
 
 **STOP here** if they need to create new tokens — they must restart Claude Code for the MCP server to pick up new env vars.
@@ -520,7 +520,7 @@ Routing & Sync:
 
 **If routing was skipped**, append:
 ```
-Routing & Sync: Skipped (run /ralph-setup again to enable later)
+Routing & Sync: Skipped (run /ralph-hero:setup again to enable later)
   See docs/cross-repo-routing.md for manual setup
 ```
 
@@ -576,7 +576,7 @@ Routing & Sync:
 
 **If routing was skipped**, append:
 ```
-Routing & Sync: Skipped (run /ralph-setup again to enable later)
+Routing & Sync: Skipped (run /ralph-hero:setup again to enable later)
   See docs/cross-repo-routing.md for manual setup
 ```
 

@@ -36,7 +36,7 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
    - If still not found, try group fallback: `thoughts/shared/plans/*group*GH-*` and check frontmatter for the issue number
    - If exactly one match, use it
    - If multiple matches, list them and ask user to specify
-   - If no matches, error: "No plan found for #NNN. Create one with `/ralph-hero:create-plan`"
+   - If no matches, error: "No plan found for #NNN. Create one with `/ralph-hero:plan`"
 6. If found via glob fallback only, self-heal by posting the missing comment:
    ```
    ralph_hero__create_comment(number=NNN, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
@@ -208,7 +208,7 @@ Status: In Review
 
 Next steps:
 - Review the PR
-- Or iterate with /ralph-hero:iterate-plan
+- Or iterate with /ralph-hero:iterate
 ```
 
 ## Resuming Work

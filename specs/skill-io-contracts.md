@@ -52,13 +52,13 @@ Defines the inputs, outputs, preconditions, and postconditions for every `ralph-
 | `ralph-val` | any (reads plan) | pass/fail verdict | — | plan doc exists | Validation report |
 | `ralph-pr` | (impl complete) | In Review, Human Needed | — | completed impl, worktree | PR created, state changed to In Review |
 | `ralph-merge` | In Review | Done, Human Needed | — | merged PR | State changed to Done, worktree cleanup |
-| `ralph-hero` | Backlog through In Progress | In Review, Human Needed | — | main branch, issue number provided | Delegates to split/research/plan/review/impl |
-| `ralph-team` | any | In Review, Human Needed | — | — | Spawns analyst/builder/integrator workers |
-| `ralph-status` | read-only | (no state changes) | — | — | Dashboard output |
-| `ralph-report` | read-only | (no state changes) | — | — | Status update posted |
+| `hero` | Backlog through In Progress | In Review, Human Needed | — | main branch, issue number provided | Delegates to split/research/plan/review/impl |
+| `team` | any | In Review, Human Needed | — | — | Spawns analyst/builder/integrator workers |
+| `status` | read-only | (no state changes) | — | — | Dashboard output |
+| `report` | read-only | (no state changes) | — | — | Status update posted |
 | `ralph-hygiene` | read-only | (no state changes) | — | main branch | Archive candidates report |
-| `ralph-setup` | — | — | — | — | GitHub Project V2 configuration |
-| `ralph-hello` | read-only | (no state changes) | — | — | Briefing output, routes to skills |
+| `setup` | — | — | — | — | GitHub Project V2 configuration |
+| `hello` | read-only | (no state changes) | — | — | Briefing output, routes to skills |
 
 ### Precondition Enforcement
 

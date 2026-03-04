@@ -30,37 +30,37 @@ default:
 # Triage a backlog issue - assess validity, close duplicates, route to research
 [group('workflow')]
 triage issue="" budget="1.00" timeout="15m":
-    @just _run_skill "triage" "{{issue}}" "{{budget}}" "{{timeout}}"
+    @just _run_skill "ralph-triage" "{{issue}}" "{{budget}}" "{{timeout}}"
 
 # Split a large issue into smaller XS/S sub-issues
 [group('workflow')]
 split issue="" budget="1.00" timeout="15m":
-    @just _run_skill "split" "{{issue}}" "{{budget}}" "{{timeout}}"
+    @just _run_skill "ralph-split" "{{issue}}" "{{budget}}" "{{timeout}}"
 
 # Research an issue - investigate codebase, create findings document
 [group('workflow')]
 research issue="" budget="2.00" timeout="15m":
-    @just _run_skill "research" "{{issue}}" "{{budget}}" "{{timeout}}"
+    @just _run_skill "ralph-research" "{{issue}}" "{{budget}}" "{{timeout}}"
 
 # Create implementation plan from research findings
 [group('workflow')]
 plan issue="" budget="3.00" timeout="15m":
-    @just _run_skill "plan" "{{issue}}" "{{budget}}" "{{timeout}}"
+    @just _run_skill "ralph-plan" "{{issue}}" "{{budget}}" "{{timeout}}"
 
 # Review and critique an implementation plan
 [group('workflow')]
 review issue="" budget="2.00" timeout="15m":
-    @just _run_skill "review" "{{issue}}" "{{budget}}" "{{timeout}}"
+    @just _run_skill "ralph-review" "{{issue}}" "{{budget}}" "{{timeout}}"
 
 # Implement an issue following its approved plan
 [group('workflow')]
 impl issue="" budget="5.00" timeout="15m":
-    @just _run_skill "impl" "{{issue}}" "{{budget}}" "{{timeout}}"
+    @just _run_skill "ralph-impl" "{{issue}}" "{{budget}}" "{{timeout}}"
 
 # Run project hygiene check - stale items, archive candidates
 [group('workflow')]
 hygiene budget="0.50" timeout="10m":
-    @just _run_skill "hygiene" "" "{{budget}}" "{{timeout}}"
+    @just _run_skill "ralph-hygiene" "" "{{budget}}" "{{timeout}}"
 
 # Display pipeline status dashboard with health indicators
 [group('workflow')]
@@ -344,9 +344,9 @@ _run_skill skill issue budget timeout:
     #!/usr/bin/env bash
     set -eu
     if [ -n "{{issue}}" ]; then
-        cmd="/ralph-hero:ralph-{{skill}} {{issue}}"
+        cmd="/ralph-hero:{{skill}} {{issue}}"
     else
-        cmd="/ralph-hero:ralph-{{skill}}"
+        cmd="/ralph-hero:{{skill}}"
     fi
     echo ">>> Running: $cmd (budget: \${{budget}}, timeout: {{timeout}})"
     if timeout "{{timeout}}" claude -p "$cmd" \
