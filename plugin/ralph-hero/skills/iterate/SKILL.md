@@ -48,7 +48,7 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
    - number: [issue-number]
    - body: "## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)"
    ```
-8. **If no plan found**: STOP with "No implementation plan found for #NNN. Run /ralph-hero:create-plan first."
+8. **If no plan found**: STOP with "No implementation plan found for #NNN. Run /ralph-hero:plan first."
 9. Remaining arguments after the issue number are the feedback/requested changes.
 
 **If first argument is a file path**:
@@ -89,8 +89,8 @@ When this command is invoked:
    I'll help you iterate on an existing implementation plan.
 
    Which plan would you like to update? Provide either:
-   - A GitHub issue number: `/ralph-hero:iterate-plan #347`
-   - A plan file path: `/ralph-hero:iterate-plan thoughts/shared/plans/2026-02-22-GH-0347-feature.md`
+   - A GitHub issue number: `/ralph-hero:iterate #347`
+   - A plan file path: `/ralph-hero:iterate thoughts/shared/plans/2026-02-22-GH-0347-feature.md`
 
    Tip: You can list recent plans with `ls -lt thoughts/shared/plans/ | head`
    ```
@@ -255,8 +255,8 @@ After changes are made, update the GitHub issue if linked:
    [If state changed: - Moved back to "Plan in Progress"]
 
    Next steps:
-   - `/ralph-hero:iterate-plan #NNN` - Make further adjustments
-   - `/ralph-hero:implement-plan #NNN` - Begin implementation
+   - `/ralph-hero:iterate #NNN` - Make further adjustments
+   - `/ralph-hero:impl #NNN` - Begin implementation
    ```
 
 ## Important Guidelines

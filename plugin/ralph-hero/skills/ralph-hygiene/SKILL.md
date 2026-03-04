@@ -1,5 +1,6 @@
 ---
 description: Run project hygiene check - identify archive candidates, stale items, and board health issues. Use when you want to clean the board, check hygiene, find stale items, or archive old issues.
+user-invocable: false
 argument-hint: ""
 context: fork
 model: sonnet

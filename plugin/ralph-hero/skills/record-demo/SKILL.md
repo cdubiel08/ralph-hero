@@ -1,5 +1,6 @@
 ---
 description: Record a product demo with narration and attach to a GitHub issue. Use when you want to create an annotated showcase of a feature or workflow.
+user-invocable: false
 context: inline
 model: sonnet
 allowed-tools:

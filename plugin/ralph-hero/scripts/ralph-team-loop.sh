@@ -42,9 +42,9 @@ echo "Budget: \$${BUDGET}"
 echo ""
 
 if [ -n "$ISSUE_NUMBER" ]; then
-    COMMAND="/ralph-hero:ralph-team $ISSUE_NUMBER"
+    COMMAND="/ralph-hero:team $ISSUE_NUMBER"
 else
-    COMMAND="/ralph-hero:ralph-team"
+    COMMAND="/ralph-hero:team"
 fi
 
 echo ">>> Running: $COMMAND"

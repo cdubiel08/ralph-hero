@@ -35,9 +35,9 @@ When this command is invoked:
    I'll help you crystallize an idea into something actionable.
 
    Provide one of:
-   1. A path to a draft idea: `/ralph-hero:form-idea thoughts/shared/ideas/2026-02-21-feature.md`
-   2. A description of the idea: `/ralph-hero:form-idea we should add operator comparison charts`
-   3. Just run `/ralph-hero:form-idea` and I'll show you recent drafts to pick from
+   1. A path to a draft idea: `/ralph-hero:form thoughts/shared/ideas/2026-02-21-feature.md`
+   2. A description of the idea: `/ralph-hero:form we should add operator comparison charts`
+   3. Just run `/ralph-hero:form` and I'll show you recent drafts to pick from
 
    Recent ideas:
    ```
@@ -119,8 +119,8 @@ Here's how this idea fits into the bigger picture:
 How would you like to shape this idea?
 
 1. **GitHub issue** - Create a well-scoped issue ready for the backlog
-2. **Implementation plan** - Create a plan document (via /ralph-hero:create-plan)
-3. **Research topic** - Create a research document to explore the idea deeper (via /ralph-hero:research-codebase)
+2. **Implementation plan** - Create a plan document (via /ralph-hero:plan)
+3. **Research topic** - Create a research document to explore the idea deeper (via /ralph-hero:research)
 4. **Ticket tree** - Break into multiple related issues (parent + children)
 5. **Keep as refined idea** - Update the draft with context but don't create issues yet
 ```
@@ -187,8 +187,8 @@ If the user chose "GitHub issue":
 
    Next steps:
    - `/ralph-hero:ralph-research NNN` - Start research phase
-   - `/ralph-hero:create-plan #NNN` - Jump to planning
-   - `/ralph-hero:iterate-plan #NNN` - Refine if needed
+   - `/ralph-hero:plan #NNN` - Jump to planning
+   - `/ralph-hero:iterate #NNN` - Refine if needed
    ```
 
 ### Step 5b: Create Ticket Tree
@@ -246,8 +246,8 @@ If the user chose "Implementation plan" or "Research topic":
    ```
 
 2. **Suggest the appropriate skill**:
-   - For plan: Suggest the user run `/ralph-hero:create-plan` with the context gathered
-   - For research: Suggest the user run `/ralph-hero:research-codebase` with the research question
+   - For plan: Suggest the user run `/ralph-hero:plan` with the context gathered
+   - For research: Suggest the user run `/ralph-hero:research` with the research question
 
    ```
    I've gathered the following context for your [plan/research]:
@@ -256,7 +256,7 @@ If the user chose "Implementation plan" or "Research topic":
    **Key files**: [relevant files found]
    **Related work**: [issues/docs found]
 
-   Run: `/ralph-hero:create-plan [context]` or `/ralph-hero:research-codebase [topic]`
+   Run: `/ralph-hero:plan [context]` or `/ralph-hero:research [topic]`
 
    Or I can hand off this context directly - shall I invoke it now?
    ```
@@ -280,7 +280,7 @@ If the user chose "Keep as refined idea":
    - Refined scope and shape
    - Updated tags for discoverability
 
-   Come back anytime with `/ralph-hero:form-idea [path]` to take the next step.
+   Come back anytime with `/ralph-hero:form [path]` to take the next step.
    ```
 
 ## Guidelines

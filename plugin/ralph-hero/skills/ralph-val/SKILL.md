@@ -1,5 +1,6 @@
 ---
 description: Validate that implementation satisfies plan requirements. Reads the plan, checks code in worktree, runs automated verification. Use when you want to validate an implementation before PR creation.
+user-invocable: false
 argument-hint: <issue-number> [--plan-doc path]
 context: fork
 model: sonnet

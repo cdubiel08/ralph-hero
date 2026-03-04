@@ -57,7 +57,7 @@ claude --plugin-dir ./ralph-hero
 Run the setup skill to create a GitHub Project with all required configuration:
 
 ```bash
-claude "/ralph-setup"
+claude "/ralph-hero:setup"
 ```
 
 This creates:
@@ -76,19 +76,19 @@ Each skill handles one phase of the workflow:
 
 | Skill | Description |
 |-------|-------------|
-| `/ralph-triage` | Assess backlog issues, close duplicates, route to research |
-| `/ralph-split` | Split large issues (M/L/XL) into smaller sub-issues |
-| `/ralph-research` | Research one XS/S issue, create findings document |
-| `/ralph-plan` | Create implementation plan from researched issue |
-| `/ralph-review` | Review implementation plan for quality |
-| `/ralph-impl` | Implement one planned issue in isolated worktree |
+| `/ralph-hero:ralph-triage` | Assess backlog issues, close duplicates, route to research |
+| `/ralph-hero:ralph-split` | Split large issues (M/L/XL) into smaller sub-issues |
+| `/ralph-hero:ralph-research` | Research one XS/S issue, create findings document |
+| `/ralph-hero:ralph-plan` | Create implementation plan from researched issue |
+| `/ralph-hero:ralph-review` | Review implementation plan for quality |
+| `/ralph-hero:ralph-impl` | Implement one planned issue in isolated worktree |
 
 ### Orchestrators
 
 | Skill | Description |
 |-------|-------------|
-| `/ralph-hero` | Tree-expansion orchestrator with task blocking for sequential execution |
-| `/ralph-team` | Multi-agent coordinator that spawns specialists for each pipeline phase |
+| `/ralph-hero:hero` | Tree-expansion orchestrator with task blocking for sequential execution |
+| `/ralph-hero:team` | Multi-agent coordinator that spawns specialists for each pipeline phase |
 
 ### CLI (`just` recipes)
 
@@ -174,16 +174,28 @@ ralph-hero/
 │           ├── cache.ts          # Session-scoped LRU cache
 │           └── group-detection.ts # Transitive closure + topological sort
 ├── skills/                   # Workflow skills (SKILL.md files)
-│   ├── ralph-triage/
-│   ├── ralph-split/
-│   ├── ralph-research/
-│   ├── ralph-plan/
-│   ├── ralph-review/
-│   ├── ralph-impl/
-│   ├── ralph-hero/
-│   ├── ralph-team/
-│   ├── ralph-val/
-│   └── ralph-setup/
+│   ├── hello/                # Session briefing (user-visible)
+│   ├── draft/                # Quick idea capture (user-visible)
+│   ├── form/                 # Crystallize ideas (user-visible)
+│   ├── plan/                 # Create implementation plan (user-visible)
+│   ├── iterate/              # Iterate on plan (user-visible)
+│   ├── impl/                 # Implement plan (user-visible)
+│   ├── research/             # Codebase research (user-visible)
+│   ├── hero/                 # Tree-expansion orchestrator (user-visible)
+│   ├── team/                 # Multi-agent coordinator (user-visible)
+│   ├── setup/                # Project setup (user-visible)
+│   ├── status/               # Pipeline dashboard (user-visible)
+│   ├── report/               # Status report (user-visible)
+│   ├── ralph-triage/         # Autonomous triage (hidden)
+│   ├── ralph-split/          # Autonomous split (hidden)
+│   ├── ralph-research/       # Autonomous research (hidden)
+│   ├── ralph-plan/           # Autonomous planning (hidden)
+│   ├── ralph-review/         # Autonomous review (hidden)
+│   ├── ralph-impl/           # Autonomous implementation (hidden)
+│   ├── ralph-val/            # Validation (hidden)
+│   ├── ralph-pr/             # PR creation (hidden)
+│   ├── ralph-merge/          # Merge (hidden)
+│   └── ralph-hygiene/        # Hygiene check (hidden)
 ├── agents/                   # Scope-bounded worker definitions
 │   ├── ralph-analyst.md
 │   ├── ralph-builder.md

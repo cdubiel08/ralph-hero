@@ -1,5 +1,6 @@
 ---
 description: Create a pull request for a completed implementation — pushes branch, creates PR via gh, moves issues to In Review. Use when you want to create a PR for a completed issue.
+user-invocable: false
 argument-hint: <issue-number> [--worktree path]
 context: fork
 model: haiku

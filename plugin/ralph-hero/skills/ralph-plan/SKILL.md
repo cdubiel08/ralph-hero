@@ -1,5 +1,6 @@
 ---
 description: Create implementation plan for a GitHub issue from research findings - phased plan with file ownership, success criteria, and verification steps. Use when you want to plan an issue, create a spec, or write an implementation plan.
+user-invocable: false
 argument-hint: [optional-issue-number] [--research-doc path]
 context: fork
 model: opus

@@ -39,8 +39,8 @@ Please provide:
 
 I'll analyze this information and work with you to create a comprehensive plan.
 
-Tip: You can also invoke this command with an issue directly: `/ralph-hero:create-plan #123`
-Or with a research doc: `/ralph-hero:create-plan thoughts/shared/research/2026-01-21-GH-0123-feature.md`
+Tip: You can also invoke this command with an issue directly: `/ralph-hero:plan #123`
+Or with a research doc: `/ralph-hero:plan thoughts/shared/research/2026-01-21-GH-0123-feature.md`
 ```
 
 Then wait for the user's input.
@@ -358,7 +358,7 @@ After the plan is finalized and the user is satisfied:
    Plan linked to GitHub issue: #NNN
    URL: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
 
-   The plan is ready for implementation. Use `/ralph-hero:implement-plan #NNN` when approved.
+   The plan is ready for implementation. Use `/ralph-hero:impl #NNN` when approved.
    ```
 
 ## Important Guidelines

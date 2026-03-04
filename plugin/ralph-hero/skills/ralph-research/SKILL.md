@@ -1,5 +1,6 @@
 ---
 description: Autonomous research on a GitHub issue - investigates codebase, creates research findings document, updates issue state. Use when you want to research an issue, investigate a ticket, or analyze codebase for planning.
+user-invocable: false
 argument-hint: [optional-issue-number]
 context: fork
 model: sonnet

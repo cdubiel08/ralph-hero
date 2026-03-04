@@ -60,7 +60,7 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
         "Generate a token at: https://github.com/settings/tokens\n" +
         "Required scopes: repo, project\n" +
         "\n" +
-        "For advanced setups (dual tokens, org projects), run /ralph-setup.",
+        "For advanced setups (dual tokens, org projects), run /ralph-hero:setup.",
     );
     process.exit(1);
   }
@@ -93,7 +93,7 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
     console.error(
       "[ralph-hero] Warning: RALPH_GH_PROJECT_NUMBER not set.\n" +
         "Project-level tools (workflow state, field updates) will not work.\n" +
-        "Run /ralph-setup to configure your GitHub Project.",
+        "Run /ralph-hero:setup to configure your GitHub Project.",
     );
   }
 
@@ -237,7 +237,7 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
             } else {
               checks.requiredFields = {
                 status: "fail",
-                detail: `Missing fields: ${missing.join(", ")}. Run /ralph-setup.`,
+                detail: `Missing fields: ${missing.join(", ")}. Run /ralph-hero:setup.`,
               };
             }
           } else {

@@ -47,17 +47,17 @@ The following skills currently have no `allowed-tools` declaration. These permis
 
 | Skill | Prescribed `allowed-tools` | Rationale |
 |-------|---------------------------|-----------|
-| `ralph-status` | Read, Bash | Read-only dashboard queries via MCP tools |
-| `ralph-report` | Read, Bash | Read-only queries, posts status update via MCP tools |
+| `status` | Read, Bash | Read-only dashboard queries via MCP tools |
+| `report` | Read, Bash | Read-only queries, posts status update via MCP tools |
 | `ralph-hygiene` | Read, Glob, Bash | Board queries, identifies archive candidates |
-| `ralph-setup` | Bash | Creates project configuration via CLI |
+| `setup` | Bash | Creates project configuration via CLI |
 
 | Requirement | Enablement |
 |-------------|------------|
-| `ralph-status` MUST have `allowed-tools: [Read, Bash]` | [x] SKILL.md frontmatter |
-| `ralph-report` MUST have `allowed-tools: [Read, Bash]` | [x] SKILL.md frontmatter |
+| `status` MUST have `allowed-tools: [Read, Bash]` | [x] SKILL.md frontmatter |
+| `report` MUST have `allowed-tools: [Read, Bash]` | [x] SKILL.md frontmatter |
 | `ralph-hygiene` MUST have `allowed-tools: [Read, Glob, Bash]` | [x] SKILL.md frontmatter |
-| `ralph-setup` MUST have `allowed-tools: [Bash]` | [x] SKILL.md frontmatter |
+| `setup` MUST have `allowed-tools: [Bash]` | [x] SKILL.md frontmatter |
 
 ### Plugin-Level Hook Overlay
 
