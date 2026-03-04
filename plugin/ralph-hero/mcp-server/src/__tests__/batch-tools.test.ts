@@ -112,11 +112,38 @@ describe("buildBatchMutationQuery", () => {
     expect(mutationString).toContain("updateProjectV2ItemFieldValue");
   });
 
-  it("references singleSelectOptionId in the value", () => {
+  it("references singleSelectOptionId in the value by default", () => {
     const { mutationString } = buildBatchMutationQuery("proj", [
       { alias: "u0", itemId: "i", fieldId: "f", optionId: "o" },
     ]);
     expect(mutationString).toContain("singleSelectOptionId");
+  });
+
+  it("uses iterationId value key when valueType is iterationId", () => {
+    const { mutationString } = buildBatchMutationQuery("proj", [
+      { alias: "iter0", itemId: "item-a", fieldId: "field-sprint", optionId: "cfc16e4d", valueType: "iterationId" },
+    ]);
+    expect(mutationString).toContain("iterationId");
+    expect(mutationString).not.toContain("singleSelectOptionId");
+  });
+
+  it("mixes singleSelectOptionId and iterationId in same batch", () => {
+    const { mutationString } = buildBatchMutationQuery("proj", [
+      { alias: "ws0", itemId: "item-a", fieldId: "field-ws", optionId: "opt-rn" },
+      { alias: "iter0", itemId: "item-a", fieldId: "field-sprint", optionId: "cfc16e4d", valueType: "iterationId" },
+    ]);
+    // ws0 alias block should use singleSelectOptionId
+    const ws0Start = mutationString.indexOf("ws0: updateProjectV2ItemFieldValue");
+    expect(ws0Start).toBeGreaterThan(-1);
+    const ws0Block = mutationString.slice(ws0Start, mutationString.indexOf("}", ws0Start + 50) + 1);
+    expect(ws0Block).toContain("singleSelectOptionId");
+
+    // iter0 alias block should use iterationId
+    const iter0Start = mutationString.indexOf("iter0: updateProjectV2ItemFieldValue");
+    expect(iter0Start).toBeGreaterThan(-1);
+    const iter0Block = mutationString.slice(iter0Start, mutationString.indexOf("}", iter0Start + 50) + 1);
+    expect(iter0Block).toContain("iterationId");
+    expect(iter0Block).not.toContain("singleSelectOptionId");
   });
 });
 
