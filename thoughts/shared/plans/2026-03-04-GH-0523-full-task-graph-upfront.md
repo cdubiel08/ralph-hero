@@ -1,57 +1,77 @@
 ---
-description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
-argument-hint: "[issue-number]"
-model: sonnet
-allowed-tools:
-  - Read
-  - Write
-  - Glob
-  - Bash
-  - Task
-  - Skill
-  - TeamCreate
-  - TeamDelete
-  - TaskCreate
-  - TaskList
-  - TaskGet
-  - TaskUpdate
-  - SendMessage
-hooks:
-  SessionStart:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=team RALPH_AUTO_APPROVE=true"
-  PreToolUse:
-    - matcher: "TeamCreate|Agent|TaskCreate"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-protocol-validator.sh"
-    - matcher: "TeamDelete"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-shutdown-validator.sh"
-    - matcher: "TaskCreate|TaskUpdate"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/task-schema-validator.sh"
-  TaskCompleted:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-task-completed.sh"
-  TeammateIdle:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-teammate-idle.sh"
-  Stop:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-stop-gate.sh"
+date: 2026-03-04
+status: draft
+github_issues: [523]
+github_urls:
+  - https://github.com/cdubiel08/ralph-hero/issues/523
+primary_issue: 523
 ---
 
-# Ralph Team
+# Ralph-team: Create Full Task Graph Upfront — Implementation Plan
 
-You coordinate a team of specialists to process GitHub issues. You never do substantive work yourself — no research, planning, reviewing, or implementing. Your job is to assess work, build a team, create tasks, and keep things moving.
+## Overview
 
+Replace the incremental task creation model in `ralph-team` SKILL.md with upfront full-graph creation. The team lead reads each issue's `workflowState`, maps it to remaining pipeline phases, and creates all tasks with `blockedBy` chains in one pass. Workers pick up tasks as blockers resolve — no team lead intervention needed between phases.
+
+## Current State Analysis
+
+The `ralph-team` skill at `plugin/ralph-hero/skills/ralph-team/SKILL.md` has four main sections:
+
+1. **Assess** (lines 56-57): Fetches issue, detects pipeline position. No state-to-phase mapping.
+2. **Build the Task List** (lines 79-120): Creates tasks for "current and upcoming pipeline phases" with the instruction: _"Add tasks incrementally as phases complete rather than predicting the entire pipeline upfront."_ (line 120)
+3. **Respond to Events** (lines 122-126): Reacts to task completions by creating follow-up tasks for the next phase.
+4. **Shut Down** (lines 128-185): Post-mortem, shutdown, delete.
+
+### Key Discoveries:
+- The workflow state machine is a contract (per `specs/issue-lifecycle.md`). Each state guarantees prior phase requirements are met.
+- Skill input states are enforced by gate hooks (per `specs/skill-io-contracts.md`). Workers cannot run a skill on an issue in the wrong state — the hook blocks it.
+- Task schema validator (`task-schema-validator.sh`) requires: role keyword in subject, `GH-NNN` pattern, and metadata with `issue_number`, `issue_url`, `command`, `phase`, `estimate`.
+- The `team-task-completed.sh` hook is advisory only (exit 0, stderr log). It does not automate task creation — the lead must act manually.
+
+## Desired End State
+
+The team lead creates the full remaining task graph during initial setup. Each task has `blockedBy` pointing to its predecessor phase task. Workers auto-pick tasks when blockers clear. The "Respond to Events" section handles only error recovery (failed reviews, failed validations).
+
+### Verification
+- [ ] When ralph-team processes a group in Backlog, all tasks from triage through PR are created upfront with `blockedBy` chains
+- [ ] When ralph-team processes an issue at Plan in Review, only implement/validate/PR tasks are created
+- [ ] Workers begin implementation immediately after plan tasks complete, without team lead creating new tasks
+- [ ] Failed reviews create corrective tasks (NEEDS_ITERATION → new plan task)
+- [ ] All tasks satisfy `task-schema-validator.sh` constraints
+
+## What We're NOT Doing
+
+- Not changing any hooks (they already work correctly — advisory TaskCompleted, enforcing task schema)
+- Not changing MCP server code or TypeScript
+- Not changing specs (they already define the contracts we're leveraging)
+- Not changing agent definitions or other skills
+- Not adding artifact validation — the workflow state is the contract
+
+## Implementation Approach
+
+Single phase — surgical edits to three sections of `plugin/ralph-hero/skills/ralph-team/SKILL.md`. The Shut Down section and frontmatter are unchanged.
+
+---
+
+## Phase 1: Rewrite SKILL.md task creation model
+
+> **Estimate**: XS | **Files**: 1
+
+### Changes Required:
+
+#### 1. Replace the Assess section (lines 55-57)
+
+**File**: `plugin/ralph-hero/skills/ralph-team/SKILL.md`
+
+**Current** (lines 55-57):
+```markdown
+## Assess
+
+Fetch the issue and detect its pipeline position. If no issue number is given, scan the project board for actionable work. If the issue is terminal (PR exists or Done), report that and stop.
+```
+
+**Replace with**:
+```markdown
 ## Assess
 
 Fetch the issue and detect its pipeline position. If no issue number is given, scan the project board for actionable work. If the issue is terminal (PR exists or Done), report that and stop.
@@ -70,27 +90,17 @@ The workflow state is a contract — each state guarantees prior phase requireme
 | In Review | merge | merge |
 
 Use this mapping to determine the full set of tasks to create for each issue. Issues at advanced states simply have fewer tasks.
+```
 
-## Create Team and Spawn Workers
+#### 2. Replace the Build the Task List section (lines 79-120)
 
-Create a team named after the issue. Spawn workers based on the suggested roster from pipeline detection.
+**File**: `plugin/ralph-hero/skills/ralph-team/SKILL.md`
 
-### Roster Table
+**Current** (lines 79-120): The section including "Build the Task List", "Stream Detection Before Implementation Tasks", and the incremental instruction at line 120.
 
-| Station | Agent Type | Names | Cap | Scaling Rule |
-|---------|-----------|-------|-----|-------------|
-| Analyst | ralph-analyst | `analyst`, `analyst-2`, `analyst-3` | 3 | `suggestedRoster.analyst` (0 after research phase) |
-| Builder | ralph-builder | `builder`, `builder-2`, `builder-3` | 3 | `suggestedRoster.builder` (stream count, see below) |
-| Integrator | ralph-integrator | `integrator`, `integrator-2` | 2 | `suggestedRoster.integrator` (1 default, 2 if 5+ issues) |
+**Replace lines 79-120 with** (preserving the Stream Detection subsection content but reframing it):
 
-**Initial spawn**: At session start, spawn workers using `suggestedRoster` from the initial `pipeline_dashboard` / `detect_pipeline_position` result. Typically 1 builder is appropriate at this stage — stream count is unknown until research completes.
-
-**Builder scaling at implementation phase**: When creating implementation tasks (after research/plan completes), call `detect_stream_positions` to determine independent stream count. If `suggestedRoster.builder` > current builder count, spawn additional builders at that point. See "Stream Detection Before Implementation Tasks" below.
-
-Give each worker a spawn prompt that includes the issue number, title, current pipeline state, and what kinds of tasks they should look for. Analysts handle triage, splitting, research, and planning. Builders handle plan review and implementation. Integrators handle validation, PR creation, and merging. Workers are autonomous — they check TaskList, self-assign unblocked tasks, invoke the appropriate skills, and report results.
-
-**Stream-scoped builder prompts**: When multiple builders are spawned for different streams, each builder's prompt must specify its stream assignment: issue numbers it covers and the `[stream-N]` tag to look for in task subjects. Example: `"You are builder-2. Your stream covers issues #44, #45. Only claim tasks tagged [stream-2]."` This prevents cross-stream task stealing.
-
+```markdown
 ## Build the Task List
 
 Create tasks for ALL remaining pipeline phases upfront. Use `blockedBy` chains to enforce phase ordering. Workers pick up tasks as soon as their blockers resolve — no team lead intervention needed between phases.
@@ -180,15 +190,31 @@ When creating implementation tasks for a group with 2+ issues:
 Stream detection requires research documents (for file paths). If issues haven't been researched yet (pre-research states), the implementation task subjects and stream tags cannot be determined at initial graph creation time.
 
 **Strategy**: Create placeholder implementation tasks without stream tags. When the last research task for the group completes, the team lead calls `detect_stream_positions`, updates implementation task subjects with stream tags, spawns additional builders if needed, and reassigns owners. This is the ONE exception to "no team lead intervention between phases" — stream detection is a graph refinement step, not a new task creation step.
+```
 
+#### 3. Replace the Respond to Events section (lines 122-126)
+
+**File**: `plugin/ralph-hero/skills/ralph-team/SKILL.md`
+
+**Current** (lines 122-126):
+```markdown
+## Respond to Events
+
+Hooks fire when tasks complete or teammates go idle. When a task completes, decide if the next phase is ready and create those tasks. When a review returns a NEEDS_ITERATION verdict, create a new planning task for the analyst. When a validation fails, create a new implementation task for the builder.
+
+Workers going idle between turns is normal — don't nudge them. Task assignment is the communication mechanism.
+```
+
+**Replace with**:
+```markdown
 ## Respond to Events
 
 Normal phase progression is handled by `blockedBy` chains — no team lead action needed. Workers going idle between turns is normal — don't nudge them.
 
 The team lead intervenes only for error recovery:
 
-- **NEEDS_ITERATION review**: Create a new Plan task for the analyst (blockedBy: none, since the review is complete). Create a new Review task for the builder (blockedBy: new Plan task). Update the corresponding Implement task's `blockedBy` to include the new Review task. Reworked plans must go through review again before implementation.
-- **Failed validation**: Create a new Implement task for the builder (blockedBy: none). Create a new Validate task for the integrator (blockedBy: new Implement task). The original Validate task already completed with a failure — it cannot be reopened by adding blockers.
+- **NEEDS_ITERATION review**: Create a new Plan task for the analyst (blockedBy: none, since the review is complete). Update the corresponding Implement task's `blockedBy` to include the new Plan task.
+- **Failed validation**: Create a new Implement task for the builder (blockedBy: none). Update the Validate task's `blockedBy` to include the new Implement task.
 - **Escalation (Human Needed)**: Report to the user and stop. Do not create corrective tasks — a human must decide next steps.
 
 ### Stream Detection Refinement
@@ -199,61 +225,35 @@ When research tasks complete for a group with 2+ issues, refine the task graph:
 2. Update implementation task subjects with `[stream-N]` tags
 3. Spawn additional builders if `suggestedRoster.builder` > current builder count
 4. Reassign implementation task owners to stream-specific builders
-
-## Shut Down
-
-When all tasks are complete:
-
-### 1. Write Post-Mortem
-
-Before shutting down teammates or deleting the team, collect session results and write a report.
-
-**Collect data**: Call `TaskList`, then `TaskGet` on each task. Extract from task metadata and descriptions:
-- Issues processed (issue_number, title, estimate, final workflow state)
-- PRs created (artifact_path or PR URLs from integrator tasks)
-- Worker assignments (task owner → task subjects)
-- Errors or escalations (tasks with failed results, Human Needed states)
-
-**Write report** to `thoughts/shared/reports/YYYY-MM-DD-ralph-team-{team-name}.md`:
-
-```markdown
-# Ralph Team Session Report: {team-name}
-
-**Date**: YYYY-MM-DD
-
-## Issues Processed
-
-| Issue | Title | Estimate | Outcome | PR |
-|-------|-------|----------|---------|-----|
-| #NNN | [title] | XS | Done | #PR |
-
-## Worker Summary
-
-| Worker | Tasks Completed |
-|--------|----------------|
-| analyst | [task subjects] |
-| builder | [task subjects] |
-| builder-2 | [task subjects] |
-| integrator | [task subjects] |
-
-*Include one row per spawned worker. Omit workers that were not spawned (e.g., builder-2 when only 1 builder was used).*
-
-## Notes
-
-[Escalations, errors, or anything notable from the session]
 ```
 
-Commit and push the report:
-```bash
-git add thoughts/shared/reports/YYYY-MM-DD-ralph-team-*.md
-git commit -m "docs(report): {team-name} session post-mortem"
-git push origin main
-```
+### Success Criteria:
 
-### 2. Shut Down Teammates
+#### Automated Verification:
+- [x] `npm run build` — no TypeScript errors (SKILL.md is markdown, but build validates the project)
+- [x] Skill frontmatter unchanged (hooks, allowed-tools, model all preserved)
 
-Send shutdown to each teammate. Wait for all to confirm.
+#### Manual Verification:
+- [ ] Run `ralph-team 523` or similar — verify full task graph created upfront with `blockedBy` chains
+- [ ] Verify workers pick up tasks automatically when blockers resolve
+- [ ] Verify tasks at advanced states have earlier phases skipped
 
-### 3. Delete Team
+---
 
-Call `TeamDelete()`. This removes the task list and team config.
+## Testing Strategy
+
+### Manual Testing Steps:
+1. Run `ralph-team` on an issue group where some issues are at advanced states (e.g., one at Backlog, one at Plan in Review)
+2. Verify the full task graph shows correct remaining phases per issue
+3. Verify `blockedBy` chains are correct (each phase blocked by its predecessor)
+4. Verify workers begin work without team lead creating follow-up tasks
+5. Simulate a review failure — verify corrective task is created correctly
+
+## References
+
+- Issue: #523
+- Current skill: `plugin/ralph-hero/skills/ralph-team/SKILL.md`
+- State machine contract: `specs/issue-lifecycle.md`
+- Skill I/O contracts: `specs/skill-io-contracts.md`
+- Task schema: `specs/task-schema.md`
+- Team schema: `specs/team-schema.md`
