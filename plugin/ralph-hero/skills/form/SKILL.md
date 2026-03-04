@@ -186,7 +186,7 @@ If the user chose "GitHub issue":
    The idea at [path] has been updated with the issue reference.
 
    Next steps:
-   - `/ralph-hero:ralph-research NNN` - Start research phase
+   - `/ralph-hero:research NNN` - Start research phase
    - `/ralph-hero:plan #NNN` - Jump to planning
    - `/ralph-hero:iterate #NNN` - Refine if needed
    ```
