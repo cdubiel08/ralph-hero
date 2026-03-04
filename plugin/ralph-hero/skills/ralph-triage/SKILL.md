@@ -7,7 +7,7 @@ hooks:
   SessionStart:
     - hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=triage RALPH_REQUIRED_BRANCH=main"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=triage RALPH_REQUIRED_BRANCH=main RALPH_VALID_OUTPUT_STATES='Research Needed,Ready for Plan,Done,Canceled,Human Needed,Backlog'"
   PreToolUse:
     - matcher: "Bash"
       hooks:
@@ -201,11 +201,12 @@ ralph_hero__list_sub_issues
    - childNumber: [new-issue-number]
    ```
 
-3. Set estimate:
+3. Set estimate and workflow state:
    ```
    ralph_hero__save_issue
    - number: [new-issue-number]
    - estimate: "XS"
+   - workflowState: "Backlog"
    ```
 
 Add comment to original listing sub-issues (reused and/or created).
