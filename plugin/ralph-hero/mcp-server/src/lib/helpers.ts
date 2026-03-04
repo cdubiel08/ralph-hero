@@ -9,7 +9,11 @@
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "./cache.js";
 import { resolveProjectOwner } from "../types.js";
-import { WORKFLOW_STATE_TO_STATUS } from "./workflow-states.js";
+import { WORKFLOW_STATE_TO_STATUS, stateIndex, isParentGateState } from "./workflow-states.js";
+import {
+  buildBatchResolveQuery,
+  buildBatchFieldValueQuery,
+} from "../tools/batch-tools.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -593,5 +597,169 @@ export async function syncStatusField(
     );
   } catch {
     // Best-effort sync - don't fail the primary operation
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Extract Workflow State from batch field value response
+// ---------------------------------------------------------------------------
+
+export function extractWorkflowState(
+  item:
+    | {
+        fieldValues?: {
+          nodes: Array<{
+            __typename?: string;
+            name?: string;
+            field?: { name: string };
+          }>;
+        };
+      }
+    | undefined,
+): string | null {
+  const node = item?.fieldValues?.nodes?.find(
+    (fv) =>
+      fv.field?.name === "Workflow State" &&
+      fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
+  );
+  return node?.name ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Auto-advance parent when all siblings reach a gate state
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-advance the parent issue if all siblings have reached the same gate state.
+ * Uses batch queries for constant-time API cost (4-6 calls max regardless of sibling count).
+ * Best-effort: returns null on any failure without throwing.
+ */
+export async function autoAdvanceParent(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  gateState: string,
+  projectNumber: number,
+): Promise<{ advanced: boolean; parentNumber?: number; toState?: string } | null> {
+  try {
+    // Step A: Fetch parent number (1 query)
+    const parentResult = await client.query<{
+      repository: {
+        issue: { parent: { number: number } | null } | null;
+      } | null;
+    }>(
+      `query($owner: String!, $repo: String!, $issueNum: Int!) {
+        repository(owner: $owner, name: $repo) {
+          issue(number: $issueNum) { parent { number } }
+        }
+      }`,
+      { owner, repo, issueNum: issueNumber },
+    );
+    const parentNumber = parentResult.repository?.issue?.parent?.number;
+    if (!parentNumber) return null;
+
+    // Step B: Fetch siblings (1 query)
+    const siblingResult = await client.query<{
+      repository: {
+        issue: {
+          subIssues: { nodes: Array<{ number: number }> };
+        } | null;
+      } | null;
+    }>(
+      `query($owner: String!, $repo: String!, $parentNum: Int!) {
+        repository(owner: $owner, name: $repo) {
+          issue(number: $parentNum) {
+            subIssues(first: 50) { nodes { number } }
+          }
+        }
+      }`,
+      { owner, repo, parentNum: parentNumber },
+    );
+    const siblings = siblingResult.repository?.issue?.subIssues?.nodes || [];
+    if (siblings.length === 0) return { advanced: false, parentNumber };
+
+    // Step C: Batch resolve project item IDs (1 query)
+    const allNumbers = [...siblings.map((s) => s.number), parentNumber];
+    const { queryString: resolveQueryString, variables: resolveVars } =
+      buildBatchResolveQuery(owner, repo, allNumbers);
+    const resolveResult = await client.query<
+      Record<string, { issue: { id: string; projectItems: { nodes: Array<{ id: string; project: { id: string } }> } } | null }>
+    >(resolveQueryString, resolveVars);
+
+    // Parse resolved IDs and cache them
+    const projectId = fieldCache.getProjectId(projectNumber);
+    if (!projectId) return null;
+
+    const projectItemIds: (string | null)[] = [];
+    for (let i = 0; i < allNumbers.length; i++) {
+      const entry = resolveResult[`i${i}`];
+      const issue = entry?.issue;
+      if (!issue) {
+        projectItemIds.push(null);
+        continue;
+      }
+      // Cache issue node ID
+      const issueCacheKey = `issue-node-id:${owner}/${repo}#${allNumbers[i]}`;
+      client.getCache().set(issueCacheKey, issue.id, 30 * 60 * 1000);
+
+      // Find matching project item
+      const projectItem = issue.projectItems?.nodes?.find(
+        (item) => item.project.id === projectId,
+      );
+      if (projectItem) {
+        const itemCacheKey = `project-item-id:${owner}/${repo}#${allNumbers[i]}`;
+        client.getCache().set(itemCacheKey, projectItem.id, 30 * 60 * 1000);
+        projectItemIds.push(projectItem.id);
+      } else {
+        projectItemIds.push(null);
+      }
+    }
+
+    // All siblings + parent must have project item IDs
+    if (projectItemIds.some((id) => id === null)) {
+      return { advanced: false, parentNumber };
+    }
+
+    // Step D: Batch read field values (1 query)
+    const itemEntries = projectItemIds.map((id, i) => ({
+      alias: `fv${i}`,
+      itemId: id!,
+    }));
+    const { queryString: fvQueryString, variables: fvVars } =
+      buildBatchFieldValueQuery(itemEntries);
+    const fvResult = await client.query<
+      Record<string, { fieldValues?: { nodes: Array<{ __typename?: string; name?: string; field?: { name: string } }> } }>
+    >(fvQueryString, fvVars);
+
+    // Step E: Gate check (in-memory, zero cost)
+    const siblingCount = siblings.length;
+    const siblingStates = [];
+    for (let i = 0; i < siblingCount; i++) {
+      siblingStates.push(extractWorkflowState(fvResult[`fv${i}`]));
+    }
+    const allAtGate = siblingStates.every((state) => state === gateState);
+    if (!allAtGate) return { advanced: false, parentNumber };
+
+    const parentIdx = allNumbers.length - 1;
+    const parentState = extractWorkflowState(fvResult[`fv${parentIdx}`]);
+    if (stateIndex(parentState || "") >= stateIndex(gateState)) {
+      return { advanced: false, parentNumber };
+    }
+
+    // Step F: Advance parent (1-2 mutations)
+    const parentItemId = projectItemIds[parentIdx]!;
+    await updateProjectItemField(
+      client, fieldCache, parentItemId,
+      "Workflow State", gateState, projectNumber,
+    );
+    await syncStatusField(
+      client, fieldCache, parentItemId, gateState, projectNumber,
+    );
+    return { advanced: true, parentNumber, toState: gateState };
+  } catch {
+    // Best-effort: don't fail the primary save_issue operation
+    return null;
   }
 }

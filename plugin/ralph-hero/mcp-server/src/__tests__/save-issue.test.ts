@@ -285,4 +285,17 @@ describe("save_issue structural", () => {
   it("supports field clearing via clearProjectV2ItemFieldValue", () => {
     expect(issueToolsSrc).toContain("clearProjectV2ItemFieldValue");
   });
+
+  it("calls autoAdvanceParent gated by isParentGateState", () => {
+    expect(issueToolsSrc).toContain("isParentGateState(resolvedWorkflowState)");
+    expect(issueToolsSrc).toContain("autoAdvanceParent(");
+  });
+
+  it("imports autoAdvanceParent from helpers", () => {
+    expect(issueToolsSrc).toContain("autoAdvanceParent");
+  });
+
+  it("imports isParentGateState from workflow-states", () => {
+    expect(issueToolsSrc).toContain("isParentGateState");
+  });
 });
