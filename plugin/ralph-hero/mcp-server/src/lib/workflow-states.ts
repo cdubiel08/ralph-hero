@@ -49,6 +49,7 @@ export const HUMAN_STATES: readonly string[] = [
  */
 export const PARENT_GATE_STATES: readonly string[] = [
   "Ready for Plan",
+  "Plan in Review",
   "In Review",
   "Done",
 ] as const;
