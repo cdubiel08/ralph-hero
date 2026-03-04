@@ -48,8 +48,8 @@ primary_issue: 508
 - [x] Automated: `save_issue({ number: N, iteration: null })` clears iteration via `clearProjectV2ItemFieldValue`
 - [ ] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint
 - [ ] Automated: `setup_project({ createIterationField: true })` creates a "Sprint" iteration field
-- [ ] Automated: `pipeline_dashboard` includes per-iteration phase breakdown when iteration assignments exist
-- [ ] Automated: Projects without iteration fields produce identical `pipeline_dashboard` output (no regression)
+- [x] Automated: `pipeline_dashboard` includes per-iteration phase breakdown when iteration assignments exist
+- [x] Automated: Projects without iteration fields produce identical `pipeline_dashboard` output (no regression)
 - [ ] Manual: Setting `iteration: "@next"` on an issue via `save_issue` appears in the correct sprint on the GitHub board
 
 ## What We're NOT Doing
@@ -302,8 +302,8 @@ async function createIterationField(
 - Call `buildIterationSection()` from `buildDashboard()` and append to output
 
 ### Success Criteria
-- [ ] Automated: Dashboard output includes `## Sprint 1` section with phase counts when items have iteration assignments — new test
-- [ ] Automated: Projects without iteration field produce identical output (no regression)
+- [x] Automated: Dashboard output includes `## Sprint 1` section with phase counts when items have iteration assignments — new test
+- [x] Automated: Projects without iteration field produce identical output (no regression)
 - [ ] Manual: `pipeline_dashboard` shows per-sprint breakdown when issues are assigned to sprints
 
 ---

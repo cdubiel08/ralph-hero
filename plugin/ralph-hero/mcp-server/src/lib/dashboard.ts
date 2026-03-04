@@ -41,6 +41,10 @@ export interface DashboardItem {
   projectNumber?: number; // Source project number (multi-project)
   projectTitle?: string; // Human-readable project title (multi-project)
   repository?: string; // "owner/repo" nameWithOwner format
+  iterationId?: string; // Short iteration ID (e.g., "cfc16e4d")
+  iterationTitle?: string; // Human-readable iteration name (e.g., "Sprint 1")
+  iterationStartDate?: string; // ISO date of iteration start
+  iterationDuration?: number; // Duration in days
 }
 
 /** One row in the pipeline snapshot. */
@@ -129,6 +133,7 @@ export interface DashboardData {
   projectBreakdowns?: Record<number, ProjectBreakdown>;
   repoBreakdowns?: Record<string, RepoBreakdown>;
   streams?: StreamDashboardSection;
+  iterations?: IterationDashboardSection;
 }
 
 export interface HealthConfig {
@@ -608,6 +613,87 @@ export function computeStreamSection(
 }
 
 // ---------------------------------------------------------------------------
+// Iteration section
+// ---------------------------------------------------------------------------
+
+export interface IterationPhaseCount {
+  state: string;
+  count: number;
+}
+
+export interface IterationSummary {
+  iterationTitle: string;
+  startDate: string;
+  duration: number;
+  issueCount: number;
+  phaseCounts: IterationPhaseCount[];
+}
+
+export interface IterationDashboardSection {
+  iterations: IterationSummary[];
+}
+
+/**
+ * Compute per-iteration breakdown: group items by iterationTitle,
+ * then count issues per workflow state within each iteration.
+ * Only includes items that have an iteration assignment.
+ */
+export function computeIterationSection(
+  items: DashboardItem[],
+): IterationDashboardSection | undefined {
+  const iterItems = items.filter((i) => i.iterationId && i.iterationTitle);
+  if (iterItems.length === 0) return undefined;
+
+  const groups = new Map<string, DashboardItem[]>();
+  for (const item of iterItems) {
+    const key = item.iterationTitle!;
+    const group = groups.get(key);
+    if (group) {
+      group.push(item);
+    } else {
+      groups.set(key, [item]);
+    }
+  }
+
+  const summaries: IterationSummary[] = [];
+
+  for (const [title, groupItems] of groups) {
+    const stateCounts = new Map<string, number>();
+    for (const item of groupItems) {
+      const state = item.workflowState ?? "Unknown";
+      stateCounts.set(state, (stateCounts.get(state) ?? 0) + 1);
+    }
+
+    const phaseCounts: IterationPhaseCount[] = [];
+    for (const [state, count] of stateCounts) {
+      phaseCounts.push({ state, count });
+    }
+
+    // Sort by STATE_ORDER
+    const stateIdx = (s: string) => {
+      const idx = STATE_ORDER.indexOf(s);
+      return idx >= 0 ? idx : STATE_ORDER.length;
+    };
+    phaseCounts.sort((a, b) => stateIdx(a.state) - stateIdx(b.state));
+
+    // Use metadata from the first item in this iteration group
+    const first = groupItems[0];
+    summaries.push({
+      iterationTitle: title,
+      startDate: first.iterationStartDate ?? "",
+      duration: first.iterationDuration ?? 0,
+      issueCount: groupItems.length,
+      phaseCounts,
+    });
+  }
+
+  // Sort by startDate ascending
+  summaries.sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+  return { iterations: summaries };
+}
+
+// ---------------------------------------------------------------------------
 // buildDashboard
 // ---------------------------------------------------------------------------
 
@@ -709,6 +795,9 @@ export function buildDashboard(
     streamSection = computeStreamSection(streams, items);
   }
 
+  // Iteration section (auto-detected from item iteration assignments)
+  const iterationSection = computeIterationSection(items);
+
   return {
     generatedAt: new Date(now).toISOString(),
     totalIssues: items.length,
@@ -721,6 +810,7 @@ export function buildDashboard(
     ...(projectBreakdowns ? { projectBreakdowns } : {}),
     ...(repoBreakdowns ? { repoBreakdowns } : {}),
     ...(streamSection ? { streams: streamSection } : {}),
+    ...(iterationSection ? { iterations: iterationSection } : {}),
   };
 }
 
@@ -912,6 +1002,28 @@ export function formatMarkdown(
     }
   }
 
+  // Iteration section
+  if (data.iterations && data.iterations.iterations.length > 0) {
+    lines.push("");
+    lines.push("## Iterations");
+
+    for (const iter of data.iterations.iterations) {
+      lines.push("");
+      const endDate = iter.startDate && iter.duration
+        ? new Date(new Date(iter.startDate).getTime() + iter.duration * 86400000).toISOString().split("T")[0]
+        : "";
+      const dateRange = iter.startDate && endDate
+        ? ` (${iter.startDate} - ${endDate}, ${iter.duration}d)`
+        : "";
+      lines.push(`### ${iter.iterationTitle}${dateRange}`);
+      lines.push("");
+      const phaseSummary = iter.phaseCounts
+        .map((pc) => `${pc.state}: ${pc.count}`)
+        .join(" | ");
+      lines.push(`**${iter.issueCount} issues**: ${phaseSummary}`);
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -1008,6 +1120,20 @@ export function formatAscii(data: DashboardData): string {
       const memberLabel = s.members.length === 1 ? "member" : "members";
       lines.push(
         `${s.streamId.padEnd(20)} ${s.currentPhase.padEnd(20)} ${s.members.length} ${memberLabel}  ${s.convergencePercent}%`,
+      );
+    }
+  }
+
+  // Iteration section
+  if (data.iterations && data.iterations.iterations.length > 0) {
+    lines.push("");
+    lines.push("--- Iterations ---");
+    for (const iter of data.iterations.iterations) {
+      const phaseSummary = iter.phaseCounts
+        .map((pc) => `${pc.state}: ${pc.count}`)
+        .join(", ");
+      lines.push(
+        `${iter.iterationTitle.padEnd(20)} ${iter.issueCount} issues  ${phaseSummary}`,
       );
     }
   }
