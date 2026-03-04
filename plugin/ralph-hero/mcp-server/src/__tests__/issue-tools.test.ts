@@ -182,6 +182,68 @@ describe("get_issue includePipeline structural", () => {
 });
 
 // ---------------------------------------------------------------------------
+// list_issues iteration filter structural tests (GH-510)
+// ---------------------------------------------------------------------------
+
+describe("list_issues iteration filter structural", () => {
+  it("Zod schema includes iteration param", () => {
+    expect(issueToolsSrc).toContain("iteration: z");
+  });
+
+  it("iteration param description mentions @current and @next tokens", () => {
+    expect(issueToolsSrc).toContain("@current");
+    expect(issueToolsSrc).toContain("@next");
+  });
+
+  it("GraphQL query includes ProjectV2ItemFieldIterationValue fragment", () => {
+    expect(issueToolsSrc).toContain("ProjectV2ItemFieldIterationValue");
+  });
+
+  it("GraphQL fragment fetches iterationId, title, startDate, duration", () => {
+    expect(issueToolsSrc).toContain("iterationId");
+    expect(issueToolsSrc).toContain("startDate");
+    expect(issueToolsSrc).toContain("duration");
+  });
+
+  it("RawProjectItem type includes iteration fields", () => {
+    // The type should include iterationId
+    const typeSection = issueToolsSrc.slice(
+      issueToolsSrc.indexOf("interface RawProjectItem"),
+      issueToolsSrc.indexOf("interface RawProjectItem") + 500,
+    );
+    expect(typeSection).toContain("iterationId?: string");
+  });
+
+  it("getIterationValue helper extracts iteration data from items", () => {
+    expect(issueToolsSrc).toContain("function getIterationValue");
+    expect(issueToolsSrc).toContain("ProjectV2ItemFieldIterationValue");
+  });
+
+  it("iteration filter calls resolveIterationId", () => {
+    expect(issueToolsSrc).toContain("resolveIterationId(");
+  });
+
+  it("iteration filter discovers field name dynamically via getFieldNames + getIterations", () => {
+    // The list_issues handler should discover the iteration field name from cache
+    expect(issueToolsSrc).toContain("fieldCache.getFieldNames(projectNumber)");
+    expect(issueToolsSrc).toContain("fieldCache.getIterations(name, projectNumber)");
+  });
+
+  it("response mapping includes iteration data", () => {
+    expect(issueToolsSrc).toContain("iteration: iterVal");
+  });
+
+  it("tool description mentions iteration", () => {
+    // list_issues tool description should mention iteration in returned fields
+    const toolDesc = issueToolsSrc.slice(
+      issueToolsSrc.indexOf("ralph_hero__list_issues"),
+      issueToolsSrc.indexOf("ralph_hero__list_issues") + 500,
+    );
+    expect(toolDesc).toContain("iteration");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Removed tools verification (GH-454)
 // ---------------------------------------------------------------------------
 

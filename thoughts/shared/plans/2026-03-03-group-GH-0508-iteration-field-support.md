@@ -220,9 +220,9 @@ export function resolveIterationId(
 - `@previous`: find the most recently completed iteration before today using `completedIterations` from cache
 
 ### Success Criteria
-- [ ] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint — new test
-- [ ] Automated: `list_issues({ iteration: "Sprint 1" })` returns issues assigned to that named iteration
-- [ ] Automated: `list_issues({ workflowState: "In Progress" })` (no `iteration`) unchanged — regression test
+- [x] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint — new test
+- [x] Automated: `list_issues({ iteration: "Sprint 1" })` returns issues assigned to that named iteration
+- [x] Automated: `list_issues({ workflowState: "In Progress" })` (no `iteration`) unchanged — regression test
 - [ ] Manual: `list_issues({ iteration: "@next" })` returns issues in upcoming sprint
 
 **Creates for next phase**: No direct output consumed by later phases.

@@ -58,7 +58,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_issues",
-    "List issues from a GitHub repository with optional filters. Returns: number, title, state, workflowState, estimate, priority, labels, assignees. Use workflowState filter to find issues in a specific phase. Recovery: if no results, broaden filters or check that issues exist in the project.",
+    "List issues from a GitHub repository with optional filters. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters or check that issues exist in the project.",
     {
       owner: z
         .string()
@@ -91,6 +91,13 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Filter by Priority (P0, P1, P2, P3)"),
+      iteration: z
+        .string()
+        .optional()
+        .describe(
+          "Filter by iteration/sprint. Accepts iteration title (e.g., 'Sprint 1'), " +
+          "@current (active sprint), or @next (upcoming sprint).",
+        ),
       label: z.string().optional().describe("Filter by label name"),
       repoFilter: z
         .string()
@@ -236,6 +243,14 @@ export function registerIssueTools(
                           optionId
                           field { ... on ProjectV2FieldCommon { name } }
                         }
+                        ... on ProjectV2ItemFieldIterationValue {
+                          __typename
+                          iterationId
+                          title
+                          startDate
+                          duration
+                          field { ... on ProjectV2FieldCommon { name } }
+                        }
                       }
                     }
                   }
@@ -290,6 +305,36 @@ export function registerIssueTools(
           items = items.filter(
             (item) => getFieldValue(item, "Priority") === args.priority,
           );
+        }
+
+        // Filter by iteration
+        if (args.iteration) {
+          // Discover the iteration field name from cache
+          const fieldNames = fieldCache.getFieldNames(projectNumber);
+          const iterFieldName = fieldNames.find((name) => {
+            const iters = fieldCache.getIterations(name, projectNumber);
+            return iters !== undefined && iters.length > 0;
+          });
+
+          if (iterFieldName) {
+            // Resolve the target iteration ID from title or token
+            const targetIterationId = resolveIterationId(
+              fieldCache, projectNumber, iterFieldName, args.iteration,
+            );
+
+            if (targetIterationId) {
+              items = items.filter((item) => {
+                const iterVal = getIterationValue(item);
+                return iterVal?.iterationId === targetIterationId;
+              });
+            } else {
+              // Token/title did not resolve - no items can match
+              items = [];
+            }
+          } else {
+            // No iteration field configured - no items can match
+            items = [];
+          }
         }
 
         // Filter by label
@@ -421,6 +466,7 @@ export function registerIssueTools(
         // Format response
         const formattedItems = items.map((item) => {
           const content = item.content as Record<string, unknown> | null;
+          const iterVal = getIterationValue(item);
           return {
             number: content?.number,
             title: content?.title,
@@ -431,6 +477,9 @@ export function registerIssueTools(
             workflowState: getFieldValue(item, "Workflow State"),
             estimate: getFieldValue(item, "Estimate"),
             priority: getFieldValue(item, "Priority"),
+            iteration: iterVal
+              ? { title: iterVal.title, startDate: iterVal.startDate, duration: iterVal.duration }
+              : null,
             labels: (
               content?.labels as { nodes: Array<{ name: string }> }
             )?.nodes?.map((l) => l.name),
@@ -1815,6 +1864,10 @@ interface RawProjectItem {
       optionId?: string;
       text?: string;
       number?: number;
+      iterationId?: string;
+      title?: string;
+      startDate?: string;
+      duration?: number;
       field?: { name: string };
     }>;
   };
@@ -1830,6 +1883,24 @@ function getFieldValue(
       fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fieldValue?.name;
+}
+
+function getIterationValue(
+  item: RawProjectItem,
+): { iterationId: string; title: string; startDate: string; duration: number; fieldName: string } | undefined {
+  const fv = item.fieldValues.nodes.find(
+    (fv) => fv.__typename === "ProjectV2ItemFieldIterationValue",
+  );
+  if (fv?.iterationId && fv.title && fv.startDate != null && fv.duration != null && fv.field?.name) {
+    return {
+      iterationId: fv.iterationId,
+      title: fv.title,
+      startDate: fv.startDate,
+      duration: fv.duration,
+      fieldName: fv.field.name,
+    };
+  }
+  return undefined;
 }
 
 type PresenceField = "workflowState" | "estimate" | "priority" | "labels" | "assignees";
