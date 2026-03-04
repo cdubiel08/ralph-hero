@@ -164,7 +164,7 @@ Routing map (instruct model to invoke the corresponding skill):
 | Issue ready for research | `/ralph-hero:ralph-research` with issue number |
 | Issue ready for planning | `/ralph-hero:ralph-plan` with issue number |
 | Hygiene/cleanup needed | `/ralph-hero:ralph-hygiene` |
-| Board healthy, pick next work | `/ralph-hero:ralph-hero` for autonomous processing |
+| Board healthy, pick next work | `/ralph-hero:ralph-triage` to pick from backlog |
 
 For "All" selection: invoke skills sequentially in numbered order (1 → 2 → 3). Warn that earlier actions may change state affecting later insights.
 
@@ -176,12 +176,12 @@ Session briefing complete. [N] insight(s) acted on.
 ```
 
 ### Success Criteria
-- [ ] Automated: `test -f plugin/ralph-hero/skills/ralph-hello/SKILL.md` — file exists
-- [ ] Automated: `grep -q 'RALPH_COMMAND=hello' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — hook configured
-- [ ] Automated: `grep -q 'pipeline_dashboard' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses dashboard tool
-- [ ] Automated: `grep -q 'project_hygiene' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses hygiene tool
-- [ ] Automated: `grep -q 'gh pr list' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses PR CLI
-- [ ] Automated: `grep -q 'AskUserQuestion' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — has routing
+- [x] Automated: `test -f plugin/ralph-hero/skills/ralph-hello/SKILL.md` — file exists
+- [x] Automated: `grep -q 'RALPH_COMMAND=hello' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — hook configured
+- [x] Automated: `grep -q 'pipeline_dashboard' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses dashboard tool
+- [x] Automated: `grep -q 'project_hygiene' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses hygiene tool
+- [x] Automated: `grep -q 'gh pr list' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — uses PR CLI
+- [x] Automated: `grep -q 'AskUserQuestion' plugin/ralph-hero/skills/ralph-hello/SKILL.md` — has routing
 - [ ] Manual: Invoke `/ralph-hero:ralph-hello` — produces 3 insights and offers routing
 
 ---
@@ -192,6 +192,18 @@ Session briefing complete. [N] insight(s) acted on.
 - [ ] Test with empty board (no issues) — graceful "nothing urgent" message
 - [ ] Test insight selection routing — each option invokes correct skill
 - [ ] Test "Other"/skip path — displays briefing and stops cleanly
+
+## Code Review Findings (v1 follow-ups)
+
+Issues identified during code review that scored 75/100 confidence. All addressed:
+
+1. ~~**`Skill` tool missing from `allowed-tools`**~~ — Fixed: added `Skill` to `allowed-tools` in SKILL.md.
+
+2. ~~**MCP tools missing from `allowed-tools`**~~ — Fixed: added `ralph_hero__pipeline_dashboard` and `ralph_hero__project_hygiene` to `allowed-tools`.
+
+3. **`AskUserQuestion` missing from `allowed-tools`** — Not added. `AskUserQuestion` is a Claude Code built-in tool exempt from `allowed-tools` enforcement (no existing skill lists it, including `ralph-review` and `ralph-setup` which both use it). Verified as non-issue.
+
+4. ~~**`specs/skill-permissions.md` not updated**~~ — Fixed: added `hello` column to permission matrix and `ralph-hello` row to I/O contracts table.
 
 ## References
 - Research: https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-03-GH-0480-hello-session-briefing.md

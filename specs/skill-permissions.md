@@ -16,22 +16,22 @@ Defines the tool access matrix for every `ralph-*` skill and the plugin-level ho
 
 Each cell: **allow** = tool is in `allowed-tools`, **—** = tool is not listed (blocked by runtime).
 
-| Tool | triage | split | research | plan | impl | review | hero | team | merge | pr | val | status | report | hygiene | setup |
-|------|--------|-------|----------|------|------|--------|------|------|-------|----|----|--------|--------|---------|-------|
-| Read | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | — | — | — | — |
-| Write | — | — | allow | allow | allow | allow | — | allow | — | — | — | — | — | — | — |
-| Edit | — | — | — | — | allow | — | — | — | — | — | — | — | — | — | — |
-| Glob | allow | allow | allow | allow | allow | allow | allow | — | allow | allow | allow | — | — | — | — |
-| Grep | allow | allow | allow | allow | allow | allow | allow | — | — | — | allow | — | — | — | — |
-| Bash | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | — | — | — | — |
-| Task | allow | allow | allow | allow | allow | allow | allow | allow | — | — | allow | — | — | — | — |
-| Skill | — | — | — | — | — | — | allow | allow | allow | — | — | — | — | — | — |
-| WebSearch | allow | — | allow | — | — | — | — | — | — | — | — | — | — | — | — |
-| WebFetch | — | — | allow | — | — | — | — | — | — | — | — | — | — | — | — |
-| TaskCreate/List/Get/Update | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — |
-| SendMessage | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — |
-| TeamCreate/Delete | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — |
-| MCP tools (ralph_hero__*) | indirect | indirect | indirect | indirect | indirect | indirect | indirect | indirect | direct | direct | — | — | — | — | — |
+| Tool | triage | split | research | plan | impl | review | hero | team | merge | pr | val | status | report | hygiene | setup | hello |
+|------|--------|-------|----------|------|------|--------|------|------|-------|----|----|--------|--------|---------|-------|-------|
+| Read | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | — | — | — | — | allow |
+| Write | — | — | allow | allow | allow | allow | — | allow | — | — | — | — | — | — | — | — |
+| Edit | — | — | — | — | allow | — | — | — | — | — | — | — | — | — | — | — |
+| Glob | allow | allow | allow | allow | allow | allow | allow | — | allow | allow | allow | — | — | — | — | — |
+| Grep | allow | allow | allow | allow | allow | allow | allow | — | — | — | allow | — | — | — | — | — |
+| Bash | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | — | — | — | — | allow |
+| Task | allow | allow | allow | allow | allow | allow | allow | allow | — | — | allow | — | — | — | — | — |
+| Skill | — | — | — | — | — | — | allow | allow | allow | — | — | — | — | — | — | allow |
+| WebSearch | allow | — | allow | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| WebFetch | — | — | allow | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| TaskCreate/List/Get/Update | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
+| SendMessage | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
+| TeamCreate/Delete | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
+| MCP tools (ralph_hero__*) | indirect | indirect | indirect | indirect | indirect | indirect | indirect | indirect | direct | direct | — | — | — | — | — | direct |
 
 **Note on MCP tools**: Most skills access `ralph_hero__*` tools indirectly through Bash/Task delegation. `ralph-merge` and `ralph-pr` have direct MCP tool access in their `allowed-tools`.
 

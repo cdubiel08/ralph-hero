@@ -58,6 +58,7 @@ Defines the inputs, outputs, preconditions, and postconditions for every `ralph-
 | `ralph-report` | read-only | (no state changes) | — | — | Status update posted |
 | `ralph-hygiene` | read-only | (no state changes) | — | main branch | Archive candidates report |
 | `ralph-setup` | — | — | — | — | GitHub Project V2 configuration |
+| `ralph-hello` | read-only | (no state changes) | — | — | Briefing output, routes to skills |
 
 ### Precondition Enforcement
 
