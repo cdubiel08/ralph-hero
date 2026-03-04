@@ -29,19 +29,19 @@ ralph_hero__save_issue(number=..., estimate="XS")
 ```
 Neither sets `workflowState`. Created issues land on the project board with no Workflow State, making them invisible to `ralph-triage`'s `analyst-triage` profile (which queries `workflowState: "Backlog"`).
 
-In contrast, `ralph-split` (the dedicated split skill) correctly sets `workflowState: "Backlog"` on created sub-issues.
+In contrast, `ralph-split` (the dedicated split skill) correctly ensures sub-issues reach "Backlog" — it uses the `__COMPLETE__` semantic intent with `command: "ralph_split"`, which the state machine resolves to "Backlog" for that command. The end result is the same (sub-issues land in Backlog), but the mechanism is semantic intent resolution, not a literal `"Backlog"` hardcode.
 
 ## Desired End State
 
 ### Verification
 - [ ] Issues created by `form-idea` (single, parent, children) have `workflowState: "Backlog"` in the `save_issue` call
 - [ ] Issues created by `ralph-triage` SPLIT path have `workflowState: "Backlog"` in the `save_issue` call
-- [ ] Both skills match `ralph-split`'s pattern for setting workflowState on new issues
+- [ ] `ralph-triage` SessionStart hook includes `RALPH_VALID_OUTPUT_STATES` with `Backlog` in the list
 
 ## What We're NOT Doing
 - Not modifying `create_issue` MCP handler (that's GH-516, separate issue)
-- Not adding hooks or validation — existing hooks already accept `"Backlog"` as a valid state
-- Not changing any TypeScript code — these are pure SKILL.md prompt changes
+- Not changing any TypeScript code — `form-idea` changes are pure SKILL.md prompt edits
+- Note: Phase 2 (`ralph-triage`) **does** require a hook config change (adding "Backlog" to `RALPH_VALID_OUTPUT_STATES`) in addition to the SKILL.md edit — see Phase 2 details below
 
 ## Implementation Approach
 Both phases are independent one-line additions to SKILL.md files. Phase 1 has three insertion points (single issue, ticket tree parent, ticket tree children). Phase 2 has one insertion point. No code dependencies between phases.
@@ -115,9 +115,33 @@ After:
 ## Phase 2: GH-515 — `ralph-triage` split path workflowState fix
 > **Issue**: [GH-515](https://github.com/cdubiel08/ralph-hero/issues/515) | **Research**: [2026-03-04-GH-0515](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-04-GH-0515-ralph-triage-split-workflowstate-fix.md)
 
+**Note**: This phase requires TWO changes — the SKILL.md prompt edit AND a hook config update. The `triage-state-gate.sh` PostToolUse hook validates `workflowState` against `RALPH_VALID_OUTPUT_STATES` (default: `Research Needed,Ready for Plan,Done,Canceled,Human Needed`). `"Backlog"` is not in this list, so the `save_issue` call will be blocked at runtime without the hook update.
+
 ### Changes Required
 
-#### 1. SPLIT path `save_issue` call
+#### 1. Hook config — add "Backlog" to valid output states
+**File**: [`plugin/ralph-hero/skills/ralph-triage/SKILL.md:10`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/ralph-triage/SKILL.md#L10)
+**Change**: Add `RALPH_VALID_OUTPUT_STATES` to the `set-skill-env.sh` call in the SessionStart hook to include `"Backlog"`.
+
+Before:
+```yaml
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=triage RALPH_REQUIRED_BRANCH=main"
+```
+
+After:
+```yaml
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=triage RALPH_REQUIRED_BRANCH=main RALPH_VALID_OUTPUT_STATES='Research Needed,Ready for Plan,Done,Canceled,Human Needed,Backlog'"
+```
+
+**Rationale**: The SPLIT path legitimately creates new child issues that should enter the pipeline at Backlog. This is the correct semantic for triage-created sub-issues. Adding "Backlog" to the valid output states explicitly models this intent.
+
+#### 2. SPLIT path `save_issue` call
 **File**: [`plugin/ralph-hero/skills/ralph-triage/SKILL.md:205-209`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/ralph-triage/SKILL.md#L205-L209)
 **Change**: Add `- workflowState: "Backlog"` to the `save_issue` call in Step 5 SPLIT, "If no children exist" branch
 
@@ -143,16 +167,18 @@ After:
 ```
 
 ### Success Criteria
+- [ ] Automated: `grep 'RALPH_VALID_OUTPUT_STATES' plugin/ralph-hero/skills/ralph-triage/SKILL.md` includes `Backlog`
 - [ ] Automated: `grep -c 'workflowState.*Backlog\|workflowState: "Backlog"' plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns at least 1 (in the SPLIT path)
-- [ ] Manual: Read the SPLIT path in SKILL.md and verify the `save_issue` call includes `workflowState: "Backlog"`
+- [ ] Manual: Verify SessionStart hook includes `RALPH_VALID_OUTPUT_STATES=...,Backlog`
+- [ ] Manual: Verify the SPLIT path `save_issue` call includes `workflowState: "Backlog"`
 
 ---
 
 ## Integration Testing
 - [ ] Verify `form-idea` SKILL.md has `workflowState: "Backlog"` in all three issue creation paths
+- [ ] Verify `ralph-triage` SKILL.md SessionStart hook includes `RALPH_VALID_OUTPUT_STATES` with `Backlog`
 - [ ] Verify `ralph-triage` SKILL.md has `workflowState: "Backlog"` in the SPLIT path `save_issue` call
 - [ ] Verify no other SKILL.md files were modified
-- [ ] Verify changes match `ralph-split` SKILL.md's existing pattern
 
 ## References
 - Research GH-514: [2026-03-04-GH-0514-form-idea-workflowstate-fix.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-04-GH-0514-form-idea-workflowstate-fix.md)
