@@ -101,7 +101,7 @@ describe("VALID_STATES completeness", () => {
 
 describe("PARENT_GATE_STATES", () => {
   it("contains exactly the expected gate states", () => {
-    expect(PARENT_GATE_STATES).toEqual(["Ready for Plan", "In Review", "Done"]);
+    expect(PARENT_GATE_STATES).toEqual(["Ready for Plan", "Plan in Review", "In Review", "Done"]);
   });
 
   it("does not include intermediate states", () => {
@@ -115,6 +115,7 @@ describe("PARENT_GATE_STATES", () => {
 describe("isParentGateState", () => {
   it("returns true for gate states", () => {
     expect(isParentGateState("Ready for Plan")).toBe(true);
+    expect(isParentGateState("Plan in Review")).toBe(true);
     expect(isParentGateState("In Review")).toBe(true);
     expect(isParentGateState("Done")).toBe(true);
   });

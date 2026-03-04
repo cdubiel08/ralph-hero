@@ -19,6 +19,7 @@ import {
 import {
   isValidState,
   isEarlierState,
+  isParentGateState,
   VALID_STATES,
   LOCK_STATES,
   TERMINAL_STATES,
@@ -39,6 +40,7 @@ import {
   resolveFullConfig,
   resolveFullConfigOptionalRepo,
   syncStatusField,
+  autoAdvanceParent,
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -1421,6 +1423,29 @@ export function registerIssueTools(
               }`,
               { projectId, itemId: projectItemId, fieldId },
             );
+          }
+
+          // 4f. Auto-advance parent if we just moved to a gate state
+          if (resolvedWorkflowState && isParentGateState(resolvedWorkflowState)) {
+            try {
+              const advanceResult = await autoAdvanceParent(
+                client,
+                fieldCache,
+                owner,
+                repo,
+                args.number,
+                resolvedWorkflowState,
+                projectNumber,
+              );
+              if (advanceResult?.advanced) {
+                changes.parentAdvanced = {
+                  number: advanceResult.parentNumber,
+                  toState: advanceResult.toState,
+                };
+              }
+            } catch {
+              // Best-effort: don't fail the primary save_issue operation
+            }
           }
         }
 
