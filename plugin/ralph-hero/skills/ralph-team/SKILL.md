@@ -187,8 +187,8 @@ Normal phase progression is handled by `blockedBy` chains — no team lead actio
 
 The team lead intervenes only for error recovery:
 
-- **NEEDS_ITERATION review**: Create a new Plan task for the analyst (blockedBy: none, since the review is complete). Update the corresponding Implement task's `blockedBy` to include the new Plan task.
-- **Failed validation**: Create a new Implement task for the builder (blockedBy: none). Update the Validate task's `blockedBy` to include the new Implement task.
+- **NEEDS_ITERATION review**: Create a new Plan task for the analyst (blockedBy: none, since the review is complete). Create a new Review task for the builder (blockedBy: new Plan task). Update the corresponding Implement task's `blockedBy` to include the new Review task. Reworked plans must go through review again before implementation.
+- **Failed validation**: Create a new Implement task for the builder (blockedBy: none). Create a new Validate task for the integrator (blockedBy: new Implement task). The original Validate task already completed with a failure — it cannot be reopened by adding blockers.
 - **Escalation (Human Needed)**: Report to the user and stop. Do not create corrective tasks — a human must decide next steps.
 
 ### Stream Detection Refinement
