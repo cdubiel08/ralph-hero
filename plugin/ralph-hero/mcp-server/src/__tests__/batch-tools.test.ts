@@ -112,11 +112,43 @@ describe("buildBatchMutationQuery", () => {
     expect(mutationString).toContain("updateProjectV2ItemFieldValue");
   });
 
-  it("references singleSelectOptionId in the value", () => {
+  it("references singleSelectOptionId in the value by default", () => {
     const { mutationString } = buildBatchMutationQuery("proj", [
       { alias: "u0", itemId: "i", fieldId: "f", optionId: "o" },
     ]);
     expect(mutationString).toContain("singleSelectOptionId");
+  });
+
+  it("uses iterationId value key when valueType is iterationId", () => {
+    const { mutationString } = buildBatchMutationQuery("proj", [
+      { alias: "iter_0", itemId: "item-a", fieldId: "field-sprint", optionId: "iter-abc", valueType: "iterationId" },
+    ]);
+    expect(mutationString).toContain("iterationId");
+    expect(mutationString).not.toContain("singleSelectOptionId");
+  });
+
+  it("mixes singleSelectOptionId and iterationId in the same batch", () => {
+    const { mutationString } = buildBatchMutationQuery("proj", [
+      { alias: "ws_0", itemId: "item-a", fieldId: "field-ws", optionId: "opt-ip" },
+      { alias: "iter_1", itemId: "item-a", fieldId: "field-sprint", optionId: "iter-abc", valueType: "iterationId" },
+    ]);
+    // Both value keys should be present
+    expect(mutationString).toContain("singleSelectOptionId");
+    expect(mutationString).toContain("iterationId");
+    // Both aliases present
+    expect(mutationString).toContain("ws_0:");
+    expect(mutationString).toContain("iter_1:");
+  });
+
+  it("defaults valueType to singleSelectOptionId when omitted", () => {
+    const { mutationString: withDefault } = buildBatchMutationQuery("proj", [
+      { alias: "u0", itemId: "i", fieldId: "f", optionId: "o" },
+    ]);
+    const { mutationString: withExplicit } = buildBatchMutationQuery("proj", [
+      { alias: "u0", itemId: "i", fieldId: "f", optionId: "o", valueType: "singleSelectOptionId" },
+    ]);
+    // Both should produce the same output
+    expect(withDefault).toBe(withExplicit);
   });
 });
 

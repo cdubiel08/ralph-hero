@@ -137,6 +137,10 @@ export interface RawDashboardItem {
     nodes: Array<{
       __typename?: string;
       name?: string;
+      iterationId?: string;
+      title?: string;
+      startDate?: string;
+      duration?: number;
       field?: { name: string };
     }>;
   };
@@ -171,6 +175,11 @@ export function toDashboardItems(
     if (!r.content || r.content.__typename !== "Issue") continue;
     if (r.content.number === undefined) continue;
 
+    // Extract iteration value (if any)
+    const iterFv = r.fieldValues.nodes.find(
+      (n) => n.__typename === "ProjectV2ItemFieldIterationValue",
+    );
+
     items.push({
       number: r.content.number,
       title: r.content.title ?? "(untitled)",
@@ -186,6 +195,12 @@ export function toDashboardItems(
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(projectTitle !== undefined ? { projectTitle } : {}),
       ...(r.content.repository ? { repository: r.content.repository.nameWithOwner } : {}),
+      ...(iterFv?.iterationId ? {
+        iterationId: iterFv.iterationId,
+        iterationTitle: iterFv.title ?? undefined,
+        iterationStartDate: iterFv.startDate ?? undefined,
+        iterationDuration: iterFv.duration ?? undefined,
+      } : {}),
     });
   }
 
@@ -233,6 +248,14 @@ export const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $f
               ... on ProjectV2ItemFieldSingleSelectValue {
                 __typename
                 name
+                field { ... on ProjectV2FieldCommon { name } }
+              }
+              ... on ProjectV2ItemFieldIterationValue {
+                __typename
+                iterationId
+                title
+                startDate
+                duration
                 field { ... on ProjectV2FieldCommon { name } }
               }
             }

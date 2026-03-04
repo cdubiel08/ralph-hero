@@ -72,7 +72,25 @@ export interface ProjectV2SingleSelectField extends ProjectV2FieldCommon {
   options: ProjectV2SingleSelectFieldOption[];
 }
 
-export type ProjectV2FieldUnion = ProjectV2Field | ProjectV2SingleSelectField;
+export interface ProjectV2IterationFieldIteration {
+  id: string;        // short string ID (e.g., "cfc16e4d")
+  title: string;
+  startDate: string; // ISO date string
+  duration: number;  // days
+}
+
+export interface ProjectV2IterationField extends ProjectV2FieldCommon {
+  dataType: "ITERATION";
+  configuration: {
+    iterations: ProjectV2IterationFieldIteration[];
+    completedIterations: ProjectV2IterationFieldIteration[];
+  };
+}
+
+export type ProjectV2FieldUnion =
+  | ProjectV2Field
+  | ProjectV2SingleSelectField
+  | ProjectV2IterationField;
 
 // ---------------------------------------------------------------------------
 // Projects V2 - Field Values
@@ -105,9 +123,10 @@ export interface ProjectV2ItemFieldSingleSelectValue {
 
 export interface ProjectV2ItemFieldIterationValue {
   __typename: "ProjectV2ItemFieldIterationValue";
+  iterationId: string;       // short string ID (e.g., "cfc16e4d")
   title: string;
-  startDate: string;
-  duration: number;
+  startDate: string;         // ISO date string
+  duration: number;          // days
   field: ProjectV2FieldCommon;
 }
 
