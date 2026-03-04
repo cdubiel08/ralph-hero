@@ -1046,6 +1046,13 @@ export function registerIssueTools(
             args.workflowState,
             projectNumber,
           );
+          await syncStatusField(
+            client,
+            fieldCache,
+            projectItemId,
+            args.workflowState,
+            projectNumber,
+          );
         }
 
         if (args.estimate) {

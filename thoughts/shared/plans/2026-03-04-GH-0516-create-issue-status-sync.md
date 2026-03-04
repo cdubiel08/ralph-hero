@@ -26,9 +26,9 @@ The `create_issue` handler sets `workflowState` via `updateProjectItemField()` a
 ## Desired End State
 
 ### Verification
-- [ ] `create_issue` calls `syncStatusField()` after setting workflowState
-- [ ] Build passes (`npm run build` in mcp-server)
-- [ ] Tests pass (`npm test` in mcp-server)
+- [x] `create_issue` calls `syncStatusField()` after setting workflowState
+- [x] Build passes (`npm run build` in mcp-server)
+- [x] Tests pass (`npm test` in mcp-server)
 
 ## What We're NOT Doing
 - Not modifying any SKILL.md files (those are GH-514 and GH-515)
@@ -92,18 +92,18 @@ After:
 ```
 
 ### Success Criteria
-- [ ] Automated: `npm run build` succeeds in `plugin/ralph-hero/mcp-server/`
-- [ ] Automated: `npm test` passes in `plugin/ralph-hero/mcp-server/`
-- [ ] Automated: `grep -A8 'if (args.workflowState)' plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts | grep syncStatusField` finds the call
-- [ ] Manual: Verify the `syncStatusField` call is inside the `if (args.workflowState)` guard, matching `save_issue`'s pattern
+- [x] Automated: `npm run build` succeeds in `plugin/ralph-hero/mcp-server/`
+- [x] Automated: `npm test` passes in `plugin/ralph-hero/mcp-server/`
+- [x] Automated: `grep -A8 'if (args.workflowState)' plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts | grep syncStatusField` finds the call
+- [x] Manual: Verify the `syncStatusField` call is inside the `if (args.workflowState)` guard, matching `save_issue`'s pattern
 
 ---
 
 ## Integration Testing
-- [ ] `npm run build` succeeds
-- [ ] `npm test` passes
-- [ ] `syncStatusField` call is present inside `if (args.workflowState)` block in `create_issue` handler
-- [ ] No changes to `save_issue` handler or any other handler
+- [x] `npm run build` succeeds
+- [x] `npm test` passes
+- [x] `syncStatusField` call is present inside `if (args.workflowState)` block in `create_issue` handler
+- [x] No changes to `save_issue` handler or any other handler
 
 ## References
 - Research: [2026-03-04-GH-0516-create-issue-status-sync-fix.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-04-GH-0516-create-issue-status-sync-fix.md)
