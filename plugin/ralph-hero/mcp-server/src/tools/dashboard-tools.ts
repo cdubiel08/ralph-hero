@@ -131,6 +131,7 @@ export interface RawDashboardItem {
     assignees?: { nodes: Array<{ login: string }> };
     trackedInIssues?: { nodes: Array<{ number: number; state: string }> };
     repository?: { nameWithOwner: string; name: string } | null;
+    subIssues?: { totalCount: number };
   } | null;
   fieldValues: {
     nodes: Array<{
@@ -180,6 +181,7 @@ export function toDashboardItems(
       estimate: getFieldValue(r, "Estimate"),
       assignees:
         r.content.assignees?.nodes?.map((a) => a.login) ?? [],
+      subIssueCount: r.content.subIssues?.totalCount ?? 0,
       blockedBy: [], // blockedBy requires separate queries; omit for now
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(projectTitle !== undefined ? { projectTitle } : {}),
@@ -213,6 +215,7 @@ export const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $f
               closedAt
               assignees(first: 5) { nodes { login } }
               repository { nameWithOwner name }
+              subIssues { totalCount }
             }
             ... on PullRequest {
               __typename

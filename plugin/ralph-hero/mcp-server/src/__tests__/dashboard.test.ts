@@ -43,6 +43,7 @@ function makeItem(overrides: Partial<DashboardItem> = {}): DashboardItem {
     priority: null,
     estimate: null,
     assignees: [],
+    subIssueCount: 0,
     blockedBy: [],
     ...overrides,
   };
@@ -234,6 +235,7 @@ describe("detectHealthIssues", () => {
           ageHours: 1,
           isLocked: true,
           blockedBy: [],
+          subIssueCount: 0,
         })),
       },
     ];
@@ -263,6 +265,7 @@ describe("detectHealthIssues", () => {
           ageHours: 1,
           isLocked: true,
           blockedBy: [],
+          subIssueCount: 0,
         })),
       },
     ];
@@ -291,6 +294,7 @@ describe("detectHealthIssues", () => {
             ageHours: 60,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -318,6 +322,7 @@ describe("detectHealthIssues", () => {
             ageHours: 100,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -344,6 +349,7 @@ describe("detectHealthIssues", () => {
             ageHours: 200,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -368,6 +374,7 @@ describe("detectHealthIssues", () => {
             ageHours: 200,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -392,6 +399,7 @@ describe("detectHealthIssues", () => {
             ageHours: 200,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -417,6 +425,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: false,
             blockedBy: [{ number: 5, workflowState: "In Progress" }],
+            subIssueCount: 0,
           },
         ],
       },
@@ -443,6 +452,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: false,
             blockedBy: [{ number: 5, workflowState: "Done" }],
+            subIssueCount: 0,
           },
         ],
       },
@@ -467,6 +477,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: false,
             blockedBy: [{ number: 5, workflowState: "Canceled" }],
+            subIssueCount: 0,
           },
         ],
       },
@@ -522,6 +533,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: true,
             blockedBy: [],
+            subIssueCount: 0,
           },
           {
             number: 2,
@@ -532,6 +544,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: true,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -558,6 +571,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: true,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -583,6 +597,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -611,6 +626,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -637,6 +653,34 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: true,
             blockedBy: [],
+            subIssueCount: 0,
+          },
+        ],
+      },
+    ];
+
+    const warnings = detectHealthIssues(phases);
+    expect(
+      warnings.filter((w) => w.type === "oversized_in_pipeline").length,
+    ).toBe(0);
+  });
+
+  it("oversized_in_pipeline: M/L/XL with sub-issues not flagged", () => {
+    const phases: PhaseSnapshot[] = [
+      {
+        state: "Ready for Plan",
+        count: 1,
+        issues: [
+          {
+            number: 10,
+            title: "Split parent",
+            priority: null,
+            estimate: "L",
+            assignees: [],
+            ageHours: 1,
+            isLocked: false,
+            blockedBy: [],
+            subIssueCount: 3,
           },
         ],
       },
@@ -664,6 +708,7 @@ describe("detectHealthIssues", () => {
             ageHours: 100,
             isLocked: true,
             blockedBy: [{ number: 5, workflowState: "Backlog" }],
+            subIssueCount: 0,
           },
           {
             number: 2,
@@ -674,6 +719,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: true,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -702,6 +748,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: false,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       },
@@ -727,6 +774,7 @@ describe("detectHealthIssues", () => {
             ageHours: 60,
             isLocked: true,
             blockedBy: [],
+            subIssueCount: 0,
           },
           {
             number: 2,
@@ -737,6 +785,7 @@ describe("detectHealthIssues", () => {
             ageHours: 1,
             isLocked: true,
             blockedBy: [],
+            subIssueCount: 0,
           },
         ],
       }, // lock_collision (critical) + stuck (warning)
