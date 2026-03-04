@@ -41,6 +41,7 @@ import {
   resolveFullConfigOptionalRepo,
   syncStatusField,
   autoAdvanceParent,
+  resolveIterationId,
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -1104,10 +1105,10 @@ export function registerIssueTools(
   server.tool(
     "ralph_hero__save_issue",
     "Unified issue mutation: update any combination of issue properties (title, body, labels, assignees, open/close) " +
-      "and project field values (workflow state, estimate, priority) in a single call. " +
+      "and project field values (workflow state, estimate, priority, iteration) in a single call. " +
       "Supports semantic intents (__LOCK__, __COMPLETE__, etc.) for workflowState. " +
       "Auto-closes the GitHub issue when workflowState resolves to a terminal state (Done, Canceled) unless issueState is explicitly set. " +
-      "Set estimate or priority to null to clear the field. " +
+      "Set estimate, priority, or iteration to null to clear the field. Use @current/@next tokens for iteration. " +
       "Returns: number, url, changes.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
@@ -1128,6 +1129,8 @@ export function registerIssueTools(
         .describe("Estimate. Set to null to clear."),
       priority: z.enum(["P0", "P1", "P2", "P3"]).nullable().optional()
         .describe("Priority. Set to null to clear."),
+      iteration: z.string().nullable().optional()
+        .describe("Iteration/sprint title (e.g., 'Sprint 1'), @current, @next, or null to clear."),
       command: z.string().optional()
         .describe("Ralph command for semantic intent resolution (e.g., 'ralph_impl'). Required when workflowState is a semantic intent."),
     },
@@ -1137,7 +1140,8 @@ export function registerIssueTools(
         const hasIssueFields = args.title !== undefined || args.body !== undefined ||
           args.labels !== undefined || args.assignees !== undefined || args.issueState !== undefined;
         const hasProjectFields = args.workflowState !== undefined ||
-          args.estimate !== undefined || args.priority !== undefined;
+          args.estimate !== undefined || args.priority !== undefined ||
+          args.iteration !== undefined;
 
         if (!hasIssueFields && !hasProjectFields) {
           return toolError("No fields to update. Provide at least one field.");
@@ -1336,7 +1340,7 @@ export function registerIssueTools(
           }
 
           // Collect field updates for aliased batch mutation
-          const updates: Array<{ alias: string; itemId: string; fieldId: string; optionId: string }> = [];
+          const updates: Array<{ alias: string; itemId: string; fieldId: string; optionId: string; valueType?: "singleSelectOptionId" | "iterationId" }> = [];
           // Collect fields to clear (separate mutations)
           const fieldsToClear: Array<{ fieldName: string; fieldId: string }> = [];
           let opIdx = 0;
@@ -1403,13 +1407,49 @@ export function registerIssueTools(
             }
           }
 
-          // 4d. Execute aliased batch mutation for non-null field updates
+          // 4d. Iteration (set, resolve token, or clear)
+          if (args.iteration !== undefined) {
+            const fieldNames = fieldCache.getFieldNames(projectNumber);
+            const iterFieldName = fieldNames.find((name) => {
+              const iters = fieldCache.getIterations(name, projectNumber);
+              return iters !== undefined && iters.length > 0;
+            });
+
+            if (iterFieldName) {
+              const fieldId = fieldCache.getFieldId(iterFieldName, projectNumber);
+              if (args.iteration === null) {
+                // Clear the iteration field
+                if (fieldId) {
+                  fieldsToClear.push({ fieldName: iterFieldName, fieldId });
+                }
+                changes.iteration = null;
+              } else {
+                // Set iteration by title or token (@current, @next)
+                const iterationId = resolveIterationId(
+                  fieldCache, projectNumber, iterFieldName, args.iteration,
+                );
+                if (fieldId && iterationId) {
+                  updates.push({
+                    alias: `iter_${opIdx}`,
+                    itemId: projectItemId,
+                    fieldId,
+                    optionId: iterationId,
+                    valueType: "iterationId",
+                  });
+                  opIdx++;
+                }
+                changes.iteration = args.iteration;
+              }
+            }
+          }
+
+          // 4e. Execute aliased batch mutation for non-null field updates
           if (updates.length > 0) {
             const { mutationString, variables } = buildBatchMutationQuery(projectId, updates);
             await client.projectMutate(mutationString, variables);
           }
 
-          // 4e. Execute clear mutations for null fields (separate calls)
+          // 4f. Execute clear mutations for null fields (separate calls)
           for (const { fieldId } of fieldsToClear) {
             await client.projectMutate(
               `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
@@ -1425,7 +1465,7 @@ export function registerIssueTools(
             );
           }
 
-          // 4f. Auto-advance parent if we just moved to a gate state
+          // 4g. Auto-advance parent if we just moved to a gate state
           if (resolvedWorkflowState && isParentGateState(resolvedWorkflowState)) {
             try {
               const advanceResult = await autoAdvanceParent(
