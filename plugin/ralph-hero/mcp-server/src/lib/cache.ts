@@ -92,10 +92,18 @@ export class SessionCache {
 // Field Option Cache
 // ---------------------------------------------------------------------------
 
+export interface IterationData {
+  id: string;
+  title: string;
+  startDate: string;
+  duration: number;
+}
+
 interface ProjectCacheData {
   projectId: string;
   fields: Map<string, Map<string, string>>;
   fieldIds: Map<string, string>;
+  iterations: Map<string, IterationData[]>;
 }
 
 /**
@@ -114,6 +122,7 @@ export class FieldOptionCache {
 
   /**
    * Populate the cache from project field data.
+   * Handles both single-select fields (options) and iteration fields (configuration.iterations).
    */
   populate(
     projectNumber: number,
@@ -122,10 +131,15 @@ export class FieldOptionCache {
       id: string;
       name: string;
       options?: Array<{ id: string; name: string }>;
+      configuration?: {
+        iterations: IterationData[];
+        completedIterations: IterationData[];
+      };
     }>,
   ): void {
     const fieldMap = new Map<string, Map<string, string>>();
     const fieldIdMap = new Map<string, string>();
+    const iterationMap = new Map<string, IterationData[]>();
 
     for (const field of fields) {
       fieldIdMap.set(field.name, field.id);
@@ -136,12 +150,30 @@ export class FieldOptionCache {
         }
         fieldMap.set(field.name, optionMap);
       }
+      if (field.configuration?.iterations) {
+        // Store iteration title -> ID in the options map for resolveOptionId compatibility
+        const iterOptionMap = new Map<string, string>();
+        for (const iter of field.configuration.iterations) {
+          iterOptionMap.set(iter.title, iter.id);
+        }
+        for (const iter of field.configuration.completedIterations ?? []) {
+          iterOptionMap.set(iter.title, iter.id);
+        }
+        fieldMap.set(field.name, iterOptionMap);
+
+        // Store full iteration metadata for @current/@next resolution
+        iterationMap.set(field.name, [
+          ...field.configuration.iterations,
+          ...(field.configuration.completedIterations ?? []),
+        ]);
+      }
     }
 
     this.projects.set(projectNumber, {
       projectId,
       fields: fieldMap,
       fieldIds: fieldIdMap,
+      iterations: iterationMap,
     });
 
     if (this.defaultProjectNumber === undefined) {
@@ -205,6 +237,19 @@ export class FieldOptionCache {
   getFieldNames(projectNumber?: number): string[] {
     const entry = this.resolveEntry(projectNumber);
     return entry ? Array.from(entry.fieldIds.keys()) : [];
+  }
+
+  /**
+   * Get iteration data for a given field name.
+   * Returns all iterations (active + completed) with full metadata
+   * for @current/@next token resolution.
+   */
+  getIterations(
+    fieldName: string,
+    projectNumber?: number,
+  ): IterationData[] | undefined {
+    const entry = this.resolveEntry(projectNumber);
+    return entry?.iterations.get(fieldName);
   }
 
   /**

@@ -90,6 +90,8 @@ export function buildBatchMutationQuery(
     itemId: string;
     fieldId: string;
     optionId: string;
+    /** When "iterationId", uses `value: { iterationId }` instead of `singleSelectOptionId`. */
+    valueType?: "singleSelectOptionId" | "iterationId";
   }>,
 ): { mutationString: string; variables: Record<string, unknown> } {
   const variables: Record<string, unknown> = {
@@ -109,12 +111,14 @@ export function buildBatchMutationQuery(
     variables[fieldVar] = update.fieldId;
     variables[optVar] = update.optionId;
 
+    const valueKey = update.valueType === "iterationId" ? "iterationId" : "singleSelectOptionId";
+
     aliases.push(
       `${update.alias}: updateProjectV2ItemFieldValue(input: {
         projectId: $projectId,
         itemId: $${itemVar},
         fieldId: $${fieldVar},
-        value: { singleSelectOptionId: $${optVar} }
+        value: { ${valueKey}: $${optVar} }
       }) {
         projectV2Item { id }
       }`,

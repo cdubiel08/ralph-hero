@@ -38,6 +38,7 @@ const saveIssueSchema = z.object({
   workflowState: z.string().optional(),
   estimate: z.enum(["XS", "S", "M", "L", "XL"]).nullable().optional(),
   priority: z.enum(["P0", "P1", "P2", "P3"]).nullable().optional(),
+  iteration: z.string().nullable().optional(),
   command: z.string().optional(),
 });
 
@@ -129,6 +130,60 @@ describe("save_issue schema validation", () => {
     const result = saveIssueSchema.safeParse({
       number: 42,
       issueState: "CLOSED_NOT_PLANNED",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts number + iteration string (set iteration)", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: "Sprint 1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBe("Sprint 1");
+    }
+  });
+
+  it("accepts number + iteration: @current", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: "@current",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBe("@current");
+    }
+  });
+
+  it("accepts number + iteration: @next", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: "@next",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBe("@next");
+    }
+  });
+
+  it("accepts number + iteration: null (clear iteration)", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBeNull();
+    }
+  });
+
+  it("accepts combined iteration + workflowState + estimate", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      workflowState: "In Progress",
+      estimate: "S",
+      iteration: "@current",
     });
     expect(result.success).toBe(true);
   });
@@ -297,5 +352,39 @@ describe("save_issue structural", () => {
 
   it("imports isParentGateState from workflow-states", () => {
     expect(issueToolsSrc).toContain("isParentGateState");
+  });
+
+  it("includes iteration parameter in save_issue schema", () => {
+    expect(issueToolsSrc).toContain('iteration: z.string().nullable().optional()');
+  });
+
+  it("imports resolveIterationId from helpers", () => {
+    expect(issueToolsSrc).toContain("resolveIterationId");
+  });
+
+  it("calls resolveIterationId when iteration is a non-null string", () => {
+    expect(issueToolsSrc).toContain("resolveIterationId(fieldCache, projectNumber, fname, args.iteration)");
+  });
+
+  it("uses valueType iterationId for iteration field updates", () => {
+    expect(issueToolsSrc).toContain('valueType: "iterationId"');
+  });
+
+  it("clears iteration field via fieldsToClear when iteration is null", () => {
+    // When iteration is null, the field should be added to fieldsToClear
+    const iterSection = issueToolsSrc.slice(
+      issueToolsSrc.indexOf("// 4d. Iteration"),
+      issueToolsSrc.indexOf("// 4e."),
+    );
+    expect(iterSection).toContain("args.iteration === null");
+    expect(iterSection).toContain("fieldsToClear.push");
+  });
+
+  it("includes iteration in hasProjectFields check", () => {
+    expect(issueToolsSrc).toContain("args.iteration !== undefined");
+  });
+
+  it("returns error with valid iteration names when resolution fails", () => {
+    expect(issueToolsSrc).toContain("Also accepts: @current, @next.");
   });
 });
