@@ -303,8 +303,8 @@ async function createIterationField(
 - Call `buildIterationSection()` from `buildDashboard()` and append to output
 
 ### Success Criteria
-- [ ] Automated: Dashboard output includes `## Sprint 1` section with phase counts when items have iteration assignments — new test
-- [ ] Automated: Projects without iteration field produce identical output (no regression)
+- [x] Automated: Dashboard output includes `## Sprint 1` section with phase counts when items have iteration assignments — new test
+- [x] Automated: Projects without iteration field produce identical output (no regression)
 - [ ] Manual: `pipeline_dashboard` shows per-sprint breakdown when issues are assigned to sprints
 
 ---
