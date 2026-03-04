@@ -169,6 +169,7 @@ If the user chose "GitHub issue":
    ralph_hero__save_issue
    - number: [created issue number]
    - estimate: "XS"  (or S/M/L/XL as appropriate)
+   - workflowState: "Backlog"
    ```
 
 3. **Update the idea file** with issue link:
@@ -214,14 +215,14 @@ If the user chose "Ticket tree":
    a. Create the parent issue:
    ```
    ralph_hero__create_issue(title=..., body=...)
-   ralph_hero__save_issue(number=..., estimate="L")
+   ralph_hero__save_issue(number=..., estimate="L", workflowState="Backlog")
    ```
 
    b. Create each child issue:
    ```
    ralph_hero__create_issue(title=..., body=...)
    ralph_hero__add_sub_issue(parentNumber=..., childNumber=...)
-   ralph_hero__save_issue(number=..., estimate="XS")
+   ralph_hero__save_issue(number=..., estimate="XS", workflowState="Backlog")
    ```
 
    c. Add ordering dependencies between children if sequential:

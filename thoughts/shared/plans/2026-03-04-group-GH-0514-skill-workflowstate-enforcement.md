@@ -107,8 +107,8 @@ After:
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'workflowState.*Backlog\|workflowState: "Backlog"' plugin/ralph-hero/skills/form-idea/SKILL.md` returns 3
-- [ ] Manual: Read SKILL.md and verify all three `save_issue` calls include `workflowState: "Backlog"`
+- [x] Automated: `grep -c 'workflowState.*Backlog\|workflowState: "Backlog"' plugin/ralph-hero/skills/form-idea/SKILL.md` returns 3
+- [x] Manual: Read SKILL.md and verify all three `save_issue` calls include `workflowState: "Backlog"`
 
 ---
 
