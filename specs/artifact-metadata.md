@@ -83,7 +83,7 @@ Skills link artifacts to issues by posting a GitHub comment with a standardized 
 | Plan artifacts MUST be linked with a `## Implementation Plan` comment header | [x] `artifact-discovery.sh` blocks if plan doc missing on disk |
 | The artifact URL MUST appear on the line immediately after the header | [x] `artifact-comment-validator.sh` |
 | Artifact discovery MUST search issue comments for the header, then extract the URL | [ ] not enforced (implemented in skill prompts, not hooks) |
-| When multiple comments match a header, the MOST RECENT (last) match MUST be used | [ ] not enforced |
+| When multiple comments match a header, the MOST RECENT (last) match MUST be used | [x] `artifact-comment-validator.sh` (records most-recent URL via marker file); read-time: skill prompt |
 
 ### Artifact Discovery Sequence
 
@@ -97,8 +97,8 @@ When a skill needs to locate a linked artifact:
 
 | Requirement | Enablement |
 |-------------|------------|
-| Skills MUST follow the discovery sequence when locating artifacts | [ ] not enforced (implemented in skill prompts) |
-| Skills MUST self-heal missing artifact comments when fallback glob succeeds | [ ] not enforced |
+| Skills MUST follow the discovery sequence when locating artifacts | [x] skill prompt (comment -> glob -> self-heal steps) |
+| Skills MUST self-heal missing artifact comments when fallback glob succeeds | [x] `artifact-comment-validator.sh` (marker written on self-heal comment); `research-postcondition.sh`, `plan-postcondition.sh` (warn if marker absent) |
 
 ### Artifact Passthrough Protocol
 

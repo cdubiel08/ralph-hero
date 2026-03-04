@@ -32,7 +32,6 @@ Defines the inputs, outputs, preconditions, and postconditions for every `ralph-
 | `RALPH_GH_REPO` | `settings.local.json` | GitHub repository name |
 | `RALPH_GH_PROJECT_NUMBER` | `settings.local.json` | GitHub Projects V2 number |
 | `RALPH_REQUIRED_BRANCH` | `set-skill-env.sh` (SessionStart) | Required git branch (usually `main`) |
-| `RALPH_ARTIFACT_CACHE` | `artifact-discovery.sh` | Cached artifact validation results |
 
 | Requirement | Enablement |
 |-------------|------------|

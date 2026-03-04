@@ -10,6 +10,9 @@
 #   RALPH_REQUIRES_RESEARCH - If "true", research doc required
 #   RALPH_REQUIRES_PLAN - If "true", plan doc required
 #
+# Note: RALPH_ARTIFACT_CACHE was removed — this hook uses direct filesystem checks
+# only (no API calls), making session-scoped caching unnecessary.
+#
 # Exit codes:
 #   0 - Required artifacts found (or no requirements for this command)
 #   2 - Missing required artifact (blocks with instructions)
