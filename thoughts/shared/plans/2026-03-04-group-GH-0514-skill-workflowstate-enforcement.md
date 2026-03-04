@@ -167,18 +167,18 @@ After:
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep 'RALPH_VALID_OUTPUT_STATES' plugin/ralph-hero/skills/ralph-triage/SKILL.md` includes `Backlog`
-- [ ] Automated: `grep -c 'workflowState.*Backlog\|workflowState: "Backlog"' plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns at least 1 (in the SPLIT path)
-- [ ] Manual: Verify SessionStart hook includes `RALPH_VALID_OUTPUT_STATES=...,Backlog`
-- [ ] Manual: Verify the SPLIT path `save_issue` call includes `workflowState: "Backlog"`
+- [x] Automated: `grep 'RALPH_VALID_OUTPUT_STATES' plugin/ralph-hero/skills/ralph-triage/SKILL.md` includes `Backlog`
+- [x] Automated: `grep -c 'workflowState.*Backlog\|workflowState: "Backlog"' plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns at least 1 (in the SPLIT path)
+- [x] Manual: Verify SessionStart hook includes `RALPH_VALID_OUTPUT_STATES=...,Backlog`
+- [x] Manual: Verify the SPLIT path `save_issue` call includes `workflowState: "Backlog"`
 
 ---
 
 ## Integration Testing
-- [ ] Verify `form-idea` SKILL.md has `workflowState: "Backlog"` in all three issue creation paths
-- [ ] Verify `ralph-triage` SKILL.md SessionStart hook includes `RALPH_VALID_OUTPUT_STATES` with `Backlog`
-- [ ] Verify `ralph-triage` SKILL.md has `workflowState: "Backlog"` in the SPLIT path `save_issue` call
-- [ ] Verify no other SKILL.md files were modified
+- [x] Verify `form-idea` SKILL.md has `workflowState: "Backlog"` in all three issue creation paths
+- [x] Verify `ralph-triage` SKILL.md SessionStart hook includes `RALPH_VALID_OUTPUT_STATES` with `Backlog`
+- [x] Verify `ralph-triage` SKILL.md has `workflowState: "Backlog"` in the SPLIT path `save_issue` call
+- [x] Verify no other SKILL.md files were modified
 
 ## References
 - Research GH-514: [2026-03-04-GH-0514-form-idea-workflowstate-fix.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-04-GH-0514-form-idea-workflowstate-fix.md)
