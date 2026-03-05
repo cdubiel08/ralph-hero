@@ -148,6 +148,85 @@ describe("resolveRepoFromProject", () => {
     consoleSpy.mockRestore();
   });
 
+  it("uses first registry repo as default when multiple repos linked and registry is set", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Attach a registry with two repos; first key is "repo-alpha"
+    const { parseRepoRegistry } = await import("../lib/repo-registry.js");
+    mockConfig.repoRegistry = parseRepoRegistry(`
+version: 1
+repos:
+  repo-alpha:
+    domain: platform
+  repo-beta:
+    domain: ui
+`);
+
+    (mockClient.projectQuery as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      user: {
+        projectV2: {
+          id: "proj-id",
+          repositories: {
+            totalCount: 2,
+            nodes: [
+              { owner: { login: "owner" }, name: "repo-alpha", nameWithOwner: "owner/repo-alpha" },
+              { owner: { login: "owner" }, name: "repo-beta", nameWithOwner: "owner/repo-beta" },
+            ],
+          },
+        },
+      },
+    });
+
+    const { resolveRepoFromProject } = await import(helpersPath);
+    const result = await resolveRepoFromProject(mockClient);
+
+    expect(result).toBe("repo-alpha");
+    expect(mockClient.config.repo).toBe("repo-alpha");
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Using "repo-alpha" as default (from .ralph-repos.yml)'),
+    );
+
+    consoleSpy.mockRestore();
+  });
+
+  it("sets owner from registry entry when owner unset and registry has owner", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { parseRepoRegistry } = await import("../lib/repo-registry.js");
+    mockConfig.owner = undefined;
+    mockConfig.projectOwner = "test-owner"; // needed for the query to proceed
+    mockConfig.repoRegistry = parseRepoRegistry(`
+version: 1
+repos:
+  my-repo:
+    owner: registry-owner
+    domain: platform
+`);
+
+    (mockClient.projectQuery as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      user: {
+        projectV2: {
+          id: "proj-id",
+          repositories: {
+            totalCount: 2,
+            nodes: [
+              { owner: { login: "registry-owner" }, name: "my-repo", nameWithOwner: "registry-owner/my-repo" },
+              { owner: { login: "registry-owner" }, name: "other-repo", nameWithOwner: "registry-owner/other-repo" },
+            ],
+          },
+        },
+      },
+    });
+
+    const { resolveRepoFromProject } = await import(helpersPath);
+    await resolveRepoFromProject(mockClient);
+
+    expect(mockClient.config.repo).toBe("my-repo");
+    expect(mockClient.config.owner).toBe("registry-owner");
+
+    vi.restoreAllMocks();
+  });
+
   it("throws when projectNumber is missing", async () => {
     mockConfig.projectNumber = undefined;
 

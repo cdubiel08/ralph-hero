@@ -271,6 +271,7 @@ export interface GitHubClientConfig {
   projectOwner?: string; // Defaults to owner if unset
   templateProjectNumber?: number; // Default template project for setup_project copy mode
   autoMode?: boolean; // When true, "In Review" maps to INTEGRATE instead of TERMINAL (RALPH_HERO_AUTO)
+  repoRegistry?: import("./lib/repo-registry.js").RepoRegistry;
 }
 
 export function resolveProjectOwner(
