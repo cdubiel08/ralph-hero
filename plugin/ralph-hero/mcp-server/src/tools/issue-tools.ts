@@ -42,6 +42,7 @@ import {
   syncStatusField,
   autoAdvanceParent,
 } from "../lib/helpers.js";
+import { lookupRepo, mergeDefaults } from "../lib/repo-registry.js";
 
 // ---------------------------------------------------------------------------
 // Register issue tools
@@ -905,10 +906,39 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
+        // Resolve owner from registry for repo shorthand
+        let resolvedArgs = { ...args };
+        const registry = client.config.repoRegistry;
+        if (registry && args.repo && !args.owner) {
+          const repoLookup = lookupRepo(registry, args.repo);
+          if (repoLookup?.entry.owner) {
+            resolvedArgs = { ...args, owner: repoLookup.entry.owner };
+          }
+        }
+
         const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
           client,
-          args,
+          resolvedArgs,
         );
+
+        // Apply registry defaults if available
+        let effectiveLabels = args.labels;
+        let effectiveAssignees = args.assignees;
+        let effectiveEstimate = args.estimate;
+
+        if (registry) {
+          const repoLookup = lookupRepo(registry, repo);
+          if (repoLookup) {
+            const merged = mergeDefaults(repoLookup.entry.defaults, {
+              labels: effectiveLabels,
+              assignees: effectiveAssignees,
+              estimate: effectiveEstimate,
+            });
+            effectiveLabels = merged.labels;
+            effectiveAssignees = merged.assignees;
+            effectiveEstimate = merged.estimate;
+          }
+        }
 
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
@@ -931,7 +961,7 @@ export function registerIssueTools(
 
         // Step 2: Resolve label IDs if provided
         let labelIds: string[] | undefined;
-        if (args.labels && args.labels.length > 0) {
+        if (effectiveLabels && effectiveLabels.length > 0) {
           const labelResult = await client.query<{
             repository: {
               labels: {
@@ -951,7 +981,7 @@ export function registerIssueTools(
           );
 
           const allLabels = labelResult.repository.labels.nodes;
-          labelIds = args.labels
+          labelIds = effectiveLabels
             .map((name) => allLabels.find((l) => l.name === name)?.id)
             .filter((id): id is string => id !== undefined);
         }
@@ -1057,13 +1087,13 @@ export function registerIssueTools(
           );
         }
 
-        if (args.estimate) {
+        if (effectiveEstimate) {
           await updateProjectItemField(
             client,
             fieldCache,
             projectItemId,
             "Estimate",
-            args.estimate,
+            effectiveEstimate,
             projectNumber,
           );
         }
@@ -1087,7 +1117,7 @@ export function registerIssueTools(
           projectItemId,
           fieldsSet: {
             workflowState: args.workflowState || null,
-            estimate: args.estimate || null,
+            estimate: effectiveEstimate || null,
             priority: args.priority || null,
           },
         });

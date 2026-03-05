@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import * as fs from "fs";
+import * as path from "path";
 import {
   RepoRegistrySchema,
   parseRepoRegistry,
@@ -379,5 +381,24 @@ describe("mergeDefaults", () => {
     const result = mergeDefaults(undefined, { labels: ["bug", "bug", "enhancement"] });
     expect(result.labels?.filter((l) => l === "bug")).toHaveLength(1);
     expect(result.labels).toContain("enhancement");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// create_issue registry integration (structural)
+// ---------------------------------------------------------------------------
+
+describe("create_issue registry integration", () => {
+  const src = fs.readFileSync(
+    path.resolve(__dirname, "../tools/issue-tools.ts"),
+    "utf-8",
+  );
+
+  it("imports lookupRepo from repo-registry", () => {
+    expect(src).toContain("lookupRepo");
+  });
+
+  it("imports mergeDefaults from repo-registry", () => {
+    expect(src).toContain("mergeDefaults");
   });
 });
