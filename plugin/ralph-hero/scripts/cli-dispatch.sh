@@ -2,7 +2,7 @@
 # cli-dispatch.sh — Shared dispatch functions for Ralph CLI
 # Modes: interactive (default), headless (-h), quick (-q)
 
-MCP_VERSION="2.5.1"
+MCP_VERSION="2.5.2"
 
 # Parse -h/-q/--budget/--timeout flags from args
 # Sets: MODE, ARGS (array), BUDGET, TIMEOUT
