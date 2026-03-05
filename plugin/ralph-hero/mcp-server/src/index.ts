@@ -23,6 +23,7 @@ import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
 import { registerDebugTools } from "./tools/debug-tools.js";
+import { registerDecomposeTools } from "./tools/decompose-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -368,6 +369,9 @@ async function main(): Promise<void> {
 
   // Hygiene reporting tools
   registerHygieneTools(server, client, fieldCache);
+
+  // Decompose feature tool (cross-repo decomposition via .ralph-repos.yml)
+  registerDecomposeTools(server, client, fieldCache);
 
   // Debug tools (only when RALPH_DEBUG=true)
   if (process.env.RALPH_DEBUG === 'true') {
