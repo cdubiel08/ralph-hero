@@ -29,8 +29,10 @@ import {
   getCurrentFieldValue,
   resolveConfig,
   resolveFullConfig,
+  resolveFullConfigOptionalRepo,
   syncStatusField,
 } from "../lib/helpers.js";
+import { paginateConnection } from "../lib/pagination.js";
 
 // ---------------------------------------------------------------------------
 // Sub-issue tree helpers (exported for testing)
@@ -109,6 +111,36 @@ export function mapSubIssueNodes(
     }
     return mapped;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Internal types and helpers for list_groups
+// ---------------------------------------------------------------------------
+
+interface RawProjectItem {
+  id: string;
+  type: string;
+  content: Record<string, unknown> | null;
+  fieldValues: {
+    nodes: Array<{
+      __typename?: string;
+      name?: string;
+      optionId?: string;
+      field?: { name: string };
+    }>;
+  };
+}
+
+function getFieldValue(
+  item: RawProjectItem,
+  fieldName: string,
+): string | undefined {
+  const fieldValue = item.fieldValues.nodes.find(
+    (fv) =>
+      fv.field?.name === fieldName &&
+      fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
+  );
+  return fieldValue?.name;
 }
 
 // ---------------------------------------------------------------------------
@@ -874,6 +906,240 @@ export function registerRelationshipTools(
           const message = error instanceof Error ? error.message : String(error);
           return toolError(`Failed to advance parent: ${message}`);
         }
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // ralph_hero__list_groups
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__list_groups",
+    "Discover all parent issues (groups) with sub-issues in a project. Returns parent info with child counts and optional child expansion. " +
+      "Single paginated pass over project items — no per-group API calls needed.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      projectNumber: z.coerce
+        .number()
+        .optional()
+        .describe("Project number override (defaults to configured project)"),
+      state: z
+        .enum(["OPEN", "CLOSED"])
+        .optional()
+        .default("OPEN")
+        .describe("Filter parent issues by state (default: OPEN)"),
+      showChildren: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Expand each group to include child issues with number/title/state/workflowState",
+        ),
+      workflowState: z
+        .string()
+        .optional()
+        .describe("Filter parents by workflow state"),
+      estimate: z
+        .string()
+        .optional()
+        .describe("Filter parents by estimate"),
+      priority: z
+        .string()
+        .optional()
+        .describe("Filter parents by priority"),
+      limit: z.coerce
+        .number()
+        .optional()
+        .default(50)
+        .describe("Max groups to return (default 50)"),
+    },
+    async (args) => {
+      try {
+        const { projectNumber, projectOwner } =
+          resolveFullConfigOptionalRepo(client, args);
+
+        // Ensure field cache is populated
+        await ensureFieldCache(
+          client,
+          fieldCache,
+          projectOwner,
+          projectNumber,
+        );
+
+        const projectId = fieldCache.getProjectId(projectNumber);
+        if (!projectId) {
+          return toolError("Could not resolve project ID");
+        }
+
+        // Conditionally include subIssues expansion in the GraphQL query
+        const subIssuesFragment = args.showChildren
+          ? `subIssues(first: 50) { nodes { number title state } }`
+          : "";
+
+        // Fetch all project items with sub-issue summary
+        const itemsResult = await paginateConnection<RawProjectItem>(
+          (q, v) => client.projectQuery(q, v),
+          `query($projectId: ID!, $cursor: String, $first: Int!) {
+            node(id: $projectId) {
+              ... on ProjectV2 {
+                items(first: $first, after: $cursor) {
+                  totalCount
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    id
+                    type
+                    content {
+                      ... on Issue {
+                        number
+                        title
+                        state
+                        url
+                        subIssuesSummary { total completed percentCompleted }
+                        ${subIssuesFragment}
+                      }
+                    }
+                    fieldValues(first: 20) {
+                      nodes {
+                        ... on ProjectV2ItemFieldSingleSelectValue {
+                          __typename
+                          name
+                          field { ... on ProjectV2FieldCommon { name } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }`,
+          { projectId, first: 100 },
+          "node.items",
+          { maxItems: 500 },
+        );
+
+        // Build lookup map: number -> { workflowState, estimate, priority }
+        const lookupMap = new Map<number, {
+          workflowState: string | undefined;
+          estimate: string | undefined;
+          priority: string | undefined;
+        }>();
+
+        for (const item of itemsResult.nodes) {
+          if (item.type === "ISSUE" && item.content) {
+            const content = item.content as Record<string, unknown>;
+            const num = content.number as number;
+            if (num !== undefined) {
+              lookupMap.set(num, {
+                workflowState: getFieldValue(item, "Workflow State"),
+                estimate: getFieldValue(item, "Estimate"),
+                priority: getFieldValue(item, "Priority"),
+              });
+            }
+          }
+        }
+
+        // Filter to parent issues (subIssuesSummary.total > 0)
+        let parentItems = itemsResult.nodes.filter((item) => {
+          if (item.type !== "ISSUE" || !item.content) return false;
+          const content = item.content as Record<string, unknown>;
+          const summary = content.subIssuesSummary as
+            | { total: number; completed: number; percentCompleted: number }
+            | undefined;
+          return summary && summary.total > 0;
+        });
+
+        // Apply parent-level filters
+        if (args.state) {
+          parentItems = parentItems.filter((item) => {
+            const content = item.content as Record<string, unknown>;
+            return content.state === args.state;
+          });
+        }
+
+        if (args.workflowState) {
+          parentItems = parentItems.filter(
+            (item) =>
+              getFieldValue(item, "Workflow State") === args.workflowState,
+          );
+        }
+
+        if (args.estimate) {
+          parentItems = parentItems.filter(
+            (item) => getFieldValue(item, "Estimate") === args.estimate,
+          );
+        }
+
+        if (args.priority) {
+          parentItems = parentItems.filter(
+            (item) => getFieldValue(item, "Priority") === args.priority,
+          );
+        }
+
+        // Sort by issue number ascending (stable ordering)
+        parentItems.sort((a, b) => {
+          const aNum = (a.content as Record<string, unknown>).number as number;
+          const bNum = (b.content as Record<string, unknown>).number as number;
+          return aNum - bNum;
+        });
+
+        // Slice to limit
+        parentItems = parentItems.slice(0, args.limit);
+
+        // Assemble response
+        const groups = parentItems.map((item) => {
+          const content = item.content as Record<string, unknown>;
+          const summary = content.subIssuesSummary as {
+            total: number;
+            completed: number;
+            percentCompleted: number;
+          };
+          const subIssues = content.subIssues as
+            | { nodes: Array<{ number: number; title: string; state: string }> }
+            | undefined;
+
+          const group: Record<string, unknown> = {
+            parent: {
+              number: content.number,
+              title: content.title,
+              state: content.state,
+              workflowState: getFieldValue(item, "Workflow State") ?? null,
+              estimate: getFieldValue(item, "Estimate") ?? null,
+              priority: getFieldValue(item, "Priority") ?? null,
+              url: content.url,
+            },
+            childCount: summary.total,
+            completedCount: summary.completed,
+            percentCompleted: summary.percentCompleted,
+          };
+
+          if (args.showChildren && subIssues?.nodes) {
+            group.children = subIssues.nodes.map((child) => ({
+              number: child.number,
+              title: child.title,
+              state: child.state,
+              workflowState:
+                lookupMap.get(child.number)?.workflowState ?? null,
+              estimate: lookupMap.get(child.number)?.estimate ?? null,
+            }));
+            if (subIssues.nodes.length === 50) {
+              group.hasMore = true;
+            }
+          }
+
+          return group;
+        });
+
+        return toolSuccess({ totalGroups: groups.length, groups });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to list groups: ${message}`);
       }
     },
   );

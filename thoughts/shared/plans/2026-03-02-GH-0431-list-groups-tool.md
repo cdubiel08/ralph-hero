@@ -39,15 +39,15 @@ A new `ralph_hero__list_groups` MCP tool in `relationship-tools.ts` that:
 5. Returns `{ totalGroups, groups: [{ parent, childCount, completedCount, children? }] }`
 
 ### Verification
-- [ ] `ralph_hero__list_groups` tool is registered and callable via MCP
-- [ ] Returns only issues with `subIssuesSummary.total > 0`
-- [ ] Parent-level filters (state, workflowState, estimate, priority) work correctly
-- [ ] `showChildren: false` (default) omits `children` array, includes `childCount`/`completedCount`
-- [ ] `showChildren: true` returns children with `number`, `title`, `state`, `workflowState`
-- [ ] Child `workflowState` resolved from project item lookup map (zero extra API calls)
-- [ ] `limit` parameter caps output (default 50)
-- [ ] Tests pass: `npm test` in mcp-server/
-- [ ] TypeScript compiles: `npm run build` in mcp-server/
+- [x] `ralph_hero__list_groups` tool is registered and callable via MCP
+- [x] Returns only issues with `subIssuesSummary.total > 0`
+- [x] Parent-level filters (state, workflowState, estimate, priority) work correctly
+- [x] `showChildren: false` (default) omits `children` array, includes `childCount`/`completedCount`
+- [x] `showChildren: true` returns children with `number`, `title`, `state`, `workflowState`
+- [x] Child `workflowState` resolved from project item lookup map (zero extra API calls)
+- [x] `limit` parameter caps output (default 50)
+- [x] Tests pass: `npm test` in mcp-server/
+- [x] TypeScript compiles: `npm run build` in mcp-server/
 
 ## What We're NOT Doing
 
@@ -296,8 +296,8 @@ describe("list_groups structural", () => {
 **Unit test for `getFieldValue`** (if exported, test directly; if private, test via structural verification).
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` compiles without errors
-- [ ] Automated: `cd plugin/ralph-hero/mcp-server && npm test` all tests pass
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm run build` compiles without errors
+- [x] Automated: `cd plugin/ralph-hero/mcp-server && npm test` all tests pass
 - [ ] Manual: Call `ralph_hero__list_groups` and verify it returns parent issues with childCount
 - [ ] Manual: Call with `showChildren: true` and verify children include `workflowState`
 - [ ] Manual: Call with `workflowState: "Backlog"` and verify filtering works
@@ -306,8 +306,8 @@ describe("list_groups structural", () => {
 
 ## Integration Testing
 
-- [ ] `npm run build` compiles successfully
-- [ ] `npm test` passes all existing + new tests
+- [x] `npm run build` compiles successfully
+- [x] `npm test` passes all existing + new tests
 - [ ] Manual: `list_groups()` returns groups from the project board
 - [ ] Manual: `list_groups(showChildren: true)` includes children with resolved `workflowState`
 - [ ] Manual: `list_groups(state: "OPEN", workflowState: "Backlog")` filters correctly

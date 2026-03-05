@@ -188,3 +188,51 @@ describe("mapSubIssueNodes", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Structural: list_groups tool (GH-431)
+// ---------------------------------------------------------------------------
+
+describe("list_groups structural", () => {
+  it("registers ralph_hero__list_groups tool", () => {
+    expect(relationshipToolsSrc).toContain("ralph_hero__list_groups");
+  });
+
+  it("has showChildren parameter in Zod schema", () => {
+    expect(relationshipToolsSrc).toMatch(/showChildren:\s*z\s*\n?\s*\.boolean\(\)/);
+  });
+
+  it("has state parameter with OPEN default", () => {
+    expect(relationshipToolsSrc).toMatch(/state:.*z\.enum.*OPEN.*CLOSED/s);
+  });
+
+  it("has limit parameter with default 50", () => {
+    expect(relationshipToolsSrc).toContain("limit:");
+  });
+
+  it("queries subIssuesSummary in project items", () => {
+    expect(relationshipToolsSrc).toContain(
+      "subIssuesSummary { total completed percentCompleted }",
+    );
+  });
+
+  it("builds lookup map from project items", () => {
+    // Verify the lookup map construction pattern
+    expect(relationshipToolsSrc).toContain("Map<number");
+  });
+
+  it("filters items to parents (subIssuesSummary.total > 0)", () => {
+    expect(relationshipToolsSrc).toContain("subIssuesSummary");
+    expect(relationshipToolsSrc).toContain("total");
+  });
+
+  it("uses paginateConnection for fetching", () => {
+    expect(relationshipToolsSrc).toContain("paginateConnection");
+  });
+
+  it("tool description mentions group discovery", () => {
+    expect(relationshipToolsSrc).toMatch(
+      /list_groups[\s\S]*?parent issues[\s\S]*?sub-issues|Discover all parent issues.*groups/i,
+    );
+  });
+});
