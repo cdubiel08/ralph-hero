@@ -198,3 +198,59 @@ describe("removed tools verification (GH-454)", () => {
     expect(issueToolsSrc).not.toContain("function computeDistance");
   });
 });
+
+// ---------------------------------------------------------------------------
+// list_issues iteration filter structural tests (GH-510)
+// ---------------------------------------------------------------------------
+
+describe("list_issues iteration filter structural", () => {
+  it("Zod schema includes iteration param", () => {
+    expect(issueToolsSrc).toMatch(/iteration:\s*z\s*\.\s*string/);
+  });
+
+  it("GraphQL query includes ProjectV2ItemFieldIterationValue fragment", () => {
+    expect(issueToolsSrc).toContain("ProjectV2ItemFieldIterationValue");
+  });
+
+  it("GraphQL fragment fetches iterationId, title, startDate, duration", () => {
+    // The fragment should include the iteration value fields
+    expect(issueToolsSrc).toContain("iterationId");
+    expect(issueToolsSrc).toContain("startDate");
+    expect(issueToolsSrc).toContain("duration");
+  });
+
+  it("has getIterationFieldValue helper function", () => {
+    expect(issueToolsSrc).toContain("function getIterationFieldValue");
+  });
+
+  it("getIterationFieldValue checks for ProjectV2ItemFieldIterationValue typename", () => {
+    expect(issueToolsSrc).toContain('"ProjectV2ItemFieldIterationValue"');
+  });
+
+  it("iteration filter uses resolveIterationId for client-side resolution", () => {
+    expect(issueToolsSrc).toContain("resolveIterationId(fieldCache, projectNumber, fname, args.iteration)");
+  });
+
+  it("iteration filter compares iterationId values", () => {
+    expect(issueToolsSrc).toContain("iterVal?.iterationId === targetIterationId");
+  });
+
+  it("response includes iteration field", () => {
+    expect(issueToolsSrc).toContain("iteration: iterVal ? iterVal.title : null");
+  });
+
+  it("tool description mentions iteration filter", () => {
+    expect(issueToolsSrc).toContain("@current, or @next to find issues in a sprint");
+  });
+
+  it("RawProjectItem interface includes iteration value fields", () => {
+    // The interface should have iterationId, title, startDate, duration
+    const rawItemBlock = issueToolsSrc.slice(
+      issueToolsSrc.indexOf("interface RawProjectItem"),
+      issueToolsSrc.indexOf("interface RawProjectItem") + 500,
+    );
+    expect(rawItemBlock).toContain("iterationId?: string");
+    expect(rawItemBlock).toContain("startDate?: string");
+    expect(rawItemBlock).toContain("duration?: number");
+  });
+});

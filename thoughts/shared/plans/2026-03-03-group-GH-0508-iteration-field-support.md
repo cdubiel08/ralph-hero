@@ -46,7 +46,7 @@ primary_issue: 508
 - [ ] Automated: `resolveIterationId("Sprint", "@current")` returns correct short ID via date math
 - [ ] Automated: `save_issue({ number: N, iteration: "Sprint 1" })` sets iteration field via `value: { iterationId }`
 - [ ] Automated: `save_issue({ number: N, iteration: null })` clears iteration via `clearProjectV2ItemFieldValue`
-- [ ] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint
+- [x] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint
 - [ ] Automated: `setup_project({ createIterationField: true })` creates a "Sprint" iteration field
 - [ ] Automated: `pipeline_dashboard` includes per-iteration phase breakdown when iteration assignments exist
 - [ ] Automated: Projects without iteration fields produce identical `pipeline_dashboard` output (no regression)
@@ -180,10 +180,10 @@ export function resolveIterationId(
 - When `iteration` is undefined: no-op (preserve existing behavior)
 
 ### Success Criteria
-- [ ] Automated: `save_issue({ number: N, iteration: "Sprint 1" })` sets the iteration field using `value: { iterationId }` — new test in `save-issue.test.ts`
-- [ ] Automated: `save_issue({ number: N, iteration: "@current" })` resolves to active iteration via date math
-- [ ] Automated: `save_issue({ number: N, iteration: null })` clears the iteration via `clearProjectV2ItemFieldValue`
-- [ ] Automated: `save_issue({ number: N, workflowState: "In Progress" })` (no `iteration` param) unchanged — regression test
+- [x] Automated: `save_issue({ number: N, iteration: "Sprint 1" })` sets the iteration field using `value: { iterationId }` — new test in `save-issue.test.ts`
+- [x] Automated: `save_issue({ number: N, iteration: "@current" })` resolves to active iteration via date math
+- [x] Automated: `save_issue({ number: N, iteration: null })` clears the iteration via `clearProjectV2ItemFieldValue`
+- [x] Automated: `save_issue({ number: N, workflowState: "In Progress" })` (no `iteration` param) unchanged — regression test
 
 **Creates for next phase**: No direct output consumed by later phases.
 
@@ -220,9 +220,9 @@ export function resolveIterationId(
 - `@previous`: find the most recently completed iteration before today using `completedIterations` from cache
 
 ### Success Criteria
-- [ ] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint — new test
-- [ ] Automated: `list_issues({ iteration: "Sprint 1" })` returns issues assigned to that named iteration
-- [ ] Automated: `list_issues({ workflowState: "In Progress" })` (no `iteration`) unchanged — regression test
+- [x] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint — new test
+- [x] Automated: `list_issues({ iteration: "Sprint 1" })` returns issues assigned to that named iteration
+- [x] Automated: `list_issues({ workflowState: "In Progress" })` (no `iteration`) unchanged — regression test
 - [ ] Manual: `list_issues({ iteration: "@next" })` returns issues in upcoming sprint
 
 **Creates for next phase**: No direct output consumed by later phases.
