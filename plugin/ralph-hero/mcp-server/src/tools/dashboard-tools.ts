@@ -15,6 +15,7 @@ import {
   buildDashboard,
   formatMarkdown,
   formatAscii,
+  groupDashboardItemsByRepo,
   type DashboardItem,
   type HealthConfig,
   DEFAULT_HEALTH_CONFIG,
@@ -345,6 +346,12 @@ export function registerDashboardTools(
         .describe(
           "Pre-computed stream assignments from detect_work_streams. When provided, dashboard includes a Streams section.",
         ),
+      groupBy: z
+        .enum(["repo"])
+        .optional()
+        .describe(
+          "Group dashboard output by dimension. 'repo' groups items by repository within the project.",
+        ),
     },
     async (args) => {
       try {
@@ -434,6 +441,38 @@ export function registerDashboardTools(
         const issuesPerPhase = args.issuesPerPhase ?? 10;
         for (const phase of dashboard.phases) {
           phase.issues = phase.issues.slice(0, issuesPerPhase);
+        }
+
+        // If groupBy=repo, build per-repo sub-dashboards
+        if (args.groupBy === "repo") {
+          const repoGroups = groupDashboardItemsByRepo(allItems);
+
+          if (args.format === "markdown") {
+            let md = "# Pipeline Dashboard (by repo)\n\n";
+            for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+              const sub = buildDashboard(repoItems, healthConfig);
+              md += `## ${repoName} (${repoItems.length} items)\n\n`;
+              md += formatMarkdown(sub) + "\n\n";
+            }
+            return toolSuccess({ markdown: md });
+          }
+
+          if (args.format === "ascii") {
+            let ascii = "Pipeline Dashboard (by repo)\n\n";
+            for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+              const sub = buildDashboard(repoItems, healthConfig);
+              ascii += `=== ${repoName} (${repoItems.length} items) ===\n`;
+              ascii += formatAscii(sub) + "\n\n";
+            }
+            return toolSuccess({ ascii });
+          }
+
+          // JSON format
+          const repoResults: Record<string, unknown> = {};
+          for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+            repoResults[repoName] = buildDashboard(repoItems, healthConfig);
+          }
+          return toolSuccess({ groupBy: "repo", repos: repoResults });
         }
 
         // Compute metrics if requested

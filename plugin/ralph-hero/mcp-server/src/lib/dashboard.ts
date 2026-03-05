@@ -915,6 +915,26 @@ export function formatMarkdown(
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// groupDashboardItemsByRepo
+// ---------------------------------------------------------------------------
+
+/**
+ * Group dashboard items by repository (nameWithOwner).
+ * Items without a repository are grouped under "(unknown)".
+ */
+export function groupDashboardItemsByRepo(
+  items: DashboardItem[],
+): Record<string, DashboardItem[]> {
+  const groups: Record<string, DashboardItem[]> = {};
+  for (const item of items) {
+    const key = item.repository || "(unknown)";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  }
+  return groups;
+}
+
 /**
  * Render dashboard data as an ASCII bar chart.
  */
