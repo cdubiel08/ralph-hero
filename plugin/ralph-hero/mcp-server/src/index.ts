@@ -296,6 +296,19 @@ async function main(): Promise<void> {
 
   const client = initGitHubClient(debugLogger);
 
+  // Load repo registry (.ralph-repos.yml) before repo inference (non-fatal)
+  try {
+    const { loadRepoRegistry } = await import("./lib/registry-loader.js");
+    const registry = await loadRepoRegistry(client);
+    if (registry) {
+      client.config.repoRegistry = registry;
+    }
+  } catch (e) {
+    console.error(
+      `[ralph-hero] Repo registry load skipped: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
   // Attempt lazy repo inference from project (non-fatal)
   try {
     await resolveRepoFromProject(client);

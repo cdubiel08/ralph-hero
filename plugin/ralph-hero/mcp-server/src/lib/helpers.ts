@@ -459,6 +459,21 @@ export async function resolveRepoFromProject(client: GitHubClient): Promise<stri
     return inferred.repo;
   }
 
+  // When a registry is loaded, use its first repo entry as the default
+  const registry = client.config.repoRegistry;
+  if (registry) {
+    const firstRepoName = Object.keys(registry.repos)[0];
+    const firstRepoEntry = registry.repos[firstRepoName];
+    client.config.repo = firstRepoName;
+    if (!client.config.owner && firstRepoEntry.owner) {
+      client.config.owner = firstRepoEntry.owner;
+    }
+    console.error(
+      `[ralph-hero] Multiple repos linked. Using "${firstRepoName}" as default (from .ralph-repos.yml).`,
+    );
+    return firstRepoName;
+  }
+
   const repoList = result.repos.map(r => r.nameWithOwner).join(", ");
   console.error(
     `[ralph-hero] Multiple repos linked to project: ${repoList}. ` +
