@@ -360,7 +360,7 @@ PR: [GitHub PR URL]
 [List all issues with titles and "In Review" status]
 
 Worktree preserved at: $GIT_ROOT/worktrees/[WORKTREE_ID]
-Run ./scripts/remove-worktree.sh [WORKTREE_ID] after PR is merged.
+Worktree will be cleaned up automatically during merge.
 ```
 
 ---

@@ -316,8 +316,8 @@ No changes needed — it doesn't reference cleanup.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -r "remove-worktree" plugin/ralph-hero/skills/` returns zero matches (all references removed from skills)
-- [ ] Skills still reference `create-worktree.sh` correctly for creation
+- [x] `grep -r "remove-worktree" plugin/ralph-hero/skills/` returns zero matches (all references removed from skills)
+- [x] Skills still reference `create-worktree.sh` correctly for creation
 
 ---
 
