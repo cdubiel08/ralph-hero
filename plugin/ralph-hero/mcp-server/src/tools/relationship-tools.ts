@@ -333,46 +333,59 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__add_dependency",
-    "Create a blocking dependency between two GitHub issues. The 'blockingNumber' issue blocks the 'blockedNumber' issue.",
+    "Create a blocking dependency between two GitHub issues. Supports cross-repo: " +
+      "the blocked and blocking issues can be in different repositories. " +
+      "The 'blockingNumber' issue blocks the 'blockedNumber' issue.",
     {
       owner: z
         .string()
         .optional()
-        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+        .describe("Default GitHub owner for both issues. Defaults to GITHUB_OWNER env var"),
       repo: z
         .string()
         .optional()
-        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+        .describe("Default repository for both issues. Defaults to GITHUB_REPO env var"),
       blockedNumber: z
         .number()
         .describe(
           "Issue number that IS blocked (cannot proceed until blocker is done)",
         ),
+      blockedOwner: z
+        .string()
+        .optional()
+        .describe("GitHub owner for the blocked issue. Defaults to 'owner' param"),
+      blockedRepo: z
+        .string()
+        .optional()
+        .describe("Repository for the blocked issue. Defaults to 'repo' param"),
       blockingNumber: z
         .number()
         .describe("Issue number that IS the blocker (must be completed first)"),
+      blockingOwner: z
+        .string()
+        .optional()
+        .describe("GitHub owner for the blocking issue. Defaults to 'owner' param"),
+      blockingRepo: z
+        .string()
+        .optional()
+        .describe("Repository for the blocking issue. Defaults to 'repo' param"),
     },
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
 
-        const blockedId = await resolveIssueNodeId(
-          client,
-          owner,
-          repo,
-          args.blockedNumber,
-        );
-        const blockingId = await resolveIssueNodeId(
-          client,
-          owner,
-          repo,
-          args.blockingNumber,
-        );
+        const bOwner = args.blockedOwner || owner;
+        const bRepo = args.blockedRepo || repo;
+        const kOwner = args.blockingOwner || owner;
+        const kRepo = args.blockingRepo || repo;
+
+        const blockedId = await resolveIssueNodeId(client, bOwner, bRepo, args.blockedNumber);
+        const blockingId = await resolveIssueNodeId(client, kOwner, kRepo, args.blockingNumber);
 
         const result = await client.mutate<{
           addBlockedBy: {
-            issue: { id: string; number: number; title: string };
-            blockingIssue: { id: string; number: number; title: string };
+            issue: { id: string; number: number; title: string; repository: { nameWithOwner: string } };
+            blockingIssue: { id: string; number: number; title: string; repository: { nameWithOwner: string } };
           };
         }>(
           `mutation($blockedId: ID!, $blockingId: ID!) {
@@ -380,8 +393,8 @@ export function registerRelationshipTools(
               issueId: $blockedId,
               blockingIssueId: $blockingId
             }) {
-              issue { id number title }
-              blockingIssue { id number title }
+              issue { id number title repository { nameWithOwner } }
+              blockingIssue { id number title repository { nameWithOwner } }
             }
           }`,
           { blockedId, blockingId },
@@ -392,11 +405,13 @@ export function registerRelationshipTools(
             id: result.addBlockedBy.issue.id,
             number: result.addBlockedBy.issue.number,
             title: result.addBlockedBy.issue.title,
+            repository: result.addBlockedBy.issue.repository.nameWithOwner,
           },
           blocking: {
             id: result.addBlockedBy.blockingIssue.id,
             number: result.addBlockedBy.blockingIssue.number,
             title: result.addBlockedBy.blockingIssue.title,
+            repository: result.addBlockedBy.blockingIssue.repository.nameWithOwner,
           },
         });
       } catch (error: unknown) {
@@ -411,40 +426,52 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__remove_dependency",
-    "Remove a blocking dependency between two GitHub issues",
+    "Remove a blocking dependency between two GitHub issues. Supports cross-repo: " +
+      "the blocked and blocking issues can be in different repositories.",
     {
       owner: z
         .string()
         .optional()
-        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+        .describe("Default GitHub owner for both issues. Defaults to GITHUB_OWNER env var"),
       repo: z
         .string()
         .optional()
-        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+        .describe("Default repository for both issues. Defaults to GITHUB_REPO env var"),
       blockedNumber: z.coerce.number().describe("Issue number that was blocked"),
+      blockedOwner: z
+        .string()
+        .optional()
+        .describe("GitHub owner for the blocked issue. Defaults to 'owner' param"),
+      blockedRepo: z
+        .string()
+        .optional()
+        .describe("Repository for the blocked issue. Defaults to 'repo' param"),
       blockingNumber: z.coerce.number().describe("Issue number that was the blocker"),
+      blockingOwner: z
+        .string()
+        .optional()
+        .describe("GitHub owner for the blocking issue. Defaults to 'owner' param"),
+      blockingRepo: z
+        .string()
+        .optional()
+        .describe("Repository for the blocking issue. Defaults to 'repo' param"),
     },
     async (args) => {
       try {
         const { owner, repo } = resolveConfig(client, args);
 
-        const blockedId = await resolveIssueNodeId(
-          client,
-          owner,
-          repo,
-          args.blockedNumber,
-        );
-        const blockingId = await resolveIssueNodeId(
-          client,
-          owner,
-          repo,
-          args.blockingNumber,
-        );
+        const bOwner = args.blockedOwner || owner;
+        const bRepo = args.blockedRepo || repo;
+        const kOwner = args.blockingOwner || owner;
+        const kRepo = args.blockingRepo || repo;
+
+        const blockedId = await resolveIssueNodeId(client, bOwner, bRepo, args.blockedNumber);
+        const blockingId = await resolveIssueNodeId(client, kOwner, kRepo, args.blockingNumber);
 
         const result = await client.mutate<{
           removeBlockedBy: {
-            issue: { id: string; number: number; title: string };
-            blockingIssue: { id: string; number: number; title: string };
+            issue: { id: string; number: number; title: string; repository: { nameWithOwner: string } };
+            blockingIssue: { id: string; number: number; title: string; repository: { nameWithOwner: string } };
           };
         }>(
           `mutation($blockedId: ID!, $blockingId: ID!) {
@@ -452,8 +479,8 @@ export function registerRelationshipTools(
               issueId: $blockedId,
               blockingIssueId: $blockingId
             }) {
-              issue { id number title }
-              blockingIssue { id number title }
+              issue { id number title repository { nameWithOwner } }
+              blockingIssue { id number title repository { nameWithOwner } }
             }
           }`,
           { blockedId, blockingId },
@@ -464,16 +491,135 @@ export function registerRelationshipTools(
             id: result.removeBlockedBy.issue.id,
             number: result.removeBlockedBy.issue.number,
             title: result.removeBlockedBy.issue.title,
+            repository: result.removeBlockedBy.issue.repository.nameWithOwner,
           },
           blocking: {
             id: result.removeBlockedBy.blockingIssue.id,
             number: result.removeBlockedBy.blockingIssue.number,
             title: result.removeBlockedBy.blockingIssue.title,
+            repository: result.removeBlockedBy.blockingIssue.repository.nameWithOwner,
           },
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to remove dependency: ${message}`);
+      }
+    },
+  );
+
+// -------------------------------------------------------------------------
+  // ralph_hero__list_dependencies
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__list_dependencies",
+    "List all blocking dependencies for a GitHub issue. Returns both 'blocking' " +
+      "(issues this issue blocks) and 'blockedBy' (issues blocking this issue) " +
+      "with full cross-repo context including repository name.",
+    {
+      owner: z
+        .string()
+        .optional()
+        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
+      repo: z
+        .string()
+        .optional()
+        .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      number: z.coerce.number().describe("Issue number to query dependencies for"),
+    },
+    async (args) => {
+      try {
+        const { owner, repo } = resolveConfig(client, args);
+
+        const result = await client.query<{
+          repository: {
+            issue: {
+              id: string;
+              number: number;
+              title: string;
+              state: string;
+              blocking: {
+                nodes: Array<{
+                  id: string;
+                  number: number;
+                  title: string;
+                  state: string;
+                  repository: { nameWithOwner: string };
+                }>;
+              };
+              blockedBy: {
+                nodes: Array<{
+                  id: string;
+                  number: number;
+                  title: string;
+                  state: string;
+                  repository: { nameWithOwner: string };
+                }>;
+              };
+            } | null;
+          } | null;
+        }>(
+          `query($owner: String!, $repo: String!, $number: Int!) {
+            repository(owner: $owner, name: $repo) {
+              issue(number: $number) {
+                id
+                number
+                title
+                state
+                blocking(first: 50) {
+                  nodes {
+                    id number title state
+                    repository { nameWithOwner }
+                  }
+                }
+                blockedBy(first: 50) {
+                  nodes {
+                    id number title state
+                    repository { nameWithOwner }
+                  }
+                }
+              }
+            }
+          }`,
+          { owner, repo, number: args.number },
+        );
+
+        const issue = result.repository?.issue;
+        if (!issue) {
+          return toolError(`Issue #${args.number} not found in ${owner}/${repo}`);
+        }
+
+        return toolSuccess({
+          issue: {
+            id: issue.id,
+            number: issue.number,
+            title: issue.title,
+            state: issue.state,
+            repository: `${owner}/${repo}`,
+          },
+          blocking: issue.blocking.nodes.map((n) => ({
+            id: n.id,
+            number: n.number,
+            title: n.title,
+            state: n.state,
+            repository: n.repository.nameWithOwner,
+          })),
+          blockedBy: issue.blockedBy.nodes.map((n) => ({
+            id: n.id,
+            number: n.number,
+            title: n.title,
+            state: n.state,
+            repository: n.repository.nameWithOwner,
+          })),
+          summary: {
+            blockingCount: issue.blocking.nodes.length,
+            blockedByCount: issue.blockedBy.nodes.length,
+            isBlocked: issue.blockedBy.nodes.length > 0,
+            isBlocking: issue.blocking.nodes.length > 0,
+          },
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Failed to list dependencies: ${message}`);
       }
     },
   );
