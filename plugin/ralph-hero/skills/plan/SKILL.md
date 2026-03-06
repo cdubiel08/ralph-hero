@@ -179,14 +179,15 @@ Once aligned on approach:
 
 After structure approval:
 
-1. **Write the plan** to `thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-description.md`
-   - Format:
-     - Single issue: `YYYY-MM-DD-GH-NNNN-description.md` (zero-padded to 4 digits)
-     - Group plan: `YYYY-MM-DD-group-GH-NNNN-description.md`
+1. **Write the plan** to `thoughts/shared/plans/`
+   - Format (with issue): `YYYY-MM-DD-GH-NNNN-description.md` (zero-padded to 4 digits)
+   - Format (without issue): `YYYY-MM-DD-description.md`
+   - Group plan: `YYYY-MM-DD-group-GH-NNNN-description.md`
    - Examples:
      - With issue: `2026-01-21-GH-0146-ticket-resolution.md`
      - Without issue: `2026-01-21-improve-error-handling.md`
      - Group: `2026-01-21-group-GH-0042-redis-caching.md`
+   - **Note**: If no issue exists yet, write without GH-NNNN. The file will be renamed when linked in Step 6.
 
 2. **Use this template structure**:
 
@@ -194,10 +195,10 @@ After structure approval:
 ---
 date: YYYY-MM-DD
 status: draft
-github_issues: [NNN]
-github_urls:
+github_issues: [NNN]           # optional until linked to an issue
+github_urls:                    # optional until linked to an issue
   - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
-primary_issue: NNN
+primary_issue: NNN              # optional until linked to an issue
 ---
 
 # [Feature/Task Name] Implementation Plan
@@ -329,7 +330,13 @@ After the plan is finalized and the user is satisfied:
 
 2. **If linking to existing issue**:
    - Verify issue exists using `ralph_hero__get_issue(number=NNN)`
-   - Post plan link comment using the Artifact Comment Protocol:
+   - **Rename file if needed**: If the filename doesn't contain `GH-NNNN`, rename it:
+     ```bash
+     # Example: 2026-03-06-improve-error-handling.md -> 2026-03-06-GH-0542-improve-error-handling.md
+     mv thoughts/shared/plans/YYYY-MM-DD-description.md thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-description.md
+     ```
+     Use zero-padded 4-digit issue number. Insert `GH-NNNN-` after the date prefix.
+   - Post plan link comment using the Artifact Comment Protocol (use the **new** filename):
      ```
      ralph_hero__create_comment(number=NNN, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/[filename].md\n\nSummary: [1-3 line summary of the plan]")
      ```
@@ -349,7 +356,8 @@ After the plan is finalized and the user is satisfied:
 3. **If creating new issue**:
    - Use `ralph_hero__create_issue(title=..., body=...)` with plan summary as body
    - Use `ralph_hero__save_issue(number=..., estimate="XS|S|M|L|XL")` to set estimate
-   - Post plan link comment (same Artifact Comment Protocol as above)
+   - **Rename file** to include the new issue number (same rename pattern as option 2)
+   - Post plan link comment (same Artifact Comment Protocol as above, using renamed filename)
    - Update plan frontmatter with new issue reference
    - Offer state transition to "Plan in Review"
 

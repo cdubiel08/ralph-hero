@@ -175,21 +175,35 @@ type: research
 
 ### Step 8: Optional issue linking
 
-If `LINKED_ISSUE` was set (user provided `#NNN`), offer to post an Artifact Comment to the issue:
+If `LINKED_ISSUE` was set (user provided `#NNN`), or the user asks to link to an issue, offer to post an Artifact Comment:
 
 ```
 Would you like me to link this research document to issue #NNN?
 ```
 
-If the user agrees, post a comment via `ralph_hero__create_comment`:
+If the user agrees:
 
-```markdown
-## Research Document
+1. **Rename file if needed**: If the filename doesn't contain `GH-NNNN`, rename it:
+   ```bash
+   # Example: 2026-03-06-authentication-flow.md -> 2026-03-06-GH-0042-authentication-flow.md
+   mv thoughts/shared/research/YYYY-MM-DD-description.md thoughts/shared/research/YYYY-MM-DD-GH-NNNN-description.md
+   ```
+   Use zero-padded 4-digit issue number. Insert `GH-NNNN-` after the date prefix.
 
-https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
+2. **Update frontmatter** with issue reference:
+   ```yaml
+   github_issue: NNN
+   github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
+   ```
 
-Key findings: [1-3 line summary of the most important discoveries]
-```
+3. **Post artifact comment** via `ralph_hero__create_comment` (use the **new** filename):
+   ```markdown
+   ## Research Document
+
+   https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
+
+   Key findings: [1-3 line summary of the most important discoveries]
+   ```
 
 ### Step 9: Present findings
 - Present a concise summary of findings to the user
