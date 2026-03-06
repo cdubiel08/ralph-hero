@@ -44,5 +44,12 @@ if ! git log --oneline -1 --all -- "$doc" 2>/dev/null | grep -q .; then
   warn "Research doc exists but may not be committed: $doc"
 fi
 
+# Check for artifact comment marker (Gap 3: discovery sequence)
+marker_dir="/tmp/ralph-artifact-markers"
+issue_number=$(echo "$ticket_id" | grep -oE '[0-9]+' | head -1)
+if [[ -n "$issue_number" ]] && [[ ! -f "$marker_dir/artifact-comment-${issue_number}" ]]; then
+  echo "WARNING: Artifact comment marker absent for #${issue_number} — '## Research Document' comment may not have been posted." >&2
+fi
+
 echo "Research postcondition passed: $doc"
 allow

@@ -49,4 +49,22 @@ See specs/artifact-metadata.md for the required format."
   fi
 done
 
+# Write artifact comment marker for postcondition verification
+# Marker records that a valid artifact comment was posted for this issue in this session.
+# Pattern: same as team-protocol-validator.sh (hash-stable across subprocess invocations)
+issue_number=$(get_field '.tool_input.number')
+if [[ -n "$issue_number" ]]; then
+  marker_dir="/tmp/ralph-artifact-markers"
+  mkdir -p "$marker_dir"
+  for header in "${artifact_headers[@]}"; do
+    if echo "$body" | grep -qF "$header"; then
+      url_line=$(echo "$body" | grep -A3 -F "$header" | grep -E "^https?://" | head -1)
+      if [[ -n "$url_line" ]]; then
+        echo "$url_line" > "$marker_dir/artifact-comment-${issue_number}"
+        break
+      fi
+    fi
+  done
+fi
+
 allow
