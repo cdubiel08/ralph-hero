@@ -5,6 +5,16 @@
   "note": "Most hooks are registered via skill frontmatter for granular scoping. This file provides plugin-level hooks that apply across all skills.",
 
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/prune-merged-worktrees.sh"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "ralph_hero__save_issue",

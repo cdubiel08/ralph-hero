@@ -266,11 +266,11 @@ Add a `SessionStart` entry to the existing hooks object. Currently it only has `
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Script is executable: `test -x plugin/ralph-hero/hooks/scripts/prune-merged-worktrees.sh`
-- [ ] Script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/prune-merged-worktrees.sh`
-- [ ] `hooks.json` is valid JSON: `jq . plugin/ralph-hero/hooks/hooks.json`
-- [ ] Script exits 0 when no worktrees exist
-- [ ] Script exits 0 when not in a git repo
+- [x] Script is executable: `test -x plugin/ralph-hero/hooks/scripts/prune-merged-worktrees.sh`
+- [x] Script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/prune-merged-worktrees.sh`
+- [x] `hooks.json` is valid JSON: `jq . plugin/ralph-hero/hooks/hooks.json`
+- [x] Script exits 0 when no worktrees exist
+- [x] Script exits 0 when not in a git repo
 
 #### Manual Verification:
 - [ ] Create a worktree, merge its branch to main, start a new session — worktree is automatically removed
