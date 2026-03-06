@@ -202,7 +202,7 @@ INSTRUCTIONS:
    - Scope: Is 'What we're NOT doing' well-defined?
 
 3. Use codebase-analyzer to verify technical claims:
-   Task(subagent_type='codebase-analyzer', prompt='Verify files mentioned in plan exist: [list files]')
+   Task(subagent_type='ralph-hero:codebase-analyzer', prompt='Verify files mentioned in plan exist: [list files]')
 
 4. Create critique document at: thoughts/shared/reviews/YYYY-MM-DD-GH-NNN-critique.md
    With frontmatter:

@@ -86,11 +86,11 @@ If `save_issue` returns an error, read the error message for valid states/intent
 1. **Read issue thoroughly** - understand the problem from user perspective
 2. **Review any linked documents** - prior research, related issues
 3. **Spawn parallel sub-tasks** using the Task tool with specialized agents:
-   - **codebase-locator**: Find all files related to the issue
-   - **codebase-analyzer**: Understand current implementation
-   - **codebase-pattern-finder**: Find similar patterns to model after
-   - **thoughts-locator**: Find existing research or decisions
-   - **web-search-researcher**: External APIs, best practices (if needed)
+   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [issue topic]")`
+   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand current implementation of [component]")`
+   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar patterns to model after for [feature]")`
+   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research or decisions about [topic]")`
+   - `Task(subagent_type="ralph-hero:web-search-researcher", prompt="External APIs, best practices for [topic]")` (if needed)
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 

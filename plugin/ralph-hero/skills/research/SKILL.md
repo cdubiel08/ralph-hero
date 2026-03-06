@@ -65,16 +65,16 @@ Then wait for the user's research query.
 Create multiple Task agents to research different aspects concurrently. Use these specialized agents:
 
 **For codebase research:**
-- Use the **ralph-hero:codebase-locator** agent to find WHERE files and components live
-- Use the **ralph-hero:codebase-analyzer** agent to understand HOW specific code works (without critiquing it)
-- Use the **ralph-hero:codebase-pattern-finder** agent to find examples of existing patterns (without evaluating them)
+- `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find WHERE files and components related to [topic] live")`
+- `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand HOW [component] works (without critiquing it)")`
+- `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find examples of existing patterns for [feature] (without evaluating them)")`
 
 **For thoughts directory:**
-- Use the **ralph-hero:thoughts-locator** agent to discover what documents exist about the topic
+- `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Discover what documents exist about [topic]")`
 - Read and synthesize the returned documents yourself in the main context
 
 **For web research (only if user explicitly asks):**
-- Use the **ralph-hero:web-search-researcher** agent for external documentation and resources
+- `Task(subagent_type="ralph-hero:web-search-researcher", prompt="Research external documentation and resources for [topic]")`
 - IF you use web-research agents, instruct them to return LINKS with their findings, and please INCLUDE those links in your final report
 
 **For GitHub Issues (if relevant):**

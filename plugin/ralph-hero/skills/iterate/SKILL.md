@@ -140,12 +140,12 @@ If the user's feedback requires understanding new code patterns or validating as
    Use the right agent for each type of research:
 
    **For code investigation:**
-   - **ralph-hero:codebase-locator** - To find relevant files
-   - **ralph-hero:codebase-analyzer** - To understand implementation details
-   - **ralph-hero:codebase-pattern-finder** - To find similar patterns
+   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [topic]")`
+   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand implementation details of [component]")`
+   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar patterns for [feature]")`
 
    **For historical context:**
-   - **ralph-hero:thoughts-locator** - To find related research or decisions
+   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find related research or decisions about [area]")`
 
    **Be EXTREMELY specific about directories**:
    - Include full path context in prompts

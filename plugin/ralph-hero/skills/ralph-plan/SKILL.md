@@ -134,12 +134,23 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
    8. **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
 2. **Build unified understanding**: shared patterns, data flow between phases, integration points
 3. **Spawn sub-tasks** for research gaps:
-   - `Task(subagent_type="codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
-   - `Task(subagent_type="codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
+   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
+   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 
 4. **Wait for sub-tasks** before proceeding
+5. **Discover project verification commands**: Search the target project directory for quality tooling. Check these sources in order (stop once found for each category):
+
+   | Category | Sources to check |
+   |----------|-----------------|
+   | Build | `package.json` scripts (`build`), `pyproject.toml` (`[tool.hatch.envs]`, `[build-system]`), `Makefile`/`justfile` targets, `CLAUDE.md` |
+   | Test | `package.json` (`test`), `pyproject.toml` (`[tool.pytest]`), `Makefile`/`justfile`, CI workflow files (`.github/workflows/*.yml`) |
+   | Lint | `package.json` (`lint`), `pyproject.toml` (`[tool.ruff]`, `[tool.flake8]`), `.eslintrc*`, `ruff.toml` |
+   | Type check | `tsconfig.json` → `tsc`, `pyproject.toml` (`[tool.mypy]`, `[tool.pyright]`) |
+   | Format | `package.json` (`format`), `pyproject.toml` (`[tool.black]`, `[tool.ruff.format]`), `.prettierrc*` |
+
+   Record the discovered commands (e.g., `npm run build`, `pytest`, `ruff check .`). These will be embedded in each phase's Success Criteria as `- [ ] Automated:` entries. Not every phase needs every command — match checks to what the phase changes (e.g., type-only changes need build/typecheck but not the full test suite).
 
 ### Step 4: Transition to Plan in Progress
 
@@ -202,7 +213,7 @@ epic_issue: 40
 **Changes**: [Specific changes]
 
 ### Success Criteria
-- [ ] Automated: [test command]
+- [ ] Automated: [discovered build/test/lint commands relevant to this phase's changes]
 - [ ] Manual: [human check]
 
 **Creates for next phase**: [What Phase 2 uses]

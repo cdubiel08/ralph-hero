@@ -72,12 +72,11 @@ When this command is invoked:
 
 Spawn parallel research to ground the idea in the codebase and project context:
 
-1. **Codebase context** - Use **ralph-hero:codebase-locator** and **ralph-hero:codebase-analyzer** to find:
-   - Where this idea would live in the codebase
-   - What already exists that's related
-   - Existing patterns to build on
+1. **Codebase context** - Spawn parallel sub-tasks:
+   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find where [idea topic] would live in the codebase")`
+   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="What already exists related to [idea topic]? What patterns to build on?")`
 
-2. **Existing work** - Use **ralph-hero:thoughts-locator** to find:
+2. **Existing work** - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans")` to find:
    - Related ideas in `thoughts/shared/ideas/`
    - Related research in `thoughts/shared/research/`
    - Related plans in `thoughts/shared/plans/`

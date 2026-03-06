@@ -20,7 +20,7 @@ hooks:
   SessionStart:
     - hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=team RALPH_AUTO_APPROVE=true"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=team RALPH_AUTO_APPROVE=true CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT}"
   PreToolUse:
     - matcher: "TeamCreate|Agent|TaskCreate"
       hooks:

@@ -66,9 +66,9 @@ Then wait for the user's input.
 3. **Spawn initial research tasks to gather context**:
    Before asking the user any questions, use specialized agents to research in parallel:
 
-   - Use the **ralph-hero:codebase-locator** agent to find all files related to the task
-   - Use the **ralph-hero:codebase-analyzer** agent to understand how the current implementation works
-   - If relevant, use the **ralph-hero:thoughts-locator** agent to find any existing thoughts documents about this feature
+   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [task topic]")`
+   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand how [component] currently works")`
+   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing thoughts documents about [feature]")` (if relevant)
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls (per ADR-001 in shared/conventions.md).
 
@@ -121,12 +121,12 @@ After getting initial clarifications:
    - Use the right agent for each type of research:
 
    **For deeper investigation:**
-   - **ralph-hero:codebase-locator** - To find more specific files
-   - **ralph-hero:codebase-analyzer** - To understand implementation details
-   - **ralph-hero:codebase-pattern-finder** - To find similar features we can model after
+   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [specific aspect]")`
+   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand implementation details of [component]")`
+   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar features we can model after for [feature]")`
 
    **For historical context:**
-   - **ralph-hero:thoughts-locator** - To find any research, plans, or decisions about this area
+   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find research, plans, or decisions about [area]")`
 
    **For existing issues:**
    - Use `ralph_hero__list_issues(query=...)` to find related issues directly

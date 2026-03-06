@@ -55,7 +55,7 @@ Don't block on answers. If the user says "just capture it", proceed with what yo
 ### Step 2: Light Research (Optional)
 
 Only if the idea references specific parts of the codebase:
-- Use **one** quick `ralph-hero:codebase-locator` search to ground the idea in reality
+- Use **one** quick search to ground the idea in reality: `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [idea topic]")`
 - Don't go deep - just confirm the relevant area exists
 - Do NOT pass `team_name` to the Task call (sub-agent team isolation per conventions)
 
