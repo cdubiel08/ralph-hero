@@ -18,6 +18,7 @@ export interface GroupIssue {
   title: string;
   state: string;
   order: number;
+  repository?: string; // "owner/repo" — present for cross-repo issues
 }
 
 export interface GroupDetectionResult {
@@ -32,6 +33,8 @@ interface IssueRelationData {
   number: number;
   title: string;
   state: string;
+  repoOwner: string;
+  repoName: string;
   parentNumber: number | null;
   subIssueNumbers: number[];
   blockingNumbers: number[];
@@ -60,8 +63,8 @@ const SEED_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
             number
             title
             state
-            blocking(first: 20) { nodes { number } }
-            blockedBy(first: 20) { nodes { number } }
+            blocking(first: 20) { nodes { number repository { owner { login } name } } }
+            blockedBy(first: 20) { nodes { number repository { owner { login } name } } }
           }
         }
       }
@@ -71,15 +74,15 @@ const SEED_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
           number
           title
           state
-          blocking(first: 20) { nodes { number } }
-          blockedBy(first: 20) { nodes { number } }
+          blocking(first: 20) { nodes { number repository { owner { login } name } } }
+          blockedBy(first: 20) { nodes { number repository { owner { login } name } } }
         }
       }
       blocking(first: 20) {
-        nodes { id number title state }
+        nodes { id number title state repository { owner { login } name } }
       }
       blockedBy(first: 20) {
-        nodes { id number title state }
+        nodes { id number title state repository { owner { login } name } }
       }
     }
   }
@@ -104,8 +107,8 @@ const EXPAND_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
             number
             title
             state
-            blocking(first: 20) { nodes { number } }
-            blockedBy(first: 20) { nodes { number } }
+            blocking(first: 20) { nodes { number repository { owner { login } name } } }
+            blockedBy(first: 20) { nodes { number repository { owner { login } name } } }
           }
         }
       }
@@ -115,15 +118,15 @@ const EXPAND_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
           number
           title
           state
-          blocking(first: 20) { nodes { number } }
-          blockedBy(first: 20) { nodes { number } }
+          blocking(first: 20) { nodes { number repository { owner { login } name } } }
+          blockedBy(first: 20) { nodes { number repository { owner { login } name } } }
         }
       }
       blocking(first: 20) {
-        nodes { id number title state }
+        nodes { id number title state repository { owner { login } name } }
       }
       blockedBy(first: 20) {
-        nodes { id number title state }
+        nodes { id number title state repository { owner { login } name } }
       }
     }
   }
@@ -133,13 +136,26 @@ const EXPAND_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
 // Response types for the seed/expand query
 // ---------------------------------------------------------------------------
 
+interface DepRepoInfo {
+  owner: { login: string };
+  name: string;
+}
+
 interface SeedIssueNode {
   id: string;
   number: number;
   title: string;
   state: string;
-  blocking?: { nodes: Array<{ number: number }> };
-  blockedBy?: { nodes: Array<{ number: number }> };
+  blocking?: { nodes: Array<{ number: number; repository?: DepRepoInfo }> };
+  blockedBy?: { nodes: Array<{ number: number; repository?: DepRepoInfo }> };
+}
+
+interface SeedDepNode {
+  id: string;
+  number: number;
+  title: string;
+  state: string;
+  repository?: DepRepoInfo;
 }
 
 interface SeedIssueResponse {
@@ -155,12 +171,8 @@ interface SeedIssueResponse {
     subIssues: { nodes: SeedIssueNode[] };
   } | null;
   subIssues: { nodes: SeedIssueNode[] };
-  blocking: {
-    nodes: Array<{ id: string; number: number; title: string; state: string }>;
-  };
-  blockedBy: {
-    nodes: Array<{ id: string; number: number; title: string; state: string }>;
-  };
+  blocking: { nodes: SeedDepNode[] };
+  blockedBy: { nodes: SeedDepNode[] };
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +199,22 @@ export async function detectGroup(
   const issueMap = new Map<number, IssueRelationData>();
   // Queue of issue numbers to expand
   const expandQueue: number[] = [];
+  // Cross-repo info for dependency targets (number -> { owner, repo })
+  const depRepoInfo = new Map<number, { owner: string; repo: string }>();
+
+  // Helper to store cross-repo info from dependency nodes
+  function trackDepRepoInfo(
+    nodes: Array<{ number: number; repository?: DepRepoInfo }>,
+  ): void {
+    for (const dep of nodes) {
+      if (dep.repository) {
+        depRepoInfo.set(dep.number, {
+          owner: dep.repository.owner.login,
+          repo: dep.repository.name,
+        });
+      }
+    }
+  }
 
   // Step 1: Seed query
   const seedResult = await client.query<{
@@ -198,12 +226,18 @@ export async function detectGroup(
     throw new Error(`Issue #${seedNumber} not found in ${owner}/${repo}`);
   }
 
+  // Track cross-repo info from seed's direct dependencies
+  trackDepRepoInfo(seedIssue.blocking.nodes);
+  trackDepRepoInfo(seedIssue.blockedBy.nodes);
+
   // Process seed issue
   addIssueToMap(issueMap, {
     id: seedIssue.id,
     number: seedIssue.number,
     title: seedIssue.title,
     state: seedIssue.state,
+    repoOwner: owner,
+    repoName: repo,
     parentNumber: seedIssue.parent?.number ?? null,
     subIssueNumbers: seedIssue.subIssues.nodes.map((n) => n.number),
     blockingNumbers: seedIssue.blocking.nodes.map((n) => n.number),
@@ -218,6 +252,8 @@ export async function detectGroup(
       number: parent.number,
       title: parent.title,
       state: parent.state,
+      repoOwner: owner,
+      repoName: repo,
       parentNumber: null,
       subIssueNumbers: parent.subIssues.nodes.map((n) => n.number),
       blockingNumbers: [],
@@ -225,11 +261,17 @@ export async function detectGroup(
     });
 
     for (const sibling of parent.subIssues.nodes) {
+      // Track cross-repo info from sibling dependencies
+      trackDepRepoInfo(sibling.blocking?.nodes ?? []);
+      trackDepRepoInfo(sibling.blockedBy?.nodes ?? []);
+
       addIssueToMap(issueMap, {
         id: sibling.id,
         number: sibling.number,
         title: sibling.title,
         state: sibling.state,
+        repoOwner: owner,
+        repoName: repo,
         parentNumber: parent.number,
         subIssueNumbers: [],
         blockingNumbers: sibling.blocking?.nodes.map((n) => n.number) ?? [],
@@ -240,11 +282,17 @@ export async function detectGroup(
 
   // Process sub-issues of seed
   for (const child of seedIssue.subIssues.nodes) {
+    // Track cross-repo info from child dependencies
+    trackDepRepoInfo(child.blocking?.nodes ?? []);
+    trackDepRepoInfo(child.blockedBy?.nodes ?? []);
+
     addIssueToMap(issueMap, {
       id: child.id,
       number: child.number,
       title: child.title,
       state: child.state,
+      repoOwner: owner,
+      repoName: repo,
       parentNumber: seedIssue.number,
       subIssueNumbers: [],
       blockingNumbers: child.blocking?.nodes.map((n) => n.number) ?? [],
@@ -254,12 +302,16 @@ export async function detectGroup(
 
   // Process direct dependencies
   for (const dep of seedIssue.blocking.nodes) {
+    const depOwner = dep.repository?.owner.login ?? owner;
+    const depRepo = dep.repository?.name ?? repo;
     if (!issueMap.has(dep.number)) {
       addIssueToMap(issueMap, {
         id: dep.id,
         number: dep.number,
         title: dep.title,
         state: dep.state,
+        repoOwner: depOwner,
+        repoName: depRepo,
         parentNumber: null,
         subIssueNumbers: [],
         blockingNumbers: [],
@@ -269,12 +321,16 @@ export async function detectGroup(
     }
   }
   for (const dep of seedIssue.blockedBy.nodes) {
+    const depOwner = dep.repository?.owner.login ?? owner;
+    const depRepo = dep.repository?.name ?? repo;
     if (!issueMap.has(dep.number)) {
       addIssueToMap(issueMap, {
         id: dep.id,
         number: dep.number,
         title: dep.title,
         state: dep.state,
+        repoOwner: depOwner,
+        repoName: depRepo,
         parentNumber: null,
         subIssueNumbers: [],
         blockingNumbers: [],
@@ -307,19 +363,40 @@ export async function detectGroup(
     }
     expanded.add(num);
 
+    // Resolve owner/repo for this issue — check cross-repo info first
+    const crossRepoInfo = depRepoInfo.get(num);
+    const expandOwner = crossRepoInfo?.owner ?? owner;
+    const expandRepo = crossRepoInfo?.repo ?? repo;
+
     try {
       const expandResult = await client.query<{
         repository: { issue: SeedIssueResponse | null } | null;
-      }>(EXPAND_QUERY, { owner, repo, number: num });
+      }>(EXPAND_QUERY, { owner: expandOwner, repo: expandRepo, number: num });
 
       const expandedIssue = expandResult.repository?.issue;
-      if (!expandedIssue) continue; // Cross-repo or deleted issue, skip
+      if (!expandedIssue) continue; // Deleted issue, skip
+
+      // Track cross-repo info from expanded issue's dependency nodes
+      trackDepRepoInfo(expandedIssue.blocking.nodes);
+      trackDepRepoInfo(expandedIssue.blockedBy.nodes);
+      for (const child of expandedIssue.subIssues.nodes) {
+        trackDepRepoInfo(child.blocking?.nodes ?? []);
+        trackDepRepoInfo(child.blockedBy?.nodes ?? []);
+      }
+      if (expandedIssue.parent) {
+        for (const sibling of expandedIssue.parent.subIssues.nodes) {
+          trackDepRepoInfo(sibling.blocking?.nodes ?? []);
+          trackDepRepoInfo(sibling.blockedBy?.nodes ?? []);
+        }
+      }
 
       addIssueToMap(issueMap, {
         id: expandedIssue.id,
         number: expandedIssue.number,
         title: expandedIssue.title,
         state: expandedIssue.state,
+        repoOwner: expandOwner,
+        repoName: expandRepo,
         parentNumber: expandedIssue.parent?.number ?? null,
         subIssueNumbers: expandedIssue.subIssues.nodes.map((n) => n.number),
         blockingNumbers: expandedIssue.blocking.nodes.map((n) => n.number),
@@ -338,7 +415,7 @@ export async function detectGroup(
     } catch {
       // Skip issues that can't be fetched (cross-repo, permissions, etc.)
       console.error(
-        `[group-detection] Could not fetch issue #${num}, skipping (may be cross-repo)`,
+        `[group-detection] Could not fetch issue #${num} from ${expandOwner}/${expandRepo}, skipping`,
       );
     }
   }
@@ -353,13 +430,18 @@ export async function detectGroup(
   // Step 4: Build result
   const groupTickets: GroupIssue[] = sorted.map((num, index) => {
     const issue = issueMap.get(num)!;
-    return {
+    const result: GroupIssue = {
       id: issue.id,
       number: issue.number,
       title: issue.title,
       state: issue.state,
       order: index + 1,
     };
+    // Include repository only for cross-repo issues
+    if (issue.repoOwner !== owner || issue.repoName !== repo) {
+      result.repository = `${issue.repoOwner}/${issue.repoName}`;
+    }
+    return result;
   });
 
   const primary = groupTickets[0] || {
@@ -403,10 +485,12 @@ function addIssueToMap(
     if (data.parentNumber !== null && existing.parentNumber === null) {
       existing.parentNumber = data.parentNumber;
     }
-    // Prefer non-empty id/title/state
+    // Prefer non-empty id/title/state/repo
     if (!existing.id && data.id) existing.id = data.id;
     if (!existing.title && data.title) existing.title = data.title;
     if (!existing.state && data.state) existing.state = data.state;
+    if (!existing.repoOwner && data.repoOwner) existing.repoOwner = data.repoOwner;
+    if (!existing.repoName && data.repoName) existing.repoName = data.repoName;
   } else {
     map.set(data.number, { ...data });
   }

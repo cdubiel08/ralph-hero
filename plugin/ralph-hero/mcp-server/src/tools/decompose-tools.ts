@@ -55,7 +55,7 @@ export interface ProposedIssue {
  */
 export interface DecompositionResult {
   proposed_issues: ProposedIssue[];
-  /** Human-readable dependency edges from the pattern, e.g. ["api -> frontend"] */
+  /** Blocking dependency edges from the pattern, e.g. ["api -> frontend"] meaning api blocks frontend */
   dependency_chain: string[];
   /** The canonical pattern name used (from registry, case-preserved) */
   matched_pattern: string;
@@ -428,11 +428,11 @@ export function registerDecomposeTools(
           });
         }
 
-        // Step 5: Wire dependencies (addSubIssue for dependency edges)
-        // Parse "a -> b" edges from dependency_chain; cross-repo sub-issues
-        // may not be supported — catch and continue.
+        // Step 5: Wire dependencies (addBlockedBy for dependency-flow edges)
+        // Parse "a -> b" edges: a blocks b (b is blocked by a)
         const wiringResults: Array<{
           edge: string;
+          type: "blockedBy";
           status: "ok" | "skipped";
           reason?: string;
         }> = [];
@@ -442,45 +442,48 @@ export function registerDecomposeTools(
           if (!match) {
             wiringResults.push({
               edge,
+              type: "blockedBy",
               status: "skipped",
               reason: "Unrecognized edge format (expected 'a -> b')",
             });
             continue;
           }
 
-          const [, fromRepo, toRepo] = match;
-          const fromIssue = createdIssues.find((i) => i.repoKey === fromRepo);
-          const toIssue = createdIssues.find((i) => i.repoKey === toRepo);
+          const [, blockingRepo, blockedRepo] = match;
+          const blockingIssue = createdIssues.find((i) => i.repoKey === blockingRepo);
+          const blockedIssue = createdIssues.find((i) => i.repoKey === blockedRepo);
 
-          if (!fromIssue || !toIssue) {
+          if (!blockingIssue || !blockedIssue) {
             wiringResults.push({
               edge,
+              type: "blockedBy",
               status: "skipped",
-              reason: `Could not find created issue for repo "${fromRepo}" or "${toRepo}"`,
+              reason: `Could not find created issue for repo "${blockingRepo}" or "${blockedRepo}"`,
             });
             continue;
           }
 
           try {
             await client.mutate(
-              `mutation($parentId: ID!, $childId: ID!) {
-                addSubIssue(input: {
-                  issueId: $parentId,
-                  subIssueId: $childId
+              `mutation($blockedId: ID!, $blockingId: ID!) {
+                addBlockedBy(input: {
+                  issueId: $blockedId,
+                  blockingIssueId: $blockingId
                 }) {
                   issue { id }
-                  subIssue { id }
+                  blockingIssue { id }
                 }
               }`,
-              { parentId: fromIssue.id, childId: toIssue.id },
+              { blockedId: blockedIssue.id, blockingId: blockingIssue.id },
             );
-            wiringResults.push({ edge, status: "ok" });
+            wiringResults.push({ edge, type: "blockedBy", status: "ok" });
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             wiringResults.push({
               edge,
+              type: "blockedBy",
               status: "skipped",
-              reason: `addSubIssue failed (cross-repo sub-issues may not be supported): ${reason}`,
+              reason: `addBlockedBy failed: ${reason}`,
             });
           }
         }

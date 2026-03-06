@@ -299,13 +299,13 @@ describe("advance_issue structural", () => {
     expect(src).not.toContain('"ralph_hero__advance_parent"');
   });
 
-  it("does not register list_dependencies", () => {
+  it("registers list_dependencies (GH-539)", () => {
     const fs = require("fs");
     const path = require("path");
     const src = fs.readFileSync(
       path.resolve(__dirname, "../tools/relationship-tools.ts"),
       "utf-8",
     );
-    expect(src).not.toContain('"ralph_hero__list_dependencies"');
+    expect(src).toContain('"ralph_hero__list_dependencies"');
   });
 });
