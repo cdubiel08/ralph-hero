@@ -12,6 +12,7 @@ import {
   buildDashboard,
   computeArchiveStats,
   computeStreamSection,
+  computeIterationSection,
   formatMarkdown,
   formatAscii,
   DEFAULT_HEALTH_CONFIG,
@@ -1854,5 +1855,220 @@ describe("formatAscii stream section", () => {
     const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
     const ascii = formatAscii(data);
     expect(ascii).not.toContain("--- Streams ---");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeIterationSection
+// ---------------------------------------------------------------------------
+
+describe("computeIterationSection", () => {
+  it("returns undefined when no items have iteration assignments", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress" }),
+      makeItem({ number: 2, workflowState: "Backlog" }),
+    ];
+    const result = computeIterationSection(items);
+    expect(result).toBeUndefined();
+  });
+
+  it("groups items by iteration title with phase counts", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+      makeItem({ number: 2, workflowState: "Backlog", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+      makeItem({ number: 3, workflowState: "In Progress", iterationId: "def", iterationTitle: "Sprint 2", iterationStartDate: "2026-03-24", iterationDuration: 14 }),
+    ];
+    const result = computeIterationSection(items);
+    expect(result).toBeDefined();
+    expect(result!.iterations).toHaveLength(2);
+
+    const sprint1 = result!.iterations.find((i) => i.iterationTitle === "Sprint 1");
+    expect(sprint1).toBeDefined();
+    expect(sprint1!.issueCount).toBe(2);
+    expect(sprint1!.phaseCounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ state: "In Progress", count: 1 }),
+        expect.objectContaining({ state: "Backlog", count: 1 }),
+      ]),
+    );
+
+    const sprint2 = result!.iterations.find((i) => i.iterationTitle === "Sprint 2");
+    expect(sprint2).toBeDefined();
+    expect(sprint2!.issueCount).toBe(1);
+  });
+
+  it("sorts iterations by startDate ascending", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Done", iterationId: "def", iterationTitle: "Sprint 2", iterationStartDate: "2026-03-24", iterationDuration: 14 }),
+      makeItem({ number: 2, workflowState: "In Progress", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+    ];
+    const result = computeIterationSection(items);
+    expect(result).toBeDefined();
+    expect(result!.iterations[0].iterationTitle).toBe("Sprint 1");
+    expect(result!.iterations[1].iterationTitle).toBe("Sprint 2");
+  });
+
+  it("excludes items without iteration assignments", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+      makeItem({ number: 2, workflowState: "Backlog" }), // No iteration
+    ];
+    const result = computeIterationSection(items);
+    expect(result).toBeDefined();
+    expect(result!.iterations).toHaveLength(1);
+    expect(result!.iterations[0].issueCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDashboard iteration integration
+// ---------------------------------------------------------------------------
+
+describe("buildDashboard iteration integration", () => {
+  it("includes iterations section when items have iteration assignments", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+      makeItem({ number: 2, workflowState: "Backlog", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.iterations).toBeDefined();
+    expect(data.iterations!.iterations).toHaveLength(1);
+    expect(data.iterations!.iterations[0].iterationTitle).toBe("Sprint 1");
+  });
+
+  it("omits iterations section when no items have iteration assignments", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress" }),
+      makeItem({ number: 2, workflowState: "Backlog" }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    expect(data.iterations).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatMarkdown iteration section
+// ---------------------------------------------------------------------------
+
+describe("formatMarkdown iteration section", () => {
+  it("renders Iterations section when iterations present", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(data);
+    expect(md).toContain("## Iterations");
+    expect(md).toContain("### Sprint 1");
+    expect(md).toContain("In Progress: 1");
+  });
+
+  it("omits Iterations section when no iterations", () => {
+    const items = [makeItem({ number: 1, workflowState: "Backlog" })];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const md = formatMarkdown(data);
+    expect(md).not.toContain("## Iterations");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatAscii iteration section
+// ---------------------------------------------------------------------------
+
+describe("formatAscii iteration section", () => {
+  it("renders Iterations section when iterations present", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "In Progress", iterationId: "abc", iterationTitle: "Sprint 1", iterationStartDate: "2026-03-10", iterationDuration: 14 }),
+    ];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const ascii = formatAscii(data);
+    expect(ascii).toContain("--- Iterations ---");
+    expect(ascii).toContain("Sprint 1");
+  });
+
+  it("omits Iterations section when no iterations", () => {
+    const items = [makeItem({ number: 1, workflowState: "Backlog" })];
+    const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
+    const ascii = formatAscii(data);
+    expect(ascii).not.toContain("--- Iterations ---");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toDashboardItems iteration extraction
+// ---------------------------------------------------------------------------
+
+describe("toDashboardItems iteration extraction", () => {
+  it("extracts iteration fields from raw items", () => {
+    const raw: RawDashboardItem[] = [
+      {
+        id: "item-1",
+        type: "ISSUE",
+        content: {
+          __typename: "Issue",
+          number: 42,
+          title: "Test issue",
+          state: "OPEN",
+          updatedAt: "2026-03-03T00:00:00Z",
+          closedAt: null,
+          assignees: { nodes: [] },
+          subIssues: { totalCount: 0 },
+        },
+        fieldValues: {
+          nodes: [
+            {
+              __typename: "ProjectV2ItemFieldSingleSelectValue",
+              name: "In Progress",
+              field: { name: "Workflow State" },
+            },
+            {
+              __typename: "ProjectV2ItemFieldIterationValue",
+              iterationId: "cfc16e4d",
+              title: "Sprint 1",
+              startDate: "2026-03-10",
+              duration: 14,
+              field: { name: "Sprint" },
+            },
+          ],
+        },
+      },
+    ];
+    const items = toDashboardItems(raw);
+    expect(items).toHaveLength(1);
+    expect(items[0].iterationId).toBe("cfc16e4d");
+    expect(items[0].iterationTitle).toBe("Sprint 1");
+    expect(items[0].iterationStartDate).toBe("2026-03-10");
+    expect(items[0].iterationDuration).toBe(14);
+  });
+
+  it("omits iteration fields when no iteration value present", () => {
+    const raw: RawDashboardItem[] = [
+      {
+        id: "item-1",
+        type: "ISSUE",
+        content: {
+          __typename: "Issue",
+          number: 42,
+          title: "Test issue",
+          state: "OPEN",
+          updatedAt: "2026-03-03T00:00:00Z",
+          closedAt: null,
+          assignees: { nodes: [] },
+          subIssues: { totalCount: 0 },
+        },
+        fieldValues: {
+          nodes: [
+            {
+              __typename: "ProjectV2ItemFieldSingleSelectValue",
+              name: "Backlog",
+              field: { name: "Workflow State" },
+            },
+          ],
+        },
+      },
+    ];
+    const items = toDashboardItems(raw);
+    expect(items).toHaveLength(1);
+    expect(items[0].iterationId).toBeUndefined();
+    expect(items[0].iterationTitle).toBeUndefined();
   });
 });
