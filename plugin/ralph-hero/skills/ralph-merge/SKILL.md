@@ -93,23 +93,21 @@ State: [state]
 
 The integrator will retry when ready.
 
-## Step 5: Merge PR
+## Step 5: Merge PR and Clean Up Worktree
+
+From the project root:
 
 ```bash
-gh pr merge NNN --merge --delete-branch
+./scripts/merge-pr.sh PR_NUMBER [WORKTREE_ID]
 ```
+
+Where PR_NUMBER is the PR number and WORKTREE_ID is the worktree name (e.g., GH-NNN).
+For group/epic worktrees, pass the worktree ID explicitly. If omitted, it is inferred
+from the PR's head branch.
 
 If merge fails, report the error and stop.
 
-## Step 6: Clean Up Worktree
-
-```bash
-./scripts/remove-worktree.sh GH-NNN
-```
-
-Run from the project root. If cleanup fails, warn but continue — the merge was successful.
-
-## Step 7: Move Issues to Done
+## Step 6: Move Issues to Done
 
 ```
 ralph_hero__advance_issue(direction="children", number=NNN, targetState="Done")
@@ -121,7 +119,7 @@ Or for a standalone issue:
 ralph_hero__save_issue(number=NNN, workflowState="Done", command="ralph_merge")
 ```
 
-## Step 8: Advance Parent
+## Step 7: Advance Parent
 
 If applicable:
 
@@ -129,13 +127,13 @@ If applicable:
 ralph_hero__advance_issue(direction="parent", number=NNN)
 ```
 
-## Step 9: Post Completion Comment
+## Step 8: Post Completion Comment
 
 ```
 ralph_hero__create_comment(number=NNN, body="## Merged\n\nPR merged successfully. Issue moved to Done.")
 ```
 
-## Step 10: Report Result
+## Step 9: Report Result
 
 Output completion status:
 
