@@ -437,6 +437,7 @@ quick-draft title priority="" estimate="" state="Backlog":
     params="$params,\"workflowState\":\"{{state}}\"}"
     just _mcp_call "ralph_hero__create_draft_issue" "$params"
 
+# [DEPRECATED: recipes now source cli-dispatch.sh directly]
 [private]
 _run_skill skill issue budget timeout:
     #!/usr/bin/env bash
