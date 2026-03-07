@@ -12,11 +12,9 @@ set tempdir := "/tmp"
 alias t  := triage
 alias r  := research
 alias p  := plan
-alias i  := impl
-alias s  := status
 alias sp := split
+alias s  := status
 alias h  := hygiene
-alias issue := quick-info
 
 # Browse and run a recipe interactively (falls back to --list without fzf)
 default:
@@ -29,48 +27,130 @@ default:
 
 # Triage a backlog issue - assess validity, close duplicates, route to research
 [group('workflow')]
-triage issue="" budget="1.00" timeout="15m":
-    @just _run_skill "ralph-triage" "{{issue}}" "{{budget}}" "{{timeout}}"
+triage *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "ralph-triage" "${ARGS[@]}" ;;
+        interactive) run_interactive "ralph-triage" "${ARGS[@]}" ;;
+        quick)       no_mode "triage" "quick" ;;
+    esac
 
 # Split a large issue into smaller XS/S sub-issues
 [group('workflow')]
-split issue="" budget="1.00" timeout="15m":
-    @just _run_skill "ralph-split" "{{issue}}" "{{budget}}" "{{timeout}}"
+split *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "ralph-split" "${ARGS[@]}" ;;
+        interactive) run_interactive "ralph-split" "${ARGS[@]}" ;;
+        quick)       no_mode "split" "quick" ;;
+    esac
 
 # Research an issue - investigate codebase, create findings document
 [group('workflow')]
-research issue="" budget="2.00" timeout="15m":
-    @just _run_skill "ralph-research" "{{issue}}" "{{budget}}" "{{timeout}}"
+research *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "ralph-research" "${ARGS[@]}" ;;
+        interactive) run_interactive "research" "${ARGS[@]}" ;;
+        quick)       no_mode "research" "quick" ;;
+    esac
 
 # Create implementation plan from research findings
 [group('workflow')]
-plan issue="" budget="3.00" timeout="15m":
-    @just _run_skill "ralph-plan" "{{issue}}" "{{budget}}" "{{timeout}}"
+plan *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=3.00 DEFAULT_TIMEOUT=15m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "ralph-plan" "${ARGS[@]}" ;;
+        interactive) run_interactive "plan" "${ARGS[@]}" ;;
+        quick)       no_mode "plan" "quick" ;;
+    esac
 
 # Review and critique an implementation plan
 [group('workflow')]
-review issue="" budget="2.00" timeout="15m":
-    @just _run_skill "ralph-review" "{{issue}}" "{{budget}}" "{{timeout}}"
+review *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "ralph-review" "${ARGS[@]}" ;;
+        interactive) run_interactive "ralph-review" "${ARGS[@]}" ;;
+        quick)       no_mode "review" "quick" ;;
+    esac
 
 # Implement an issue following its approved plan
 [group('workflow')]
-impl issue="" budget="5.00" timeout="15m":
-    @just _run_skill "ralph-impl" "{{issue}}" "{{budget}}" "{{timeout}}"
+impl *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=5.00 DEFAULT_TIMEOUT=15m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "ralph-impl" "${ARGS[@]}" ;;
+        interactive) run_interactive "impl" "${ARGS[@]}" ;;
+        quick)       no_mode "impl" "quick" ;;
+    esac
 
 # Run project hygiene check - stale items, archive candidates
 [group('workflow')]
-hygiene budget="0.50" timeout="10m":
-    @just _run_skill "ralph-hygiene" "" "{{budget}}" "{{timeout}}"
+hygiene *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "ralph-hygiene" "${ARGS[@]}" ;;
+        interactive) run_interactive "ralph-hygiene" "${ARGS[@]}" ;;
+        quick)       run_quick "ralph_hero__project_hygiene" '{}' ;;
+    esac
 
 # Display pipeline status dashboard with health indicators
 [group('workflow')]
-status budget="0.50" timeout="10m":
-    @just _run_skill "status" "" "{{budget}}" "{{timeout}}"
+status *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "status" "${ARGS[@]}" ;;
+        interactive) run_interactive "status" "${ARGS[@]}" ;;
+        quick)       run_quick "ralph_hero__pipeline_dashboard" \
+                         '{"format":"markdown","includeHealth":true}' ;;
+    esac
 
 # Generate and post a project status report
 [group('workflow')]
-report issue="" budget="1.00" timeout="10m":
-    @just _run_skill "report" "{{issue}}" "{{budget}}" "{{timeout}}"
+report *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "report" "${ARGS[@]}" ;;
+        interactive) run_interactive "report" "${ARGS[@]}" ;;
+        quick)       no_mode "report" "quick" ;;
+    esac
 
 # Multi-agent team coordinator - spawns specialist workers
 [group('orchestrate')]
