@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
 # cli-dispatch.sh — Shared dispatch functions for Ralph CLI
-# Modes: interactive (default), headless (-h), quick (-q)
+# Modes: headless (default), interactive (-i), quick (-q)
 
 MCP_VERSION="2.5.13"
 
-# Parse -h/-q/--budget/--timeout flags from args
-# Sets: MODE, ARGS (array), BUDGET, TIMEOUT
 parse_mode() {
-    MODE="${DEFAULT_MODE:-interactive}"
+    MODE="${DEFAULT_MODE:-headless}"
     ARGS=()
     BUDGET="${DEFAULT_BUDGET:-2.00}"
     TIMEOUT="${DEFAULT_TIMEOUT:-15m}"
 
     for arg in "$@"; do
         case "$arg" in
-            -h|--headless) MODE="headless" ;;
+            -i|--interactive) MODE="interactive" ;;
             -q|--quick) MODE="quick" ;;
             --budget=*) BUDGET="${arg#--budget=}" ;;
             --timeout=*) TIMEOUT="${arg#--timeout=}" ;;
@@ -95,9 +93,9 @@ no_mode() {
     local mode="$2"
     echo "Error: '$command' does not support $mode mode."
     case "$mode" in
-        interactive) echo "Try: ralph $command -h (headless) or ralph $command -q (quick)" ;;
-        headless) echo "Try: ralph $command (interactive) or ralph $command -q (quick)" ;;
-        quick) echo "Try: ralph $command (interactive) or ralph $command -h (headless)" ;;
+        interactive) echo "Try: ralph $command (headless) or ralph $command -q (quick)" ;;
+        headless) echo "Try: ralph $command -i (interactive) or ralph $command -q (quick)" ;;
+        quick) echo "Try: ralph $command (headless) or ralph $command -i (interactive)" ;;
     esac
     exit 1
 }
