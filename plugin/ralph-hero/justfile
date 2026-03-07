@@ -159,8 +159,17 @@ team issue="" budget="10.00" timeout="30m":
 
 # Tree-expansion orchestrator - drives issue through full lifecycle
 [group('orchestrate')]
-hero issue="" budget="10.00" timeout="30m":
-    @just _run_skill "hero" "{{issue}}" "{{budget}}" "{{timeout}}"
+hero *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=10.00 DEFAULT_TIMEOUT=30m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "hero" "${ARGS[@]}" ;;
+        interactive) run_interactive "hero" "${ARGS[@]}" ;;
+        quick)       no_mode "hero" "quick" ;;
+    esac
 
 # Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
 [group('orchestrate')]
@@ -174,8 +183,17 @@ loop mode="all" review="skip" split="auto" hygiene="auto" budget="5.00" timeout=
 
 # One-time project setup - create GitHub Project V2 with required fields
 [group('setup')]
-setup budget="1.00" timeout="10m":
-    @just _run_skill "setup" "" "{{budget}}" "{{timeout}}"
+setup *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
+    parse_mode {{args}}
+    case "$MODE" in
+        headless)    run_headless "setup" "${ARGS[@]}" ;;
+        interactive) run_interactive "setup" "${ARGS[@]}" ;;
+        quick)       no_mode "setup" "quick" ;;
+    esac
 
 # Diagnose setup issues - checks env, deps, plugin manifest, and API connectivity
 [group('setup')]
