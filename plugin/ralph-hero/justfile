@@ -32,12 +32,7 @@ triage *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "ralph-triage" "${ARGS[@]}" ;;
-        interactive) run_interactive "ralph-triage" "${ARGS[@]}" ;;
-        quick)       no_mode "triage" "quick" ;;
-    esac
+    dispatch "ralph-triage" {{args}}
 
 # Split a large issue into smaller XS/S sub-issues
 [group('workflow')]
@@ -46,12 +41,7 @@ split *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "ralph-split" "${ARGS[@]}" ;;
-        interactive) run_interactive "ralph-split" "${ARGS[@]}" ;;
-        quick)       no_mode "split" "quick" ;;
-    esac
+    dispatch "ralph-split" {{args}}
 
 # Research an issue - investigate codebase, create findings document
 [group('workflow')]
@@ -60,12 +50,8 @@ research *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "ralph-research" "${ARGS[@]}" ;;
-        interactive) run_interactive "research" "${ARGS[@]}" ;;
-        quick)       no_mode "research" "quick" ;;
-    esac
+    INTERACTIVE_SKILL="research"
+    dispatch "ralph-research" {{args}}
 
 # Create implementation plan from research findings
 [group('workflow')]
@@ -74,12 +60,8 @@ plan *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=3.00 DEFAULT_TIMEOUT=15m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "ralph-plan" "${ARGS[@]}" ;;
-        interactive) run_interactive "plan" "${ARGS[@]}" ;;
-        quick)       no_mode "plan" "quick" ;;
-    esac
+    INTERACTIVE_SKILL="plan"
+    dispatch "ralph-plan" {{args}}
 
 # Review and critique an implementation plan
 [group('workflow')]
@@ -88,12 +70,7 @@ review *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "ralph-review" "${ARGS[@]}" ;;
-        interactive) run_interactive "ralph-review" "${ARGS[@]}" ;;
-        quick)       no_mode "review" "quick" ;;
-    esac
+    dispatch "ralph-review" {{args}}
 
 # Implement an issue following its approved plan
 [group('workflow')]
@@ -102,12 +79,8 @@ impl *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=5.00 DEFAULT_TIMEOUT=15m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "ralph-impl" "${ARGS[@]}" ;;
-        interactive) run_interactive "impl" "${ARGS[@]}" ;;
-        quick)       no_mode "impl" "quick" ;;
-    esac
+    INTERACTIVE_SKILL="impl"
+    dispatch "ralph-impl" {{args}}
 
 # Run project hygiene check - stale items, archive candidates
 [group('workflow')]
@@ -116,12 +89,8 @@ hygiene *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "ralph-hygiene" "${ARGS[@]}" ;;
-        interactive) run_interactive "ralph-hygiene" "${ARGS[@]}" ;;
-        quick)       run_quick "ralph_hero__project_hygiene" '{}' ;;
-    esac
+    QUICK_TOOL="ralph_hero__project_hygiene" QUICK_PARAMS='{}'
+    dispatch "ralph-hygiene" {{args}}
 
 # Display pipeline status dashboard with health indicators
 [group('workflow')]
@@ -130,13 +99,8 @@ status *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "status" "${ARGS[@]}" ;;
-        interactive) run_interactive "status" "${ARGS[@]}" ;;
-        quick)       run_quick "ralph_hero__pipeline_dashboard" \
-                         '{"format":"markdown","includeHealth":true}' ;;
-    esac
+    QUICK_TOOL="ralph_hero__pipeline_dashboard" QUICK_PARAMS='{"format":"markdown","includeHealth":true}'
+    dispatch "status" {{args}}
 
 # Generate and post a project status report
 [group('workflow')]
@@ -145,12 +109,7 @@ report *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "report" "${ARGS[@]}" ;;
-        interactive) run_interactive "report" "${ARGS[@]}" ;;
-        quick)       no_mode "report" "quick" ;;
-    esac
+    dispatch "report" {{args}}
 
 # Multi-agent team coordinator - spawns specialist workers
 [group('orchestrate')]
@@ -164,12 +123,7 @@ hero *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=10.00 DEFAULT_TIMEOUT=30m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "hero" "${ARGS[@]}" ;;
-        interactive) run_interactive "hero" "${ARGS[@]}" ;;
-        quick)       no_mode "hero" "quick" ;;
-    esac
+    dispatch "hero" {{args}}
 
 # Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
 [group('orchestrate')]
@@ -188,12 +142,7 @@ setup *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
-    parse_mode {{args}}
-    case "$MODE" in
-        headless)    run_headless "setup" "${ARGS[@]}" ;;
-        interactive) run_interactive "setup" "${ARGS[@]}" ;;
-        quick)       no_mode "setup" "quick" ;;
-    esac
+    dispatch "setup" {{args}}
 
 # Diagnose setup issues - checks env, deps, plugin manifest, and API connectivity
 [group('setup')]

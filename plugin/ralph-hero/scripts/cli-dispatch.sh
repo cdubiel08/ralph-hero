@@ -38,18 +38,19 @@ run_headless() {
 
     local repo_root
     repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-    local gh_base="https://github.com/${RALPH_GH_OWNER:-}/${RALPH_GH_REPO:-}"
 
     echo ">>> $cmd (budget: \$$BUDGET, timeout: $TIMEOUT)"
     local start_time
     start_time=$(date +%s)
 
-    local exit_code=0
+    set +e
     timeout "$TIMEOUT" claude -p "$cmd" \
         --max-budget-usd "$BUDGET" \
         --dangerously-skip-permissions \
         </dev/null \
-        2>&1 | _output_filter "$repo_root" "$gh_base" || exit_code=${PIPESTATUS[0]:-$?}
+        2>&1 | _output_filter "$repo_root"
+    local exit_code=${PIPESTATUS[0]}
+    set -e
 
     local elapsed=$(( $(date +%s) - start_time ))
 
@@ -73,11 +74,10 @@ run_headless() {
 # Filter that streams output and collects links/transitions for summary
 _output_filter() {
     local repo_root="$1"
-    local gh_base="$2"
     _RALPH_SUMMARY_FILE=$(mktemp /tmp/ralph-summary.XXXXXX)
     export _RALPH_SUMMARY_FILE
 
-    awk -v repo_root="$repo_root" -v gh_base="$gh_base" -v summary_file="$_RALPH_SUMMARY_FILE" '
+    awk -v repo_root="$repo_root" -v summary_file="$_RALPH_SUMMARY_FILE" '
     BEGIN {
         url_count = 0
         file_count = 0
@@ -137,6 +137,27 @@ _output_filter() {
         close(summary_file)
     }
     '
+}
+
+# Dispatch to the correct mode handler
+# Usage: dispatch <skill> [args...]
+# Pre-set: DEFAULT_BUDGET, DEFAULT_TIMEOUT
+# Optional: INTERACTIVE_SKILL (defaults to skill), QUICK_TOOL + QUICK_PARAMS
+dispatch() {
+    local skill="$1"; shift
+    parse_mode "$@"
+
+    case "$MODE" in
+        headless)    run_headless "$skill" "${ARGS[@]}" ;;
+        interactive) run_interactive "${INTERACTIVE_SKILL:-$skill}" "${ARGS[@]}" ;;
+        quick)
+            if [ -n "${QUICK_TOOL:-}" ]; then
+                run_quick "$QUICK_TOOL" "${QUICK_PARAMS:-{}}"
+            else
+                no_mode "${skill#ralph-}" "quick"
+            fi
+            ;;
+    esac
 }
 
 # Direct MCP tool call (instant, no AI)
