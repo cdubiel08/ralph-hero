@@ -10,6 +10,7 @@ let embedderInstance: FeatureExtractionPipeline | null = null;
 
 export async function getEmbedder(): Promise<FeatureExtractionPipeline> {
   if (!embedderInstance) {
+    // @ts-expect-error pipeline() overload union is too complex for TS
     embedderInstance = (await pipeline(
       "feature-extraction",
       MODEL_ID
