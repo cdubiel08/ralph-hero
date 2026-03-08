@@ -103,6 +103,32 @@ Total: 7 relevant documents found
    - Plan files often named `YYYY-MM-DD-feature-name.md`
    - Handoff files: `YYYY-MM-DD_HH-MM-SS_description.md`
 
+## Relationship Discovery (grep-based)
+
+Documents may declare typed relationships to other documents using `[[wiki-link]]` syntax. Use these grep patterns to discover relationships without any index.
+
+**Find what builds on a document:**
+```bash
+grep -rl "builds_on.*\[\[TARGET_FILENAME\]\]" thoughts/shared/
+```
+
+**Find what has tensions with a document:**
+```bash
+grep -rl "tensions.*\[\[TARGET_FILENAME\]\]" thoughts/shared/
+```
+
+**Find what a document builds on (its outgoing links):**
+```bash
+grep "builds_on.*\[\[" thoughts/shared/TYPE/TARGET_FILENAME.md
+```
+
+**Find superseded documents:**
+```bash
+grep -rl "superseded_by" thoughts/shared/
+```
+
+> **Note:** These patterns work without any index. When the `knowledge_search` or `knowledge_traverse` MCP tools are available, prefer those for faster and semantic results — fall back to grep when they are not.
+
 ## Important Guidelines
 
 - **Don't read full file contents** - Just scan for relevance
