@@ -176,9 +176,33 @@ primary_issue: 123
 stream_id: "stream-123-125"
 stream_issues: [123, 125]
 epic_issue: 40
+tags: [topic1, topic2]
 ---
+```
 
+Include 2-5 tags describing the key concepts (e.g., caching, auth, mcp-server, performance). Use lowercase, hyphenated terms. Reuse existing tags from prior documents when applicable.
+
+The document must begin with a `## Prior Work` section immediately after the title (before the Overview table):
+
+```markdown
+## Prior Work
+
+- builds_on:: [[document-filename-without-extension]]
+- tensions:: [[document-filename-without-extension]]
+```
+
+- `builds_on::` for documents this plan extends or was informed by (especially the research doc)
+- `tensions::` for documents whose conclusions conflict with this plan's approach
+- Populate from research documents discovered during context gathering and any related plans
+- If no relevant prior work exists, include the section with "None identified."
+- Use filenames without extension as wikilink targets
+
+```markdown
 # [Description] - Atomic Implementation Plan
+
+## Prior Work
+
+- builds_on:: [[research-doc-filename]]
 
 ## Overview
 [N] related issues for atomic implementation in a single PR:
