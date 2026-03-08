@@ -49,7 +49,7 @@ export class FtsSearch {
     const params: Record<string, unknown> = { query, limit };
 
     if (!includeSuperseded) {
-      conditions.push("d.status != 'superseded'");
+      conditions.push("d.status IS NOT 'superseded'");
     }
 
     if (type) {
