@@ -68,10 +68,7 @@ export function createServer(dbPath: string) {
   return { server, db, fts, vec, hybrid, traverser };
 }
 
-const isMain = process.argv[1]?.endsWith("index.js");
-if (isMain) {
-  const dbPath = process.env.RALPH_KNOWLEDGE_DB ?? "knowledge.db";
-  const { server } = createServer(dbPath);
-  const transport = new StdioServerTransport();
-  server.connect(transport).catch(console.error);
-}
+const dbPath = process.env.RALPH_KNOWLEDGE_DB ?? "knowledge.db";
+const { server } = createServer(dbPath);
+const transport = new StdioServerTransport();
+server.connect(transport).catch(console.error);
