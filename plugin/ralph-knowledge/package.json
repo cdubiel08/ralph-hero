@@ -3,6 +3,9 @@
   "version": "0.1.2",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "ralph-hero-knowledge-index": "dist/index.js"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/cdubiel08/ralph-hero.git",
