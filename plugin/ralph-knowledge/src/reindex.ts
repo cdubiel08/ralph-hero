@@ -84,6 +84,6 @@ async function reindex(thoughtsDir: string, dbPath: string): Promise<void> {
   db.close();
 }
 
-const thoughtsDir = process.argv[2] ?? "../../../thoughts";
+const thoughtsDir = process.argv[2] ?? "../../thoughts";
 const dbPath = process.argv[3] ?? "knowledge.db";
 reindex(thoughtsDir, dbPath).catch(console.error);
