@@ -1,0 +1,21 @@
+{
+  "name": "ralph-knowledge",
+  "version": "0.1.0",
+  "description": "Knowledge graph for ralph-hero: semantic search, relationship traversal, and document indexing across thoughts/ documents. Optional companion to ralph-hero.",
+  "author": {
+    "name": "Chad Dubiel",
+    "url": "https://github.com/cdubiel08"
+  },
+  "homepage": "https://github.com/cdubiel08/ralph-hero",
+  "repository": "https://github.com/cdubiel08/ralph-hero",
+  "license": "MIT",
+  "keywords": [
+    "knowledge-graph",
+    "semantic-search",
+    "obsidian",
+    "ralph-hero",
+    "document-indexing",
+    "fts5",
+    "embeddings"
+  ]
+}
