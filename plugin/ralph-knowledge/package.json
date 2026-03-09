@@ -3,6 +3,11 @@
   "version": "0.1.1",
   "type": "module",
   "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cdubiel08/ralph-hero.git",
+    "directory": "plugin/ralph-knowledge"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
