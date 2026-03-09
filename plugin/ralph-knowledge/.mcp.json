@@ -2,7 +2,7 @@
   "mcpServers": {
     "ralph-knowledge": {
       "command": "npx",
-      "args": ["-y", "ralph-hero-knowledge-index@0.1.1"],
+      "args": ["-y", "ralph-hero-knowledge-index@0.1.2"],
       "cwd": "${CLAUDE_PLUGIN_ROOT}",
       "env": {
         "RALPH_KNOWLEDGE_DB": "${RALPH_KNOWLEDGE_DB:-knowledge.db}"
