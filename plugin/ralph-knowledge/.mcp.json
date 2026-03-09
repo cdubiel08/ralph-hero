@@ -2,7 +2,7 @@
   "mcpServers": {
     "ralph-knowledge": {
       "command": "npx",
-      "args": ["-y", "ralph-hero-knowledge-index@0.1.6"]
+      "args": ["-y", "ralph-hero-knowledge-index@0.1.7"]
     }
   }
 }
