@@ -7,7 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "reindex": "node dist/reindex.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
