@@ -51,6 +51,16 @@ thoughts/
 - Check standard subdirectories
 - Search in searchable/ but report corrected paths
 
+### Knowledge Graph (when available)
+
+If `knowledge_search` or `knowledge_traverse` MCP tools are available (from the ralph-knowledge plugin), prefer them for discovery:
+
+1. **Semantic search**: `knowledge_search(query="[search topic]")` returns ranked documents with relevance scores and snippets. Use this FIRST for topic-based searches — it finds conceptually related documents even when exact keywords differ.
+
+2. **Relationship traversal**: `knowledge_traverse(from="[document-id]", direction="incoming")` returns all documents that `builds_on` or have `tensions` with a given document. Use this to map the knowledge web around a document.
+
+3. **Fall back to grep/glob** if the knowledge tools are not available or return no results. The grep-based patterns below always work without any index.
+
 ### Path Correction
 **CRITICAL**: If you find files in thoughts/searchable/, report the actual path:
 - `thoughts/searchable/shared/research/api.md` -> `thoughts/shared/research/api.md`
@@ -103,7 +113,16 @@ Total: 7 relevant documents found
    - Plan files often named `YYYY-MM-DD-feature-name.md`
    - Handoff files: `YYYY-MM-DD_HH-MM-SS_description.md`
 
-## Relationship Discovery (grep-based)
+## Relationship Discovery
+
+### Via knowledge tools (preferred, when available)
+
+Use `knowledge_traverse` for typed relationship walking:
+- `knowledge_traverse(from="[doc-id]", type="builds_on", direction="incoming")` — find what builds on this document
+- `knowledge_traverse(from="[doc-id]", type="tensions", direction="incoming")` — find what has tensions with this document
+- `knowledge_traverse(from="[doc-id]", direction="outgoing")` — find what this document builds on
+
+### Via grep (fallback, always works)
 
 Documents may declare typed relationships to other documents using `[[wiki-link]]` syntax. Use these grep patterns to discover relationships without any index.
 
@@ -126,8 +145,6 @@ grep "builds_on.*\[\[" thoughts/shared/TYPE/TARGET_FILENAME.md
 ```bash
 grep -rl "superseded_by" thoughts/shared/
 ```
-
-> **Note:** These patterns work without any index. When the `knowledge_search` or `knowledge_traverse` MCP tools are available, prefer those for faster and semantic results — fall back to grep when they are not.
 
 ## Important Guidelines
 
