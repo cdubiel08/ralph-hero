@@ -1,10 +1,11 @@
 {
   "mcpServers": {
     "ralph-knowledge": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "ralph-hero-knowledge-index@0.1.0"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}",
       "env": {
-        "RALPH_KNOWLEDGE_DB": "${CLAUDE_PLUGIN_ROOT}/knowledge.db"
+        "RALPH_KNOWLEDGE_DB": "${RALPH_KNOWLEDGE_DB:-knowledge.db}"
       }
     }
   }
