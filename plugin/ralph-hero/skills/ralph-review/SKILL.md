@@ -95,6 +95,12 @@ Then STOP.
 
 2. **Find linked plan document**:
 
+   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first:
+   ```
+   knowledge_search(query="implementation plan GH-${number} [issue title keywords]", type="plan", limit=3)
+   ```
+   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If `knowledge_search` is not available or returns no results, continue with standard Artifact Comment Protocol discovery below.
+
    **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
 
    Find the plan using the Artifact Comment Protocol:

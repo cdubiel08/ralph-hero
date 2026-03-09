@@ -251,6 +251,12 @@ ralph_hero__save_issue
 
 After triage action is complete, scan for related issues in Backlog or Research Needed:
 
+   **Knowledge context (optional)**: If `knowledge_search` is available, search for related research documents before querying issues:
+   ```
+   knowledge_search(query="[issue title and key concepts]", limit=5)
+   ```
+   Use any returned documents as additional context when analyzing relatedness in step 2. This helps surface conceptual relationships that aren't visible from issue titles alone.
+
 1. **Query candidate issues**:
    ```
    ralph_hero__list_issues

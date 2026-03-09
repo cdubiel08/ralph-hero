@@ -11,6 +11,11 @@
       "name": "ralph-hero",
       "description": "The naive hero picks tickets, does their best work, and moves on. Autonomous triage, research, planning, and implementation with GitHub Projects V2.",
       "source": "./plugin/ralph-hero"
+    },
+    {
+      "name": "ralph-knowledge",
+      "description": "Knowledge graph for ralph-hero: semantic search, relationship traversal, and document indexing across thoughts/ documents. Optional companion to ralph-hero.",
+      "source": "./plugin/ralph-knowledge"
     }
   ]
 }

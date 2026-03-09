@@ -57,6 +57,12 @@ Then wait for the user's input.
    - **CRITICAL**: DO NOT spawn sub-tasks before reading these files yourself in the main context
    - **NEVER** read files partially - if a file is mentioned, read it completely
 
+   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first to find related research:
+   ```
+   knowledge_search(query="research [topic keywords]", type="research", limit=5)
+   ```
+   If results are returned, read the top matches for context. This supplements (not replaces) the issue comment check and thoughts-locator search below.
+
 2. **If a `#NNN` issue was provided**, fetch it directly:
    ```
    ralph_hero__get_issue(number=NNN)

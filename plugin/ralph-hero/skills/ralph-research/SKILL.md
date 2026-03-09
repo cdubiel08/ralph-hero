@@ -120,8 +120,26 @@ github_issue: NNN
 github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
 status: complete
 type: research
+tags: [topic1, topic2]
 ---
 ```
+
+Include 2-5 tags describing the key concepts (e.g., caching, auth, mcp-server, performance). Use lowercase, hyphenated terms. Reuse existing tags from prior documents when applicable.
+
+The document must begin with a `## Prior Work` section immediately after the title (before Problem Statement):
+
+```markdown
+## Prior Work
+
+- builds_on:: [[document-filename-without-extension]]
+- tensions:: [[document-filename-without-extension]]
+```
+
+- `builds_on::` for documents this research extends or was informed by
+- `tensions::` for documents whose conclusions conflict with findings here
+- Populate from thoughts-locator results gathered during the research phase
+- If no relevant prior work exists, include the section with "None identified."
+- Use filenames without extension as wikilink targets
 
 Include: problem statement, current state analysis, key discoveries with file:line references, potential approaches (pros/cons), risks, and recommended next steps.
 
