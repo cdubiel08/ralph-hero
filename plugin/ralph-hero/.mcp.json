@@ -9,13 +9,6 @@
         "RALPH_GH_REPO": "${RALPH_GH_REPO:-ralph-hero}",
         "RALPH_GH_PROJECT_NUMBER": "${RALPH_GH_PROJECT_NUMBER:-3}"
       }
-    },
-    "ralph-knowledge": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/knowledge-index/dist/index.js"],
-      "env": {
-        "RALPH_KNOWLEDGE_DB": "${CLAUDE_PLUGIN_ROOT}/knowledge-index/knowledge.db"
-      }
     }
   }
 }
