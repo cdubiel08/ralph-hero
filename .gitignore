@@ -1,2 +1,5 @@
 # Git worktrees (created by scripts/create-worktree.sh)
 worktrees/
+
+# Knowledge DB (lives at ~/.ralph-hero/knowledge.db)
+knowledge.db

@@ -43,19 +43,11 @@ If not found, ask the user for the path.
 
 ### Step 2: Determine the DB path
 
-Check if `RALPH_KNOWLEDGE_DB` is set in the environment. If so, use it.
+The default DB path is `~/.ralph-hero/knowledge.db`. The directory is auto-created if it doesn't exist.
 
-If not, default to `knowledge.db` in the current project root. Note: this is a relative path that resolves based on the MCP server's working directory.
+If `RALPH_KNOWLEDGE_DB` is set in the environment, that overrides the default. Use it instead.
 
-For a more reliable setup, suggest setting an absolute path:
-```
-Tip: For consistent DB location, add to .claude/settings.local.json:
-{
-  "env": {
-    "RALPH_KNOWLEDGE_DB": "/absolute/path/to/knowledge.db"
-  }
-}
-```
+Pass the resolved DB path to the reindex script in Step 3.
 
 ### Step 3: Install and run reindex
 
@@ -86,8 +78,8 @@ knowledge_search(query="recent research", limit=3)
 
 Display the results. If results come back, setup is complete. If results are empty or an error occurs:
 
-- **Empty results with "Error: no such table"**: The MCP server's DB path doesn't match where reindex wrote the DB. Check `RALPH_KNOWLEDGE_DB` env var.
-- **Empty results but no error**: The DB exists but the MCP server is reading a different copy. Set `RALPH_KNOWLEDGE_DB` to the absolute path of the DB that was just created.
+- **Empty results with "Error: no such table"**: The MCP server's DB path doesn't match where reindex wrote the DB. Both default to `~/.ralph-hero/knowledge.db` — if overriding, ensure `RALPH_KNOWLEDGE_DB` matches the path passed to reindex.
+- **Empty results but no error**: The MCP server may need restarting to pick up the new DB. Run `/reload-plugins` or restart Claude Code.
 - **Connection error**: The MCP server isn't running. Run `/reload-plugins` or restart Claude Code.
 
 ### Step 5: Summary

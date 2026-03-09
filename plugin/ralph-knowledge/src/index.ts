@@ -2,12 +2,23 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
 import { HybridSearch } from "./hybrid-search.js";
 import { Traverser } from "./traverse.js";
 import { embed } from "./embedder.js";
+
+const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
+
+function resolveEnv(name: string): string | undefined {
+  const val = process.env[name];
+  // Claude Code passes unexpanded ${VAR} literals for unset env vars in .mcp.json
+  if (!val || val.startsWith("${")) return undefined;
+  return val;
+}
 
 export function createServer(dbPath: string) {
   const server = new McpServer({ name: "ralph-hero-knowledge", version: "0.1.0" });
@@ -68,7 +79,7 @@ export function createServer(dbPath: string) {
   return { server, db, fts, vec, hybrid, traverser };
 }
 
-const dbPath = process.env.RALPH_KNOWLEDGE_DB ?? "knowledge.db";
+const dbPath = resolveEnv("RALPH_KNOWLEDGE_DB") ?? DEFAULT_DB_PATH;
 const { server } = createServer(dbPath);
 const transport = new StdioServerTransport();
 server.connect(transport).catch(console.error);

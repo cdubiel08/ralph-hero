@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, basename } from "node:path";
+import { homedir } from "node:os";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
@@ -84,6 +85,8 @@ async function reindex(thoughtsDir: string, dbPath: string): Promise<void> {
   db.close();
 }
 
+const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
+
 const thoughtsDir = process.argv[2] ?? "../../thoughts";
-const dbPath = process.argv[3] ?? "knowledge.db";
+const dbPath = process.argv[3] ?? DEFAULT_DB_PATH;
 reindex(thoughtsDir, dbPath).catch(console.error);

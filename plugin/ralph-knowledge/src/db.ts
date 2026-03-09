@@ -1,5 +1,7 @@
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 
 export interface DocumentRow {
   id: string;
@@ -22,6 +24,7 @@ export class KnowledgeDB {
   readonly db: DatabaseType;
 
   constructor(dbPath: string) {
+    mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.createSchema();
