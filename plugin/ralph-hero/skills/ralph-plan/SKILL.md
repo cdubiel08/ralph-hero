@@ -117,6 +117,12 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
 
 1. **For each issue** (dependency order):
 
+   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first:
+   ```
+   knowledge_search(query="research GH-${number} [issue title keywords]", type="research", limit=3)
+   ```
+   If a high-relevance result is returned, read that file directly and skip steps 1-7 below. If `knowledge_search` is not available or returns no results, continue with standard Artifact Comment Protocol discovery below.
+
    **Artifact shortcut**: If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-7 below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
 
    1. Read issue via `ralph_hero__get_issue(owner, repo, number)` — response includes comments

@@ -25,6 +25,13 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
 ### Step 1: Parse the Argument
 
 **If first argument matches `#\d+` pattern** (e.g., `#347`):
+
+   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first:
+   ```
+   knowledge_search(query="implementation plan GH-${number}", type="plan", limit=3)
+   ```
+   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If `knowledge_search` is not available or returns no results, continue with standard discovery below.
+
 1. Query GitHub for the issue:
    ```
    ralph_hero__get_issue
