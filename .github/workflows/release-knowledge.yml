@@ -4,12 +4,17 @@ on:
   push:
     branches: [main]
     paths:
+      # MCP server
       - 'plugin/ralph-knowledge/src/**'
       - 'plugin/ralph-knowledge/package.json'
       - 'plugin/ralph-knowledge/package-lock.json'
       - 'plugin/ralph-knowledge/tsconfig.json'
       - 'plugin/ralph-knowledge/.claude-plugin/plugin.json'
       - 'plugin/ralph-knowledge/.mcp.json'
+      # Plugin content
+      - 'plugin/ralph-knowledge/skills/**'
+      - 'plugin/ralph-knowledge/agents/**'
+      - 'plugin/ralph-knowledge/hooks/**'
   workflow_dispatch:
     inputs:
       bump:
@@ -40,6 +45,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Classify changes
+        id: classify
+        working-directory: .
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || echo "$BEFORE" | grep -qE '^0+$'; then
+            echo "mcp_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Classification: mcp_changed=true (dispatch or new branch)"
+            exit 0
+          fi
+
+          DIFF=$(git diff --name-only "$BEFORE" "$AFTER")
+          echo "Changed files:"
+          echo "$DIFF"
+
+          MCP_CHANGED=false
+          echo "$DIFF" | grep -qE '^plugin/ralph-knowledge/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
+
+          echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "Classification: mcp_changed=$MCP_CHANGED"
 
       - uses: actions/setup-node@v4
         with:
@@ -87,6 +116,7 @@ jobs:
           jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
 
       - name: Pin version in .mcp.json
+        if: steps.classify.outputs.mcp_changed == 'true'
         working-directory: .
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
@@ -111,6 +141,7 @@ jobs:
           git push origin main --tags
 
       - name: Publish to npm
+        if: steps.classify.outputs.mcp_changed == 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
