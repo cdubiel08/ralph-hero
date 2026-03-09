@@ -61,6 +61,16 @@ Only if the idea references specific parts of the codebase:
 
 If the idea is purely conceptual, skip this entirely.
 
+### Step 2b: Dedup Check (Optional)
+
+If `knowledge_search` is available, check for existing similar ideas:
+```
+knowledge_search(query="[idea topic summary]", type="idea", limit=3)
+```
+If a close match is found, mention it to the user: "There's an existing idea that may overlap: `[path]` — [title]. Want to continue with a new idea or build on that one?"
+
+If `knowledge_search` is not available, skip this step.
+
 ### Step 3: Write the Draft
 
 Save to `thoughts/shared/ideas/YYYY-MM-DD-description.md`
