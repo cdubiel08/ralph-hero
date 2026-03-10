@@ -135,8 +135,8 @@ github_issues: [123, 124] # array — existing plan convention
    - Include the primary technology or domain
 
 ### Success Criteria
-- [ ] Automated: `test -f plugin/ralph-hero/skills/shared/fragments/knowledge-metadata.md` exits 0
-- [ ] Manual: Fragment content is clear, explains the "why", provides copy-pasteable templates, and is ~30-35 lines
+- [x] Automated: `test -f plugin/ralph-hero/skills/shared/fragments/knowledge-metadata.md` exits 0
+- [x] Manual: Fragment content is clear, explains the "why", provides copy-pasteable templates, and is ~30-35 lines
 
 **Creates for Phase 2**: The `knowledge-metadata.md` fragment that autonomous skills will include via `!cat` injection.
 
