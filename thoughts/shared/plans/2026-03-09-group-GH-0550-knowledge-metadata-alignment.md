@@ -365,10 +365,10 @@ No type, schema, or downstream changes needed. The `ParsedDocument` interface (`
 5. **Edge case — null primary_issue**: Document with `primary_issue: null` -> yields `githubIssue: null`
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-knowledge && npm test` passes
-- [ ] Automated: Parser test for `github_issues: [42]` -> `githubIssue: 42`
-- [ ] Automated: Parser test for `primary_issue: 42` -> `githubIssue: 42`
-- [ ] Automated: Parser test for `github_issue: 42` -> `githubIssue: 42` (no regression)
+- [x] Automated: `cd plugin/ralph-knowledge && npm test` passes
+- [x] Automated: Parser test for `github_issues: [42]` -> `githubIssue: 42`
+- [x] Automated: Parser test for `primary_issue: 42` -> `githubIssue: 42`
+- [x] Automated: Parser test for `github_issue: 42` -> `githubIssue: 42` (no regression)
 - [ ] Manual: After reindex (Phase 6), `knowledge_search(type="plan")` returns plan documents linked to their issues
 
 **Creates for Phase 6**: The indexer can now correctly link plan documents to issues via the `github_issues` array fallback, enabling full benefit from the reindex.

@@ -57,7 +57,13 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
     date: frontmatter.date ? String(frontmatter.date) : null,
     type: frontmatter.type ?? null,
     status: frontmatter.status ?? null,
-    githubIssue: typeof frontmatter.github_issue === "number" ? frontmatter.github_issue : null,
+    githubIssue: typeof frontmatter.github_issue === "number"
+      ? frontmatter.github_issue
+      : Array.isArray(frontmatter.github_issues) && typeof frontmatter.github_issues[0] === "number"
+        ? frontmatter.github_issues[0]
+        : typeof frontmatter.primary_issue === "number"
+          ? frontmatter.primary_issue
+          : null,
     tags, relationships, content: body,
   };
 }
