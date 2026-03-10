@@ -218,7 +218,8 @@ INSTRUCTIONS:
    github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
    plan_document: [plan path]
    status: approved OR needs-iteration
-   type: critique
+   type: review
+   tags: [plan-review, relevant, component, tags]
    ---
 
 5. Commit and push:

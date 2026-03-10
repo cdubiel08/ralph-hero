@@ -164,6 +164,8 @@ Update **all group issues**: `ralph_hero__save_issue(number=N, workflowState="__
 
 !cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/error-handling.md
 
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/knowledge-metadata.md
+
 ### Step 5: Create Implementation Plan
 
 **Filename**: `thoughts/shared/plans/YYYY-MM-DD-group-GH-NNN-description.md` (use primary issue number; for single issues: `YYYY-MM-DD-GH-NNN-description.md`; for stream plans: `YYYY-MM-DD-stream-GH-NNN-NNN-description.md` using sorted issue numbers from the stream)
@@ -174,6 +176,8 @@ Update **all group issues**: `ralph_hero__save_issue(number=N, workflowState="__
 ---
 date: YYYY-MM-DD
 status: draft
+type: plan
+github_issue: 123        # singular — same as primary_issue, for the knowledge indexer
 github_issues: [123, 124, 125]
 github_urls:
   - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/123
@@ -185,6 +189,8 @@ epic_issue: 40
 tags: [topic1, topic2]
 ---
 ```
+
+Set `github_issue:` to the same value as `primary_issue` — the knowledge indexer uses this singular field to link plans to issues.
 
 Include 2-5 tags describing the key concepts (e.g., caching, auth, mcp-server, performance). Use lowercase, hyphenated terms. Reuse existing tags from prior documents when applicable.
 

@@ -174,15 +174,15 @@ github_issues: [123, 124] # array — existing plan convention
 **Note**: This change MUST be deployed atomically with Phase 4 (hook update) to avoid breaking AUTO mode reviews. In a single PR, this is naturally satisfied.
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'tags:' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'github_issue:' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 2
-- [ ] Automated: `grep -c 'type: review' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 1
-- [ ] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns 1
-- [ ] Manual: Templates are clear and the new fields do not bloat the prompt excessively
+- [x] Automated: `grep -c 'tags:' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'github_issue:' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 2
+- [x] Automated: `grep -c 'type: review' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 1
+- [x] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns 1
+- [x] Manual: Templates are clear and the new fields do not bloat the prompt excessively
 
 **Creates for Phase 3**: Establishes the pattern that interactive skills will follow (same fields, but inline instead of via fragment).
 
