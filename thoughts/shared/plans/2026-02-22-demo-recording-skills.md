@@ -1,6 +1,7 @@
 ---
 date: 2026-02-22
 status: draft
+type: plan
 github_issues: [364]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/364
@@ -68,6 +69,7 @@ The document should follow the standard research format with YAML frontmatter an
 ---
 date: 2026-02-22
 status: complete
+type: plan
 type: research
 ---
 

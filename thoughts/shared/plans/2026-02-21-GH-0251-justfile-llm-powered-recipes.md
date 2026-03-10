@@ -1,6 +1,7 @@
 ---
 date: 2026-02-21
 status: complete
+type: plan
 github_issue: 251
 github_url: https://github.com/cdubiel08/ralph-hero/issues/251
 primary_issue: 251

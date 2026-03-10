@@ -1,6 +1,7 @@
 ---
 date: 2026-02-22
 status: draft
+type: plan
 github_issues: [324]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/324
@@ -168,6 +169,7 @@ In the "Fallback Discovery" section (around line 250), add a stream glob fallbac
 ---
 date: YYYY-MM-DD
 status: draft
+type: plan
 github_issues: [123, 124, 125]
 github_urls:
   - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/123
@@ -180,6 +182,7 @@ primary_issue: 123
 ---
 date: YYYY-MM-DD
 status: draft
+type: plan
 github_issues: [123, 124, 125]
 github_urls:
   - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/123

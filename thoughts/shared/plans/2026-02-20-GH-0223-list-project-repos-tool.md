@@ -2,6 +2,7 @@
 title: "Implement list_project_repos tool"
 github_issue: 223
 status: complete
+type: plan
 estimate: XS
 created: 2026-02-20
 ---

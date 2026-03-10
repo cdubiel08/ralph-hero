@@ -1,6 +1,7 @@
 ---
 date: 2026-02-13
 status: draft
+type: plan
 github_issue: null
 github_url: null
 ---

@@ -1,6 +1,7 @@
 ---
 date: 2026-02-13
 status: implemented
+type: plan
 linear_ticket: null
 linear_url: null
 ---

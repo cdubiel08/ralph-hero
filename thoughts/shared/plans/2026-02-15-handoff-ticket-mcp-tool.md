@@ -1,6 +1,7 @@
 ---
 date: 2026-02-15
 status: draft
+type: plan
 linear_ticket: null
 linear_url: null
 ---

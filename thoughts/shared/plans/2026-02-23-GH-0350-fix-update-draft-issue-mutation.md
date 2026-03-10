@@ -3,6 +3,7 @@ title: "Fix update_draft_issue MCP tool — wrong mutation response field"
 github_issue: 350
 estimate: XS
 status: approved
+type: plan
 created: 2026-02-23
 ---
 

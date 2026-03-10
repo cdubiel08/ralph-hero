@@ -1,6 +1,7 @@
 ---
 date: 2026-02-21
 status: draft
+type: plan
 ---
 
 # Ralph Hero Plugin Guidance Improvements - Implementation Plan
