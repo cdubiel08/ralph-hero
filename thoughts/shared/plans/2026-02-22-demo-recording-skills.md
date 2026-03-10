@@ -69,7 +69,6 @@ The document should follow the standard research format with YAML frontmatter an
 ---
 date: 2026-02-22
 status: complete
-type: plan
 type: research
 ---
 
