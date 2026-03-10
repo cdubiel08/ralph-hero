@@ -173,6 +173,7 @@ If the user chose "GitHub issue":
 
 3. **Update the idea file** with issue link:
    ```yaml
+   type: idea
    github_issue: NNN
    status: formed
    ```
@@ -231,6 +232,7 @@ If the user chose "Ticket tree":
 
 4. **Update the idea file** with parent issue link:
    ```yaml
+   type: idea
    github_issue: NNN
    status: formed
    ```
@@ -269,6 +271,7 @@ If the user chose "Keep as refined idea":
    - Add related issues and documents
    - Refine the rough shape based on research
    - Update tags with more specific terms
+   - Set `type: idea` if not already present
    - Set `status: refined`
 
 2. **Report**:

@@ -97,4 +97,87 @@ describe("parseDocument", () => {
     expect(doc.content).toContain("current cache has no TTL");
     expect(doc.content).not.toContain("---");
   });
+
+  describe("githubIssue fallback chain", () => {
+    function makeDoc(frontmatter: string, body = "# Test\n\nContent."): string {
+      return `---\n${frontmatter}\n---\n\n${body}`;
+    }
+
+    it("falls back to github_issues[0] when github_issue is absent", () => {
+      const raw = makeDoc("github_issues: [42, 43, 44]");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBe(42);
+    });
+
+    it("falls back to primary_issue when both github_issue and github_issues are absent", () => {
+      const raw = makeDoc("primary_issue: 42");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBe(42);
+    });
+
+    it("prefers github_issue over github_issues and primary_issue", () => {
+      const raw = makeDoc("github_issue: 10\ngithub_issues: [20, 30]\nprimary_issue: 40");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBe(10);
+    });
+
+    it("prefers github_issues[0] over primary_issue when github_issue is absent", () => {
+      const raw = makeDoc("github_issues: [20, 30]\nprimary_issue: 40");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBe(20);
+    });
+
+    it("returns null for empty github_issues array with no other fallbacks", () => {
+      const raw = makeDoc("github_issues: []");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBeNull();
+    });
+
+    it("returns null when primary_issue is null", () => {
+      const raw = makeDoc("primary_issue: null");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBeNull();
+    });
+
+    it("returns null when no issue fields are present", () => {
+      const raw = makeDoc("status: draft\ntype: plan");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBeNull();
+    });
+
+    it("returns null when github_issues contains non-number first element", () => {
+      const raw = makeDoc('github_issues: ["not-a-number"]');
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssue).toBeNull();
+    });
+
+    it("handles typical group plan frontmatter with all fields", () => {
+      const raw = makeDoc([
+        "date: 2026-03-09",
+        "status: draft",
+        "type: plan",
+        "github_issue: 550",
+        "github_issues: [550, 551, 552]",
+        "primary_issue: 550",
+        "tags: [knowledge-graph, metadata]",
+      ].join("\n"));
+      const doc = parseDocument("test-plan", "thoughts/shared/plans/test-plan.md", raw);
+      expect(doc.githubIssue).toBe(550);
+      expect(doc.type).toBe("plan");
+      expect(doc.tags).toEqual(["knowledge-graph", "metadata"]);
+    });
+
+    it("handles plan with only github_issues array (no singular)", () => {
+      const raw = makeDoc([
+        "date: 2026-03-09",
+        "status: draft",
+        "type: plan",
+        "github_issues: [550, 551, 552]",
+        "primary_issue: 550",
+        "tags: [knowledge-graph]",
+      ].join("\n"));
+      const doc = parseDocument("test-plan", "thoughts/shared/plans/test-plan.md", raw);
+      expect(doc.githubIssue).toBe(550);
+    });
+  });
 });

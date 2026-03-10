@@ -1,6 +1,7 @@
 ---
 date: 2026-02-22
 status: draft
+type: plan
 github_issues: [352, 353, 354, 355, 356, 357, 358, 359, 360, 361]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/352

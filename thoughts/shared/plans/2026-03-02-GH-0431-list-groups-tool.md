@@ -1,6 +1,7 @@
 ---
 date: 2026-03-02
 status: draft
+type: plan
 github_issues: [431]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/431

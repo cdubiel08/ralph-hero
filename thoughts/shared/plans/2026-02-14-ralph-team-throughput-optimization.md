@@ -1,6 +1,7 @@
 ---
 date: 2026-02-14
 status: draft
+type: plan
 linear_ticket: LAN-382
 linear_url: https://linear.app/landcrawler-ai/issue/LAN-382/ralph-hero-plugin-team-throughput-optimization-pull-based-architecture
 ---

@@ -201,6 +201,9 @@ After structure approval:
 ---
 date: YYYY-MM-DD
 status: draft
+type: plan
+tags: [relevant, component, tags]     # 2-5 tags describing the plan's subject matter
+github_issue: NNN               # singular integer — for the knowledge indexer (same as primary_issue)
 github_issues: [NNN]           # optional until linked to an issue
 github_urls:                    # optional until linked to an issue
   - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
@@ -208,6 +211,10 @@ primary_issue: NNN              # optional until linked to an issue
 ---
 
 # [Feature/Task Name] Implementation Plan
+
+## Prior Work
+
+- builds_on:: [[research-doc-filename]]
 
 ## Overview
 
@@ -348,11 +355,13 @@ After the plan is finalized and the user is satisfied:
      ```
    - Update plan frontmatter with issue reference:
      ```yaml
+     github_issue: NNN              # singular — for the knowledge indexer
      github_issues: [NNN]
      github_urls:
        - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
      primary_issue: NNN
      ```
+     Set `github_issue` to the same value as `primary_issue` (singular integer for the knowledge indexer).
    - Offer to transition to "Plan in Review":
      ```
      Would you like to move #NNN to "Plan in Review"?
@@ -364,7 +373,7 @@ After the plan is finalized and the user is satisfied:
    - Use `ralph_hero__save_issue(number=..., estimate="XS|S|M|L|XL")` to set estimate
    - **Rename file** to include the new issue number (same rename pattern as option 2)
    - Post plan link comment (same Artifact Comment Protocol as above, using renamed filename)
-   - Update plan frontmatter with new issue reference
+   - Update plan frontmatter with new issue reference (including `github_issue: NNN` for the knowledge indexer)
    - Offer state transition to "Plan in Review"
 
 4. **Report result**:

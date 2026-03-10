@@ -135,8 +135,8 @@ github_issues: [123, 124] # array — existing plan convention
    - Include the primary technology or domain
 
 ### Success Criteria
-- [ ] Automated: `test -f plugin/ralph-hero/skills/shared/fragments/knowledge-metadata.md` exits 0
-- [ ] Manual: Fragment content is clear, explains the "why", provides copy-pasteable templates, and is ~30-35 lines
+- [x] Automated: `test -f plugin/ralph-hero/skills/shared/fragments/knowledge-metadata.md` exits 0
+- [x] Manual: Fragment content is clear, explains the "why", provides copy-pasteable templates, and is ~30-35 lines
 
 **Creates for Phase 2**: The `knowledge-metadata.md` fragment that autonomous skills will include via `!cat` injection.
 
@@ -174,15 +174,15 @@ github_issues: [123, 124] # array — existing plan convention
 **Note**: This change MUST be deployed atomically with Phase 4 (hook update) to avoid breaking AUTO mode reviews. In a single PR, this is naturally satisfied.
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'tags:' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'github_issue:' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 2
-- [ ] Automated: `grep -c 'type: review' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 1
-- [ ] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns 1
-- [ ] Manual: Templates are clear and the new fields do not bloat the prompt excessively
+- [x] Automated: `grep -c 'tags:' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'github_issue:' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 2
+- [x] Automated: `grep -c 'type: review' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 1
+- [x] Automated: `grep -c 'knowledge-metadata' plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns 1
+- [x] Manual: Templates are clear and the new fields do not bloat the prompt excessively
 
 **Creates for Phase 3**: Establishes the pattern that interactive skills will follow (same fields, but inline instead of via fragment).
 
@@ -257,13 +257,13 @@ github_issue: null
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/draft/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/form/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/iterate/SKILL.md` returns >= 1
-- [ ] Manual: Interactive plan skill template includes all four new fields naturally
-- [ ] Manual: Iterate skill guidance is clear about preservation without being heavy-handed
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/draft/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/form/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/iterate/SKILL.md` returns >= 1
+- [x] Manual: Interactive plan skill template includes all four new fields naturally
+- [x] Manual: Iterate skill guidance is clear about preservation without being heavy-handed
 
 **Creates for Phase 6**: All new documents will have correct metadata going forward; the backfill addresses existing documents.
 
@@ -314,12 +314,12 @@ This is the sole enforcement point for the `type:` field on review documents. No
 - **Line 107**: Change `type: critique` to `type: review` in the requirement row: `Critique frontmatter MUST include \`status\`, \`github_issue\`, and \`type: review\` fields`
 
 ### Success Criteria
-- [ ] Automated: `grep 'type: review' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` matches
-- [ ] Automated: `grep -c 'type: critique' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` returns 0
-- [ ] Automated: `grep 'type: review' specs/artifact-metadata.md` matches
-- [ ] Automated: `grep 'type: review' specs/document-protocols.md` matches
-- [ ] Automated: `grep -c 'SHOULD' specs/artifact-metadata.md` returns >= 4 (new SHOULD rows)
-- [ ] Manual: Specs are internally consistent and cross-references are correct
+- [x] Automated: `grep 'type: review' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` matches
+- [x] Automated: `grep -c 'type: critique' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` returns 0
+- [x] Automated: `grep 'type: review' specs/artifact-metadata.md` matches
+- [x] Automated: `grep 'type: review' specs/document-protocols.md` matches
+- [x] Automated: `grep -c 'SHOULD' specs/artifact-metadata.md` returns >= 4 (new SHOULD rows)
+- [x] Manual: Specs are internally consistent and cross-references are correct
 
 **Creates for Phase 6**: The hook now accepts `type: review`, enabling the backfill to rename `type: critique` -> `type: review` in existing review documents without breaking future AUTO mode reviews.
 
@@ -365,10 +365,10 @@ No type, schema, or downstream changes needed. The `ParsedDocument` interface (`
 5. **Edge case — null primary_issue**: Document with `primary_issue: null` -> yields `githubIssue: null`
 
 ### Success Criteria
-- [ ] Automated: `cd plugin/ralph-knowledge && npm test` passes
-- [ ] Automated: Parser test for `github_issues: [42]` -> `githubIssue: 42`
-- [ ] Automated: Parser test for `primary_issue: 42` -> `githubIssue: 42`
-- [ ] Automated: Parser test for `github_issue: 42` -> `githubIssue: 42` (no regression)
+- [x] Automated: `cd plugin/ralph-knowledge && npm test` passes
+- [x] Automated: Parser test for `github_issues: [42]` -> `githubIssue: 42`
+- [x] Automated: Parser test for `primary_issue: 42` -> `githubIssue: 42`
+- [x] Automated: Parser test for `github_issue: 42` -> `githubIssue: 42` (no regression)
 - [ ] Manual: After reindex (Phase 6), `knowledge_search(type="plan")` returns plan documents linked to their issues
 
 **Creates for Phase 6**: The indexer can now correctly link plan documents to issues via the `github_issues` array fallback, enabling full benefit from the reindex.
@@ -434,11 +434,11 @@ git commit -m "chore: backfill type metadata for knowledge graph alignment
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -rc "type: critique" thoughts/shared/reviews/` returns 0
-- [ ] Automated: `grep -rc "type: review" thoughts/shared/reviews/` returns count > 0
-- [ ] Automated: `grep -rL "^type:" thoughts/shared/plans/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
-- [ ] Automated: `grep -rL "^type:" thoughts/shared/ideas/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
-- [ ] Automated: Reindex completes without errors
+- [x] Automated: `grep -rc "type: critique" thoughts/shared/reviews/` returns 0
+- [x] Automated: `grep -rc "type: review" thoughts/shared/reviews/` returns count > 0
+- [x] Automated: `grep -rL "^type:" thoughts/shared/plans/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
+- [x] Automated: `grep -rL "^type:" thoughts/shared/ideas/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
+- [x] Automated: Reindex completes without errors
 - [ ] Manual: `knowledge_search(type="review")` returns review documents
 - [ ] Manual: `knowledge_search(type="plan")` returns plan documents
 - [ ] Manual: `knowledge_search(type="idea")` returns idea documents

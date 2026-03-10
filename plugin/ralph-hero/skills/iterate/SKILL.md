@@ -201,6 +201,8 @@ Get user confirmation before proceeding.
    - If modifying scope, update "What We're NOT Doing" section
    - If changing approach, update "Implementation Approach" section
    - Maintain the distinction between automated vs manual success criteria
+   - Preserve `tags:`, `type:`, and `## Prior Work` sections -- do not remove or overwrite these during edits
+   - If adding significant new content, consider whether new `builds_on::` relationships should be added to `## Prior Work`
 
 3. **Preserve quality standards**:
    - Include specific file paths and line numbers for new content

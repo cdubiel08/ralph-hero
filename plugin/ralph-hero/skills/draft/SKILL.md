@@ -81,6 +81,7 @@ Use this lightweight template:
 ---
 date: YYYY-MM-DD
 status: draft
+type: idea
 author: user
 tags: [relevant, tags]
 github_issue: null

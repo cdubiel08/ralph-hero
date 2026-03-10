@@ -102,6 +102,7 @@ The key is to use these agents intelligently:
 - Include specific file paths and line numbers for reference
 - Highlight patterns, connections, and architectural decisions
 - Answer the user's specific questions with concrete evidence
+- Populate the `## Prior Work` section with `builds_on::` wikilinks to related research and plan documents discovered by the thoughts-locator agent
 
 ### Step 5: Gather metadata for the research document
 - Get current commit: `git rev-parse HEAD`
@@ -133,6 +134,10 @@ type: research
 ---
 
 # Research: [Research Question/Topic]
+
+## Prior Work
+
+- builds_on:: [[related-research-doc-id]]
 
 ## Research Question
 [Original user query]

@@ -71,7 +71,16 @@ Defines file naming patterns, frontmatter schemas, and the Artifact Comment Prot
 | Critique docs MUST include `date` field (YYYY-MM-DD) | [x] `artifact-metadata-validator.sh` |
 | Critique docs MUST include `github_issue` field (integer) | [x] `artifact-metadata-validator.sh` |
 | Critique docs MUST include `status` field (`approved` or `needs-iteration`) | [x] `artifact-metadata-validator.sh` |
-| Critique docs MUST include `type: critique` field | [x] `artifact-metadata-validator.sh` |
+| Critique docs MUST include `type: review` field | [x] `artifact-metadata-validator.sh` |
+
+#### Recommended Fields (Knowledge Graph)
+
+| Requirement | Enablement |
+|-------------|------------|
+| Research docs SHOULD include `tags` field (array of strings) | [ ] not enforced (skill-prompt guidance) |
+| Plan docs SHOULD include `type: plan` field | [ ] not enforced (skill-prompt guidance) |
+| Plan docs SHOULD include `tags` field (array of strings) | [ ] not enforced (skill-prompt guidance) |
+| Plan docs SHOULD include `github_issue` field (integer, same as primary_issue) | [ ] not enforced |
 
 ### Artifact Comment Protocol
 

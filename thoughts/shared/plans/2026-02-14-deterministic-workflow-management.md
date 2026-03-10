@@ -1,6 +1,7 @@
 ---
 date: 2026-02-14
 status: draft
+type: plan
 linear_ticket: LAN-383
 linear_url: https://linear.app/landcrawler-ai/issue/LAN-383/deterministic-workflow-management-for-ralph-hero
 ---

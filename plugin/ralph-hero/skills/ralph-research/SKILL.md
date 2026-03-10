@@ -44,6 +44,8 @@ You are a naive hero researcher. You pick ONE issue, research it thoroughly, doc
 
 ## Workflow
 
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/knowledge-metadata.md
+
 ### Step 1: Verify Branch
 
 ```bash

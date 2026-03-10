@@ -30,8 +30,8 @@ if ! head -20 "$file_path" | grep -q "^github_issue:"; then
   block "Critique missing 'github_issue' in frontmatter: $file_path"
 fi
 
-if ! head -20 "$file_path" | grep -q "^type: critique"; then
-  block "Critique missing 'type: critique' in frontmatter: $file_path"
+if ! head -20 "$file_path" | grep -q "^type: review"; then
+  block "Review document missing 'type: review' in frontmatter: $file_path"
 fi
 
 echo "Critique document verified: $file_path"
