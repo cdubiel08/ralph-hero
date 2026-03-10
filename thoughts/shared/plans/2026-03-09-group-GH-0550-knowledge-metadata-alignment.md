@@ -314,12 +314,12 @@ This is the sole enforcement point for the `type:` field on review documents. No
 - **Line 107**: Change `type: critique` to `type: review` in the requirement row: `Critique frontmatter MUST include \`status\`, \`github_issue\`, and \`type: review\` fields`
 
 ### Success Criteria
-- [ ] Automated: `grep 'type: review' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` matches
-- [ ] Automated: `grep -c 'type: critique' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` returns 0
-- [ ] Automated: `grep 'type: review' specs/artifact-metadata.md` matches
-- [ ] Automated: `grep 'type: review' specs/document-protocols.md` matches
-- [ ] Automated: `grep -c 'SHOULD' specs/artifact-metadata.md` returns >= 4 (new SHOULD rows)
-- [ ] Manual: Specs are internally consistent and cross-references are correct
+- [x] Automated: `grep 'type: review' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` matches
+- [x] Automated: `grep -c 'type: critique' plugin/ralph-hero/hooks/scripts/review-verify-doc.sh` returns 0
+- [x] Automated: `grep 'type: review' specs/artifact-metadata.md` matches
+- [x] Automated: `grep 'type: review' specs/document-protocols.md` matches
+- [x] Automated: `grep -c 'SHOULD' specs/artifact-metadata.md` returns >= 4 (new SHOULD rows)
+- [x] Manual: Specs are internally consistent and cross-references are correct
 
 **Creates for Phase 6**: The hook now accepts `type: review`, enabling the backfill to rename `type: critique` -> `type: review` in existing review documents without breaking future AUTO mode reviews.
 

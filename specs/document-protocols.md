@@ -92,7 +92,7 @@ Defines content structure, quality criteria, and enforcement status for document
 - Verdict (APPROVED or NEEDS_ITERATION)
 - Critique/findings
 
-**Frontmatter schema**: See [artifact-metadata.md](artifact-metadata.md) for the critique frontmatter schema. Required fields: `date`, `github_issue`, `github_url` (if applicable), `status: complete` (if applicable), `type: critique`.
+**Frontmatter schema**: See [artifact-metadata.md](artifact-metadata.md) for the critique frontmatter schema. Required fields: `date`, `github_issue`, `github_url` (if applicable), `status: complete` (if applicable), `type: review`.
 
 **Verdict values**: APPROVED transitions the issue to In Progress. NEEDS_ITERATION transitions to Ready for Plan and adds `needs-iteration` label.
 
@@ -104,7 +104,7 @@ Defines content structure, quality criteria, and enforcement status for document
 |-------------|------------|
 | In AUTO mode, a critique document MUST be created and committed | `[x]` `review-postcondition.sh` |
 | Critique documents MUST NOT duplicate an existing critique for the same issue | `[x]` `review-no-dup.sh` |
-| Critique frontmatter MUST include `status`, `github_issue`, and `type: critique` fields | `[x]` `review-verify-doc.sh` (blocks on missing fields) |
+| Critique frontmatter MUST include `status`, `github_issue`, and `type: review` fields | `[x]` `review-verify-doc.sh` (blocks on missing fields) |
 | Critique documents MUST contain a verdict section (APPROVED or NEEDS_ITERATION) | `[x]` `doc-structure-validator.sh` |
 | An Artifact Comment with `## Plan Critique` header MUST be posted after creation | `[ ]` not enforced |
 
