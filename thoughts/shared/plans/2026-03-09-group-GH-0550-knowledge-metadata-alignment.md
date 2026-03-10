@@ -257,13 +257,13 @@ github_issue: null
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/draft/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/form/SKILL.md` returns >= 1
-- [ ] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/iterate/SKILL.md` returns >= 1
-- [ ] Manual: Interactive plan skill template includes all four new fields naturally
-- [ ] Manual: Iterate skill guidance is clear about preservation without being heavy-handed
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: plan' plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/draft/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'type: idea' plugin/ralph-hero/skills/form/SKILL.md` returns >= 1
+- [x] Automated: `grep -c 'Prior Work' plugin/ralph-hero/skills/iterate/SKILL.md` returns >= 1
+- [x] Manual: Interactive plan skill template includes all four new fields naturally
+- [x] Manual: Iterate skill guidance is clear about preservation without being heavy-handed
 
 **Creates for Phase 6**: All new documents will have correct metadata going forward; the backfill addresses existing documents.
 
@@ -434,11 +434,11 @@ git commit -m "chore: backfill type metadata for knowledge graph alignment
 ```
 
 ### Success Criteria
-- [ ] Automated: `grep -rc "type: critique" thoughts/shared/reviews/` returns 0
-- [ ] Automated: `grep -rc "type: review" thoughts/shared/reviews/` returns count > 0
-- [ ] Automated: `grep -rL "^type:" thoughts/shared/plans/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
-- [ ] Automated: `grep -rL "^type:" thoughts/shared/ideas/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
-- [ ] Automated: Reindex completes without errors
+- [x] Automated: `grep -rc "type: critique" thoughts/shared/reviews/` returns 0
+- [x] Automated: `grep -rc "type: review" thoughts/shared/reviews/` returns count > 0
+- [x] Automated: `grep -rL "^type:" thoughts/shared/plans/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
+- [x] Automated: `grep -rL "^type:" thoughts/shared/ideas/*.md | wc -l` returns 1 or 0 (the 1 edge case without YAML frontmatter)
+- [x] Automated: Reindex completes without errors
 - [ ] Manual: `knowledge_search(type="review")` returns review documents
 - [ ] Manual: `knowledge_search(type="plan")` returns plan documents
 - [ ] Manual: `knowledge_search(type="idea")` returns idea documents
