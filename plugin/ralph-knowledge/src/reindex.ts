@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join, relative, basename } from "node:path";
+import { join, relative, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
@@ -7,7 +7,7 @@ import { VectorSearch } from "./vector-search.js";
 import { embed, prepareTextForEmbedding } from "./embedder.js";
 import { parseDocument } from "./parser.js";
 
-function findMarkdownFiles(dir: string): string[] {
+export function findMarkdownFiles(dir: string): string[] {
   const results: string[] = [];
   function walk(d: string) {
     for (const entry of readdirSync(d, { withFileTypes: true })) {
@@ -23,8 +23,8 @@ function findMarkdownFiles(dir: string): string[] {
   return results;
 }
 
-async function reindex(thoughtsDir: string, dbPath: string): Promise<void> {
-  console.log(`Indexing ${thoughtsDir} -> ${dbPath}`);
+export async function reindex(dirs: string[], dbPath: string): Promise<void> {
+  console.log(`Indexing ${dirs.join(", ")} -> ${dbPath}`);
 
   const db = new KnowledgeDB(dbPath);
   const fts = new FtsSearch(db);
@@ -35,13 +35,22 @@ async function reindex(thoughtsDir: string, dbPath: string): Promise<void> {
   vec.dropIndex();
   vec.createIndex();
 
-  const files = findMarkdownFiles(thoughtsDir);
-  console.log(`Found ${files.length} markdown files`);
+  const files: string[] = [];
+  for (const dir of dirs) {
+    const found = findMarkdownFiles(dir);
+    console.log(`  ${dir}: ${found.length} files`);
+    files.push(...found);
+  }
+  console.log(`Found ${files.length} total markdown files`);
 
   let indexed = 0;
   for (const filePath of files) {
     const raw = readFileSync(filePath, "utf-8");
-    const relPath = relative(join(thoughtsDir, ".."), filePath);
+    const absPath = resolve(filePath);
+    const sourceDir = dirs.find(d => absPath.startsWith(resolve(d)));
+    const relPath = sourceDir
+      ? relative(resolve(sourceDir, ".."), absPath)
+      : filePath;
     const id = basename(filePath, ".md");
 
     const parsed = parseDocument(id, relPath, raw);
@@ -87,6 +96,28 @@ async function reindex(thoughtsDir: string, dbPath: string): Promise<void> {
 
 const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
 
-const thoughtsDir = process.argv[2] ?? "../../thoughts";
-const dbPath = process.argv[3] ?? DEFAULT_DB_PATH;
-reindex(thoughtsDir, dbPath).catch(console.error);
+export function resolveDirs(): { dirs: string[]; dbPath: string } {
+  const cliArgs = process.argv.slice(2);
+  const cliDb = cliArgs.find(a => a.endsWith(".db"));
+  const cliDirs = cliArgs.filter(a => !a.endsWith(".db"));
+
+  if (cliDirs.length > 0) {
+    return { dirs: cliDirs, dbPath: cliDb ?? DEFAULT_DB_PATH };
+  }
+
+  const envDirs = process.env.RALPH_KNOWLEDGE_DIRS;
+  if (envDirs) {
+    return {
+      dirs: envDirs.split(",").map(d => d.trim()).filter(Boolean),
+      dbPath: cliDb ?? process.env.RALPH_KNOWLEDGE_DB ?? DEFAULT_DB_PATH,
+    };
+  }
+
+  return { dirs: ["../../thoughts"], dbPath: cliDb ?? DEFAULT_DB_PATH };
+}
+
+const isMain = process.argv[1]?.endsWith("reindex.js");
+if (isMain) {
+  const { dirs, dbPath } = resolveDirs();
+  reindex(dirs, dbPath).catch(console.error);
+}
