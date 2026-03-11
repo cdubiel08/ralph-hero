@@ -10,7 +10,29 @@ tags: [design-system, ai-automation, figma, maturity-checklist, portability]
 > **Author**: Chad Dubiel
 > **Purpose**: A portable, framework-agnostic maturity checklist for evaluating and building AI-ready design systems. Grounded in lessons from the LandCrawler design system, industry research (Brad Frost, Atlassian, Shopify, GitHub), and the current Claude Code + Figma integration landscape as of March 2026.
 >
-> **Target use case**: Export this playbook to accelerate frontend development at an Angular-based company with a partial design system, using Claude Code as the primary AI development tool.
+> **Target use case**: Export this playbook to accelerate frontend development at any company with a partial design system, using Claude Code as the primary AI development tool.
+>
+> **Companion documents**:
+> - [Angular Acceleration Playbook](./angular-acceleration-playbook.md) — standalone action plan for Angular-based companies
+> - [Figma File Hygiene Checklist](./figma-file-hygiene-checklist.md) — design team checklist for AI-ready Figma files
+
+## Quick Start: If You Only Do 5 Things
+
+If you're staring at ~60 checkpoints and feeling paralyzed, do these five first. They're the highest-ROI, lowest-barrier actions that unlock everything else:
+
+1. **Write a `CLAUDE.md`** (Ring 3, checkpoint 3.2.3) — Document your component patterns, naming conventions, token usage rules, and file structure. This is the single highest-impact action. A 200-line CLAUDE.md gives Claude Code more context than weeks of pair programming. Time: 2-4 hours.
+
+2. **Set up the Figma MCP server** (Ring 2, checkpoint 2.2.1) — Run `claude mcp add --transport http figma https://mcp.figma.com/mcp`, authenticate, and try `get_design_context` on one frame. You'll immediately see what Claude Code can do with your designs. Time: 30 minutes.
+
+3. **Extract your tokens into CSS Custom Properties** (Ring 1, checkpoint 1.1.8) — If you have hardcoded colors/spacing/typography, extract them into CSS variables. This doesn't require DTCG yet — just `--color-primary: #005FD8` in a `:root` block. Time: 1-2 days.
+
+4. **Map your top 5 Figma components with Code Connect** (Ring 2, checkpoint 2.2.2) — Pick your Button, Input, Card, Modal, and whatever your most-used component is. Map them so the AI generates with your components instead of hallucinating new ones. Time: 2-4 hours.
+
+5. **Run `create_design_system_rules`** (Ring 2, checkpoint 2.2.3) — This Figma MCP tool generates a rules file capturing your design conventions. Save it alongside your CLAUDE.md. Time: 15 minutes.
+
+**After these 5 steps**, you'll be at roughly Tier 2 across Rings 1-3. That's enough to start generating components from Figma frames with reasonable accuracy.
+
+---
 
 ## The Problem This Solves
 
@@ -220,118 +242,128 @@ Specific to evaluating how well AI agents can work with your design system.
 
 ---
 
-## Playbook: Exporting to an Angular Company
+## Blank Scoring Template
 
-### Context
+Copy this table to assess any design system. Score each checkpoint 0-5 using the tier definitions in the ring tables above.
 
-- Company has a **partial design system** (some shared components, inconsistent)
-- Uses **Figma** with Dev seats / Organization plan
-- Framework: **Angular** (likely Angular 17-19)
-- Goal: Use **Claude Code** to accelerate frontend development dramatically
+### Ring 1: Foundation
 
-### The Angular Reality
+| # | Checkpoint | Current Tier | Target Tier | Gap | Notes |
+|---|-----------|:------------:|:-----------:|:---:|-------|
+| 1.1.1 | Color palette | | | | |
+| 1.1.2 | Typography scale | | | | |
+| 1.1.3 | Spacing system | | | | |
+| 1.1.4 | Shadow system | | | | |
+| 1.1.5 | Motion/easing tokens | | | | |
+| 1.1.6 | Border radius tokens | | | | |
+| 1.1.7 | Z-index scale | | | | |
+| 1.1.8 | Token format | | | | |
+| 1.1.9 | Token layers | | | | |
+| 1.1.10 | Dark mode / color schemes | | | | |
+| 1.2.1 | Component library exists | | | | |
+| 1.2.2 | Variant management | | | | |
+| 1.2.3 | Prop typing | | | | |
+| 1.2.4 | Ref forwarding | | | | |
+| 1.2.5 | Composition patterns | | | | |
+| 1.2.6 | Icon system | | | | |
+| 1.2.7 | Form components | | | | |
+| 1.2.8 | Layout primitives | | | | |
+| 1.2.9 | Loading/empty/error states | | | | |
+| 1.2.10 | Component naming conventions | | | | |
+| 1.3.1 | Package build | | | | |
+| 1.3.2 | Versioning | | | | |
+| 1.3.3 | Dependency management | | | | |
+| | **Ring 1 Average** | | | | |
 
-The AI automation ring is **React-biased** in tooling. But switching frameworks is almost never worth the cost. Instead, invest in the **framework-agnostic layers** that make AI work regardless of framework:
+### Ring 2: Design-Code Bridge
 
-| Layer | Framework Dependency | Angular Support |
-|-------|---------------------|----------------|
-| Design tokens (DTCG) | None | Full |
-| Figma MCP server | None | Full |
-| Code Connect | Framework-specific | Angular supported |
-| Storybook | Framework-specific | Angular supported (Storybook for Angular) |
-| Storybook MCP addon | Framework-agnostic | Works with Angular Storybook |
-| shadcn registry | React-only | Not available (see alternative below) |
-| Claude Code generation | Framework-aware | Good quality, not React-level |
-| Figma Make | React-only | Not available |
-| v0.app | React-only | Not available |
+| # | Checkpoint | Current Tier | Target Tier | Gap | Notes |
+|---|-----------|:------------:|:-----------:|:---:|-------|
+| 2.1.1 | Figma component library | | | | |
+| 2.1.2 | Figma Variables | | | | |
+| 2.1.3 | Auto Layout usage | | | | |
+| 2.1.4 | Layer naming | | | | |
+| 2.1.5 | Component variants in Figma | | | | |
+| 2.1.6 | Figma annotations | | | | |
+| 2.2.1 | Figma MCP server | | | | |
+| 2.2.2 | Code Connect | | | | |
+| 2.2.3 | Design system rules file | | | | |
+| 2.2.4 | Code-to-canvas | | | | |
+| 2.3.1 | Token source of truth | | | | |
+| 2.3.2 | Token transformation | | | | |
+| 2.3.3 | Figma ↔ Code token sync | | | | |
+| 2.3.4 | Multi-platform output | | | | |
+| | **Ring 2 Average** | | | | |
 
-**Angular-specific alternatives:**
-- Instead of shadcn registry: Build a custom **component manifest** (JSON describing all components, props, variants) and serve it via a simple MCP server
-- Instead of Figma Make: Use Figma MCP `get_design_context` → Claude Code → Angular component
-- Invest heavily in **CLAUDE.md** and **design system rules** — this is where Claude Code learns Angular patterns
+### Ring 3: AI Automation
 
-### Prioritized Roadmap
+| # | Checkpoint | Current Tier | Target Tier | Gap | Notes |
+|---|-----------|:------------:|:-----------:|:---:|-------|
+| 3.1.1 | AI-assisted component creation | | | | |
+| 3.1.2 | Component registry | | | | |
+| 3.1.3 | Scaffold/generator CLI | | | | |
+| 3.1.4 | Design-to-code fidelity | | | | |
+| 3.1.5 | Component hydration via tokens | | | | |
+| 3.2.1 | Storybook + MCP | | | | |
+| 3.2.2 | Custom design system MCP | | | | |
+| 3.2.3 | Claude Code rules | | | | |
+| 3.2.4 | AI skill/command library | | | | |
+| 3.3.1 | Automated component packaging | | | | |
+| 3.3.2 | Token package automation | | | | |
+| 3.3.3 | Design system export | | | | |
+| 3.4.1 | Agent can discover components | | | | |
+| 3.4.2 | Agent can read tokens | | | | |
+| 3.4.3 | Agent can generate on-system | | | | |
+| 3.4.4 | Agent can validate output | | | | |
+| 3.4.5 | Agent understands context | | | | |
+| 3.4.6 | Agent can propose improvements | | | | |
+| | **Ring 3 Average** | | | | |
 
-#### Phase 0: Assessment (Week 1)
-- [ ] Audit existing partial design system against this checklist
-- [ ] Inventory all existing shared components
-- [ ] Document current Figma usage (variables? auto layout? component library?)
-- [ ] Assess Angular version and architecture (standalone components? signals?)
-- [ ] Identify the 10 most-recreated components (the biggest time sinks)
+### Ring 4: Quality & Governance
 
-#### Phase 1: Token Foundation (Weeks 2-3)
-- [ ] Define token architecture: primitive → semantic → component layers
-- [ ] Create W3C DTCG `.tokens.json` source of truth
-- [ ] Set up Style Dictionary v4 pipeline: DTCG → CSS Custom Properties + TypeScript
-- [ ] Migrate existing hardcoded values to tokens
-- [ ] Set up Tokens Studio in Figma, sync variables to DTCG source
-- [ ] Create GitHub Action: token change → rebuild → PR
+| # | Checkpoint | Current Tier | Target Tier | Gap | Notes |
+|---|-----------|:------------:|:-----------:|:---:|-------|
+| 4.1.1 | Unit tests | | | | |
+| 4.1.2 | Visual regression testing | | | | |
+| 4.1.3 | Accessibility testing | | | | |
+| 4.1.4 | Cross-browser testing | | | | |
+| 4.1.5 | Performance testing | | | | |
+| 4.2.1 | Contribution model | | | | |
+| 4.2.2 | Design-code drift detection | | | | |
+| 4.2.3 | Component usage analytics | | | | |
+| 4.2.4 | Breaking change management | | | | |
+| | **Ring 4 Average** | | | | |
 
-#### Phase 2: Figma Bridge (Weeks 3-4)
-- [ ] Configure Figma MCP server (remote mode: `https://mcp.figma.com/mcp`)
-- [ ] Set up Code Connect: map top 20 Figma components to Angular code
-- [ ] Run `create_design_system_rules` → save to `CLAUDE.md` / `.cursorrules`
-- [ ] Document Figma file structure best practices for the design team
-- [ ] Create Figma annotation conventions for interactive behaviors
-- [ ] Test workflow: Figma frame → `get_design_context` → Claude Code → Angular component
+### Ring 5: Portability & Export
 
-#### Phase 3: AI Automation Layer (Weeks 4-6)
-- [ ] Write comprehensive `CLAUDE.md` with Angular component patterns:
-  - Standalone component template
-  - Reactive Forms patterns
-  - Signal-based state management
-  - OnPush change detection conventions
-  - Token usage rules
-  - File naming and folder structure
-- [ ] Set up Storybook for Angular with all existing components
-- [ ] Install `@storybook/addon-mcp` (when Angular-compatible version available)
-- [ ] Create Claude Code skills for component generation:
-  - `create-component` (from description)
-  - `create-from-figma` (from Figma frame URL)
-  - `create-form` (from data schema)
-  - `create-page` (from wireframe/layout)
-- [ ] Build component manifest JSON (until shadcn-style registry exists for Angular):
-  ```json
-  {
-    "components": [
-      {
-        "name": "Button",
-        "import": "@company/design-system/button",
-        "props": { "variant": ["primary", "secondary", "outline"], "size": ["sm", "md", "lg"] },
-        "usage": "Use for all interactive actions. Never use <a> styled as button.",
-        "figmaNodeId": "1234:5678"
-      }
-    ]
-  }
-  ```
-- [ ] Create simple MCP server that serves this manifest to Claude Code
+| # | Checkpoint | Current Tier | Target Tier | Gap | Notes |
+|---|-----------|:------------:|:-----------:|:---:|-------|
+| 5.1.1 | Theme architecture | | | | |
+| 5.1.2 | White-label capability | | | | |
+| 5.1.3 | Framework portability | | | | |
+| 5.2.1 | Documentation site | | | | |
+| 5.2.2 | Design system as npm package | | | | |
+| 5.2.3 | Figma library distribution | | | | |
+| 5.2.4 | Onboarding experience | | | | |
+| | **Ring 5 Average** | | | | |
 
-#### Phase 4: Quality Gates (Weeks 6-8)
-- [ ] Set up visual regression testing (Chromatic or Percy)
-- [ ] Add axe-core accessibility testing to Storybook
-- [ ] Create CI pipeline: type-check + lint + test + visual regression + a11y
-- [ ] Set up token drift detection (compare Figma Variables export to code tokens)
-- [ ] Create PR template for design system changes
+### Summary
 
-#### Phase 5: Scale & Iterate (Ongoing)
-- [ ] Track component generation accuracy, iterate on rules/skills
-- [ ] Expand Code Connect mappings as new components are built
-- [ ] Set up code-to-canvas workflow for designer review
-- [ ] Create onboarding guide: "How to create a component with Claude Code"
-- [ ] Monthly design system health review against this checklist
-- [ ] Graduate successful patterns into reusable Claude Code skills
+| Ring | Average Tier | Target | Gap to Target |
+|------|:-----------:|:------:|:-------------:|
+| 1. Foundation | | 4 | |
+| 2. Design-Code Bridge | | 4 | |
+| 3. AI Automation | | 4 | |
+| 4. Quality & Governance | | 3 | |
+| 5. Portability & Export | | 3 | |
+| **Overall** | | | |
 
-### Expected Impact
+---
 
-Based on Atlassian's published data and industry benchmarks:
+## Companion Documents
 
-| Metric | Before | After Phase 3 | After Phase 5 |
-|--------|--------|---------------|----------------|
-| Time to create new component | 4-8 hours | 30-60 min | 10-20 min |
-| Design-to-code accuracy | Manual, varies | ~70% first pass | ~85%+ first pass |
-| Token consistency | Low (hardcoded values) | High (CI enforced) | Very high (AI enforced) |
-| Component reuse rate | Low | Medium | High |
-| Onboarding time for new dev | Weeks | Days | Hours (AI-assisted) |
+- **[Angular Acceleration Playbook](./angular-acceleration-playbook.md)** — Standalone action plan with phased roadmap, Angular CLAUDE.md template, component manifest schema, and expected impact metrics
+- **[Figma File Hygiene Checklist](./figma-file-hygiene-checklist.md)** — Hand this to your design team to ensure Figma files produce high-quality AI output
 
 ---
 
