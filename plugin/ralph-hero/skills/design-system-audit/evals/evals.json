@@ -1,0 +1,78 @@
+{
+  "skill_name": "design-system-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We have an Angular 18 app with some shared components but our designers just hand us Figma links and we rebuild everything from scratch. We want to use AI to speed things up.",
+      "expected_output": "Full audit report scoring low on Rings 2-3, moderate on Ring 1. Angular-specific guidance. Quick wins lead with CLAUDE.md and Figma MCP.",
+      "assertions": [
+        { "text": "Report contains Ring Scores table for all 5 rings", "type": "structural" },
+        { "text": "Ring 1 scored 1.0-2.5", "type": "scoring" },
+        { "text": "Ring 2 scored 0-1.5", "type": "scoring" },
+        { "text": "Ring 3 scored 0-1.0", "type": "scoring" },
+        { "text": "Mentions Angular-specific guidance", "type": "content" },
+        { "text": "CLAUDE.md in quick wins", "type": "content" },
+        { "text": "Figma MCP in quick wins", "type": "content" },
+        { "text": "Phased action plan present", "type": "structural" },
+        { "text": "Figma hygiene checklist referenced", "type": "content" },
+        { "text": "Overall score 0.5-2.0", "type": "scoring" }
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I'm a solo dev with a React/Next.js project using shadcn/ui and Tailwind. How AI-ready is my setup?",
+      "expected_output": "Audit recognizing shadcn provides high Ring 1 maturity. Ring 2 scored 0 (no Figma). Targets adjusted for solo dev. No Angular playbook.",
+      "assertions": [
+        { "text": "Report contains Ring Scores table for all 5 rings", "type": "structural" },
+        { "text": "Ring 1 scored 2.5-4.0", "type": "scoring" },
+        { "text": "Ring 2 scored 0-1.0", "type": "scoring" },
+        { "text": "Acknowledges shadcn as strong component infrastructure", "type": "content" },
+        { "text": "Does NOT recommend Angular playbook", "type": "content" },
+        { "text": "Targets adjusted for solo developer", "type": "content" },
+        { "text": "Mentions shadcn MCP or registry as strength/win", "type": "content" },
+        { "text": "No-Figma treated as gap not blocker", "type": "content" },
+        { "text": "CLAUDE.md in quick wins", "type": "content" },
+        { "text": "Phased action plan present", "type": "structural" }
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Our team of 12 has a mature design system with tokens, Storybook, and Figma libraries, but we haven't done anything with AI yet. Where should we start?",
+      "expected_output": "Rings 1-2 scored high (3-4), Ring 3 scored 0-1. Quick wins focus on Ring 3. Does not recommend redoing tokens/components.",
+      "assertions": [
+        { "text": "Report contains Ring Scores table for all 5 rings", "type": "structural" },
+        { "text": "Ring 1 scored 3.0-4.5", "type": "scoring" },
+        { "text": "Ring 2 scored 2.5-4.0", "type": "scoring" },
+        { "text": "Ring 3 scored 0-1.5", "type": "scoring" },
+        { "text": "Ring 4 scored 3.0-4.5", "type": "scoring" },
+        { "text": "Quick wins focus on Ring 3 (AI enablement)", "type": "content" },
+        { "text": "Does NOT recommend major token/component work", "type": "content" },
+        { "text": "Mentions Code Connect as key unlock", "type": "content" },
+        { "text": "Mentions Storybook MCP addon", "type": "content" },
+        { "text": "Overall score 2.0-3.5", "type": "scoring" }
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "We have a detailed application design in Figma. Part of the application is already functionally coded in React, but we need to refactor to Angular and use the design in Figma.",
+      "expected_output": "Migration scenario identified. Figma as stable bridge. Angular-specific guidance. Action plan starts with Figma, not React code porting.",
+      "assertions": [
+        { "text": "Report contains Ring Scores table for all 5 rings", "type": "structural" },
+        { "text": "Identifies this as a migration scenario", "type": "content" },
+        { "text": "Figma identified as key stable/transferable asset", "type": "content" },
+        { "text": "Ring 1 components scored low (0-2) for Angular target", "type": "scoring" },
+        { "text": "Ring 2 Figma scored moderately high (2-4)", "type": "scoring" },
+        { "text": "Angular-specific guidance referenced", "type": "content" },
+        { "text": "Figma hygiene checklist referenced", "type": "content" },
+        { "text": "Action plan starts with design asset stabilization", "type": "content" },
+        { "text": "Does NOT recommend porting React patterns to Angular", "type": "content" },
+        { "text": "Recommends Figma MCP + Code Connect for Angular", "type": "content" },
+        { "text": "Uses migration-specific phases (not greenfield)", "type": "structural" }
+      ],
+      "files": []
+    }
+  ]
+}
