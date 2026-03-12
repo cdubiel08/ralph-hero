@@ -69,6 +69,29 @@ describe("RepoRegistrySchema", () => {
     ]);
   });
 
+  it("accepts a registry with localDir on repo entries", () => {
+    const data = {
+      version: 1,
+      repos: {
+        "ralph-hero": {
+          localDir: "~/projects/ralph-hero",
+          domain: "platform",
+          tech: ["typescript"],
+          paths: ["plugin/ralph-hero/mcp-server"],
+        },
+        "landcrawler-ai": {
+          localDir: "~/projects/landcrawler-ai",
+          domain: "backend",
+        },
+      },
+    };
+    const result = RepoRegistrySchema.safeParse(data);
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error("expected success");
+    expect(result.data.repos["ralph-hero"].localDir).toBe("~/projects/ralph-hero");
+    expect(result.data.repos["landcrawler-ai"].localDir).toBe("~/projects/landcrawler-ai");
+  });
+
   it("rejects a registry missing version", () => {
     const data = {
       repos: { "my-repo": { domain: "platform" } },
@@ -198,6 +221,22 @@ patterns:
     expect(pattern?.["dependency-flow"]).toEqual(["api -> web"]);
   });
 
+  it("parses localDir from YAML", () => {
+    const yaml = `
+version: 1
+repos:
+  ralph-hero:
+    localDir: ~/projects/ralph-hero
+    domain: platform
+  landcrawler-ai:
+    localDir: ~/projects/landcrawler-ai
+    domain: backend
+`;
+    const registry = parseRepoRegistry(yaml);
+    expect(registry.repos["ralph-hero"].localDir).toBe("~/projects/ralph-hero");
+    expect(registry.repos["landcrawler-ai"].localDir).toBe("~/projects/landcrawler-ai");
+  });
+
   it("throws a descriptive error listing all schema issues", () => {
     const yaml = `
 version: 2
@@ -247,6 +286,19 @@ repos:
   it("returns undefined for an unknown repo", () => {
     const result = lookupRepo(registry, "nonexistent");
     expect(result).toBeUndefined();
+  });
+
+  it("returns localDir when present in registry entry", () => {
+    const reg = parseRepoRegistry(`
+version: 1
+repos:
+  ralph-hero:
+    localDir: ~/projects/ralph-hero
+    domain: platform
+`);
+    const result = lookupRepo(reg, "ralph-hero");
+    expect(result).toBeDefined();
+    expect(result?.entry.localDir).toBe("~/projects/ralph-hero");
   });
 });
 
