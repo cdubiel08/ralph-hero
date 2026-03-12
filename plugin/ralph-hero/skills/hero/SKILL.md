@@ -116,6 +116,21 @@ The result provides:
 
 Execute the phase indicated by `phase`. Do NOT interpret workflow states yourself -- trust the tool's decision.
 
+### Step 1a: Registry Lookup
+
+Load the repo registry to determine if cross-repo orchestration is needed:
+
+1. Read `.ralph-repos.yml` from the repo root using the `Read` tool
+   - If file exists: parse YAML to extract repos, `localDir` paths, and patterns
+   - If file does not exist: proceed in single-repo mode (existing behavior)
+
+   > **Why `Read` instead of MCP tools?** Hero's `allowed-tools` are `[Read, Glob, Grep, Bash, Skill, Task]` — no MCP tools. It reads the registry file directly and delegates MCP tool calls (like `decompose_feature`) to sub-agents via `Task` when needed.
+
+2. Store registry context for use in later steps:
+   - `registryAvailable: boolean`
+   - `repoEntries: { [repoKey]: { localDir, domain, tech } }`
+   - `patterns: { [name]: { description, decomposition, dependency-flow } }`
+
 ### Step 1.5: Resumability Check
 
 1. Call `TaskList()` to check if tasks already exist for this session
@@ -174,6 +189,15 @@ TaskUpdate(taskId, addBlockedBy=[dependency_task_ids])
 
 Include `metadata.issue_number` in each task's description for traceability.
 
+**Cross-repo task metadata:**
+
+When an issue spans repos (detected during research or split), include in each task's metadata:
+- `repos`: list of repo keys involved
+- `localDirs`: mapping of repo key → local directory path
+- `dependencyFlow`: dependency edges (if any)
+
+This metadata flows to builder sub-agents so they know which directories to work in.
+
 ### Step 2.5: Stream Detection (Groups >= 3)
 
 After all research tasks complete (detectable when plan tasks become unblocked), if `isGroup=true` and `issues.length >= 3`:
@@ -204,6 +228,63 @@ Agent(subagent_type="general-purpose",
      description="Split #NNN")
 ```
 After all splits complete, re-call `get_issue(includePipeline=true)` and rebuild remaining task list.
+
+##### Cross-Repo Tree Expansion
+
+When the root issue spans repos (detected during research or from issue body):
+
+1. **Check for matching pattern:** Look up the issue's repos against registry patterns.
+
+2. **Invoke `decompose_feature` via sub-agent:** Hero does not have MCP tools in `allowed-tools`. Delegate `decompose_feature` calls through a `Task` sub-agent using `subagent_type="general-purpose"` (which has unrestricted tool access):
+   ```
+   Create Task: "Decompose cross-repo feature"
+   SubagentType: general-purpose
+   Prompt: Call decompose_feature with:
+   - title: {root issue title}
+   - description: {root issue body + research summary}
+   - pattern: {matched pattern name}
+   - dryRun: true
+   Report the proposal back.
+   ```
+
+3. **Review proposal:** Read the sub-agent's result and verify:
+   - Correct repos identified
+   - Correct dependency chain
+   - Sensible titles and descriptions
+
+4. **Create sub-issues:** Dispatch another sub-agent with `dryRun: false`:
+   ```
+   Create Task: "Create cross-repo sub-issues"
+   SubagentType: general-purpose
+   Prompt: Call decompose_feature with:
+   - title: {root issue title}
+   - description: {root issue body}
+   - pattern: {matched pattern name}
+   - dryRun: false
+   Report created issue numbers and dependency wiring.
+   ```
+   This creates the sub-issues on GitHub and wires `blockedBy` relationships.
+
+5. **Add to project board:** The `decompose_feature` tool automatically adds created issues to the project and wires dependencies.
+
+6. **Update task list:** Add the created sub-issues as tasks with `blockedBy` chains matching the `dependency-flow`. Independent repos get no `blockedBy` — they run in parallel.
+
+**When repos are independent** (no `dependency-flow` edge): Sub-issues run in parallel. No `blockedBy` links between them.
+
+**When repos have a `dependency-flow` edge:** Sequential execution. Downstream sub-issue blocked by upstream sub-issue.
+
+##### Evidence-Based Dependency Detection
+
+During tree expansion, if research found evidence of cross-repo dependencies not declared in the registry:
+
+1. **Check research document** for mentions of imports between repos (e.g., `import { X } from 'ralph-hero'` found in landcrawler-ai code).
+
+2. **If undeclared dependency found:**
+   - Treat repos as dependent (add `blockedBy` to the downstream sub-issue)
+   - Surface to the human: "I found imports from ralph-hero in landcrawler-ai. Your registry doesn't declare this dependency — want me to add it?"
+   - If human confirms, suggest adding a `dependency-flow` edge to the pattern
+
+3. **Default for unknown relationships:** If no evidence of dependency is found and no `dependency-flow` edge exists, treat repos as independent and run in parallel.
 
 #### RESEARCH tasks
 ```
@@ -326,8 +407,15 @@ Ralph Hero is **resumable** across context windows:
 
 ## Link Formatting
 
+**Single-repo (default):**
+
 | Reference type | Format |
 |---------------|--------|
 | File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
 | With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
 | Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
+
+**Cross-repo:** Resolve owner/repo from the registry entry for each file:
+- `[repo-name:path/file.py](https://github.com/{owner}/{repo}/blob/main/path/file.py)`
+
+When operating on a cross-repo issue, look up each file's repo in the registry to get the correct `owner` and repo name for link URLs. Do NOT hardcode `$RALPH_GH_OWNER/$RALPH_GH_REPO` for files in other repos.
