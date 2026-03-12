@@ -60,6 +60,49 @@ Branch name: `feature/GH-NNN`
 
 If no worktree exists, output an error and stop.
 
+## Step 3a: Multi-Repo PR Detection
+
+If the issue has cross-repo scope (multiple worktrees exist for this issue):
+
+1. **Detect repos from worktrees:** Read `.ralph-repos.yml` from the repo root. For each repo with a `localDir`, check for worktrees:
+   ```bash
+   for repo_dir in {registry localDir paths}; do
+     if [[ -d "$repo_dir/worktrees/GH-${ISSUE_NUMBER}" ]]; then
+       echo "Found worktree in $(basename $repo_dir)"
+     fi
+   done
+   ```
+
+2. **Create one PR per repo:** For each repo with a worktree:
+   ```bash
+   cd {repo_localDir}/worktrees/GH-{issue_number}
+   git push -u origin feature/GH-{issue_number}
+   gh pr create --repo {owner}/{repo} \
+     --title "GH-{issue_number}: {title}" \
+     --body "$(cat <<'PREOF'
+   ## Summary
+   {summary for this repo}
+
+   ## Cross-Repo Context
+   This PR is part of GH-{issue_number}. Related PRs:
+   - {other_repo} PR #{other_pr_number} ({upstream|downstream}, merge {first|after})
+
+   Closes #{issue_number}
+   PREOF
+   )"
+   ```
+
+3. **Cross-reference PRs:** After creating all PRs, edit each PR body to include links to the other PRs. The merge order comes from the `dependency-flow` in the registry pattern.
+
+**Single-repo (default):** If only one worktree exists, behavior is unchanged — continue to Step 4.
+
+### Link Formatting in PR Bodies
+
+When creating cross-repo PR bodies, resolve the correct owner/repo for each link:
+- Links to files in the current repo: use the current repo's owner/name
+- Links to files in other repos: look up the owner/name from the registry entry
+- Links to related PRs: `https://github.com/{owner}/{repo}/pull/{number}`
+
 ## Step 4: Push Branch
 
 From the worktree directory:
