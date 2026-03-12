@@ -3,7 +3,8 @@
 # PreToolUse (Write|Edit): Block writes outside worktree during implementation
 #
 # Environment:
-#   RALPH_COMMAND - Current command (only enforced for "impl")
+#   RALPH_COMMAND        - Current command (only enforced for "impl")
+#   RALPH_WORKTREE_PATHS - Colon-separated active worktree paths (optional, for multi-repo)
 #
 # Exit codes:
 #   0 - Allowed (in worktree or non-impl command)
@@ -34,7 +35,18 @@ else
   PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$(pwd)")
 fi
 
-# Check if file_path is inside a worktree
+# Check if file_path is inside any active worktree
+# RALPH_WORKTREE_PATHS: colon-separated active worktree paths (set by impl skill for multi-repo)
+if [[ -n "${RALPH_WORKTREE_PATHS:-}" ]]; then
+  IFS=':' read -ra WORKTREE_DIRS <<< "$RALPH_WORKTREE_PATHS"
+  for wt_path in "${WORKTREE_DIRS[@]}"; do
+    if [[ "$file_path" == "$wt_path/"* ]]; then
+      allow
+    fi
+  done
+fi
+
+# Fallback: check single-repo worktree (original behavior)
 if [[ -n "$PROJECT_ROOT" ]]; then
   WORKTREE_BASE="$PROJECT_ROOT/worktrees"
   if [[ "$file_path" == "$WORKTREE_BASE/"* ]]; then
