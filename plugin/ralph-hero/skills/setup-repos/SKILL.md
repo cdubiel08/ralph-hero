@@ -108,6 +108,25 @@ Discovered Repositories
   3. my-org/infra       (HCL)         "Infrastructure as code"
 ```
 
+**2b. Detect `localDir` for each repo:**
+
+For each discovered repo, check if a local checkout exists:
+
+```bash
+# Try common locations
+for repo in "${DISCOVERED_REPOS[@]}"; do
+  for candidate in "$HOME/projects/$repo" "$HOME/$repo" "$(pwd)/../$repo"; do
+    if [[ -d "$candidate/.git" ]]; then
+      echo "$repo -> $candidate"
+      break
+    fi
+  done
+done
+```
+
+If a checkout is not found automatically, prompt the user:
+> "I couldn't find a local checkout for `{repo}`. Where is it on disk? (Enter path or 'skip')"
+
 If no repos are discovered, display:
 
 ```
@@ -282,6 +301,7 @@ version: 1
 repos:
   {name}:
     owner: {owner}
+    localDir: {localDir if detected or user-provided}
     domain: {domain}
     tech: [{tech}]
     defaults:
@@ -359,6 +379,7 @@ version: 1  # Required, must be 1
 repos:
   repo-name:           # Short name (used in tool calls)
     owner: github-org  # GitHub owner — falls back to RALPH_GH_OWNER if omitted
+    localDir: ~/projects/repo-name  # On-disk checkout location for agent cross-repo access
     domain: backend    # Functional domain (backend, frontend, infra, library, docs, platform)
     tech:              # Optional tech stack tags
       - typescript
