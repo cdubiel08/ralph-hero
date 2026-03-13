@@ -8,8 +8,9 @@ function makeOwnership(
   number: number,
   files: string[] = [],
   blockedBy: number[] = [],
+  repo?: string,
 ): IssueFileOwnership {
-  return { number, files, blockedBy };
+  return { number, files, blockedBy, repo };
 }
 
 describe("detectWorkStreams - file overlap", () => {
@@ -137,5 +138,59 @@ describe("detectWorkStreams - edge cases", () => {
     expect(result.totalIssues).toBe(0);
     expect(result.streams).toEqual([]);
     expect(result.rationale).toBe("No issues provided.");
+  });
+});
+
+describe("detectWorkStreams - cross-repo file keys", () => {
+  it("does not cluster issues with same file path in different repos", () => {
+    const result = detectWorkStreams([
+      makeOwnership(42, ["src/types.ts"], [], "ralph-hero"),
+      makeOwnership(43, ["src/types.ts"], [], "landcrawler-ai"),
+    ]);
+
+    expect(result.totalStreams).toBe(2);
+    expect(result.streams[0].issues).toEqual([42]);
+    expect(result.streams[1].issues).toEqual([43]);
+  });
+
+  it("clusters issues sharing same file in same repo", () => {
+    const result = detectWorkStreams([
+      makeOwnership(42, ["src/types.ts", "src/index.ts"], [], "ralph-hero"),
+      makeOwnership(43, ["src/types.ts"], [], "ralph-hero"),
+    ]);
+
+    expect(result.totalStreams).toBe(1);
+    expect(result.streams[0].issues).toEqual([42, 43]);
+  });
+
+  it("works without repo field (backward compatible single-repo mode)", () => {
+    const result = detectWorkStreams([
+      makeOwnership(42, ["src/auth/middleware.ts"]),
+      makeOwnership(43, ["src/auth/middleware.ts"]),
+    ]);
+
+    expect(result.totalStreams).toBe(1);
+    expect(result.streams[0].sharedFiles).toContain("src/auth/middleware.ts");
+  });
+
+  it("reports shared files with repo prefix in sharedFiles", () => {
+    const result = detectWorkStreams([
+      makeOwnership(42, ["src/types.ts", "src/index.ts"], [], "ralph-hero"),
+      makeOwnership(43, ["src/types.ts"], [], "ralph-hero"),
+    ]);
+
+    expect(result.streams[0].sharedFiles).toContain("ralph-hero:src/types.ts");
+    expect(result.streams[0].sharedFiles).not.toContain("src/types.ts");
+  });
+
+  it("does not mix repo-qualified and unqualified keys for same path", () => {
+    // Issue 42 has repo set, issue 43 does not — they should NOT cluster
+    // because file:ralph-hero:src/types.ts !== file:src/types.ts
+    const result = detectWorkStreams([
+      makeOwnership(42, ["src/types.ts"], [], "ralph-hero"),
+      makeOwnership(43, ["src/types.ts"]),
+    ]);
+
+    expect(result.totalStreams).toBe(2);
   });
 });
