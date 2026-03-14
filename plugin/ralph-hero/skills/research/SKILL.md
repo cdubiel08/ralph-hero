@@ -213,6 +213,13 @@ If the user agrees:
 ### Step 9: Present findings
 - Present a concise summary of findings to the user
 - Include key file references for easy navigation
+- If the research findings reveal actionable work AND `LINKED_ISSUE` was NOT set:
+  - Suggest creating an issue from the findings via the composable `/form` chain:
+    ```
+    This research identified actionable work. To create a GitHub issue from these findings, run:
+
+    `/ralph-hero:form thoughts/shared/research/[filename].md`
+    ```
 - Ask if they have follow-up questions or need clarification
 
 ### Step 10: Handle follow-up questions
