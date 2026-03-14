@@ -73,6 +73,7 @@ export function sanitize(
 
 export class DebugLogger {
   private logPath: string | null = null;
+  private logPathPromise: Promise<string> | null = null;
   private logDir: string;
 
   constructor(options?: DebugLoggerOptions) {
@@ -80,9 +81,14 @@ export class DebugLogger {
       options?.logDir ?? join(homedir(), ".ralph-hero", "logs");
   }
 
-  private async getLogPath(): Promise<string> {
-    if (this.logPath) return this.logPath;
+  private getLogPath(): Promise<string> {
+    if (!this.logPathPromise) {
+      this.logPathPromise = this.initLogPath();
+    }
+    return this.logPathPromise;
+  }
 
+  private async initLogPath(): Promise<string> {
     await mkdir(this.logDir, { recursive: true });
 
     const now = new Date();

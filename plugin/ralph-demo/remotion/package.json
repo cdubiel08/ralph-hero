@@ -1,6 +1,7 @@
 {
   "name": "demo-studio",
   "version": "1.0.0",
+  "type": "module",
   "description": "Sprint demo video generator using Remotion",
   "scripts": {
     "dev": "remotion studio",
