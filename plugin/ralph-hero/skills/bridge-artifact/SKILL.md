@@ -5,6 +5,7 @@ user-invocable: true
 argument-hint: <path-to-superpowers-artifact> [#issue-number]
 context: fork
 model: sonnet
+allowed-tools: [Read, Write, Glob, Grep, ralph_hero__get_issue, ralph_hero__create_comment]
 ---
 
 # Bridge Superpowers Artifact to Ralph-Hero

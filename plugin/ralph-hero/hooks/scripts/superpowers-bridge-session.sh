@@ -9,6 +9,8 @@
 set -euo pipefail
 
 # Check if superpowers plugin is installed
+# NOTE: This path is coupled to Claude Code's internal plugin cache layout.
+# If the cache structure changes, this detection will silently stop working.
 SUPERPOWERS_DIR=""
 for dir in "${HOME}/.claude/plugins/cache/claude-plugins-official/superpowers"/*/; do
   if [[ -d "$dir/skills" ]]; then
@@ -26,14 +28,23 @@ if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
   echo "export RALPH_SUPERPOWERS_BRIDGE=true" >> "$CLAUDE_ENV_FILE"
 fi
 
-CONTEXT="RALPH-HERO + SUPERPOWERS BRIDGE ACTIVE\\n\\nBoth ralph-hero and superpowers plugins are installed. When superpowers skills produce artifacts (specs, plans):\\n\\n- Superpowers default paths (docs/superpowers/) are fine for initial drafts\\n- For project management integration, also save to thoughts/shared/ with ralph-hero frontmatter\\n- A PostToolUse hook will provide specific path and frontmatter suggestions after each superpowers artifact write\\n- Use /ralph-hero:bridge-artifact <path> to migrate any superpowers artifact to ralph-hero format\\n\\nSuperpowers artifact mapping:\\n  docs/superpowers/specs/*  →  thoughts/shared/research/*\\n  docs/superpowers/plans/*  →  thoughts/shared/plans/*"
+CONTEXT="RALPH-HERO + SUPERPOWERS BRIDGE ACTIVE
 
-cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "${CONTEXT}"
+Both ralph-hero and superpowers plugins are installed. When superpowers skills produce artifacts (specs, plans):
+
+- Superpowers default paths (docs/superpowers/) are fine for initial drafts
+- For project management integration, also save to thoughts/shared/ with ralph-hero frontmatter
+- A PostToolUse hook will provide specific path and frontmatter suggestions after each superpowers artifact write
+- Use /ralph-hero:bridge-artifact <path> to migrate any superpowers artifact to ralph-hero format
+
+Superpowers artifact mapping:
+  docs/superpowers/specs/*  →  thoughts/shared/research/*
+  docs/superpowers/plans/*  →  thoughts/shared/plans/*"
+
+jq -n --arg ctx "$CONTEXT" '{
+  hookSpecificOutput: {
+    hookEventName: "SessionStart",
+    additionalContext: $ctx
   }
-}
-EOF
+}'
 exit 0

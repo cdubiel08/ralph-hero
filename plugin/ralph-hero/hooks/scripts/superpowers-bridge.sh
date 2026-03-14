@@ -9,13 +9,17 @@
 
 set -euo pipefail
 
+# Skip entirely if superpowers bridge is not active (set by SessionStart hook)
+[[ "${RALPH_SUPERPOWERS_BRIDGE:-}" == "true" ]] || exit 0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/hook-utils.sh"
 
 read_input > /dev/null
 
-TOOL_NAME=$(get_tool_name)
-[[ "$TOOL_NAME" == "Write" ]] || exit 0
+# Check that the write actually succeeded before advising
+EXIT_CODE=$(echo "$RALPH_HOOK_INPUT" | jq -r '.tool_response.exitCode // 0')
+[[ "$EXIT_CODE" == "0" ]] || exit 0
 
 FILE_PATH=$(echo "$RALPH_HOOK_INPUT" | jq -r '.tool_input.file_path // ""')
 
@@ -45,21 +49,38 @@ RALPH_PATH="${RALPH_DIR}/${RALPH_FILENAME}"
 
 # Build frontmatter template
 if [[ "$ARTIFACT_TYPE" == "plan" ]]; then
-  STATUS="draft"
-  FRONTMATTER="---\ndate: ${DATE_PART}\nstatus: ${STATUS}\ntype: plan\ntags: []\n# github_issue: NNN        # add when linking to an issue\n# github_issues: [NNN]\n# primary_issue: NNN\n---"
+  FRONTMATTER="---
+date: ${DATE_PART}
+status: draft
+type: plan
+tags: []
+# github_issue: NNN        # add when linking to an issue
+# github_issues: [NNN]
+# primary_issue: NNN
+---"
 else
-  STATUS="complete"
-  FRONTMATTER="---\ndate: ${DATE_PART}\nstatus: ${STATUS}\ntype: research\ntags: []\n# github_issue: NNN        # add when linking to an issue\n---"
+  FRONTMATTER="---
+date: ${DATE_PART}
+status: complete
+type: research
+tags: []
+# github_issue: NNN        # add when linking to an issue
+---"
 fi
 
-CONTEXT="SUPERPOWERS BRIDGE: A superpowers ${ARTIFACT_TYPE} artifact was saved to ${FILE_PATH}.\\n\\nTo integrate with ralph-hero project management:\\n1. Save a copy to: ${RALPH_PATH}\\n2. Add this frontmatter at the top:\\n${FRONTMATTER}\\n3. Optionally link to a GitHub issue with: ralph_hero__create_comment(number=NNN, body=\\\"## Implementation Plan\\\\n\\\\nhttps://github.com/\${RALPH_GH_OWNER}/\${RALPH_GH_REPO}/blob/main/${RALPH_PATH}\\\")\\n\\nOr use /ralph-hero:bridge-artifact ${FILE_PATH} to migrate automatically."
+# Build advisory context using jq for safe JSON construction
+CONTEXT=$(jq -n \
+  --arg type "$ARTIFACT_TYPE" \
+  --arg src "$FILE_PATH" \
+  --arg dst "$RALPH_PATH" \
+  --arg fm "$FRONTMATTER" \
+  '"SUPERPOWERS BRIDGE: A superpowers " + $type + " artifact was saved to " + $src + ".\n\nTo integrate with ralph-hero project management:\n1. Save a copy to: " + $dst + "\n2. Add this frontmatter at the top:\n" + $fm + "\n3. Optionally link to a GitHub issue with: ralph_hero__create_comment(number=NNN, ...)\n\nOr use /ralph-hero:bridge-artifact " + $src + " to migrate automatically."')
 
-cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "additionalContext": "${CONTEXT}"
+# Output JSON with jq-constructed context (already a JSON string with quotes)
+jq -n --argjson ctx "$CONTEXT" '{
+  hookSpecificOutput: {
+    hookEventName: "PostToolUse",
+    additionalContext: $ctx
   }
-}
-EOF
+}'
 exit 0
