@@ -38,6 +38,7 @@ const saveIssueSchema = z.object({
   workflowState: z.string().optional(),
   estimate: z.enum(["XS", "S", "M", "L", "XL"]).nullable().optional(),
   priority: z.enum(["P0", "P1", "P2", "P3"]).nullable().optional(),
+  iteration: z.string().nullable().optional(),
   command: z.string().optional(),
 });
 
@@ -131,6 +132,66 @@ describe("save_issue schema validation", () => {
       issueState: "CLOSED_NOT_PLANNED",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("accepts number + iteration (iteration title)", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: "Sprint 1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBe("Sprint 1");
+    }
+  });
+
+  it("accepts number + iteration: @current (token)", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: "@current",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBe("@current");
+    }
+  });
+
+  it("accepts number + iteration: @next (token)", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: "@next",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBe("@next");
+    }
+  });
+
+  it("accepts number + iteration: null (field clearing)", () => {
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.iteration).toBeNull();
+    }
+  });
+
+  it("treats iteration as project field (triggers project mutation path)", () => {
+    // When iteration is the only project-level field, hasProjectFields should be true
+    const result = saveIssueSchema.safeParse({
+      number: 42,
+      iteration: "Sprint 1",
+    });
+    expect(result.success).toBe(true);
+    // Verify no issue-level fields are set (only project-level)
+    if (result.success) {
+      expect(result.data.title).toBeUndefined();
+      expect(result.data.workflowState).toBeUndefined();
+      expect(result.data.estimate).toBeUndefined();
+      expect(result.data.priority).toBeUndefined();
+    }
   });
 });
 
@@ -297,5 +358,36 @@ describe("save_issue structural", () => {
 
   it("imports isParentGateState from workflow-states", () => {
     expect(issueToolsSrc).toContain("isParentGateState");
+  });
+
+  it("imports resolveIterationId from helpers", () => {
+    expect(issueToolsSrc).toContain("resolveIterationId");
+  });
+
+  it("includes iteration in hasProjectFields check", () => {
+    expect(issueToolsSrc).toContain("args.iteration !== undefined");
+  });
+
+  it("calls resolveIterationId for non-null iteration values", () => {
+    expect(issueToolsSrc).toContain("resolveIterationId(");
+  });
+
+  it("uses valueType iterationId for iteration field updates", () => {
+    expect(issueToolsSrc).toContain('valueType: "iterationId"');
+  });
+
+  it("discovers iteration field dynamically via getFieldNames + getIterations", () => {
+    expect(issueToolsSrc).toContain("fieldCache.getFieldNames(");
+    expect(issueToolsSrc).toContain("fieldCache.getIterations(");
+  });
+
+  it("supports clearing iteration field via fieldsToClear", () => {
+    // Iteration clear path pushes to fieldsToClear like estimate/priority
+    const iterSection = issueToolsSrc.slice(
+      issueToolsSrc.indexOf("// 4d. Iteration"),
+      issueToolsSrc.indexOf("// 4e."),
+    );
+    expect(iterSection).toContain("fieldsToClear.push");
+    expect(iterSection).toContain("args.iteration === null");
   });
 });
