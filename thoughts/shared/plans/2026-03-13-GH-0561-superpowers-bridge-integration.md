@@ -403,8 +403,8 @@ The original superpowers artifact has been preserved.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Skill file exists: `test -f plugin/ralph-hero/skills/bridge-artifact/SKILL.md`
-- [ ] Skill has valid frontmatter with `name`, `description`, `user-invocable: true`
+- [x] Skill file exists: `test -f plugin/ralph-hero/skills/bridge-artifact/SKILL.md`
+- [x] Skill has valid frontmatter with `name`, `description`, `user-invocable: true`
 
 #### Manual Verification:
 - [ ] Invoke `/ralph-hero:bridge-artifact` with a superpowers plan → correctly migrated to `thoughts/shared/plans/` with frontmatter
