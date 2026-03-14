@@ -1,0 +1,29 @@
+{
+  "sprint": 42,
+  "date": "2026-03-12",
+  "team": "Platform Team",
+  "theme": "energetic",
+  "format": "16:9",
+  "scenes": [
+    {
+      "type": "title",
+      "headline": "Sprint 42 Demo",
+      "subtitle": "Pipeline Improvements"
+    },
+    {
+      "type": "feature",
+      "name": "Batch Processing",
+      "description": "Process 10x more records per run",
+      "icon": "⚡"
+    },
+    {
+      "type": "bullets",
+      "title": "By the Numbers",
+      "items": ["10x throughput", "40% less config", "Zero downtime deploys"]
+    },
+    {
+      "type": "outro",
+      "text": "Questions? Reach out in #platform-team"
+    }
+  ]
+}
