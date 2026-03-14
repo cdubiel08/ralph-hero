@@ -265,10 +265,10 @@ Add a new entry to the `SessionStart` array:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Script is executable: `test -x plugin/ralph-hero/hooks/scripts/superpowers-bridge-session.sh`
-- [ ] `hooks.json` is valid JSON: `jq . plugin/ralph-hero/hooks/hooks.json`
-- [ ] Script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/superpowers-bridge-session.sh`
-- [ ] `RALPH_SUPERPOWERS_BRIDGE` env var is set after session start (when superpowers installed)
+- [x] Script is executable: `test -x plugin/ralph-hero/hooks/scripts/superpowers-bridge-session.sh`
+- [x] `hooks.json` is valid JSON: `jq . plugin/ralph-hero/hooks/hooks.json`
+- [x] Script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/superpowers-bridge-session.sh`
+- [x] `RALPH_SUPERPOWERS_BRIDGE` env var is set after session start (when superpowers installed)
 
 #### Manual Verification:
 - [ ] Start new session with both plugins → observe bridge active message in session context
