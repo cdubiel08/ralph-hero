@@ -1,6 +1,6 @@
 ---
-description: Crystallize draft ideas into structured GitHub issues, implementation plans, or research topics. Reads idea files, researches codebase context, finds duplicates, and creates well-scoped tickets.
-argument-hint: "<idea-path-or-description>"
+description: Crystallize draft ideas or research findings into structured GitHub issues, implementation plans, or research topics. Reads idea files or research documents, researches codebase context, finds duplicates, and creates well-scoped tickets.
+argument-hint: "<idea-path-or-research-doc-or-description>"
 model: opus
 allowed-tools:
   - Read
@@ -9,8 +9,14 @@ allowed-tools:
   - Glob
   - Grep
   - Bash
-  - Task
+  - Agent
   - WebSearch
+  - ralph_hero__list_issues
+  - ralph_hero__create_issue
+  - ralph_hero__save_issue
+  - ralph_hero__add_sub_issue
+  - ralph_hero__add_dependency
+  - ralph_hero__create_comment
   - WebFetch
   - ralph_hero__list_issues
   - ralph_hero__create_issue
@@ -29,20 +35,32 @@ When this command is invoked:
 
 1. **If an idea file path was provided** (e.g., `thoughts/shared/ideas/2026-02-21-feature.md`):
    - Read the file FULLY
+   - Set `INPUT_TYPE = "idea"`
    - Proceed to Step 1
 
-2. **If a raw description was provided** (not a file path):
+2. **If a research doc path was provided** (e.g., `thoughts/shared/research/2026-03-14-GH-0564-topic.md`):
+   - Read the file FULLY
+   - Set `INPUT_TYPE = "research"`
+   - Extract the research question, summary, detailed findings, and code references
+   - If the research doc has `github_issue` in frontmatter, set `LINKED_ISSUE` to that value (the research is already linked to an issue -- the form skill should be aware)
+   - Proceed to Step 1
+
+   **Detection logic**: A path is a research doc if it matches `thoughts/shared/research/*.md` or has `type: research` in its frontmatter.
+
+3. **If a raw description was provided** (not a file path):
    - Treat it as an inline idea
+   - Set `INPUT_TYPE = "idea"`
    - Proceed to Step 1
 
-3. **If no parameters provided**:
+4. **If no parameters provided**:
    ```
    I'll help you crystallize an idea into something actionable.
 
    Provide one of:
    1. A path to a draft idea: `/ralph-hero:form thoughts/shared/ideas/2026-02-21-feature.md`
-   2. A description of the idea: `/ralph-hero:form we should add operator comparison charts`
-   3. Just run `/ralph-hero:form` and I'll show you recent drafts to pick from
+   2. A research document: `/ralph-hero:form thoughts/shared/research/2026-03-14-topic.md`
+   3. A description of the idea: `/ralph-hero:form we should add operator comparison charts`
+   4. Just run `/ralph-hero:form` and I'll show you recent drafts to pick from
 
    Recent ideas:
    ```
@@ -75,7 +93,16 @@ When this command is invoked:
 
 ### Step 2: Research & Contextualize
 
-Spawn parallel research to ground the idea in the codebase and project context:
+**If `INPUT_TYPE` is "research"** (input was a research document):
+- The research document already contains codebase analysis, code references, and architectural context
+- **Skip** the codebase-locator and codebase-analyzer sub-tasks (the research doc is the investigation)
+- **Still run** the following (these provide project-management context the research doc may lack):
+  - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans about [topic from research doc]")` -- to find related work
+  - `ralph_hero__list_issues(query=...)` -- to find duplicate or overlapping issues
+- This avoids re-investigating what the research doc already covers while still grounding the idea in the project context
+
+**If `INPUT_TYPE` is "idea"** (input was an idea file or inline description):
+- Proceed with full research as currently defined:
 
 1. **Codebase context** - Spawn parallel sub-tasks:
    - `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find where [idea topic] would live in the codebase")`
@@ -151,7 +178,16 @@ If the user chose "GitHub issue":
    ## Context
    - Related: [links to related issues/docs]
    - Idea source: [link to draft idea file]
+   ```
 
+   If `INPUT_TYPE` is "research", also include a Research section in the issue body:
+   ```
+   ## Research
+   See [research doc](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md)
+   ```
+
+   Then present for approval:
+   ```
    **Labels**: [suggested labels]
    **Estimate**: [XS/S/M/L/XL]
    **Priority**: [suggested priority]
@@ -176,14 +212,35 @@ If the user chose "GitHub issue":
    - workflowState: "Backlog"
    ```
 
-3. **Update the idea file** with issue link:
+3. **Update the source file** with issue link:
+
+   **If `INPUT_TYPE` is "idea"**: Update the idea file:
    ```yaml
    type: idea
    github_issue: NNN
    status: formed
    ```
 
+   **If `INPUT_TYPE` is "research"**: Update the research doc's frontmatter:
+   ```yaml
+   github_issue: NNN
+   github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
+   ```
+   Then post an artifact comment linking the research doc to the new issue (same pattern as the research skill's Step 8):
+   ```
+   ralph_hero__create_comment
+   - number: NNN
+   - body: |
+       ## Research Document
+
+       https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
+
+       Key findings: [1-3 line summary from the research doc's Summary section]
+   ```
+
 4. **Report**:
+
+   **If `INPUT_TYPE` is "idea"**:
    ```
    Created: #NNN - [title]
    URL: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
@@ -193,6 +250,18 @@ If the user chose "GitHub issue":
    Next steps:
    - `/ralph-hero:research NNN` - Start research phase
    - `/ralph-hero:plan #NNN` - Jump to planning
+   - `/ralph-hero:iterate #NNN` - Refine if needed
+   ```
+
+   **If `INPUT_TYPE` is "research"**:
+   ```
+   Created: #NNN - [title]
+   URL: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
+
+   The research doc at [path] has been linked to the new issue.
+
+   Next steps:
+   - `/ralph-hero:plan #NNN` - Create an implementation plan (research is already done)
    - `/ralph-hero:iterate #NNN` - Refine if needed
    ```
 
@@ -235,21 +304,33 @@ If the user chose "Ticket tree":
    ralph_hero__add_dependency(blockedNumber=..., blockingNumber=...)
    ```
 
-4. **Update the idea file** with parent issue link:
+4. **Update the source file** with parent issue link:
+
+   **If `INPUT_TYPE` is "idea"**:
    ```yaml
    type: idea
    github_issue: NNN
    status: formed
    ```
 
+   **If `INPUT_TYPE` is "research"**: Update the research doc's frontmatter:
+   ```yaml
+   github_issue: NNN
+   github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
+   ```
+
 ### Step 5c: Hand Off to Another Skill
 
 If the user chose "Implementation plan" or "Research topic":
 
-1. **Update the idea file** with status:
+1. **Update the source file** with status:
+
+   **If `INPUT_TYPE` is "idea"**:
    ```yaml
    status: forming
    ```
+
+   **If `INPUT_TYPE` is "research"**: No status update needed (research docs don't have a `status` field).
 
 2. **Suggest the appropriate skill**:
    - For plan: Suggest the user run `/ralph-hero:plan` with the context gathered
@@ -271,13 +352,19 @@ If the user chose "Implementation plan" or "Research topic":
 
 If the user chose "Keep as refined idea":
 
-1. **Update the idea file** with enriched content:
+1. **Update the source file** with enriched content:
    - Add the codebase context discovered
    - Add related issues and documents
    - Refine the rough shape based on research
    - Update tags with more specific terms
+
+   **If `INPUT_TYPE` is "idea"**:
    - Set `type: idea` if not already present
    - Set `status: refined`
+
+   **If `INPUT_TYPE` is "research"**:
+   - Do NOT overwrite `type: research` — preserve the existing type
+   - Add any new context as additional sections in the research doc
 
 2. **Report**:
    ```
