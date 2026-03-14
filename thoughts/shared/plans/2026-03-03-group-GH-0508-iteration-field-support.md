@@ -48,7 +48,7 @@ primary_issue: 508
 - [ ] Automated: `save_issue({ number: N, iteration: "Sprint 1" })` sets iteration field via `value: { iterationId }`
 - [ ] Automated: `save_issue({ number: N, iteration: null })` clears iteration via `clearProjectV2ItemFieldValue`
 - [ ] Automated: `list_issues({ iteration: "@current" })` returns only issues in the active sprint
-- [ ] Automated: `setup_project({ createIterationField: true })` creates a "Sprint" iteration field
+- [x] Automated: `setup_project({ createIterationField: true })` creates a "Sprint" iteration field
 - [ ] Automated: `pipeline_dashboard` includes per-iteration phase breakdown when iteration assignments exist
 - [ ] Automated: Projects without iteration fields produce identical `pipeline_dashboard` output (no regression)
 - [ ] Manual: Setting `iteration: "@next"` on an issue via `save_issue` appears in the correct sprint on the GitHub board
@@ -262,8 +262,8 @@ async function createIterationField(
 - Invalidate field cache after creation (same pattern as existing field creation)
 
 ### Success Criteria
-- [ ] Automated: `setup_project({ createIterationField: true })` creates a "Sprint" field — new test in `setup-project-template.test.ts`
-- [ ] Automated: `setup_project()` without flag creates only the 3 existing fields — backward compat regression test
+- [x] Automated: `setup_project({ createIterationField: true })` creates a "Sprint" field — new test in `setup-project-template.test.ts`
+- [x] Automated: `setup_project()` without flag creates only the 3 existing fields — backward compat regression test
 - [ ] Manual: After `setup_project({ createIterationField: true })`, the GitHub project UI shows a "Sprint" iteration field
 
 **Creates for next phase**: No direct output consumed by later phases.
