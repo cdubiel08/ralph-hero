@@ -242,7 +242,7 @@ INSTRUCTIONS:
      description="Critique #NNN plan")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to this critique `Task()` call or any sub-agent `Task()` calls within it. Sub-agents must run outside any team context.
+> **Team Isolation**: Do NOT pass `team_name` to this critique `Agent()` call or any sub-agent `Agent()` calls within it. Sub-agents must run outside any team context.
 
 **Wait for result**:
 ```

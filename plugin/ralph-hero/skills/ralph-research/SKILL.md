@@ -100,7 +100,7 @@ If `save_issue` returns an error, read the error message for valid states/intent
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research or decisions about [topic]")`
    - `Agent(subagent_type="ralph-hero:web-search-researcher", prompt="External APIs, best practices for [topic]")` (if needed)
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 4. **Wait for ALL sub-tasks** before proceeding
 5. **Synthesize findings** - combine results into coherent understanding

@@ -86,7 +86,7 @@ Create multiple Task agents to research different aspects concurrently. Use thes
 
 **IMPORTANT**: All agents are documentarians, not critics. They will describe what exists without suggesting improvements or identifying issues.
 
-**Sub-agent team isolation**: Do NOT pass `team_name` to any internal `Task()` calls (per conventions).
+**Sub-agent team isolation**: Do NOT pass `team_name` to any internal `Agent()` calls (per conventions).
 
 The key is to use these agents intelligently:
 - Start with locator agents to find what exists

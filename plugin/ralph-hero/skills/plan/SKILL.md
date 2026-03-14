@@ -81,7 +81,7 @@ Then wait for the user's input.
    - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand how [component] currently works")`
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing thoughts documents about [feature]")` (if relevant)
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls (per ADR-001 in shared/conventions.md).
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls (per ADR-001 in shared/conventions.md).
 
    These agents will:
    - Find relevant source files, configs, and tests
@@ -142,7 +142,7 @@ After getting initial clarifications:
    **For existing issues:**
    - Use `ralph_hero__list_issues(query=...)` to find related issues directly
 
-   > **Team Isolation**: Do NOT pass `team_name` to sub-agent `Task()` calls.
+   > **Team Isolation**: Do NOT pass `team_name` to sub-agent `Agent()` calls.
 
 3. **Wait for ALL sub-tasks to complete** before proceeding
 

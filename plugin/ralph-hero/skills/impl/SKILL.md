@@ -117,7 +117,7 @@ For each unchecked phase in the plan:
 - Follow the plan's intent while adapting to what you find
 - Implement each change specified in the phase
 - Use sub-agents sparingly - mainly for targeted exploration of unfamiliar areas
-- Do NOT pass `team_name` to any internal `Task()` calls (sub-agent team isolation per conventions)
+- Do NOT pass `team_name` to any internal `Agent()` calls (sub-agent team isolation per conventions)
 
 ### 4.3 Run Automated Verification
 - Read the phase's success criteria for verification commands
@@ -237,4 +237,4 @@ Remember: You're implementing a solution, not just checking boxes. Keep the end 
 - **Verification**: Read verification commands from the plan's success criteria - do not hardcode any specific commands
 - **Frontmatter consistency**: Plan files use `github_issue`/`github_issues` frontmatter fields
 - **Link formatting**: See `shared/conventions.md` for GitHub link format patterns
-- **Sub-agent isolation**: Do NOT pass `team_name` to internal `Task()` calls
+- **Sub-agent isolation**: Do NOT pass `team_name` to internal `Agent()` calls

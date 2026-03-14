@@ -120,7 +120,7 @@ Then STOP.
    Agent(subagent_type="ralph-hero:codebase-locator", prompt="Search for [keywords from issue title]. Does this feature/fix already exist?")
    ```
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
    Also search GitHub for similar issues:
    ```

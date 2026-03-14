@@ -161,7 +161,7 @@ If the user's feedback requires understanding new code patterns or validating as
    - Include full path context in prompts
    - Specify which directories to focus on
 
-   **Important**: Do NOT pass `team_name` to any `Task()` calls for sub-agents.
+   **Important**: Do NOT pass `team_name` to any `Agent()` calls for sub-agents.
 
 2. **Read any new files identified by research**:
    - Read them FULLY into the main context

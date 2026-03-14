@@ -63,7 +63,7 @@ Use a subagent to find candidates:
 Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first.")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 Or query directly:
 ```
@@ -142,7 +142,7 @@ Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find all files relate
 Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [primary component]. What are the distinct pieces of work?")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 **Goal**: Identify natural boundaries for splitting:
 - Separate layers (database, API, frontend)

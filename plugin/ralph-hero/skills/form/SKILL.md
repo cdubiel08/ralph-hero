@@ -93,7 +93,7 @@ Spawn parallel research to ground the idea in the codebase and project context:
 
 4. **Wait for ALL research to complete** before proceeding
 
-**Important**: Do NOT pass `team_name` to any `Task()` calls for sub-agents.
+**Important**: Do NOT pass `team_name` to any `Agent()` calls for sub-agents.
 
 ### Step 3: Present the Larger Context
 

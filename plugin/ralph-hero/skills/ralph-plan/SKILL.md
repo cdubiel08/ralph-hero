@@ -147,7 +147,7 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
    - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
    - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 4. **Wait for sub-tasks** before proceeding
 5. **Discover project verification commands**: Search the target project directory for quality tooling. Check these sources in order (stop once found for each category):
