@@ -27,6 +27,7 @@ export interface WorkStream {
 // ---------------------------------------------------------------------------
 
 /** Pre-processed project item for dashboard consumption. */
+/** Pre-processed project item for dashboard consumption. */
 export interface DashboardItem {
   number: number;
   title: string;
@@ -41,6 +42,10 @@ export interface DashboardItem {
   projectNumber?: number; // Source project number (multi-project)
   projectTitle?: string; // Human-readable project title (multi-project)
   repository?: string; // "owner/repo" nameWithOwner format
+  iterationId?: string; // Iteration short ID (e.g., "cfc16e4d")
+  iterationTitle?: string; // Iteration name (e.g., "Sprint 1")
+  iterationStartDate?: string; // ISO date string
+  iterationDuration?: number; // days
 }
 
 /** One row in the pipeline snapshot. */
@@ -99,6 +104,18 @@ export interface RepoBreakdown {
   health: { ok: boolean; warnings: HealthWarning[] };
 }
 
+export interface IterationBreakdown {
+  iterationTitle: string;
+  startDate: string;
+  duration: number;
+  phaseCounts: Array<{ state: string; count: number }>;
+  totalIssues: number;
+}
+
+export interface IterationDashboardSection {
+  iterations: IterationBreakdown[];
+}
+
 export interface StreamPhaseCount {
   state: string;
   count: number;
@@ -129,6 +146,7 @@ export interface DashboardData {
   projectBreakdowns?: Record<number, ProjectBreakdown>;
   repoBreakdowns?: Record<string, RepoBreakdown>;
   streams?: StreamDashboardSection;
+  iterations?: IterationDashboardSection;
 }
 
 export interface HealthConfig {
@@ -608,6 +626,74 @@ export function computeStreamSection(
 }
 
 // ---------------------------------------------------------------------------
+// Iteration section
+// ---------------------------------------------------------------------------
+
+/**
+ * Build per-iteration breakdown: group items by iteration, count phases
+ * per iteration. Only includes items that have an iteration assignment.
+ * Returns undefined if no items have iteration data.
+ */
+export function buildIterationSection(
+  items: DashboardItem[],
+): IterationDashboardSection | undefined {
+  const iterItems = items.filter((i) => i.iterationId && i.iterationTitle);
+  if (iterItems.length === 0) return undefined;
+
+  // Group by iteration title
+  const groups = new Map<string, { items: DashboardItem[]; startDate: string; duration: number }>();
+  for (const item of iterItems) {
+    const title = item.iterationTitle!;
+    const existing = groups.get(title);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      groups.set(title, {
+        items: [item],
+        startDate: item.iterationStartDate ?? "",
+        duration: item.iterationDuration ?? 0,
+      });
+    }
+  }
+
+  // Build breakdowns sorted by start date
+  const breakdowns: IterationBreakdown[] = [];
+  for (const [title, group] of groups) {
+    // Count items per workflow state
+    const stateCounts = new Map<string, number>();
+    for (const item of group.items) {
+      const state = item.workflowState ?? "Unknown";
+      stateCounts.set(state, (stateCounts.get(state) ?? 0) + 1);
+    }
+
+    const phaseCounts: Array<{ state: string; count: number }> = [];
+    for (const [state, count] of stateCounts) {
+      phaseCounts.push({ state, count });
+    }
+
+    // Sort by STATE_ORDER position
+    const stateIdx = (s: string) => {
+      const idx = STATE_ORDER.indexOf(s);
+      return idx >= 0 ? idx : STATE_ORDER.length;
+    };
+    phaseCounts.sort((a, b) => stateIdx(a.state) - stateIdx(b.state));
+
+    breakdowns.push({
+      iterationTitle: title,
+      startDate: group.startDate,
+      duration: group.duration,
+      phaseCounts,
+      totalIssues: group.items.length,
+    });
+  }
+
+  // Sort by start date
+  breakdowns.sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+  return { iterations: breakdowns };
+}
+
+// ---------------------------------------------------------------------------
 // buildDashboard
 // ---------------------------------------------------------------------------
 
@@ -709,6 +795,9 @@ export function buildDashboard(
     streamSection = computeStreamSection(streams, items);
   }
 
+  // Iteration section (only when items have iteration assignments)
+  const iterationSection = buildIterationSection(items);
+
   return {
     generatedAt: new Date(now).toISOString(),
     totalIssues: items.length,
@@ -721,6 +810,7 @@ export function buildDashboard(
     ...(projectBreakdowns ? { projectBreakdowns } : {}),
     ...(repoBreakdowns ? { repoBreakdowns } : {}),
     ...(streamSection ? { streams: streamSection } : {}),
+    ...(iterationSection ? { iterations: iterationSection } : {}),
   };
 }
 
@@ -898,6 +988,31 @@ export function formatMarkdown(
     }
   }
 
+  // Iteration section
+  if (data.iterations && data.iterations.iterations.length > 0) {
+    lines.push("");
+    lines.push("## Iterations");
+
+    for (const iter of data.iterations.iterations) {
+      const endDate = iter.startDate && iter.duration
+        ? new Date(new Date(iter.startDate).getTime() + iter.duration * 86400000)
+            .toISOString().split("T")[0]
+        : "";
+      const dateRange = iter.startDate && endDate
+        ? ` (${iter.startDate} to ${endDate}, ${iter.duration}d)`
+        : "";
+
+      lines.push("");
+      lines.push(`### ${iter.iterationTitle}${dateRange}`);
+      lines.push("");
+
+      const phaseLine = iter.phaseCounts
+        .map((p) => `${p.state}: ${p.count}`)
+        .join(" | ");
+      lines.push(`${phaseLine} (${iter.totalIssues} total)`);
+    }
+  }
+
   // Stream section
   if (data.streams && data.streams.streams.length > 0) {
     lines.push("");
@@ -1017,6 +1132,18 @@ export function formatAscii(data: DashboardData): string {
           lines.push(`  ${w.severity.toUpperCase()}: ${w.message}`);
         }
       }
+    }
+  }
+
+  // Iteration section
+  if (data.iterations && data.iterations.iterations.length > 0) {
+    lines.push("");
+    lines.push("--- Iterations ---");
+    for (const iter of data.iterations.iterations) {
+      const phaseLine = iter.phaseCounts
+        .map((p) => `${p.state}: ${p.count}`)
+        .join(", ");
+      lines.push(`${iter.iterationTitle}: ${phaseLine} (${iter.totalIssues} total)`);
     }
   }
 
