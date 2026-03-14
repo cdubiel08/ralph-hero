@@ -1,5 +1,5 @@
 ---
-description: Create detailed implementation plans through interactive research and iteration. Collaboratively explores codebase, proposes phased structure, and writes a plan document. Optionally links to a GitHub issue and transitions to Plan in Review.
+description: Create detailed implementation plans through interactive research and iteration. Collaboratively explores codebase, proposes phased structure, and writes a plan document. Optionally links to a GitHub issue and transitions to Plan in Review or directly to In Progress.
 argument-hint: "[optional: #NNN issue number, file path, or description]"
 model: opus
 allowed-tools:
@@ -362,11 +362,15 @@ After the plan is finalized and the user is satisfied:
      primary_issue: NNN
      ```
      Set `github_issue` to the same value as `primary_issue` (singular integer for the knowledge indexer).
-   - Offer to transition to "Plan in Review":
+   - Offer to advance the issue:
      ```
-     Would you like to move #NNN to "Plan in Review"?
+     Would you like to advance #NNN?
+     1. Move to "Plan in Review" (for later autonomous review via /ralph-review)
+     2. Move to "In Progress" (you've reviewed the plan interactively — ready for implementation)
+     3. Skip state transition
      ```
-     If yes: `ralph_hero__save_issue(number=NNN, workflowState="Plan in Review", command="create_plan")`
+     If option 1: `ralph_hero__save_issue(number=NNN, workflowState="Plan in Review")`
+     If option 2: `ralph_hero__save_issue(number=NNN, workflowState="In Progress")`
 
 3. **If creating new issue**:
    - Use `ralph_hero__create_issue(title=..., body=...)` with plan summary as body
@@ -374,15 +378,15 @@ After the plan is finalized and the user is satisfied:
    - **Rename file** to include the new issue number (same rename pattern as option 2)
    - Post plan link comment (same Artifact Comment Protocol as above, using renamed filename)
    - Update plan frontmatter with new issue reference (including `github_issue: NNN` for the knowledge indexer)
-   - Offer state transition to "Plan in Review"
+   - Offer to advance the issue (same 3 options as above)
 
 4. **Report result**:
    ```
    Plan linked to GitHub issue: #NNN
    URL: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
-
-   The plan is ready for implementation. Use `/ralph-hero:impl #NNN` when approved.
    ```
+   If moved to "In Progress": `Ready for implementation. Use /ralph-hero:impl #NNN to start.`
+   If moved to "Plan in Review": `The plan is ready for review. Use /ralph-hero:ralph-review #NNN or /ralph-hero:impl #NNN after approval.`
 
 ## Important Guidelines
 

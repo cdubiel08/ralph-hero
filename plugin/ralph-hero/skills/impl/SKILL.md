@@ -92,7 +92,7 @@ git pull origin "$(git branch --show-current)" --no-edit
 If a linked issue exists and is not already "In Progress":
 
 ```
-ralph_hero__save_issue(number=NNN, workflowState="In Progress", command="implement_plan")
+ralph_hero__save_issue(number=NNN, workflowState="In Progress")
 ```
 
 ### 3.3 Post Start Comment
