@@ -9,8 +9,14 @@ allowed-tools:
   - Glob
   - Grep
   - Bash
-  - Task
+  - Agent
   - WebSearch
+  - ralph_hero__list_issues
+  - ralph_hero__create_issue
+  - ralph_hero__save_issue
+  - ralph_hero__add_sub_issue
+  - ralph_hero__add_dependency
+  - ralph_hero__create_comment
   - WebFetch
   - ralph_hero__list_issues
   - ralph_hero__create_issue
@@ -91,7 +97,7 @@ When this command is invoked:
 - The research document already contains codebase analysis, code references, and architectural context
 - **Skip** the codebase-locator and codebase-analyzer sub-tasks (the research doc is the investigation)
 - **Still run** the following (these provide project-management context the research doc may lack):
-  - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans about [topic from research doc]")` -- to find related work
+  - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans about [topic from research doc]")` -- to find related work
   - `ralph_hero__list_issues(query=...)` -- to find duplicate or overlapping issues
 - This avoids re-investigating what the research doc already covers while still grounding the idea in the project context
 
@@ -298,21 +304,33 @@ If the user chose "Ticket tree":
    ralph_hero__add_dependency(blockedNumber=..., blockingNumber=...)
    ```
 
-4. **Update the idea file** with parent issue link:
+4. **Update the source file** with parent issue link:
+
+   **If `INPUT_TYPE` is "idea"**:
    ```yaml
    type: idea
    github_issue: NNN
    status: formed
    ```
 
+   **If `INPUT_TYPE` is "research"**: Update the research doc's frontmatter:
+   ```yaml
+   github_issue: NNN
+   github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
+   ```
+
 ### Step 5c: Hand Off to Another Skill
 
 If the user chose "Implementation plan" or "Research topic":
 
-1. **Update the idea file** with status:
+1. **Update the source file** with status:
+
+   **If `INPUT_TYPE` is "idea"**:
    ```yaml
    status: forming
    ```
+
+   **If `INPUT_TYPE` is "research"**: No status update needed (research docs don't have a `status` field).
 
 2. **Suggest the appropriate skill**:
    - For plan: Suggest the user run `/ralph-hero:plan` with the context gathered
@@ -334,13 +352,19 @@ If the user chose "Implementation plan" or "Research topic":
 
 If the user chose "Keep as refined idea":
 
-1. **Update the idea file** with enriched content:
+1. **Update the source file** with enriched content:
    - Add the codebase context discovered
    - Add related issues and documents
    - Refine the rough shape based on research
    - Update tags with more specific terms
+
+   **If `INPUT_TYPE` is "idea"**:
    - Set `type: idea` if not already present
    - Set `status: refined`
+
+   **If `INPUT_TYPE` is "research"**:
+   - Do NOT overwrite `type: research` — preserve the existing type
+   - Add any new context as additional sections in the research doc
 
 2. **Report**:
    ```
