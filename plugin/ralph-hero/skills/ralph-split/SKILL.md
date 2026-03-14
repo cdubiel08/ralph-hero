@@ -37,6 +37,14 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__save_issue
+  - ralph_hero__create_issue
+  - ralph_hero__add_sub_issue
+  - ralph_hero__list_sub_issues
+  - ralph_hero__add_dependency
+  - ralph_hero__create_comment
 ---
 
 # Ralph GitHub Split - Issue Decomposition
@@ -52,10 +60,10 @@ You are an issue decomposition specialist. You take ONE large issue (M/L/XL), re
 
 Use a subagent to find candidates:
 ```
-Task(subagent_type="ralph-hero:codebase-locator", prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first.")
+Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first.")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 Or query directly:
 ```
@@ -129,12 +137,12 @@ If children exist, add a note to the analysis: "Found [N] existing children. Wil
 Spawn parallel sub-tasks to understand the full scope:
 
 ```
-Task(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [issue topic]. What components are involved?")
+Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [issue topic]. What components are involved?")
 
-Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [primary component]. What are the distinct pieces of work?")
+Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [primary component]. What are the distinct pieces of work?")
 ```
 
-> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+> **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 **Goal**: Identify natural boundaries for splitting:
 - Separate layers (database, API, frontend)

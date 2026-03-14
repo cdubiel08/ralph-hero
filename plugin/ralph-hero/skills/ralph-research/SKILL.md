@@ -1,5 +1,5 @@
 ---
-description: Autonomous research on a GitHub issue - investigates codebase, creates research findings document, updates issue state. Use when you want to research an issue, investigate a ticket, or analyze codebase for planning.
+description: Autonomous research on a GitHub issue — investigates codebase, creates research findings document, updates issue state. Called by hero/team orchestrators, not directly by users. No human interaction — picks an issue, researches it, writes findings, and advances the workflow state. Unlike the interactive research skill (collaborative with user), this runs fully autonomously.
 user-invocable: false
 argument-hint: [optional-issue-number]
 context: fork
@@ -36,6 +36,12 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
+  - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__save_issue
+  - ralph_hero__create_comment
+  - ralph_hero__add_dependency
+  - ralph_hero__remove_dependency
 ---
 
 # Ralph GitHub Research - Naive Hero Mode
@@ -88,13 +94,13 @@ If `save_issue` returns an error, read the error message for valid states/intent
 1. **Read issue thoroughly** - understand the problem from user perspective
 2. **Review any linked documents** - prior research, related issues
 3. **Spawn parallel sub-tasks** using the Task tool with specialized agents:
-   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [issue topic]")`
-   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand current implementation of [component]")`
-   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar patterns to model after for [feature]")`
-   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research or decisions about [topic]")`
-   - `Task(subagent_type="ralph-hero:web-search-researcher", prompt="External APIs, best practices for [topic]")` (if needed)
+   - `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [issue topic]")`
+   - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand current implementation of [component]")`
+   - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar patterns to model after for [feature]")`
+   - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research or decisions about [topic]")`
+   - `Agent(subagent_type="ralph-hero:web-search-researcher", prompt="External APIs, best practices for [topic]")` (if needed)
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 4. **Wait for ALL sub-tasks** before proceeding
 5. **Synthesize findings** - combine results into coherent understanding

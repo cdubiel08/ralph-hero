@@ -30,6 +30,14 @@ allowed-tools:
   - Bash
   - Task
   - WebSearch
+  - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__save_issue
+  - ralph_hero__create_issue
+  - ralph_hero__add_sub_issue
+  - ralph_hero__list_sub_issues
+  - ralph_hero__add_dependency
+  - ralph_hero__create_comment
 ---
 
 # Ralph GitHub Triage - Backlog Groomer
@@ -109,10 +117,10 @@ Then STOP.
    Use the Task tool to check codebase and GitHub concurrently:
 
    ```
-   Task(subagent_type="ralph-hero:codebase-locator", prompt="Search for [keywords from issue title]. Does this feature/fix already exist?")
+   Agent(subagent_type="ralph-hero:codebase-locator", prompt="Search for [keywords from issue title]. Does this feature/fix already exist?")
    ```
 
-   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
+   > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
    Also search GitHub for similar issues:
    ```

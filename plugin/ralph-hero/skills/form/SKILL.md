@@ -12,6 +12,11 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
+  - ralph_hero__list_issues
+  - ralph_hero__create_issue
+  - ralph_hero__save_issue
+  - ralph_hero__add_sub_issue
+  - ralph_hero__add_dependency
 ---
 
 # Form Idea
@@ -73,10 +78,10 @@ When this command is invoked:
 Spawn parallel research to ground the idea in the codebase and project context:
 
 1. **Codebase context** - Spawn parallel sub-tasks:
-   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find where [idea topic] would live in the codebase")`
-   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="What already exists related to [idea topic]? What patterns to build on?")`
+   - `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find where [idea topic] would live in the codebase")`
+   - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="What already exists related to [idea topic]? What patterns to build on?")`
 
-2. **Existing work** - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans")` to find:
+2. **Existing work** - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans")` to find:
    - Related ideas in `thoughts/shared/ideas/`
    - Related research in `thoughts/shared/research/`
    - Related plans in `thoughts/shared/plans/`
@@ -88,7 +93,7 @@ Spawn parallel research to ground the idea in the codebase and project context:
 
 4. **Wait for ALL research to complete** before proceeding
 
-**Important**: Do NOT pass `team_name` to any `Task()` calls for sub-agents.
+**Important**: Do NOT pass `team_name` to any `Agent()` calls for sub-agents.
 
 ### Step 3: Present the Larger Context
 

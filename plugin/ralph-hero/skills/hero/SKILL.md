@@ -1,5 +1,5 @@
 ---
-description: Tree-expansion orchestrator that drives a GitHub issue through the full lifecycle - split, research, plan, review, and sequential implementation using task blocking. Use when you want to process an issue tree end-to-end in hero mode.
+description: Single-orchestrator pipeline that drives a GitHub issue through the full lifecycle with a human plan-approval gate. Expands issue trees, parallelizes research, then implements sequentially. Unlike team mode (fully autonomous with persistent workers), hero mode stops for human review before implementation and uses ephemeral sub-agents per task. Use when you want to process an issue end-to-end with human oversight, need a plan approval gate, or prefer a lighter-weight orchestrator for small groups.
 argument-hint: <issue-number>
 model: sonnet
 allowed-tools:
@@ -9,6 +9,9 @@ allowed-tools:
   - Bash
   - Skill
   - Task
+  - ralph_hero__get_issue
+  - ralph_hero__detect_stream_positions
+  - ralph_hero__pick_actionable_issue
 hooks:
   SessionStart:
     - hooks:
@@ -73,14 +76,26 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 
 ## Prerequisites
 
-**Required argument**: Issue number (e.g., `42`)
+**Preferred argument**: Issue number (e.g., `42`)
 
-If no issue number provided:
-```
-Usage: /ralph-hero <issue-number>
-Please provide a GitHub issue number to orchestrate.
-```
-Then STOP.
+If no issue number provided, scan the board for the best candidate:
+
+1. Call `ralph_hero__pick_actionable_issue()` to find the highest-priority actionable issue
+2. If a candidate is found, present it to the user:
+   ```
+   No issue number provided. The highest-priority actionable issue is:
+
+   #NNN — [title] ([estimate], [priority], [workflowState])
+
+   Would you like to process this issue? (y/n)
+   ```
+3. If the user confirms, proceed with that issue number
+4. If no actionable issues found or user declines, show:
+   ```
+   Usage: /ralph-hero <issue-number>
+   No actionable issues found on the board. Provide a specific issue number.
+   ```
+   Then STOP.
 
 ## Workflow
 
@@ -184,7 +199,7 @@ Loop until pipeline is complete:
 
 #### SPLIT tasks
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-split', args='NNN') to split issue #NNN.",
      description="Split #NNN")
 ```
@@ -192,7 +207,7 @@ After all splits complete, re-call `get_issue(includePipeline=true)` and rebuild
 
 #### RESEARCH tasks
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-research', args='NNN') to research issue GH-NNN: [title].",
      description="Research GH-NNN")
 ```
@@ -203,19 +218,19 @@ After all research completes, run Stream Detection (Step 2.5) if applicable.
 Before spawning, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, append `--research-doc {path}` to args:
 
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN --research-doc thoughts/shared/research/...') to create a plan for GH-NNN.",
      description="Plan GH-NNN")
 ```
 If no `artifact_path` in research task metadata, omit the flag:
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create a plan for GH-NNN.",
      description="Plan GH-NNN")
 ```
 For multi-issue groups:
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY] --research-doc {path}') to create a GROUP plan. Group: GH-AAA, GH-BBB, GH-CCC.",
      description="Plan group GH-[PRIMARY]")
 ```
@@ -225,7 +240,7 @@ Task(subagent_type="general-purpose",
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-review', args='NNN --plan-doc thoughts/shared/plans/...') to review the plan. Return: APPROVED or NEEDS_ITERATION.",
      description="Review GH-NNN")
 ```
@@ -241,13 +256,13 @@ Then STOP.
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN --plan-doc thoughts/shared/plans/...') to implement GH-NNN. Follow the plan exactly.",
      description="Implement GH-NNN")
 ```
 If no `artifact_path` available, omit the flag:
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN') to implement GH-NNN. Follow the plan exactly.",
      description="Implement GH-NNN")
 ```

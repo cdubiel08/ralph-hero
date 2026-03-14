@@ -1,5 +1,5 @@
 ---
-description: Multi-agent team coordinator that spawns specialist workers (analyst, builder, integrator) to process GitHub issues in parallel. Detects issue state, drives forward through state machine. Use when you want to run a team, start agent teams, or process issues with parallel agents.
+description: Autonomous multi-agent team that spawns persistent specialist workers (analyst, builder, integrator) to process GitHub issues in parallel without human intervention. Unlike hero mode (which stops for plan approval), team mode runs fully autonomously with RALPH_AUTO_APPROVE=true. Use when you want to run a team, start agent teams, process issues with parallel workers, or need fully autonomous end-to-end processing. Choose team over hero when you have multiple issues that benefit from parallel execution, need triage + validation phases, or want autonomous operation without human gates.
 argument-hint: "[issue-number]"
 model: sonnet
 allowed-tools:
@@ -16,6 +16,10 @@ allowed-tools:
   - TaskGet
   - TaskUpdate
   - SendMessage
+  - ralph_hero__get_issue
+  - ralph_hero__pipeline_dashboard
+  - ralph_hero__detect_stream_positions
+  - ralph_hero__pick_actionable_issue
 hooks:
   SessionStart:
     - hooks:

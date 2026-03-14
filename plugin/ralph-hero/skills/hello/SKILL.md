@@ -1,5 +1,5 @@
 ---
-description: Session briefing with actionable insights. Fetches pipeline status, hygiene warnings, and recent PRs, synthesizes 3 ranked insights, and routes to the appropriate skill. Use when starting a session, checking what needs attention, or deciding what to work on next.
+description: Session briefing that tells you what to work on. Fetches pipeline status, hygiene warnings, and open PRs, then synthesizes ranked actionable insights with skill routes. Use this skill whenever someone asks "what should I work on", "what needs attention", "catch me up", "anything on fire", "what's blocking", or wants to know the current state of the project before deciding what to do. Also trigger when users start a session with greetings like "hello", "good morning", or "hey" combined with questions about project status, priorities, or next steps. This is the go-to skill for session-start orientation, post-vacation catch-ups, pre-meeting status checks, and "where do things stand" questions.
 argument-hint: ""
 context: fork
 model: sonnet

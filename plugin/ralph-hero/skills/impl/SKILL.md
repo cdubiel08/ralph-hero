@@ -1,5 +1,5 @@
 ---
-description: Implement an approved plan for a GitHub issue, phase by phase with manual verification pauses. Finds plan via Artifact Comment Protocol, sets up worktree, tracks progress. Use when you want to implement a planned issue interactively.
+description: Interactive implementation of an approved plan with human verification between phases. Pauses after each phase for manual testing, handles mismatches collaboratively, and creates PR when complete. Use when you want to implement interactively with oversight. Unlike ralph-impl (autonomous, one phase per invocation), this skill keeps a human in the loop throughout.
 argument-hint: "<#NNN issue number or plan-path>"
 model: opus
 allowed-tools:
@@ -12,6 +12,9 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
+  - ralph_hero__get_issue
+  - ralph_hero__save_issue
+  - ralph_hero__create_comment
 ---
 
 # Implement Plan
@@ -92,7 +95,7 @@ git pull origin "$(git branch --show-current)" --no-edit
 If a linked issue exists and is not already "In Progress":
 
 ```
-ralph_hero__save_issue(number=NNN, workflowState="In Progress", command="implement_plan")
+ralph_hero__save_issue(number=NNN, workflowState="In Progress")
 ```
 
 ### 3.3 Post Start Comment
@@ -114,7 +117,7 @@ For each unchecked phase in the plan:
 - Follow the plan's intent while adapting to what you find
 - Implement each change specified in the phase
 - Use sub-agents sparingly - mainly for targeted exploration of unfamiliar areas
-- Do NOT pass `team_name` to any internal `Task()` calls (sub-agent team isolation per conventions)
+- Do NOT pass `team_name` to any internal `Agent()` calls (sub-agent team isolation per conventions)
 
 ### 4.3 Run Automated Verification
 - Read the phase's success criteria for verification commands
@@ -234,4 +237,4 @@ Remember: You're implementing a solution, not just checking boxes. Keep the end 
 - **Verification**: Read verification commands from the plan's success criteria - do not hardcode any specific commands
 - **Frontmatter consistency**: Plan files use `github_issue`/`github_issues` frontmatter fields
 - **Link formatting**: See `shared/conventions.md` for GitHub link format patterns
-- **Sub-agent isolation**: Do NOT pass `team_name` to internal `Task()` calls
+- **Sub-agent isolation**: Do NOT pass `team_name` to internal `Agent()` calls

@@ -12,6 +12,11 @@ allowed-tools:
   - Bash
   - Read
   - Write
+  - ralph_hero__health_check
+  - ralph_hero__pipeline_dashboard
+  - ralph_hero__list_issues
+  - ralph_hero__decompose_feature
+  - ralph_hero__create_issue
 ---
 
 # Ralph Repos Setup
