@@ -692,19 +692,26 @@ async function createIterationField(
       projectV2Field: {
         id: string;
         name: string;
+        configuration: {
+          iterations: Array<{ startDate: string; duration: number }>;
+        };
       };
     };
   }>(
-    `mutation($projectId: ID!, $name: String!, $dataType: ProjectV2CustomFieldType!) {
+    `mutation($projectId: ID!, $name: String!, $dataType: ProjectV2CustomFieldType!, $config: ProjectV2IterationFieldConfigurationInput!) {
       createProjectV2Field(input: {
         projectId: $projectId,
         dataType: $dataType,
-        name: $name
+        name: $name,
+        iterationConfiguration: $config
       }) {
         projectV2Field {
           ... on ProjectV2IterationField {
             id
             name
+            configuration {
+              iterations { startDate duration }
+            }
           }
         }
       }
@@ -713,15 +720,23 @@ async function createIterationField(
       projectId,
       name,
       dataType: "ITERATION",
+      config: {
+        duration: durationDays,
+        startDate: start,
+        iterations: [
+          { startDate: start, duration: durationDays },
+        ],
+      },
     },
   );
 
   const field = result.createProjectV2Field.projectV2Field;
+  const firstIter = field.configuration?.iterations?.[0];
   return {
     id: field.id,
     name: field.name || name,
-    startDate: start,
-    durationDays,
+    startDate: firstIter?.startDate ?? start,
+    durationDays: firstIter?.duration ?? durationDays,
   };
 }
 

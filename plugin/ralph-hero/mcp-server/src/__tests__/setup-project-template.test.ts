@@ -105,6 +105,26 @@ describe("setup_project iteration field creation structural", () => {
     expect(projectToolsSrc).toContain('dataType: "ITERATION"');
   });
 
+  it("passes iterationConfiguration to the mutation", () => {
+    expect(projectToolsSrc).toContain("iterationConfiguration: $config");
+    expect(projectToolsSrc).toContain("ProjectV2IterationFieldConfigurationInput!");
+  });
+
+  it("sends duration and startDate in iterationConfiguration", () => {
+    expect(projectToolsSrc).toContain("duration: durationDays");
+    expect(projectToolsSrc).toContain("startDate: start");
+  });
+
+  it("returns values from API response, not local computation", () => {
+    expect(projectToolsSrc).toContain("firstIter?.startDate ?? start");
+    expect(projectToolsSrc).toContain("firstIter?.duration ?? durationDays");
+  });
+
+  it("queries configuration.iterations in the response", () => {
+    expect(projectToolsSrc).toContain("configuration {");
+    expect(projectToolsSrc).toContain("iterations { startDate duration }");
+  });
+
   it("fragments on ProjectV2IterationField in mutation response", () => {
     expect(projectToolsSrc).toContain("... on ProjectV2IterationField");
   });
