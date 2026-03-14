@@ -12,6 +12,9 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
+  - ralph_hero__get_issue
+  - ralph_hero__create_comment
+  - ralph_hero__save_issue
 ---
 
 # Iterate Implementation Plan
@@ -147,12 +150,12 @@ If the user's feedback requires understanding new code patterns or validating as
    Use the right agent for each type of research:
 
    **For code investigation:**
-   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [topic]")`
-   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand implementation details of [component]")`
-   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar patterns for [feature]")`
+   - `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [topic]")`
+   - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand implementation details of [component]")`
+   - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar patterns for [feature]")`
 
    **For historical context:**
-   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find related research or decisions about [area]")`
+   - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related research or decisions about [area]")`
 
    **Be EXTREMELY specific about directories**:
    - Include full path context in prompts

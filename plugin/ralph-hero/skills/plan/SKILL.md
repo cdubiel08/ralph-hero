@@ -1,5 +1,5 @@
 ---
-description: Create detailed implementation plans through interactive research and iteration. Collaboratively explores codebase, proposes phased structure, and writes a plan document. Optionally links to a GitHub issue and transitions to Plan in Review or directly to In Progress.
+description: Interactive implementation planning with human collaboration. Researches codebase, asks clarifying questions, proposes approaches, iterates on structure with the user, then writes a phased plan document. Use this skill when you want to plan interactively, create a spec collaboratively, or need human input during planning. This is the human-in-the-loop planner — unlike ralph-plan (autonomous, no questions), this skill works WITH the user through research, design options, and incremental approval.
 argument-hint: "[optional: #NNN issue number, file path, or description]"
 model: opus
 allowed-tools:
@@ -12,6 +12,11 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
+  - ralph_hero__get_issue
+  - ralph_hero__create_comment
+  - ralph_hero__save_issue
+  - ralph_hero__create_issue
+  - ralph_hero__list_issues
 ---
 
 # Implementation Plan
@@ -72,9 +77,9 @@ Then wait for the user's input.
 3. **Spawn initial research tasks to gather context**:
    Before asking the user any questions, use specialized agents to research in parallel:
 
-   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [task topic]")`
-   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand how [component] currently works")`
-   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing thoughts documents about [feature]")` (if relevant)
+   - `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [task topic]")`
+   - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand how [component] currently works")`
+   - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing thoughts documents about [feature]")` (if relevant)
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls (per ADR-001 in shared/conventions.md).
 
@@ -127,12 +132,12 @@ After getting initial clarifications:
    - Use the right agent for each type of research:
 
    **For deeper investigation:**
-   - `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [specific aspect]")`
-   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand implementation details of [component]")`
-   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar features we can model after for [feature]")`
+   - `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [specific aspect]")`
+   - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand implementation details of [component]")`
+   - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar features we can model after for [feature]")`
 
    **For historical context:**
-   - `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Find research, plans, or decisions about [area]")`
+   - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find research, plans, or decisions about [area]")`
 
    **For existing issues:**
    - Use `ralph_hero__list_issues(query=...)` to find related issues directly

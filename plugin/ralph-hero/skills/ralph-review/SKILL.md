@@ -40,6 +40,10 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__save_issue
+  - ralph_hero__create_comment
 ---
 
 # Ralph GitHub Review - Plan Quality Gate
@@ -196,7 +200,7 @@ AskUserQuestion(
 **Spawn critique in separate context window**:
 
 ```
-Task(subagent_type="general-purpose",
+Agent(subagent_type="general-purpose",
      prompt="You are executing an autonomous plan critique for #NNN.
 
 INSTRUCTIONS:
@@ -208,7 +212,7 @@ INSTRUCTIONS:
    - Scope: Is 'What we're NOT doing' well-defined?
 
 3. Use codebase-analyzer to verify technical claims:
-   Task(subagent_type='ralph-hero:codebase-analyzer', prompt='Verify files mentioned in plan exist: [list files]')
+   Agent(subagent_type='ralph-hero:codebase-analyzer', prompt='Verify files mentioned in plan exist: [list files]')
 
 4. Create critique document at: thoughts/shared/reviews/YYYY-MM-DD-GH-NNN-critique.md
    With frontmatter:

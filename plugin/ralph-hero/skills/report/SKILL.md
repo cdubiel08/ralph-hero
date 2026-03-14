@@ -11,6 +11,8 @@ hooks:
 allowed-tools:
   - Read
   - Bash
+  - ralph_hero__pipeline_dashboard
+  - ralph_hero__create_status_update
 ---
 
 # Ralph Project Report

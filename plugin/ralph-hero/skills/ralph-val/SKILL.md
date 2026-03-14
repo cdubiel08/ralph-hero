@@ -19,6 +19,8 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - ralph_hero__get_issue
+  - ralph_hero__create_comment
 ---
 
 # Ralph Val

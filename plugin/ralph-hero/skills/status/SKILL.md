@@ -11,6 +11,7 @@ hooks:
 allowed-tools:
   - Read
   - Bash
+  - ralph_hero__pipeline_dashboard
 ---
 
 # Ralph Pipeline Status

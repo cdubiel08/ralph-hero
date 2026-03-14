@@ -1,5 +1,5 @@
 ---
-description: Implement an approved plan for a GitHub issue, phase by phase with manual verification pauses. Finds plan via Artifact Comment Protocol, sets up worktree, tracks progress. Use when you want to implement a planned issue interactively.
+description: Interactive implementation of an approved plan with human verification between phases. Pauses after each phase for manual testing, handles mismatches collaboratively, and creates PR when complete. Use when you want to implement interactively with oversight. Unlike ralph-impl (autonomous, one phase per invocation), this skill keeps a human in the loop throughout.
 argument-hint: "<#NNN issue number or plan-path>"
 model: opus
 allowed-tools:
@@ -12,6 +12,9 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
+  - ralph_hero__get_issue
+  - ralph_hero__save_issue
+  - ralph_hero__create_comment
 ---
 
 # Implement Plan

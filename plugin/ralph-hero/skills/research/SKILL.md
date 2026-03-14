@@ -1,5 +1,5 @@
 ---
-description: Interactive codebase research - asks for a research question, spawns parallel sub-agents, synthesizes findings into a research document. Documents what IS, not what SHOULD BE.
+description: Interactive codebase research with human collaboration. Asks for a research question, spawns parallel sub-agents, synthesizes findings into a research document. Documents what IS, not what SHOULD BE. Use when you want to research interactively, investigate a topic collaboratively, or explore the codebase with human guidance. Unlike ralph-research (autonomous, no questions), this skill works WITH the user to refine research questions and validate findings.
 argument-hint: "[optional: research question or #NNN issue number]"
 model: opus
 allowed-tools:
@@ -12,6 +12,9 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
+  - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__create_comment
 ---
 
 # Research Codebase
@@ -65,16 +68,16 @@ Then wait for the user's research query.
 Create multiple Task agents to research different aspects concurrently. Use these specialized agents:
 
 **For codebase research:**
-- `Task(subagent_type="ralph-hero:codebase-locator", prompt="Find WHERE files and components related to [topic] live")`
-- `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand HOW [component] works (without critiquing it)")`
-- `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find examples of existing patterns for [feature] (without evaluating them)")`
+- `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find WHERE files and components related to [topic] live")`
+- `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand HOW [component] works (without critiquing it)")`
+- `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find examples of existing patterns for [feature] (without evaluating them)")`
 
 **For thoughts directory:**
-- `Task(subagent_type="ralph-hero:thoughts-locator", prompt="Discover what documents exist about [topic]")`
+- `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Discover what documents exist about [topic]")`
 - Read and synthesize the returned documents yourself in the main context
 
 **For web research (only if user explicitly asks):**
-- `Task(subagent_type="ralph-hero:web-search-researcher", prompt="Research external documentation and resources for [topic]")`
+- `Agent(subagent_type="ralph-hero:web-search-researcher", prompt="Research external documentation and resources for [topic]")`
 - IF you use web-research agents, instruct them to return LINKS with their findings, and please INCLUDE those links in your final report
 
 **For GitHub Issues (if relevant):**

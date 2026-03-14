@@ -10,6 +10,9 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=setup"
 allowed-tools:
   - Bash
+  - ralph_hero__health_check
+  - ralph_hero__get_project
+  - ralph_hero__setup_project
 ---
 
 # Ralph GitHub Setup

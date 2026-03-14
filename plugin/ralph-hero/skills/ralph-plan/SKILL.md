@@ -1,5 +1,5 @@
 ---
-description: Create implementation plan for a GitHub issue from research findings - phased plan with file ownership, success criteria, and verification steps. Use when you want to plan an issue, create a spec, or write an implementation plan.
+description: Autonomous implementation planning — picks an issue group, reads research findings, creates a phased plan with file ownership and verification steps, commits to main, and updates GitHub. No questions asked, no human interaction. Called by hero/team orchestrators, not directly by users. Unlike the interactive plan skill, this runs fully autonomously with strict constraints (XS/S only, research required, 15-minute limit).
 user-invocable: false
 argument-hint: [optional-issue-number] [--research-doc path]
 context: fork
@@ -38,6 +38,10 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__save_issue
+  - ralph_hero__create_comment
 ---
 
 # Ralph GitHub Plan - Naive Hero Mode
@@ -140,8 +144,8 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
    8. **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
 2. **Build unified understanding**: shared patterns, data flow between phases, integration points
 3. **Spawn sub-tasks** for research gaps:
-   - `Task(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
-   - `Task(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
+   - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
+   - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Task()` calls. Sub-agents must run outside any team context.
 

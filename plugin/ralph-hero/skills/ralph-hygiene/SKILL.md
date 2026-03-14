@@ -13,6 +13,9 @@ allowed-tools:
   - Read
   - Glob
   - Bash
+  - ralph_hero__pipeline_dashboard
+  - ralph_hero__project_hygiene
+  - ralph_hero__archive_items
 ---
 
 # Ralph GitHub Hygiene - Board Cleanup

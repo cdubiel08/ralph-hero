@@ -1,5 +1,5 @@
 ---
-description: Autonomous implementation of a GitHub issue following its approved plan - executes one phase per invocation in an isolated worktree. Use when you want to implement an issue, execute a plan, code a ticket, or address PR review feedback.
+description: Autonomous implementation — executes ONE phase per invocation in an isolated worktree, then stops for resumability. Called by hero/team orchestrators, not directly by users. Also handles PR review feedback in Address Mode. Unlike the interactive impl skill (human verification pauses), this runs fully autonomously with strict hooks enforcing plan compliance, worktree isolation, and staging constraints.
 user-invocable: false
 argument-hint: [optional-issue-number] [--plan-doc path]
 context: fork
@@ -45,6 +45,11 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__save_issue
+  - ralph_hero__create_comment
+  - ralph_hero__list_sub_issues
 ---
 
 # Ralph GitHub Implement - Naive Hero Mode
