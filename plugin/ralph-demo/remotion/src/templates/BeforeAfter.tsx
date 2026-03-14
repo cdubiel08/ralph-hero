@@ -47,7 +47,7 @@ export const BeforeAfter: React.FC<BeforeAfterProps> = ({
       case "wipe":
         return { clipPath: `inset(0 ${(1 - afterProgress) * 100}% 0 0)` };
       case "slide":
-        return { transform: `translateX(${(1 - afterProgress) * 100}px) scale(${Math.max(0, afterScale)})` };
+        return { transform: `translateX(${(1 - afterProgress) * 100}%) scale(${Math.max(0, afterScale)})` };
       case "fade":
       default:
         return { opacity: afterProgress, transform: `scale(${Math.max(0, afterScale)})` };

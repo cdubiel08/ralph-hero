@@ -91,10 +91,10 @@ Ask which format(s) to render:
 - `social-reel` - 1080x1920
 - `presentation` - 1920x1080
 
-Render the selected format:
+Render the selected format (replace `{COMPOSITION}` with the chosen composition ID):
 
 ```bash
-cd ${CLAUDE_PLUGIN_ROOT}/remotion && npx remotion render sprint-demo --props inputs/sprint-{N}.json --output out/sprint-{N}-demo.mp4
+cd ${CLAUDE_PLUGIN_ROOT}/remotion && npx remotion render {COMPOSITION} --props inputs/sprint-{N}.json --output out/sprint-{N}-{COMPOSITION}.mp4
 ```
 
 Offer batch rendering to additional formats if desired.

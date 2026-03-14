@@ -34,6 +34,35 @@ jobs:
       - name: Test
         run: npm test
 
+  build-and-test-demo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin/ralph-demo/remotion
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: plugin/ralph-demo/remotion/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm test
+
   build-and-test-knowledge:
     runs-on: ubuntu-latest
     defaults:
