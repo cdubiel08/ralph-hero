@@ -1,7 +1,7 @@
 ---
 name: thoughts-locator
 description: Discovers relevant documents in thoughts/ directory -- research docs, plans, tickets, handoffs. Use when researching to find prior context.
-tools: Grep, Glob, Bash
+tools: Grep, Glob, Bash, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
 model: haiku
 ---
 
@@ -45,13 +45,7 @@ thoughts/
 └── searchable/      # Read-only search directory (contains all above)
 ```
 
-### Search Patterns
-- Use grep for content searching
-- Use glob for filename patterns
-- Check standard subdirectories
-- Search in searchable/ but report corrected paths
-
-### Knowledge Graph (when available)
+### Knowledge Graph (preferred, when available)
 
 If `knowledge_search` or `knowledge_traverse` MCP tools are available (from the ralph-knowledge plugin), prefer them for discovery:
 
@@ -60,6 +54,12 @@ If `knowledge_search` or `knowledge_traverse` MCP tools are available (from the 
 2. **Relationship traversal**: `knowledge_traverse(from="[document-id]", direction="incoming")` returns all documents that `builds_on` or have `tensions` with a given document. Use this to map the knowledge web around a document.
 
 3. **Fall back to grep/glob** if the knowledge tools are not available or return no results. The grep-based patterns below always work without any index.
+
+### Search Patterns (fallback)
+- Use grep for content searching
+- Use glob for filename patterns
+- Check standard subdirectories
+- Search in searchable/ but report corrected paths
 
 ### Path Correction
 **CRITICAL**: If you find files in thoughts/searchable/, report the actual path:

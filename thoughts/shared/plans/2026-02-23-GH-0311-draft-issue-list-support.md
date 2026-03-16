@@ -13,9 +13,9 @@ primary_issue: 311
 ## Overview
 1 issue for atomic implementation in a single PR:
 
-| Phase | Issue | Title | Estimate |
-|-------|-------|-------|----------|
-| 1 | GH-311 | Improve draft issue management — archive, remove, and list support | S |
+| Phase | Issue  | Title                                                              | Estimate |
+| ----- | ------ | ------------------------------------------------------------------ | -------- |
+| 1     | GH-311 | Improve draft issue management — archive, remove, and list support | S        |
 
 ## Current State Analysis
 
