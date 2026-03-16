@@ -3,3 +3,11 @@ worktrees/
 
 # Knowledge DB (lives at ~/.ralph-hero/knowledge.db)
 knowledge.db
+
+# Obsidian
+thoughts/.obsidian/
+thoughts/Untitled*.canvas
+
+# Generated knowledge index (rebuilt by ralph-knowledge:setup)
+thoughts/_*.md
+thoughts/_issues/
