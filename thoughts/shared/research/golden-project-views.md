@@ -1,6 +1,8 @@
 ---
 date: 2026-02-20
-github_issues: [160, 161]
+github_issues:
+  - 160
+  - 161
 type: reference
 ---
 
