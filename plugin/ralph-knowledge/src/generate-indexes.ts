@@ -121,3 +121,125 @@ export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void 
     writeFileSync(join(issuesDir, fileName), lines.join("\n"));
   }
 }
+
+const RECENT_LIMIT = 20;
+
+export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[]): void {
+  const sorted = [...allDocs].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+  const recent = sorted.slice(0, RECENT_LIMIT);
+
+  const lines: string[] = [
+    frontmatter({ generated: true, updated: new Date().toISOString().slice(0, 10) }),
+    "# Knowledge Index\n",
+    "## Browse by Type\n",
+    "- [[_research]] — Research documents",
+    "- [[_plans]] — Implementation plans",
+    "- [[_ideas]] — Ideas and drafts",
+    "- [[_reviews]] — Code and plan reviews",
+    "- [[_reports]] — Status reports",
+    "- [[_queries]] — Dataview query snippets",
+    "",
+  ];
+
+  if (recent.length > 0) {
+    lines.push("## Recent Documents\n");
+    for (const doc of recent) {
+      const type = doc.type ? `[${doc.type}]` : "";
+      const issue = doc.githubIssue ? ` #${doc.githubIssue}` : "";
+      lines.push(`- [[${doc.id}]] ${type}${issue} — ${doc.title}`);
+    }
+    lines.push("");
+  }
+
+  writeFileSync(join(outDir, "_index.md"), lines.join("\n"));
+}
+
+export function writeQueryReference(outDir: string): void {
+  const content = `${frontmatter({ generated: true, updated: new Date().toISOString().slice(0, 10) })}
+# Knowledge Queries
+
+Pre-built Dataview queries. Copy any query block into a note to use it.
+Requires the [Dataview](https://github.com/blacksmithgu/obsidian-dataview) community plugin.
+
+## All Research by Date
+
+\`\`\`dataview
+TABLE status, tags, github_issue as "Issue"
+FROM "."
+WHERE type = "research"
+SORT date DESC
+\`\`\`
+
+## Plans by Status
+
+\`\`\`dataview
+TABLE status, github_issue as "Issue", date
+FROM "."
+WHERE type = "plan"
+SORT date DESC
+\`\`\`
+
+## Documents by Tag
+
+Replace \`"mcp-server"\` with your tag of interest:
+
+\`\`\`dataview
+TABLE type, status, date
+FROM "."
+WHERE contains(tags, "mcp-server")
+SORT date DESC
+\`\`\`
+
+## Documents by Issue Number
+
+Replace \`564\` with your issue number:
+
+\`\`\`dataview
+TABLE type, status, date
+FROM "."
+WHERE github_issue = 564
+SORT type ASC
+\`\`\`
+
+## Draft Documents (Active Work)
+
+\`\`\`dataview
+TABLE type, github_issue as "Issue", date
+FROM "."
+WHERE status = "draft" AND !generated
+SORT date DESC
+\`\`\`
+
+## Superseded Documents
+
+\`\`\`dataview
+TABLE superseded_by, date
+FROM "."
+WHERE status = "superseded"
+SORT date DESC
+\`\`\`
+
+## Recently Modified
+
+\`\`\`dataview
+TABLE type, status, github_issue as "Issue"
+FROM "."
+WHERE !generated
+SORT file.mtime DESC
+LIMIT 20
+\`\`\`
+
+## Issues with Research but No Plan
+
+\`\`\`dataview
+TABLE date, status
+FROM "."
+WHERE type = "research" AND github_issue
+GROUP BY github_issue
+FLATTEN github_issue as issue
+WHERE !contains(rows.type, "plan")
+\`\`\`
+`;
+
+  writeFileSync(join(outDir, "_queries.md"), content);
+}
