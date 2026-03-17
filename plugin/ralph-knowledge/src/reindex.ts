@@ -34,6 +34,14 @@ async function reindex(thoughtsDir: string, dbPath: string, generate: boolean): 
     const parsed = parseDocument(id, relPath, raw);
     parsedDocs.push(parsed);
 
+    const missing: string[] = [];
+    if (!parsed.date) missing.push("date");
+    if (!parsed.type) missing.push("type");
+    if (!parsed.status) missing.push("status");
+    if (missing.length > 0) {
+      console.warn(`  Warning: ${id} missing frontmatter: ${missing.join(", ")}`);
+    }
+
     db.upsertDocument({
       id: parsed.id,
       path: parsed.path,
