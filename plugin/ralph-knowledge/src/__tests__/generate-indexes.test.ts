@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatIssueNumber, frontmatter, writeTypeIndex } from "../generate-indexes.js";
+import { formatIssueNumber, frontmatter, writeTypeIndex, writeIssueHubs } from "../generate-indexes.js";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -80,5 +80,51 @@ describe("writeTypeIndex", () => {
     const olderIdx = content.indexOf("[[older]]");
     const newerIdx = content.indexOf("[[newer]]");
     expect(newerIdx).toBeLessThan(olderIdx);
+  });
+});
+
+describe("writeIssueHubs", () => {
+  it("creates per-issue hub with grouped docs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "research-560", title: "Cache TTL Research", type: "research", githubIssue: 560 }),
+      makeParsedDoc({ id: "research-560-b", title: "Cache Follow-up", type: "research", githubIssue: 560 }),
+      makeParsedDoc({ id: "plan-560", title: "Cache TTL Plan", type: "plan", githubIssue: 560 }),
+    ];
+    writeIssueHubs(dir, docs);
+    const content = readFileSync(join(dir, "_issues", "GH-0560.md"), "utf-8");
+    expect(content).toContain("# GH-560");
+    expect(content).toContain("github_issue: 560");
+    expect(content).toContain("## Research");
+    expect(content).toContain("[[research-560]]");
+    expect(content).toContain("[[research-560-b]]");
+    expect(content).toContain("## Plans");
+    expect(content).toContain("[[plan-560]]");
+  });
+
+  it("skips docs without github_issue", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "no-issue", githubIssue: null }),
+      makeParsedDoc({ id: "has-issue", githubIssue: 42 }),
+    ];
+    writeIssueHubs(dir, docs);
+    expect(existsSync(join(dir, "_issues", "GH-0042.md"))).toBe(true);
+    const files = readdirSync(join(dir, "_issues"));
+    expect(files).toHaveLength(1);
+  });
+
+  it("includes relationships from all docs for the issue", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({
+        id: "research-99", type: "research", githubIssue: 99,
+        relationships: [{ sourceId: "research-99", targetId: "earlier-doc", type: "builds_on" }],
+      }),
+    ];
+    writeIssueHubs(dir, docs);
+    const content = readFileSync(join(dir, "_issues", "GH-0099.md"), "utf-8");
+    expect(content).toContain("## Relationships");
+    expect(content).toContain("builds_on:: [[earlier-doc]]");
   });
 });
