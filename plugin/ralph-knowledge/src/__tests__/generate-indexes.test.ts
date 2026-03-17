@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { formatIssueNumber, frontmatter, writeTypeIndex, writeIssueHubs, writeMasterIndex, writeQueryReference, generateIndexes } from "../generate-indexes.js";
+import { findMarkdownFiles } from "../file-scanner.js";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -211,5 +212,33 @@ describe("generateIndexes", () => {
     const content = readFileSync(join(dir, "_uncategorized.md"), "utf-8");
     expect(content).toContain("[[no-type]]");
     expect(content).not.toContain("[[typed]]");
+  });
+});
+
+describe("findMarkdownFiles", () => {
+  it("skips _-prefixed files and directories during scan", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    // Create a normal doc
+    mkdirSync(join(dir, "research"), { recursive: true });
+    writeFileSync(join(dir, "research", "real-doc.md"), "---\ntype: research\n---\n# Real\n");
+    // Create _-prefixed files that should be skipped
+    writeFileSync(join(dir, "_index.md"), "---\ngenerated: true\n---\n# Index\n");
+    mkdirSync(join(dir, "_issues"), { recursive: true });
+    writeFileSync(join(dir, "_issues", "GH-0042.md"), "---\ngenerated: true\n---\n# Hub\n");
+
+    const files = findMarkdownFiles(dir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toContain("real-doc.md");
+  });
+
+  it("skips dot-directories", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    mkdirSync(join(dir, ".obsidian"), { recursive: true });
+    writeFileSync(join(dir, ".obsidian", "app.md"), "# Config\n");
+    writeFileSync(join(dir, "real.md"), "# Real\n");
+
+    const files = findMarkdownFiles(dir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toContain("real.md");
   });
 });
