@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatIssueNumber, frontmatter, writeTypeIndex, writeIssueHubs, writeMasterIndex, writeQueryReference } from "../generate-indexes.js";
+import { formatIssueNumber, frontmatter, writeTypeIndex, writeIssueHubs, writeMasterIndex, writeQueryReference, generateIndexes } from "../generate-indexes.js";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -170,5 +170,46 @@ describe("writeQueryReference", () => {
     expect(content).toContain("```dataview");
     expect(content).toContain("type = \"research\"");
     expect(content).toContain("generated: true");
+  });
+});
+
+describe("generateIndexes", () => {
+  it("generates all index files from mixed doc types", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "r1", type: "research", githubIssue: 100 }),
+      makeParsedDoc({ id: "p1", type: "plan", githubIssue: 100 }),
+      makeParsedDoc({ id: "i1", type: "idea" }),
+    ];
+    generateIndexes(dir, docs);
+
+    expect(existsSync(join(dir, "_index.md"))).toBe(true);
+    expect(existsSync(join(dir, "_research.md"))).toBe(true);
+    expect(existsSync(join(dir, "_plans.md"))).toBe(true);
+    expect(existsSync(join(dir, "_ideas.md"))).toBe(true);
+    expect(existsSync(join(dir, "_reviews.md"))).toBe(true);
+    expect(existsSync(join(dir, "_reports.md"))).toBe(true);
+    expect(existsSync(join(dir, "_queries.md"))).toBe(true);
+    expect(existsSync(join(dir, "_issues", "GH-0100.md"))).toBe(true);
+  });
+
+  it("handles empty doc list without errors", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    expect(() => generateIndexes(dir, [])).not.toThrow();
+    expect(existsSync(join(dir, "_index.md"))).toBe(true);
+    expect(existsSync(join(dir, "_queries.md"))).toBe(true);
+  });
+
+  it("puts docs with null type into uncategorized index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "no-type", type: null, title: "No Type Doc" }),
+      makeParsedDoc({ id: "typed", type: "research", title: "Typed Doc" }),
+    ];
+    generateIndexes(dir, docs);
+    expect(existsSync(join(dir, "_uncategorized.md"))).toBe(true);
+    const content = readFileSync(join(dir, "_uncategorized.md"), "utf-8");
+    expect(content).toContain("[[no-type]]");
+    expect(content).not.toContain("[[typed]]");
   });
 });

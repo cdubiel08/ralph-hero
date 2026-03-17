@@ -243,3 +243,28 @@ WHERE !contains(rows.type, "plan")
 
   writeFileSync(join(outDir, "_queries.md"), content);
 }
+
+const TYPE_INDEX_CONFIG: Array<{ type: string; filename: string; heading: string }> = [
+  { type: "research", filename: "research", heading: "Research Documents" },
+  { type: "plan", filename: "plans", heading: "Implementation Plans" },
+  { type: "idea", filename: "ideas", heading: "Ideas & Drafts" },
+  { type: "review", filename: "reviews", heading: "Reviews" },
+  { type: "report", filename: "reports", heading: "Reports" },
+];
+
+export function generateIndexes(outDir: string, allDocs: ParsedDocument[]): void {
+  for (const { type, filename, heading } of TYPE_INDEX_CONFIG) {
+    const typeDocs = allDocs.filter((d) => d.type === type);
+    writeTypeIndex(outDir, filename, heading, typeDocs);
+  }
+
+  // Documents with type: null go into an "uncategorized" index
+  const uncategorized = allDocs.filter((d) => d.type === null || !TYPE_INDEX_CONFIG.some((c) => c.type === d.type));
+  if (uncategorized.length > 0) {
+    writeTypeIndex(outDir, "uncategorized", "Uncategorized Documents", uncategorized);
+  }
+
+  writeMasterIndex(outDir, allDocs);
+  writeIssueHubs(outDir, allDocs);
+  writeQueryReference(outDir);
+}
