@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatIssueNumber, frontmatter, writeTypeIndex, writeIssueHubs } from "../generate-indexes.js";
+import { formatIssueNumber, frontmatter, writeTypeIndex, writeIssueHubs, writeMasterIndex, writeQueryReference } from "../generate-indexes.js";
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -126,5 +126,49 @@ describe("writeIssueHubs", () => {
     const content = readFileSync(join(dir, "_issues", "GH-0099.md"), "utf-8");
     expect(content).toContain("## Relationships");
     expect(content).toContain("builds_on:: [[earlier-doc]]");
+  });
+});
+
+describe("writeMasterIndex", () => {
+  it("links to type indexes and shows recent docs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "recent-1", title: "Recent Research", type: "research", date: "2026-03-14" }),
+      makeParsedDoc({ id: "recent-2", title: "Recent Plan", type: "plan", date: "2026-03-13" }),
+    ];
+    writeMasterIndex(dir, docs);
+    const content = readFileSync(join(dir, "_index.md"), "utf-8");
+    expect(content).toContain("# Knowledge Index");
+    expect(content).toContain("[[_research]]");
+    expect(content).toContain("[[_plans]]");
+    expect(content).toContain("[[_ideas]]");
+    expect(content).toContain("[[_reviews]]");
+    expect(content).toContain("[[_reports]]");
+    expect(content).toContain("## Recent Documents");
+    expect(content).toContain("[[recent-1]]");
+    expect(content).toContain("[[recent-2]]");
+  });
+
+  it("limits recent docs to 20", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = Array.from({ length: 30 }, (_, i) =>
+      makeParsedDoc({ id: `doc-${i}`, title: `Doc ${i}`, date: `2026-03-${String(i + 1).padStart(2, "0")}` })
+    );
+    writeMasterIndex(dir, docs);
+    const content = readFileSync(join(dir, "_index.md"), "utf-8");
+    const matches = content.match(/\[\[doc-\d+\]\]/g);
+    expect(matches).toHaveLength(20);
+  });
+});
+
+describe("writeQueryReference", () => {
+  it("writes Dataview query snippets", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    writeQueryReference(dir);
+    const content = readFileSync(join(dir, "_queries.md"), "utf-8");
+    expect(content).toContain("# Knowledge Queries");
+    expect(content).toContain("```dataview");
+    expect(content).toContain("type = \"research\"");
+    expect(content).toContain("generated: true");
   });
 });
