@@ -51,3 +51,73 @@ export function writeTypeIndex(
 
   writeFileSync(join(outDir, `_${type}.md`), lines.join("\n"));
 }
+
+const TYPE_HEADINGS: Record<string, string> = {
+  research: "Research",
+  plan: "Plans",
+  idea: "Ideas",
+  review: "Reviews",
+  report: "Reports",
+};
+
+export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void {
+  const byIssue = new Map<number, ParsedDocument[]>();
+  for (const doc of allDocs) {
+    if (doc.githubIssue !== null) {
+      const list = byIssue.get(doc.githubIssue) ?? [];
+      list.push(doc);
+      byIssue.set(doc.githubIssue, list);
+    }
+  }
+
+  const issuesDir = join(outDir, "_issues");
+  mkdirSync(issuesDir, { recursive: true });
+
+  for (const [issueNum, docs] of byIssue) {
+    const fileName = `${formatIssueNumber(issueNum)}.md`;
+    const lines: string[] = [
+      frontmatter({ generated: true, github_issue: issueNum, updated: new Date().toISOString().slice(0, 10) }),
+      `# GH-${issueNum}\n`,
+    ];
+
+    const byType = new Map<string, ParsedDocument[]>();
+    for (const doc of docs) {
+      const t = doc.type ?? "other";
+      const list = byType.get(t) ?? [];
+      list.push(doc);
+      byType.set(t, list);
+    }
+
+    for (const [type, heading] of Object.entries(TYPE_HEADINGS)) {
+      const typeDocs = byType.get(type);
+      if (typeDocs && typeDocs.length > 0) {
+        lines.push(`## ${heading}\n`);
+        for (const doc of typeDocs) {
+          lines.push(`- [[${doc.id}]] — ${doc.title}`);
+        }
+        lines.push("");
+      }
+    }
+
+    // "other" type docs that don't match known headings
+    const otherDocs = byType.get("other");
+    if (otherDocs && otherDocs.length > 0) {
+      lines.push("## Other\n");
+      for (const doc of otherDocs) {
+        lines.push(`- [[${doc.id}]] — ${doc.title}`);
+      }
+      lines.push("");
+    }
+
+    const allRels = docs.flatMap((d) => d.relationships);
+    if (allRels.length > 0) {
+      lines.push("## Relationships\n");
+      for (const rel of allRels) {
+        lines.push(`- ${rel.type}:: [[${rel.targetId}]]`);
+      }
+      lines.push("");
+    }
+
+    writeFileSync(join(issuesDir, fileName), lines.join("\n"));
+  }
+}
