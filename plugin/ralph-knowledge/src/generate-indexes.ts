@@ -124,7 +124,7 @@ export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void 
 
 const RECENT_LIMIT = 20;
 
-export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[]): void {
+export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[], hasUncategorized = false): void {
   const sorted = [...allDocs].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
   const recent = sorted.slice(0, RECENT_LIMIT);
 
@@ -138,8 +138,11 @@ export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[]): voi
     "- [[_reviews]] — Code and plan reviews",
     "- [[_reports]] — Status reports",
     "- [[_queries]] — Dataview query snippets",
-    "",
   ];
+  if (hasUncategorized) {
+    lines.push("- [[_uncategorized]] — Uncategorized documents");
+  }
+  lines.push("");
 
   if (recent.length > 0) {
     lines.push("## Recent Documents\n");
@@ -264,7 +267,7 @@ export function generateIndexes(outDir: string, allDocs: ParsedDocument[]): void
     writeTypeIndex(outDir, "uncategorized", "Uncategorized Documents", uncategorized);
   }
 
-  writeMasterIndex(outDir, allDocs);
+  writeMasterIndex(outDir, allDocs, uncategorized.length > 0);
   writeIssueHubs(outDir, allDocs);
   writeQueryReference(outDir);
 }
