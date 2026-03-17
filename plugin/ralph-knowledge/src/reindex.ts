@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, relative, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { KnowledgeDB } from "./db.js";
@@ -6,22 +6,7 @@ import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
 import { embed, prepareTextForEmbedding } from "./embedder.js";
 import { parseDocument } from "./parser.js";
-
-export function findMarkdownFiles(dir: string): string[] {
-  const results: string[] = [];
-  function walk(d: string) {
-    for (const entry of readdirSync(d, { withFileTypes: true })) {
-      const fullPath = join(d, entry.name);
-      if (entry.isDirectory() && !entry.name.startsWith(".")) {
-        walk(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith(".md")) {
-        results.push(fullPath);
-      }
-    }
-  }
-  walk(dir);
-  return results;
-}
+import { findMarkdownFiles } from "./file-scanner.js";
 
 export async function reindex(dirs: string[], dbPath: string): Promise<void> {
   console.log(`Indexing ${dirs.join(", ")} -> ${dbPath}`);
