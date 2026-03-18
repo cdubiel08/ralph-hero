@@ -6,6 +6,7 @@ export interface IssueFileOwnership {
   number: number;
   files: string[]; // Will Modify paths from research doc
   blockedBy: number[]; // GitHub blockedBy issue numbers
+  repo?: string; // Repository key (e.g., "ralph-hero"). When set, file keys are repo-qualified to prevent cross-repo collisions.
 }
 
 export interface WorkStream {
@@ -88,7 +89,8 @@ export function detectWorkStreams(
 
     // File-overlap edges: union issue with each of its files
     for (const file of issue.files) {
-      uf.union(`file:${file}`, issueKey);
+      const fileKey = issue.repo ? `file:${issue.repo}:${file}` : `file:${file}`;
+      uf.union(fileKey, issueKey);
     }
 
     // Dependency edges: union with blockedBy issues (only if in input set)
@@ -109,10 +111,13 @@ export function detectWorkStreams(
     components.get(root)!.push(issue.number);
   }
 
-  // Build file ownership lookup: issue number -> files
-  const issueFiles = new Map<number, string[]>();
+  // Build qualified file keys for shared-files reporting
+  const qualifiedFiles = new Map<number, string[]>();
   for (const issue of issues) {
-    issueFiles.set(issue.number, issue.files);
+    qualifiedFiles.set(
+      issue.number,
+      issue.files.map((f) => (issue.repo ? `${issue.repo}:${f}` : f)),
+    );
   }
 
   // Build blockedBy lookup for rationale
@@ -126,7 +131,7 @@ export function detectWorkStreams(
   for (const issueNumbers of components.values()) {
     const sorted = [...issueNumbers].sort((a, b) => a - b);
     const id = `stream-${sorted.join("-")}`;
-    const sharedFiles = computeSharedFiles(sorted, issueFiles);
+    const sharedFiles = computeSharedFiles(sorted, qualifiedFiles);
     const primaryIssue = sorted[0];
 
     streams.push({ id, issues: sorted, sharedFiles, primaryIssue });
