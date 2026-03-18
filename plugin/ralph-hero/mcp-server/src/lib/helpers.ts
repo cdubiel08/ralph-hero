@@ -8,6 +8,7 @@
 
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "./cache.js";
+import type { ProjectV2IterationFieldIteration } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
 import { WORKFLOW_STATE_TO_STATUS, stateIndex, isParentGateState } from "./workflow-states.js";
 import {
@@ -27,6 +28,10 @@ export interface ProjectCacheResponse {
       name: string;
       dataType: string;
       options?: Array<{ id: string; name: string }>;
+      configuration?: {
+        iterations: ProjectV2IterationFieldIteration[];
+        completedIterations: ProjectV2IterationFieldIteration[];
+      };
     }>;
   };
 }
@@ -70,6 +75,15 @@ async function fetchProjectForCache(
               name
               dataType
               options { id name }
+            }
+            ... on ProjectV2IterationField {
+              id
+              name
+              dataType
+              configuration {
+                iterations { id title startDate duration }
+                completedIterations { id title startDate duration }
+              }
             }
           }
         }
@@ -120,8 +134,54 @@ export async function ensureFieldCache(
       id: f.id,
       name: f.name,
       options: f.options,
+      configuration: f.configuration,
     })),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Helper: Resolve iteration title or @current/@next token to iteration ID
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve an iteration title string or special token (@current, @next)
+ * to its short iteration ID using cached iteration metadata.
+ *
+ * @param fieldCache - The populated FieldOptionCache
+ * @param projectNumber - The project number to look up
+ * @param fieldName - The iteration field name (e.g., "Sprint")
+ * @param titleOrToken - Iteration title, "@current", or "@next"
+ * @param now - Optional Date override for testing
+ * @returns The short iteration ID, or null if not found
+ */
+export function resolveIterationId(
+  fieldCache: FieldOptionCache,
+  projectNumber: number,
+  fieldName: string,
+  titleOrToken: string,
+  now?: Date,
+): string | null {
+  const today = now ?? new Date();
+  const iterations = fieldCache.getIterations(fieldName, projectNumber);
+  if (!iterations) return null;
+
+  if (titleOrToken === "@current") {
+    return iterations.find((it) => {
+      const start = new Date(it.startDate);
+      const end = new Date(start.getTime() + it.duration * 86400000);
+      return start <= today && today < end;
+    })?.id ?? null;
+  }
+
+  if (titleOrToken === "@next") {
+    const upcoming = iterations
+      .filter((it) => new Date(it.startDate) > today)
+      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    return upcoming[0]?.id ?? null;
+  }
+
+  // Direct title lookup
+  return iterations.find((it) => it.title === titleOrToken)?.id ?? null;
 }
 
 // ---------------------------------------------------------------------------
