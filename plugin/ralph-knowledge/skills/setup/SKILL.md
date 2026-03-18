@@ -138,3 +138,9 @@ Then suggest:
 Want to browse your knowledge documents in Obsidian?
 Run /ralph-knowledge:setup-obsidian to set up navigational indexes and vault config.
 ```
+
+Then suggest:
+```
+Want to browse your knowledge documents in Obsidian?
+Run /ralph-knowledge:setup-obsidian to set up navigational indexes and vault config.
+```
