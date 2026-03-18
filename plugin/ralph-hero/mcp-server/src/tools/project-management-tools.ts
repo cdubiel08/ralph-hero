@@ -12,7 +12,6 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { toolSuccess, toolError } from "../types.js";
-import { paginateConnection } from "../lib/pagination.js";
 import { buildBatchArchiveMutation } from "./batch-tools.js";
 import {
   ensureFieldCache,
@@ -694,51 +693,9 @@ export function registerProjectManagementTools(
         }
 
         const effectiveMax = Math.min(args.maxItems || 50, 200);
+        const SCAN_CAP = 2000; // Hard limit to prevent runaway pagination
 
-        // Query project items with field values
-        const itemsResult = await paginateConnection<RawBulkArchiveItem>(
-          (q, v) => client.projectQuery(q, v),
-          `query($projectId: ID!, $cursor: String, $first: Int!) {
-            node(id: $projectId) {
-              ... on ProjectV2 {
-                items(first: $first, after: $cursor) {
-                  totalCount
-                  pageInfo { hasNextPage endCursor }
-                  nodes {
-                    id
-                    type
-                    content {
-                      ... on Issue {
-                        number
-                        title
-                        updatedAt
-                      }
-                      ... on PullRequest {
-                        number
-                        title
-                        updatedAt
-                      }
-                    }
-                    fieldValues(first: 20) {
-                      nodes {
-                        ... on ProjectV2ItemFieldSingleSelectValue {
-                          __typename
-                          name
-                          field { ... on ProjectV2FieldCommon { name } }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-          { projectId, first: 100 },
-          "node.items",
-          { maxItems: effectiveMax * 3 },
-        );
-
-        // Validate updatedBefore if provided
+        // Validate updatedBefore early (before scan loop)
         let updatedBeforeCutoff: number | undefined;
         if (args.updatedBefore) {
           updatedBeforeCutoff = new Date(args.updatedBefore).getTime();
@@ -749,18 +706,82 @@ export function registerProjectManagementTools(
           }
         }
 
-        // Filter by workflow state and optional date
-        const matched = itemsResult.nodes
-          .filter((item) => {
+        // Scan-until-full: fetch pages and filter until we have enough matches or exhaust items
+        const matched: RawBulkArchiveItem[] = [];
+        let cursor: string | null = null;
+        let totalScanned = 0;
+        let hasMorePages = true;
+
+        while (matched.length < effectiveMax && hasMorePages && totalScanned < SCAN_CAP) {
+          const pageSize = Math.min(100, SCAN_CAP - totalScanned);
+          const page = await client.projectQuery(
+            `query($projectId: ID!, $cursor: String, $first: Int!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  items(first: $first, after: $cursor) {
+                    totalCount
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      id
+                      type
+                      content {
+                        ... on Issue {
+                          number
+                          title
+                          updatedAt
+                        }
+                        ... on PullRequest {
+                          number
+                          title
+                          updatedAt
+                        }
+                      }
+                      fieldValues(first: 20) {
+                        nodes {
+                          ... on ProjectV2ItemFieldSingleSelectValue {
+                            __typename
+                            name
+                            field { ... on ProjectV2FieldCommon { name } }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }`,
+            { projectId, first: pageSize, cursor },
+          );
+
+          const connection = (page as Record<string, unknown>).node as Record<string, unknown>;
+          const items = (connection as Record<string, unknown>).items as {
+            totalCount: number;
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: RawBulkArchiveItem[];
+          };
+
+          totalScanned += items.nodes.length;
+
+          for (const item of items.nodes) {
+            if (matched.length >= effectiveMax) break;
+
             const ws = getBulkArchiveFieldValue(item, "Workflow State");
-            return ws && args.workflowStates!.includes(ws);
-          })
-          .filter((item) => {
-            if (!updatedBeforeCutoff) return true;
-            if (!item.content?.updatedAt) return false;
-            return new Date(item.content.updatedAt).getTime() < updatedBeforeCutoff;
-          })
-          .slice(0, effectiveMax);
+            if (!ws || !args.workflowStates!.includes(ws)) continue;
+
+            if (updatedBeforeCutoff) {
+              if (!item.content?.updatedAt) continue;
+              if (new Date(item.content.updatedAt).getTime() >= updatedBeforeCutoff) continue;
+            }
+
+            matched.push(item);
+          }
+
+          hasMorePages = items.pageInfo.hasNextPage && !!items.pageInfo.endCursor;
+          cursor = items.pageInfo.endCursor;
+        }
+
+        // Determine if more eligible items may exist beyond what we collected
+        const hasMore = matched.length >= effectiveMax && hasMorePages;
 
         if (matched.length === 0) {
           return toolSuccess({
@@ -769,6 +790,8 @@ export function registerProjectManagementTools(
             wouldArchive: 0,
             items: [],
             errors: [],
+            hasMore: false,
+            totalScanned,
           });
         }
 
@@ -783,6 +806,8 @@ export function registerProjectManagementTools(
               itemId: m.id,
             })),
             errors: [],
+            hasMore,
+            totalScanned,
           });
         }
 
@@ -824,6 +849,8 @@ export function registerProjectManagementTools(
           archivedCount: archived.length,
           items: archived,
           errors,
+          hasMore,
+          totalScanned,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

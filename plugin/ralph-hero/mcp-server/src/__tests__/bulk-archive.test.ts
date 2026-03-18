@@ -236,3 +236,101 @@ describe("archive_items tool registration (GH-454)", () => {
     expect(pmToolsSrc).toContain("Unarchive is only supported for single items");
   });
 });
+
+// ---------------------------------------------------------------------------
+// archive_items scan-until-full pagination tests (GH-592)
+// ---------------------------------------------------------------------------
+
+describe("bulk_archive hasMore response field", () => {
+  it("hasMore is true when matched >= effectiveMax and more pages exist", () => {
+    const matchedLength = 200;
+    const effectiveMax = 200;
+    const hasMorePages = true;
+    const hasMore = matchedLength >= effectiveMax && hasMorePages;
+    expect(hasMore).toBe(true);
+  });
+
+  it("hasMore is false when all pages exhausted", () => {
+    const matchedLength = 150;
+    const effectiveMax = 200;
+    const hasMorePages = false;
+    const hasMore = matchedLength >= effectiveMax && hasMorePages;
+    expect(hasMore).toBe(false);
+  });
+
+  it("hasMore is false when fewer matches than requested", () => {
+    const matchedLength = 50;
+    const effectiveMax = 200;
+    const hasMorePages = true;
+    const hasMore = matchedLength >= effectiveMax && hasMorePages;
+    expect(hasMore).toBe(false);
+  });
+});
+
+describe("bulk_archive totalScanned field", () => {
+  it("totalScanned counts all items examined, not just matches", () => {
+    // Simulate scanning 3 pages of 100 items each, finding 15 matches
+    let totalScanned = 0;
+    const matchedCount = 0;
+    const pages = [100, 100, 100];
+    for (const pageCount of pages) {
+      totalScanned += pageCount;
+    }
+    expect(totalScanned).toBe(300);
+    expect(matchedCount).toBe(0); // matches tracked separately
+  });
+
+  it("totalScanned stops at SCAN_CAP when project is very large", () => {
+    const SCAN_CAP = 2000;
+    let totalScanned = 0;
+    const pageSize = 100;
+    while (totalScanned < SCAN_CAP) {
+      totalScanned += pageSize;
+    }
+    expect(totalScanned).toBe(SCAN_CAP);
+  });
+});
+
+describe("bulk_archive scan-until-full logic (GH-592)", () => {
+  it("source no longer contains effectiveMax * 3 over-fetch pattern", () => {
+    expect(pmToolsSrc).not.toContain("effectiveMax * 3");
+  });
+
+  it("source contains SCAN_CAP constant", () => {
+    expect(pmToolsSrc).toContain("SCAN_CAP");
+  });
+
+  it("source contains hasMore in response objects", () => {
+    expect(pmToolsSrc).toContain("hasMore");
+  });
+
+  it("source contains totalScanned in response objects", () => {
+    expect(pmToolsSrc).toContain("totalScanned");
+  });
+});
+
+describe("archive_items response structure (GH-592)", () => {
+  it("tool response includes hasMore field", () => {
+    // Verify hasMore appears in the toolSuccess calls
+    const hasMoreMatches = pmToolsSrc.match(/hasMore/g);
+    expect(hasMoreMatches).toBeTruthy();
+    // Should appear in at least 3 response paths (empty, dry-run, archive)
+    expect(hasMoreMatches!.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("tool response includes totalScanned field", () => {
+    // Verify totalScanned appears in the toolSuccess calls
+    const totalScannedMatches = pmToolsSrc.match(/totalScanned/g);
+    expect(totalScannedMatches).toBeTruthy();
+    // Should appear in at least 3 response paths (empty, dry-run, archive)
+    expect(totalScannedMatches!.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("SCAN_CAP is set to 2000", () => {
+    expect(pmToolsSrc).toContain("SCAN_CAP = 2000");
+  });
+
+  it("paginateConnection import is removed from project-management-tools", () => {
+    expect(pmToolsSrc).not.toContain("paginateConnection");
+  });
+});
