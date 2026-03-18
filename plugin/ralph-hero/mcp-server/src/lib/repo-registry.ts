@@ -51,6 +51,7 @@ export const RepoDefaultsSchema = z.object({
  * Example YAML:
  *   mcp-server:
  *     owner: cdubiel08
+ *     localDir: ~/projects/mcp-server
  *     domain: platform
  *     tech: [typescript, node]
  *     defaults:
@@ -62,6 +63,10 @@ export const RepoEntrySchema = z.object({
     .string()
     .optional()
     .describe("GitHub owner (user or org); falls back to RALPH_GH_OWNER if omitted"),
+  localDir: z
+    .string()
+    .optional()
+    .describe("On-disk checkout location (e.g., '~/projects/ralph-hero'); used by agents for cross-repo Read/Grep/Glob"),
   domain: z
     .string()
     .describe("Functional domain this repo belongs to (e.g., 'platform', 'frontend')"),

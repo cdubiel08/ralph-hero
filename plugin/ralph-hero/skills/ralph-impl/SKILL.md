@@ -228,6 +228,43 @@ If `git pull` fails with merge conflicts: use `__ESCALATE__` state, comment with
 must use paths relative to the worktree OR absolute paths within the worktree.
 The impl-worktree-gate hook will BLOCK any Write/Edit outside the worktree directory.
 
+### Step 6a: Multi-Repo Worktree Setup
+
+If the research document includes a "Cross-Repo Scope" section:
+
+1. **Identify repos:** Read the research doc's cross-repo scope to get the list of repos and their `localDir` paths.
+
+2. **Create worktrees in each repo:**
+   For each repo in the cross-repo scope:
+   ```bash
+   cd {localDir}
+   git worktree add worktrees/GH-{issue_number} -b feature/GH-{issue_number}
+   ```
+
+   Example for GH-601 spanning ralph-hero and landcrawler-ai:
+   ```
+   ~/projects/ralph-hero/worktrees/GH-601/
+   ~/projects/landcrawler-ai/worktrees/GH-601/
+   ```
+
+3. **Set `RALPH_WORKTREE_PATHS`:** Export a colon-separated list of all active worktree **absolute** paths (tilde expanded) so the impl-worktree-gate hook allows writes to any of them:
+   ```bash
+   # IMPORTANT: Expand ~ to absolute paths — the hook uses string prefix matching
+   export RALPH_WORKTREE_PATHS="/home/user/projects/ralph-hero/worktrees/GH-601:/home/user/projects/landcrawler-ai/worktrees/GH-601"
+   ```
+   > **Tilde expansion:** `localDir` values in the registry may use `~`. Always expand to absolute paths before setting `RALPH_WORKTREE_PATHS`, since the hook compares against `file_path` which is always absolute.
+
+4. **Pass worktree mapping to builder:** Include in the builder spawn prompt:
+   ```
+   Worktree directories:
+   - ralph-hero: ~/projects/ralph-hero/worktrees/GH-601
+   - landcrawler-ai: ~/projects/landcrawler-ai/worktrees/GH-601
+
+   Make changes to each repo in its respective worktree directory.
+   ```
+
+**Single-repo (default):** If no cross-repo scope, behavior is unchanged — one worktree in the current repo.
+
 ### Step 7: Implement ONE Phase
 
 Current phase = first unchecked phase from Step 3.
@@ -260,7 +297,23 @@ Current phase = first unchecked phase from Step 3.
 
 4. If the plan has no File Ownership Summary, stage only files you explicitly created or modified in this phase. Never use `git add -A`, `git add .`, or `git add --all`.
 
-5. Commit and push:
+5. **Multi-repo commits:** When changes span multiple repos, commit and push separately in each worktree. **Never use `git add -A` or `git add .`** — stage specific files only:
+
+   ```bash
+   # ralph-hero changes
+   cd ~/projects/ralph-hero/worktrees/GH-601
+   git add path/to/changed-file1.ts path/to/changed-file2.ts
+   git commit -m "feat: [description of ralph-hero changes]"
+   git push -u origin feature/GH-601
+
+   # landcrawler-ai changes
+   cd ~/projects/landcrawler-ai/worktrees/GH-601
+   git add path/to/changed-file.ts
+   git commit -m "feat: [description of landcrawler-ai changes]"
+   git push -u origin feature/GH-601
+   ```
+
+6. Commit and push (single-repo):
    ```bash
    git commit -m "feat(component): [phase description]
 
@@ -447,8 +500,15 @@ Use `command="ralph_impl"` in state transitions.
 
 ## Link Formatting
 
+**Single-repo (default):**
+
 | Reference type | Format |
 |---------------|--------|
 | File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
 | With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
 | Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
+
+**Cross-repo:** Resolve owner/repo from the registry entry for each file:
+- `[repo-name:path/file.py](https://github.com/{owner}/{repo}/blob/main/path/file.py)`
+
+When operating on a cross-repo issue, look up each file's repo in the registry to get the correct `owner` and repo name for link URLs. Do NOT hardcode `$RALPH_GH_OWNER/$RALPH_GH_REPO` for files in other repos.
