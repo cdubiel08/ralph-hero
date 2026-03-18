@@ -35,17 +35,40 @@ if [[ -z "$ticket_id" ]]; then
 fi
 
 plans_dir="$(get_project_root)/thoughts/shared/plans"
+
+# Check 1: Direct plan
 plan_doc=$(find_existing_artifact "$plans_dir" "$ticket_id")
+
+# Check 2: Group plan
+if [[ -z "$plan_doc" ]]; then
+  plan_doc=$(find "$plans_dir" -name "*group*${ticket_id}*" -type f 2>/dev/null | head -1)
+fi
+
+# Check 3: Stream plan
+if [[ -z "$plan_doc" ]]; then
+  plan_doc=$(find "$plans_dir" -name "*stream*${ticket_id}*" -type f 2>/dev/null | head -1)
+fi
+
+# Check 4: Plan Reference (parent-planned atomic issue)
+if [[ -z "$plan_doc" ]]; then
+  plan_ref="${RALPH_PLAN_REFERENCE:-}"
+  if [[ -n "$plan_ref" ]]; then
+    local_path=$(echo "$plan_ref" | sed 's|https://github.com/[^/]*/[^/]*/blob/main/||')
+    if [[ -f "$(get_project_root)/$local_path" ]]; then
+      plan_doc="$(get_project_root)/$local_path"
+    fi
+  fi
+fi
 
 if [[ -z "$plan_doc" ]]; then
   block "Plan required before implementation
 
 Ticket: $ticket_id
-Expected: Plan document in $plans_dir
+Expected: Plan document in $plans_dir or ## Plan Reference comment
 Found: None
 
 Implementation requires an approved plan document.
-Run /ralph-plan $ticket_id first."
+Run /ralph-plan $ticket_id first, or verify ## Plan Reference exists on the issue."
 fi
 
 allow_with_context "Plan document found: $plan_doc"
