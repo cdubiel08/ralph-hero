@@ -1,17 +1,12 @@
 ---
 description: Session briefing that tells you what to work on. Fetches pipeline status, hygiene warnings, and open PRs, then synthesizes ranked actionable insights with skill routes. Use this skill whenever someone asks "what should I work on", "what needs attention", "catch me up", "anything on fire", "what's blocking", or wants to know the current state of the project before deciding what to do. Also trigger when users start a session with greetings like "hello", "good morning", or "hey" combined with questions about project status, priorities, or next steps. This is the go-to skill for session-start orientation, post-vacation catch-ups, pre-meeting status checks, and "where do things stand" questions.
 argument-hint: ""
-context: fork
-model: sonnet
-hooks:
-  SessionStart:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=hello"
+context: inline
 allowed-tools:
   - Read
   - Bash
   - Skill
+  - AskUserQuestion
   - ralph_hero__pipeline_dashboard
   - ralph_hero__project_hygiene
 ---

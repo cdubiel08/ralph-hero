@@ -31,6 +31,7 @@ Each cell: **allow** = tool is in `allowed-tools`, **—** = tool is not listed 
 | TaskCreate/List/Get/Update | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
 | SendMessage | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
 | TeamCreate/Delete | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
+| AskUserQuestion | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | allow |
 | MCP tools (ralph_hero__*) | indirect | indirect | indirect | indirect | indirect | indirect | indirect | indirect | direct | direct | — | — | — | — | — | direct |
 
 **Note on MCP tools**: Most skills access `ralph_hero__*` tools indirectly through Bash/Task delegation. `ralph-merge` and `ralph-pr` have direct MCP tool access in their `allowed-tools`.
