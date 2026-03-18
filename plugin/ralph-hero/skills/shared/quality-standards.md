@@ -4,12 +4,13 @@ Canonical quality criteria referenced by ralph-plan, ralph-review, and ralph-res
 
 ## Plan Quality Dimensions
 
-Plans are evaluated on four dimensions (matching ralph-review AUTO critique):
+Plans are evaluated on five dimensions (matching ralph-review AUTO critique):
 
 1. **Completeness** — All phases defined with specific file changes and clear descriptions
 2. **Feasibility** — Referenced files exist; patterns are valid and follow existing codebase conventions
 3. **Clarity** — Success criteria are specific and testable (`- [ ] Automated:` / `- [ ] Manual:` format)
 4. **Scope** — "What we're NOT doing" section is explicit and well-bounded
+5. **Dispatchability** — Every task is self-contained enough to dispatch to a subagent with zero additional context. Task has files, TDD flag, acceptance criteria, and dependency info. No task requires reading the full plan to understand.
 
 ### Group-Specific Requirements
 
