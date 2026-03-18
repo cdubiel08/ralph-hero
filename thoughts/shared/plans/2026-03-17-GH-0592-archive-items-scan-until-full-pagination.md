@@ -38,12 +38,12 @@ The `archive_items` bulk mode in [project-management-tools.ts:696-827](https://g
 ## Desired End State
 
 ### Verification
-- [ ] `archive_items` with `maxItems: 200` returns up to 200 matching items regardless of the match ratio in the project
-- [ ] Response includes `hasMore: boolean` indicating whether more eligible items exist beyond what was archived
-- [ ] Response includes `totalScanned: number` showing how many project items were examined
-- [ ] `dryRun` mode also returns `hasMore` and `totalScanned`
-- [ ] A hard scan cap (2000 items) prevents runaway pagination on very large projects
-- [ ] Existing tests pass; new tests cover the scan-until-full behavior and `hasMore` field
+- [x] `archive_items` with `maxItems: 200` returns up to 200 matching items regardless of the match ratio in the project
+- [x] Response includes `hasMore: boolean` indicating whether more eligible items exist beyond what was archived
+- [x] Response includes `totalScanned: number` showing how many project items were examined
+- [x] `dryRun` mode also returns `hasMore` and `totalScanned`
+- [x] A hard scan cap (2000 items) prevents runaway pagination on very large projects
+- [x] Existing tests pass; new tests cover the scan-until-full behavior and `hasMore` field
 
 ## What We're NOT Doing
 
@@ -263,10 +263,10 @@ return toolSuccess({
 
 ### Success Criteria
 
-- [ ] Automated: `npm run build` (from `plugin/ralph-hero/mcp-server/`) passes with no type errors
-- [ ] Automated: `npm test` (from `plugin/ralph-hero/mcp-server/`) -- all existing tests pass, new tests pass
-- [ ] Manual: The `effectiveMax * 3` pattern no longer exists in the codebase
-- [ ] Manual: Response includes `hasMore: boolean` and `totalScanned: number` in all three response paths (empty, dry-run, archive)
+- [x] Automated: `npm run build` (from `plugin/ralph-hero/mcp-server/`) passes with no type errors
+- [x] Automated: `npm test` (from `plugin/ralph-hero/mcp-server/`) -- all existing tests pass, new tests pass
+- [x] Manual: The `effectiveMax * 3` pattern no longer exists in the codebase
+- [x] Manual: Response includes `hasMore: boolean` and `totalScanned: number` in all three response paths (empty, dry-run, archive)
 
 ## Integration Testing
 
