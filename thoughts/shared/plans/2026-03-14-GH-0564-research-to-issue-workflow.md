@@ -47,15 +47,15 @@ The codebase follows a "each skill does one thing" composable pattern: `draft` c
 ## Desired End State
 
 ### Verification
-- [ ] The `/research` skill suggests `/form <research-doc-path>` in Step 9 when findings reveal actionable work
-- [ ] The `/form` skill accepts research doc paths (`thoughts/shared/research/*.md`) as input
-- [ ] When `/form` receives a research doc, Step 2 research is lighter (skips redundant codebase investigation since the doc already contains it)
-- [ ] Issue creation from research doc uses the existing `form` Step 5a pattern (interactive draft, approval, create, link)
-- [ ] The research document is linked to the new issue (frontmatter updated, artifact comment posted)
-- [ ] The composable chain works end-to-end: `/research` -> suggest `/form` -> `/form` creates issue
-- [ ] Both skills remain purely interactive (ask the user, wait for confirmation at each step)
-- [ ] Existing `/research` Step 8 (link to existing issue) and Step 10 continue to work unchanged
-- [ ] Existing `/form` with idea files and inline descriptions continues to work unchanged
+- [x] The `/research` skill suggests `/form <research-doc-path>` in Step 9 when findings reveal actionable work
+- [x] The `/form` skill accepts research doc paths (`thoughts/shared/research/*.md`) as input
+- [x] When `/form` receives a research doc, Step 2 research is lighter (skips redundant codebase investigation since the doc already contains it)
+- [x] Issue creation from research doc uses the existing `form` Step 5a pattern (interactive draft, approval, create, link)
+- [x] The research document is linked to the new issue (frontmatter updated, artifact comment posted)
+- [x] The composable chain works end-to-end: `/research` -> suggest `/form` -> `/form` creates issue
+- [x] Both skills remain purely interactive (ask the user, wait for confirmation at each step)
+- [x] Existing `/research` Step 8 (link to existing issue) and Step 10 continue to work unchanged
+- [x] Existing `/form` with idea files and inline descriptions continues to work unchanged
 
 ## What We're NOT Doing
 - Adding issue creation logic to the `/research` skill (that's the `form` skill's domain)
