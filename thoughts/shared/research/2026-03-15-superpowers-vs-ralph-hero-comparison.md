@@ -5,6 +5,8 @@ tags: [research, plugin-architecture, superpowers, ralph-hero, comparison, skill
 status: complete
 type: research
 git_commit: 7651dcbec195cc7b9c59328973f8928f9da04421
+github_issue: 594
+github_url: https://github.com/cdubiel08/ralph-hero/issues/594
 ---
 
 # Research: Superpowers vs Ralph-Hero Plugin Comparison

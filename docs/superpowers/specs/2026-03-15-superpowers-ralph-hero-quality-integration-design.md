@@ -3,6 +3,11 @@ date: 2026-03-15
 status: draft
 type: spec
 tags: [superpowers, ralph-hero, tdd, plan-quality, code-quality, automation, tiered-planning]
+github_issue: 594
+github_issues: [594, 595, 596, 597, 598, 599, 600, 601, 602]
+github_urls:
+  - https://github.com/cdubiel08/ralph-hero/issues/594
+primary_issue: 594
 ---
 
 # Superpowers Quality Integration — Design Spec
