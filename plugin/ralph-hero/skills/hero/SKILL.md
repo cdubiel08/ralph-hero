@@ -4,14 +4,29 @@ argument-hint: <issue-number>
 model: sonnet
 allowed-tools:
   - Read
+  - Write
+  - Edit
   - Glob
   - Grep
   - Bash
+  - Agent
   - Skill
   - Task
   - ralph_hero__get_issue
+  - ralph_hero__list_issues
+  - ralph_hero__save_issue
+  - ralph_hero__create_issue
+  - ralph_hero__create_comment
+  - ralph_hero__add_sub_issue
+  - ralph_hero__list_sub_issues
+  - ralph_hero__add_dependency
+  - ralph_hero__remove_dependency
+  - ralph_hero__decompose_feature
   - ralph_hero__detect_stream_positions
   - ralph_hero__pick_actionable_issue
+  - ralph_hero__pipeline_dashboard
+  - knowledge_search
+  - knowledge_traverse
 hooks:
   SessionStart:
     - hooks:
@@ -223,9 +238,7 @@ Loop until pipeline is complete:
 
 #### SPLIT tasks
 ```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-split', args='NNN') to split issue #NNN.",
-     description="Split #NNN")
+Skill("ralph-hero:ralph-split", "NNN")
 ```
 After all splits complete, re-call `get_issue(includePipeline=true)` and rebuild remaining task list.
 
@@ -235,7 +248,7 @@ When the root issue spans repos (detected during research or from issue body):
 
 1. **Check for matching pattern:** Look up the issue's repos against registry patterns.
 
-2. **Invoke `decompose_feature` via sub-agent:** Hero does not have MCP tools in `allowed-tools`. Delegate `decompose_feature` calls through a `Task` sub-agent using `subagent_type="general-purpose"` (which has unrestricted tool access):
+2. **Invoke `decompose_feature` directly:** Hero now has MCP tools in `allowed-tools`:
    ```
    Create Task: "Decompose cross-repo feature"
    SubagentType: general-purpose
@@ -288,9 +301,7 @@ During tree expansion, if research found evidence of cross-repo dependencies not
 
 #### RESEARCH tasks
 ```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-research', args='NNN') to research issue GH-NNN: [title].",
-     description="Research GH-NNN")
+Skill("ralph-hero:ralph-research", "NNN")
 ```
 After all research completes, run Stream Detection (Step 2.5) if applicable.
 
@@ -298,22 +309,22 @@ After all research completes, run Stream Detection (Step 2.5) if applicable.
 
 Before spawning, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, append `--research-doc {path}` to args:
 
+Determine planning approach from issue estimate:
+- **L/XL estimate** → `Skill("ralph-hero:ralph-plan-epic", "NNN")` — handles wave orchestration internally
+- **M/S/XS estimate** → `Skill("ralph-hero:ralph-plan", "NNN --research-doc thoughts/shared/research/...")` or without flag if no artifact_path
+
 ```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN --research-doc thoughts/shared/research/...') to create a plan for GH-NNN.",
-     description="Plan GH-NNN")
-```
-If no `artifact_path` in research task metadata, omit the flag:
-```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='NNN') to create a plan for GH-NNN.",
-     description="Plan GH-NNN")
-```
-For multi-issue groups:
-```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-plan', args='[PRIMARY] --research-doc {path}') to create a GROUP plan. Group: GH-AAA, GH-BBB, GH-CCC.",
-     description="Plan group GH-[PRIMARY]")
+# For L/XL epics:
+Skill("ralph-hero:ralph-plan-epic", "NNN")
+
+# For M/S/XS with research doc:
+Skill("ralph-hero:ralph-plan", "NNN --research-doc thoughts/shared/research/...")
+
+# For M/S/XS without research doc:
+Skill("ralph-hero:ralph-plan", "NNN")
+
+# For multi-issue groups:
+Skill("ralph-hero:ralph-plan", "[PRIMARY] --research-doc {path}")
 ```
 
 #### REVIEW tasks (if RALPH_REVIEW_MODE == "auto")
@@ -321,9 +332,7 @@ Agent(subagent_type="general-purpose",
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-review', args='NNN --plan-doc thoughts/shared/plans/...') to review the plan. Return: APPROVED or NEEDS_ITERATION.",
-     description="Review GH-NNN")
+Skill("ralph-hero:ralph-review", "NNN --plan-doc thoughts/shared/plans/...")
 ```
 **Routing**: ALL APPROVED → continue. ANY NEEDS_ITERATION → STOP with critique links.
 
@@ -337,16 +346,20 @@ Then STOP.
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN --plan-doc thoughts/shared/plans/...') to implement GH-NNN. Follow the plan exactly.",
-     description="Implement GH-NNN")
+Skill("ralph-hero:ralph-impl", "NNN --plan-doc thoughts/shared/plans/...")
 ```
 If no `artifact_path` available, omit the flag:
 ```
-Agent(subagent_type="general-purpose",
-     prompt="Use Skill(skill='ralph-hero:ralph-impl', args='NNN') to implement GH-NNN. Follow the plan exactly.",
-     description="Implement GH-NNN")
+Skill("ralph-hero:ralph-impl", "NNN")
 ```
+
+### Inline Skill Invocation Notes
+
+Skills invoked via `Skill()` run **inline in hero's context**, not as separate agents:
+- The skill's `SessionStart` hook sets `RALPH_COMMAND` for that skill
+- `ralph-impl` can dispatch its own subagents via `Agent()` — these are one level deep from hero's context (valid)
+- `Skill()` nesting is fine: hero → Skill(ralph-plan-epic) → Skill(ralph-plan) — all same context
+- Hero trades context isolation for subagent dispatch capability — this is intentional
 If any implementation fails, STOP immediately. Do NOT continue to next issue.
 
 #### PR tasks
