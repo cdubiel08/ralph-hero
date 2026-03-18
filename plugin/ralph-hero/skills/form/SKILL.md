@@ -18,11 +18,6 @@ allowed-tools:
   - ralph_hero__add_dependency
   - ralph_hero__create_comment
   - WebFetch
-  - ralph_hero__list_issues
-  - ralph_hero__create_issue
-  - ralph_hero__save_issue
-  - ralph_hero__add_sub_issue
-  - ralph_hero__add_dependency
 ---
 
 # Form Idea
