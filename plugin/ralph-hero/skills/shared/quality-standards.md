@@ -27,6 +27,23 @@ Avoid:
 - Ignoring existing patterns in the codebase
 - For groups: unclear phase ordering or missing dependencies
 
+## Plan-of-Plans Quality Dimensions
+
+Plan-of-plans documents (type: plan-of-plans) are evaluated on four dimensions:
+
+1. **Decomposition** — Features are M-sized, independently plannable, with clear boundaries between them.
+2. **Dependency clarity** — Wave sequencing is explicit; each feature's inputs and outputs are named with concrete types, files, and interfaces.
+3. **Integration** — Strategy for how features compose is concrete with specific shared interfaces, not hand-wavy.
+4. **Constraint completeness** — Shared constraints cover patterns, conventions, compatibility requirements, and apply to all child features.
+
+### Plan-of-Plans Anti-Patterns
+
+- Features too large (L/XL) or too small (XS/S) — M is the target
+- Dependencies between features left implicit ("Feature B needs Feature A")
+- Integration strategy is just "test everything at the end"
+- Shared constraints missing — each feature reinvents conventions
+- Wave sequencing that doesn't match actual dependency graph
+
 ## Research Quality Dimensions
 
 Research documents are evaluated on:
