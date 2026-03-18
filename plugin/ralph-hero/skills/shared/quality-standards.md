@@ -44,6 +44,31 @@ Plan-of-plans documents (type: plan-of-plans) are evaluated on four dimensions:
 - Shared constraints missing — each feature reinvents conventions
 - Wave sequencing that doesn't match actual dependency graph
 
+## Task Metadata Requirements
+
+Every task within an implementation plan must include these fields to be dispatchable:
+
+| Field | Required | Values | Purpose |
+|-------|----------|--------|---------|
+| `files` | yes | paths with (create/modify/read) | Scope + parallelism detection + drift tracking |
+| `tdd` | yes | `true` / `false` | Planner's decision — test-first or implement directly |
+| `complexity` | yes | `low` / `medium` / `high` | Drives implementer model selection |
+| `depends_on` | yes | `null` or `[task IDs]` | Enables parallel dispatch |
+| `acceptance` | yes | checkbox list | Verifiable criteria checked by task reviewer |
+
+### TDD Flag Guidelines
+
+Set `tdd: true` when:
+- Task creates or modifies functions/methods with testable behavior
+- Task adds error handling paths
+- Task implements business logic
+
+Set `tdd: false` when:
+- Pure wiring/configuration (imports, exports, config files)
+- Type-only changes (interfaces without logic)
+- Migration/scaffolding
+- Build/CI configuration changes
+
 ## Research Quality Dimensions
 
 Research documents are evaluated on:
