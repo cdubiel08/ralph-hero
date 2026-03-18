@@ -99,9 +99,13 @@ export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void 
       }
     }
 
-    // "other" type docs that don't match known headings
-    const otherDocs = byType.get("other");
-    if (otherDocs && otherDocs.length > 0) {
+    // Collect docs with null type ("other") or non-standard types (e.g., "meeting")
+    const otherDocs: ParsedDocument[] = [];
+    for (const [type, typeDocs] of byType) {
+      if (type !== "other" && TYPE_HEADINGS[type]) continue;
+      otherDocs.push(...typeDocs);
+    }
+    if (otherDocs.length > 0) {
       lines.push("## Other\n");
       for (const doc of otherDocs) {
         lines.push(`- [[${doc.id}]] — ${doc.title}`);
