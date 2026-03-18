@@ -16,6 +16,11 @@
       "name": "ralph-knowledge",
       "description": "Knowledge graph for ralph-hero: semantic search, relationship traversal, and document indexing across thoughts/ documents. Optional companion to ralph-hero.",
       "source": "./plugin/ralph-knowledge"
+    },
+    {
+      "name": "ralph-demo",
+      "description": "Generate sprint demo videos from structured JSON input using Remotion. 7 scene templates, pluggable themes, and export presets for 16:9, 1:1, and 9:16 formats.",
+      "source": "./plugin/ralph-demo"
     }
   ]
 }
