@@ -4,6 +4,7 @@ import {
   VALID_STATES,
   PARENT_GATE_STATES,
   WORKFLOW_STATE_TO_STATUS,
+  SKIP_ENTRY_STATES,
   stateIndex,
   compareStates,
   isEarlierState,
@@ -158,5 +159,28 @@ describe("WORKFLOW_STATE_TO_STATUS", () => {
     expect(WORKFLOW_STATE_TO_STATUS["Done"]).toBe("Done");
     expect(WORKFLOW_STATE_TO_STATUS["Canceled"]).toBe("Done");
     expect(WORKFLOW_STATE_TO_STATUS["Human Needed"]).toBe("Done");
+  });
+});
+
+describe("SKIP_ENTRY_STATES", () => {
+  it("maps parent plan context to child entry states", () => {
+    expect(SKIP_ENTRY_STATES).toEqual({
+      "plan-of-plans": "Ready for Plan",
+      "plan": "In Progress",
+    });
+  });
+
+  it("plan-of-plans children enter at Ready for Plan", () => {
+    expect(SKIP_ENTRY_STATES["plan-of-plans"]).toBe("Ready for Plan");
+  });
+
+  it("implementation plan children enter at In Progress", () => {
+    expect(SKIP_ENTRY_STATES["plan"]).toBe("In Progress");
+  });
+
+  it("all entry states are valid workflow states", () => {
+    for (const state of Object.values(SKIP_ENTRY_STATES)) {
+      expect(isValidState(state)).toBe(true);
+    }
   });
 });

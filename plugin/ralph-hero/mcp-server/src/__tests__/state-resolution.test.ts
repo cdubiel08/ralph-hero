@@ -31,6 +31,12 @@ describe("resolveState - semantic intents", () => {
     );
   });
 
+  it("resolves __LOCK__ for ralph_plan_epic", () => {
+    expect(resolveState("__LOCK__", "ralph_plan_epic").resolvedState).toBe(
+      "Plan in Progress",
+    );
+  });
+
   it("rejects __LOCK__ for commands without lock states with recovery guidance", () => {
     expect(() => resolveState("__LOCK__", "ralph_triage")).toThrow(
       /not valid for ralph_triage/i,
@@ -65,6 +71,15 @@ describe("resolveState - semantic intents", () => {
     );
     expect(resolveState("__COMPLETE__", "ralph_merge").resolvedState).toBe(
       "Done",
+    );
+    expect(resolveState("__COMPLETE__", "ralph_plan_epic").resolvedState).toBe(
+      "In Progress",
+    );
+  });
+
+  it("resolves __COMPLETE__ for ralph_split to Backlog (backward compat default)", () => {
+    expect(resolveState("__COMPLETE__", "ralph_split").resolvedState).toBe(
+      "Backlog",
     );
   });
 
@@ -130,6 +145,42 @@ describe("resolveState - direct state names", () => {
     expect(
       resolveState("Human Needed", "ralph_merge").resolvedState,
     ).toBe("Human Needed");
+  });
+
+  it("accepts valid output states for ralph_plan_epic", () => {
+    expect(resolveState("Plan in Progress", "ralph_plan_epic").resolvedState).toBe(
+      "Plan in Progress",
+    );
+    expect(resolveState("In Progress", "ralph_plan_epic").resolvedState).toBe(
+      "In Progress",
+    );
+    expect(resolveState("Human Needed", "ralph_plan_epic").resolvedState).toBe(
+      "Human Needed",
+    );
+  });
+
+  it("rejects invalid output states for ralph_plan_epic", () => {
+    expect(() => resolveState("Plan in Review", "ralph_plan_epic")).toThrow(
+      /not a valid output for ralph_plan_epic/i,
+    );
+    expect(() => resolveState("Done", "ralph_plan_epic")).toThrow(
+      /not a valid output for ralph_plan_epic/i,
+    );
+  });
+
+  it("accepts In Progress and Ready for Plan as direct states for ralph_split", () => {
+    expect(resolveState("In Progress", "ralph_split").resolvedState).toBe(
+      "In Progress",
+    );
+    expect(resolveState("Ready for Plan", "ralph_split").resolvedState).toBe(
+      "Ready for Plan",
+    );
+  });
+
+  it("accepts In Progress as direct state for ralph_plan (split-after-plan)", () => {
+    expect(resolveState("In Progress", "ralph_plan").resolvedState).toBe(
+      "In Progress",
+    );
   });
 
   it("rejects states not in command's allowed outputs with recovery", () => {
