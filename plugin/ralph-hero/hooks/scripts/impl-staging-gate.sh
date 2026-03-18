@@ -59,4 +59,19 @@ then stage only files listed in the plan's File Ownership Summary."
   esac
 done
 
+# If RALPH_TASK_FILES is set, warn about files outside the task's declared list
+task_files="${RALPH_TASK_FILES:-}"
+if [[ -n "$task_files" ]]; then
+  for arg in $add_args; do
+    # Skip flags
+    [[ "$arg" == -* ]] && continue
+    # Check if file is in the task's declared list
+    if ! echo "$task_files" | grep -qF "$arg"; then
+      warn "File '$arg' not in current task's declared file list. This may indicate drift.
+Task files: $task_files
+If intentional, document in commit message with DRIFT: prefix."
+    fi
+  done
+fi
+
 allow
