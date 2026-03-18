@@ -1,11 +1,11 @@
 ---
 description: Set up or rebuild the ralph-knowledge index from markdown documents. Use when setting up ralph-knowledge for the first time, reindexing after adding new documents, rebuilding a corrupted knowledge DB, or when knowledge_search returns empty results. Also use when the user mentions "index thoughts", "reindex", "set up knowledge", or "knowledge search not working".
-argument-hint: "[thoughts-directory]"
+argument-hint: "[directory1,directory2,...]"
 ---
 
 # Ralph Knowledge Setup
 
-Interactive setup and reindex skill for the ralph-knowledge plugin. Indexes markdown documents from a `thoughts/` directory into a SQLite database with full-text search and semantic embeddings.
+Interactive setup and reindex skill for the ralph-knowledge plugin. Indexes markdown documents from one or more directories into a SQLite database with full-text search and semantic embeddings.
 
 ## Prerequisites
 
@@ -41,6 +41,36 @@ Proceed with indexing?
 
 If not found, ask the user for the path.
 
+### Step 1b: Additional directories
+
+After confirming the thoughts directory, check if `RALPH_KNOWLEDGE_DIRS` is set in the environment. If it contains additional directories beyond the one found in Step 1, note them:
+
+```
+Also indexing from RALPH_KNOWLEDGE_DIRS: docs/plans, docs/adr
+```
+
+If `RALPH_KNOWLEDGE_DIRS` is NOT set, ask:
+
+```
+Would you like to index additional directories alongside thoughts/?
+Common choices: docs/, docs/plans/, docs/adr/
+
+Enter comma-separated paths (relative to project root), or press Enter to skip:
+```
+
+If the user provides additional directories, validate each exists. Combine all directories into a single list for Step 3.
+
+If the user wants to persist this, suggest:
+
+```
+To persist, add to .claude/settings.local.json:
+{
+  "env": {
+    "RALPH_KNOWLEDGE_DIRS": "thoughts,docs/plans"
+  }
+}
+```
+
 ### Step 2: Determine the DB path
 
 The default DB path is `~/.ralph-hero/knowledge.db`. The directory is auto-created if it doesn't exist.
@@ -55,8 +85,10 @@ The reindex script is bundled in the npm package. Install it to a temp location 
 
 ```bash
 cd /tmp && npm install --no-save ralph-hero-knowledge-index@latest 2>&1 | tail -3
-node /tmp/node_modules/ralph-hero-knowledge-index/dist/reindex.js [thoughts-dir] [db-path]
+node /tmp/node_modules/ralph-hero-knowledge-index/dist/reindex.js [dir1] [dir2] ... [db-path]
 ```
+
+Pass all directories as separate arguments, followed by the database path (ending in `.db`).
 
 Display the output as it runs. The script will:
 - Scan for all `.md` files recursively (skipping dot-directories)
@@ -89,14 +121,22 @@ Knowledge Index Ready
 =====================
 Documents indexed: [N]
 Database: [db-path]
-Thoughts directory: [thoughts-dir]
+Directories indexed:
+  - thoughts/
+  - docs/plans/
 
 Tools available:
   - knowledge_search: Keyword + semantic search across documents
   - knowledge_traverse: Walk relationship edges between documents
 
 To reindex after adding new documents:
-  /ralph-knowledge:setup [thoughts-dir]
+  /ralph-knowledge:setup
+```
+
+Then suggest:
+```
+Want to browse your knowledge documents in Obsidian?
+Run /ralph-knowledge:setup-obsidian to set up navigational indexes and vault config.
 ```
 
 Then suggest:

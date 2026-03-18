@@ -164,6 +164,7 @@ describe("writeMasterIndex", () => {
     expect(content).not.toContain("[[_uncategorized]]");
   });
 
+
   it("limits recent docs to 20", () => {
     const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
     const docs = Array.from({ length: 30 }, (_, i) =>

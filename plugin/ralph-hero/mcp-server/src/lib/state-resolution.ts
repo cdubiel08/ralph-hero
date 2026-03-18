@@ -13,6 +13,7 @@ const SEMANTIC_INTENTS: Record<string, Record<string, string | null>> = {
   __LOCK__: {
     ralph_research: "Research in Progress",
     ralph_plan: "Plan in Progress",
+    ralph_plan_epic: "Plan in Progress",
     ralph_impl: "In Progress",
   },
   __COMPLETE__: {
@@ -20,6 +21,7 @@ const SEMANTIC_INTENTS: Record<string, Record<string, string | null>> = {
     ralph_split: "Backlog",
     ralph_research: "Ready for Plan",
     ralph_plan: "Plan in Review",
+    ralph_plan_epic: "In Progress",
     ralph_impl: "In Review",
     ralph_review: "In Progress",
     ralph_merge: "Done",
@@ -39,9 +41,10 @@ const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
     "Canceled",
     "Human Needed",
   ],
-  ralph_split: ["Backlog"],
+  ralph_split: ["Backlog", "In Progress", "Ready for Plan"],
   ralph_research: ["Research in Progress", "Ready for Plan", "Human Needed"],
-  ralph_plan: ["Plan in Progress", "Plan in Review", "Human Needed"],
+  ralph_plan: ["Plan in Progress", "Plan in Review", "In Progress", "Human Needed"],
+  ralph_plan_epic: ["Plan in Progress", "In Progress", "Human Needed"],
   ralph_impl: ["In Progress", "In Review", "Human Needed"],
   ralph_review: ["In Progress", "Ready for Plan", "Human Needed"],
   ralph_hero: ["In Review", "Human Needed"],

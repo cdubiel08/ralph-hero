@@ -4,12 +4,13 @@ Canonical quality criteria referenced by ralph-plan, ralph-review, and ralph-res
 
 ## Plan Quality Dimensions
 
-Plans are evaluated on four dimensions (matching ralph-review AUTO critique):
+Plans are evaluated on five dimensions (matching ralph-review AUTO critique):
 
 1. **Completeness** — All phases defined with specific file changes and clear descriptions
 2. **Feasibility** — Referenced files exist; patterns are valid and follow existing codebase conventions
 3. **Clarity** — Success criteria are specific and testable (`- [ ] Automated:` / `- [ ] Manual:` format)
 4. **Scope** — "What we're NOT doing" section is explicit and well-bounded
+5. **Dispatchability** — Every task is self-contained enough to dispatch to a subagent with zero additional context. Task has files, TDD flag, acceptance criteria, and dependency info. No task requires reading the full plan to understand.
 
 ### Group-Specific Requirements
 
@@ -25,6 +26,48 @@ Avoid:
 - Unbounded scope without explicit exclusions
 - Ignoring existing patterns in the codebase
 - For groups: unclear phase ordering or missing dependencies
+
+## Plan-of-Plans Quality Dimensions
+
+Plan-of-plans documents (type: plan-of-plans) are evaluated on four dimensions:
+
+1. **Decomposition** — Features are M-sized, independently plannable, with clear boundaries between them.
+2. **Dependency clarity** — Wave sequencing is explicit; each feature's inputs and outputs are named with concrete types, files, and interfaces.
+3. **Integration** — Strategy for how features compose is concrete with specific shared interfaces, not hand-wavy.
+4. **Constraint completeness** — Shared constraints cover patterns, conventions, compatibility requirements, and apply to all child features.
+
+### Plan-of-Plans Anti-Patterns
+
+- Features too large (L/XL) or too small (XS/S) — M is the target
+- Dependencies between features left implicit ("Feature B needs Feature A")
+- Integration strategy is just "test everything at the end"
+- Shared constraints missing — each feature reinvents conventions
+- Wave sequencing that doesn't match actual dependency graph
+
+## Task Metadata Requirements
+
+Every task within an implementation plan must include these fields to be dispatchable:
+
+| Field | Required | Values | Purpose |
+|-------|----------|--------|---------|
+| `files` | yes | paths with (create/modify/read) | Scope + parallelism detection + drift tracking |
+| `tdd` | yes | `true` / `false` | Planner's decision — test-first or implement directly |
+| `complexity` | yes | `low` / `medium` / `high` | Drives implementer model selection |
+| `depends_on` | yes | `null` or `[task IDs]` | Enables parallel dispatch |
+| `acceptance` | yes | checkbox list | Verifiable criteria checked by task reviewer |
+
+### TDD Flag Guidelines
+
+Set `tdd: true` when:
+- Task creates or modifies functions/methods with testable behavior
+- Task adds error handling paths
+- Task implements business logic
+
+Set `tdd: false` when:
+- Pure wiring/configuration (imports, exports, config files)
+- Type-only changes (interfaces without logic)
+- Migration/scaffolding
+- Build/CI configuration changes
 
 ## Research Quality Dimensions
 

@@ -89,6 +89,59 @@ ralph_hero__save_issue
 
 If `save_issue` returns an error, read the error message for valid states/intents and retry with corrected parameters.
 
+### Step 3a: Registry Lookup (Cross-Repo Detection)
+
+Before dispatching sub-agents, check if the issue may span multiple repos:
+
+1. **Load registry:** Read `.ralph-repos.yml` from the repo root using the `Read` tool. Parse the YAML to extract available repos, their `localDir` paths, and patterns. If the file does not exist, skip this step (single-repo mode).
+
+   > **Why `Read` instead of `decompose_feature`?** The research skill has `Read` in its `allowed-tools` and can parse YAML from the file contents directly. Using `decompose_feature` with no `pattern` is an undocumented side-channel. `Read` is simpler and always available.
+
+2. **Check for cross-repo scope:** Look for signals in the issue body/title:
+   - References to files in other repos (e.g., "update the MCP server" when researching a skill issue)
+   - Mentions of repo names from the registry
+   - Import paths or package references that map to other repos
+
+3. **If cross-repo scope detected:**
+   - Note which repos are involved and their `localDir` paths from the registry
+   - Pass the additional repo directories to sub-agents in their spawn prompts:
+     ```
+     Additional repo directories to search:
+     - ralph-hero: ~/projects/ralph-hero
+     - landcrawler-ai: ~/projects/landcrawler-ai
+     ```
+   - Sub-agents use standard `Read`, `Grep`, `Glob` with those paths — no new tooling
+
+4. **If single-repo:** Proceed unchanged (existing behavior).
+
+### Step 3b: Cross-Repo Dependency Detection
+
+When cross-repo scope is detected (during the registry lookup above), add an additional research task:
+
+**Detect undeclared dependencies between repos:**
+
+1. Search for direct imports between repos:
+   ```
+   For each pair of repos in scope:
+   - Grep for import/require statements referencing the other repo's package name
+   - Check package.json dependencies for cross-references
+   - Look for shared types, API clients, or SDK references
+   ```
+
+2. **Compare against registry:** Check if found dependencies match the `dependency-flow` edges in the registry pattern.
+
+3. **Flag discrepancies:** If imports exist but no `dependency-flow` edge is declared:
+   ```markdown
+   ## Dependency Discrepancy
+
+   Found: `landcrawler-ai` imports from `ralph-hero` (package: `ralph-hero-mcp-server`)
+   Registry: No `dependency-flow` edge declared between ralph-hero and landcrawler-ai
+
+   Recommendation: Add `ralph-hero -> landcrawler-ai` to the pattern's dependency-flow
+   ```
+
+This information is consumed by the hero skill during tree expansion to override the default "assume independent" behavior when evidence contradicts the registry.
+
 ### Step 4: Conduct Research
 
 1. **Read issue thoroughly** - understand the problem from user perspective
@@ -172,6 +225,26 @@ Rules:
 - Each path must be backtick-wrapped (parseable via regex `` `[^`]+` ``)
 - Both subsections are required even if empty (use "None" if no files apply)
 - This section is validated by the research postcondition hook
+- **Cross-repo:** For cross-repo issues, prefix file paths with the repo key:
+  - `ralph-hero:plugin/ralph-hero/mcp-server/src/lib/repo-registry.ts`
+  - `landcrawler-ai:src/api/client.ts`
+  This repo-qualified format is required for correct work-stream detection when the hero skill clusters cross-repo issues.
+
+### Cross-Repo Scope (if applicable)
+
+If cross-repo scope was detected during research, include this section in the research document:
+
+```markdown
+## Cross-Repo Scope
+
+Repos involved:
+- `ralph-hero` (~/projects/ralph-hero) — [what changes are needed]
+- `landcrawler-ai` (~/projects/landcrawler-ai) — [what changes are needed]
+
+Dependency relationship: ralph-hero → landcrawler-ai (landcrawler-ai imports from ralph-hero)
+```
+
+This section is consumed by the plan and impl skills to set up per-repo worktrees and wire `blockedBy` dependencies.
 
 ### Step 7: Commit and Push
 
@@ -264,8 +337,15 @@ See [shared/quality-standards.md](../shared/quality-standards.md) for canonical 
 
 ## Link Formatting
 
+**Single-repo (default):**
+
 | Reference type | Format |
 |---------------|--------|
 | File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
 | With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
 | Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
+
+**Cross-repo:** Resolve owner/repo from the registry entry for each file:
+- `[repo-name:path/file.py](https://github.com/{owner}/{repo}/blob/main/path/file.py)`
+
+When operating on a cross-repo issue, look up each file's repo in the registry to get the correct `owner` and repo name for link URLs. Do NOT hardcode `$RALPH_GH_OWNER/$RALPH_GH_REPO` for files in other repos.

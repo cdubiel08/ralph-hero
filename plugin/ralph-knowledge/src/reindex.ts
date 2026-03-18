@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join, relative, basename } from "node:path";
+import { join, relative, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
@@ -9,8 +9,8 @@ import { parseDocument, type ParsedDocument } from "./parser.js";
 import { findMarkdownFiles } from "./file-scanner.js";
 import { generateIndexes } from "./generate-indexes.js";
 
-async function reindex(thoughtsDir: string, dbPath: string, generate: boolean): Promise<void> {
-  console.log(`Indexing ${thoughtsDir} -> ${dbPath}`);
+export async function reindex(dirs: string[], dbPath: string, generate: boolean = false): Promise<void> {
+  console.log(`Indexing ${dirs.join(", ")} -> ${dbPath}`);
 
   const db = new KnowledgeDB(dbPath);
   const fts = new FtsSearch(db);
@@ -21,14 +21,23 @@ async function reindex(thoughtsDir: string, dbPath: string, generate: boolean): 
   vec.dropIndex();
   vec.createIndex();
 
-  const files = findMarkdownFiles(thoughtsDir);
-  console.log(`Found ${files.length} markdown files`);
+  const files: string[] = [];
+  for (const dir of dirs) {
+    const found = findMarkdownFiles(dir);
+    console.log(`  ${dir}: ${found.length} files`);
+    files.push(...found);
+  }
+  console.log(`Found ${files.length} total markdown files`);
 
   const parsedDocs: ParsedDocument[] = [];
   let indexed = 0;
   for (const filePath of files) {
     const raw = readFileSync(filePath, "utf-8");
-    const relPath = relative(join(thoughtsDir, ".."), filePath);
+    const absPath = resolve(filePath);
+    const sourceDir = dirs.find(d => absPath.startsWith(resolve(d)));
+    const relPath = sourceDir
+      ? relative(resolve(sourceDir, ".."), absPath)
+      : filePath;
     const id = basename(filePath, ".md");
 
     const parsed = parseDocument(id, relPath, raw);
@@ -78,9 +87,9 @@ async function reindex(thoughtsDir: string, dbPath: string, generate: boolean): 
   fts.rebuildIndex();
 
   try {
-    if (generate) {
+    if (generate && dirs.length > 0) {
       console.log("Generating index notes...");
-      generateIndexes(thoughtsDir, parsedDocs);
+      generateIndexes(dirs[0], parsedDocs);
       console.log("Index notes generated.");
     }
   } finally {
@@ -91,9 +100,31 @@ async function reindex(thoughtsDir: string, dbPath: string, generate: boolean): 
 
 const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
 
-const args = process.argv.slice(2);
-const noGenerate = args.includes("--no-generate");
-const positional = args.filter((a) => !a.startsWith("--"));
-const thoughtsDir = positional[0] ?? "../../thoughts";
-const dbPath = positional[1] ?? DEFAULT_DB_PATH;
-reindex(thoughtsDir, dbPath, !noGenerate).catch(console.error);
+export function resolveDirs(): { dirs: string[]; dbPath: string; generate: boolean } {
+  const cliArgs = process.argv.slice(2);
+  const noGenerate = cliArgs.includes("--no-generate");
+  const positional = cliArgs.filter(a => !a.startsWith("--"));
+  const cliDb = positional.find(a => a.endsWith(".db"));
+  const cliDirs = positional.filter(a => !a.endsWith(".db"));
+
+  if (cliDirs.length > 0) {
+    return { dirs: cliDirs, dbPath: cliDb ?? DEFAULT_DB_PATH, generate: !noGenerate };
+  }
+
+  const envDirs = process.env.RALPH_KNOWLEDGE_DIRS;
+  if (envDirs) {
+    return {
+      dirs: envDirs.split(",").map(d => d.trim()).filter(Boolean),
+      dbPath: cliDb ?? process.env.RALPH_KNOWLEDGE_DB ?? DEFAULT_DB_PATH,
+      generate: !noGenerate,
+    };
+  }
+
+  return { dirs: ["../../thoughts"], dbPath: cliDb ?? DEFAULT_DB_PATH, generate: !noGenerate };
+}
+
+const isMain = process.argv[1]?.endsWith("reindex.js");
+if (isMain) {
+  const { dirs, dbPath, generate } = resolveDirs();
+  reindex(dirs, dbPath, generate).catch(console.error);
+}

@@ -2,7 +2,7 @@
 # cli-dispatch.sh — Shared dispatch functions for Ralph CLI
 # Modes: headless (default), interactive (-i), quick (-q)
 
-MCP_VERSION="2.5.13"
+MCP_VERSION="2.5.23"
 
 parse_mode() {
     MODE="${DEFAULT_MODE:-headless}"

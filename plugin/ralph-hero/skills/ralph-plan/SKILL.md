@@ -1,14 +1,14 @@
 ---
 description: Autonomous implementation planning — picks an issue group, reads research findings, creates a phased plan with file ownership and verification steps, commits to main, and updates GitHub. No questions asked, no human interaction. Called by hero/team orchestrators, not directly by users. Unlike the interactive plan skill, this runs fully autonomously with strict constraints (XS/S only, research required, 15-minute limit).
 user-invocable: false
-argument-hint: [optional-issue-number] [--research-doc path]
+argument-hint: [optional-issue-number] [--research-doc path] [--parent-plan path] [--sibling-context text]
 context: fork
 model: opus
 hooks:
   SessionStart:
     - hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=plan RALPH_REQUIRED_BRANCH=main RALPH_REQUIRES_RESEARCH=true"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=plan RALPH_REQUIRED_BRANCH=main RALPH_REQUIRES_RESEARCH=true RALPH_PLAN_TYPE=plan"
   PreToolUse:
     - matcher: "Bash"
       hooks:
@@ -18,6 +18,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-research-required.sh"
+    - matcher: "ralph_hero__save_issue"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
   PostToolUse:
     - matcher: "ralph_hero__save_issue"
       hooks:
@@ -83,9 +87,9 @@ Then STOP. Do not proceed.
 
 2. **Filter to plannable issues**:
    - All group members must be in "Ready for Plan" workflow state
-   - All must be XS/Small estimates ("XS" or "S")
+   - All must be XS/Small/Medium estimates ("XS", "S", or "M")
    - If some not ready, STOP and report which need research first
-   - If any is Medium+, STOP and report it needs splitting
+   - If any is Large+, STOP and report it needs splitting first
 
 3. **Order the group** by topological order from the response, then **skip to Step 3**
 
@@ -97,7 +101,7 @@ Then STOP. Do not proceed.
    # Profile expands to: workflowState="Ready for Plan"
    ```
 
-2. **Filter to XS/Small** estimates ("XS" or "S")
+2. **Filter to XS/Small/Medium** estimates ("XS", "S", or "M")
 
 3. **Build groups**: For each candidate, call `ralph_hero__get_issue(number=N)`. The response includes group members with their workflow states. Standalone issues (no parent/blocking) are groups of 1.
 
@@ -115,7 +119,18 @@ Then STOP. Do not proceed.
    Run /ralph-research first.
    ```
 
-If no eligible groups: respond "No XS/Small issues ready for planning. Queue empty." then STOP.
+If no eligible groups: respond "No XS/Small/Medium issues ready for planning. Queue empty." then STOP.
+
+### Child Plan Mode
+
+If `--parent-plan` was provided:
+1. Read the parent plan-of-plans document fully
+2. Extract the `## Shared Constraints` section — these apply to ALL tasks
+3. Extract THIS feature's scope from the `## Feature Decomposition` section
+4. Set `RALPH_PLAN_TYPE=plan` (not plan-of-plans)
+5. Skip full codebase research — do targeted research only for gaps not covered by parent plan
+
+The parent plan's shared constraints are inherited verbatim into this plan's `## Shared Constraints` section, extended with any feature-specific constraints discovered during targeted research.
 
 ### Step 3: Gather Group Context
 
@@ -150,6 +165,23 @@ If no eligible groups: respond "No XS/Small issues ready for planning. Queue emp
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
 4. **Wait for sub-tasks** before proceeding
+
+### Sibling Context (if --sibling-context provided)
+
+When planning a Wave 2+ feature, the epic planner provides concrete interface definitions from completed sibling plans:
+
+```
+Sibling Context: Feature A (GH-201) — PLANNED
+Produces:
+- src/types.ts: StreamConfig interface, StreamState enum
+Interface contract: StreamConfig { name: string, sources: Source[] }
+```
+
+Use sibling context to:
+- Reference concrete type names in task acceptance criteria
+- Import from sibling-produced files in `depends_on` chains
+- Validate that this feature's plan is compatible with sibling interfaces
+
 5. **Discover project verification commands**: Search the target project directory for quality tooling. Check these sources in order (stop once found for each category):
 
    | Category | Sources to check |
@@ -186,6 +218,7 @@ github_issues: [123, 124, 125]
 github_urls:
   - https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/123
 primary_issue: 123
+parent_plan: thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-epic.md  # if child of plan-of-plans
 # Stream fields (include only when planning a work stream):
 stream_id: "stream-123-125"
 stream_issues: [123, 125]
@@ -229,6 +262,11 @@ The document must begin with a `## Prior Work` section immediately after the tit
 
 **Why grouped**: [Explanation]
 
+## Shared Constraints
+
+[Inherited from parent plan-of-plans if applicable, extended with feature-specific constraints.
+If no parent plan, document key architectural decisions and patterns for this feature.]
+
 ## Current State Analysis
 [Combined analysis from research docs]
 
@@ -244,19 +282,40 @@ The document must begin with a `## Prior Work` section immediately after the tit
 
 ---
 
-## Phase 1: [GH-123 Title]
-> **Issue**: [URL] | **Research**: [URL] | **Depends on**: (if applicable)
+## Phase 1: [Atomic Issue GH-123 — title]
 
-### Changes Required
-#### 1. [Change]
-**File**: `path/to/file`
-**Changes**: [Specific changes]
+### Overview
+[What this phase accomplishes — 1-2 sentences]
 
-### Success Criteria
-- [ ] Automated: [discovered build/test/lint commands relevant to this phase's changes]
-- [ ] Manual: [human check]
+### Tasks
 
-**Creates for next phase**: [What Phase 2 uses]
+#### Task 1.1: [descriptive name]
+- **files**: `path/to/file.ts` (create|modify|read)
+- **tdd**: true | false
+- **complexity**: low | medium | high
+- **depends_on**: null | [N.M, ...]
+- **acceptance**:
+  - [ ] [Specific verifiable criterion with concrete values]
+  - [ ] [Another criterion]
+
+#### Task 1.2: [descriptive name]
+- **files**: `path/to/other.ts` (create), `path/to/file.ts` (read)
+- **tdd**: true
+- **complexity**: medium
+- **depends_on**: [1.1]
+- **acceptance**:
+  - [ ] [Criterion]
+
+### Phase Success Criteria
+
+#### Automated Verification:
+- [ ] `[discovered build command]` — no errors
+- [ ] `[discovered test command]` — all passing
+
+#### Manual Verification:
+- [ ] [Human-testable criterion]
+
+**Creates for next phase**: [What this phase produces that the next phase needs]
 
 ---
 
@@ -268,6 +327,42 @@ The document must begin with a `## Prior Work` section immediately after the tit
 - Related issues: [URLs]
 ```
 
+### TDD Flag Decision Guide
+
+When setting `tdd` on each task, follow these rules:
+
+Set `tdd: true` when:
+- Task creates or modifies functions/methods with testable behavior
+- Task adds error handling paths
+- Task implements business logic
+- Task creates data transformations or parsers
+
+Set `tdd: false` when:
+- Pure wiring/configuration (imports, exports, config files)
+- Type-only changes (interfaces, type definitions without logic)
+- Migration/scaffolding
+- Build/CI configuration changes
+- Re-exports or barrel files
+
+### Complexity Decision Guide
+
+- **low**: touches 1 file, clear spec, mechanical implementation → haiku model
+- **medium**: touches 2-3 files, requires pattern matching or integration → sonnet model
+- **high**: multi-file coordination, design judgment, broad codebase understanding → opus model
+
+### Dispatchability Self-Check
+
+Before committing the plan, verify each task passes the dispatchability test:
+
+For every `#### Task` block, confirm:
+1. A subagent reading ONLY this task block + shared constraints could implement it
+2. `files` lists every file the subagent needs to touch
+3. `acceptance` criteria are specific enough to verify mechanically
+4. `depends_on` correctly identifies prerequisite tasks
+5. No task requires reading the full plan to understand its scope
+
+If any task fails this check, add more detail until it passes.
+
 ### Step 6: Commit and Push
 
 ```bash
@@ -275,6 +370,34 @@ git add thoughts/shared/plans/YYYY-MM-DD-*.md
 git commit -m "docs(plan): GH-NNN implementation plan"  # or "GH-123, GH-124, GH-125 group plan"
 git push origin main
 ```
+
+### Step 6.5: Split Integration (M issues only)
+
+If the issue estimate is M and the plan has multiple phases mapping to atomic children:
+
+1. Invoke `Skill("ralph-hero:ralph-split", "GH-NNN")` to create atomic child issues
+2. For each child issue created:
+   - Post `## Plan Reference` comment:
+     ```
+     ## Plan Reference
+
+     https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[plan-path]#phase-N
+
+     Parent: #NNN
+     Phase: N of M
+     Shared constraints inherited from parent plan.
+     ```
+3. Move each child to "In Progress" via `ralph_hero__save_issue(number=child, workflowState="In Progress")`
+4. Move parent to "In Progress" via `ralph_hero__save_issue(number=NNN, workflowState="In Progress")`
+
+If the issue is XS/S (standalone), skip this step — the plan goes through normal `Plan in Review` flow.
+
+### State Transitions
+
+| Issue Size | Entry | Lock | Exit |
+|------------|-------|------|------|
+| XS/S (standalone) | Ready for Plan | Plan in Progress | Plan in Review |
+| M (with children) | Ready for Plan | Plan in Progress | In Progress (after split) |
 
 ### Step 7: Update All Group Issues
 
@@ -339,7 +462,7 @@ Profiles set default filters. Explicit params override profile defaults.
 ## Constraints
 
 - Work on ONE issue group only
-- XS/Small estimates only
+- Estimates: XS, S, or M (M issues produce plans with per-child phases)
 - No questions - use research findings + reasonable assumptions
 - Plan only, no implementation
 - Complete within 15 minutes
@@ -350,11 +473,18 @@ See [shared/quality-standards.md](../shared/quality-standards.md) for canonical 
 
 ## Link Formatting
 
+**Single-repo (default):**
+
 | Reference type | Format |
 |---------------|--------|
 | File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
 | With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
 | Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
+
+**Cross-repo:** Resolve owner/repo from the registry entry for each file:
+- `[repo-name:path/file.py](https://github.com/{owner}/{repo}/blob/main/path/file.py)`
+
+When operating on a cross-repo issue, look up each file's repo in the registry to get the correct `owner` and repo name for link URLs. Do NOT hardcode `$RALPH_GH_OWNER/$RALPH_GH_REPO` for files in other repos.
 
 ## Edge Cases
 

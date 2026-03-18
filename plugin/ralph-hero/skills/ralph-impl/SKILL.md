@@ -27,6 +27,10 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-branch-gate.sh"
   PostToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/drift-tracker.sh"
     - matcher: "Bash"
       hooks:
         - type: command
@@ -44,6 +48,7 @@ allowed-tools:
   - Glob
   - Grep
   - Bash
+  - Agent
   - Task
   - ralph_hero__get_issue
   - ralph_hero__list_issues
@@ -112,10 +117,14 @@ After fetching the issue, check its current state:
    **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
 
    Find the plan using the Artifact Comment Protocol:
-   1. Search issue comments for `## Implementation Plan` or `## Group Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
-   2. Extract the GitHub URL from the line after the header
-   3. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
-   4. Read the plan document fully
+   1. Search issue comments for these headers (in priority order):
+      a. `## Implementation Plan` or `## Group Implementation Plan` — direct plan ownership
+      b. `## Plan Reference` — parent-planned atomic (backreference to parent plan + phase anchor)
+   2. If multiple matches of same type, use the **most recent** (last) match.
+   3. Extract the GitHub URL from the line after the header
+   4. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
+   5. If resolved via `## Plan Reference`: extract phase anchor from URL (e.g., `#phase-1`), read parent plan, extract specific phase + `## Shared Constraints` section. Set `RALPH_PLAN_REFERENCE` env var.
+   6. Read the plan document fully
    5. **Fallback**: If no comment found, glob for the plan doc. Try both padded and unpadded:
       - `thoughts/shared/plans/*GH-${number}*`
       - `thoughts/shared/plans/*GH-$(printf '%04d' ${number})*`
@@ -228,16 +237,102 @@ If `git pull` fails with merge conflicts: use `__ESCALATE__` state, comment with
 must use paths relative to the worktree OR absolute paths within the worktree.
 The impl-worktree-gate hook will BLOCK any Write/Edit outside the worktree directory.
 
-### Step 7: Implement ONE Phase
+### Step 6a: Multi-Repo Worktree Setup
+
+If the research document includes a "Cross-Repo Scope" section:
+
+1. **Identify repos:** Read the research doc's cross-repo scope to get the list of repos and their `localDir` paths.
+
+2. **Create worktrees in each repo:**
+   For each repo in the cross-repo scope:
+   ```bash
+   cd {localDir}
+   git worktree add worktrees/GH-{issue_number} -b feature/GH-{issue_number}
+   ```
+
+   Example for GH-601 spanning ralph-hero and landcrawler-ai:
+   ```
+   ~/projects/ralph-hero/worktrees/GH-601/
+   ~/projects/landcrawler-ai/worktrees/GH-601/
+   ```
+
+3. **Set `RALPH_WORKTREE_PATHS`:** Export a colon-separated list of all active worktree **absolute** paths (tilde expanded) so the impl-worktree-gate hook allows writes to any of them:
+   ```bash
+   # IMPORTANT: Expand ~ to absolute paths — the hook uses string prefix matching
+   export RALPH_WORKTREE_PATHS="/home/user/projects/ralph-hero/worktrees/GH-601:/home/user/projects/landcrawler-ai/worktrees/GH-601"
+   ```
+   > **Tilde expansion:** `localDir` values in the registry may use `~`. Always expand to absolute paths before setting `RALPH_WORKTREE_PATHS`, since the hook compares against `file_path` which is always absolute.
+
+4. **Pass worktree mapping to builder:** Include in the builder spawn prompt:
+   ```
+   Worktree directories:
+   - ralph-hero: ~/projects/ralph-hero/worktrees/GH-601
+   - landcrawler-ai: ~/projects/landcrawler-ai/worktrees/GH-601
+
+   Make changes to each repo in its respective worktree directory.
+   ```
+
+**Single-repo (default):** If no cross-repo scope, behavior is unchanged — one worktree in the current repo.
+
+### Step 6.5: Extract Tasks and Build Dependency Graph
 
 Current phase = first unchecked phase from Step 3.
 
-1. Announce: `Starting Phase [N]: #NNN - [Title]`
-2. Read phase requirements from plan
-3. Make the specified changes
-4. Run automated verification commands
-5. **If fails**: attempt fix once. If still failing, commit what works, comment on issue, STOP with error details.
-6. **If succeeds**: mark plan checkboxes as `- [x]`
+1. Parse the phase's `### Tasks` section for `#### Task N.M:` blocks
+2. For each task, extract: `files`, `tdd`, `complexity`, `depends_on`, `acceptance`
+3. Build dependency graph from `depends_on` fields
+4. Identify parallel groups: tasks with `depends_on: null` AND no shared files
+5. Set `RALPH_TASK_FILES` env var to union of all task file paths
+
+**If the phase has no `### Tasks` section** (legacy plan format): fall back to monolithic implementation — read phase requirements and implement directly without subagent dispatch. Skip Steps 7 and 7.5.
+
+### Step 7: Task Execution Loop (Controller Pattern)
+
+Announce: `Starting Phase [N]: #NNN - [Title] — [count] tasks, [parallel_count] parallelizable`
+
+For each task group (parallel where independent, sequential where dependent):
+
+**7a. Build context packet** — Read `implementer-prompt.md`, substitute:
+- `{{TASK_DEFINITION}}` → full task block text
+- `{{SHARED_CONSTRAINTS}}` → from plan header
+- `{{DRIFT_LOG}}` → accumulated DRIFT: entries (or "None")
+- `{{IF_TDD_TRUE/FALSE}}` → conditional sections based on task's tdd flag
+
+**7b. Dispatch implementer subagent** — Model from complexity: low→haiku, medium→sonnet, high→opus.
+```
+Agent(subagent_type="general-purpose", model=selected, prompt=rendered, description="Implement task N.M: [name]")
+```
+For independent tasks: dispatch multiple `Agent()` calls in one turn.
+
+**7c. Handle status:**
+- `DONE` → proceed to review
+- `DONE_WITH_CONCERNS` → evaluate, then review
+- `NEEDS_CONTEXT` → provide context, re-dispatch
+- `BLOCKED` → assess drift (minor: adapt+log, major: pause+escalate, weak model: upgrade once)
+- Max 3 retries per task. After 3: escalate to Human Needed.
+
+**7d. Dispatch task reviewer** — Read `task-reviewer-prompt.md`, substitute task spec + report + tdd flag.
+```
+Agent(subagent_type="general-purpose", model="haiku", prompt=rendered, description="Review task N.M")
+```
+- `COMPLIANT` → mark complete, next task
+- `ISSUES` → implementer fixes, re-review (max 3 loops)
+
+**7e. Update drift log** — Aggregate DRIFT: commits for phase summary.
+
+### Step 7.5: Phase-Level Code Quality Review
+
+After ALL tasks pass review:
+
+1. `git diff [phase-start]..HEAD`
+2. Read `phase-reviewer-prompt.md`, substitute phase overview + diff + constraints
+3. `Agent(subagent_type="general-purpose", model="opus", prompt=rendered, description="Review phase N quality")`
+4. `APPROVED` → proceed. `NEEDS_FIXES` → dispatch fix subagent (Critical blocks, Important gets fixed, Minor logged)
+5. Post `## Phase N Review` comment on issue
+6. Post `## Drift Log — Phase N` comment if drift occurred
+7. Run phase success criteria (automated verification)
+8. If fails: fix once, if still failing commit what works + STOP
+9. If succeeds: mark plan checkboxes `- [x]`
 
 ### Step 8: Commit and Push
 
@@ -260,7 +355,23 @@ Current phase = first unchecked phase from Step 3.
 
 4. If the plan has no File Ownership Summary, stage only files you explicitly created or modified in this phase. Never use `git add -A`, `git add .`, or `git add --all`.
 
-5. Commit and push:
+5. **Multi-repo commits:** When changes span multiple repos, commit and push separately in each worktree. **Never use `git add -A` or `git add .`** — stage specific files only:
+
+   ```bash
+   # ralph-hero changes
+   cd ~/projects/ralph-hero/worktrees/GH-601
+   git add path/to/changed-file1.ts path/to/changed-file2.ts
+   git commit -m "feat: [description of ralph-hero changes]"
+   git push -u origin feature/GH-601
+
+   # landcrawler-ai changes
+   cd ~/projects/landcrawler-ai/worktrees/GH-601
+   git add path/to/changed-file.ts
+   git commit -m "feat: [description of landcrawler-ai changes]"
+   git push -u origin feature/GH-601
+   ```
+
+6. Commit and push (single-repo):
    ```bash
    git commit -m "feat(component): [phase description]
 
@@ -447,8 +558,15 @@ Use `command="ralph_impl"` in state transitions.
 
 ## Link Formatting
 
+**Single-repo (default):**
+
 | Reference type | Format |
 |---------------|--------|
 | File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
 | With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
 | Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
+
+**Cross-repo:** Resolve owner/repo from the registry entry for each file:
+- `[repo-name:path/file.py](https://github.com/{owner}/{repo}/blob/main/path/file.py)`
+
+When operating on a cross-repo issue, look up each file's repo in the registry to get the correct `owner` and repo name for link URLs. Do NOT hardcode `$RALPH_GH_OWNER/$RALPH_GH_REPO` for files in other repos.

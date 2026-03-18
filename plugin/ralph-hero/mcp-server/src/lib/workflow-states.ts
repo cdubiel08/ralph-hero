@@ -115,6 +115,21 @@ export function isValidState(state: string): boolean {
  * - In Progress = work actively being processed (lock states + review)
  * - Done = terminal/escalated states (no automated progression)
  */
+/**
+ * Maps parent plan document type to the entry state for children
+ * created by ralph_split from that plan.
+ *
+ * When a parent issue has a plan-of-plans, its feature children
+ * skip to "Ready for Plan" (they need their own detailed plan).
+ *
+ * When a parent issue has an implementation plan, its atomic children
+ * skip to "In Progress" (the plan already covers their implementation).
+ */
+export const SKIP_ENTRY_STATES: Record<string, string> = {
+  "plan-of-plans": "Ready for Plan",
+  "plan": "In Progress",
+};
+
 export const WORKFLOW_STATE_TO_STATUS: Record<string, string> = {
   "Backlog": "Todo",
   "Research Needed": "Todo",
