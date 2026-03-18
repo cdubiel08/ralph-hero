@@ -136,9 +136,11 @@ describe("Token resolution logic", () => {
 });
 
 describe(".mcp.json contract", () => {
-  it("should NOT pass GITHUB_TOKEN or GH_TOKEN to MCP server", () => {
-    // This test documents the .mcp.json contract: only RALPH_-prefixed vars
-    const allowedVars = [
+  it("should only accept RALPH_-prefixed env vars", () => {
+    // Contract: .mcp.json has no env block — the MCP server inherits
+    // the parent environment. Only RALPH_-prefixed vars are read by
+    // resolveEnv(). This test documents which vars the server accepts.
+    const acceptedVars = [
       "RALPH_GH_REPO_TOKEN",
       "RALPH_GH_PROJECT_TOKEN",
       "RALPH_HERO_GITHUB_TOKEN",
@@ -146,6 +148,10 @@ describe(".mcp.json contract", () => {
       "RALPH_GH_REPO",
       "RALPH_GH_PROJECT_OWNER",
       "RALPH_GH_PROJECT_NUMBER",
+      "RALPH_GH_PROJECT_NUMBERS",
+      "RALPH_GH_TEMPLATE_PROJECT",
+      "RALPH_HERO_AUTO",
+      "RALPH_DEBUG",
     ];
 
     const forbiddenVars = [
@@ -156,14 +162,12 @@ describe(".mcp.json contract", () => {
       "GITHUB_REPO",
     ];
 
-    // Verify none of the forbidden vars are in the allowed list
     for (const forbidden of forbiddenVars) {
-      expect(allowedVars).not.toContain(forbidden);
+      expect(acceptedVars).not.toContain(forbidden);
     }
 
-    // Verify all allowed vars start with RALPH_
-    for (const allowed of allowedVars) {
-      expect(allowed).toMatch(/^RALPH_/);
+    for (const accepted of acceptedVars) {
+      expect(accepted).toMatch(/^RALPH_/);
     }
   });
 });
