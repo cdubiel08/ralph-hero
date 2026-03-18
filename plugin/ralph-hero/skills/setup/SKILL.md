@@ -51,7 +51,7 @@ The MCP server reads environment variables at startup. After changing settings, 
 
 ### Where NOT to put tokens
 
-- **Don't put tokens in `.mcp.json`** — the `env` block can overwrite inherited values with unexpanded literals
+- **Don't put tokens in `.mcp.json`** — all env vars belong in `settings.local.json`, not in the plugin config
 - **Don't put tokens in `.bashrc` after the interactive guard** — non-interactive processes (like MCP servers) won't see them
 - **Don't commit tokens to git** — use `settings.local.json` (gitignored) or shell profile
 
@@ -272,7 +272,7 @@ export RALPH_GH_REPO="[repo]"
 export RALPH_GH_PROJECT_NUMBER="[number]"
 ```
 
-**Important**: Do NOT put tokens in `.mcp.json` — the env block can mask inherited values.
+**Important**: Do NOT put tokens in `.mcp.json` — all env vars belong in `settings.local.json`.
 ```
 
 **If repo owner != project owner (split-owner setup):**
@@ -324,7 +324,7 @@ For dual-token setups (separate org repo + personal project tokens):
 }
 ```
 
-**Important**: Do NOT put tokens in `.mcp.json` — the env block can mask inherited values.
+**Important**: Do NOT put tokens in `.mcp.json` — all env vars belong in `settings.local.json`.
 ```
 
 Also include the Workflow States table in both cases:
