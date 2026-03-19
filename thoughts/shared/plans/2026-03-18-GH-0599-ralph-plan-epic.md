@@ -10,7 +10,7 @@ github_urls:
 primary_issue: 599
 parent_plan: docs/superpowers/specs/2026-03-15-superpowers-ralph-hero-quality-integration-design.md
 ---
-
+[]()
 # ralph-plan-epic (New Skill) — Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
