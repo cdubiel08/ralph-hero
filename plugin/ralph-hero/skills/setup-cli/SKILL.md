@@ -52,40 +52,37 @@ Print: `Installed: ~/.local/bin/ralph`
 
 ## Step 3: Detect shell and install completions
 
+Detect shell: `basename "$SHELL"`
+
+**For zsh**, run this self-contained block:
+
 ```bash
 LATEST=$(ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/" 2>/dev/null | sort -V | tail -1)
 PLUGIN_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/$LATEST"
-```
-
-Detect shell: `basename "$SHELL"`
-
-**For zsh:**
-
-Check if `$PLUGIN_DIR/scripts/ralph-completions.zsh` exists.
-
-- If it exists:
-  ```bash
+if [ -f "$PLUGIN_DIR/scripts/ralph-completions.zsh" ]; then
   mkdir -p "$HOME/.local/share/ralph"
   cp "$PLUGIN_DIR/scripts/ralph-completions.zsh" "$HOME/.local/share/ralph/ralph-completions.zsh"
-  ```
-  Print: `Installed: ~/.local/share/ralph/ralph-completions.zsh`
-- If it does not exist: print `Warning: ralph-completions.zsh not found in plugin — skipping completions.`
+  echo "Installed: ~/.local/share/ralph/ralph-completions.zsh"
+else
+  echo "Warning: ralph-completions.zsh not found in plugin — skipping completions."
+fi
+```
 
-**For bash:**
+**For bash**, run this self-contained block:
 
-Check if `$PLUGIN_DIR/scripts/ralph-completions.bash` exists.
-
-- If it exists:
-  ```bash
+```bash
+LATEST=$(ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/" 2>/dev/null | sort -V | tail -1)
+PLUGIN_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/$LATEST"
+if [ -f "$PLUGIN_DIR/scripts/ralph-completions.bash" ]; then
   mkdir -p "$HOME/.local/share/ralph"
   cp "$PLUGIN_DIR/scripts/ralph-completions.bash" "$HOME/.local/share/ralph/ralph-completions.bash"
-  ```
-  Print: `Installed: ~/.local/share/ralph/ralph-completions.bash`
-- If it does not exist: print `Warning: ralph-completions.bash not found in plugin — skipping completions.`
+  echo "Installed: ~/.local/share/ralph/ralph-completions.bash"
+else
+  echo "Warning: ralph-completions.bash not found in plugin — skipping completions."
+fi
+```
 
-**For any other shell:**
-
-Print: `Note: only bash/zsh completions are available — skipping completions.`
+**For any other shell:** no bash block to run. Print: `Note: only bash/zsh completions are available — skipping completions.`
 
 ## Step 4: Check PATH
 
@@ -111,7 +108,7 @@ Record the result as `JUST_OK` (true/false) for use in Step 6.
 
 Print what was done and the next steps, tailored to the detected shell and what warnings were triggered.
 
-**For zsh**, print (omit the PATH line if `PATH_OK` is true, omit the `source` completions line if completions were not installed in Step 3, omit just warning if `JUST_OK` is true):
+**For zsh**, print (omit the PATH line if `PATH_OK` is true, omit the `source` completions line if completions were not installed in Step 3):
 
 ```
 Done! Ralph CLI installed.
@@ -125,11 +122,11 @@ Next steps:
 
 3. Set up your GitHub project: /ralph-hero:setup
 
-Warning: 'just' is not installed — ralph won't work until it is.
-Install: brew install just  (or see https://just.systems)
+Warning: 'just' is not installed — ralph won't work until it is.  # omit if JUST_OK
+Install: brew install just  (or see https://just.systems)          # omit if JUST_OK
 ```
 
-**For bash**, print (omit the PATH line if `PATH_OK` is true, omit the `source` completions line if completions were not installed in Step 3, omit just warning if `JUST_OK` is true):
+**For bash**, print (omit the PATH line if `PATH_OK` is true, omit the `source` completions line if completions were not installed in Step 3):
 
 ```
 Done! Ralph CLI installed.
@@ -143,8 +140,8 @@ Next steps:
 
 3. Set up your GitHub project: /ralph-hero:setup
 
-Warning: 'just' is not installed — ralph won't work until it is.
-Install: brew install just  (or see https://just.systems)
+Warning: 'just' is not installed — ralph won't work until it is.  # omit if JUST_OK
+Install: brew install just  (or see https://just.systems)          # omit if JUST_OK
 ```
 
-**For other shells**, substitute the appropriate RC file note or omit the completions line if it was skipped.
+**For other shells**, Step 3 skipped completions entirely. Print the summary without any `source` completions line and without any RC file instruction — only the PATH export line (omit if `PATH_OK` is true), the verify step, the setup step, and the `just` warning (omit if `JUST_OK` is true).
