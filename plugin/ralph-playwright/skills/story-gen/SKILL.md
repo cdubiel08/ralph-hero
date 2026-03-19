@@ -31,6 +31,7 @@ Produce stories in these categories:
 - Duplicate/already-exists submission → conflict error
 - Too many attempts / rate limited → throttle message
 - Network error mid-flow → graceful error, no data loss (if applicable)
+- Empty state (no items in list, first-time user) → empty state UI shown, not blank or broken page
 
 **Edge paths** — include at minimum:
 - Empty/zero state (no items, first-time user)

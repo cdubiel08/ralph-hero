@@ -46,6 +46,8 @@ The explorer agent:
 3. Follows unique paths up to 2 levels deep (max 20 flows)
 4. Records each unique path as a user story
 
+After the agent returns, convert its JSON array output to canonical YAML schema format and save to `playwright-stories/<page-name>-discovered.yaml`.
+
 ---
 
 ### Step 2: Augment with sad paths
