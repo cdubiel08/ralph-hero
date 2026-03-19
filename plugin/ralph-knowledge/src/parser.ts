@@ -27,6 +27,7 @@ const SUPERSEDED_BY_RE = /\[\[(.+?)\]\]/;
 const PATH_TYPE_MAP: Array<{ segment: string; type: string }> = [
   { segment: "/research/", type: "research" },
   { segment: "/plans/",    type: "plan" },
+  { segment: "/specs/",    type: "spec" },
   { segment: "/ideas/",    type: "idea" },
   { segment: "/reviews/",  type: "review" },
   { segment: "/reports/",  type: "report" },

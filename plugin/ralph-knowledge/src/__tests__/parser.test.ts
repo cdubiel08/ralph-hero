@@ -187,6 +187,10 @@ describe("inferTypeFromPath", () => {
     expect(inferTypeFromPath("thoughts/shared/plans/foo.md")).toBe("plan");
   });
 
+  it("infers spec from /specs/ segment", () => {
+    expect(inferTypeFromPath("thoughts/shared/specs/foo.md")).toBe("spec");
+  });
+
   it("infers research from /research/ segment", () => {
     expect(inferTypeFromPath("thoughts/shared/research/foo.md")).toBe("research");
   });
