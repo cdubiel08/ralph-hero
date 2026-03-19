@@ -21,26 +21,28 @@ Install the global `ralph` command and shell completions from the installed ralp
 Run:
 
 ```bash
-ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/" 2>/dev/null | sort -V | tail -1
+LATEST=$(ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/" 2>/dev/null | sort -V | tail -1)
+if [ -z "$LATEST" ]; then
+  echo "Error: ralph-hero plugin not found."
+  echo "Install it first: claude plugin install https://github.com/cdubiel08/ralph-hero"
+  exit 1
+fi
+PLUGIN_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/$LATEST"
+if [ ! -f "$PLUGIN_DIR/scripts/ralph-cli.sh" ]; then
+  echo "Error: ralph-cli.sh not found at $PLUGIN_DIR/scripts/ralph-cli.sh"
+  echo "Try reinstalling: claude plugin install https://github.com/cdubiel08/ralph-hero"
+  exit 1
+fi
+echo "Plugin found: $PLUGIN_DIR"
 ```
-
-- If the directory does not exist or produces no output, stop with:
-  ```
-  Error: ralph-hero plugin not found.
-  Install it first: claude plugin install https://github.com/cdubiel08/ralph-hero
-  ```
-- Set `PLUGIN_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/<latest-version>"`
-- Check that `$PLUGIN_DIR/scripts/ralph-cli.sh` exists. If not, stop with:
-  ```
-  Error: ralph-cli.sh not found at $PLUGIN_DIR/scripts/ralph-cli.sh
-  Try reinstalling: claude plugin install https://github.com/cdubiel08/ralph-hero
-  ```
 
 ## Step 2: Install binary
 
 Run:
 
 ```bash
+LATEST=$(ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/" 2>/dev/null | sort -V | tail -1)
+PLUGIN_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/$LATEST"
 mkdir -p "$HOME/.local/bin"
 cp "$PLUGIN_DIR/scripts/ralph-cli.sh" "$HOME/.local/bin/ralph"
 chmod +x "$HOME/.local/bin/ralph"
@@ -49,6 +51,11 @@ chmod +x "$HOME/.local/bin/ralph"
 Print: `Installed: ~/.local/bin/ralph`
 
 ## Step 3: Detect shell and install completions
+
+```bash
+LATEST=$(ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/" 2>/dev/null | sort -V | tail -1)
+PLUGIN_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/$LATEST"
+```
 
 Detect shell: `basename "$SHELL"`
 
@@ -104,7 +111,7 @@ Record the result as `JUST_OK` (true/false) for use in Step 6.
 
 Print what was done and the next steps, tailored to the detected shell and what warnings were triggered.
 
-**For zsh**, print (omit the PATH line if `PATH_OK` is true, omit just warning if `JUST_OK` is true):
+**For zsh**, print (omit the PATH line if `PATH_OK` is true, omit the `source` completions line if completions were not installed in Step 3, omit just warning if `JUST_OK` is true):
 
 ```
 Done! Ralph CLI installed.
@@ -112,7 +119,7 @@ Done! Ralph CLI installed.
 Next steps:
 1. Add to ~/.zshrc, then restart your shell (or run: source ~/.zshrc):
    export PATH="$HOME/.local/bin:$PATH"           # omit if PATH_OK
-   source ~/.local/share/ralph/ralph-completions.zsh
+   source ~/.local/share/ralph/ralph-completions.zsh  # omit if completions skipped in Step 3
 
 2. Verify: ralph doctor
 
@@ -122,7 +129,7 @@ Warning: 'just' is not installed — ralph won't work until it is.
 Install: brew install just  (or see https://just.systems)
 ```
 
-**For bash**, print (same conditional omissions):
+**For bash**, print (omit the PATH line if `PATH_OK` is true, omit the `source` completions line if completions were not installed in Step 3, omit just warning if `JUST_OK` is true):
 
 ```
 Done! Ralph CLI installed.
@@ -130,7 +137,7 @@ Done! Ralph CLI installed.
 Next steps:
 1. Add to ~/.bashrc, then restart your shell (or run: source ~/.bashrc):
    export PATH="$HOME/.local/bin:$PATH"           # omit if PATH_OK
-   source ~/.local/share/ralph/ralph-completions.bash
+   source ~/.local/share/ralph/ralph-completions.bash  # omit if completions skipped in Step 3
 
 2. Verify: ralph doctor
 
