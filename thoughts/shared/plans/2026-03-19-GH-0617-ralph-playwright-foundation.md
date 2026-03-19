@@ -38,7 +38,7 @@ Single issue: establish `plugin/ralph-playwright/` directory structure, user sto
 ## Current State Analysis
 
 - `plugin/ralph-playwright/` does not exist
-- `plugin/ralph-knowledge/.claude-plugin/plugin.json` is the reference format for plugin registration (it has `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords` — no `skills`/`agents` array at top level; skill files are auto-discovered by Claude Code from the `skills/` directory)
+- `plugin/ralph-knowledge/.claude-plugin/plugin.json` is the reference format for plugin registration (has `name`, `version`, `description`, `author`, etc.). The parent plan specifies a more minimal format for ralph-playwright with explicit `skills` and `agents` arrays
 - Skills in ralph-hero use YAML frontmatter with `name`, `description`, `argument-hint` keys; body is markdown
 - No existing user story schema in the repo — this phase defines the canonical format
 
@@ -55,7 +55,7 @@ Single issue: establish `plugin/ralph-playwright/` directory structure, user sto
 - No story-gen, explore, test-e2e, a11y-scan, storybook-test, or visual-diff skills (phases 2–4)
 - No explorer-agent or story-runner-agent (phases 2–3)
 - No TypeScript, MCP server, or build tooling
-- No `skills` / `agents` arrays in plugin.json (Claude Code auto-discovers from directories)
+- No `author` / `homepage` / `repository` / `license` fields in plugin.json (keep minimal, matching parent plan spec)
 - No CI workflow integration (deferred per parent plan)
 
 ## Implementation Approach
@@ -79,8 +79,9 @@ Create the `plugin/ralph-playwright/` directory with plugin registration, YAML s
 - **depends_on**: null
 - **acceptance**:
   - [ ] File is valid JSON (parseable with `JSON.parse`)
-  - [ ] Contains fields: `name` ("ralph-playwright"), `version` ("0.1.0"), `description` (includes "polymorphic", "UI testing", "Storybook", "E2E", "a11y"), `author`, `homepage`, `repository`, `license`, `keywords`
-  - [ ] `keywords` array includes at minimum: "playwright", "testing", "storybook", "a11y", "ralph-hero"
+  - [ ] Contains fields: `name` ("ralph-playwright"), `version` ("0.1.0"), `description` (mentions "polymorphic UI testing", covers story generation, E2E, a11y, Storybook, visual regression)
+  - [ ] Declares `skills` array with 7 entries: `["skills/setup", "skills/story-gen", "skills/explore", "skills/test-e2e", "skills/a11y-scan", "skills/storybook-test", "skills/visual-diff"]`
+  - [ ] Declares `agents` array with 2 entries: `["agents/story-runner-agent.md", "agents/explorer-agent.md"]`
 
 #### Task 1.2: User story YAML schema
 - **files**: `plugin/ralph-playwright/schemas/user-story.schema.yaml` (create)
