@@ -20,6 +20,7 @@ allowed-tools:
   - ralph_hero__pipeline_dashboard
   - ralph_hero__detect_stream_positions
   - ralph_hero__pick_actionable_issue
+  - ralph_hero__create_issue
 hooks:
   SessionStart:
     - hooks:
@@ -34,6 +35,8 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-shutdown-validator.sh"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-postmortem-completeness.sh"
     - matcher: "TaskCreate|TaskUpdate"
       hooks:
         - type: command
@@ -210,49 +213,13 @@ When all tasks are complete:
 
 ### 1. Write Post-Mortem
 
-Before shutting down teammates or deleting the team, collect session results and write a report.
-
-**Collect data**: Call `TaskList`, then `TaskGet` on each task. Extract from task metadata and descriptions:
-- Issues processed (issue_number, title, estimate, final workflow state)
-- PRs created (artifact_path or PR URLs from integrator tasks)
-- Worker assignments (task owner → task subjects)
-- Errors or escalations (tasks with failed results, Human Needed states)
-
-**Write report** to `thoughts/shared/reports/YYYY-MM-DD-ralph-team-{team-name}.md`:
-
-```markdown
-# Ralph Team Session Report: {team-name}
-
-**Date**: YYYY-MM-DD
-
-## Issues Processed
-
-| Issue | Title | Estimate | Outcome | PR |
-|-------|-------|----------|---------|-----|
-| #NNN | [title] | XS | Done | #PR |
-
-## Worker Summary
-
-| Worker | Tasks Completed |
-|--------|----------------|
-| analyst | [task subjects] |
-| builder | [task subjects] |
-| builder-2 | [task subjects] |
-| integrator | [task subjects] |
-
-*Include one row per spawned worker. Omit workers that were not spawned (e.g., builder-2 when only 1 builder was used).*
-
-## Notes
-
-[Escalations, errors, or anything notable from the session]
-```
-
-Commit and push the report:
-```bash
-git add thoughts/shared/reports/YYYY-MM-DD-ralph-team-*.md
-git commit -m "docs(report): {team-name} session post-mortem"
-git push origin main
-```
+Invoke the `ralph-hero:ralph-postmortem` skill. It handles:
+- Data collection from TaskList/TaskGet
+- Blocker vs. impediment classification
+- Writing the Obsidian-ready report with full frontmatter
+- Patching plan documents with `post_mortem::` edges
+- Auto-creating GitHub issues for blockers
+- Committing and pushing the report
 
 ### 2. Shut Down Teammates
 
