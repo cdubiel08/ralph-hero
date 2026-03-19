@@ -161,6 +161,8 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
 3. **Spawn sub-tasks** for research gaps:
    - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
    - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
+   - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research, plans, or decisions about [topic]")`
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and constraints from thought documents about [topic]")`
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 

@@ -151,6 +151,7 @@ This information is consumed by the hero skill during tree expansion to override
    - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand current implementation of [component]")`
    - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find similar patterns to model after for [feature]")`
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research or decisions about [topic]")`
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key findings and decisions from existing research about [topic]")`
    - `Agent(subagent_type="ralph-hero:web-search-researcher", prompt="External APIs, best practices for [topic]")` (if needed)
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
@@ -198,7 +199,7 @@ The document must begin with a `## Prior Work` section immediately after the tit
 
 - `builds_on::` for documents this research extends or was informed by
 - `tensions::` for documents whose conclusions conflict with findings here
-- Populate from thoughts-locator results gathered during the research phase
+- Populate from thoughts-locator and thoughts-analyzer results gathered during the research phase
 - If no relevant prior work exists, include the section with "None identified."
 - Use filenames without extension as wikilink targets
 
