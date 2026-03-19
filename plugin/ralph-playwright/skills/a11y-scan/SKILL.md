@@ -1,12 +1,12 @@
 ---
 name: ralph-playwright:a11y-scan
-description: Run a standalone WCAG 2.2 AA accessibility audit against a URL or set of URLs using axe-core via a11y-mcp-server. Reports violations by severity. Use for a quick a11y check without running full story execution. Requires a11y-mcp-server to be registered.
+description: Run a standalone WCAG 2.2 AA accessibility audit against a URL or set of URLs using axe-core via a11y-accessibility. Reports violations by severity. Use for a quick a11y check without running full story execution. Requires a11y-accessibility to be registered.
 ---
 
 # A11y Scan — Standalone Accessibility Audit
 
 ## Prerequisites
-`a11y-mcp-server` registered in Claude Code (see `/ralph-playwright:setup`).
+`a11y-accessibility` registered in Claude Code (see `/ralph-playwright:setup`).
 
 ## Process
 

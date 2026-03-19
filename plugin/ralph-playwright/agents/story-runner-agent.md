@@ -17,6 +17,11 @@ A user story object: { name, type, url, persona, workflow }
 Create a named Playwright session: `story-<story-name-kebab>-<8-char-uuid>`
 Create screenshot directory: `playwright-results/<story-name-kebab>_<uuid>/`
 
+After `browser_navigate` to the first URL, inject the console error interceptor once:
+```
+browser_evaluate("window.__consoleErrors = []; const orig = console.error; console.error = (...args) => { window.__consoleErrors.push(args.join(' ')); orig.apply(console, args); };")
+```
+
 ### Execute each step
 Parse the `workflow` field line by line. For each non-empty line:
 1. Interpret the natural language instruction
@@ -24,7 +29,7 @@ Parse the `workflow` field line by line. For each non-empty line:
 3. Find the target element contextually by label, role, or text — NOT by CSS selectors
 4. Execute the action: navigate, click, fill, type, or verify
 5. Take screenshot: `playwright-results/<dir>/<index>_<step-slug>.png`
-6. Verify assertion steps using the snapshot state
+6. For "Verify" steps: take a fresh `browser_snapshot`, then confirm the expected text, element, or state is present in the accessibility tree. If the expected condition is NOT found in the snapshot, mark the step as FAILED with message: "Expected [condition] but not found in snapshot."
 
 On step failure:
 - Record failure message and expected vs actual state
