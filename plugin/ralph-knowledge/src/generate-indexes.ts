@@ -71,6 +71,18 @@ export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void 
     }
   }
 
+  // Secondary pass: index into additional hubs from githubIssues array
+  for (const doc of allDocs) {
+    for (const issueNum of doc.githubIssues) {
+      if (issueNum === doc.githubIssue) continue; // already added in primary pass
+      const list = byIssue.get(issueNum) ?? [];
+      if (!list.includes(doc)) {
+        list.push(doc);
+        byIssue.set(issueNum, list);
+      }
+    }
+  }
+
   const issuesDir = join(outDir, "_issues");
   mkdirSync(issuesDir, { recursive: true });
 
