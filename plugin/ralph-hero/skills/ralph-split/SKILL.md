@@ -3,7 +3,7 @@ description: Split large GitHub issues (M/L/XL) into smaller XS/S sub-issues for
 user-invocable: false
 argument-hint: [optional-issue-number]
 context: fork
-model: sonnet
+model: opus
 hooks:
   SessionStart:
     - hooks:
