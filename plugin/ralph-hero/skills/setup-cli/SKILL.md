@@ -84,6 +84,18 @@ fi
 
 **For any other shell:** no bash block to run. Print: `Note: only bash/zsh completions are available — skipping completions.`
 
+## Step 3a: Check compinit (zsh only)
+
+Only run this step if the shell is zsh AND completions were installed in Step 3.
+
+Run:
+
+```bash
+grep -q "compinit" "$HOME/.zshrc" 2>/dev/null && echo "compinit_ok" || echo "compinit_missing"
+```
+
+Record the result as `COMPINIT_OK` (true/false) for use in Step 6. If the shell is not zsh or completions were skipped, treat `COMPINIT_OK` as true (no action needed).
+
 ## Step 4: Check PATH
 
 Run:
@@ -108,7 +120,7 @@ Record the result as `JUST_OK` (true/false) for use in Step 6.
 
 Print what was done and the next steps, tailored to the detected shell and what warnings were triggered.
 
-**For zsh**, print (omit the PATH line if `PATH_OK` is true, omit the `source` completions line if completions were not installed in Step 3):
+**For zsh**, print (omit the PATH line if `PATH_OK` is true, omit the `autoload` and `source` lines if completions were not installed in Step 3, omit the `autoload` line if `COMPINIT_OK` is true):
 
 ```
 Done! Ralph CLI installed.
@@ -116,6 +128,7 @@ Done! Ralph CLI installed.
 Next steps:
 1. Add to ~/.zshrc, then restart your shell (or run: source ~/.zshrc):
    export PATH="$HOME/.local/bin:$PATH"           # omit if PATH_OK
+   autoload -Uz compinit && compinit               # omit if COMPINIT_OK or completions skipped
    source ~/.local/share/ralph/ralph-completions.zsh  # omit if completions skipped in Step 3
 
 2. Verify: ralph doctor
