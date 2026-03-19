@@ -535,6 +535,7 @@ Next steps:
 3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
 4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
 5. Run /ralph-triage to start processing issues
+Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
 Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped**, use the original 3-item list:
@@ -543,6 +544,7 @@ Next steps:
 1. Verify .claude/settings.local.json has your token and config
 2. Restart Claude Code if you changed any env vars
 3. Run /ralph-triage to start processing issues
+Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
 **For split-owner setup:**
@@ -603,6 +605,7 @@ Next steps:
 3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
 4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
 5. Run /ralph-triage to start processing issues
+Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
 Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped:**
@@ -611,6 +614,7 @@ Next steps:
 1. Verify .claude/settings.local.json has your token and config
 2. Restart Claude Code if you changed any env vars
 3. Run /ralph-triage to start processing issues
+Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
 ## Error Handling
