@@ -98,6 +98,41 @@ describe("parseDocument", () => {
     expect(doc.content).not.toContain("---");
   });
 
+  it("parses post_mortem relationship from Prior Work", () => {
+    const raw = `---
+date: 2026-03-18
+type: plan
+github_issue: 600
+---
+
+# My Plan
+
+## Prior Work
+
+- post_mortem:: [[2026-03-19-ralph-team-GH-600-session]]
+`;
+    const doc = parseDocument("my-plan", "thoughts/shared/plans/my-plan.md", raw);
+    const postMortem = doc.relationships.filter(r => r.type === "post_mortem");
+    expect(postMortem).toHaveLength(1);
+    expect(postMortem[0].targetId).toBe("2026-03-19-ralph-team-GH-600-session");
+    expect(postMortem[0].sourceId).toBe("my-plan");
+  });
+
+  it("does not parse post_mortem from frontmatter superseded_by path", () => {
+    // superseded_by is handled separately; post_mortem must come from body inline fields
+    const raw = `---
+date: 2026-03-18
+type: plan
+superseded_by: "[[2026-03-19-ralph-team-GH-600-session]]"
+---
+
+# My Plan
+`;
+    const doc = parseDocument("my-plan", "thoughts/shared/plans/my-plan.md", raw);
+    const postMortem = doc.relationships.filter(r => r.type === "post_mortem");
+    expect(postMortem).toHaveLength(0);
+  });
+
   describe("githubIssue fallback chain", () => {
     function makeDoc(frontmatter: string, body = "# Test\n\nContent."): string {
       return `---\n${frontmatter}\n---\n\n${body}`;
