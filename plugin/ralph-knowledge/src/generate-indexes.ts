@@ -55,6 +55,7 @@ export function writeTypeIndex(
 const TYPE_HEADINGS: Record<string, string> = {
   research: "Research",
   plan: "Plans",
+  spec: "Specs",
   idea: "Ideas",
   review: "Reviews",
   report: "Reports",
@@ -138,6 +139,7 @@ export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[], hasU
     "## Browse by Type\n",
     "- [[_research]] — Research documents",
     "- [[_plans]] — Implementation plans",
+    "- [[_specs]] — Specifications",
     "- [[_ideas]] — Ideas and drafts",
     "- [[_reviews]] — Code and plan reviews",
     "- [[_reports]] — Status reports",
@@ -254,6 +256,7 @@ WHERE !contains(rows.type, "plan")
 const TYPE_INDEX_CONFIG: Array<{ type: string; filename: string; heading: string }> = [
   { type: "research", filename: "research", heading: "Research Documents" },
   { type: "plan", filename: "plans", heading: "Implementation Plans" },
+  { type: "spec", filename: "specs", heading: "Specifications" },
   { type: "idea", filename: "ideas", heading: "Ideas & Drafts" },
   { type: "review", filename: "reviews", heading: "Reviews" },
   { type: "report", filename: "reports", heading: "Reports" },

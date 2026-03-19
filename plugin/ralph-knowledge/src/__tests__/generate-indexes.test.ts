@@ -241,6 +241,22 @@ describe("generateIndexes", () => {
     const index = readFileSync(join(dir, "_index.md"), "utf-8");
     expect(index).not.toContain("[[_uncategorized]]");
   });
+
+  it("routes spec docs to _specs.md and not to uncategorized", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "debug-spec", type: "spec", title: "Debug Mode Spec" }),
+      makeParsedDoc({ id: "r1", type: "research" }),
+    ];
+    generateIndexes(dir, docs);
+    expect(existsSync(join(dir, "_specs.md"))).toBe(true);
+    const specs = readFileSync(join(dir, "_specs.md"), "utf-8");
+    expect(specs).toContain("[[debug-spec]]");
+    expect(existsSync(join(dir, "_uncategorized.md"))).toBe(false);
+    const index = readFileSync(join(dir, "_index.md"), "utf-8");
+    expect(index).toContain("[[_specs]]");
+    expect(index).not.toContain("[[_uncategorized]]");
+  });
 });
 
 describe("findMarkdownFiles", () => {

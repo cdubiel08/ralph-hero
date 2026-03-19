@@ -1,4 +1,5 @@
 ---
+type: plan
 date: 2026-02-27
 status: draft
 github_issues: [451]

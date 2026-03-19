@@ -1,3 +1,8 @@
+---
+type: research
+date: 2026-02-20
+---
+
 # GH-199: Add Audit Trail Comments for Cross-Project State Sync
 
 **Issue**: https://github.com/cdubiel08/ralph-hero/issues/199

@@ -1,3 +1,8 @@
+---
+type: report
+date: 2026-03-18
+---
+
 # Ralph Team Session Report: GH-604-demo-cli
 
 **Date**: 2026-03-18
