@@ -67,6 +67,13 @@ export interface GitHubClient {
   /** Get the authenticated user's login. */
   getAuthenticatedUser: () => Promise<string>;
 
+  /** Execute a REST API POST request. Uses project token by default. */
+  restPost: <T = unknown>(
+    path: string,
+    body: unknown,
+    useProjectToken?: boolean,
+  ) => Promise<T>;
+
   /** Configuration. */
   config: GitHubClientConfig;
 }
@@ -281,6 +288,37 @@ export function createGitHubClient(
       const login = result.viewer.login;
       cache.set(cacheKey, login, 60 * 60 * 1000); // Cache for 1 hour
       return login;
+    },
+
+    async restPost<T>(
+      path: string,
+      body: unknown,
+      useProjectToken = true,
+    ): Promise<T> {
+      const token = useProjectToken
+        ? (clientConfig.projectToken ?? clientConfig.token)
+        : clientConfig.token;
+
+      const url = `https://api.github.com${path}`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(
+          `GitHub REST API error ${response.status} for ${path}: ${text}`,
+        );
+      }
+
+      return response.json() as Promise<T>;
     },
   };
 }
