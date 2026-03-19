@@ -111,7 +111,7 @@ For each drift log found:
 1. Parse drift entries (lines starting with `- DRIFT:` or containing `DRIFT:` prefix)
 2. For each minor drift: verify the adaptation is consistent with plan intent
 3. For each entry: verify a `DRIFT:` commit message exists in the worktree git log via `git log --oneline | grep "DRIFT:"`
-4. Flag any undocumented drift — determine the base ref via `git merge-base HEAD origin/main`, then run `git diff --name-only $(git merge-base HEAD origin/main)..HEAD` to list all changed files; any file not in any task's declared file list AND with no `DRIFT:` commit is undocumented drift
+4. Flag any undocumented drift — files in `git diff --name-only [base]..HEAD` that aren't in any task's declared file list AND have no `DRIFT:` commit
 
 Report drift summary:
 ```
