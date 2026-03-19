@@ -1,0 +1,143 @@
+---
+description: Install the global 'ralph' CLI command and shell completions. Run this once after installing the ralph-hero plugin to make 'ralph' available from anywhere in your terminal.
+argument-hint: ""
+context: fork
+model: haiku
+hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=setup-cli"
+allowed-tools:
+  - Bash
+---
+
+# Install Ralph CLI
+
+Install the global `ralph` command and shell completions from the installed ralph-hero plugin.
+
+## Step 1: Locate plugin
+
+Run:
+
+```bash
+ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/" 2>/dev/null | sort -V | tail -1
+```
+
+- If the directory does not exist or produces no output, stop with:
+  ```
+  Error: ralph-hero plugin not found.
+  Install it first: claude plugin install https://github.com/cdubiel08/ralph-hero
+  ```
+- Set `PLUGIN_DIR="$HOME/.claude/plugins/cache/ralph-hero/ralph-hero/<latest-version>"`
+- Check that `$PLUGIN_DIR/scripts/ralph-cli.sh` exists. If not, stop with:
+  ```
+  Error: ralph-cli.sh not found at $PLUGIN_DIR/scripts/ralph-cli.sh
+  Try reinstalling: claude plugin install https://github.com/cdubiel08/ralph-hero
+  ```
+
+## Step 2: Install binary
+
+Run:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+cp "$PLUGIN_DIR/scripts/ralph-cli.sh" "$HOME/.local/bin/ralph"
+chmod +x "$HOME/.local/bin/ralph"
+```
+
+Print: `Installed: ~/.local/bin/ralph`
+
+## Step 3: Detect shell and install completions
+
+Detect shell: `basename "$SHELL"`
+
+**For zsh:**
+
+Check if `$PLUGIN_DIR/scripts/ralph-completions.zsh` exists.
+
+- If it exists:
+  ```bash
+  mkdir -p "$HOME/.local/share/ralph"
+  cp "$PLUGIN_DIR/scripts/ralph-completions.zsh" "$HOME/.local/share/ralph/ralph-completions.zsh"
+  ```
+  Print: `Installed: ~/.local/share/ralph/ralph-completions.zsh`
+- If it does not exist: print `Warning: ralph-completions.zsh not found in plugin — skipping completions.`
+
+**For bash:**
+
+Check if `$PLUGIN_DIR/scripts/ralph-completions.bash` exists.
+
+- If it exists:
+  ```bash
+  mkdir -p "$HOME/.local/share/ralph"
+  cp "$PLUGIN_DIR/scripts/ralph-completions.bash" "$HOME/.local/share/ralph/ralph-completions.bash"
+  ```
+  Print: `Installed: ~/.local/share/ralph/ralph-completions.bash`
+- If it does not exist: print `Warning: ralph-completions.bash not found in plugin — skipping completions.`
+
+**For any other shell:**
+
+Print: `Note: only bash/zsh completions are available — skipping completions.`
+
+## Step 4: Check PATH
+
+Run:
+
+```bash
+echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin" && echo "in_path" || echo "not_in_path"
+```
+
+Record the result as `PATH_OK` (true/false) for use in Step 6.
+
+## Step 5: Check just
+
+Run:
+
+```bash
+command -v just >/dev/null 2>&1 && echo "just_ok" || echo "just_missing"
+```
+
+Record the result as `JUST_OK` (true/false) for use in Step 6.
+
+## Step 6: Print summary
+
+Print what was done and the next steps, tailored to the detected shell and what warnings were triggered.
+
+**For zsh**, print (omit the PATH line if `PATH_OK` is true, omit just warning if `JUST_OK` is true):
+
+```
+Done! Ralph CLI installed.
+
+Next steps:
+1. Add to ~/.zshrc, then restart your shell (or run: source ~/.zshrc):
+   export PATH="$HOME/.local/bin:$PATH"           # omit if PATH_OK
+   source ~/.local/share/ralph/ralph-completions.zsh
+
+2. Verify: ralph doctor
+
+3. Set up your GitHub project: /ralph-hero:setup
+
+Warning: 'just' is not installed — ralph won't work until it is.
+Install: brew install just  (or see https://just.systems)
+```
+
+**For bash**, print (same conditional omissions):
+
+```
+Done! Ralph CLI installed.
+
+Next steps:
+1. Add to ~/.bashrc, then restart your shell (or run: source ~/.bashrc):
+   export PATH="$HOME/.local/bin:$PATH"           # omit if PATH_OK
+   source ~/.local/share/ralph/ralph-completions.bash
+
+2. Verify: ralph doctor
+
+3. Set up your GitHub project: /ralph-hero:setup
+
+Warning: 'just' is not installed — ralph won't work until it is.
+Install: brew install just  (or see https://just.systems)
+```
+
+**For other shells**, substitute the appropriate RC file note or omit the completions line if it was skipped.
