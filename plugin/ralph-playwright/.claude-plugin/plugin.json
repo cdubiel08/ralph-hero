@@ -1,7 +1,23 @@
 {
   "name": "ralph-playwright",
   "version": "0.1.0",
-  "description": "Polymorphic UI testing skills: story generation, E2E execution, a11y, Storybook, and visual regression",
+  "description": "Polymorphic UI testing plugin: story generation, E2E execution, a11y scanning, Storybook integration, and visual regression for ralph-hero.",
+  "author": {
+    "name": "Chad Dubiel",
+    "url": "https://github.com/cdubiel08"
+  },
+  "homepage": "https://github.com/cdubiel08/ralph-hero",
+  "repository": "https://github.com/cdubiel08/ralph-hero",
+  "license": "MIT",
+  "keywords": [
+    "playwright",
+    "ui-testing",
+    "e2e",
+    "accessibility",
+    "storybook",
+    "visual-regression",
+    "ralph-hero"
+  ],
   "skills": [
     "skills/setup",
     "skills/story-gen",
