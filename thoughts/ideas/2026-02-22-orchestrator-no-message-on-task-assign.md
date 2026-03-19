@@ -1,4 +1,5 @@
 ---
+type: idea
 date: 2026-02-22
 status: closed
 reason: Handled by existing epic (team worker redesign)

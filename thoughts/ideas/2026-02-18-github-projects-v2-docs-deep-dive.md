@@ -1,4 +1,5 @@
 ---
+type: idea
 date: 2026-02-18
 status: closed
 reason: "Ideas triaged: #367 (iteration), #368 (capacity). Ideas 2,3,4,7 already implemented. Ideas 5,8,9 covered by existing issues."

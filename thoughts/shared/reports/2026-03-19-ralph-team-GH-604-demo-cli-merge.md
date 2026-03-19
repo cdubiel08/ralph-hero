@@ -1,3 +1,8 @@
+---
+type: report
+date: 2026-03-19
+---
+
 # Ralph Team Session Report: GH-604-demo-cli (merge session)
 
 **Date**: 2026-03-19

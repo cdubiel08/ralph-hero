@@ -1,3 +1,8 @@
+---
+type: report
+date: 2026-02-25
+---
+
 # Idea Hunt Team Diagnostic Report
 
 **Date:** 2026-02-25

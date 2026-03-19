@@ -1,3 +1,8 @@
+---
+type: report
+date: 2026-03-01
+---
+
 # Ralph Team Session Report: plugin-cleanup
 
 **Date**: 2026-03-01

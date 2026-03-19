@@ -1,4 +1,5 @@
 ---
+type: plan
 title: "Demo: Add greeting message to CLI"
 date: 2026-03-18
 github_issues: [605, 606, 607]
