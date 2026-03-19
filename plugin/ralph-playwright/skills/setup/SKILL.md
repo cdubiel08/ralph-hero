@@ -9,7 +9,7 @@ Install and configure all MCP servers required by ralph-playwright skills.
 
 ## Step 1: Required MCP — Playwright (mandatory)
 
-Add to `.claude/settings.local.json` under `env` → `mcpServers`:
+Add to `.claude/settings.local.json` under the top-level `mcpServers` key:
 ```json
 {
   "mcpServers": {
