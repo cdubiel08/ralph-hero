@@ -18,7 +18,16 @@ cat package.json | grep -E "chromatic|@applitools"
 ## Chromatic (default)
 ```bash
 npm install --save-dev chromatic
-npx chromatic --project-token=<token-from-chromatic.com>
+```
+
+Before running Chromatic, get your project token from https://www.chromatic.com and set it as an environment variable:
+```bash
+export CHROMATIC_PROJECT_TOKEN=your-token-here
+```
+
+Then run:
+```bash
+npx chromatic
 ```
 Free tier: 5,000 snapshots/month. Pixel-perfect diffing. Good for stable UIs.
 
