@@ -80,17 +80,6 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 +-------------------------------------------------------------------+
 ```
 
-## Step 0: Environment Bootstrap
-
-Before any MCP tool calls, ensure `RALPH_COMMAND` is set (required by `skill-precondition.sh`):
-
-```bash
-echo 'export RALPH_COMMAND=hero' >> "$CLAUDE_ENV_FILE"
-echo 'export RALPH_AUTO_APPROVE=false' >> "$CLAUDE_ENV_FILE"
-```
-
-Run this via the Bash tool at the start of every hero session. If `CLAUDE_ENV_FILE` is not set, skip — the env vars are already available.
-
 ## Prerequisites
 
 **Preferred argument**: Issue number (e.g., `42`)
