@@ -224,7 +224,7 @@ In `plugin/ralph-hero/skills/team/SKILL.md` lines 5–22, add `ralph_hero__creat
 
 - [ ] **Step 2: Replace the Shut Down section**
 
-Replace lines 207–255 (the `## Shut Down` → `### 1. Write Post-Mortem` block through the commit/push block) with:
+Replace lines 207–264 (the entire `## Shut Down` section through end of file) with:
 
 ```markdown
 ## Shut Down
@@ -375,24 +375,22 @@ for section in "## Artifacts" "## Blockers" "## Impediments" "## Issues Processe
   fi
 done
 
-# Build error message if anything is missing
+# Build error message if anything is missing using $'\n' for real newlines in Bash
 if [[ ${#MISSING_FIELDS[@]} -gt 0 || ${#MISSING_SECTIONS[@]} -gt 0 ]]; then
-  MSG="Post-mortem at ${POSTMORTEM} is incomplete.\n\n"
+  MSG="Post-mortem at ${POSTMORTEM} is incomplete."
   if [[ ${#MISSING_FIELDS[@]} -gt 0 ]]; then
-    MSG+="Missing frontmatter fields:\n"
+    MSG+=$'\n\n'"Missing frontmatter fields:"
     for f in "${MISSING_FIELDS[@]}"; do
-      MSG+="  - ${f}\n"
+      MSG+=$'\n'"  - ${f}"
     done
-    MSG+="\n"
   fi
   if [[ ${#MISSING_SECTIONS[@]} -gt 0 ]]; then
-    MSG+="Missing body sections:\n"
+    MSG+=$'\n\n'"Missing body sections:"
     for s in "${MISSING_SECTIONS[@]}"; do
-      MSG+="  - ${s}\n"
+      MSG+=$'\n'"  - ${s}"
     done
-    MSG+="\n"
   fi
-  MSG+="Regenerate using the ralph-hero:ralph-postmortem skill."
+  MSG+=$'\n\n'"Regenerate using the ralph-hero:ralph-postmortem skill."
   block "$MSG"
 fi
 

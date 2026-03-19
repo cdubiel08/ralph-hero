@@ -220,7 +220,7 @@ githubIssues: Array.isArray(frontmatter.github_issues)
 
 - [ ] **Step 5: Update `makeParsedDoc` factory in generate-indexes.test.ts**
 
-In `generate-indexes.test.ts` line 9–22, add `githubIssues: []` to the default object:
+In `generate-indexes.test.ts` lines 9–23, add `githubIssues: []` to the default object:
 
 ```typescript
 function makeParsedDoc(overrides: Partial<ParsedDocument>): ParsedDocument {
@@ -334,15 +334,29 @@ cd plugin/ralph-knowledge && npx vitest run src/__tests__/generate-indexes.test.
 
 Expected: FAIL — multi-hub test fails because GH-0612.md is not created
 
-- [ ] **Step 3: Add secondary hub pass to `writeIssueHubs`**
+- [ ] **Step 3: Insert secondary hub pass into `writeIssueHubs`**
 
-In `generate-indexes.ts`, update `writeIssueHubs` to add a secondary pass after the primary grouping loop (after line 71, before the `mkdirSync` call):
+In `generate-indexes.ts`, insert the following block **after line 71** (the closing `}` of the primary `for (const doc of allDocs)` loop) and **before line 73** (the `mkdirSync` call). Do not replace the existing function — insert only this new loop:
+
+```typescript
+  // Secondary pass: index into additional hubs from githubIssues array
+  for (const doc of allDocs) {
+    for (const issueNum of doc.githubIssues) {
+      if (issueNum === doc.githubIssue) continue; // already added in primary pass
+      const list = byIssue.get(issueNum) ?? [];
+      if (!list.includes(doc)) {
+        list.push(doc);
+        byIssue.set(issueNum, list);
+      }
+    }
+  }
+```
+
+After insertion, lines 63–73 of the function should read:
 
 ```typescript
 export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void {
   const byIssue = new Map<number, ParsedDocument[]>();
-
-  // Primary pass: group by githubIssue (singular)
   for (const doc of allDocs) {
     if (doc.githubIssue !== null) {
       const list = byIssue.get(doc.githubIssue) ?? [];
@@ -363,7 +377,8 @@ export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void 
     }
   }
 
-  // (rest of function unchanged — mkdirSync, hub file generation loop)
+  const issuesDir = join(outDir, "_issues");
+  // ... rest of function unchanged
 ```
 
 - [ ] **Step 4: Run all tests to verify they pass**
