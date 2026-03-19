@@ -1,7 +1,7 @@
 ---
 description: Single-orchestrator pipeline that drives a GitHub issue through the full lifecycle with a human plan-approval gate. Expands issue trees, parallelizes research, then implements sequentially. Unlike team mode (fully autonomous with persistent workers), hero mode stops for human review before implementation and uses ephemeral sub-agents per task. Use when you want to process an issue end-to-end with human oversight, need a plan approval gate, or prefer a lighter-weight orchestrator for small groups.
 argument-hint: <issue-number>
-model: sonnet
+context: inline
 allowed-tools:
   - Read
   - Write
@@ -27,16 +27,7 @@ allowed-tools:
   - ralph_hero__pipeline_dashboard
   - knowledge_search
   - knowledge_traverse
-hooks:
-  SessionStart:
-    - hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=hero RALPH_AUTO_APPROVE=false"
-  PreToolUse:
-    - matcher: "TaskCreate|TaskUpdate"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/task-schema-validator.sh"
+  - AskUserQuestion
 ---
 
 # Ralph GitHub Hero - Tree Expansion Orchestrator
@@ -88,6 +79,17 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 |  COMPLETE                                                          |
 +-------------------------------------------------------------------+
 ```
+
+## Step 0: Environment Bootstrap
+
+Before any MCP tool calls, ensure `RALPH_COMMAND` is set (required by `skill-precondition.sh`):
+
+```bash
+echo 'export RALPH_COMMAND=hero' >> "$CLAUDE_ENV_FILE"
+echo 'export RALPH_AUTO_APPROVE=false' >> "$CLAUDE_ENV_FILE"
+```
+
+Run this via the Bash tool at the start of every hero session. If `CLAUDE_ENV_FILE` is not set, skip — the env vars are already available.
 
 ## Prerequisites
 
