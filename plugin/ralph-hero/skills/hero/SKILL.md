@@ -1,7 +1,7 @@
 ---
 description: Single-orchestrator pipeline that drives a GitHub issue through the full lifecycle with a human plan-approval gate. Expands issue trees, parallelizes research, then implements sequentially. Unlike team mode (fully autonomous with persistent workers), hero mode stops for human review before implementation and uses ephemeral sub-agents per task. Use when you want to process an issue end-to-end with human oversight, need a plan approval gate, or prefer a lighter-weight orchestrator for small groups.
 argument-hint: <issue-number>
-model: sonnet
+context: inline
 allowed-tools:
   - Read
   - Write
@@ -27,6 +27,7 @@ allowed-tools:
   - ralph_hero__pipeline_dashboard
   - knowledge_search
   - knowledge_traverse
+  - AskUserQuestion
 hooks:
   SessionStart:
     - hooks:
