@@ -43,7 +43,7 @@ Error: ralph-hero plugin not found.
 Install it first: claude plugin install https://github.com/cdubiel08/ralph-hero
 ```
 
-If `ralph-cli.sh` is not found inside the latest version dir, hard stop with the checked path + reinstall suggestion.
+Check that `<plugin-dir>/scripts/ralph-cli.sh` exists. If not, hard stop with the exact path that was checked and a reinstall suggestion.
 
 **Step 2 — Install binary**
 
@@ -57,48 +57,31 @@ Auto-creates `~/.local/bin` if it doesn't exist. No confirmation prompt — this
 
 **Step 3 — Detect shell and install completions**
 
-Read `$SHELL`. Handle:
+Read `$SHELL`. For each supported shell, copy the completions file to `~/.local/share/ralph/` (a dedicated stable directory) and print the `source` line the user needs to add to their shell RC file. The completions files are designed for sourcing (per their own headers); this avoids fpath and bash-completion-v2 setup complexity entirely.
 
-| Shell | Completions file | Destination |
-|-------|-----------------|-------------|
-| zsh | `ralph-completions.zsh` | `~/.local/share/zsh/site-functions/_ralph` |
-| bash | `ralph-completions.bash` | `~/.local/share/bash-completion/completions/ralph` |
-| other | (skip) | Print: only bash/zsh completions available |
+| Shell | Source file | Destination | RC file instruction |
+|-------|-------------|-------------|---------------------|
+| zsh | `scripts/ralph-completions.zsh` | `~/.local/share/ralph/ralph-completions.zsh` | `source ~/.local/share/ralph/ralph-completions.zsh` → `~/.zshrc` |
+| bash | `scripts/ralph-completions.bash` | `~/.local/share/ralph/ralph-completions.bash` | `source ~/.local/share/ralph/ralph-completions.bash` → `~/.bashrc` |
+| other | (skip) | — | Print: only bash/zsh completions available |
 
-Auto-create the destination directory if it doesn't exist.
+Check that the completions source file exists in the plugin dir before copying. If missing: warn and skip completions, continue.
+
+Auto-create `~/.local/share/ralph/` if it doesn't exist.
+
+Always print the `source` line as an explicit instruction — do NOT add it to the RC file automatically.
 
 **Step 4 — PATH check**
 
 Check if `~/.local/bin` is in `$PATH`. If not, print the exact line to add — do NOT modify shell profile automatically:
 
-For zsh (`~/.zshrc`):
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-For bash (`~/.bashrc` or `~/.bash_profile`):
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+Print the appropriate RC file name based on the shell detected in Step 3 (`~/.zshrc` for zsh, `~/.bashrc` for bash).
 
-**Step 5 — fpath check (zsh only)**
-
-Check if `~/.local/share/zsh/site-functions` is in `$fpath`. If not, print:
-
-```bash
-# Add to ~/.zshrc:
-fpath=(~/.local/share/zsh/site-functions $fpath)
-autoload -U compinit && compinit
-```
-
-For bash, note that the system bash-completion setup typically sources from the installed directory automatically; if uncertain, print:
-
-```bash
-# Add to ~/.bashrc if completions don't work:
-source ~/.local/share/bash-completion/completions/ralph
-```
-
-**Step 6 — just check**
+**Step 5 — just check**
 
 Check if `just` is installed via `command -v just`. If missing, print a **warning** (not a hard stop):
 
@@ -108,29 +91,47 @@ won't work until just is available at runtime.
 Install: brew install just  (or see https://just.systems)
 ```
 
-**Step 7 — Summary and next steps**
+**Step 6 — Summary and next steps**
 
-Print a clean summary of what succeeded and what was warned, then:
+Print a clean summary of what succeeded and what was warned, then print shell-specific instructions using the shell detected in Step 3:
 
+For zsh:
 ```
 Done! Ralph CLI installed.
 
 Next steps:
-1. Restart your shell (or run: source ~/.zshrc)
+1. Add to ~/.zshrc, then restart your shell (or run: source ~/.zshrc):
+   export PATH="$HOME/.local/bin:$PATH"          # if PATH warning shown
+   source ~/.local/share/ralph/ralph-completions.zsh
 2. Verify: ralph doctor
 3. Set up your GitHub project: /ralph-hero:setup
 ```
+
+For bash:
+```
+Done! Ralph CLI installed.
+
+Next steps:
+1. Add to ~/.bashrc, then restart your shell (or run: source ~/.bashrc):
+   export PATH="$HOME/.local/bin:$PATH"          # if PATH warning shown
+   source ~/.local/share/ralph/ralph-completions.bash
+2. Verify: ralph doctor
+3. Set up your GitHub project: /ralph-hero:setup
+```
+
+Items that are already satisfied (PATH already set, completions skipped, etc.) are omitted from the next steps.
 
 ### Error handling summary
 
 | Situation | Action |
 |-----------|--------|
-| Plugin cache missing | Hard stop + install instruction |
-| `ralph-cli.sh` not found | Hard stop + path shown + reinstall suggestion |
+| Plugin cache dir missing | Hard stop + install instruction |
+| `scripts/ralph-cli.sh` not found in plugin dir | Hard stop + exact path shown + reinstall suggestion |
 | `~/.local/bin` missing | Auto-create, continue |
-| Completions dir missing | Auto-create, continue |
-| Unknown shell | Skip completions, note it, continue |
-| `~/.local/bin` not in PATH | Print export line, do NOT edit profile |
+| Completions source file missing from plugin dir | Warn and skip completions, continue |
+| `~/.local/share/ralph/` missing | Auto-create, continue |
+| Unknown shell | Skip completions with a note, continue |
+| `~/.local/bin` not in PATH | Print export line + RC file name, do NOT edit profile |
 | `just` not installed | Warning only, continue |
 
 **Principle:** only hard-stop when the binary itself cannot be installed. Everything else is a warning or auto-fix.
@@ -139,7 +140,7 @@ Next steps:
 
 ## Change to `/ralph-hero:setup`
 
-At the end of the **Next steps** block in Step 7 of `skills/setup/SKILL.md`, add one line:
+At the end of **all four** Next steps blocks in Step 7 of `skills/setup/SKILL.md` (simple setup with routing enabled, simple setup with routing skipped, split-owner with routing enabled, split-owner with routing skipped), add one line:
 
 ```
 Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
@@ -156,6 +157,7 @@ This appears as a non-blocking suggestion after the primary next steps — disco
 - Does not chain into `/ralph-hero:setup`
 - Does not require `just` to be installed at skill-run time
 - Does not touch `.mcp.json` or env vars
+- Does not use fpath or bash-completion-v2 infrastructure
 
 ---
 
@@ -165,5 +167,5 @@ This appears as a non-blocking suggestion after the primary next steps — disco
 plugin/ralph-hero/skills/setup-cli/
 └── SKILL.md          # new skill definition
 plugin/ralph-hero/skills/setup/
-└── SKILL.md          # existing skill, +1 tip line at end
+└── SKILL.md          # existing skill, +1 tip line in all four Step 7 variants
 ```
