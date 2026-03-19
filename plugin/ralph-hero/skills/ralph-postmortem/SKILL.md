@@ -130,6 +130,7 @@ For each entry in `## Blockers` (skip if "None."):
 Call `ralph_hero__create_issue` with:
 - `title`: `process: {brief description of the blocker}`
 - `body`: fuller description of what failed, what the retry cost was, and what improvement would prevent recurrence
+- `labels`: `["process-improvement"]`
 - `workflowState`: `"Backlog"`
 
 Update the blocker entry in the post-mortem to include the created issue number: `[issue created: #NNN]`
