@@ -103,6 +103,44 @@ From the worktree directory, execute each automated verification criterion:
 
 Record each check as PASS or FAIL with details.
 
+## Step 6.5: Drift Log Verification
+
+Search issue comments (from `ralph_hero__get_issue` response) for `## Drift Log — Phase N` headers.
+
+For each drift log found:
+1. Parse drift entries (lines starting with `- DRIFT:` or containing `DRIFT:` prefix)
+2. For each minor drift: verify the adaptation is consistent with plan intent
+3. For each entry: verify a `DRIFT:` commit message exists in the worktree git log via `git log --oneline | grep "DRIFT:"`
+4. Flag any undocumented drift — determine the base ref via `git merge-base HEAD origin/main`, then run `git diff --name-only $(git merge-base HEAD origin/main)..HEAD` to list all changed files; any file not in any task's declared file list AND with no `DRIFT:` commit is undocumented drift
+
+Report drift summary:
+```
+Drift Analysis:
+- Phase 1: 2 minor drifts (documented)
+- Phase 2: 0 drifts
+- Undocumented changes: none
+```
+
+If no drift logs exist on the issue, report: `Drift Analysis: No drift logs found (clean implementation)`
+
+## Step 6.6: Cross-Phase Integration Check (multi-phase plans only)
+
+If the plan has more than one `## Phase N:` section:
+
+1. Verify each phase's "Creates for next phase" items actually exist in the worktree
+2. Check imports between phase outputs — if Phase 1 exports types used by Phase 2, verify the import paths resolve
+3. Run the plan's `## Integration Testing` section checks if that section exists
+
+Report integration status:
+```
+Cross-Phase Integration:
+- Phase 1 → Phase 2: types.ts exports used correctly ✓
+- Phase 2 → Phase 3: parser.ts interface matches ✓
+- Integration tests: 3/3 passing ✓
+```
+
+If the plan has only one phase, report: `Cross-Phase Integration: Single-phase plan — skipped`
+
 ## Step 7: Produce Verdict
 
 If all automated criteria pass: `PASS`
@@ -116,11 +154,18 @@ Issue: #NNN
 Plan: [plan path]
 Worktree: [worktree path]
 
-Checks:
+### Automated Checks:
 - [x] npm test — passed (exit 0)
 - [x] npm run build — passed (exit 0)
 - [x] test -f plugin/ralph-hero/skills/ralph-val/SKILL.md — exists
 - [ ] grep "RALPH_COMMAND: \"val\"" ... — MISSING
+
+### Drift Analysis:
+- Phase 1: 1 minor drift (documented)
+- Undocumented changes: none
+
+### Cross-Phase Integration:
+- All phase outputs verified ✓
 
 Verdict: [PASS/FAIL]
 [If FAIL: list each failing criterion with specific details]

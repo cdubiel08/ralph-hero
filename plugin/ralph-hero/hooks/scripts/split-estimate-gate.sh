@@ -16,4 +16,4 @@ read_input > /dev/null
 
 min_estimate="${RALPH_MIN_ESTIMATE:-M}"
 
-allow_with_context "Split command requires ticket estimate of M/L/XL. Verify after fetching ticket details."
+allow_with_context "Split command requires ticket estimate of M/L/XL. Valid input states: Backlog, Research Needed, Plan in Review. Verify after fetching ticket details."
