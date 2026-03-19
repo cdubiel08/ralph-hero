@@ -1,0 +1,18 @@
+{
+  "name": "ralph-playwright",
+  "version": "0.1.0",
+  "description": "Polymorphic UI testing skills: story generation, E2E execution, a11y, Storybook, and visual regression",
+  "skills": [
+    "skills/setup",
+    "skills/story-gen",
+    "skills/explore",
+    "skills/test-e2e",
+    "skills/a11y-scan",
+    "skills/storybook-test",
+    "skills/visual-diff"
+  ],
+  "agents": [
+    "agents/story-runner-agent.md",
+    "agents/explorer-agent.md"
+  ]
+}
