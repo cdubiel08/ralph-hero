@@ -215,6 +215,46 @@ superseded_by: "[[2026-03-19-ralph-team-GH-600-session]]"
       expect(doc.githubIssue).toBe(550);
     });
   });
+
+  describe("githubIssues array", () => {
+    function makeDoc(frontmatter: string, body = "# Test\n\nContent."): string {
+      return `---\n${frontmatter}\n---\n\n${body}`;
+    }
+
+    it("populates githubIssues from github_issues array", () => {
+      const raw = makeDoc("github_issues: [100, 200, 300]");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssues).toEqual([100, 200, 300]);
+    });
+
+    it("filters non-number values from github_issues", () => {
+      const raw = makeDoc('github_issues: [100, "bad", 200]');
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssues).toEqual([100, 200]);
+    });
+
+    it("returns empty array when github_issues is absent", () => {
+      const raw = makeDoc("github_issue: 42");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssues).toEqual([]);
+    });
+
+    it("returns empty array when github_issues is not an array", () => {
+      const raw = makeDoc("github_issues: 42");
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssues).toEqual([]);
+    });
+
+    it("includes all issues in session post-mortem pattern", () => {
+      const raw = makeDoc([
+        "github_issue: 611",
+        "github_issues: [611, 612]",
+      ].join("\n"));
+      const doc = parseDocument("test", "test.md", raw);
+      expect(doc.githubIssues).toEqual([611, 612]);
+      expect(doc.githubIssue).toBe(611); // primary unchanged
+    });
+  });
 });
 
 describe("inferTypeFromPath", () => {

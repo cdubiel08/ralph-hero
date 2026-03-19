@@ -15,6 +15,7 @@ function makeParsedDoc(overrides: Partial<ParsedDocument>): ParsedDocument {
     type: "research",
     status: "draft",
     githubIssue: null,
+    githubIssues: [],
     tags: [],
     relationships: [],
     content: "test content",

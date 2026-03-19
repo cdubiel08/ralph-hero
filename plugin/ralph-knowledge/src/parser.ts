@@ -14,6 +14,7 @@ export interface ParsedDocument {
   type: string | null;
   status: string | null;
   githubIssue: number | null;
+  githubIssues: number[];
   tags: string[];
   relationships: Relationship[];
   content: string;
@@ -83,6 +84,9 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
         : typeof frontmatter.primary_issue === "number"
           ? frontmatter.primary_issue
           : null,
+    githubIssues: Array.isArray(frontmatter.github_issues)
+      ? frontmatter.github_issues.filter((n: unknown) => typeof n === "number")
+      : [],
     tags, relationships, content: body,
   };
 }
