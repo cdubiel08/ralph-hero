@@ -97,19 +97,16 @@ github_urls:
 ## Impediments
 
 {impediment_items or "None."}
-
-## Notes
-
-{any other notable observations, or omit section if nothing to add}
 ```
 
 Where:
 - `{primary_issue_number}`: the first issue number in the session (lowest number if multiple)
 - `{all_issue_numbers}`: comma-separated list of all issue numbers, e.g. `[611, 612]`
+- `{owner}` and `{repo}`: use `RALPH_GH_OWNER` and `RALPH_GH_REPO` env vars, or extract from any `issue_url` collected in Step 1
 - `{builds_on_links}`: one `- builds_on:: [[plan-slug]]` per plan found in Step 2; omit section content (but keep heading) if no plans found
 - Blocker items: `- [issue created: #NNN] Description of what failed and the retry cost`
 - Impediment items: `- Description of friction observed`
-- `## Notes` section is optional — include only if there is content beyond what's in Blockers/Impediments
+- `## Notes` section: omit entirely if there is nothing to add beyond Blockers/Impediments
 
 ## Step 5: Patch Plan Documents
 
