@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - WebSearch
   - WebFetch
   - ralph_hero__get_issue
@@ -80,9 +81,11 @@ Then wait for the user's input.
    - `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find all files related to [task topic]")`
    - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Understand how [component] currently works")`
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing thoughts documents about [feature]")` (if relevant)
-   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions, constraints, and specs from thoughts documents about [feature]")` (dispatch after locator returns)
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls (per ADR-001 in shared/conventions.md).
+
+   After locator agents return, dispatch analyzers on the most relevant findings:
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions, constraints, and specs from thoughts documents about [feature]")`
 
    These agents will:
    - Find relevant source files, configs, and tests
@@ -140,7 +143,9 @@ After getting initial clarifications:
 
    **For historical context:**
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find research, plans, or decisions about [area]")`
-   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Analyze decisions and constraints from [area] documents")` (dispatch after locator returns)
+
+   After locator agents return, dispatch analyzers on the most relevant findings:
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Analyze decisions and constraints from [area] documents")`
 
    **For existing issues:**
    - Use `ralph_hero__list_issues(query=...)` to find related issues directly

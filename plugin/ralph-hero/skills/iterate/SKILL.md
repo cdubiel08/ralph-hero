@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - WebSearch
   - WebFetch
   - ralph_hero__get_issue

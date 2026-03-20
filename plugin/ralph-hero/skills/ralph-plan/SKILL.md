@@ -42,6 +42,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - ralph_hero__get_issue
   - ralph_hero__list_issues
   - ralph_hero__save_issue
@@ -162,9 +163,11 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
    - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
    - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research, plans, or decisions about [topic]")`
-   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and constraints from thought documents about [topic]")`
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
+
+   After locator agents return, dispatch analyzers on the most relevant findings:
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and constraints from thought documents about [topic]")`
 
 4. **Wait for sub-tasks** before proceeding
 

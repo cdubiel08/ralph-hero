@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - WebSearch
   - WebFetch
   - ralph_hero__get_issue
@@ -74,6 +75,8 @@ Create multiple Task agents to research different aspects concurrently. Use thes
 
 **For thoughts directory:**
 - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Discover what documents exist about [topic]")`
+
+  Then analyze the most relevant findings:
 - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions, constraints, and technical specs from [documents found by locator]")`
 
 **For web research (only if user explicitly asks):**
