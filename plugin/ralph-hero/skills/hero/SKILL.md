@@ -220,7 +220,7 @@ Loop until pipeline is complete:
 
 1. `TaskList()` → filter to tasks with `status=pending` AND `blockedBy=[]` (empty/all resolved)
 2. If no pending unblocked tasks: check for `in_progress` tasks — if all tasks are `completed`, STOP (pipeline complete)
-3. Execute all unblocked tasks simultaneously (multiple `Task()` calls in a single message, foreground)
+3. Execute all unblocked tasks simultaneously (multiple `Agent()` calls in a single message)
 4. Wait for all to complete
 5. `TaskUpdate(status="completed")` for each completed task
 6. Repeat from step 1
@@ -229,7 +229,7 @@ Loop until pipeline is complete:
 
 #### SPLIT tasks
 ```
-Skill("ralph-hero:ralph-split", "NNN")
+Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-split NNN", description="Split GH-NNN")
 ```
 After all splits complete, re-call `get_issue(includePipeline=true)` and rebuild remaining task list.
 
@@ -292,7 +292,7 @@ During tree expansion, if research found evidence of cross-repo dependencies not
 
 #### RESEARCH tasks
 ```
-Skill("ralph-hero:ralph-research", "NNN")
+Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-research NNN", description="Research GH-NNN")
 ```
 After all research completes, run Stream Detection (Step 2.5) if applicable.
 
@@ -301,21 +301,21 @@ After all research completes, run Stream Detection (Step 2.5) if applicable.
 Before spawning, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, append `--research-doc {path}` to args:
 
 Determine planning approach from issue estimate:
-- **L/XL estimate** → `Skill("ralph-hero:ralph-plan-epic", "NNN")` — handles wave orchestration internally
-- **M/S/XS estimate** → `Skill("ralph-hero:ralph-plan", "NNN --research-doc thoughts/shared/research/...")` or without flag if no artifact_path
+- **L/XL estimate** → `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan-epic NNN", description="Plan epic GH-NNN")` — handles wave orchestration internally
+- **M/S/XS estimate** → `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN --research-doc thoughts/shared/research/...", description="Plan GH-NNN")` or without flag if no artifact_path
 
 ```
 # For L/XL epics:
-Skill("ralph-hero:ralph-plan-epic", "NNN")
+Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan-epic NNN", description="Plan epic GH-NNN")
 
 # For M/S/XS with research doc:
-Skill("ralph-hero:ralph-plan", "NNN --research-doc thoughts/shared/research/...")
+Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN --research-doc thoughts/shared/research/...", description="Plan GH-NNN")
 
 # For M/S/XS without research doc:
-Skill("ralph-hero:ralph-plan", "NNN")
+Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN", description="Plan GH-NNN")
 
 # For multi-issue groups:
-Skill("ralph-hero:ralph-plan", "[PRIMARY] --research-doc {path}")
+Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan [PRIMARY] --research-doc {path}", description="Plan GH-[PRIMARY]")
 ```
 
 #### REVIEW tasks (if RALPH_REVIEW_MODE == "auto")
@@ -323,7 +323,7 @@ Skill("ralph-hero:ralph-plan", "[PRIMARY] --research-doc {path}")
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Skill("ralph-hero:ralph-review", "NNN --plan-doc thoughts/shared/plans/...")
+Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-review NNN --plan-doc thoughts/shared/plans/...", description="Review GH-NNN")
 ```
 **Routing**: ALL APPROVED → continue. ANY NEEDS_ITERATION → STOP with critique links.
 
@@ -337,20 +337,20 @@ Then STOP.
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Skill("ralph-hero:ralph-impl", "NNN --plan-doc thoughts/shared/plans/...")
+Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-impl NNN --plan-doc thoughts/shared/plans/...", description="Implement GH-NNN")
 ```
 If no `artifact_path` available, omit the flag:
 ```
-Skill("ralph-hero:ralph-impl", "NNN")
+Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-impl NNN", description="Implement GH-NNN")
 ```
 
-### Inline Skill Invocation Notes
+### Agent Dispatch Notes
 
-Skills invoked via `Skill()` run **inline in hero's context**, not as separate agents:
-- The skill's `SessionStart` hook sets `RALPH_COMMAND` for that skill
-- `ralph-impl` can dispatch its own subagents via `Agent()` — these are one level deep from hero's context (valid)
-- `Skill()` nesting is fine: hero → Skill(ralph-plan-epic) → Skill(ralph-plan) — all same context
-- Hero trades context isolation for subagent dispatch capability — this is intentional
+Autonomous skills run via `Agent()` for context isolation — each gets a fresh context window:
+- The `prompt` must include the full slash command and all arguments (e.g., `"Run /ralph-hero:ralph-plan NNN --research-doc ..."`)
+- Agent results are not directly visible to the user — hero must relay key outcomes (plan path, review verdict, error messages) from task metadata
+- Agents report artifacts via `TaskUpdate(metadata.artifact_path=...)` — hero reads these via `TaskGet` before spawning downstream agents
+- `Skill()` is reserved for interactive skills invoked directly by the user (e.g., `/hello`, `/plan`, `/impl` in conversational mode) — hero does NOT use `Skill()` for pipeline phases
 If any implementation fails, STOP immediately. Do NOT continue to next issue.
 
 #### PR tasks
