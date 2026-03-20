@@ -66,43 +66,24 @@ Open with a conversational greeting that weaves memory context with current boar
 - Backlog items that have been sitting get context, not alarm: *"#55 has been in backlog since February — you mentioned wanting to tackle it before the API launch but it hasn't been urgent yet."*
 - If the board is healthy and quiet: *"Things look calm — nothing stuck, nothing on fire."*
 
-## Step 3: Present AskUserQuestion
+## Step 3: Offer Directions
 
-After displaying the briefing, present the user with a choice. Each option must be **self-contained** — the user should be able to choose without scrolling back to the briefing.
+After the orient greeting, surface **up to 3 directions** — but only if they genuinely matter. Zero is fine.
 
-!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
+**What counts as a direction**:
+- An issue ready to advance with context on *why* the user would care — *"#55 'Add webhook support' is ready for planning — this is the one you flagged as important for the API launch"*
+- A PR that needs attention with context — *"PR #640 has been open for 2 days, it's the batch update feature you were working on last week"*
+- A strategic nudge from memory — *"You mentioned wanting to clean up the auth middleware before the compliance deadline — nothing's started on that yet"*
 
-**Label**: action verb + target (e.g., "Merge PR #627", "Review Plan #597", "Clean Board")
-**Description**: what the target is + what will happen when selected (e.g., "ralph-playwright (4 phases) — runs code review, checks CI, merges if clean")
+**What does NOT count as a direction**:
+- Housekeeping ("Archive 66 done items")
+- Hygiene noise ("7 issues missing estimate field")
+- WIP limit violations unless they're causing actual bottlenecks
+- Anything that reads like a project management report
 
-```
-AskUserQuestion(
-  questions=[{
-    "question": "Which insight would you like to act on?",
-    "header": "Action",
-    "options": [
-      {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
-      {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
-      {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
-      {"label": "All", "description": "Act on all insights sequentially"}
-    ],
-    "multiSelect": false
-  }]
-)
-```
+**Format**: Each direction is a short paragraph (2-3 sentences max) explaining what it is and why it matters. Conversational, not a numbered dashboard.
 
-**Examples of good labels and descriptions:**
-
-| Insight | Label | Description |
-|---------|-------|-------------|
-| PR needing review | Merge PR #627 | ralph-playwright (4 phases) — runs code review, checks CI, merges if clean |
-| Plan waiting approval | Review Plan #597 | Artifact protocol & quality standards — reads plan, posts approval or feedback |
-| Board hygiene | Clean Board | Archive 66 done items, flag 7 stale issues — runs ralph-hygiene |
-| Stuck issue | Triage #42 | Stuck in Research 5 days — assesses issue, recommends action |
-
-If fewer than 3 insights were generated, only include options for the insights that exist plus "All".
-
-If the user selects "Other" (built-in option), treat it as "skip" — display a brief summary and stop.
+**When there's nothing to surface**: End with *"Nothing urgent jumping out — what are you thinking about today?"* and skip Step 4 entirely (go straight to Step 5).
 
 ## Step 4: Route Based on Selection
 
