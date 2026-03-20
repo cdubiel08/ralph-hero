@@ -27,7 +27,7 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 ## CI/CD
 
-**PR checks** (`ci.yml`): Build + test across Node 18, 20, 22 for all three plugins (hero, knowledge, demo).
+**PR checks** (`ci.yml`): Build + test across Node 18, 20, 22 for plugins with source (hero, knowledge, demo). ralph-playwright is skills/agents-only — no build step.
 
 **Auto-release** (`release.yml`): Merges to `main` that touch MCP server source auto-bump version in both `mcp-server/package.json` and `.claude-plugin/plugin.json`, tag, and publish to npm with provenance. Include `#minor` or `#major` in a commit message for larger bumps.
 
@@ -35,7 +35,7 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 ## Architecture
 
-### Three-Plugin System
+### Plugin System
 
 ```
 plugin/
@@ -47,6 +47,10 @@ plugin/
 │   └── scripts/             # CLI and automation scripts
 ├── ralph-knowledge/         # Semantic search over thoughts/ documents
 │   └── src/                 # Hono MCP server, SQLite + sqlite-vec embeddings
+├── ralph-playwright/        # Polymorphic UI testing skills (no MCP server)
+│   ├── skills/              # 7 skills (setup, story-gen, explore, test-e2e, a11y-scan, storybook-test, visual-diff)
+│   ├── agents/              # 2 agents (explorer-agent, story-runner-agent)
+│   └── schemas/             # User story YAML schema + examples
 └── ralph-demo/              # Sprint demo video generation (Remotion)
     └── remotion/            # React-based video compositing (pnpm)
 ```

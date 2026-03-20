@@ -1,0 +1,61 @@
+stories:
+  - name: "Login succeeds with valid credentials"
+    type: happy
+    url: "http://localhost:3000/login"
+    persona: "registered user"
+    tags: [auth, login]
+    workflow: |
+      Navigate to http://localhost:3000/login
+      Verify login form with email and password fields is visible
+      Fill email field with "test@example.com"
+      Fill password field with "correct-password"
+      Click the Sign In button
+      Verify redirect to /dashboard occurs
+      Verify a welcome message is visible
+
+  - name: "Login fails with wrong password"
+    type: sad
+    url: "http://localhost:3000/login"
+    persona: "registered user"
+    tags: [auth, login, error-handling]
+    workflow: |
+      Navigate to http://localhost:3000/login
+      Fill email field with "test@example.com"
+      Fill password field with "wrong-password"
+      Click the Sign In button
+      Verify an "Invalid credentials" error message appears
+      Verify the user remains on the login page
+      Verify the password field is cleared
+
+  - name: "Login fails when fields are empty"
+    type: sad
+    url: "http://localhost:3000/login"
+    persona: "anonymous"
+    tags: [auth, login, validation]
+    workflow: |
+      Navigate to http://localhost:3000/login
+      Click the Sign In button without entering any values
+      Verify validation errors appear for both email and password fields
+      Verify the form was not submitted
+
+  - name: "Unauthenticated user is redirected from dashboard"
+    type: sad
+    url: "http://localhost:3000/dashboard"
+    persona: "anonymous"
+    tags: [auth, redirect]
+    workflow: |
+      Navigate directly to http://localhost:3000/dashboard without logging in
+      Verify redirect to /login occurs
+      Verify a "Please sign in" message or similar prompt is shown
+
+  - name: "Login form is keyboard-navigable and screen-reader accessible"
+    type: edge
+    url: "http://localhost:3000/login"
+    persona: "screen reader user"
+    tags: [auth, login, a11y]
+    workflow: |
+      Navigate to http://localhost:3000/login
+      Verify all form fields have associated visible or aria labels
+      Verify tab order is logical: email → password → submit button
+      Verify the submit button is operable via keyboard Enter
+      Verify error messages are associated with their fields via aria-describedby

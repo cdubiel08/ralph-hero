@@ -1,0 +1,24 @@
+# ralph-playwright user story schema
+# Each file contains one or more stories for a feature area
+
+stories:
+  - name: string              # Human-readable story name (used for directory naming)
+    type: happy | sad | edge  # Test classification
+    url: string               # Entry URL for this story
+    persona: string           # Optional: user role ("anonymous", "admin", "registered user")
+    tags: [string]            # Optional: filter tags (e.g. ["auth", "login"])
+    workflow: |               # Plain-text natural language steps (Bowser-compatible)
+      Navigate to <url>
+      Verify <expected state>
+      <action>
+      Verify <expected outcome>
+
+# Sad path heuristics (applied automatically by story-gen and explore):
+# - Required field empty → validation error appears, form not submitted
+# - Invalid format (wrong email, special chars) → format validation error
+# - Wrong credentials / unauthorized → error message, user stays on page
+# - Already exists / duplicate submission → conflict error
+# - Session expired / unauthenticated access → redirect to login
+# - Rate limited / too many attempts → appropriate throttle error
+# - Empty state (no items in list, first-time user) → empty state UI shown
+# - Boundary values (very long strings, max-length fields) → graceful handling
