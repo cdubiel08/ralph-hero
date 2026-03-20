@@ -43,7 +43,7 @@ allowed-tools:
   - ralph_hero__add_sub_issue
   - ralph_hero__list_sub_issues
   - ralph_hero__decompose_feature
-  - knowledge_search
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
 ---
 
 # ralph-plan-epic — Strategic Planning for Multi-Tier Work
