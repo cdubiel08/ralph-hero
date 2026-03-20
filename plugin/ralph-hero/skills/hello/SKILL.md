@@ -95,7 +95,7 @@ AskUserQuestion(
       {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
       {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
       {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
-      {"label": "All", "description": "Run all 3 actions sequentially"}
+      {"label": "All", "description": "Act on all insights sequentially"}
     ],
     "multiSelect": false
   }]
