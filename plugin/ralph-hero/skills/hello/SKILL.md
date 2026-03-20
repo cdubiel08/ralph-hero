@@ -85,35 +85,62 @@ After the orient greeting, surface **up to 3 directions** — but only if they g
 
 **When there's nothing to surface**: End with *"Nothing urgent jumping out — what are you thinking about today?"* and skip Step 4 entirely (go straight to Step 5).
 
-## Step 4: Route Based on Selection
+## Step 4: Present Picker
 
-Invoke the corresponding skill based on the insight type:
+**Skip this step entirely if no directions were surfaced in Step 3.**
 
-| Insight Type | Skill to Invoke |
+Present the user with a choice using AskUserQuestion. Each option must be self-contained.
+
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
+
+**Label**: action verb + target (e.g., "Plan #55", "Review PR #640", "Start auth cleanup")
+**Description**: what it is + why it matters (e.g., "Webhook support — you flagged this for the API launch")
+
+```
+AskUserQuestion(
+  questions=[{
+    "question": "Which direction would you like to take?",
+    "header": "Next Step",
+    "options": [
+      {"label": "[Action] [Target]", "description": "[What it is] — [why it matters]"},
+      ...one option per direction surfaced in Step 3...
+      {"label": "Work through these in order", "description": "Address each direction in order"}
+    ],
+    "multiSelect": false
+  }]
+)
+```
+
+If the user selects "Other" (built-in option): respond with *"Got it — holler if you need anything."* and stop.
+
+## Step 5: Route and Complete
+
+Invoke the corresponding skill based on the direction type:
+
+| Direction Type | Skill to Invoke |
 |---|---|
-| Stuck issue in Research/Plan phase | `/ralph-hero:ralph-triage` with issue number |
-| Plan in Review waiting action | `/ralph-hero:ralph-review` with issue number |
+| Issue in Research/Plan phase needing attention | `/ralph-hero:ralph-triage` with issue number |
+| Plan waiting review | `/ralph-hero:ralph-review` with issue number |
 | PR waiting merge or review | `/ralph-hero:ralph-merge` with PR number |
 | Issue ready for research | `/ralph-hero:ralph-research` with issue number |
 | Issue ready for planning | `/ralph-hero:ralph-plan` with issue number |
-| Hygiene or cleanup needed | `/ralph-hero:ralph-hygiene` |
-| Board healthy, pick next work | `/ralph-hero:ralph-triage` to pick from backlog |
+| Board healthy, user wants to pick work | `/ralph-hero:ralph-triage` to pick from backlog |
 
 Invoke the skill using the Skill tool with the appropriate arguments.
 
-For **"All"** selection: invoke skills sequentially in numbered order (1, then 2, then 3). Before each subsequent invocation, warn: "Note: earlier actions may have changed board state."
+For **"Work through these in order"**: invoke skills sequentially in the order directions were presented. Before each subsequent invocation, note: "Earlier actions may have changed board state."
 
-## Step 5: Completion
-
-After routing completes (or if user skips), output:
+After routing completes, output:
 
 ```
-Session briefing complete. [N] insight(s) acted on.
+Session complete.
 ```
 
 ## Constraints
 
 - Read-only: this skill does not modify issues, PRs, or project state directly
-- Always produce exactly 3 insights (or fewer only if the board genuinely has fewer actionable items)
-- Do not add commentary beyond the briefing format — keep it scannable
 - Do not re-fetch data after the initial parallel fetch in Step 1
+- Do not use severity tags, dashboard formatting, or project management jargon
+- Do not flag WIP limits or hygiene issues unless they're causing a concrete problem
+- If no memories exist, skip the "last time" context gracefully — do not mention memory is unavailable
+- If no directions are worth surfacing, skip the picker entirely
