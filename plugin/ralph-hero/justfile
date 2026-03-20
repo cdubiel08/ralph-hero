@@ -32,7 +32,9 @@ triage *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
-    dispatch "ralph-triage" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-triage" "$@"
 
 # Split a large issue into smaller XS/S sub-issues
 [group('workflow')]
@@ -41,7 +43,9 @@ split *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
-    dispatch "ralph-split" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-split" "$@"
 
 # Research an issue - investigate codebase, create findings document
 [group('workflow')]
@@ -51,7 +55,9 @@ research *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
     INTERACTIVE_SKILL="research"
-    dispatch "ralph-research" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-research" "$@"
 
 # Create implementation plan from research findings
 [group('workflow')]
@@ -61,7 +67,9 @@ plan *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=3.00 DEFAULT_TIMEOUT=15m
     INTERACTIVE_SKILL="plan"
-    dispatch "ralph-plan" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-plan" "$@"
 
 # Review and critique an implementation plan
 [group('workflow')]
@@ -70,7 +78,9 @@ review *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
-    dispatch "ralph-review" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-review" "$@"
 
 # Implement an issue following its approved plan
 [group('workflow')]
@@ -80,7 +90,9 @@ impl *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=5.00 DEFAULT_TIMEOUT=15m
     INTERACTIVE_SKILL="impl"
-    dispatch "ralph-impl" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-impl" "$@"
 
 # Run project hygiene check - stale items, archive candidates
 [group('workflow')]
@@ -90,7 +102,9 @@ hygiene *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
     QUICK_TOOL="ralph_hero__project_hygiene" QUICK_PARAMS='{}'
-    dispatch "ralph-hygiene" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-hygiene" "$@"
 
 # Display pipeline status dashboard with health indicators
 [group('workflow')]
@@ -100,7 +114,9 @@ status *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
     QUICK_TOOL="ralph_hero__pipeline_dashboard" QUICK_PARAMS='{"format":"markdown","includeHealth":true}'
-    dispatch "status" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "status" "$@"
 
 # Generate and post a project status report
 [group('workflow')]
@@ -109,7 +125,9 @@ report *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
-    dispatch "report" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "report" "$@"
 
 # Multi-agent team coordinator - spawns specialist workers
 [group('orchestrate')]
@@ -123,7 +141,9 @@ hero *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=10.00 DEFAULT_TIMEOUT=30m
-    dispatch "hero" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "hero" "$@"
 
 # Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
 [group('orchestrate')]
@@ -142,7 +162,9 @@ setup *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
-    dispatch "setup" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "setup" "$@"
 
 # Diagnose setup issues - checks env, deps, plugin manifest, and API connectivity
 [group('setup')]
