@@ -17,6 +17,7 @@ import type {
   ProjectV2ItemFieldSingleSelectValue,
   ProjectV2FieldUnion,
   ProjectV2SingleSelectField,
+  ProjectV2View,
 } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
 import { queryProjectRepositories } from "../lib/helpers.js";
@@ -602,6 +603,82 @@ async function fetchProject(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// View Queries (for create_views tool)
+// ---------------------------------------------------------------------------
+
+interface ViewsQueryResult {
+  user?: { projectV2: { views: { nodes: ProjectV2View[] } } | null } | null;
+  organization?: {
+    projectV2: { views: { nodes: ProjectV2View[] } } | null;
+  } | null;
+}
+
+const VIEWS_QUERY_USER = `
+  query($login: String!, $number: Int!) {
+    user(login: $login) {
+      projectV2(number: $number) {
+        views(first: 50) {
+          nodes { id name number layout filter }
+        }
+      }
+    }
+  }
+`;
+
+const VIEWS_QUERY_ORG = `
+  query($login: String!, $number: Int!) {
+    organization(login: $login) {
+      projectV2(number: $number) {
+        views(first: 50) {
+          nodes { id name number layout filter }
+        }
+      }
+    }
+  }
+`;
+
+export interface FetchProjectViewsResult {
+  views: ProjectV2View[];
+  ownerType: "users" | "orgs";
+}
+
+/**
+ * Fetch project views via GraphQL with user→org fallback.
+ * Returns views AND the resolved ownerType so callers can construct
+ * the correct REST API path without a separate round-trip.
+ */
+export async function fetchProjectViews(
+  client: GitHubClient,
+  owner: string,
+  projectNumber: number,
+): Promise<FetchProjectViewsResult> {
+  // Try user first
+  try {
+    const result = await client.projectQuery<ViewsQueryResult>(
+      VIEWS_QUERY_USER,
+      { login: owner, number: projectNumber },
+    );
+    const nodes = result.user?.projectV2?.views?.nodes;
+    if (nodes) return { views: nodes, ownerType: "users" };
+  } catch {
+    // fall through to org
+  }
+
+  // Try org
+  const result = await client.projectQuery<ViewsQueryResult>(
+    VIEWS_QUERY_ORG,
+    { login: owner, number: projectNumber },
+  );
+  const nodes = result.organization?.projectV2?.views?.nodes;
+  if (!nodes) {
+    throw new Error(
+      `Project #${projectNumber} not found for owner "${owner}"`,
+    );
+  }
+  return { views: nodes, ownerType: "orgs" };
 }
 
 async function createSingleSelectField(
