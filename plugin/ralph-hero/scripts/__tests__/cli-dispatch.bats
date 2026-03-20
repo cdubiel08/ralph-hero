@@ -47,3 +47,62 @@ setup() {
     source "${BATS_TEST_DIRNAME}/../cli-dispatch.sh"
     [ "$MCP_VERSION" = "latest" ]
 }
+
+# --- Mode parsing ---
+
+@test "parse_mode defaults to headless" {
+    parse_mode
+    [ "$MODE" = "headless" ]
+}
+
+@test "parse_mode respects DEFAULT_MODE" {
+    DEFAULT_MODE="quick"
+    parse_mode
+    [ "$MODE" = "quick" ]
+}
+
+@test "parse_mode -i sets interactive mode" {
+    parse_mode "-i"
+    [ "$MODE" = "interactive" ]
+}
+
+@test "parse_mode -q sets quick mode" {
+    parse_mode "-q"
+    [ "$MODE" = "quick" ]
+}
+
+@test "parse_mode extracts non-flag args into ARGS" {
+    parse_mode "42" "-i" "extra"
+    [ "$MODE" = "interactive" ]
+    [ "${ARGS[0]}" = "42" ]
+    [ "${ARGS[1]}" = "extra" ]
+}
+
+@test "parse_mode --budget sets BUDGET" {
+    parse_mode "--budget=3.00"
+    [ "$BUDGET" = "3.00" ]
+}
+
+@test "parse_mode --timeout sets TIMEOUT" {
+    parse_mode "--timeout=30m"
+    [ "$TIMEOUT" = "30m" ]
+}
+
+@test "parse_mode mixed flags and positional args" {
+    parse_mode "-i" "--budget=5.00" "42" "--timeout=20m" "extra"
+    [ "$MODE" = "interactive" ]
+    [ "$BUDGET" = "5.00" ]
+    [ "$TIMEOUT" = "20m" ]
+    [ "${ARGS[0]}" = "42" ]
+    [ "${ARGS[1]}" = "extra" ]
+}
+
+@test "parse_mode defaults BUDGET to 2.00" {
+    parse_mode
+    [ "$BUDGET" = "2.00" ]
+}
+
+@test "parse_mode defaults TIMEOUT to 15m" {
+    parse_mode
+    [ "$TIMEOUT" = "15m" ]
+}
