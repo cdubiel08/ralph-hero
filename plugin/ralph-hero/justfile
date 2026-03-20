@@ -225,20 +225,46 @@ doctor:
     #!/usr/bin/env bash
     set -eu
     errors=0; warnings=0
-    # Read env var from .claude/settings.local.json (fallback when not in shell env)
+    # Read env var from settings.local.json (repo-local first, then global HOME)
+    # Optional second arg: explicit settings file path (skips auto-discovery)
     read_settings_env() {
         local var="$1"
-        local settings_file
-        settings_file="$(git rev-parse --show-toplevel 2>/dev/null)/.claude/settings.local.json"
-        if [ ! -f "$settings_file" ]; then return 1; fi
-        local val
-        val=$(node -e "
-            const s = JSON.parse(require('fs').readFileSync('$settings_file','utf8'));
-            const v = (s.env || {})['$var'] || '';
-            if (!v || v.startsWith('\${')) process.exit(1);
-            process.stdout.write(v);
-        " 2>/dev/null) || return 1
-        echo "$val"
+        local settings_file="${2:-}"
+        # If explicit path given, only check that path
+        if [ -n "$settings_file" ]; then
+            if [ ! -f "$settings_file" ]; then return 1; fi
+            local val
+            val=$(node -e "
+                const s = JSON.parse(require('fs').readFileSync('$settings_file','utf8'));
+                const v = (s.env || {})['$var'] || '';
+                if (!v || v.startsWith('\${')) process.exit(1);
+                process.stdout.write(v);
+            " 2>/dev/null) || return 1
+            echo "$val"
+            return 0
+        fi
+        # No explicit path — try all known locations
+        local paths=()
+        local repo_root
+        repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+        if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/settings.local.json" ]; then
+            paths+=("$repo_root/.claude/settings.local.json")
+        fi
+        if [ -f "$HOME/.claude/settings.local.json" ]; then
+            paths+=("$HOME/.claude/settings.local.json")
+        fi
+        for sf in ${paths[@]+"${paths[@]}"}; do
+            local val
+            val=$(node -e "
+                const s = JSON.parse(require('fs').readFileSync('$sf','utf8'));
+                const v = (s.env || {})['$var'] || '';
+                if (!v || v.startsWith('\${')) process.exit(1);
+                process.stdout.write(v);
+            " 2>/dev/null) || continue
+            echo "$val"
+            return 0
+        done
+        return 1
     }
     resolved_token=""
     resolved_owner=""
@@ -246,14 +272,27 @@ doctor:
     echo "=== Ralph Doctor ==="
     echo ""
     echo "--- Environment Variables ---"
+    # Resolve repo root once for the loop (no 'local' — we're at recipe scope, not in a function)
+    _repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
     for var in RALPH_HERO_GITHUB_TOKEN RALPH_GH_OWNER RALPH_GH_PROJECT_NUMBER; do
         val="${!var:-}"
         source_label=""
-        if [ -z "$val" ]; then
-            val=$(read_settings_env "$var") && source_label=" (from settings.local.json)" || val=""
+        if [ -n "$val" ]; then
+            source_label=" (from shell env)"
+        else
+            # Try repo-local settings first, then global
+            if [ -n "$_repo_root" ] && [ -f "$_repo_root/.claude/settings.local.json" ]; then
+                val=$(read_settings_env "$var" "$_repo_root/.claude/settings.local.json") && source_label=" (from .claude/settings.local.json)" || val=""
+            fi
+            if [ -z "$val" ] && [ -f "$HOME/.claude/settings.local.json" ]; then
+                val=$(read_settings_env "$var" "$HOME/.claude/settings.local.json") && source_label=" (from ~/.claude/settings.local.json)" || val=""
+            fi
         fi
         if [ -z "$val" ]; then
-            echo "FAIL: $var is not set"
+            echo "FAIL: $var — not found in:"
+            echo "      - shell environment"
+            if [ -n "$_repo_root" ]; then echo "      - .claude/settings.local.json (repo)"; fi
+            echo "      - ~/.claude/settings.local.json (global)"
             errors=$((errors + 1))
         else
             if [ "$var" = "RALPH_HERO_GITHUB_TOKEN" ]; then
@@ -281,7 +320,7 @@ doctor:
     if command -v mcp &>/dev/null; then
         echo "  OK: mcp (mcptools)"
     else
-        echo "WARN: mcp (mcptools) not installed -- quick-* recipes unavailable"
+        echo "WARN: mcp (mcptools) not installed -- quick commands unavailable"
         echo "      Install: brew tap f/mcptools && brew install mcp"
         warnings=$((warnings + 1))
     fi
@@ -314,6 +353,17 @@ doctor:
     else
         echo "FAIL: .mcp.json not found"
         errors=$((errors + 1))
+    fi
+    echo ""
+    echo "--- Version ---"
+    if [ -n "${RALPH_MCP_VERSION:-}" ]; then
+        echo "  OK: ralph v${RALPH_MCP_VERSION} (from RALPH_MCP_VERSION)"
+    elif [ -d "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero" ]; then
+        cache_ver=$(ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero" | sort -V | tail -1)
+        echo "  OK: ralph v${cache_ver} (from plugin cache)"
+    else
+        echo "WARN: version unknown — plugin cache not found"
+        warnings=$((warnings + 1))
     fi
     echo ""
     if command -v mcp &>/dev/null && [ -n "$resolved_token" ]; then
