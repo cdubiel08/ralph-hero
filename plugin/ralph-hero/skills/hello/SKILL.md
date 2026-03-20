@@ -79,7 +79,12 @@ Each insight MUST include:
 
 ## Step 3: Present AskUserQuestion
 
-After displaying the briefing, present the user with a choice:
+After displaying the briefing, present the user with a choice. Each option must be **self-contained** — the user should be able to choose without scrolling back to the briefing.
+
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
+
+**Label**: action verb + target (e.g., "Merge PR #627", "Review Plan #597", "Clean Board")
+**Description**: what the target is + what will happen when selected (e.g., "ralph-playwright (4 phases) — runs code review, checks CI, merges if clean")
 
 ```
 AskUserQuestion(
@@ -87,15 +92,24 @@ AskUserQuestion(
     "question": "Which insight would you like to act on?",
     "header": "Action",
     "options": [
-      {"label": "1", "description": "[First insight summary]"},
-      {"label": "2", "description": "[Second insight summary]"},
-      {"label": "3", "description": "[Third insight summary]"},
+      {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
+      {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
+      {"label": "[Action] [Target]", "description": "[What it is] — [what skill runs and what happens]"},
       {"label": "All", "description": "Act on all insights sequentially"}
     ],
     "multiSelect": false
   }]
 )
 ```
+
+**Examples of good labels and descriptions:**
+
+| Insight | Label | Description |
+|---------|-------|-------------|
+| PR needing review | Merge PR #627 | ralph-playwright (4 phases) — runs code review, checks CI, merges if clean |
+| Plan waiting approval | Review Plan #597 | Artifact protocol & quality standards — reads plan, posts approval or feedback |
+| Board hygiene | Clean Board | Archive 66 done items, flag 7 stale issues — runs ralph-hygiene |
+| Stuck issue | Triage #42 | Stuck in Research 5 days — assesses issue, recommends action |
 
 If fewer than 3 insights were generated, only include options for the insights that exist plus "All".
 
