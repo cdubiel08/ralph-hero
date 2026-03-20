@@ -83,7 +83,7 @@ After the orient greeting, surface **up to 3 directions** — but only if they g
 
 **Format**: Each direction is a short paragraph (2-3 sentences max) explaining what it is and why it matters. Conversational, not a numbered dashboard.
 
-**When there's nothing to surface**: End with *"Nothing urgent jumping out — what are you thinking about today?"* and skip Step 4 entirely (go straight to Step 5).
+**When there's nothing to surface**: End with *"Nothing urgent jumping out — what are you thinking about today?"* and stop. Do not present a picker or route to a skill — just wait for the user's response.
 
 ## Step 4: Present Picker
 
