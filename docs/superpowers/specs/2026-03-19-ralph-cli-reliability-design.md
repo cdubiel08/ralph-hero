@@ -30,10 +30,11 @@ run_headless "$skill" "${ARGS[@]}"
 run_headless "$skill" ${ARGS[@]+"${ARGS[@]}"}
 ```
 
-Three occurrences in `dispatch()`:
-- Line 151: headless case
-- Line 152: interactive case
-- Line 155: quick case (inside the `if` body, `QUICK_PARAMS` reference is fine since it uses `:-` default)
+Two occurrences in `dispatch()` need the fix:
+- Line 151: headless case — `"${ARGS[@]}"` → `${ARGS[@]+"${ARGS[@]}"}`
+- Line 152: interactive case — same pattern
+
+Line 155 (`"${QUICK_PARAMS:-{}}"`) is already safe — it uses `:-` default, not an array expansion.
 
 ### 2. Runtime Version Resolution
 
@@ -151,6 +152,8 @@ status *args:
 
 `ralph status` now hits MCP directly (instant, no AI cost). `ralph status -i` opens an AI-powered session.
 
+**Note:** This is a behavioral change — `ralph status` previously defaulted to headless (AI-powered). The new default is quick mode since the pipeline dashboard is a pure data query that doesn't benefit from AI processing.
+
 #### Old quick-* recipes
 
 Mark all existing `quick-*` recipes as `[private]` so they don't appear in `--list` or completions, but remain available for backwards compatibility and direct `just` usage.
@@ -224,33 +227,35 @@ Add a version section to doctor output:
 
 #### Unknown command suggestions
 
-After `just` exits with a non-zero code indicating an unknown recipe, parse the failed recipe name and suggest the closest match:
+Use a pre-flight recipe existence check before calling `exec just`. This preserves streaming output for all commands (important for long-running AI workflows like `ralph impl`) while still catching unknown commands:
 
 ```bash
-# Capture just's stderr
-output=$(just --justfile "$RALPH_JUSTFILE" "$@" 2>&1) || {
-    exit_code=$?
-    if echo "$output" | grep -q "does not contain recipe"; then
-        failed_recipe=$(echo "$output" | grep -oP "recipe \`\K[^']+")
-        # Get all public recipes
-        recipes=$(just --justfile "$RALPH_JUSTFILE" --summary 2>/dev/null)
-        # Find closest match (prefix or edit distance)
-        suggestion=$(_suggest_recipe "$failed_recipe" "$recipes")
-        echo "Error: Unknown command '$failed_recipe'."
-        if [ -n "$suggestion" ]; then
-            echo "Did you mean '$suggestion'?"
-        fi
-        echo ""
-        echo "Run 'ralph --help' for available commands."
-        exit 1
+# Pre-flight: check if recipe exists before exec
+_recipe="$1"
+_recipes=$(just --justfile "$RALPH_JUSTFILE" --summary 2>/dev/null)
+if ! echo "$_recipes" | tr ' ' '\n' | grep -qx "$_recipe"; then
+    # Try prefix match (e.g., "isue" → "issue")
+    _suggestion=$(echo "$_recipes" | tr ' ' '\n' | grep "^${_recipe:0:3}" | head -1)
+    # Try substring match as fallback
+    if [ -z "$_suggestion" ]; then
+        _suggestion=$(echo "$_recipes" | tr ' ' '\n' | grep "$_recipe" | head -1)
     fi
-    # Pass through other errors
-    echo "$output" >&2
-    exit $exit_code
-}
+    echo "Error: Unknown command '$_recipe'."
+    if [ -n "${_suggestion:-}" ]; then
+        echo "Did you mean '$_suggestion'?"
+    fi
+    echo ""
+    echo "Run 'ralph --help' for available commands."
+    exit 1
+fi
+exec just --justfile "$RALPH_JUSTFILE" "$@"
 ```
 
-The `_suggest_recipe()` function uses prefix matching first (fast), then falls back to simple edit distance for typo correction.
+This approach:
+- Runs the check before `exec`, so streaming output is never interrupted
+- Uses `grep` prefix matching (3-char prefix) — no Perl regex, works on macOS
+- Falls back to substring matching for less obvious typos
+- Only adds one `just --summary` call overhead (fast, no API calls)
 
 #### Missing dependency errors
 
@@ -440,7 +445,8 @@ setup() {
 @test "ralph unknown-command suggests closest match" {
     run "$RALPH_CLI" "isue"
     [ "$status" -ne 0 ]
-    [[ "$output" =~ "Did you mean" ]] || [[ "$output" =~ "issue" ]]
+    [[ "$output" =~ "Did you mean" ]]
+    [[ "$output" =~ "issue" ]]
 }
 
 @test "ralph with missing plugin cache shows install instructions" {
