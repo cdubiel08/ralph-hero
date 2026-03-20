@@ -89,3 +89,22 @@ jobs:
 
       - name: Test
         run: npm test
+
+  test-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js (for doctor tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Run CLI tests
+        uses: bats-core/bats-action@2.0.0
+        with:
+          support-path: plugin/ralph-hero/scripts/__tests__
+          tests-path: plugin/ralph-hero/scripts/__tests__
