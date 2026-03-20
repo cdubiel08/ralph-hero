@@ -150,18 +150,46 @@ doctor:
     #!/usr/bin/env bash
     set -eu
     errors=0; warnings=0
+    # Read env var from .claude/settings.local.json (fallback when not in shell env)
+    read_settings_env() {
+        local var="$1"
+        local settings_file
+        settings_file="$(git rev-parse --show-toplevel 2>/dev/null)/.claude/settings.local.json"
+        if [ ! -f "$settings_file" ]; then return 1; fi
+        local val
+        val=$(node -e "
+            const s = JSON.parse(require('fs').readFileSync('$settings_file','utf8'));
+            const v = (s.env || {})['$var'] || '';
+            if (!v || v.startsWith('\${')) process.exit(1);
+            process.stdout.write(v);
+        " 2>/dev/null) || return 1
+        echo "$val"
+    }
+    resolved_token=""
+    resolved_owner=""
+    resolved_project=""
     echo "=== Ralph Doctor ==="
     echo ""
     echo "--- Environment Variables ---"
     for var in RALPH_HERO_GITHUB_TOKEN RALPH_GH_OWNER RALPH_GH_PROJECT_NUMBER; do
-        if [ -z "${!var:-}" ]; then
+        val="${!var:-}"
+        source_label=""
+        if [ -z "$val" ]; then
+            val=$(read_settings_env "$var") && source_label=" (from settings.local.json)" || val=""
+        fi
+        if [ -z "$val" ]; then
             echo "FAIL: $var is not set"
             errors=$((errors + 1))
         else
             if [ "$var" = "RALPH_HERO_GITHUB_TOKEN" ]; then
-                echo "  OK: $var (set, redacted)"
-            else
-                echo "  OK: $var = ${!var}"
+                echo "  OK: $var (set, redacted)$source_label"
+                resolved_token="$val"
+            elif [ "$var" = "RALPH_GH_OWNER" ]; then
+                echo "  OK: $var = ${val}$source_label"
+                resolved_owner="$val"
+            elif [ "$var" = "RALPH_GH_PROJECT_NUMBER" ]; then
+                echo "  OK: $var = ${val}$source_label"
+                resolved_project="$val"
             fi
         fi
     done
@@ -213,8 +241,11 @@ doctor:
         errors=$((errors + 1))
     fi
     echo ""
-    if command -v mcp &>/dev/null && [ -n "${RALPH_HERO_GITHUB_TOKEN:-}" ]; then
+    if command -v mcp &>/dev/null && [ -n "$resolved_token" ]; then
         echo "--- API Health Check ---"
+        RALPH_HERO_GITHUB_TOKEN="$resolved_token" \
+        RALPH_GH_OWNER="${resolved_owner:-${RALPH_GH_OWNER:-}}" \
+        RALPH_GH_PROJECT_NUMBER="${resolved_project:-${RALPH_GH_PROJECT_NUMBER:-}}" \
         just _mcp_call "ralph_hero__health_check" '{}' || {
             echo "FAIL: API health check failed"
             errors=$((errors + 1))
