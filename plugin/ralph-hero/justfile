@@ -16,6 +16,59 @@ alias sp := split
 alias s  := status
 alias h  := hygiene
 
+# Create a new issue
+[group('commands')]
+issue title priority="" estimate="" state="Backlog" label="":
+    #!/usr/bin/env bash
+    set -eu
+    params='{"title":"{{title}}"'
+    if [ -n "{{priority}}" ]; then params="$params,\"priority\":\"{{priority}}\""; fi
+    if [ -n "{{estimate}}" ]; then params="$params,\"estimate\":\"{{estimate}}\""; fi
+    if [ -n "{{label}}" ]; then params="$params,\"labels\":[\"{{label}}\"]"; fi
+    params="$params,\"workflowState\":\"{{state}}\"}"
+    just _mcp_call "ralph_hero__create_issue" "$params"
+
+# Move issue to a workflow state
+[group('commands')]
+move number state:
+    @just _mcp_call "ralph_hero__save_issue" \
+        '{"number":{{number}},"workflowState":"{{state}}","command":"ralph_cli"}'
+
+# Get issue details
+[group('commands')]
+info number:
+    @just _mcp_call "ralph_hero__get_issue" \
+        '{"number":{{number}}}'
+
+# Add comment to an issue
+[group('commands')]
+comment number body:
+    @just _mcp_call "ralph_hero__create_comment" \
+        '{"number":{{number}},"body":"{{body}}"}'
+
+# Assign issue to a user
+[group('commands')]
+assign number user:
+    @just _mcp_call "ralph_hero__save_issue" \
+        '{"number":{{number}},"assignees":["{{user}}"]}'
+
+# Find next actionable issue
+[group('commands')]
+pick state="Research Needed" max-estimate="S":
+    @just _mcp_call "ralph_hero__pick_actionable_issue" \
+        '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
+
+# Create a draft card on the board
+[group('commands')]
+draft title priority="" estimate="" state="Backlog":
+    #!/usr/bin/env bash
+    set -eu
+    params='{"title":"{{title}}"'
+    if [ -n "{{priority}}" ]; then params="$params,\"priority\":\"{{priority}}\""; fi
+    if [ -n "{{estimate}}" ]; then params="$params,\"estimate\":\"{{estimate}}\""; fi
+    params="$params,\"workflowState\":\"{{state}}\"}"
+    just _mcp_call "ralph_hero__create_draft_issue" "$params"
+
 # Browse and run a recipe interactively (falls back to --list without fzf)
 default:
     #!/usr/bin/env bash
@@ -112,7 +165,7 @@ status *args:
     #!/usr/bin/env bash
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
-    DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
+    DEFAULT_MODE=quick DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
     QUICK_TOOL="ralph_hero__pipeline_dashboard" QUICK_PARAMS='{"format":"markdown","includeHealth":true}'
     _args={{quote(args)}}
     set -- $_args
@@ -381,31 +434,31 @@ completions shell="bash":
     @just --completions {{shell}}
 
 # Pipeline status dashboard - instant, no API cost
-[group('quick')]
+[private]
 quick-status format="markdown":
     @just _mcp_call "ralph_hero__pipeline_dashboard" \
         '{"format":"{{format}}","includeHealth":true}'
 
 # Move issue to a workflow state - instant, no API cost
-[group('quick')]
+[private]
 quick-move issue state:
     @just _mcp_call "ralph_hero__save_issue" \
         '{"number":{{issue}},"workflowState":"{{state}}","command":"ralph_cli"}'
 
 # Find next actionable issue by workflow state - instant, no API cost
-[group('quick')]
+[private]
 quick-pick state="Research Needed" max-estimate="S":
     @just _mcp_call "ralph_hero__pick_actionable_issue" \
         '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
 
 # Assign issue to a GitHub user - instant, no API cost
-[group('quick')]
+[private]
 quick-assign issue user:
     @just _mcp_call "ralph_hero__save_issue" \
         '{"number":{{issue}},"assignees":["{{user}}"]}'
 
 # Create a new issue with project fields - instant, no API cost
-[group('quick')]
+[private]
 quick-issue title label="" priority="" estimate="" state="Backlog":
     #!/usr/bin/env bash
     set -eu
@@ -417,19 +470,19 @@ quick-issue title label="" priority="" estimate="" state="Backlog":
     just _mcp_call "ralph_hero__create_issue" "$params"
 
 # Get full issue details with project fields - instant, no API cost
-[group('quick')]
+[private]
 quick-info issue:
     @just _mcp_call "ralph_hero__get_issue" \
         '{"number":{{issue}}}'
 
 # Add a comment to an issue - instant, no API cost
-[group('quick')]
+[private]
 quick-comment issue body:
     @just _mcp_call "ralph_hero__create_comment" \
         '{"number":{{issue}},"body":"{{body}}"}'
 
 # Create a draft issue on the project board (no GitHub issue, just a card)
-[group('quick')]
+[private]
 quick-draft title priority="" estimate="" state="Backlog":
     #!/usr/bin/env bash
     set -eu
