@@ -2,6 +2,7 @@
 name: explorer-agent
 description: Fallback exploration agent. Navigates a web app via @playwright/mcp, maps interactive elements and navigation paths up to 2 levels deep, and returns structured flow data for conversion to user stories.
 model: sonnet
+color: orange
 ---
 
 # Explorer Agent

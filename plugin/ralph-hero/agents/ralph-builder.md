@@ -3,7 +3,7 @@ name: ralph-builder
 description: Builder worker - reviews plans and implements code for the full build lifecycle
 tools: Read, Write, Edit, Bash, Glob, Grep, Skill, TaskList, TaskGet, TaskUpdate, SendMessage
 model: sonnet
-color: cyan
+color: yellow
 hooks:
   PreToolUse:
     - matcher: "Write|Edit"

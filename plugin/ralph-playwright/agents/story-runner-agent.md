@@ -2,6 +2,7 @@
 name: story-runner-agent
 description: Executes a single user story YAML via @playwright/mcp. Captures screenshots per step, captures console errors on failure, runs axe-core a11y check at the end (if a11y MCP available), and returns a structured pass/fail result.
 model: sonnet
+color: red
 ---
 
 # Story Runner Agent
