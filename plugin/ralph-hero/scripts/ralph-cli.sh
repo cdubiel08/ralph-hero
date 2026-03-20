@@ -92,4 +92,7 @@ EOF
     touch "$WELCOMED_FILE"
 fi
 
+# Export version for cli-dispatch.sh and justfile _mcp_call
+export RALPH_MCP_VERSION="${LATEST:-latest}"
+
 exec just --justfile "$RALPH_JUSTFILE" "$@"

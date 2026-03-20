@@ -33,3 +33,17 @@ setup() {
     [ "$MODE" = "interactive" ]
     [ ${#ARGS[@]} -eq 0 ]
 }
+
+# --- Version resolution ---
+
+@test "MCP_VERSION uses RALPH_MCP_VERSION when set" {
+    export RALPH_MCP_VERSION="2.5.39"
+    source "${BATS_TEST_DIRNAME}/../cli-dispatch.sh"
+    [ "$MCP_VERSION" = "2.5.39" ]
+}
+
+@test "MCP_VERSION falls back to latest when RALPH_MCP_VERSION unset" {
+    unset RALPH_MCP_VERSION
+    source "${BATS_TEST_DIRNAME}/../cli-dispatch.sh"
+    [ "$MCP_VERSION" = "latest" ]
+}
