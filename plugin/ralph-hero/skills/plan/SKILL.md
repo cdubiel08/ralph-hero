@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - WebSearch
   - WebFetch
   - ralph_hero__get_issue
@@ -83,16 +84,20 @@ Then wait for the user's input.
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls (per ADR-001 in shared/conventions.md).
 
+   After locator agents return, dispatch analyzers on the most relevant findings:
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions, constraints, and specs from thoughts documents about [feature]")`
+
    These agents will:
    - Find relevant source files, configs, and tests
    - Identify the specific directories to focus on
    - Trace data flow and key functions
    - Return detailed explanations with file:line references
 
-4. **Read all files identified by research tasks**:
-   - After research tasks complete, read ALL files they identified as relevant
+4. **Read code files identified by research tasks**:
+   - After research tasks complete, read code files they identified as relevant
    - Read them FULLY into the main context
-   - This ensures you have complete understanding before proceeding
+   - For thought documents, rely on thoughts-analyzer output rather than reading raw docs
+   - This keeps the main context focused on code while leveraging structured insight extraction
 
 5. **Analyze and verify understanding**:
    - Cross-reference the requirements with actual code
@@ -138,6 +143,9 @@ After getting initial clarifications:
 
    **For historical context:**
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find research, plans, or decisions about [area]")`
+
+   After locator agents return, dispatch analyzers on the most relevant findings:
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Analyze decisions and constraints from [area] documents")`
 
    **For existing issues:**
    - Use `ralph_hero__list_issues(query=...)` to find related issues directly

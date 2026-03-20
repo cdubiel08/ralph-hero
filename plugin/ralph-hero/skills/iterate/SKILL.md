@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - WebSearch
   - WebFetch
   - ralph_hero__get_issue
@@ -156,6 +157,7 @@ If the user's feedback requires understanding new code patterns or validating as
 
    **For historical context:**
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related research or decisions about [area]")`
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract relevant decisions and constraints from [area] documents")`
 
    **Be EXTREMELY specific about directories**:
    - Include full path context in prompts

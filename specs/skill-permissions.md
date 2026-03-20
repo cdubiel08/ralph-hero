@@ -25,6 +25,7 @@ Each cell: **allow** = tool is in `allowed-tools`, **—** = tool is not listed 
 | Grep | allow | allow | allow | allow | allow | allow | allow | — | — | — | allow | — | — | — | — | — |
 | Bash | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | — | — | — | — | allow |
 | Task | allow | allow | allow | allow | allow | allow | allow | allow | — | — | allow | — | — | — | — | — |
+| Agent | allow | allow | allow | allow | allow | allow | allow | — | — | — | — | — | — | — | — | — |
 | Skill | — | — | — | — | — | — | allow | allow | allow | — | — | — | — | — | — | allow |
 | WebSearch | allow | — | allow | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | WebFetch | — | — | allow | — | — | — | — | — | — | — | — | — | — | — | — | — |

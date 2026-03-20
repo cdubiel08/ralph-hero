@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - WebSearch
   - WebFetch
   - ralph_hero__get_issue
@@ -74,7 +75,9 @@ Create multiple Task agents to research different aspects concurrently. Use thes
 
 **For thoughts directory:**
 - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Discover what documents exist about [topic]")`
-- Read and synthesize the returned documents yourself in the main context
+
+  Then analyze the most relevant findings:
+- `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions, constraints, and technical specs from [documents found by locator]")`
 
 **For web research (only if user explicitly asks):**
 - `Agent(subagent_type="ralph-hero:web-search-researcher", prompt="Research external documentation and resources for [topic]")`
@@ -100,7 +103,7 @@ The key is to use these agents intelligently:
 - IMPORTANT: Wait for ALL sub-agent tasks to complete before proceeding
 - Compile all sub-agent results (both codebase and thoughts findings)
 - Prioritize live codebase findings as primary source of truth
-- Use thoughts/ findings as supplementary historical context
+- Use thoughts-analyzer findings as supplementary historical context (decisions, constraints, open questions)
 - Connect findings across different components
 - Include specific file paths and line numbers for reference
 - Highlight patterns, connections, and architectural decisions

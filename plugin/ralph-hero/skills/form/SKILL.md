@@ -108,6 +108,9 @@ When this command is invoked:
    - Related research in `thoughts/shared/research/`
    - Related plans in `thoughts/shared/plans/`
 
+   Then analyze the most relevant findings:
+   - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and prior art from documents about [idea topic]")`
+
 3. **Existing issues** - Use `ralph_hero__list_issues(query=...)` to find:
    - Duplicate or overlapping issues
    - Related work already planned or in progress

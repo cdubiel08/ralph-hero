@@ -40,6 +40,7 @@ allowed-tools:
   - Grep
   - Bash
   - Task
+  - Agent
   - ralph_hero__get_issue
   - ralph_hero__list_issues
   - ralph_hero__save_issue
