@@ -40,29 +40,48 @@ Usage: ralph <command> [options]
 
 Ralph Hero — autonomous GitHub Projects V2 workflow automation.
 
-Common commands:
-  loop        Run the full analyst+builder+integrator loop
-  impl        Implement the next In Progress issue
-  plan        Write an implementation plan for the next issue
-  triage      Triage new issues onto the project board
-  research    Run the research phase for an issue
-  review      Review an implementation plan
-  hygiene     Run project hygiene checks
-  doctor      Diagnose your Ralph installation
+Workflow commands (AI-powered):
+  triage              Triage backlog issues
+  research            Investigate an issue
+  plan                Write implementation plan
+  impl                Implement from plan
+  review              Critique a plan
+  hygiene             Run project hygiene
+  report              Post status report
+
+Quick commands (instant, no AI cost):
+  status              Pipeline dashboard
+  issue <title>       Create a new issue
+  move <num> <state>  Change workflow state
+  info <num>          Get issue details
+  comment <num> <body>  Add a comment
+  assign <num> <user> Assign to a user
+  pick                Find next actionable issue
+  draft <title>       Create a draft card
+
+Orchestrators:
+  hero                Drive issue through full lifecycle
+  team                Spawn multi-agent team
+  loop                Sequential autonomous loop
+
+Setup:
+  doctor              Diagnose installation
+  setup               Create GitHub Project V2
 
 Options:
-  --version, -V   Print the installed Ralph version and exit
-  --help,    -h   Print this help message and exit
-  -i              Run in interactive mode (opens Claude session)
-  -q              Run in quick mode (direct MCP tool call)
-  --budget=N      Set spend cap in USD (default: 2.00)
-  --timeout=T     Set per-task timeout (default: 15m)
+  --version, -V       Print installed version
+  --help, -h          Print this help
+  -i                  Interactive mode (opens Claude session)
+  -q                  Quick mode (direct MCP call)
+  --budget=N          Spend cap in USD (default varies by command)
+  --timeout=T         Per-task timeout (default: 15m)
 
 Examples:
-  ralph loop                 # Run the full workflow loop
-  ralph impl 42              # Implement issue #42
-  ralph triage -q            # Quick-triage without AI
-  ralph loop --budget=5.00   # Loop with a higher budget cap
+  ralph status                              # Pipeline dashboard (instant)
+  ralph issue "fix login bug" priority=P1   # Create issue with priority
+  ralph triage                              # Triage next backlog issue
+  ralph move 42 "In Progress"              # Move issue to new state
+  ralph impl -i 42                          # Implement interactively
 
 Docs: https://github.com/cdubiel08/ralph-hero
 EOF
@@ -94,5 +113,35 @@ fi
 
 # Export version for cli-dispatch.sh and justfile _mcp_call
 export RALPH_MCP_VERSION="${LATEST:-latest}"
+
+# Pre-flight: check if recipe exists before exec (preserves streaming)
+if [ $# -gt 0 ]; then
+    _recipe="$1"
+    # Skip pre-flight for flags (--help, --version already handled above)
+    case "$_recipe" in
+        -*) ;;  # flags pass through to just
+        *)
+            _recipes=$(just --justfile "$RALPH_JUSTFILE" --summary 2>/dev/null)
+            if ! echo "$_recipes" | tr ' ' '\n' | grep -qx "$_recipe"; then
+                # Try prefix match (e.g., "isue" → "issue") — try 2-char then 3-char prefix
+                _suggestion=$(echo "$_recipes" | tr ' ' '\n' | grep "^${_recipe:0:2}" | head -1 || true)
+                if [ -z "$_suggestion" ]; then
+                    _suggestion=$(echo "$_recipes" | tr ' ' '\n' | grep "^${_recipe:0:3}" | head -1 || true)
+                fi
+                # Try substring match as fallback
+                if [ -z "$_suggestion" ]; then
+                    _suggestion=$(echo "$_recipes" | tr ' ' '\n' | grep "$_recipe" | head -1 || true)
+                fi
+                echo "Error: Unknown command '$_recipe'."
+                if [ -n "${_suggestion:-}" ]; then
+                    echo "Did you mean '$_suggestion'?"
+                fi
+                echo ""
+                echo "Run 'ralph --help' for available commands."
+                exit 1
+            fi
+            ;;
+    esac
+fi
 
 exec just --justfile "$RALPH_JUSTFILE" "$@"
