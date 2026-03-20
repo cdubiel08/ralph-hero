@@ -220,7 +220,7 @@ Loop until pipeline is complete:
 
 1. `TaskList()` → filter to tasks with `status=pending` AND `blockedBy=[]` (empty/all resolved)
 2. If no pending unblocked tasks: check for `in_progress` tasks — if all tasks are `completed`, STOP (pipeline complete)
-3. Execute all unblocked tasks simultaneously (multiple `Task()` calls in a single message, foreground)
+3. Execute all unblocked tasks simultaneously (multiple `Agent()` calls in a single message)
 4. Wait for all to complete
 5. `TaskUpdate(status="completed")` for each completed task
 6. Repeat from step 1
