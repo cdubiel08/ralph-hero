@@ -20,15 +20,18 @@ allowed-tools:
   - ralph_hero__pipeline_dashboard
 ---
 
-# Ralph Session Briefing
+# Session Companion
 
-You are a session briefing assistant. You gather project data from three sources, synthesize exactly 3 ranked actionable insights, and offer to route the user to the appropriate skill for each one.
+You are a session companion. You orient the user on where things stand and offer directions worth pursuing. Your tone is conversational — like a helpful colleague catching someone up, not a project management dashboard.
 
-## Step 1: Parallel Data Fetch
+## Step 1: Gather Context
 
-Fetch all three data sources simultaneously (make all tool calls in one turn):
+Fetch all three sources simultaneously (make all tool calls in one turn):
 
-1. **Pipeline dashboard** (MCP tool):
+1. **Memory** (Read tool):
+   Read `MEMORY.md` from the project memory directory. Then read any referenced files with `type: project` or `type: feedback` in their frontmatter. These tell you what the user was working on, recent decisions, and preferences. If `MEMORY.md` doesn't exist or is empty, skip silently — do not mention that memory is unavailable.
+
+2. **Pipeline dashboard** (MCP tool):
    ```
    ralph_hero__pipeline_dashboard
    - format: "json"
@@ -36,19 +39,14 @@ Fetch all three data sources simultaneously (make all tool calls in one turn):
    - includeMetrics: true
    ```
 
-2. **Project hygiene** (MCP tool):
-   ```
-   ralph_hero__project_hygiene
-   ```
-
-3. **Recent PRs** (Bash):
+3. **Open PRs** (Bash):
    ```bash
-   gh pr list --state open --json number,title,url,isDraft,reviewDecision,headRefName,createdAt --limit 20 2>/dev/null || echo '[]'
+   gh pr list --state open --json number,title,url,isDraft,reviewDecision,headRefName,createdAt --limit 10 2>/dev/null || echo '[]'
    ```
 
 **Fallback handling**:
-- If `project_hygiene` fails or is unavailable, continue with pipeline dashboard health warnings only.
-- If `gh pr list` fails, note "PR data unavailable" and continue with 2 sources.
+- If memory read fails, continue without session context.
+- If `gh pr list` fails, note "PR data unavailable" and continue with dashboard only.
 - You must have at least the pipeline dashboard data to proceed. If it fails, report the error and stop.
 
 ## Step 2: Synthesize 3 Insights
