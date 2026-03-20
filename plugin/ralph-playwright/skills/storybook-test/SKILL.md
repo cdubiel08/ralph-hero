@@ -11,8 +11,8 @@ npx storybook --version          # needs 9.x
 cat package.json | grep -E "addon-vitest|test-runner"
 ```
 
-- `@storybook/addon-vitest` found → **Vitest mode** (Storybook 9, recommended)
-- `@storybook/test-runner` found → **Legacy mode** (older Storybook)
+- `@storybook/addon-vitest` found → **Vitest mode** (Storybook 9+, recommended)
+- `@storybook/test-runner` found → **Legacy mode** (Storybook 7/8, still works with 9)
 - Neither → show install instructions
 
 ### Install instructions (if neither found)

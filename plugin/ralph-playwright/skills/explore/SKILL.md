@@ -44,7 +44,13 @@ The explorer agent:
 1. Navigates to the URL and takes an accessibility tree snapshot
 2. Identifies all interactive elements, forms, and navigation links
 3. Follows unique paths up to 2 levels deep (max 20 flows)
-4. Records each unique path as a user story
+4. Returns discovered flows as structured YAML
+
+After the agent returns:
+1. Parse the returned flow data
+2. Convert each flow to a user story using the canonical schema (see `schemas/user-story.schema.yaml`)
+3. Infer `type`: success flows → `happy`, error states → `sad`
+4. Save to `playwright-stories/<page-name>-discovered.yaml`
 
 ---
 
@@ -72,4 +78,4 @@ If Playwright Planner produces insufficient coverage (< 5 flows on a complex SPA
 npm install @browserbasehq/stagehand
 ```
 
-Use `stagehand.observe()` to enumerate all available actions at each page state, then `stagehand.agent()` for a full autonomous loop. This gives richer exploration at the cost of a Browserbase dependency and higher token usage. See Deferred section for full implementation notes.
+Use `stagehand.observe()` to enumerate all available actions at each page state, then `stagehand.agent()` for a full autonomous loop. This gives richer exploration at the cost of a Browserbase dependency and higher token usage. See the parent plan (GH-616) Deferred Work section for full implementation notes.

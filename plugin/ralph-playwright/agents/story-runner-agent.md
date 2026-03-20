@@ -1,7 +1,7 @@
 ---
 name: story-runner-agent
 description: Executes a single user story YAML via @playwright/mcp. Captures screenshots per step, captures console errors on failure, runs axe-core a11y check at the end (if a11y MCP available), and returns a structured pass/fail result.
-model: claude-sonnet-4-6
+model: sonnet
 ---
 
 # Story Runner Agent
@@ -44,21 +44,29 @@ test_accessibility(url: <current page URL>)
 ```
 Attach WCAG violations to the result.
 
-### Output (JSON)
-```json
-{
-  "story": "Login succeeds with valid credentials",
-  "type": "happy",
-  "status": "pass",
-  "duration": 3241,
-  "steps": [
-    { "step": "Navigate to login", "status": "pass", "screenshot": "00_navigate.png" },
-    { "step": "Verify form visible", "status": "pass", "screenshot": "01_verify-form.png" },
-    { "step": "Fill email", "status": "pass", "screenshot": "02_fill-email.png" },
-    { "step": "Click Sign In", "status": "fail", "error": "Button not found in snapshot", "consoleErrors": [] }
-  ],
-  "a11yViolations": [
-    { "rule": "label", "impact": "serious", "description": "Form field has no label", "wcag": "1.3.1" }
-  ]
-}
+### Output (YAML)
+```yaml
+story: "Login succeeds with valid credentials"
+type: happy
+status: pass
+duration: 3241
+steps:
+  - step: "Navigate to login"
+    status: pass
+    screenshot: "00_navigate.png"
+  - step: "Verify form visible"
+    status: pass
+    screenshot: "01_verify-form.png"
+  - step: "Fill email"
+    status: pass
+    screenshot: "02_fill-email.png"
+  - step: "Click Sign In"
+    status: fail
+    error: "Button not found in snapshot"
+    consoleErrors: []
+a11yViolations:
+  - rule: label
+    impact: serious
+    description: "Form field has no label"
+    wcag: "1.3.1"
 ```
