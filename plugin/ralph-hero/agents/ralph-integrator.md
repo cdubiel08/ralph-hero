@@ -5,11 +5,6 @@ tools: Read, Glob, Grep, Bash, Skill, TaskList, TaskGet, TaskUpdate, SendMessage
 model: haiku
 color: green
 hooks:
-  PreToolUse:
-    - matcher: "ralph_hero__save_issue|ralph_hero__advance_issue|ralph_hero__create_comment"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
   Stop:
     - hooks:
         - type: command

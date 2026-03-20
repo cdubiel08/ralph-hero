@@ -5,11 +5,6 @@ tools: Read, Write, Edit, Glob, Grep, Skill, Bash, Agent, WebSearch, WebFetch, T
 model: sonnet
 color: green
 hooks:
-  PreToolUse:
-    - matcher: "ralph_hero__save_issue|ralph_hero__create_issue|ralph_hero__create_comment|ralph_hero__add_sub_issue|ralph_hero__add_dependency|ralph_hero__remove_dependency"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
   Stop:
     - hooks:
         - type: command
