@@ -1,7 +1,7 @@
 ---
 name: ralph-analyst
 description: Analyst worker - composes triage, split, research, and plan skills for issue assessment, investigation, and planning
-tools: Read, Write, Glob, Grep, Skill, Bash, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__save_issue, ralph_hero__create_issue, ralph_hero__create_comment, ralph_hero__add_sub_issue, ralph_hero__add_dependency, ralph_hero__remove_dependency, ralph_hero__list_sub_issues
+tools: Read, Write, Edit, Glob, Grep, Skill, Bash, Agent, WebSearch, WebFetch, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__save_issue, ralph_hero__create_issue, ralph_hero__create_comment, ralph_hero__add_sub_issue, ralph_hero__add_dependency, ralph_hero__remove_dependency, ralph_hero__list_sub_issues, ralph_hero__decompose_feature, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
 model: sonnet
 color: green
 hooks:

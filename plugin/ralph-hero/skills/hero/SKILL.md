@@ -25,8 +25,8 @@ allowed-tools:
   - ralph_hero__detect_stream_positions
   - ralph_hero__pick_actionable_issue
   - ralph_hero__pipeline_dashboard
-  - knowledge_search
-  - knowledge_traverse
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
   - AskUserQuestion
 ---
 

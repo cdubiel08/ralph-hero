@@ -1,7 +1,7 @@
 ---
 name: ralph-integrator
 description: Integration specialist - validates implementation against plan requirements, handles PR creation, merge, worktree cleanup, and git operations
-tools: Read, Glob, Bash, Skill, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__save_issue, ralph_hero__create_comment, ralph_hero__advance_issue, ralph_hero__list_sub_issues
+tools: Read, Glob, Grep, Bash, Skill, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__save_issue, ralph_hero__create_comment, ralph_hero__advance_issue, ralph_hero__list_sub_issues, ralph_hero__list_dependencies
 model: haiku
 color: green
 hooks:
