@@ -16,11 +16,11 @@ tags: [hero, skills, agent-dispatch, context-isolation]
 
 `plugin/ralph-hero/skills/hero/SKILL.md` dispatches all sub-skills (split, research, plan, review, impl) via `Skill()`, which runs inline in hero's context window. This causes context window bloat, prevents true parallelism, and contradicts the `context: fork` declarations in all autonomous skill frontmatters. The original rationale (hero lacked MCP tool access) was removed in a prior PR — the "Inline Skill Invocation Notes" section documenting that trade-off is now stale.
 
-`plugin/ralph-hero/skills/ralph-plan-epic/SKILL.md` has the same issue in its internal Steps 6 and 7.
+`plugin/ralph-hero/skills/ralph-plan-epic/SKILL.md` has internal `Skill()` calls (Steps 6 and 7), but these are correct — ralph-plan-epic runs inside a `ralph-analyst` agent which doesn't have `Agent` in its allowed-tools, so sub-dispatches must remain `Skill()` (inline within the agent's fresh context).
 
 ## Estimate: S
 
-Single phase, 4 tasks. Changes are targeted find-and-replace plus a section rewrite. No logic changes to the orchestration loop.
+Single phase, 3 tasks. Changes are targeted find-and-replace plus a section rewrite in hero.md only. No logic changes to the orchestration loop. ralph-plan-epic.md is NOT changed — its internal `Skill()` calls are correct since it runs inside an agent that lacks `Agent` in allowed-tools.
 
 ## Dispatchability Self-Check
 
@@ -77,97 +77,20 @@ Autonomous skills run via `Agent()` for context isolation — each gets a fresh 
 - The new "Agent Dispatch Notes" section is in its place with the 4 bullets above
 - The sentence "If any implementation fails, STOP immediately. Do NOT continue to next issue." that follows the old section (currently line 354) is preserved immediately after the new section
 
-### Task 3: Update ralph-plan-epic.md — Convert internal Skill() calls to Agent()
+### Task 3: Verify — Audit remaining Skill() usage in hero.md
 
-**File**: `plugin/ralph-hero/skills/ralph-plan-epic/SKILL.md`
-
-**Location**: Step 6 (line 210) and Step 7 (lines 243–244).
-
-**Step 6 change**:
-
-Old:
-```
-Invoke `Skill("ralph-hero:ralph-split", "GH-NNN")` to create M-sized feature children from the plan.
-```
-
-New:
-```
-Invoke `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-split GH-NNN", description="Split epic GH-NNN")` to create M-sized feature children from the plan.
-```
-
-**Step 7 change** — the wave orchestration loop invocation:
-
-Old:
-```
-  # Invoke ralph-plan for this feature
-  Skill("ralph-hero:ralph-plan",
-    "GH-{feature_number} --parent-plan {plan_of_plans_path} --sibling-context {sibling_context}")
-```
-
-New:
-```
-  # Invoke ralph-plan for this feature
-  Agent(
-    subagent_type="ralph-hero:ralph-analyst",
-    prompt="Run /ralph-hero:ralph-plan GH-{feature_number} --parent-plan {plan_of_plans_path} --sibling-context {sibling_context}",
-    description="Plan GH-{feature_number}"
-  )
-```
-
-Also update the misleading comment in the Step 7 preamble. Old:
-
-```
-Process waves sequentially. Within a wave, features with no shared dependencies can be planned in parallel (via parallel `Skill()` calls).
-```
-
-New:
-```
-Process waves sequentially. Within a wave, features with no shared dependencies can be planned in parallel (via parallel `Agent()` calls in a single message).
-```
-
-And update the wave completion note. Old:
-
-```
-**Wave completion detection**: Each `Skill()` call blocks until the feature plan is written. After all `Skill()` calls in a wave return, verify via `ralph_hero__get_issue` that all features have exited `Plan in Progress`.
-```
-
-New:
-```
-**Wave completion detection**: Each `Agent()` call blocks until the feature plan is written. After all `Agent()` calls in a wave return, verify via `ralph_hero__get_issue` that all features have exited `Plan in Progress`.
-```
-
-Also update the escalation table entry. Old:
-
-```
-| Feature not exiting Plan in Progress after Skill() returns | Investigate: check if feature went to Human Needed; if so, pause and escalate epic |
-```
-
-New:
-```
-| Feature not exiting Plan in Progress after Agent() returns | Investigate: check if feature went to Human Needed; if so, pause and escalate epic |
-```
-
-**Acceptance criteria**:
-- Zero `Skill("ralph-hero:ralph-split"` or `Skill("ralph-hero:ralph-plan"` strings remain in ralph-plan-epic/SKILL.md
-- All `Skill()` references in prose/comments updated to `Agent()`
-
-### Task 4: Verify — Audit remaining Skill() usage in hero.md
-
-After Tasks 1–3, search `plugin/ralph-hero/skills/hero/SKILL.md` for any remaining `Skill(` occurrences.
+After Tasks 1–2, search `plugin/ralph-hero/skills/hero/SKILL.md` for any remaining `Skill(` occurrences.
 
 **Expected result**: No `Skill(` calls should remain. The only `Skill` occurrence should be in the `allowed-tools:` list (`- Skill`) — which can be left as-is since removing it would change the allowed-tools contract. Hero may delegate to interactive skills in future use cases, so retaining `Skill` in `allowed-tools` is harmless.
 
 **Acceptance criteria**:
 - `grep -n 'Skill(' plugin/ralph-hero/skills/hero/SKILL.md` returns zero results
-- `grep -n 'Skill(' plugin/ralph-hero/skills/ralph-plan-epic/SKILL.md` returns zero results
 
 ## Phase 1 Completion Criteria
 
 1. All `Skill()` dispatch calls in `hero/SKILL.md` replaced with `Agent()` calls
 2. "Inline Skill Invocation Notes" section replaced with "Agent Dispatch Notes"
-3. All `Skill()` calls in `ralph-plan-epic/SKILL.md` replaced with `Agent()` calls
-4. All prose references to `Skill()` in ralph-plan-epic updated to `Agent()`
-5. Changes committed to main with message: `feat(skills): GH-637 convert hero skill dispatch from Skill() to Agent()`
+3. Changes committed to main with message: `feat(skills): GH-637 convert hero skill dispatch from Skill() to Agent()`
 
 ## What Does NOT Change
 
@@ -177,3 +100,4 @@ After Tasks 1–3, search `plugin/ralph-hero/skills/hero/SKILL.md` for any remai
 - The HUMAN GATE logic in hero.md — unchanged
 - The `allowed-tools` list in hero/SKILL.md — `Skill` entry stays (future interactive use, no harm)
 - team.md — already uses Agent() correctly, no changes needed
+- ralph-plan-epic.md — its internal `Skill()` calls are correct; it runs inside an agent (ralph-analyst) which doesn't have `Agent` in allowed-tools, so internal sub-dispatches must remain `Skill()` (they run inline within the agent's context, which is fine since the agent has a fresh context window)
