@@ -49,40 +49,22 @@ Fetch all three sources simultaneously (make all tool calls in one turn):
 - If `gh pr list` fails, note "PR data unavailable" and continue with dashboard only.
 - You must have at least the pipeline dashboard data to proceed. If it fails, report the error and stop.
 
-## Step 2: Synthesize 3 Insights
+## Step 2: Orient
 
-Analyze all fetched data and produce **exactly 3 insights**, ranked by urgency and impact.
+Open with a conversational greeting that weaves memory context with current board state. This is not a dashboard — it's a colleague catching you up.
 
-**Priority ranking** (highest to lowest):
+**Structure** (3 sentences max):
+- One sentence acknowledging prior context from memory: *"Last session you were digging into the playwright plugin — that shipped in PR #627."*
+- One sentence on what changed, if memory has enough prior detail to compare: *"Since then, 2 new issues landed in backlog and PR #636 merged."* Omit this if you can't meaningfully infer a delta.
+- One sentence on current state: *"Right now there are 3 things in progress and 1 PR open for review."*
 
-1. **Critical health warnings** — stuck issues, WIP violations, pipeline gaps (from `pipeline_dashboard` health warnings with `critical` or `warning` severity)
-2. **PR blockers** — open PRs with `reviewDecision: "REVIEW_REQUIRED"` older than 24h, or PRs with `headRefName` containing `GH-` that are not drafts
-3. **High-priority actionable items** — highest-priority issue in the earliest pipeline phase ready to advance (from dashboard phase data or metrics highlights)
-4. **Hygiene items** — stale issues, missing fields, orphaned items, WIP violations (from `project_hygiene`)
+**When memory is empty**: Skip the "last time" and "what changed" sentences. Open with board state directly: *"Here's where things stand — 3 items in progress, 1 PR waiting review."* Do not mention that memory is unavailable.
 
-If fewer than 3 distinct insights exist, produce as many as available and note "Board is healthy — nothing else urgent."
-
-**Output format** — numbered, scannable, with the target skill shown:
-
-```
-Session Briefing
-================
-
-1. [CRITICAL] #42 stuck in Research for 5 days — needs triage intervention
-   -> /ralph-hero:ralph-triage 42
-
-2. [PR] PR #87 "GH-420 Add batch update" waiting review for 3 days
-   -> /ralph-hero:ralph-merge 87
-
-3. [READY] #55 "Add webhook support" is highest-priority in Ready for Plan
-   -> /ralph-hero:ralph-plan 55
-```
-
-Each insight MUST include:
-- A severity tag: `[CRITICAL]`, `[PR]`, `[STUCK]`, `[READY]`, `[HYGIENE]`, or `[INFO]`
-- The issue or PR number
-- A concise description of why it needs attention
-- The skill that would address it
+**Tone rules**:
+- No severity tags (CRITICAL, STUCK, WARNING, etc. in brackets). If something is genuinely stuck, say it plainly: *"Issue #42 has been sitting in Research for 5 days — might be blocked on something."*
+- No WIP violation language unless it's actually causing a problem. "3 items in progress" is fine — don't flag it just because a configured limit says 2.
+- Backlog items that have been sitting get context, not alarm: *"#55 has been in backlog since February — you mentioned wanting to tackle it before the API launch but it hasn't been urgent yet."*
+- If the board is healthy and quiet: *"Things look calm — nothing stuck, nothing on fire."*
 
 ## Step 3: Present AskUserQuestion
 
