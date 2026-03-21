@@ -16,6 +16,59 @@ alias sp := split
 alias s  := status
 alias h  := hygiene
 
+# Create a new issue
+[group('commands')]
+issue title priority="" estimate="" state="Backlog" label="":
+    #!/usr/bin/env bash
+    set -eu
+    params='{"title":"{{title}}"'
+    if [ -n "{{priority}}" ]; then params="$params,\"priority\":\"{{priority}}\""; fi
+    if [ -n "{{estimate}}" ]; then params="$params,\"estimate\":\"{{estimate}}\""; fi
+    if [ -n "{{label}}" ]; then params="$params,\"labels\":[\"{{label}}\"]"; fi
+    params="$params,\"workflowState\":\"{{state}}\"}"
+    just _mcp_call "ralph_hero__create_issue" "$params"
+
+# Move issue to a workflow state
+[group('commands')]
+move number state:
+    @just _mcp_call "ralph_hero__save_issue" \
+        '{"number":{{number}},"workflowState":"{{state}}","command":"ralph_cli"}'
+
+# Get issue details
+[group('commands')]
+info number:
+    @just _mcp_call "ralph_hero__get_issue" \
+        '{"number":{{number}}}'
+
+# Add comment to an issue
+[group('commands')]
+comment number body:
+    @just _mcp_call "ralph_hero__create_comment" \
+        '{"number":{{number}},"body":"{{body}}"}'
+
+# Assign issue to a user
+[group('commands')]
+assign number user:
+    @just _mcp_call "ralph_hero__save_issue" \
+        '{"number":{{number}},"assignees":["{{user}}"]}'
+
+# Find next actionable issue
+[group('commands')]
+pick state="Research Needed" max-estimate="S":
+    @just _mcp_call "ralph_hero__pick_actionable_issue" \
+        '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
+
+# Create a draft card on the board
+[group('commands')]
+draft title priority="" estimate="" state="Backlog":
+    #!/usr/bin/env bash
+    set -eu
+    params='{"title":"{{title}}"'
+    if [ -n "{{priority}}" ]; then params="$params,\"priority\":\"{{priority}}\""; fi
+    if [ -n "{{estimate}}" ]; then params="$params,\"estimate\":\"{{estimate}}\""; fi
+    params="$params,\"workflowState\":\"{{state}}\"}"
+    just _mcp_call "ralph_hero__create_draft_issue" "$params"
+
 # Browse and run a recipe interactively (falls back to --list without fzf)
 default:
     #!/usr/bin/env bash
@@ -32,7 +85,9 @@ triage *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
-    dispatch "ralph-triage" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-triage" "$@"
 
 # Split a large issue into smaller XS/S sub-issues
 [group('workflow')]
@@ -41,7 +96,9 @@ split *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=15m
-    dispatch "ralph-split" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-split" "$@"
 
 # Research an issue - investigate codebase, create findings document
 [group('workflow')]
@@ -51,7 +108,9 @@ research *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
     INTERACTIVE_SKILL="research"
-    dispatch "ralph-research" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-research" "$@"
 
 # Create implementation plan from research findings
 [group('workflow')]
@@ -61,7 +120,9 @@ plan *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=3.00 DEFAULT_TIMEOUT=15m
     INTERACTIVE_SKILL="plan"
-    dispatch "ralph-plan" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-plan" "$@"
 
 # Review and critique an implementation plan
 [group('workflow')]
@@ -70,7 +131,9 @@ review *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=2.00 DEFAULT_TIMEOUT=15m
-    dispatch "ralph-review" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-review" "$@"
 
 # Implement an issue following its approved plan
 [group('workflow')]
@@ -80,7 +143,9 @@ impl *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=5.00 DEFAULT_TIMEOUT=15m
     INTERACTIVE_SKILL="impl"
-    dispatch "ralph-impl" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-impl" "$@"
 
 # Run project hygiene check - stale items, archive candidates
 [group('workflow')]
@@ -90,7 +155,9 @@ hygiene *args:
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
     QUICK_TOOL="ralph_hero__project_hygiene" QUICK_PARAMS='{}'
-    dispatch "ralph-hygiene" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-hygiene" "$@"
 
 # Display pipeline status dashboard with health indicators
 [group('workflow')]
@@ -98,9 +165,11 @@ status *args:
     #!/usr/bin/env bash
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
-    DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
+    DEFAULT_MODE=quick DEFAULT_BUDGET=0.50 DEFAULT_TIMEOUT=10m
     QUICK_TOOL="ralph_hero__pipeline_dashboard" QUICK_PARAMS='{"format":"markdown","includeHealth":true}'
-    dispatch "status" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "status" "$@"
 
 # Generate and post a project status report
 [group('workflow')]
@@ -109,7 +178,9 @@ report *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
-    dispatch "report" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "report" "$@"
 
 # Multi-agent team coordinator - spawns specialist workers
 [group('orchestrate')]
@@ -123,7 +194,9 @@ hero *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=10.00 DEFAULT_TIMEOUT=30m
-    dispatch "hero" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "hero" "$@"
 
 # Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
 [group('orchestrate')]
@@ -142,7 +215,9 @@ setup *args:
     set -eu
     source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
     DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
-    dispatch "setup" {{args}}
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "setup" "$@"
 
 # Diagnose setup issues - checks env, deps, plugin manifest, and API connectivity
 [group('setup')]
@@ -150,18 +225,85 @@ doctor:
     #!/usr/bin/env bash
     set -eu
     errors=0; warnings=0
+    # Read env var from settings.local.json (repo-local first, then global HOME)
+    # Optional second arg: explicit settings file path (skips auto-discovery)
+    read_settings_env() {
+        local var="$1"
+        local settings_file="${2:-}"
+        # If explicit path given, only check that path
+        if [ -n "$settings_file" ]; then
+            if [ ! -f "$settings_file" ]; then return 1; fi
+            local val
+            val=$(node -e "
+                const s = JSON.parse(require('fs').readFileSync('$settings_file','utf8'));
+                const v = (s.env || {})['$var'] || '';
+                if (!v || v.startsWith('\${')) process.exit(1);
+                process.stdout.write(v);
+            " 2>/dev/null) || return 1
+            echo "$val"
+            return 0
+        fi
+        # No explicit path — try all known locations
+        local paths=()
+        local repo_root
+        repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+        if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/settings.local.json" ]; then
+            paths+=("$repo_root/.claude/settings.local.json")
+        fi
+        if [ -f "$HOME/.claude/settings.local.json" ]; then
+            paths+=("$HOME/.claude/settings.local.json")
+        fi
+        for sf in ${paths[@]+"${paths[@]}"}; do
+            local val
+            val=$(node -e "
+                const s = JSON.parse(require('fs').readFileSync('$sf','utf8'));
+                const v = (s.env || {})['$var'] || '';
+                if (!v || v.startsWith('\${')) process.exit(1);
+                process.stdout.write(v);
+            " 2>/dev/null) || continue
+            echo "$val"
+            return 0
+        done
+        return 1
+    }
+    resolved_token=""
+    resolved_owner=""
+    resolved_project=""
     echo "=== Ralph Doctor ==="
     echo ""
     echo "--- Environment Variables ---"
+    # Resolve repo root once for the loop (no 'local' — we're at recipe scope, not in a function)
+    _repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
     for var in RALPH_HERO_GITHUB_TOKEN RALPH_GH_OWNER RALPH_GH_PROJECT_NUMBER; do
-        if [ -z "${!var:-}" ]; then
-            echo "FAIL: $var is not set"
+        val="${!var:-}"
+        source_label=""
+        if [ -n "$val" ]; then
+            source_label=" (from shell env)"
+        else
+            # Try repo-local settings first, then global
+            if [ -n "$_repo_root" ] && [ -f "$_repo_root/.claude/settings.local.json" ]; then
+                val=$(read_settings_env "$var" "$_repo_root/.claude/settings.local.json") && source_label=" (from .claude/settings.local.json)" || val=""
+            fi
+            if [ -z "$val" ] && [ -f "$HOME/.claude/settings.local.json" ]; then
+                val=$(read_settings_env "$var" "$HOME/.claude/settings.local.json") && source_label=" (from ~/.claude/settings.local.json)" || val=""
+            fi
+        fi
+        if [ -z "$val" ]; then
+            echo "FAIL: $var — not found in:"
+            echo "      - shell environment"
+            if [ -n "$_repo_root" ]; then echo "      - .claude/settings.local.json (repo)"; fi
+            echo "      - ~/.claude/settings.local.json (global)"
             errors=$((errors + 1))
         else
             if [ "$var" = "RALPH_HERO_GITHUB_TOKEN" ]; then
-                echo "  OK: $var (set, redacted)"
-            else
-                echo "  OK: $var = ${!var}"
+                echo "  OK: $var (set, redacted)$source_label"
+                resolved_token="$val"
+            elif [ "$var" = "RALPH_GH_OWNER" ]; then
+                echo "  OK: $var = ${val}$source_label"
+                resolved_owner="$val"
+            elif [ "$var" = "RALPH_GH_PROJECT_NUMBER" ]; then
+                echo "  OK: $var = ${val}$source_label"
+                resolved_project="$val"
             fi
         fi
     done
@@ -178,7 +320,7 @@ doctor:
     if command -v mcp &>/dev/null; then
         echo "  OK: mcp (mcptools)"
     else
-        echo "WARN: mcp (mcptools) not installed -- quick-* recipes unavailable"
+        echo "WARN: mcp (mcptools) not installed -- quick commands unavailable"
         echo "      Install: brew tap f/mcptools && brew install mcp"
         warnings=$((warnings + 1))
     fi
@@ -213,8 +355,22 @@ doctor:
         errors=$((errors + 1))
     fi
     echo ""
-    if command -v mcp &>/dev/null && [ -n "${RALPH_HERO_GITHUB_TOKEN:-}" ]; then
+    echo "--- Version ---"
+    if [ -n "${RALPH_MCP_VERSION:-}" ]; then
+        echo "  OK: ralph v${RALPH_MCP_VERSION} (from RALPH_MCP_VERSION)"
+    elif [ -d "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero" ]; then
+        cache_ver=$(ls "$HOME/.claude/plugins/cache/ralph-hero/ralph-hero" | sort -V | tail -1)
+        echo "  OK: ralph v${cache_ver} (from plugin cache)"
+    else
+        echo "WARN: version unknown — plugin cache not found"
+        warnings=$((warnings + 1))
+    fi
+    echo ""
+    if command -v mcp &>/dev/null && [ -n "$resolved_token" ]; then
         echo "--- API Health Check ---"
+        RALPH_HERO_GITHUB_TOKEN="$resolved_token" \
+        RALPH_GH_OWNER="${resolved_owner:-${RALPH_GH_OWNER:-}}" \
+        RALPH_GH_PROJECT_NUMBER="${resolved_project:-${RALPH_GH_PROJECT_NUMBER:-}}" \
         just _mcp_call "ralph_hero__health_check" '{}' || {
             echo "FAIL: API health check failed"
             errors=$((errors + 1))
@@ -328,31 +484,31 @@ completions shell="bash":
     @just --completions {{shell}}
 
 # Pipeline status dashboard - instant, no API cost
-[group('quick')]
+[private]
 quick-status format="markdown":
     @just _mcp_call "ralph_hero__pipeline_dashboard" \
         '{"format":"{{format}}","includeHealth":true}'
 
 # Move issue to a workflow state - instant, no API cost
-[group('quick')]
+[private]
 quick-move issue state:
     @just _mcp_call "ralph_hero__save_issue" \
         '{"number":{{issue}},"workflowState":"{{state}}","command":"ralph_cli"}'
 
 # Find next actionable issue by workflow state - instant, no API cost
-[group('quick')]
+[private]
 quick-pick state="Research Needed" max-estimate="S":
     @just _mcp_call "ralph_hero__pick_actionable_issue" \
         '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
 
 # Assign issue to a GitHub user - instant, no API cost
-[group('quick')]
+[private]
 quick-assign issue user:
     @just _mcp_call "ralph_hero__save_issue" \
         '{"number":{{issue}},"assignees":["{{user}}"]}'
 
 # Create a new issue with project fields - instant, no API cost
-[group('quick')]
+[private]
 quick-issue title label="" priority="" estimate="" state="Backlog":
     #!/usr/bin/env bash
     set -eu
@@ -364,19 +520,19 @@ quick-issue title label="" priority="" estimate="" state="Backlog":
     just _mcp_call "ralph_hero__create_issue" "$params"
 
 # Get full issue details with project fields - instant, no API cost
-[group('quick')]
+[private]
 quick-info issue:
     @just _mcp_call "ralph_hero__get_issue" \
         '{"number":{{issue}}}'
 
 # Add a comment to an issue - instant, no API cost
-[group('quick')]
+[private]
 quick-comment issue body:
     @just _mcp_call "ralph_hero__create_comment" \
         '{"number":{{issue}},"body":"{{body}}"}'
 
 # Create a draft issue on the project board (no GitHub issue, just a card)
-[group('quick')]
+[private]
 quick-draft title priority="" estimate="" state="Backlog":
     #!/usr/bin/env bash
     set -eu
@@ -427,7 +583,7 @@ _mcp_call tool params:
         exit 1
     fi
     raw=$(mcp call "{{tool}}" --params '{{params}}' \
-        npx -y ralph-hero-mcp-server@2.5.17)
+        npx -y "ralph-hero-mcp-server@${RALPH_MCP_VERSION:-latest}")
     if command -v jq &>/dev/null; then
         if ! echo "$raw" | jq -e '.' > /dev/null 2>&1; then
             echo "Error: MCP server returned invalid response" >&2

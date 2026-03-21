@@ -85,3 +85,73 @@ describe("GitHubClientConfig templateProjectNumber structural", () => {
     expect(typesSrc).toContain("templateProjectNumber");
   });
 });
+
+describe("setup_project iteration field creation structural", () => {
+  it("Zod schema includes createIterationField param", () => {
+    expect(projectToolsSrc).toContain("createIterationField");
+  });
+
+  it("createIterationField defaults to false", () => {
+    expect(projectToolsSrc).toContain(".default(false)");
+  });
+
+  it("has createIterationField helper function", () => {
+    expect(projectToolsSrc).toContain(
+      "async function createIterationField(",
+    );
+  });
+
+  it("uses dataType ITERATION in mutation", () => {
+    expect(projectToolsSrc).toContain('dataType: "ITERATION"');
+  });
+
+  it("passes iterationConfiguration to the mutation", () => {
+    expect(projectToolsSrc).toContain("iterationConfiguration: $config");
+    expect(projectToolsSrc).toContain("ProjectV2IterationFieldConfigurationInput!");
+  });
+
+  it("sends duration and startDate in iterationConfiguration", () => {
+    expect(projectToolsSrc).toContain("duration: durationDays");
+    expect(projectToolsSrc).toContain("startDate: start");
+  });
+
+  it("returns values from API response, not local computation", () => {
+    expect(projectToolsSrc).toContain("firstIter?.startDate ?? start");
+    expect(projectToolsSrc).toContain("firstIter?.duration ?? durationDays");
+  });
+
+  it("queries configuration.iterations in the response", () => {
+    expect(projectToolsSrc).toContain("configuration {");
+    expect(projectToolsSrc).toContain("iterations { startDate duration }");
+  });
+
+  it("fragments on ProjectV2IterationField in mutation response", () => {
+    expect(projectToolsSrc).toContain("... on ProjectV2IterationField");
+  });
+
+  it("creates Sprint field with 14-day duration", () => {
+    expect(projectToolsSrc).toContain('"Sprint"');
+    expect(projectToolsSrc).toContain("14");
+  });
+
+  it("only creates iteration field in blank path when flag is true", () => {
+    expect(projectToolsSrc).toContain("if (args.createIterationField)");
+  });
+
+  it("has getNextMonday helper for default start date", () => {
+    expect(projectToolsSrc).toContain("function getNextMonday(");
+  });
+
+  it("iteration field creation is conditional (not in template path)", () => {
+    // The createIterationField call should be inside the else branch (blank path)
+    // Verify it appears after the Estimate field creation and before the closing brace
+    const blankPathIdx = projectToolsSrc.indexOf(
+      "--- Blank path: existing createProjectV2",
+    );
+    const iterFieldIdx = projectToolsSrc.indexOf(
+      "args.createIterationField",
+    );
+    expect(blankPathIdx).toBeGreaterThan(-1);
+    expect(iterFieldIdx).toBeGreaterThan(blankPathIdx);
+  });
+});

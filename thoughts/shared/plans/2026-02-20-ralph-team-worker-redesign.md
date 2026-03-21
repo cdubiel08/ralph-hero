@@ -1,3 +1,8 @@
+---
+type: plan
+date: 2026-02-20
+---
+
 # Ralph Team Worker Redesign
 
 **Date**: 2026-02-20

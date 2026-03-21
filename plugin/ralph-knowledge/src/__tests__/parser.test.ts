@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDocument } from "../parser.js";
+import { parseDocument, inferTypeFromPath } from "../parser.js";
 
 const FULL_DOC = `---
 date: 2026-03-08
@@ -179,5 +179,69 @@ describe("parseDocument", () => {
       const doc = parseDocument("test-plan", "thoughts/shared/plans/test-plan.md", raw);
       expect(doc.githubIssue).toBe(550);
     });
+  });
+});
+
+describe("inferTypeFromPath", () => {
+  it("infers plan from /plans/ segment", () => {
+    expect(inferTypeFromPath("thoughts/shared/plans/foo.md")).toBe("plan");
+  });
+
+  it("infers research from /research/ segment", () => {
+    expect(inferTypeFromPath("thoughts/shared/research/foo.md")).toBe("research");
+  });
+
+  it("infers report from /reports/ segment", () => {
+    expect(inferTypeFromPath("thoughts/shared/reports/foo.md")).toBe("report");
+  });
+
+  it("infers idea from /ideas/ segment", () => {
+    expect(inferTypeFromPath("thoughts/ideas/foo.md")).toBe("idea");
+  });
+
+  it("returns null for unknown path", () => {
+    expect(inferTypeFromPath("thoughts/misc/foo.md")).toBeNull();
+  });
+});
+
+describe("parseDocument type inference", () => {
+  const NO_TYPE_DOC = `---
+date: 2026-03-01
+status: draft
+---
+
+# My Plan
+`;
+
+  const SPEC_DOC = `---
+date: 2026-02-21
+status: draft
+type: spec
+---
+
+# Debug Mode Spec
+`;
+
+  it("infers type from path when frontmatter type is absent", () => {
+    const doc = parseDocument("my-plan", "thoughts/shared/plans/my-plan.md", NO_TYPE_DOC);
+    expect(doc.type).toBe("plan");
+  });
+
+  it("preserves frontmatter type: spec without aliasing", () => {
+    const doc = parseDocument("debug-spec", "thoughts/shared/plans/debug-spec.md", SPEC_DOC);
+    expect(doc.type).toBe("spec");
+  });
+
+  it("frontmatter type takes priority over path inference", () => {
+    // file is in /plans/ but has type: research in frontmatter
+    const raw = `---\ndate: 2026-03-01\ntype: research\n---\n\n# Research in plans dir\n`;
+    const doc = parseDocument("x", "thoughts/shared/plans/x.md", raw);
+    expect(doc.type).toBe("research");
+  });
+
+  it("returns null when path gives no hint and type is absent", () => {
+    const raw = `---\ndate: 2026-03-01\n---\n\n# Mystery\n`;
+    const doc = parseDocument("x", "thoughts/misc/x.md", raw);
+    expect(doc.type).toBeNull();
   });
 });

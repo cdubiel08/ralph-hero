@@ -1,15 +1,10 @@
 ---
 name: ralph-builder
 description: Builder worker - reviews plans and implements code for the full build lifecycle
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, TaskList, TaskGet, TaskUpdate, SendMessage
+tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Agent, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__save_issue, ralph_hero__create_comment, ralph_hero__list_sub_issues
 model: sonnet
-color: cyan
+color: yellow
 hooks:
-  PreToolUse:
-    - matcher: "Write|Edit"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/require-skill-context.sh"
   Stop:
     - hooks:
         - type: command

@@ -25,12 +25,14 @@ Each cell: **allow** = tool is in `allowed-tools`, **—** = tool is not listed 
 | Grep | allow | allow | allow | allow | allow | allow | allow | — | — | — | allow | — | — | — | — | — |
 | Bash | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | allow | — | — | — | — | allow |
 | Task | allow | allow | allow | allow | allow | allow | allow | allow | — | — | allow | — | — | — | — | — |
+| Agent | allow | allow | allow | allow | allow | allow | allow | — | — | — | — | — | — | — | — | — |
 | Skill | — | — | — | — | — | — | allow | allow | allow | — | — | — | — | — | — | allow |
 | WebSearch | allow | — | allow | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | WebFetch | — | — | allow | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | TaskCreate/List/Get/Update | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
 | SendMessage | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
 | TeamCreate/Delete | — | — | — | — | — | — | — | allow | — | — | — | — | — | — | — | — |
+| AskUserQuestion | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | allow |
 | MCP tools (ralph_hero__*) | indirect | indirect | indirect | indirect | indirect | indirect | indirect | indirect | direct | direct | — | — | — | — | — | direct |
 
 **Note on MCP tools**: Most skills access `ralph_hero__*` tools indirectly through Bash/Task delegation. `ralph-merge` and `ralph-pr` have direct MCP tool access in their `allowed-tools`.

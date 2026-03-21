@@ -86,14 +86,16 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
 
   fts.rebuildIndex();
 
-  if (generate && dirs.length > 0) {
-    console.log("Generating index notes...");
-    generateIndexes(dirs[0], parsedDocs);
-    console.log("Index notes generated.");
+  try {
+    if (generate && dirs.length > 0) {
+      console.log("Generating index notes...");
+      generateIndexes(dirs[0], parsedDocs);
+      console.log("Index notes generated.");
+    }
+  } finally {
+    console.log(`Done. ${indexed} documents indexed.`);
+    db.close();
   }
-
-  console.log(`Done. ${indexed} documents indexed.`);
-  db.close();
 }
 
 const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");

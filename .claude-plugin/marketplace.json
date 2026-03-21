@@ -21,6 +21,11 @@
       "name": "ralph-demo",
       "description": "Generate sprint demo videos from structured JSON input using Remotion. 7 scene templates, pluggable themes, and export presets for 16:9, 1:1, and 9:16 formats.",
       "source": "./plugin/ralph-demo"
+    },
+    {
+      "name": "ralph-playwright",
+      "description": "Polymorphic UI testing plugin: story generation, E2E execution, a11y scanning, Storybook integration, and visual regression for ralph-hero.",
+      "source": "./plugin/ralph-playwright"
     }
   ]
 }

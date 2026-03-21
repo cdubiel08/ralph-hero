@@ -1,4 +1,5 @@
 ---
+type: research
 date: 2026-02-18
 github_issue: 66
 github_url: https://github.com/cdubiel08/ralph-hero/issues/66

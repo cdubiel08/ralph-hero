@@ -24,6 +24,21 @@ const TITLE_RE = /^# (.+)$/m;
 const WIKILINK_REL_RE = /^- (builds_on|tensions):: \[\[(.+?)\]\]/gm;
 const SUPERSEDED_BY_RE = /\[\[(.+?)\]\]/;
 
+const PATH_TYPE_MAP: Array<{ segment: string; type: string }> = [
+  { segment: "/research/", type: "research" },
+  { segment: "/plans/",    type: "plan" },
+  { segment: "/ideas/",    type: "idea" },
+  { segment: "/reviews/",  type: "review" },
+  { segment: "/reports/",  type: "report" },
+];
+
+export function inferTypeFromPath(path: string): string | null {
+  for (const { segment, type } of PATH_TYPE_MAP) {
+    if (path.includes(segment)) return type;
+  }
+  return null;
+}
+
 export function parseDocument(id: string, path: string, raw: string): ParsedDocument {
   const fmMatch = raw.match(FRONTMATTER_RE);
   const frontmatter = fmMatch ? parseYaml(fmMatch[1]) ?? {} : {};
@@ -55,7 +70,9 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
   return {
     id, path, title,
     date: frontmatter.date ? String(frontmatter.date) : null,
-    type: frontmatter.type ?? null,
+    type: (typeof frontmatter.type === "string" && frontmatter.type.length > 0)
+      ? frontmatter.type
+      : inferTypeFromPath(path),
     status: frontmatter.status ?? null,
     githubIssue: typeof frontmatter.github_issue === "number"
       ? frontmatter.github_issue

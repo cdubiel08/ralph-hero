@@ -44,6 +44,8 @@ The `reindex` script gains a generation phase. After populating SQLite, it write
 | `_research.md` | All research docs, sorted by date, with status and issue links |
 | `_plans.md` | All plans with approval status |
 | `_ideas.md` | All ideas with formation status |
+| `_reviews.md` | All review documents |
+| `_reports.md` | All report documents |
 | `_issues/GH-NNNN.md` | Per-issue hub aggregating all related docs |
 | `_queries.md` | Pre-built Dataview query snippets |
 
@@ -52,6 +54,7 @@ The `reindex` script gains a generation phase. After populating SQLite, it write
 - The `_issues/` directory is entirely generated
 - All generated files include `generated: true` in YAML frontmatter
 - Generated files are `.gitignore`'d (derived artifacts, regenerated on each reindex)
+- The reindexer skips files and directories starting with `_` to prevent indexing generated content (feedback loop prevention)
 
 **Example: `_research.md`**
 
@@ -101,20 +104,21 @@ All authored documents in `thoughts/` use consistent frontmatter for Dataview co
 date: 2026-03-14          # creation date
 type: research             # research | plan | idea | review | report
 status: draft              # draft | approved | superseded | archived
-tags: [caching, mcp-server]
 ---
 ```
 
 **Optional fields:**
 
 ```yaml
-github_issue: 564          # linked issue number
+tags: [caching, mcp-server]  # forward-looking; only ~6% of existing docs have tags
+github_issue: 564             # linked issue number (also accepts github_issues, primary_issue)
 superseded_by: "[[doc-id]]"
 ```
 
 **Changes:**
-- `reindex` validates frontmatter and logs warnings on missing/invalid fields (not hard errors)
-- No migration needed — existing docs mostly comply already
+- `reindex` validates frontmatter and logs warnings on missing `date`, `type`, or `status` fields (not hard errors)
+- `tags` is optional — tag-based queries will grow in usefulness as new documents are created with tags by skills. No backfill migration needed.
+- The parser accepts `github_issue`, `github_issues` (plural), and `primary_issue` fields for issue number extraction (existing parser behavior)
 - Skills that create documents already emit correct frontmatter
 
 ### 3. Dataview Queries & Obsidian Config
@@ -132,9 +136,10 @@ Ships with 5-8 Dataview snippets covering:
 **Obsidian config fragment (`.obsidian/`):**
 
 Minimal config for a good out-of-box experience:
-- `community-plugins.json` — Dataview enabled
-- `app.json` — wikilink style set to shortest path (so `[[doc-id]]` resolves without full paths)
+- `app.json` — wikilink style set to shortest path (so `[[doc-id]]` resolves without full paths). Date-prefixed filenames make collisions extremely unlikely.
 - `graph.json` — group coloring by doc type: research=blue, plans=green, ideas=yellow, generated=gray
+
+**Dataview plugin:** The config fragment does NOT install Dataview — Obsidian community plugins must be installed manually from the Community Plugin browser. The setup skill prints explicit instructions: "Open Settings > Community Plugins > Browse > search 'Dataview' > Install > Enable." The `_queries.md` file works without Dataview (it's just markdown with code blocks), but the queries won't execute until Dataview is installed.
 
 ### 4. Reindex Integration
 
@@ -152,15 +157,15 @@ scan thoughts/ → parse docs → insert SQLite → build FTS5 → generate embe
 
 **CLI flag:** `--no-generate` to skip index note generation (for users who only want the SQLite index). Default is generate.
 
+**Reindexer change:** `findMarkdownFiles()` in `reindex.ts` must skip files and directories starting with `_`. This prevents the reindexer from indexing its own generated output on subsequent runs.
+
+**Issue hub filenames:** Zero-padded to 4 digits (`GH-0042.md`, `GH-0564.md`). For issue numbers with 5+ digits, use the full number (`GH-12345.md`).
+
 **Gitignore additions (`thoughts/.gitignore`):**
 
 ```
-_index.md
-_research.md
-_plans.md
-_ideas.md
+_*.md
 _issues/
-_queries.md
 ```
 
 ### 5. Setup Skill & Onboarding
@@ -170,11 +175,15 @@ _queries.md
 Separate from existing `/ralph-knowledge:setup` (SQLite indexing):
 
 1. Locate `thoughts/` directory
-2. Check for existing `.obsidian/` — merge carefully if present, create fresh if not
-3. Copy config fragment (app settings, Dataview plugin, graph coloring)
-4. Add generated files to `thoughts/.gitignore`
-5. Run `reindex` (now includes index note generation)
-6. Print: "Open `thoughts/` as a vault in Obsidian. Install Dataview from Community Plugins when prompted."
+2. Check for existing `.obsidian/` directory
+   - **If absent**: create `.obsidian/` with full config fragment
+   - **If present**: patch `app.json` keys only if they don't already exist (preserve user customizations). Append to `graph.json` groups only if no existing groups conflict. Never overwrite existing config values.
+3. Add generated files to `thoughts/.gitignore` (append if `.gitignore` exists, create if not)
+4. Run `reindex` (now includes index note generation)
+5. Print setup instructions:
+   - "Open `thoughts/` as a vault in Obsidian"
+   - "Install Dataview: Settings > Community Plugins > Browse > search 'Dataview' > Install > Enable"
+   - "Start with `_index.md` for navigation"
 
 **Existing `/ralph-knowledge:setup` updated:**
 - After successful index, suggest: "Want to browse this in Obsidian? Run `/ralph-knowledge:setup-obsidian`"
@@ -186,7 +195,7 @@ reindex.ts
   ├── scan & parse (existing)
   ├── SQLite + FTS5 + embeddings (existing)
   └── generate-indexes.ts (NEW)
-       ├── writeTypeIndexes(_research.md, _plans.md, _ideas.md)
+       ├── writeTypeIndexes(_research.md, _plans.md, _ideas.md, _reviews.md, _reports.md)
        ├── writeMasterIndex(_index.md)
        ├── writeIssueHubs(_issues/GH-NNNN.md)
        └── writeQueryReference(_queries.md)
@@ -211,10 +220,17 @@ setup skill (MODIFIED)
 | Separate setup-obsidian skill | Keeps Obsidian optional — SQLite index works without it |
 | No custom Obsidian plugin | Reduces maintenance burden; Dataview + config is sufficient |
 | `--no-generate` flag | Escape hatch for users who only want the indexing backend |
+| Reindexer skips `_`-prefixed files | Prevents feedback loop where generated content gets indexed |
+| `tags` is optional | Only ~6% of existing docs have tags; tag queries grow useful over time |
+| Multi-directory indexing deferred | Current design assumes single `thoughts/` directory; multi-dir support (see `thoughts/shared/plans/2026-03-10-multi-dir-knowledge-index.md`) would need a location strategy for generated files |
 
 ## Testing
 
-- Unit tests for `generate-indexes.ts`: given parsed docs, verify correct markdown output
-- Integration test: reindex a test `thoughts/` directory, verify generated files exist with correct content
-- Verify wikilinks resolve correctly (shortest-path format matches Obsidian's default)
+- Unit tests for `generate-indexes.ts`:
+  - Given 3 research docs and 1 plan for issue 560, `_issues/GH-0560.md` contains exactly 3 research wikilinks and 1 plan wikilink under correct headings
+  - Given 0 documents, generates empty index files with headers but no entries
+  - Given docs with missing frontmatter fields, generates indexes using available data (no crashes)
+  - Superseded docs appear in the "Superseded" section with strikethrough and arrow to replacement
+- Integration test: reindex a test `thoughts/` directory, verify generated files exist with correct content and `_`-prefixed files are not in the SQLite index
+- Verify wikilinks resolve correctly (shortest-path format matches Obsidian's default; date-prefixed filenames prevent collisions)
 - Verify Dataview queries parse and return expected results (manual verification in Obsidian)

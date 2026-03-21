@@ -150,6 +150,21 @@ describe("writeMasterIndex", () => {
     expect(content).toContain("[[recent-2]]");
   });
 
+  it("includes uncategorized link when hasUncategorized is true", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    writeMasterIndex(dir, [], true);
+    const content = readFileSync(join(dir, "_index.md"), "utf-8");
+    expect(content).toContain("[[_uncategorized]]");
+  });
+
+  it("omits uncategorized link when hasUncategorized is false", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    writeMasterIndex(dir, [], false);
+    const content = readFileSync(join(dir, "_index.md"), "utf-8");
+    expect(content).not.toContain("[[_uncategorized]]");
+  });
+
+
   it("limits recent docs to 20", () => {
     const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
     const docs = Array.from({ length: 30 }, (_, i) =>
@@ -212,6 +227,35 @@ describe("generateIndexes", () => {
     const content = readFileSync(join(dir, "_uncategorized.md"), "utf-8");
     expect(content).toContain("[[no-type]]");
     expect(content).not.toContain("[[typed]]");
+    // _index.md should link to _uncategorized when it exists
+    const index = readFileSync(join(dir, "_index.md"), "utf-8");
+    expect(index).toContain("[[_uncategorized]]");
+  });
+
+  it("does not link _uncategorized in index when all docs are typed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "r1", type: "research" }),
+    ];
+    generateIndexes(dir, docs);
+    const index = readFileSync(join(dir, "_index.md"), "utf-8");
+    expect(index).not.toContain("[[_uncategorized]]");
+  });
+
+  it("routes spec docs to _specs.md and not to uncategorized", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const docs = [
+      makeParsedDoc({ id: "debug-spec", type: "spec", title: "Debug Mode Spec" }),
+      makeParsedDoc({ id: "r1", type: "research" }),
+    ];
+    generateIndexes(dir, docs);
+    expect(existsSync(join(dir, "_specs.md"))).toBe(true);
+    const specs = readFileSync(join(dir, "_specs.md"), "utf-8");
+    expect(specs).toContain("[[debug-spec]]");
+    expect(existsSync(join(dir, "_uncategorized.md"))).toBe(false);
+    const index = readFileSync(join(dir, "_index.md"), "utf-8");
+    expect(index).toContain("[[_specs]]");
+    expect(index).not.toContain("[[_uncategorized]]");
   });
 });
 

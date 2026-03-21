@@ -1,4 +1,5 @@
 ---
+type: report
 date: 2026-03-04
 ---
 
@@ -8,19 +9,19 @@ date: 2026-03-04
 
 ## Issues Processed
 
-| Issue | Title | Estimate | Outcome | PR |
-|-------|-------|----------|---------|-----|
-| #519 | Parent state advancement & dashboard false positive fix | M | Merged | — |
-| #520 | Dashboard: suppress oversized_in_pipeline for issues with sub-issues | XS | Merged | — |
-| #521 | Add Plan in Review to PARENT_GATE_STATES | XS | Merged | — |
-| #522 | Auto-advance parent in save_issue using batch queries | S | Merged | — |
-| #431 | Add list_groups tool to discover all parent issues with sub-issue expansion | S | In Review | #529 |
-| #500 | Artifact Comment Protocol Enforcement | S | In Review | #530 |
-| #511 | setup_project Iteration Field Creation | XS | In Review | #527 |
-| #508 | Iteration Field Cache & GraphQL Fragment Support | S | In Review | #528 |
-| #509 | save_issue Iteration Param | S | In Review | #531 |
-| #510 | list_issues Iteration Filter | S | In Review | #532 |
-| #512 | pipeline_dashboard Per-Iteration Breakdown | S | In Review | #533 |
+| Issue | Title                                                                       | Estimate | Outcome   | PR   |
+| ----- | --------------------------------------------------------------------------- | -------- | --------- | ---- |
+| #519  | Parent state advancement & dashboard false positive fix                     | M        | Merged    | —    |
+| #520  | Dashboard: suppress oversized_in_pipeline for issues with sub-issues        | XS       | Merged    | —    |
+| #521  | Add Plan in Review to PARENT_GATE_STATES                                    | XS       | Merged    | —    |
+| #522  | Auto-advance parent in save_issue using batch queries                       | S        | Merged    | —    |
+| #431  | Add list_groups tool to discover all parent issues with sub-issue expansion | S        | In Review | #529 |
+| #500  | Artifact Comment Protocol Enforcement                                       | S        | In Review | #530 |
+| #511  | setup_project Iteration Field Creation                                      | XS       | In Review | #527 |
+| #508  | Iteration Field Cache & GraphQL Fragment Support                            | S        | In Review | #528 |
+| #509  | save_issue Iteration Param                                                  | S        | In Review | #531 |
+| #510  | list_issues Iteration Filter                                                | S        | In Review | #532 |
+| #512  | pipeline_dashboard Per-Iteration Breakdown                                  | S        | In Review | #533 |
 
 ## Worker Summary
 

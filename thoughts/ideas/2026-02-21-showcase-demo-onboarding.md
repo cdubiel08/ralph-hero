@@ -1,4 +1,5 @@
 ---
+type: idea
 date: 2026-02-21
 status: closed
 reason: Covered by GH-310 and GH-364

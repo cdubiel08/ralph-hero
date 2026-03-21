@@ -195,6 +195,7 @@ Ralph uses specialized agents for parallel task execution:
 | `codebase-analyzer` | Understand implementation details with file:line references |
 | `codebase-pattern-finder` | Find similar patterns and usage examples |
 | `thoughts-locator` | Discover prior research docs, plans, and decisions |
+| `thoughts-analyzer` | Extract key decisions, constraints, and insights from thought documents |
 | `web-search-researcher` | External API docs and best practices research |
 | `github-lister` | Search GitHub for trending repos and patterns |
 | `github-analyzer` | Analyze GitHub findings and synthesize insights |

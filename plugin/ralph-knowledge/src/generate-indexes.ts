@@ -55,6 +55,7 @@ export function writeTypeIndex(
 const TYPE_HEADINGS: Record<string, string> = {
   research: "Research",
   plan: "Plans",
+  spec: "Specs",
   idea: "Ideas",
   review: "Reviews",
   report: "Reports",
@@ -99,9 +100,13 @@ export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void 
       }
     }
 
-    // "other" type docs that don't match known headings
-    const otherDocs = byType.get("other");
-    if (otherDocs && otherDocs.length > 0) {
+    // Collect docs with null type ("other") or non-standard types (e.g., "meeting")
+    const otherDocs: ParsedDocument[] = [];
+    for (const [type, typeDocs] of byType) {
+      if (type !== "other" && TYPE_HEADINGS[type]) continue;
+      otherDocs.push(...typeDocs);
+    }
+    if (otherDocs.length > 0) {
       lines.push("## Other\n");
       for (const doc of otherDocs) {
         lines.push(`- [[${doc.id}]] — ${doc.title}`);
@@ -124,7 +129,7 @@ export function writeIssueHubs(outDir: string, allDocs: ParsedDocument[]): void 
 
 const RECENT_LIMIT = 20;
 
-export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[]): void {
+export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[], hasUncategorized = false): void {
   const sorted = [...allDocs].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
   const recent = sorted.slice(0, RECENT_LIMIT);
 
@@ -134,12 +139,16 @@ export function writeMasterIndex(outDir: string, allDocs: ParsedDocument[]): voi
     "## Browse by Type\n",
     "- [[_research]] — Research documents",
     "- [[_plans]] — Implementation plans",
+    "- [[_specs]] — Specifications",
     "- [[_ideas]] — Ideas and drafts",
     "- [[_reviews]] — Code and plan reviews",
     "- [[_reports]] — Status reports",
     "- [[_queries]] — Dataview query snippets",
-    "",
   ];
+  if (hasUncategorized) {
+    lines.push("- [[_uncategorized]] — Uncategorized documents");
+  }
+  lines.push("");
 
   if (recent.length > 0) {
     lines.push("## Recent Documents\n");
@@ -247,6 +256,7 @@ WHERE !contains(rows.type, "plan")
 const TYPE_INDEX_CONFIG: Array<{ type: string; filename: string; heading: string }> = [
   { type: "research", filename: "research", heading: "Research Documents" },
   { type: "plan", filename: "plans", heading: "Implementation Plans" },
+  { type: "spec", filename: "specs", heading: "Specifications" },
   { type: "idea", filename: "ideas", heading: "Ideas & Drafts" },
   { type: "review", filename: "reviews", heading: "Reviews" },
   { type: "report", filename: "reports", heading: "Reports" },
@@ -264,7 +274,7 @@ export function generateIndexes(outDir: string, allDocs: ParsedDocument[]): void
     writeTypeIndex(outDir, "uncategorized", "Uncategorized Documents", uncategorized);
   }
 
-  writeMasterIndex(outDir, allDocs);
+  writeMasterIndex(outDir, allDocs, uncategorized.length > 0);
   writeIssueHubs(outDir, allDocs);
   writeQueryReference(outDir);
 }

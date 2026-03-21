@@ -1,3 +1,8 @@
+---
+type: report
+date: 2026-02-21
+---
+
 # Ralph Hero — Weekly Ship Report
 
 **Period**: Feb 14–21, 2026

@@ -1,3 +1,8 @@
+---
+type: idea
+date: 2026-02-25
+---
+
 # Idea Hunt Synthesis: What's Actually Interesting Out There
 
 **Date:** 2026-02-25

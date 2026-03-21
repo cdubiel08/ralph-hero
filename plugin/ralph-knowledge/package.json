@@ -1,6 +1,6 @@
 {
   "name": "ralph-hero-knowledge-index",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

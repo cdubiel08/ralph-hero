@@ -17,6 +17,7 @@ import type {
   ProjectV2ItemFieldSingleSelectValue,
   ProjectV2FieldUnion,
   ProjectV2SingleSelectField,
+  ProjectV2View,
 } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
 import { queryProjectRepositories } from "../lib/helpers.js";
@@ -170,7 +171,7 @@ export function registerProjectTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__setup_project",
-    "Create a new GitHub Project V2 with Workflow State, Priority, and Estimate custom fields",
+    "Create a new GitHub Project V2 with Workflow State, Priority, Estimate, and optional Sprint iteration fields",
     {
       owner: z.string().describe("GitHub owner (user or org)"),
       title: z.string().describe("Project title").default("Ralph Workflow"),
@@ -180,6 +181,14 @@ export function registerProjectTools(
         .describe(
           "Template project number to copy from. Overrides RALPH_GH_TEMPLATE_PROJECT env var. " +
             "When set, copies the template project (views, fields, automations) instead of creating blank.",
+        ),
+      createIterationField: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          'When true, creates a "Sprint" iteration field with 2-week duration starting next Monday. ' +
+            "Only applies to blank project creation (ignored when using template).",
         ),
     },
     async (args) => {
@@ -362,6 +371,20 @@ export function registerProjectTools(
             ESTIMATE_OPTIONS,
           );
           fieldResults["Estimate"] = estField;
+
+          // Optional: Sprint iteration field
+          if (args.createIterationField) {
+            const iterField = await createIterationField(
+              client,
+              project.id,
+              "Sprint",
+              14,
+            );
+            fieldResults["Sprint"] = {
+              id: iterField.id,
+              options: [`Sprint 1 (${iterField.startDate}, ${iterField.durationDays}d)`],
+            };
+          }
         }
 
         // Shared: cache hydration (both paths)
@@ -582,6 +605,82 @@ async function fetchProject(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// View Queries (for create_views tool)
+// ---------------------------------------------------------------------------
+
+interface ViewsQueryResult {
+  user?: { projectV2: { views: { nodes: ProjectV2View[] } } | null } | null;
+  organization?: {
+    projectV2: { views: { nodes: ProjectV2View[] } } | null;
+  } | null;
+}
+
+const VIEWS_QUERY_USER = `
+  query($login: String!, $number: Int!) {
+    user(login: $login) {
+      projectV2(number: $number) {
+        views(first: 50) {
+          nodes { id name number layout filter }
+        }
+      }
+    }
+  }
+`;
+
+const VIEWS_QUERY_ORG = `
+  query($login: String!, $number: Int!) {
+    organization(login: $login) {
+      projectV2(number: $number) {
+        views(first: 50) {
+          nodes { id name number layout filter }
+        }
+      }
+    }
+  }
+`;
+
+export interface FetchProjectViewsResult {
+  views: ProjectV2View[];
+  ownerType: "users" | "orgs";
+}
+
+/**
+ * Fetch project views via GraphQL with user→org fallback.
+ * Returns views AND the resolved ownerType so callers can construct
+ * the correct REST API path without a separate round-trip.
+ */
+export async function fetchProjectViews(
+  client: GitHubClient,
+  owner: string,
+  projectNumber: number,
+): Promise<FetchProjectViewsResult> {
+  // Try user first
+  try {
+    const result = await client.projectQuery<ViewsQueryResult>(
+      VIEWS_QUERY_USER,
+      { login: owner, number: projectNumber },
+    );
+    const nodes = result.user?.projectV2?.views?.nodes;
+    if (nodes) return { views: nodes, ownerType: "users" };
+  } catch {
+    // fall through to org
+  }
+
+  // Try org
+  const result = await client.projectQuery<ViewsQueryResult>(
+    VIEWS_QUERY_ORG,
+    { login: owner, number: projectNumber },
+  );
+  const nodes = result.organization?.projectV2?.views?.nodes;
+  if (!nodes) {
+    throw new Error(
+      `Project #${projectNumber} not found for owner "${owner}"`,
+    );
+  }
+  return { views: nodes, ownerType: "orgs" };
+}
+
 async function createSingleSelectField(
   client: GitHubClient,
   projectId: string,
@@ -642,6 +741,80 @@ async function ensureFieldCacheForNewProject(
   // Do NOT clear fieldCache — other projects' data must be preserved (GH-242).
   client.getCache().invalidatePrefix("query:");
   await ensureFieldCache(client, fieldCache, owner, number);
+}
+
+/**
+ * Compute the next Monday on or after a given date.
+ * Used to set a sensible default start date for new iteration fields.
+ */
+function getNextMonday(from: Date = new Date()): string {
+  const d = new Date(from);
+  const day = d.getDay(); // 0=Sun, 1=Mon, ...
+  const daysUntilMonday = day === 0 ? 1 : day === 1 ? 0 : 8 - day;
+  d.setDate(d.getDate() + daysUntilMonday);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+async function createIterationField(
+  client: GitHubClient,
+  projectId: string,
+  name: string = "Sprint",
+  durationDays: number = 14,
+  startDate?: string,
+): Promise<{ id: string; name: string; startDate: string; durationDays: number }> {
+  const start = startDate || getNextMonday();
+
+  const result = await client.projectMutate<{
+    createProjectV2Field: {
+      projectV2Field: {
+        id: string;
+        name: string;
+        configuration: {
+          iterations: Array<{ startDate: string; duration: number }>;
+        };
+      };
+    };
+  }>(
+    `mutation($projectId: ID!, $name: String!, $dataType: ProjectV2CustomFieldType!, $config: ProjectV2IterationFieldConfigurationInput!) {
+      createProjectV2Field(input: {
+        projectId: $projectId,
+        dataType: $dataType,
+        name: $name,
+        iterationConfiguration: $config
+      }) {
+        projectV2Field {
+          ... on ProjectV2IterationField {
+            id
+            name
+            configuration {
+              iterations { startDate duration }
+            }
+          }
+        }
+      }
+    }`,
+    {
+      projectId,
+      name,
+      dataType: "ITERATION",
+      config: {
+        duration: durationDays,
+        startDate: start,
+        iterations: [
+          { startDate: start, duration: durationDays },
+        ],
+      },
+    },
+  );
+
+  const field = result.createProjectV2Field.projectV2Field;
+  const firstIter = field.configuration?.iterations?.[0];
+  return {
+    id: field.id,
+    name: field.name || name,
+    startDate: firstIter?.startDate ?? start,
+    durationDays: firstIter?.duration ?? durationDays,
+  };
 }
 
 async function linkRepoAfterSetup(
