@@ -1,13 +1,24 @@
 ---
 name: ralph-playwright:test-e2e
-description: Run all user story YAML files in playwright-stories/ in parallel using isolated Playwright agents. Aggregates pass/fail results with screenshots and a11y violations. Optionally filter by type (happy/sad/edge) or tags. Use when you want to run your full story suite or a filtered subset.
+description: Run all user story YAML files in playwright-stories/ using the execute → reflect → act pipeline via playwright-cli. Aggregates pass/fail results with screenshots and signals. Optionally filter by type or tags.
+allowed-tools:
+  - Bash(playwright-cli *)
+  - Agent
+  - Read
+  - Write
 ---
 
 # Test E2E — Run All User Stories
 
+## Prerequisites
+- `playwright-cli` installed globally (see `/ralph-playwright:setup`)
+- Target app running
+- Story files in `playwright-stories/`
+
 ## Process
 
 ### Step 1: Discover stories
+
 Glob all `playwright-stories/**/*.yaml` files.
 
 If none found, suggest:
@@ -19,33 +30,65 @@ Optional filters (from arguments):
 - `--tags auth,login` — run only stories with matching tags
 - `--story "Login succeeds"` — run a specific story by name
 
-### Step 2: Fan out parallel agents
-Spawn one `story-runner-agent` per YAML file simultaneously.
-Each agent gets its own named Playwright session — fully isolated.
+### Step 2: Execute (structured, per story)
 
-### Step 3: Wait and aggregate
-Wait for all agents to complete, then produce a unified report:
+For each story file, spawn a `story-runner-agent` with:
+- The story object (name, type, url, persona, workflow)
+- Session name: `<date>-test-e2e-<story-kebab>`
+
+Spawn agents in parallel — each gets its own named playwright-cli session (fully isolated).
+
+Each agent writes a journey trace to `.playwright-cli/<session>/journey-trace.yaml`.
+
+### Step 3: Reflect (aggregate)
+
+After all agents complete, read all journey traces.
+
+For each trace, examine:
+- Step outcomes (pass/fail/skip)
+- Screenshots of failed steps
+- Accessibility snapshots
+- Console errors
+
+Produce an aggregated signal report to `.playwright-cli/<date>-test-e2e/signal-report.yaml`:
+- **error**: Test step failures with expected vs actual
+- **a11y_violation**: Accessibility issues found during execution
+- **anomaly**: Unexpected console errors even on passing steps
+
+### Step 4: Act
+
+Based on the signal report:
+
+1. For `critical` or `high` severity signals: **create GitHub issues** via ralph-hero MCP (`ralph_hero__create_issue`) with:
+   - Title prefixed by signal type (e.g., `a11y: Missing label on email field`)
+   - Body includes step details, expected vs actual, console errors
+   - Tags from the story's tags
+
+2. **Promote failure screenshots** to `thoughts/local/assets/<date>-test-e2e/`
+
+3. Write the action log to `.playwright-cli/<date>-test-e2e/action-log.yaml`
+
+### Step 5: Report
 
 ```
 == ralph-playwright E2E Report ==
-Stories: 5 | ✅ Pass: 4 | ❌ Fail: 1 | ⏭ Skip: 0
-A11y violations: 2
+Stories: N | Pass: N | Fail: N | Skip: N
+Signals: N (critical: N, high: N, medium: N, low: N)
 
 PASSED:
   ✅ auth — "Login succeeds with valid credentials" (3.2s)
-  ✅ auth — "Login fails with wrong password" (2.1s)
-  ✅ auth — "Login fails when fields are empty" (1.8s)
-  ✅ auth — "Login form is keyboard-navigable" (2.9s)
+  ...
 
 FAILED:
   ❌ auth — "Unauthenticated user is redirected from dashboard"
      Step 2: Expected redirect to /login — page stayed at /dashboard
-     Screenshot: playwright-results/unauthenticated-redirect_a1b2c3d4/02_navigate.png
-     Console errors: []
+     Screenshot: .playwright-cli/<session>/02_navigate.png
 
-A11Y VIOLATIONS:
-  - auth/login — Missing label on #email-field (WCAG 1.3.1, serious)
-  - auth/login — Color contrast insufficient on .error-text (WCAG 1.4.3, serious)
+SIGNALS:
+  🔴 error: Redirect not implemented for /dashboard (critical)
+  🟠 a11y_violation: Missing label on #email-field (high)
+
+ACTIONS:
+  📋 Issue #652 created: "error: Redirect not implemented for /dashboard"
+  📸 2 screenshots promoted to thoughts/local/assets/
 ```
-
-Results directory `playwright-results/` is created automatically.
