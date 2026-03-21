@@ -15,6 +15,7 @@ function makeParsedDoc(overrides: Partial<ParsedDocument>): ParsedDocument {
     type: "research",
     status: "draft",
     githubIssue: null,
+    githubIssues: [],
     tags: [],
     relationships: [],
     content: "test content",
@@ -256,6 +257,54 @@ describe("generateIndexes", () => {
     const index = readFileSync(join(dir, "_index.md"), "utf-8");
     expect(index).toContain("[[_specs]]");
     expect(index).not.toContain("[[_uncategorized]]");
+  });
+});
+
+describe("writeIssueHubs — multi-hub indexing", () => {
+  it("indexes a document into all hubs listed in githubIssues", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const doc = makeParsedDoc({
+      id: "2026-03-19-ralph-team-GH-611-session",
+      title: "Team Session Report",
+      type: "report",
+      githubIssue: 611,
+      githubIssues: [611, 612],
+    });
+    writeIssueHubs(dir, [doc]);
+    const hub611 = readFileSync(join(dir, "_issues", "GH-0611.md"), "utf-8");
+    const hub612 = readFileSync(join(dir, "_issues", "GH-0612.md"), "utf-8");
+    expect(hub611).toContain("[[2026-03-19-ralph-team-GH-611-session]]");
+    expect(hub612).toContain("[[2026-03-19-ralph-team-GH-611-session]]");
+  });
+
+  it("does not duplicate document in primary hub when githubIssues includes primary", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const doc = makeParsedDoc({
+      id: "multi-issue-doc",
+      title: "Multi Issue Doc",
+      githubIssue: 100,
+      githubIssues: [100, 200],
+    });
+    writeIssueHubs(dir, [doc]);
+    const hub100 = readFileSync(join(dir, "_issues", "GH-0100.md"), "utf-8");
+    // Should appear exactly once, not twice
+    const matches = hub100.match(/\[\[multi-issue-doc\]\]/g) ?? [];
+    expect(matches).toHaveLength(1);
+  });
+
+  it("handles document with githubIssues but null githubIssue", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gen-test-"));
+    const doc = makeParsedDoc({
+      id: "array-only-doc",
+      title: "Array Only",
+      githubIssue: null,
+      githubIssues: [300, 301],
+    });
+    writeIssueHubs(dir, [doc]);
+    const hub300 = readFileSync(join(dir, "_issues", "GH-0300.md"), "utf-8");
+    const hub301 = readFileSync(join(dir, "_issues", "GH-0301.md"), "utf-8");
+    expect(hub300).toContain("[[array-only-doc]]");
+    expect(hub301).toContain("[[array-only-doc]]");
   });
 });
 

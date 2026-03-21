@@ -3,7 +3,7 @@ import { parse as parseYaml } from "yaml";
 export interface Relationship {
   sourceId: string;
   targetId: string;
-  type: "builds_on" | "tensions" | "superseded_by";
+  type: "builds_on" | "tensions" | "superseded_by" | "post_mortem";
 }
 
 export interface ParsedDocument {
@@ -14,6 +14,7 @@ export interface ParsedDocument {
   type: string | null;
   status: string | null;
   githubIssue: number | null;
+  githubIssues: number[];
   tags: string[];
   relationships: Relationship[];
   content: string;
@@ -21,7 +22,7 @@ export interface ParsedDocument {
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/;
 const TITLE_RE = /^# (.+)$/m;
-const WIKILINK_REL_RE = /^- (builds_on|tensions):: \[\[(.+?)\]\]/gm;
+const WIKILINK_REL_RE = /^- (builds_on|tensions|post_mortem):: \[\[(.+?)\]\]/gm;
 const SUPERSEDED_BY_RE = /\[\[(.+?)\]\]/;
 
 const PATH_TYPE_MAP: Array<{ segment: string; type: string }> = [
@@ -53,7 +54,9 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
     relationships.push({
       sourceId: id,
       targetId: match[2],
-      type: match[1] as "builds_on" | "tensions",
+      // Cast is safe: WIKILINK_REL_RE alternation matches exactly these three types.
+      // "superseded_by" is intentionally absent — it is parsed from frontmatter, not body wikilinks.
+      type: match[1] as "builds_on" | "tensions" | "post_mortem",
     });
   }
 
@@ -81,6 +84,9 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
         : typeof frontmatter.primary_issue === "number"
           ? frontmatter.primary_issue
           : null,
+    githubIssues: Array.isArray(frontmatter.github_issues)
+      ? frontmatter.github_issues.filter((n: unknown) => typeof n === "number")
+      : [],
     tags, relationships, content: body,
   };
 }

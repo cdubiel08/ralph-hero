@@ -53,7 +53,9 @@ Check if `[thoughts-dir]/.obsidian/` exists.
     { "query": "path:_", "color": { "a": 1, "rgb": 8421504 } },
     { "query": "tag:#research OR type:research", "color": { "a": 1, "rgb": 4474111 } },
     { "query": "tag:#plan OR type:plan", "color": { "a": 1, "rgb": 4487360 } },
-    { "query": "tag:#idea OR type:idea", "color": { "a": 1, "rgb": 16761095 } }
+    { "query": "tag:#idea OR type:idea", "color": { "a": 1, "rgb": 16761095 } },
+    { "query": "type:report", "color": { "a": 1, "rgb": 16744272 } },
+    { "query": "type:spec", "color": { "a": 1, "rgb": 12517631 } }
   ]
 }
 ```
