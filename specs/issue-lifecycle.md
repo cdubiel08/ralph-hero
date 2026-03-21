@@ -110,7 +110,7 @@ Lock states prevent concurrent claim by multiple agents. Three lock states exist
 
 | Requirement | Enablement |
 |-------------|------------|
-| Agents MUST NOT claim an issue that is in a lock state | `[x]` `lock-claim-validator.sh` (blocks save_issue when RALPH_CURRENT_STATE is a lock state) |
+| Agents MUST NOT claim an issue that is in a lock state | `[x]` `save_issue` server-side guard (fetches current workflow state via `getCurrentFieldValue`, returns `toolError` when target is a lock state and issue is already locked) |
 | Lock acquisition MUST transition from the correct source state | `[ ]` `auto-state.sh` (script not yet on main branch) |
 | Lock release on success MUST transition to the correct target state | `[x]` per-command state gate hooks |
 | Lock release on failure MUST return to the pre-lock state (except In Progress) | `[x]` `lock-release-on-failure.sh` Stop hook on ralph-research, ralph-plan, ralph-impl |
