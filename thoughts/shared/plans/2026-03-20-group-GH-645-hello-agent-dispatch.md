@@ -170,8 +170,8 @@ Create the canonical reference document classifying all ralph-hero skills by dis
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] File exists: `ls thoughts/shared/research/2026-03-20-skill-dispatch-inventory.md`
-- [ ] All 20+ skills appear: `grep -c "ralph-" thoughts/shared/research/2026-03-20-skill-dispatch-inventory.md` returns >= 11
+- [x] File exists: `ls thoughts/shared/research/2026-03-20-skill-dispatch-inventory.md`
+- [x] All 20+ skills appear: `grep -c "ralph-" thoughts/shared/research/2026-03-20-skill-dispatch-inventory.md` returns >= 11
 
 #### Manual Verification:
 - [ ] Open the document and verify the classification for ralph-review correctly captures the AUTO/INTERACTIVE edge case
@@ -195,19 +195,19 @@ Create a concise shared fragment that codifies the Skill() vs Agent() decision r
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [x] File exists at `plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
-  - [x] Decision rule is stated in 1-2 sentences at the top: "Use `Agent()` when the sub-skill has `context: fork` or `user-invocable: false`. Use `Skill()` when the sub-skill needs to share the caller's context or interact with the user."
-  - [x] Subagent_type mapping table included: ralph-analyst (triage/split/research/plan), ralph-builder (review/impl/merge)
-  - [x] Anti-pattern example shown (calling autonomous skill via Skill())
-  - [x] Correct pattern example shown (calling same skill via Agent())
-  - [x] ralph-review edge case noted: "ralph-review is autonomous in AUTO mode — safe to call via Agent(); INTERACTIVE mode requires Skill()"
-  - [x] `!cat` include directive added to at least one relevant skill (e.g., hero/SKILL.md or a new SKILL-AUTHORING.md) OR a note added saying "Include in skill authoring docs"
+  - [ ] File exists at `plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
+  - [ ] Decision rule is stated in 1-2 sentences at the top: "Use `Agent()` when the sub-skill has `context: fork` or `user-invocable: false`. Use `Skill()` when the sub-skill needs to share the caller's context or interact with the user."
+  - [ ] Subagent_type mapping table included: ralph-analyst (triage/split/research/plan), ralph-builder (review/impl/merge)
+  - [ ] Anti-pattern example shown (calling autonomous skill via Skill())
+  - [ ] Correct pattern example shown (calling same skill via Agent())
+  - [ ] ralph-review edge case noted: "ralph-review is autonomous in AUTO mode — safe to call via Agent(); INTERACTIVE mode requires Skill()"
+  - [ ] `!cat` include directive added to at least one relevant skill (e.g., hero/SKILL.md or a new SKILL-AUTHORING.md) OR a note added saying "Include in skill authoring docs"
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [x] File exists: `ls plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
-- [x] Contains Agent() example: `grep "Agent(" plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
+- [ ] File exists: `ls plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
+- [ ] Contains Agent() example: `grep "Agent(" plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
 
 #### Manual Verification:
 - [ ] Decision rule is clear and actionable in under 30 seconds of reading
