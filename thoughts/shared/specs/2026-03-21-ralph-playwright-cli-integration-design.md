@@ -267,7 +267,7 @@ A pass-through wrapper providing raw `playwright-cli` access with ralph-hero con
 The setup skill checks:
 1. `playwright-cli` installed? → guide `npm install -g @playwright/cli@latest` if missing.
 2. Version adequate? → warn if old.
-3. Browser binaries installed? → guide `playwright-cli install chromium`.
+3. Browser binaries installed? → guide `playwright-cli install-browser --browser chrome`.
 
 No MCP detection. No fallback.
 
