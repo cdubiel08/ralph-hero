@@ -206,8 +206,8 @@ Create a concise shared fragment that codifies the Skill() vs Agent() decision r
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] File exists: `ls plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
-- [ ] Contains Agent() example: `grep "Agent(" plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
+- [x] File exists: `ls plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
+- [x] Contains Agent() example: `grep "Agent(" plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md`
 
 #### Manual Verification:
 - [ ] Decision rule is clear and actionable in under 30 seconds of reading
