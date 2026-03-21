@@ -19,12 +19,12 @@
 **Files:**
 - Modify: `plugin/ralph-hero/skills/shared/quality-standards.md:9-12`
 
-- [ ] **Step 1: Read the current file to verify structure**
+- [x] **Step 1: Read the current file to verify structure**
 
 Run: `cat -n plugin/ralph-hero/skills/shared/quality-standards.md`
 Expected: 53 lines, four plan quality dimensions at lines 9–12
 
-- [ ] **Step 2: Add Dispatchability as fifth plan quality dimension**
+- [x] **Step 2: Add Dispatchability as fifth plan quality dimension**
 
 After line 12 (the Scope dimension), add:
 
@@ -32,12 +32,12 @@ After line 12 (the Scope dimension), add:
 5. **Dispatchability** — Every task is self-contained enough to dispatch to a subagent with zero additional context. Task has files, TDD flag, acceptance criteria, and dependency info. No task requires reading the full plan to understand.
 ```
 
-- [ ] **Step 3: Verify no other files reference quality dimensions by number**
+- [x] **Step 3: Verify no other files reference quality dimensions by number**
 
 Run: `cd plugin/ralph-hero && grep -rn "four dimensions\|4 dimensions\|dimension 1\|dimension 2\|dimension 3\|dimension 4" skills/ --include="*.md"`
 Expected: Any matches need updating to "five dimensions"
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add plugin/ralph-hero/skills/shared/quality-standards.md
@@ -51,7 +51,7 @@ git commit -m "docs(quality): add Dispatchability as fifth plan quality dimensio
 **Files:**
 - Modify: `plugin/ralph-hero/skills/shared/quality-standards.md`
 
-- [ ] **Step 1: Add plan-of-plans section after plan anti-patterns (after line ~28)**
+- [x] **Step 1: Add plan-of-plans section after plan anti-patterns (after line ~28)**
 
 Insert after the plan anti-patterns section:
 
@@ -75,7 +75,7 @@ Plan-of-plans documents (type: plan-of-plans) are evaluated on four dimensions:
 - Wave sequencing that doesn't match actual dependency graph
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add plugin/ralph-hero/skills/shared/quality-standards.md
@@ -89,7 +89,7 @@ git commit -m "docs(quality): add plan-of-plans quality dimensions"
 **Files:**
 - Modify: `plugin/ralph-hero/skills/shared/quality-standards.md`
 
-- [ ] **Step 1: Add task metadata section after plan-of-plans section**
+- [x] **Step 1: Add task metadata section after plan-of-plans section**
 
 ```markdown
 
@@ -119,7 +119,7 @@ Set `tdd: false` when:
 - Build/CI configuration changes
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add plugin/ralph-hero/skills/shared/quality-standards.md
@@ -135,7 +135,7 @@ git commit -m "docs(quality): add task metadata requirements for dispatchability
 **Files:**
 - Create: `plugin/ralph-hero/skills/shared/artifact-comment-protocol.md`
 
-- [ ] **Step 1: Write the protocol reference document**
+- [x] **Step 1: Write the protocol reference document**
 
 ```markdown
 # Artifact Comment Protocol
@@ -236,7 +236,7 @@ When resolving via `## Plan Reference`:
 - Optionally: extract `## Integration Strategy` from plan-of-plans if cross-feature work
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add plugin/ralph-hero/skills/shared/artifact-comment-protocol.md
@@ -247,17 +247,17 @@ git commit -m "docs(protocol): create artifact comment protocol reference"
 
 ## Final Verification
 
-- [ ] **Verify quality-standards.md is well-formed**
+- [x] **Verify quality-standards.md is well-formed**
 
 Run: `head -80 plugin/ralph-hero/skills/shared/quality-standards.md`
 Expected: All five plan dimensions visible, plan-of-plans dimensions visible, task metadata table visible
 
-- [ ] **Verify artifact-comment-protocol.md exists**
+- [x] **Verify artifact-comment-protocol.md exists**
 
 Run: `test -f plugin/ralph-hero/skills/shared/artifact-comment-protocol.md && echo "OK"`
 Expected: OK
 
-- [ ] **Run MCP server tests to verify no regressions**
+- [x] **Run MCP server tests to verify no regressions**
 
 Run: `cd plugin/ralph-hero/mcp-server && npm test`
 Expected: ALL PASS (these are doc-only changes, no TS impact)

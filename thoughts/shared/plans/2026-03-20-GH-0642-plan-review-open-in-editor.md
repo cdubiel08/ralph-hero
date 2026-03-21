@@ -108,7 +108,7 @@ Modify `ralph-review/SKILL.md` Step 4A to add a fifth picker option that opens t
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] None — skills-only change, no build or test commands apply
+- [x] None — skills-only change, no build or test commands apply
 
 #### Manual Verification:
 - [ ] Running `/ralph-hero:ralph-review NNN --interactive` presents 5 options in the picker
