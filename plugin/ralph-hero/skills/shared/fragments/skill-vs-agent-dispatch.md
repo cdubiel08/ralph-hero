@@ -47,5 +47,5 @@ ralph-review is autonomous in AUTO mode (no `AskUserQuestion`) -- safe to dispat
 Skill authors can include this fragment in their skill definitions:
 
 ```
-!cat plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/skill-vs-agent-dispatch.md
 ```
