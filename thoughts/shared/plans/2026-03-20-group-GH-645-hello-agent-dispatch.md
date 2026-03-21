@@ -119,11 +119,11 @@ Derived from research doc + direct frontmatter inspection:
 ## Desired End State
 
 ### Verification
-- [ ] `thoughts/shared/research/2026-03-20-skill-dispatch-inventory.md` exists with all 20+ skills classified
-- [ ] `plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md` exists with decision rule, mapping table, and examples
-- [ ] `plugin/ralph-hero/skills/hello/SKILL.md` Step 5 uses `Agent()` for all 5 autonomous skill routes
-- [ ] hello's `allowed-tools` no longer lists `Skill`
-- [ ] The ralph-review edge case (INTERACTIVE vs AUTO) is documented in both the audit and the convention fragment
+- [x] `thoughts/shared/research/2026-03-20-skill-dispatch-inventory.md` exists with all 20+ skills classified
+- [x] `plugin/ralph-hero/skills/shared/fragments/skill-vs-agent-dispatch.md` exists with decision rule, mapping table, and examples
+- [x] `plugin/ralph-hero/skills/hello/SKILL.md` Step 5 uses `Agent()` for all 5 autonomous skill routes
+- [x] hello's `allowed-tools` no longer lists `Skill`
+- [x] The ralph-review edge case (INTERACTIVE vs AUTO) is documented in both the audit and the convention fragment
 
 ## What We're NOT Doing
 
@@ -258,9 +258,9 @@ Update `hello/SKILL.md` Step 5 to replace all `Skill()` dispatch calls with `Age
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] No Skill( calls remain: `grep -c "Skill(" plugin/ralph-hero/skills/hello/SKILL.md` returns 0
-- [ ] Agent( calls present: `grep -c "Agent(" plugin/ralph-hero/skills/hello/SKILL.md` returns >= 5
-- [ ] Skill not in allowed-tools: `grep "Skill" plugin/ralph-hero/skills/hello/SKILL.md | grep "allowed-tools" | wc -l` returns 0
+- [x] No Skill( calls remain: `grep -c "Skill(" plugin/ralph-hero/skills/hello/SKILL.md` returns 0
+- [x] Agent( calls present: `grep -c "Agent(" plugin/ralph-hero/skills/hello/SKILL.md` returns >= 5
+- [x] Skill not in allowed-tools: `grep "Skill" plugin/ralph-hero/skills/hello/SKILL.md | grep "allowed-tools" | wc -l` returns 0
 
 #### Manual Verification:
 - [ ] Read Step 5 end-to-end — each route's Agent() call is syntactically correct and uses the right subagent_type

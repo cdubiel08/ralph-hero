@@ -15,7 +15,7 @@ context: inline
 allowed-tools:
   - Read
   - Bash
-  - Skill
+  - Agent
   - AskUserQuestion
   - ralph_hero__pipeline_dashboard
 ---
@@ -115,20 +115,20 @@ If the user selects "Other" (built-in option): respond with *"Got it — holler 
 
 ## Step 5: Route and Complete
 
-Invoke the corresponding skill based on the direction type:
+Dispatch the corresponding autonomous skill via Agent() based on the direction type:
 
-| Direction Type | Skill to Invoke |
+| Direction Type | Agent Dispatch |
 |---|---|
-| Issue in Research/Plan phase needing attention | `/ralph-hero:ralph-triage` with issue number |
-| Plan waiting review | `/ralph-hero:ralph-review` with issue number |
-| PR waiting merge or review | `/ralph-hero:ralph-merge` with PR number |
-| Issue ready for research | `/ralph-hero:ralph-research` with issue number |
-| Issue ready for planning | `/ralph-hero:ralph-plan` with issue number |
-| Board healthy, user wants to pick work | `/ralph-hero:ralph-triage` to pick from backlog |
+| Issue in Research/Plan phase needing attention | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-triage NNN", description="Triage GH-NNN")` |
+| Plan waiting review | `Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-review NNN", description="Review plan for GH-NNN")` |
+| PR waiting merge or review | `Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-merge NNN", description="Merge PR #NNN")` |
+| Issue ready for research | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-research NNN", description="Research GH-NNN")` |
+| Issue ready for planning | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN", description="Plan GH-NNN")` |
+| Board healthy, user wants to pick work | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-triage", description="Pick work from backlog")` |
 
-Invoke the skill using the Skill tool with the appropriate arguments.
+Replace `NNN` with the actual issue or PR number. Each Agent() call spawns an isolated context -- the autonomous skill runs in its own fork without bloating hello's context window.
 
-For **"Work through these in order"**: invoke skills sequentially in the order directions were presented. Before each subsequent invocation, note: "Earlier actions may have changed board state."
+For **"Work through these in order"**: dispatch Agent() calls sequentially in the order directions were presented. Before each subsequent dispatch, note: "Earlier actions may have changed board state."
 
 After routing completes, output:
 
