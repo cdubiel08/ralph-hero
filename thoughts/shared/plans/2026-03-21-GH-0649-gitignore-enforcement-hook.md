@@ -135,10 +135,10 @@ Create a PreToolUse Write hook that blocks creation of local-only files when the
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/hooks/scripts/gitignore-enforcement.sh` -- valid syntax
-- [ ] `jq . plugin/ralph-hero/hooks/hooks.json > /dev/null` -- valid JSON
-- [ ] `git check-ignore .claude/ralph-hero.local.md` -- returns exit 0 (covered by root .gitignore)
-- [ ] `git check-ignore .claude/settings.local.json` -- returns exit 0 (covered by root .gitignore)
+- [x] `bash -n plugin/ralph-hero/hooks/scripts/gitignore-enforcement.sh` -- valid syntax
+- [x] `jq . plugin/ralph-hero/hooks/hooks.json > /dev/null` -- valid JSON
+- [x] `git check-ignore --no-index .claude/ralph-hero.local.md` -- returns exit 0 (covered by root .gitignore)
+- [x] `git check-ignore --no-index .claude/settings.local.json` -- returns exit 0 (covered by root .gitignore)
 
 #### Manual Verification:
 - [ ] In a test repo WITHOUT `*.local.md` in `.gitignore`, attempting to write `.claude/test.local.md` via Claude Code triggers the hook block message
