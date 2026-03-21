@@ -447,7 +447,9 @@ Define typed contracts for reflect and act primitives:
 - Create: `plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh`
 - Create: `plugin/ralph-playwright/hooks/hooks.json`
 
-The validation hook enforces schema contracts at every primitive boundary. It is called by the hook system before/after relevant tool calls.
+The validation hook enforces schema contracts at primitive boundaries. The spec defines 6 enforcement points (pre/post for each primitive). Hooks cover the **schema validation** boundaries (PostToolUse on Write and PreToolUse on Read of primitive artifacts). The remaining spec checks (CLI availability, file existence, MCP availability) are enforced **inline by skill instructions** — each skill's markdown verifies prerequisites before invoking primitives.
+
+**Prerequisite:** `yq` must be installed (`brew install yq` on macOS). If missing, validation tests in Steps 4-5 will fail.
 
 - [ ] **Step 1: Write `validate-primitive-io.sh`**
 
@@ -515,7 +517,11 @@ REQUIRED_FIELDS=$(yq '.required[]' "$SCHEMA_FILE" 2>/dev/null || true)
 if [[ -n "$REQUIRED_FIELDS" ]]; then
   MISSING=""
   while IFS= read -r field; do
-    if [[ -z $(yq ".${field}" "$FILE_PATH" 2>/dev/null) || $(yq ".${field}" "$FILE_PATH" 2>/dev/null) == "null" ]]; then
+    val=$(yq ".${field}" "$FILE_PATH" 2>/dev/null) || {
+      echo "ERROR: Failed to parse ${FILE_PATH} as YAML" >&2
+      exit 1
+    }
+    if [[ -z "$val" || "$val" == "null" ]]; then
       MISSING="${MISSING}  - ${field}\n"
     fi
   done <<< "$REQUIRED_FIELDS"
@@ -568,6 +574,17 @@ chmod +x plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh
   "version": "1.0.0",
 
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/validate-primitive-io.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write",
@@ -662,7 +679,7 @@ The base layer — only skill that invokes `playwright-cli` directly. All other 
 
 - [ ] **Step 1: Write the skill**
 
-```markdown
+````markdown
 ---
 name: ralph-playwright:browser
 description: Raw browser automation via playwright-cli with ralph-hero conventions. Use when you need direct access to playwright-cli commands — navigation, interaction, screenshots, snapshots, cookies, storage, network, devtools. All other ralph-playwright skills compose through this one. Requires global install of @playwright/cli.
@@ -686,7 +703,7 @@ which playwright-cli || echo "Not installed — run: npm install -g @playwright/
 ## Session Convention
 
 All output is scoped to `.playwright-cli/<session>/`. Session name defaults to:
-```
+````
 <date>-<skill>-<slug>
 ```
 Example: `2026-03-21-browser-checkout-flow`
@@ -761,7 +778,7 @@ Drop all MCP guidance. CLI-only detection and installation.
 
 Replace the entire content of `plugin/ralph-playwright/skills/setup/SKILL.md` with:
 
-```markdown
+````markdown
 ---
 name: ralph-playwright:setup
 description: One-time setup for ralph-playwright — installs playwright-cli globally, validates browser installation, and creates playwright-stories/ directory. Use when setting up ralph-playwright for the first time or diagnosing a broken install.
@@ -801,7 +818,7 @@ Story YAML files in `playwright-stories/` should be committed to git.
 ## Step 4: Verify `.gitignore` entries
 
 Confirm these entries exist (added by ralph-playwright plugin):
-```
+````
 # Root .gitignore
 .playwright-cli/
 
@@ -846,7 +863,7 @@ Replace all MCP tool calls with `playwright-cli` commands. Agent now produces a 
 
 Replace the entire content of `plugin/ralph-playwright/agents/story-runner-agent.md` with:
 
-```markdown
+````markdown
 ---
 name: story-runner-agent
 description: Executes a single user story YAML via playwright-cli. Captures screenshots and accessibility snapshots per step, captures console errors on failure, and writes a structured journey trace YAML to the session directory.
@@ -956,7 +973,7 @@ After writing the trace, close the session:
 ```bash
 playwright-cli -s=<session> close
 ```
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -982,7 +999,7 @@ Replace MCP tools with CLI commands. Becomes the freeform execute primitive's ag
 
 Replace the entire content of `plugin/ralph-playwright/agents/explorer-agent.md` with:
 
-```markdown
+````markdown
 ---
 name: explorer-agent
 description: Freeform exploration agent. Navigates a web app via playwright-cli toward a stated goal, maps interactive elements and paths, captures screenshots and snapshots at each step, and writes a journey trace YAML.
@@ -1086,7 +1103,7 @@ After writing the trace, close the session:
 ```bash
 playwright-cli -s=<session> close
 ```
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -1112,7 +1129,7 @@ Full rewrite as the execute (freeform) → reflect → act pipeline.
 
 Replace the entire content of `plugin/ralph-playwright/skills/explore/SKILL.md` with:
 
-```markdown
+````markdown
 ---
 name: ralph-playwright:explore
 description: Explore a running website to discover user flows, analyze findings, and produce research notes with promoted screenshots. Uses the execute → reflect → act pipeline via playwright-cli. Works on localhost or any accessible URL.
@@ -1197,7 +1214,7 @@ Report:
 - N screenshots promoted
 - N user stories generated (if any)
 - Suggest: `/ralph-playwright:test-e2e` to run generated stories
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -1221,7 +1238,7 @@ writes research notes. Drops MCP and Playwright Planner paths."
 
 Replace the entire content of `plugin/ralph-playwright/skills/test-e2e/SKILL.md` with:
 
-```markdown
+````markdown
 ---
 name: ralph-playwright:test-e2e
 description: Run all user story YAML files in playwright-stories/ using the execute → reflect → act pipeline via playwright-cli. Aggregates pass/fail results with screenshots and signals. Optionally filter by type or tags.
@@ -1294,7 +1311,7 @@ Based on the signal report:
 
 ### Step 5: Report
 
-```
+````
 == ralph-playwright E2E Report ==
 Stories: N | Pass: N | Fail: N | Skip: N
 Signals: N (critical: N, high: N, medium: N, low: N)
@@ -1340,7 +1357,7 @@ critical findings, promotes failure screenshots."
 
 Replace the entire content of `plugin/ralph-playwright/skills/a11y-scan/SKILL.md` with:
 
-```markdown
+````markdown
 ---
 name: ralph-playwright:a11y-scan
 description: Run a WCAG 2.2 AA accessibility audit against a URL using playwright-cli. Captures accessibility snapshots, analyzes for violations, and creates issues for findings. Uses the execute → reflect → act pipeline with an a11y-focused goal.
@@ -1396,7 +1413,7 @@ For each signal:
 
 ### Step 4: Report
 
-```
+````
 == A11y Scan: http://localhost:3000/login ==
 WCAG 2.2 AA | playwright-cli | N violations
 
@@ -1435,9 +1452,9 @@ Lighter touch — add optional execute-first observation without rewriting the w
 
 - [ ] **Step 1: Add execute-first option to story-gen**
 
-In `plugin/ralph-playwright/skills/story-gen/SKILL.md`, replace the `## Process` section's `### Step 1: Gather input` with:
+In `plugin/ralph-playwright/skills/story-gen/SKILL.md`, **insert the following new section immediately ABOVE the existing `### Step 1: Gather input`** heading (do NOT replace or delete the existing Step 1 heading or its body content):
 
-```markdown
+````markdown
 ### Step 0: Observe (optional)
 
 If a running app URL is available and the user wants stories generated from observation rather than description:
@@ -1452,9 +1469,7 @@ If a running app URL is available and the user wants stories generated from obse
 3. Use the discovered flows as input for story generation (Step 2) instead of the text description
 
 This produces more accurate stories because the agent observes actual UI elements, form fields, and navigation paths rather than inferring them from a description.
-
-### Step 1: Gather input
-```
+````
 
 Also update the frontmatter to include CLI tools:
 
@@ -1490,7 +1505,7 @@ rather than text descriptions."
 
 - [ ] **Step 1: Write the skill**
 
-```markdown
+````markdown
 ---
 name: ralph-playwright:reflect
 description: Analyze a journey trace and its screenshots to produce a signal report. Use when you have a journey trace from a previous execute run and want to analyze it separately. Reads screenshots and accessibility snapshots to identify anomalies, regressions, a11y violations, and UX issues.
@@ -1563,7 +1578,7 @@ summary:
 
 ### Step 5: Report
 
-```
+````
 == Signal Report for <session> ==
 Trace: <trace_id> | Steps: <N> | Duration: <ms>
 
@@ -1601,7 +1616,7 @@ into typed signals with severity, writes a signal report YAML."
 
 - [ ] **Step 1: Write the skill**
 
-```markdown
+````markdown
 ---
 name: ralph-playwright:capture
 description: Quick one-shot — screenshot a URL and optionally promote the screenshot to a research note in thoughts/. Runs execute (1-step) → reflect (minimal) → act (promote). Use for grabbing a screenshot of a specific page state.
@@ -1706,7 +1721,7 @@ Report the screenshot location and whether it was promoted:
 - Screenshot saved: `.playwright-cli/<session>/00_page.png`
 - Promoted to: `thoughts/local/assets/<note-slug>/<name>.png` (if promoted)
 - Note: `<note-path>` (if attached to a note)
-```
+````
 
 - [ ] **Step 2: Commit**
 
