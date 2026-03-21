@@ -2,9 +2,11 @@
 # validate-primitive-io.sh — Validate YAML artifacts against ralph-playwright schemas
 # Called by hooks.json as PreToolUse/PostToolUse hooks
 #
+# Input: JSON payload on stdin from Claude Code hook system
+#   { tool_name, tool_input: { file_path, ... }, ... }
+#
 # Environment:
 #   CLAUDE_PLUGIN_ROOT — path to plugin/ralph-playwright
-#   TOOL_INPUT         — JSON string with tool input (from hook system)
 #
 # Exit 0: validation passes (or no artifact to validate)
 # Exit 1: validation fails (blocks downstream primitive)
@@ -13,8 +15,11 @@ set -euo pipefail
 
 SCHEMA_DIR="${CLAUDE_PLUGIN_ROOT}/schemas"
 
+# Read hook input from stdin (standard Claude Code hook protocol)
+INPUT=$(cat)
+
 # Extract the file path being written/read from tool input
-FILE_PATH=$(echo "$TOOL_INPUT" | jq -r '.file_path // .path // empty' 2>/dev/null || true)
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null || true)
 
 if [[ -z "$FILE_PATH" ]]; then
   exit 0  # No file path — not a primitive IO operation
@@ -94,6 +99,14 @@ if [[ "$SCHEMA" == "signal-report.schema.yaml" ]]; then
   INVALID_SEVS=$(yq '.signals[].severity' "$FILE_PATH" 2>/dev/null | grep -v -E '^(critical|high|medium|low)$' || true)
   if [[ -n "$INVALID_SEVS" ]]; then
     echo "ERROR: Invalid signal severities in ${FILE_PATH}: ${INVALID_SEVS}" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$SCHEMA" == "action-log.schema.yaml" ]]; then
+  INVALID_TYPES=$(yq '.actions[].type' "$FILE_PATH" 2>/dev/null | grep -v -E '^(issue_created|note_written|screenshot_promoted|status_update)$' || true)
+  if [[ -n "$INVALID_TYPES" ]]; then
+    echo "ERROR: Invalid action types in ${FILE_PATH}: ${INVALID_TYPES}" >&2
     exit 1
   fi
 fi
