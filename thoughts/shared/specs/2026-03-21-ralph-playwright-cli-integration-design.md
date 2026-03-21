@@ -70,8 +70,8 @@ steps:
     target: "https://example.com/checkout"
     outcome: pass | fail | skip
     screenshot: ".playwright-cli/<session>/00_navigate.png"
-    snapshot: ".playwright-cli/<session>/00_navigate.yml"
-    console: []                     # captured console errors/warnings
+    snapshot: ".playwright-cli/<session>/00_navigate.md"   # playwright-cli snapshot produces markdown
+    console: []                     # captured console errors/warnings (see Console Capture below)
     duration_ms: 1200
     error: null
 summary:
@@ -84,9 +84,12 @@ summary:
 **Key decisions**:
 
 - Screenshots and snapshots stay in `.playwright-cli/<session>/` (tier 1, ephemeral).
-- Session name scopes all output into a subdirectory.
+- **Path construction is explicit**: the skill/agent must construct the output path `.playwright-cli/<session>/<index>_<slug>.png` and pass it via `--filename` for every `screenshot` and `snapshot` command. The CLI does not auto-scope output by session — session naming is a ralph-playwright convention enforced by the skills.
+- Snapshots are markdown files (`.md`) — this is the native format of `playwright-cli snapshot`. They contain the accessibility tree with element refs. The reflect primitive uses these for a11y analysis and reproducibility of element targeting.
 - The trace is self-contained — reflect does not need to re-run anything.
 - Same output schema whether input was structured or freeform.
+
+**Console capture**: Each step captures console errors/warnings. The execute primitive injects a JavaScript interceptor via `playwright-cli eval` at journey start (same pattern as the current story-runner-agent's `browser_evaluate` approach). Each step diffs against the previous watermark to produce per-step console entries.
 
 ### Primitive 2: Reflect — Analyze the Trace
 
@@ -209,12 +212,12 @@ Hooks call a lightweight schema validator (shell script + `yq` assertions or a s
 
 ### Gitignore Changes
 
-Add to `thoughts/.gitignore`:
+Append to existing `thoughts/.gitignore`:
 ```
 local/
 ```
 
-Add to root `.gitignore`:
+Append to root `.gitignore`:
 ```
 .playwright-cli/
 ```
@@ -231,6 +234,7 @@ A pass-through wrapper providing raw `playwright-cli` access with ralph-hero con
 - Output directory: scoped under `.playwright-cli/<session>/`.
 - Exposes the full CLI command surface.
 - Frontmatter: `allowed-tools: Bash(playwright-cli *)`.
+- **Requires global install** (`npm install -g @playwright/cli@latest`). The `allowed-tools` pattern matches the `playwright-cli` binary name, so global install is a hard prerequisite — `npx` invocation is not supported. The setup skill enforces this.
 - Only skill that touches `playwright-cli` directly — all other skills compose through it or invoke it via agent.
 
 ### Refactored Guided Flow Skills
@@ -255,7 +259,7 @@ A pass-through wrapper providing raw `playwright-cli` access with ralph-hero con
 
 | Skill | Purpose |
 |-------|---------|
-| **`capture`** | Quick one-shot: screenshot a URL, optionally promote to a note. Thin wrapper over execute (1-step) → act (promote). |
+| **`capture`** | Quick one-shot: screenshot a URL, optionally promote to a note. Runs execute (1-step) → reflect (minimal) → act (promote). The reflect step is lightweight but required — act only accepts signal reports, not raw traces. |
 | **`reflect`** | Standalone: point at a journey trace, get a signal report. For when execute ran separately. |
 
 ### Dependency Detection
@@ -337,12 +341,12 @@ plugin/ralph-playwright/
     └── user-story.schema.yaml      # unchanged, referenced by execute-input
 ```
 
-### Gitignore additions
+### Gitignore additions (append to existing files)
 
 ```
-# root .gitignore
+# root .gitignore — append
 .playwright-cli/
 
-# thoughts/.gitignore
+# thoughts/.gitignore — append
 local/
 ```
