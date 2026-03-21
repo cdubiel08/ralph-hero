@@ -664,7 +664,7 @@ git add plugin/ralph-playwright/hooks/
 git commit -m "feat(ralph-playwright): add IO validation hook for primitive boundaries
 
 Shell script validates YAML artifacts against schemas (required fields,
-enum values). Registered as PostToolUse hook on Write operations.
+enum values). Registered as PreToolUse(Read) + PostToolUse(Write) hooks.
 Malformed data blocks downstream primitives."
 ```
 
@@ -703,7 +703,7 @@ which playwright-cli || echo "Not installed — run: npm install -g @playwright/
 ## Session Convention
 
 All output is scoped to `.playwright-cli/<session>/`. Session name defaults to:
-````
+```
 <date>-<skill>-<slug>
 ```
 Example: `2026-03-21-browser-checkout-flow`
@@ -818,7 +818,7 @@ Story YAML files in `playwright-stories/` should be committed to git.
 ## Step 4: Verify `.gitignore` entries
 
 Confirm these entries exist (added by ralph-playwright plugin):
-````
+```
 # Root .gitignore
 .playwright-cli/
 
@@ -1311,7 +1311,7 @@ Based on the signal report:
 
 ### Step 5: Report
 
-````
+```
 == ralph-playwright E2E Report ==
 Stories: N | Pass: N | Fail: N | Skip: N
 Signals: N (critical: N, high: N, medium: N, low: N)
@@ -1413,7 +1413,7 @@ For each signal:
 
 ### Step 4: Report
 
-````
+```
 == A11y Scan: http://localhost:3000/login ==
 WCAG 2.2 AA | playwright-cli | N violations
 
@@ -1578,7 +1578,7 @@ summary:
 
 ### Step 5: Report
 
-````
+```
 == Signal Report for <session> ==
 Trace: <trace_id> | Steps: <N> | Duration: <ms>
 
