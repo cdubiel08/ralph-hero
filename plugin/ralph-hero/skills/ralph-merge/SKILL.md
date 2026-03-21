@@ -18,6 +18,8 @@ allowed-tools:
   - Read
   - Glob
   - Bash
+  - AskUserQuestion
+  - Skill
   - ralph_hero__get_issue
   - ralph_hero__list_sub_issues
   - ralph_hero__list_dependencies
@@ -70,7 +72,69 @@ gh pr list --head feature/GH-NNN --json number,url,state --jq '.[0]'
 
 If no PR found, report and stop.
 
-## Step 4: Check PR Readiness
+## Step 4: Code Review Gate
+
+Check whether the PR has received a code review:
+
+```bash
+gh pr view NNN --json reviews,comments,reviewDecision
+```
+
+**If `reviewDecision` is `APPROVED` or `CHANGES_REQUESTED`**, or if there are review comments (non-empty `reviews` array): a code review has been performed. Proceed to Step 5.
+
+**If no reviews exist** (empty `reviews` array and `reviewDecision` is null or empty):
+
+1. Check if the `code-review:code-review` skill is available by looking for it in the available skills list (it is an official Anthropic plugin).
+
+2. **If the skill is available**, present a choice:
+
+   !cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
+
+   ```
+   AskUserQuestion(
+     questions=[{
+       "question": "This PR has no code review yet. Would you like to run one before merging?",
+       "header": "Code Review",
+       "options": [
+         {"label": "Run code review", "description": "Invoke /code-review:code-review on PR #NNN before merging"},
+         {"label": "Merge without review", "description": "Skip code review and proceed to merge"}
+       ],
+       "multiSelect": false
+     }]
+   )
+   ```
+
+   - If user selects **"Run code review"**: invoke `Skill(skill="code-review:code-review", args="NNN")` where NNN is the PR number. After the review completes, re-check `reviewDecision` via `gh pr view`. If the PR was approved, continue to Step 5. If changes were requested, output the review findings and stop — the user needs to address feedback first.
+   - If user selects **"Merge without review"**: proceed to Step 5.
+   - If user selects **"Other"**: stop.
+
+3. **If the skill is NOT available**, inform the user:
+
+   ```
+   This PR has no code review. Consider installing the code-review plugin:
+     claude plugins install @anthropic/code-review
+   ```
+
+   Then present:
+
+   ```
+   AskUserQuestion(
+     questions=[{
+       "question": "Proceed without code review?",
+       "header": "No Code Review Plugin",
+       "options": [
+         {"label": "Merge without review", "description": "Skip code review and proceed to merge"},
+         {"label": "Stop", "description": "Stop here — install the code-review plugin first"}
+       ],
+       "multiSelect": false
+     }]
+   )
+   ```
+
+   - If user selects **"Merge without review"**: proceed to Step 5.
+   - If user selects **"Stop"** or **"Other"**: stop.
+
+## Step 5: Check PR Readiness
 
 ```bash
 gh pr view NNN --json mergeable,reviewDecision,state
@@ -94,7 +158,7 @@ State: [state]
 
 The integrator will retry when ready.
 
-## Step 5: Merge PR and Clean Up Worktree
+## Step 6: Merge PR and Clean Up Worktree
 
 From the project root:
 
@@ -108,7 +172,7 @@ from the PR's head branch.
 
 If merge fails, report the error and stop.
 
-## Step 6: Move Issues to Done
+## Step 7: Move Issues to Done
 
 ```
 ralph_hero__advance_issue(direction="children", number=NNN, targetState="Done")
@@ -120,7 +184,7 @@ Or for a standalone issue:
 ralph_hero__save_issue(number=NNN, workflowState="Done", command="ralph_merge")
 ```
 
-## Step 7: Advance Parent
+## Step 8: Advance Parent
 
 If applicable:
 
@@ -128,13 +192,13 @@ If applicable:
 ralph_hero__advance_issue(direction="parent", number=NNN)
 ```
 
-## Step 8: Post Completion Comment
+## Step 9: Post Completion Comment
 
 ```
 ralph_hero__create_comment(number=NNN, body="## Merged\n\nPR merged successfully. Issue moved to Done.")
 ```
 
-## Step 8a: Cross-Repo Unblock Check
+## Step 9a: Cross-Repo Unblock Check
 
 After merging a PR, check if cross-repo dependents are now unblocked:
 
@@ -147,7 +211,7 @@ After merging a PR, check if cross-repo dependents are now unblocked:
 
 3. **This is informational only.** The downstream issue becomes actionable through the normal pipeline (picked up by `/ralph-hero` or the next loop iteration). No automated cascade triggering.
 
-## Step 8b: Upstream PR Rejection
+## Step 9b: Upstream PR Rejection
 
 **Detection trigger:** Ralph-merge is invoked to merge a specific PR. If it discovers the PR has already been closed without merge (via `gh pr view --json state,mergedAt`), this is a rejection.
 
@@ -157,7 +221,7 @@ After merging a PR, check if cross-repo dependents are now unblocked:
 3. Post a notification via `create_comment` on the parent issue: "PR #{number} for GH-{issue} ({repo}) was closed without merge. GH-{downstream} ({repo}) remains blocked pending resolution."
 4. The human decides next steps (re-open, re-plan, etc.)
 
-## Step 9: Report Result
+## Step 10: Report Result
 
 Output completion status:
 
