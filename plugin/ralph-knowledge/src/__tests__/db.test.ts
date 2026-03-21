@@ -49,3 +49,164 @@ describe("KnowledgeDB", () => {
     expect(db.getDocument("doc-1")).toBeUndefined();
   });
 });
+
+describe("Outcome Events", () => {
+  it("inserts and retrieves an outcome event", () => {
+    const result = db.insertOutcomeEvent({
+      eventType: "task_complete",
+      issueNumber: 42,
+      sessionId: "sess-1",
+      durationMs: 5000,
+      verdict: "success",
+      componentArea: "api/auth",
+      estimate: "S",
+      driftCount: 1,
+      model: "opus-4",
+      agentType: "coder",
+      iterationCount: 3,
+      payload: { notes: "all good" },
+    });
+
+    expect(result.id).toBeTruthy();
+    expect(result.eventType).toBe("task_complete");
+    expect(result.issueNumber).toBe(42);
+    expect(result.timestamp).toBeTruthy();
+
+    const rows = db.queryOutcomeEvents({ issueNumber: 42 });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].eventType).toBe("task_complete");
+    expect(rows[0].sessionId).toBe("sess-1");
+    expect(rows[0].durationMs).toBe(5000);
+    expect(rows[0].verdict).toBe("success");
+    expect(rows[0].componentArea).toBe("api/auth");
+    expect(rows[0].estimate).toBe("S");
+    expect(rows[0].driftCount).toBe(1);
+    expect(rows[0].model).toBe("opus-4");
+    expect(rows[0].agentType).toBe("coder");
+    expect(rows[0].iterationCount).toBe(3);
+    expect(JSON.parse(rows[0].payload)).toEqual({ notes: "all good" });
+  });
+
+  it("filters by event_type and component_area", () => {
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 1, componentArea: "api/auth" });
+    db.insertOutcomeEvent({ eventType: "drift", issueNumber: 2, componentArea: "api/billing" });
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 3, componentArea: "ui/dashboard" });
+
+    const byType = db.queryOutcomeEvents({ eventType: "task_complete" });
+    expect(byType).toHaveLength(2);
+
+    // component_area uses LIKE prefix match
+    const byComponent = db.queryOutcomeEvents({ componentArea: "api" });
+    expect(byComponent).toHaveLength(2);
+
+    const combined = db.queryOutcomeEvents({ eventType: "task_complete", componentArea: "api" });
+    expect(combined).toHaveLength(1);
+    expect(combined[0].issueNumber).toBe(1);
+  });
+
+  it("filters by since date", () => {
+    // Insert events, then query with a since filter
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 1 });
+
+    // Query with a future date should return nothing
+    const futureRows = db.queryOutcomeEvents({ since: "2099-01-01T00:00:00.000Z" });
+    expect(futureRows).toHaveLength(0);
+
+    // Query with a past date should return the event
+    const pastRows = db.queryOutcomeEvents({ since: "2000-01-01T00:00:00.000Z" });
+    expect(pastRows).toHaveLength(1);
+  });
+
+  it("filters by verdict and estimate", () => {
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 1, verdict: "success", estimate: "S" });
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 2, verdict: "blocked", estimate: "M" });
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 3, verdict: "success", estimate: "M" });
+
+    const byVerdict = db.queryOutcomeEvents({ verdict: "blocked" });
+    expect(byVerdict).toHaveLength(1);
+    expect(byVerdict[0].issueNumber).toBe(2);
+
+    const byEstimate = db.queryOutcomeEvents({ estimate: "M" });
+    expect(byEstimate).toHaveLength(2);
+  });
+
+  it("respects limit parameter", () => {
+    for (let i = 0; i < 10; i++) {
+      db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: i });
+    }
+
+    const limited = db.queryOutcomeEvents({ limit: 3 });
+    expect(limited).toHaveLength(3);
+  });
+
+  it("returns most recent first", () => {
+    // Insert with explicit timestamps via direct SQL to control ordering
+    const ids = ["a", "b", "c"];
+    for (let i = 0; i < 3; i++) {
+      db.db.prepare(`
+        INSERT INTO outcome_events (id, event_type, issue_number, timestamp, payload)
+        VALUES (?, 'task_complete', 1, ?, '{}')
+      `).run(ids[i], `2026-03-0${i + 1}T00:00:00.000Z`);
+    }
+
+    const rows = db.queryOutcomeEvents({ issueNumber: 1 });
+    expect(rows).toHaveLength(3);
+    expect(rows[0].id).toBe("c"); // March 3rd — most recent
+    expect(rows[2].id).toBe("a"); // March 1st — oldest
+  });
+
+  it("computes aggregation", () => {
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 1, verdict: "success", componentArea: "api/auth", driftCount: 2, iterationCount: 5 });
+    db.insertOutcomeEvent({ eventType: "drift", issueNumber: 2, verdict: "blocked", componentArea: "api/auth", driftCount: 4, iterationCount: 3 });
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 3, verdict: "success", componentArea: "ui/dashboard", driftCount: 0, iterationCount: 1 });
+
+    const agg = db.aggregateOutcomeEvents();
+    expect(agg.count).toBe(3);
+    expect(agg.avgDriftCount).toBe(2); // (2+4+0)/3
+    expect(agg.avgIterationCount).toBe(3); // (5+3+1)/3
+    expect(agg.verdictDistribution).toEqual({ success: 2, blocked: 1 });
+    expect(agg.eventTypeDistribution).toEqual({ task_complete: 2, drift: 1 });
+    expect(agg.topComponentAreas).toHaveLength(2);
+    expect(agg.topComponentAreas[0]).toEqual({ area: "api/auth", count: 2 });
+  });
+
+  it("returns outcome summary for an issue", () => {
+    // Use direct SQL inserts with explicit timestamps to ensure deterministic ordering
+    db.db.prepare(`
+      INSERT INTO outcome_events (id, event_type, issue_number, timestamp, drift_count, payload)
+      VALUES (?, 'task_start', 42, '2026-03-01T00:00:00.000Z', 1, '{}')
+    `).run("oe-1");
+    db.db.prepare(`
+      INSERT INTO outcome_events (id, event_type, issue_number, timestamp, verdict, drift_count, payload)
+      VALUES (?, 'drift', 42, '2026-03-02T00:00:00.000Z', 'blocked', 2, '{}')
+    `).run("oe-2");
+    db.db.prepare(`
+      INSERT INTO outcome_events (id, event_type, issue_number, timestamp, verdict, drift_count, payload)
+      VALUES (?, 'task_complete', 42, '2026-03-03T00:00:00.000Z', 'success', 0, '{}')
+    `).run("oe-3");
+
+    const summary = db.getOutcomeSummary(42);
+    expect(summary).not.toBeNull();
+    expect(summary!.totalEvents).toBe(3);
+    expect(summary!.latestVerdict).toBe("success"); // most recent with a verdict
+    expect(summary!.driftCount).toBe(3); // 1+2+0
+    expect(summary!.blockers).toBe(1);
+    expect(summary!.eventsByType).toEqual({ task_start: 1, drift: 1, task_complete: 1 });
+  });
+
+  it("returns null summary for missing issue", () => {
+    const summary = db.getOutcomeSummary(9999);
+    expect(summary).toBeNull();
+  });
+
+  it("clearAll preserves outcome events", () => {
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 1 });
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+
+    db.clearAll();
+
+    expect(db.getDocument("doc-1")).toBeUndefined();
+    const rows = db.queryOutcomeEvents({ issueNumber: 1 });
+    expect(rows).toHaveLength(1);
+  });
+});
