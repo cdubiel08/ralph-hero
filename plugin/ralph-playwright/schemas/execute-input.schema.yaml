@@ -1,0 +1,52 @@
+# ralph-playwright execute primitive input schema
+# Supports two modes: structured (replay a user story) and freeform (LLM exploration)
+
+type: object
+required: [kind]
+properties:
+  kind:
+    type: string
+    enum: [structured, freeform]
+    description: "Execution mode"
+
+  # Structured mode — replay a user story YAML file
+  story:
+    type: string
+    description: "Path to a user story YAML file (required when kind=structured)"
+
+  # Freeform mode — LLM-driven exploration toward a goal
+  url:
+    type: string
+    format: uri
+    description: "Entry URL (required when kind=freeform)"
+  goal:
+    type: string
+    description: "Natural language exploration goal (required when kind=freeform)"
+  persona:
+    type: string
+    description: "User role for the exploration (optional)"
+  tags:
+    type: array
+    items:
+      type: string
+    description: "Filter/categorization tags (optional)"
+
+  # Common
+  session:
+    type: string
+    pattern: "^[a-z0-9-]+$"
+    description: "Session name. Auto-generated as <date>-<skill>-<slug> if omitted."
+
+allOf:
+  - if:
+      properties:
+        kind:
+          const: structured
+    then:
+      required: [story]
+  - if:
+      properties:
+        kind:
+          const: freeform
+    then:
+      required: [url, goal]
