@@ -46,7 +46,16 @@ export function createServer(dbPath: string) {
           limit: args.limit ?? 10,
           includeSuperseded: args.includeSuperseded,
         });
-        const enriched = results.map(r => ({ ...r, tags: db.getTags(r.id) }));
+        const enriched = results.map(r => {
+          const base = { ...r, tags: db.getTags(r.id) };
+          // SearchResult does not carry githubIssue — fetch from documents table
+          const doc = db.getDocument(r.id);
+          if (doc?.githubIssue) {
+            const outcomes = db.getOutcomeSummary(doc.githubIssue);
+            if (outcomes) return { ...base, outcomes_summary: outcomes };
+          }
+          return base;
+        });
         return { content: [{ type: "text" as const, text: JSON.stringify(enriched, null, 2) }] };
       } catch (e) {
         return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
