@@ -77,10 +77,10 @@ If no PR found, report and stop.
 Check whether the PR has received a code review:
 
 ```bash
-gh pr view NNN --json reviews,comments,reviewDecision
+gh pr view NNN --json reviewDecision
 ```
 
-**If `reviewDecision` is `APPROVED`**, or if there are review comments (non-empty `reviews` array) and `reviewDecision` is not `CHANGES_REQUESTED`: a code review has been performed and approved. Proceed to Step 5.
+**If `reviewDecision` is `APPROVED`**: a code review has been performed and approved. Proceed to Step 5.
 
 **If `reviewDecision` is `CHANGES_REQUESTED`**: a code review was performed but the reviewer requested changes. Output:
 
@@ -93,7 +93,7 @@ Reason: Reviewer requested changes — address feedback before merging.
 
 And stop.
 
-**If no reviews exist** (empty `reviews` array and `reviewDecision` is null or empty):
+**If no review decision exists** (`reviewDecision` is null or empty):
 
 1. Check if the `code-review:code-review` skill is available by looking for it in the available skills list (it is an official Anthropic plugin).
 
@@ -115,7 +115,7 @@ And stop.
    )
    ```
 
-   - If user selects **"Run code review"**: invoke `Skill(skill="code-review:code-review", args="PR_NUMBER")` where PR_NUMBER is the PR number obtained in Step 3 (not the issue number). After the review completes, re-check `reviewDecision` via `gh pr view`. If the PR was approved, continue to Step 5. If changes were requested, output the review findings and stop — the user needs to address feedback first.
+   - If user selects **"Run code review"**: invoke `Skill("code-review:code-review", "PR_NUMBER")` where PR_NUMBER is the PR number obtained in Step 3 (not the issue number). After the review completes, re-check `reviewDecision` via `gh pr view`. If the PR was approved, continue to Step 5. If changes were requested, output the review findings and stop — the user needs to address feedback first.
    - If user selects **"Merge without review"**: proceed to Step 5.
    - If user selects **"Other"**: stop.
 
