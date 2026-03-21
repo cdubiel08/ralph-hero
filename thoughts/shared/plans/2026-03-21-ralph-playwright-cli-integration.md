@@ -752,7 +752,7 @@ playwright-cli -s=<session-name> <command>  # Run command in named session
 playwright-cli list                          # List active sessions
 playwright-cli close-all                     # Close all sessions
 ```
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -837,7 +837,7 @@ local/
 - Generate stories: `/ralph-playwright:story-gen`
 - Explore a URL: `/ralph-playwright:explore http://localhost:3000`
 - Run tests: `/ralph-playwright:test-e2e`
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -1333,7 +1333,7 @@ ACTIONS:
   📋 Issue #652 created: "error: Redirect not implemented for /dashboard"
   📸 2 screenshots promoted to thoughts/local/assets/
 ```
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -1428,7 +1428,7 @@ WCAG 2.2 AA | playwright-cli | N violations
 
 Actions: N issues created, N screenshots promoted
 ```
-```
+````
 
 - [ ] **Step 2: Commit**
 
@@ -1595,7 +1595,7 @@ Recommendation: <recommendation>
 Next: Use /ralph-playwright:capture to promote screenshots, or pipe this
 report to the act primitive for automated issue creation.
 ```
-```
+````
 
 - [ ] **Step 2: Commit**
 
