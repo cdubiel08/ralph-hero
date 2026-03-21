@@ -80,7 +80,18 @@ Check whether the PR has received a code review:
 gh pr view NNN --json reviews,comments,reviewDecision
 ```
 
-**If `reviewDecision` is `APPROVED` or `CHANGES_REQUESTED`**, or if there are review comments (non-empty `reviews` array): a code review has been performed. Proceed to Step 5.
+**If `reviewDecision` is `APPROVED`**, or if there are review comments (non-empty `reviews` array) and `reviewDecision` is not `CHANGES_REQUESTED`: a code review has been performed and approved. Proceed to Step 5.
+
+**If `reviewDecision` is `CHANGES_REQUESTED`**: a code review was performed but the reviewer requested changes. Output:
+
+```
+MERGE BLOCKED
+Issue: #NNN
+PR: #PR_NUMBER
+Reason: Reviewer requested changes — address feedback before merging.
+```
+
+And stop.
 
 **If no reviews exist** (empty `reviews` array and `reviewDecision` is null or empty):
 
@@ -104,7 +115,7 @@ gh pr view NNN --json reviews,comments,reviewDecision
    )
    ```
 
-   - If user selects **"Run code review"**: invoke `Skill(skill="code-review:code-review", args="NNN")` where NNN is the PR number. After the review completes, re-check `reviewDecision` via `gh pr view`. If the PR was approved, continue to Step 5. If changes were requested, output the review findings and stop — the user needs to address feedback first.
+   - If user selects **"Run code review"**: invoke `Skill(skill="code-review:code-review", args="PR_NUMBER")` where PR_NUMBER is the PR number obtained in Step 3 (not the issue number). After the review completes, re-check `reviewDecision` via `gh pr view`. If the PR was approved, continue to Step 5. If changes were requested, output the review findings and stop — the user needs to address feedback first.
    - If user selects **"Merge without review"**: proceed to Step 5.
    - If user selects **"Other"**: stop.
 
