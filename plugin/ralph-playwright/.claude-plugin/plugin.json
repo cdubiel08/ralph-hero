@@ -1,6 +1,6 @@
 {
   "name": "ralph-playwright",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Polymorphic UI testing plugin: story generation, E2E execution, a11y scanning, Storybook integration, and visual regression for ralph-hero.",
   "author": {
     "name": "Chad Dubiel",
