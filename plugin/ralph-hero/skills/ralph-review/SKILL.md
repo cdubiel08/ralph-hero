@@ -147,7 +147,8 @@ AskUserQuestion(
       {"label": "Approve", "description": "Plan is complete and ready for implementation"},
       {"label": "Minor Changes", "description": "Small adjustments needed, can fix and proceed"},
       {"label": "Major Changes", "description": "Significant rework needed, return to planning"},
-      {"label": "Reject", "description": "Plan is fundamentally flawed, needs complete redo"}
+      {"label": "Reject", "description": "Plan is fundamentally flawed, needs complete redo"},
+      {"label": "Open in editor", "description": "Opens plan file in system default editor — picker re-appears after"}
     ],
     "multiSelect": false
   }]
@@ -155,6 +156,18 @@ AskUserQuestion(
 ```
 
 **Route based on response**:
+
+**If "Open in editor"**:
+```bash
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  open "<plan-local-path>"
+else
+  xdg-open "<plan-local-path>"
+fi
+```
+where `<plan-local-path>` is the local file path discovered in Step 3.
+
+Then re-present this same picker (loop until a verdict is selected).
 
 **If "Approve"**:
 -> Proceed to Step 5 (approve flow)
