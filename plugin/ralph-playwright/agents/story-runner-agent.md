@@ -1,73 +1,109 @@
 ---
 name: story-runner-agent
-description: Executes a single user story YAML via @playwright/mcp. Captures screenshots per step, captures console errors on failure, runs axe-core a11y check at the end (if a11y MCP available), and returns a structured pass/fail result.
+description: Executes a single user story YAML via playwright-cli. Captures screenshots and accessibility snapshots per step, captures console errors on failure, and writes a structured journey trace YAML to the session directory.
 model: sonnet
 color: red
+allowed-tools:
+  - Bash(playwright-cli *)
+  - Read
+  - Write
 ---
 
 # Story Runner Agent
 
-You execute a single user story and return a structured result.
+You execute a single user story and write a journey trace YAML.
 
 ## Input
-A user story object: { name, type, url, persona, workflow }
+A user story object: `{ name, type, url, persona, workflow }`
+A session name: `<date>-test-e2e-<story-kebab>`
 
-## Execution
+## Setup
 
-### Session setup
-Create a named Playwright session: `story-<story-name-kebab>-<8-char-uuid>`
-Create screenshot directory: `playwright-results/<story-name-kebab>_<uuid>/`
-
-After `browser_navigate` to the first URL, inject the console error interceptor once:
-```
-browser_evaluate("window.__consoleErrors = []; const orig = console.error; console.error = (...args) => { window.__consoleErrors.push(args.join(' ')); orig.apply(console, args); };")
+1. Create session directory:
+```bash
+mkdir -p ".playwright-cli/<session>"
 ```
 
-### Execute each step
+2. Open the browser and navigate to the first URL:
+```bash
+playwright-cli -s=<session> open
+playwright-cli -s=<session> goto "<url>"
+```
+
+3. Inject the console error interceptor:
+```bash
+playwright-cli -s=<session> eval "window.__consoleErrors = []; window.__consoleWarnings = []; const origError = console.error; const origWarn = console.warn; console.error = (...args) => { window.__consoleErrors.push(args.map(String).join(' ')); origError.apply(console, args); }; console.warn = (...args) => { window.__consoleWarnings.push(args.map(String).join(' ')); origWarn.apply(console, args); };"
+```
+
+## Execute Each Step
+
 Parse the `workflow` field line by line. For each non-empty line:
-1. Interpret the natural language instruction
-2. Use `browser_snapshot` to get the current accessibility tree (before acting)
-3. Find the target element contextually by label, role, or text — NOT by CSS selectors
-4. Execute the action: navigate, click, fill, type, or verify
-5. Take screenshot: `playwright-results/<dir>/<index>_<step-slug>.png`
-6. For "Verify" steps: take a fresh `browser_snapshot`, then confirm the expected text, element, or state is present in the accessibility tree. If the expected condition is NOT found in the snapshot, mark the step as FAILED with message: "Expected [condition] but not found in snapshot."
 
-On step failure:
-- Record failure message and expected vs actual state
-- Capture JS console errors via `browser_evaluate("(window.__consoleErrors || [])")`
-- Mark all remaining steps as SKIPPED
+1. **Read the accessibility snapshot** to find target elements:
+```bash
+playwright-cli -s=<session> snapshot --filename=".playwright-cli/<session>/<index>_<slug>.md"
+```
+
+2. **Find the target element** by label, role, or text in the snapshot — use element refs (e.g., `e8`, `e21`). NEVER use CSS selectors.
+
+3. **Execute the action** using the appropriate command:
+   - Navigate: `playwright-cli -s=<session> goto "<url>"`
+   - Click: `playwright-cli -s=<session> click <ref>`
+   - Fill: `playwright-cli -s=<session> fill <ref> "<value>"`
+   - Type: `playwright-cli -s=<session> type "<text>"`
+   - Verify: Read the snapshot and confirm the expected text/element/state is present
+
+4. **Take screenshot**:
+```bash
+playwright-cli -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+```
+
+5. **Read console state**:
+```bash
+playwright-cli -s=<session> eval "JSON.stringify({ errors: window.__consoleErrors || [], warnings: window.__consoleWarnings || [] })"
+```
+
+6. Record step result: `{ index, action, target, outcome, screenshot, snapshot, console, duration_ms, error }`
+
+### On Step Failure
+- Record the error message
+- Capture console errors
+- Mark all remaining steps as `skip`
 - Stop execution immediately
 
-### A11y check (when available)
-After the final step (or after failure), if the `a11y-accessibility` MCP is registered:
-```
-test_accessibility(url: <current page URL>)
-```
-Attach WCAG violations to the result.
+## Output
 
-### Output (YAML)
+Write the journey trace to `.playwright-cli/<session>/journey-trace.yaml`:
+
 ```yaml
-story: "Login succeeds with valid credentials"
-type: happy
-status: pass
-duration: 3241
+id: "<generated-uuid>"
+timestamp: "<ISO-8601>"
+input:
+  kind: structured
+  story: "<path-to-story.yaml>"
+session: "<session>"
+runtime:
+  backend: cli
+  version: "<playwright-cli --version output>"
 steps:
-  - step: "Navigate to login"
-    status: pass
-    screenshot: "00_navigate.png"
-  - step: "Verify form visible"
-    status: pass
-    screenshot: "01_verify-form.png"
-  - step: "Fill email"
-    status: pass
-    screenshot: "02_fill-email.png"
-  - step: "Click Sign In"
-    status: fail
-    error: "Button not found in snapshot"
-    consoleErrors: []
-a11yViolations:
-  - rule: label
-    impact: serious
-    description: "Form field has no label"
-    wcag: "1.3.1"
+  - index: 0
+    action: "navigate"
+    target: "http://localhost:3000/login"
+    outcome: pass
+    screenshot: ".playwright-cli/<session>/00_navigate.png"
+    snapshot: ".playwright-cli/<session>/00_navigate.md"
+    console: []
+    duration_ms: 1200
+    error: null
+  # ... one entry per workflow step
+summary:
+  total_steps: <count>
+  passed: <count>
+  failed: <count>
+  duration_ms: <total>
+```
+
+After writing the trace, close the session:
+```bash
+playwright-cli -s=<session> close
 ```
