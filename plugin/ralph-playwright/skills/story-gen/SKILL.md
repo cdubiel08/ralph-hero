@@ -1,11 +1,31 @@
 ---
 name: ralph-playwright:story-gen
-description: Generate user stories YAML from plain-text descriptions, feature requirements, or PRDs. Automatically includes happy paths AND contextually relevant sad paths (validation errors, auth failures, empty states, network errors, boundary values). Saves to playwright-stories/<feature-name>.yaml. Use when you want to create test stories from a description rather than by exploring a live site.
+description: Generate user stories YAML from plain-text descriptions, feature requirements, or PRDs. Can optionally explore a live URL first to generate stories from observation. Automatically includes happy paths AND contextually relevant sad paths. Saves to playwright-stories/<feature-name>.yaml.
+allowed-tools:
+  - Bash(playwright-cli *)
+  - Agent
+  - Read
+  - Write
 ---
 
 # Story Generation — Text → User Stories YAML
 
 ## Process
+
+### Step 0: Observe (optional)
+
+If a running app URL is available and the user wants stories generated from observation rather than description:
+
+1. Spawn `explorer-agent` with:
+   - `url`: The app URL
+   - `goal`: "Discover all interactive user flows on this page"
+   - `session`: `<date>-story-gen-<slug>`
+
+2. Read the journey trace from `.playwright-cli/<session>/journey-trace.yaml`
+
+3. Use the discovered flows as input for story generation (Step 2) instead of the text description
+
+This produces more accurate stories because the agent observes actual UI elements, form fields, and navigation paths rather than inferring them from a description.
 
 ### Step 1: Gather input
 Ask for (or use provided arguments):
