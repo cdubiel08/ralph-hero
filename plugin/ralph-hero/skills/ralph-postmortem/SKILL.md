@@ -9,6 +9,7 @@ allowed-tools:
   - Write
   - Bash
   - ralph_hero__create_issue
+  - knowledge_record_outcome
 ---
 
 # Ralph Post-Mortem
@@ -50,6 +51,29 @@ Review the session events collected in Step 1. Apply these rules:
 - Slow-downs from idle message spam or delayed task unblocking
 - Plan gaps fixed inline without retry
 - Validation run against wrong path, self-corrected after a message
+
+### Step 3.5: Record outcome events
+
+After classifying blockers and impediments, record each to the outcome ledger:
+
+For each **blocker**: call `knowledge_record_outcome` with:
+- `event_type`: `"blocker_recorded"`
+- `issue_number`: the primary issue number
+- `agent_type`: the worker that encountered the blocker
+- `session_id`: the team session identifier
+- `payload`: `{ blocker_type, description, created_issue_number }`
+
+For each **impediment**: call `knowledge_record_outcome` with:
+- `event_type`: `"impediment_recorded"`
+- `issue_number`: the primary issue number
+- `agent_type`: the worker that encountered the impediment
+- `payload`: `{ impediment_type, description, self_resolved, workaround }`
+
+After writing the report, record session completion:
+- `event_type`: `"session_completed"`
+- `issue_number`: the primary issue number
+- `session_id`: the team session identifier
+- `payload`: `{ issues_processed, issues_completed, workers, total_tokens }`
 
 ## Step 4: Write Post-Mortem
 
