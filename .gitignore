@@ -17,3 +17,6 @@ thoughts/_issues/
 *.local.json
 .env
 .env.*
+
+# Playwright CLI session data (ephemeral screenshots/snapshots)
+.playwright-cli/

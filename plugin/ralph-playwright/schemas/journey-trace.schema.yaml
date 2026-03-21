@@ -1,0 +1,84 @@
+# ralph-playwright journey trace schema
+# Output of the execute primitive, input to the reflect primitive
+# Same format regardless of structured or freeform execution
+
+type: object
+required: [id, timestamp, input, session, runtime, steps, summary]
+properties:
+  id:
+    type: string
+    format: uuid
+    description: "Unique trace identifier"
+  timestamp:
+    type: string
+    format: date-time
+    description: "ISO-8601 execution timestamp"
+  input:
+    type: object
+    description: "Echo of the execute input for reproducibility"
+  session:
+    type: string
+    pattern: "^[a-z0-9-]+$"
+    description: "Session name matching the .playwright-cli/ subdirectory"
+  runtime:
+    type: object
+    required: [backend, version]
+    properties:
+      backend:
+        type: string
+        enum: [cli]
+      version:
+        type: string
+        description: "playwright-cli version"
+  steps:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [index, action, target, outcome, screenshot, snapshot, console, duration_ms]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        action:
+          type: string
+          description: "Action performed (navigate, click, fill, type, verify, etc.)"
+        target:
+          type: string
+          description: "Target URL, element description, or verification condition"
+        outcome:
+          type: string
+          enum: [pass, fail, skip]
+        screenshot:
+          type: string
+          description: "Path to screenshot PNG relative to repo root"
+        snapshot:
+          type: string
+          description: "Path to accessibility snapshot MD relative to repo root"
+        console:
+          type: array
+          items:
+            type: string
+          description: "Console errors/warnings captured during this step"
+        duration_ms:
+          type: integer
+          minimum: 0
+        error:
+          type: ["string", "null"]
+          description: "Error message if outcome is fail, null otherwise"
+  summary:
+    type: object
+    required: [total_steps, passed, failed, duration_ms]
+    properties:
+      total_steps:
+        type: integer
+        minimum: 1
+      passed:
+        type: integer
+        minimum: 0
+      failed:
+        type: integer
+        minimum: 0
+      duration_ms:
+        type: integer
+        minimum: 0

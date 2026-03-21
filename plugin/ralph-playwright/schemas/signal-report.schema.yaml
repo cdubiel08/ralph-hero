@@ -1,0 +1,76 @@
+# ralph-playwright signal report schema
+# Output of the reflect primitive, input to the act primitive
+
+type: object
+required: [trace_id, timestamp, signals, summary]
+properties:
+  trace_id:
+    type: string
+    format: uuid
+    description: "ID of the journey trace this report analyzes"
+  timestamp:
+    type: string
+    format: date-time
+    description: "ISO-8601 analysis timestamp"
+  signals:
+    type: array
+    items:
+      type: object
+      required: [type, severity, title, description, evidence, tags]
+      properties:
+        type:
+          type: string
+          enum: [anomaly, regression, a11y_violation, ux_issue, error]
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+        title:
+          type: string
+          description: "Short signal title"
+        description:
+          type: string
+          description: "Detailed explanation of the signal"
+        evidence:
+          type: object
+          required: [steps, screenshots]
+          properties:
+            steps:
+              type: array
+              items:
+                type: integer
+              description: "Step indices from the journey trace"
+            screenshots:
+              type: array
+              items:
+                type: string
+              description: "Screenshot filenames as evidence"
+        tags:
+          type: array
+          items:
+            type: string
+  summary:
+    type: object
+    required: [total_signals, by_severity, recommendation]
+    properties:
+      total_signals:
+        type: integer
+        minimum: 0
+      by_severity:
+        type: object
+        required: [critical, high, medium, low]
+        properties:
+          critical:
+            type: integer
+            minimum: 0
+          high:
+            type: integer
+            minimum: 0
+          medium:
+            type: integer
+            minimum: 0
+          low:
+            type: integer
+            minimum: 0
+      recommendation:
+        type: string
+        description: "Actionable recommendation based on signals"

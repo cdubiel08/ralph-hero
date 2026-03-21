@@ -1,0 +1,6 @@
+_*.md
+_issues/
+.obsidian/
+
+# Local-only assets (screenshots promoted from .playwright-cli/)
+local/

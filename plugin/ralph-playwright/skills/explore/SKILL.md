@@ -1,81 +1,84 @@
 ---
 name: ralph-playwright:explore
-description: Explore a running website to discover user flows and generate user story YAML files. Uses Playwright Planner agent (v1.56+) as the primary path. Falls back to @playwright/mcp direct navigation if Planner is unavailable. Pivot path to Stagehand documented below. Works on localhost or any accessible URL. Automatically augments discovered flows with sad paths.
+description: Explore a running website to discover user flows, analyze findings, and produce research notes with promoted screenshots. Uses the execute → reflect → act pipeline via playwright-cli. Works on localhost or any accessible URL.
+allowed-tools:
+  - Bash(playwright-cli *)
+  - Agent
+  - Read
+  - Write
 ---
 
-# Explore — Live URL → User Stories YAML
+# Explore — Live URL → Research Notes + User Stories
 
 ## Prerequisites
-- Target app must be running (e.g. `npm run dev` → `http://localhost:3000`)
-- `@playwright/mcp` installed and registered in Claude Code
+- `playwright-cli` installed globally (see `/ralph-playwright:setup`)
+- Target app running (e.g., `npm run dev` → `http://localhost:3000`)
 
 ## Process
 
-### Step 1: Check Playwright version
-```bash
-npx playwright --version
-```
-- v1.56.0+: use **Playwright Planner** (primary path)
-- Older: use **@playwright/mcp direct navigation** (fallback path)
+### Step 1: Execute (freeform)
 
----
+Generate a session name: `<date>-explore-<slug>` (e.g., `2026-03-21-explore-checkout-flow`)
 
-### Primary Path: Playwright Planner Agent (v1.56+)
+Spawn `explorer-agent` with:
+- `url`: The target URL (from arguments or ask)
+- `goal`: Exploration objective (from arguments or ask, e.g., "discover all user flows on the checkout page")
+- `session`: The generated session name
+- `persona`: User role if relevant (optional)
 
-```bash
-npx playwright init-agents --loop=claude
-```
+The agent navigates the app via `playwright-cli`, captures screenshots and accessibility snapshots at each step, and writes a journey trace to `.playwright-cli/<session>/journey-trace.yaml`.
 
-The Planner agent browses the target URL, discovers interactive elements and navigation paths, and produces a structured Markdown test plan.
+### Step 2: Reflect
 
-After Planner completes:
-1. Parse the Markdown test plan
-2. Convert each discovered flow to a user story using the canonical schema
-3. Infer `type`: success flows → `happy`, error states found → `sad`
-4. Save to `playwright-stories/<page-name>-discovered.yaml`
+Read the journey trace from `.playwright-cli/<session>/journey-trace.yaml`.
 
----
+For each step, examine:
+- The screenshot (read the PNG file to see what the page looked like)
+- The accessibility snapshot (read the .md file for element structure)
+- Console errors/warnings captured during the step
 
-### Fallback Path: @playwright/mcp Direct Navigation
+Produce a signal report identifying:
+- **a11y_violation**: Missing labels, broken tab order, insufficient contrast
+- **ux_issue**: Confusing navigation, dead-end pages, broken flows
+- **error**: Console errors, failed navigations, broken interactions
+- **anomaly**: Unexpected behavior, visual glitches observed in screenshots
 
-When Planner is unavailable, spawn `explorer-agent` with the target URL.
+Write the signal report to `.playwright-cli/<session>/signal-report.yaml` following the signal-report schema.
 
-The explorer agent:
-1. Navigates to the URL and takes an accessibility tree snapshot
-2. Identifies all interactive elements, forms, and navigation links
-3. Follows unique paths up to 2 levels deep (max 20 flows)
-4. Returns discovered flows as structured YAML
+### Step 3: Act
 
-After the agent returns:
-1. Parse the returned flow data
-2. Convert each flow to a user story using the canonical schema (see `schemas/user-story.schema.yaml`)
-3. Infer `type`: success flows → `happy`, error states → `sad`
-4. Save to `playwright-stories/<page-name>-discovered.yaml`
+Read the signal report. For each signal:
 
----
+1. **Promote evidence screenshots** from tier 1 to tier 2:
+   - Source: `.playwright-cli/<session>/<screenshot>`
+   - Destination: `thoughts/local/assets/<session>/<meaningful-name>.png`
+   - Create the destination directory: `mkdir -p thoughts/local/assets/<session>/`
 
-### Step 2: Augment with sad paths
+2. **Write a research note** to `thoughts/shared/research/<date>-<slug>-exploration.md`:
+   ```yaml
+   ---
+   date: <today>
+   type: research
+   tags: [ralph-playwright, exploration, <app-specific-tags>]
+   assets:
+     - thoughts/local/assets/<session>/<promoted-screenshot-1>.png
+     - thoughts/local/assets/<session>/<promoted-screenshot-2>.png
+   ---
+   ```
+   Include signal summary, findings, and inline screenshot references.
 
-After flow discovery, automatically generate sad paths:
-- For each **form** found: invalid input story + empty submission story
-- For each **auth-protected page** found: unauthenticated access story
-- For each **destructive action** found: confirmation/cancellation story
-- For each **data-loading component**: empty state + error state story
+3. **Optionally generate user stories** from discovered flows:
+   - Convert happy-path flows to user story YAML
+   - Apply sad-path heuristics from `schemas/user-story.schema.yaml`
+   - Save to `playwright-stories/<slug>-discovered.yaml`
 
-### Step 3: Output and summary
-Save all stories to `playwright-stories/` and report:
-- N happy paths discovered
-- N sad paths generated
-- Suggest: `/ralph-playwright:test-e2e` to run them
+4. Write the action log to `.playwright-cli/<session>/action-log.yaml` following the action-log schema.
 
----
+### Step 4: Summary
 
-## Pivot Note: Stagehand (when to switch)
-
-If Playwright Planner produces insufficient coverage (< 5 flows on a complex SPA, or misses dynamically rendered content):
-
-```bash
-npm install @browserbasehq/stagehand
-```
-
-Use `stagehand.observe()` to enumerate all available actions at each page state, then `stagehand.agent()` for a full autonomous loop. This gives richer exploration at the cost of a Browserbase dependency and higher token usage. See the parent plan (GH-616) Deferred Work section for full implementation notes.
+Report:
+- N steps explored, N signals found (by severity)
+- Research note written to `thoughts/shared/research/<path>`
+- N screenshots promoted
+- N user stories generated (if any)
+- Suggest: `/ralph-playwright:test-e2e` to run generated stories

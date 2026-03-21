@@ -1,42 +1,70 @@
 ---
 name: ralph-playwright:a11y-scan
-description: Run a standalone WCAG 2.2 AA accessibility audit against a URL or set of URLs using axe-core via a11y-accessibility. Reports violations by severity. Use for a quick a11y check without running full story execution. Requires a11y-accessibility to be registered.
+description: Run a WCAG 2.2 AA accessibility audit against a URL using playwright-cli. Captures accessibility snapshots, analyzes for violations, and creates issues for findings. Uses the execute → reflect → act pipeline with an a11y-focused goal.
+allowed-tools:
+  - Bash(playwright-cli *)
+  - Agent
+  - Read
+  - Write
 ---
 
-# A11y Scan — Standalone Accessibility Audit
+# A11y Scan — Accessibility Audit via CLI
 
 ## Prerequisites
-`a11y-accessibility` registered in Claude Code (see `/ralph-playwright:setup`).
+- `playwright-cli` installed globally (see `/ralph-playwright:setup`)
+- Target app running
 
 ## Process
 
-### Step 1: Target URL(s)
-From arguments or ask. Multiple URLs run in parallel.
+### Step 1: Execute (freeform, a11y goal)
 
-### Step 2: Run axe-core checks
-For each URL:
-```
-test_accessibility(url)         → WCAG rule violations
-check_color_contrast(url)       → contrast ratios
-check_aria_attributes(url)      → ARIA validity
-```
+Generate session name: `<date>-a11y-scan-<slug>`
 
-### Step 3: Report
+Spawn `explorer-agent` with:
+- `url`: Target URL (from arguments or ask)
+- `goal`: "Systematically audit this page for WCAG 2.2 AA accessibility compliance. Focus on: form labels, tab order, keyboard operability, color contrast ratios, ARIA attributes, heading hierarchy, alt text, and focus management."
+- `session`: The generated session name
+
+The agent navigates the page, interacts with all interactive elements (especially via keyboard), and captures snapshots at each state.
+
+### Step 2: Reflect (a11y signals only)
+
+Read the journey trace. For each step, examine the accessibility snapshot (`.md` file) for:
+
+- **Missing or empty labels**: Form fields without associated `<label>` or `aria-label`
+- **Broken tab order**: Elements not reachable via Tab, or illogical order
+- **Keyboard inoperability**: Buttons/links not operable via Enter/Space
+- **Missing ARIA**: Interactive components without `role`, `aria-expanded`, `aria-describedby` etc.
+- **Heading hierarchy**: Skipped levels (h1 → h3), missing h1, multiple h1s
+- **Color contrast**: Text against background ratios below 4.5:1 (normal) or 3:1 (large)
+- **Missing alt text**: Images without `alt` attribute
+- **Focus management**: Modals/dialogs that don't trap focus, focus not returned on close
+
+Classify all findings as `a11y_violation` signals with WCAG success criteria references.
+
+Write signal report to `.playwright-cli/<session>/signal-report.yaml`.
+
+### Step 3: Act
+
+For each signal:
+1. **Critical/high**: Create GitHub issue with WCAG reference, element details, and remediation guidance
+2. **Promote evidence screenshots** showing the violation context
+3. **Write research note** to `thoughts/shared/research/<date>-<slug>-a11y-audit.md` with full findings
+
+### Step 4: Report
+
 ```
 == A11y Scan: http://localhost:3000/login ==
-WCAG 2.2 AA | axe-core | 3 violations
+WCAG 2.2 AA | playwright-cli | N violations
 
-🔴 CRITICAL (1):
-  - Interactive element not keyboard accessible: .modal-close-btn
-    → Add tabindex="0" and keydown handler (WCAG 2.1.1)
+🔴 CRITICAL (N):
+  - <violation> → <remediation> (WCAG <criterion>)
 
-🟠 SERIOUS (1):
-  - Form field missing label: <input id="email">
-    → Add <label for="email"> or aria-label (WCAG 1.3.1)
+🟠 HIGH (N):
+  - <violation> → <remediation> (WCAG <criterion>)
 
-🟡 MODERATE (1):
-  - Color contrast insufficient: .helper-text ratio 2.8:1, needs 4.5:1
-    → Darken text color (WCAG 1.4.3)
+🟡 MEDIUM (N):
+  - <violation> → <remediation> (WCAG <criterion>)
+
+Actions: N issues created, N screenshots promoted
 ```
-
-Severities: 🔴 critical, 🟠 serious, 🟡 moderate, ⚪ minor.

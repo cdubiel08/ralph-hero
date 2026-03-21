@@ -1,58 +1,58 @@
 ---
 name: ralph-playwright:setup
-description: One-time setup for ralph-playwright — installs required MCPs (Playwright, a11y, Storybook), validates browser installation, and creates playwright-stories/ directory. Use when setting up ralph-playwright for the first time or diagnosing a broken install.
+description: One-time setup for ralph-playwright — installs playwright-cli globally, validates browser installation, and creates playwright-stories/ directory. Use when setting up ralph-playwright for the first time or diagnosing a broken install.
 ---
 
 # Ralph-Playwright Setup
 
-Install and configure all MCP servers required by ralph-playwright skills.
+Install and configure `playwright-cli` for ralph-playwright skills.
 
-## Step 1: Required MCP — Playwright (mandatory)
+## Step 1: Install playwright-cli (required)
 
 ```bash
-claude mcp add playwright npx @playwright/mcp@latest
+npm install -g @playwright/cli@latest
 ```
 
-## Step 2: A11y MCP (recommended)
+Verify installation:
 ```bash
-claude mcp add a11y-accessibility -- npx -y a11y-mcp-server
+playwright-cli --version
+```
+Must show a version. If the command is not found, the global install failed — check your npm prefix (`npm config get prefix`) and ensure it's on your PATH.
+
+## Step 2: Install browser binaries
+
+```bash
+playwright-cli install-browser --browser chrome
 ```
 
-## Step 3: Storybook MCP (optional — Storybook 9.1.16+ only)
-Requires Storybook dev server running. Add to your project:
-```bash
-npm install -D @storybook/addon-mcp
-```
-Register MCP (transport: http, Storybook must be running first):
-```bash
-claude mcp add storybook-mcp --transport http http://localhost:6006/mcp --scope project
-```
+## Step 3: Create story directory
 
-## Step 4: Install browsers
-```bash
-npx playwright install chromium
-# Or all browsers:
-npx playwright install
-```
-
-## Step 5: Create story directory
 In your project root:
 ```bash
 mkdir -p playwright-stories
 ```
 
-Add to `.gitignore`:
-```
-playwright-results/
-```
-(Story YAML files in `playwright-stories/` should be committed.)
+Story YAML files in `playwright-stories/` should be committed to git.
 
-## Validation
-- `npx playwright --version` → should show 1.56.0 or higher for Planner support
-- Claude Code MCP panel shows "playwright" connected
-- (Optional) "a11y-accessibility" connected
+## Step 4: Verify `.gitignore` entries
+
+Confirm these entries exist (added by ralph-playwright plugin):
+```
+# Root .gitignore
+.playwright-cli/
+
+# thoughts/.gitignore
+local/
+```
+
+## Validation Checklist
+- `playwright-cli --version` → prints a version
+- `which playwright-cli` → resolves to a path
+- `playwright-stories/` directory exists
+- `.playwright-cli/` is in `.gitignore`
 
 ## Next Steps
+- Browse directly: `/ralph-playwright:browser`
 - Generate stories: `/ralph-playwright:story-gen`
 - Explore a URL: `/ralph-playwright:explore http://localhost:3000`
 - Run tests: `/ralph-playwright:test-e2e`

@@ -1,0 +1,50 @@
+# ralph-playwright action log schema
+# Output of the act primitive
+
+type: object
+required: [report_id, timestamp, actions]
+properties:
+  report_id:
+    type: string
+    format: uuid
+    description: "ID of the signal report that triggered these actions"
+  timestamp:
+    type: string
+    format: date-time
+    description: "ISO-8601 action timestamp"
+  actions:
+    type: array
+    items:
+      type: object
+      required: [type, signal_index, detail]
+      properties:
+        type:
+          type: string
+          enum: [issue_created, note_written, screenshot_promoted, status_update]
+        signal_index:
+          type: integer
+          minimum: 0
+          description: "Index into the signal report's signals array"
+        detail:
+          type: object
+          description: "Action-specific detail, varies by type"
+          properties:
+            # issue_created
+            issue_number:
+              type: integer
+            title:
+              type: string
+            # screenshot_promoted
+            from:
+              type: string
+              description: "Source path in .playwright-cli/"
+            to:
+              type: string
+              description: "Destination path in thoughts/local/assets/"
+            # note_written
+            path:
+              type: string
+              description: "Path to the written note"
+            note:
+              type: string
+              description: "Path to the associated note"
