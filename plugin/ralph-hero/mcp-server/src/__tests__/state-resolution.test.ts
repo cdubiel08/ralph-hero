@@ -217,6 +217,64 @@ describe("resolveState - direct state names", () => {
   });
 });
 
+describe("resolveState - ralph_pr command", () => {
+  it("accepts In Review as direct state", () => {
+    const result = resolveState("In Review", "ralph_pr");
+    expect(result.resolvedState).toBe("In Review");
+    expect(result.wasIntent).toBe(false);
+  });
+
+  it("accepts Human Needed as direct state", () => {
+    const result = resolveState("Human Needed", "ralph_pr");
+    expect(result.resolvedState).toBe("Human Needed");
+    expect(result.wasIntent).toBe(false);
+  });
+
+  it("rejects states not in ralph_pr allowed outputs", () => {
+    expect(() => resolveState("In Progress", "ralph_pr")).toThrow(
+      /not a valid output for ralph_pr/i,
+    );
+    expect(() => resolveState("In Progress", "ralph_pr")).toThrow(/recovery/i);
+  });
+
+  it("resolves __ESCALATE__ for ralph_pr", () => {
+    expect(resolveState("__ESCALATE__", "ralph_pr").resolvedState).toBe(
+      "Human Needed",
+    );
+  });
+
+  it("resolves __CLOSE__ for ralph_pr", () => {
+    expect(resolveState("__CLOSE__", "ralph_pr").resolvedState).toBe("Done");
+  });
+
+  it("resolves __CANCEL__ for ralph_pr", () => {
+    expect(resolveState("__CANCEL__", "ralph_pr").resolvedState).toBe(
+      "Canceled",
+    );
+  });
+
+  it("rejects __LOCK__ for ralph_pr (no lock state)", () => {
+    expect(() => resolveState("__LOCK__", "ralph_pr")).toThrow(
+      /not valid for ralph_pr/i,
+    );
+  });
+
+  it("rejects __COMPLETE__ for ralph_pr (not mapped)", () => {
+    expect(() => resolveState("__COMPLETE__", "ralph_pr")).toThrow(
+      /not valid for ralph_pr/i,
+    );
+  });
+
+  it("normalizeCommand('pr') returns 'ralph_pr'", () => {
+    expect(normalizeCommand("pr")).toBe("ralph_pr");
+  });
+
+  it("accepts bare 'pr' command name via normalization", () => {
+    const result = resolveState("In Review", "pr");
+    expect(result.resolvedState).toBe("In Review");
+  });
+});
+
 describe("resolveState - command validation", () => {
   it("rejects unknown commands with recovery guidance", () => {
     expect(() => resolveState("__LOCK__", "foo")).toThrow(/unknown command/i);

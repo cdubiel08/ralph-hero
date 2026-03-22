@@ -45,6 +45,7 @@ const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
   ralph_research: ["Research in Progress", "Ready for Plan", "Human Needed"],
   ralph_plan: ["Plan in Progress", "Plan in Review", "In Progress", "Human Needed"],
   ralph_plan_epic: ["Plan in Progress", "In Progress", "Human Needed"],
+  ralph_pr: ["In Review", "Human Needed"],
   ralph_impl: ["In Progress", "In Review", "Human Needed"],
   ralph_review: ["In Progress", "Ready for Plan", "Human Needed"],
   ralph_hero: ["In Review", "Human Needed"],
