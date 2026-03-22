@@ -45,6 +45,8 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-task-completed.sh"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/outcome-collector.sh"
   TeammateIdle:
     - hooks:
         - type: command
