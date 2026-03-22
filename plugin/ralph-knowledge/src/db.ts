@@ -258,7 +258,8 @@ export class KnowledgeDB {
   }
 
   aggregateOutcomeEvents(params: OutcomeQueryParams = {}): OutcomeAggregate {
-    const rows = this.queryOutcomeEvents({ ...params, limit: 10000 });
+    // Override limit to aggregate over all matching events, not just the caller's limit
+    const rows = this.queryOutcomeEvents({ ...params, limit: undefined });
 
     const verdictDistribution: Record<string, number> = {};
     const eventTypeDistribution: Record<string, number> = {};
@@ -315,7 +316,7 @@ export class KnowledgeDB {
       if (row.driftCount !== null) {
         driftCount += row.driftCount;
       }
-      if (row.verdict === "blocked") {
+      if (row.eventType === "blocker_recorded") {
         blockers++;
       }
     }

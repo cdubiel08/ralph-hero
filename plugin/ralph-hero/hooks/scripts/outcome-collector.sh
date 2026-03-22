@@ -18,8 +18,9 @@
 
 set -euo pipefail
 
-# Resolve DB path
+# Resolve DB path and ensure directory exists
 DB_PATH="${RALPH_KNOWLEDGE_DB:-${HOME}/.ralph-hero/knowledge.db}"
+mkdir -p "$(dirname "$DB_PATH")" 2>/dev/null || true
 
 # Read hook input
 INPUT=$(cat)

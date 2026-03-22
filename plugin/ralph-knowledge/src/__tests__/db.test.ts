@@ -177,8 +177,8 @@ describe("Outcome Events", () => {
       VALUES (?, 'task_start', 42, '2026-03-01T00:00:00.000Z', 1, '{}')
     `).run("oe-1");
     db.db.prepare(`
-      INSERT INTO outcome_events (id, event_type, issue_number, timestamp, verdict, drift_count, payload)
-      VALUES (?, 'drift', 42, '2026-03-02T00:00:00.000Z', 'blocked', 2, '{}')
+      INSERT INTO outcome_events (id, event_type, issue_number, timestamp, drift_count, payload)
+      VALUES (?, 'blocker_recorded', 42, '2026-03-02T00:00:00.000Z', 2, '{}')
     `).run("oe-2");
     db.db.prepare(`
       INSERT INTO outcome_events (id, event_type, issue_number, timestamp, verdict, drift_count, payload)
@@ -190,8 +190,8 @@ describe("Outcome Events", () => {
     expect(summary!.totalEvents).toBe(3);
     expect(summary!.latestVerdict).toBe("success"); // most recent with a verdict
     expect(summary!.driftCount).toBe(3); // 1+2+0
-    expect(summary!.blockers).toBe(1);
-    expect(summary!.eventsByType).toEqual({ task_start: 1, drift: 1, task_complete: 1 });
+    expect(summary!.blockers).toBe(1); // blocker_recorded event type
+    expect(summary!.eventsByType).toEqual({ task_start: 1, blocker_recorded: 1, task_complete: 1 });
   });
 
   it("returns null summary for missing issue", () => {
