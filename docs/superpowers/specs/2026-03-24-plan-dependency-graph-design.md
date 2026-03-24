@@ -47,7 +47,7 @@ Today, phases have no `depends_on`. Phases are implicitly sequential (Phase 1 be
 
 ### Cross-Phase Task Dependencies
 
-Today, task-level `depends_on` is scoped within a phase (e.g., Task 1.2 depends on Task 1.1). The extension allows cross-phase references:
+Today, task-level `depends_on` conventionally references sibling tasks within the same phase (e.g., Task 1.2 depends on Task 1.1), though nothing in the parser enforces this scoping. The extension formalizes cross-phase references:
 
 ```markdown
 #### Task 2.1: Add endpoint handler
@@ -57,11 +57,11 @@ Today, task-level `depends_on` is scoped within a phase (e.g., Task 1.2 depends 
   - [ ] Handler uses the model from Task 1.3
 ```
 
-Task 2.1 in Phase 2 depends on Task 1.3 in Phase 1. This allows partial overlap between phases — Phase 2 can start tasks that don't depend on Phase 1 outputs while Phase 1 is still completing.
+Task 2.1 in Phase 2 depends on Task 1.3 in Phase 1. **Important**: cross-phase task dependencies are consumed by the orchestrator (hero/team) when building the TaskList, not by `ralph-impl` directly. Since `ralph-impl` processes one phase per invocation, it cannot evaluate cross-phase task completion. The orchestrator resolves these by checking whether the referenced task's phase has completed (via plan checkbox state) before dispatching the dependent phase's `ralph-impl` invocation.
 
 ### Plan-of-Plans Feature Dependencies
 
-Today, the `## Feature Sequencing` section uses prose waves with `blocked_by:` lists. The extension replaces prose waves with structured `depends_on`:
+Today, the `## Feature Decomposition` section uses a prose `Dependencies` field, and the `## Feature Sequencing` section uses prose waves with `blocked_by:` lists. The extension replaces both with structured `depends_on`:
 
 ```markdown
 ## Feature Decomposition
@@ -71,17 +71,33 @@ Today, the `## Feature Sequencing` section uses prose waves with `blocked_by:` l
 - **produces**: AuthMiddleware interface, session token format
 
 ### Feature B: Protected routes (GH-45)
-- **depends_on**: [feature-a]
+- **depends_on**: [GH-44]
 - **consumes**: AuthMiddleware interface
 - **produces**: Route guard pattern
 
 ### Feature C: Audit logging (GH-46)
 - **depends_on**: null
-- **parallel_with**: [feature-a, feature-b]
+- **parallel_with**: [GH-44, GH-45]
 ```
 
 - `produces`/`consumes` annotations describe interface contracts between features. These are informational — they help child plans inherit context from completed siblings.
 - The `## Feature Sequencing` section is replaced by the dependency graph implicit in these annotations. No separate wave section needed.
+
+### Dependency Identifier Resolution
+
+All `depends_on` references use a consistent format based on context:
+
+| Context | Identifier Format | Example | Resolves To |
+|---------|------------------|---------|-------------|
+| Phase-level (within a plan) | `phase-N` | `depends_on: [phase-1]` | Phase 1 of the same plan |
+| Task-level (within or across phases) | `N.M` | `depends_on: [1.3]` | Task 3 of Phase 1 |
+| Feature-level (plan-of-plans) | `GH-NNN` | `depends_on: [GH-44]` | The feature associated with issue GH-44 |
+| Cross-plan issue reference | `GH-NNN` | `depends_on: [GH-100]` | Issue GH-100 (may be in a different plan) |
+
+The `sync_plan_graph` parser resolves identifiers to GitHub issue numbers using:
+- `phase-N` → extracted from the `## Phase N: ... (GH-NNN)` heading in the same document
+- `GH-NNN` → used directly as the issue number
+- `N.M` → not synced to GitHub (task-level deps are consumed by the orchestrator at dispatch time)
 
 ### Backward Compatibility
 
@@ -128,16 +144,25 @@ server.tool("ralph_hero__sync_plan_graph", "Parse plan dependency graph and sync
 
 New tool module `src/tools/plan-graph-tools.ts` following the existing `registerXyzTools()` pattern. The tool needs filesystem read access (to parse the plan) and GitHub API access (to query/mutate dependencies).
 
+### Skill `allowed-tools` Updates
+
+The following skills must add `ralph_hero__sync_plan_graph` to their `allowed-tools` list:
+- **`ralph-plan`** — calls it after committing the plan document
+- **`ralph-plan-epic`** — calls it after committing the plan-of-plans document
+
+No other skills need access. The orchestrator skills (hero, team) read the plan document directly to build the task graph — they don't call `sync_plan_graph` themselves.
+
 ## Execution Layer Changes
 
 ### `ralph-impl` (autonomous single-issue implementation)
 
-Today: processes phases sequentially. Phase 1 must complete before Phase 2 starts.
+Today: processes one phase per invocation, then stops for resumability. Phase selection is "first unchecked phase."
 
 With dependency graph:
-- Step 6.5 (task extraction) extends to parse phase-level `depends_on` and cross-phase task refs.
-- Phase ordering becomes graph-driven: when a phase completes, the next phase(s) to execute are those whose `depends_on` are all satisfied, not just the numerically next phase.
-- Multiple unblocked phases can execute concurrently via parallel subagent dispatch (extending the existing within-phase parallel task dispatch).
+- **`ralph-impl` remains single-phase-per-invocation.** The one-phase-then-stop architecture is preserved — it is essential for resumability, worktree isolation, and the postcondition hook model.
+- Step 6.5 (task extraction) extends to parse phase-level `depends_on` so the phase selection logic changes from "first unchecked phase" to "first unchecked phase whose `depends_on` are all satisfied" (checked via plan checkbox state of referenced phases).
+- If no unblocked phase exists (all unchecked phases have unsatisfied deps), `ralph-impl` stops and reports the blockage to the orchestrator.
+- **Parallel phase execution is the orchestrator's responsibility, not `ralph-impl`'s.** The orchestrator (hero/team) reads the plan graph and dispatches multiple `ralph-impl` invocations concurrently for independent phases, each in its own worktree.
 - If no explicit `depends_on` exists on phases, fall back to sequential ordering (backward compat).
 
 ### `hero` skill (single orchestrator, multi-issue)
@@ -189,11 +214,13 @@ Plan wins for edges between plan issues. If someone manually adds/removes a `blo
 
 ### Safety Net: Postcondition Hook
 
-`plan-postcondition.sh` is extended to:
-1. Parse the plan document for `depends_on` annotations.
-2. Query GitHub via `gh` CLI for actual `blockedBy` edges on the plan's issues.
-3. Compare declared dependencies against actual edges.
-4. **Block the plan skill from completing** if they don't match.
+`plan-postcondition.sh` is extended to validate that the dependency sync has occurred. Rather than reimplementing plan parsing and GitHub querying in bash (which would be fragile and duplicate MCP server logic), the hook delegates to the MCP tool:
+
+1. The hook calls `sync_plan_graph` with `dryRun: true` via the MCP server (using the existing `mcptools` CLI bridge that hooks can invoke).
+2. If the dry-run response shows edges in the `added` or `removed` arrays, the sync is incomplete — the hook blocks.
+3. If all arrays are empty (or only `unchanged`), the sync is confirmed — the hook passes.
+
+If the `mcptools` bridge is unavailable, the hook falls back to a simpler check: it greps the plan document for `depends_on` annotations and, if any exist, checks that `sync_plan_graph` appears in the session's tool call history (via the conversation log). This is a weaker check but still catches the "planner forgot entirely" case.
 
 This is a hard gate — the planner cannot claim it's done without syncing. If the LLM forgot to call `sync_plan_graph`, the postcondition hook catches it and the LLM is forced to make the call.
 
@@ -210,14 +237,14 @@ This is a hard gate — the planner cannot claim it's done without syncing. If t
 
 | Component | Change | Type |
 |-----------|--------|------|
-| Plan document format | Phase-level `depends_on`, cross-phase task `depends_on`, feature-level `depends_on`/`produces`/`consumes` | Format extension |
+| Plan document format | Phase-level `depends_on`, cross-phase task `depends_on`, feature-level `depends_on`/`produces`/`consumes`, identifier resolution rules | Format extension |
 | `src/tools/plan-graph-tools.ts` | New `sync_plan_graph` tool — plan parser + GitHub dependency sync | New tool module |
-| `ralph-plan` skill | Add phase-level `depends_on` to template, add `sync_plan_graph` to checklist | Skill update |
-| `ralph-plan-epic` skill | Replace prose waves with feature-level `depends_on`, add `sync_plan_graph` call | Skill update |
-| `ralph-impl` skill | Extend Step 6.5 for phase-level deps, allow non-sequential phase execution | Skill update |
-| `hero` skill | Build TaskList from plan dependency graph instead of defaulting to sequential | Skill update |
-| `team` skill | Same as hero — TaskList edges from plan graph | Skill update |
-| `plan-postcondition.sh` | Add dependency sync validation | Hook update |
+| `ralph-plan` skill | Add phase-level `depends_on` to template, add `sync_plan_graph` to checklist, add `ralph_hero__sync_plan_graph` to `allowed-tools` | Skill update |
+| `ralph-plan-epic` skill | Replace prose waves with feature-level `depends_on`, add `sync_plan_graph` call, add `ralph_hero__sync_plan_graph` to `allowed-tools` | Skill update |
+| `ralph-impl` skill | Extend Step 6.5 phase selection from "first unchecked" to "first unchecked with satisfied deps" (remains single-phase-per-invocation) | Skill update |
+| `hero` skill | Read plan dependency graph to build TaskList; dispatch parallel `ralph-impl` invocations for independent phases | Orchestration update |
+| `team` skill | Same as hero — TaskList edges from plan graph; parallel phase dispatch across builders | Orchestration update |
+| `plan-postcondition.sh` | Add dependency sync validation via `sync_plan_graph --dryRun` delegation | Hook update |
 
 ## Open Questions
 
