@@ -216,7 +216,7 @@ Plan wins for edges between plan issues. If someone manually adds/removes a `blo
 
 `plan-postcondition.sh` is extended to validate that the dependency sync has occurred. Rather than reimplementing plan parsing and GitHub querying in bash (which would be fragile and duplicate MCP server logic), the hook delegates to the MCP tool:
 
-1. The hook calls `sync_plan_graph` with `dryRun: true` via the MCP server (using the existing `mcptools` CLI bridge that hooks can invoke).
+1. The hook calls `sync_plan_graph` with `dryRun: true` via the MCP server (using a `mcptools` CLI bridge — this bridge may need to be created as part of this work if no hook-to-MCP invocation path exists yet).
 2. If the dry-run response shows edges in the `added` or `removed` arrays, the sync is incomplete — the hook blocks.
 3. If all arrays are empty (or only `unchanged`), the sync is confirmed — the hook passes.
 
