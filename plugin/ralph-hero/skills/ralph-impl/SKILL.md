@@ -148,7 +148,18 @@ After fetching the issue, check its current state:
    - Scan for phase sections (## Phase N:)
    - Check each phase's "Automated Verification" checkboxes
    - A phase is complete if ALL its automated verification items are checked (`- [x]`)
-   - Find the **first unchecked phase** - this is what we'll implement
+   - **Phase selection (dependency-aware)**:
+     1. Find all unchecked phases.
+     2. For each unchecked phase, check its `- **depends_on**:` annotation.
+     3. If `depends_on` is `null` or absent, the phase is **unblocked**.
+     4. If `depends_on` references other phases (e.g., `[phase-1]`), check whether
+        those referenced phases are complete (all automated verification items checked).
+     5. Select the **first unblocked unchecked phase** (by phase number).
+     6. If NO unchecked phase is unblocked, STOP and report:
+        "All remaining phases have unsatisfied dependencies. Blocked on: [list]."
+        The orchestrator will resume after blocking phases complete.
+   - **Backward compat**: Phases without `depends_on` annotations are treated as
+     sequential — Phase N depends on Phase N-1.
 
 6. **If resuming (issue already "In Progress")**:
    - Resolve git root: `GIT_ROOT=$(git rev-parse --show-toplevel)`
@@ -276,12 +287,14 @@ If the research document includes a "Cross-Repo Scope" section:
 
 ### Step 6.5: Extract Tasks and Build Dependency Graph
 
-Current phase = first unchecked phase from Step 3.
+Current phase = first **unblocked** unchecked phase from Step 5 (dependency-aware selection).
 
 1. Parse the phase's `### Tasks` section for `#### Task N.M:` blocks
 2. For each task, extract: `files`, `tdd`, `complexity`, `depends_on`, `acceptance`
 3. Build dependency graph from `depends_on` fields
 4. Identify parallel groups: tasks with `depends_on: null` AND no shared files
+
+**Note on cross-phase task deps**: If a task has `depends_on: [1.3]` where `1.3` is in a different phase, this is informational within `ralph-impl` — the orchestrator (hero/team) handles cross-phase ordering by only dispatching `ralph-impl` once blocking phases are complete. `ralph-impl` only evaluates within-phase task dependencies.
 5. Set `RALPH_TASK_FILES` env var to union of all task file paths
 
 **If the phase has no `### Tasks` section** (legacy plan format): fall back to monolithic implementation — read phase requirements and implement directly without subagent dispatch. Skip Steps 7 and 7.5.

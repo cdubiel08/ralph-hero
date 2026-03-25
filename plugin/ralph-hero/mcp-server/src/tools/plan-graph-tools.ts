@@ -82,7 +82,7 @@ export function registerPlanGraphTools(
     "Sync a plan document's dependency graph to GitHub blockedBy edges. " +
       "Reads the plan file, extracts dependency edges, diffs against existing GitHub edges " +
       "scoped to plan issues, and adds missing / removes stale edges. " +
-      "Use dryRun=true (default) to preview changes without mutating.",
+      "Use dryRun=true to preview changes without mutating (default: false).",
     {
       planPath: z
         .string()

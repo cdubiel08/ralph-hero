@@ -44,6 +44,7 @@ allowed-tools:
   - ralph_hero__list_sub_issues
   - ralph_hero__decompose_feature
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
+  - ralph_hero__sync_plan_graph
 ---
 
 # ralph-plan-epic — Strategic Planning for Multi-Tier Work
@@ -149,16 +150,15 @@ This section is inherited verbatim by every feature plan.]
 
 ## Feature Decomposition
 
-### Feature A: [name]
-- **Scope**: [what this feature covers]
-- **Produces**: [interfaces, files, capabilities other features depend on]
-- **Dependencies**: none
+### Feature A: [name] (GH-NNN)
+- **depends_on**: null
+- **produces**: [interfaces, files, capabilities other features depend on]
 - **Estimated atomics**: N
 
-### Feature B: [name]
-- **Scope**: [what this feature covers]
-- **Produces**: [interfaces, files, capabilities]
-- **Dependencies**: Feature A (needs types from A)
+### Feature B: [name] (GH-NNN)
+- **depends_on**: [GH-NNN]
+- **produces**: [interfaces, files, capabilities]
+- **consumes**: [interfaces from Feature A]
 - **Estimated atomics**: N
 
 ## Integration Strategy
@@ -167,17 +167,13 @@ This section is inherited verbatim by every feature plan.]
 
 ## Feature Sequencing
 
-### Wave 1 (no dependencies — plan immediately):
-- Feature A: GH-NNN
-- Feature C: GH-NNN
+Feature execution order is derived from the `depends_on` graph in the Feature Decomposition above.
+Features with `depends_on: null` can be planned in parallel.
+Features with `depends_on: [GH-NNN]` wait until the referenced feature's plan is complete before planning begins.
 
-### Wave 2 (depends on Wave 1 plans):
-- Feature B: GH-NNN
-  - blocked_by: [GH-NNN plan complete]
+No separate wave section is needed — the dependency graph IS the sequencing.
 
-### Wave 3 (depends on Wave 2):
-- Feature D: GH-NNN
-  - blocked_by: [GH-NNN plan complete, GH-NNN plan complete]
+After committing the plan-of-plans document, call `ralph_hero__sync_plan_graph` to sync feature-level `depends_on` edges to GitHub `blockedBy` relationships.
 
 ## What We're NOT Doing
 

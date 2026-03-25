@@ -147,7 +147,19 @@ Task 12: Create PR for GH-43: title (integrator, blockedBy: [11])
 
 Workers claim unblocked tasks matching their role. No team lead action needed between phases.
 
-### Stream Detection Before Implementation Tasks
+### Implementation Task Ordering (Dependency-Graph-Aware)
+
+**Priority for task ordering**:
+1. **Plan dependency graph** (`depends_on` annotations) — if present in the plan document
+2. **Stream detection** (`detect_stream_positions`) — fallback when no annotations
+3. **Sequential by default** — fallback when no stream data
+
+After all plans are written, read each plan's `## Phase N:` headings and their `- **depends_on**:` annotations:
+- If Phase 2 has `depends_on: [phase-1]`, the Phase 2 impl task is `blockedBy` the Phase 1 impl task.
+- If Phase 3 has `depends_on: null`, the Phase 3 impl task has no `blockedBy` — it can execute in parallel.
+- If a plan has NO `depends_on` annotations, fall back to stream detection or sequential ordering below.
+
+### Stream Detection Before Implementation Tasks — Fallback
 
 When creating implementation tasks for a group with 2+ issues:
 

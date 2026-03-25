@@ -187,6 +187,18 @@ T-1..N: Implement GH-AAA … GH-ZZZ             → each impl blockedBy prior im
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
 ```
 
+**Implementation task ordering (dependency-graph-aware)**:
+
+After all plans are written, read each plan's `## Phase N:` headings and their `- **depends_on**:` annotations.
+
+1. For each phase in each plan, create an implementation task.
+2. Set `blockedBy` chains from the plan's dependency graph:
+   - If Phase 2 has `depends_on: [phase-1]`, the Phase 2 impl task is `blockedBy` the Phase 1 impl task.
+   - If Phase 3 has `depends_on: null`, the Phase 3 impl task has no `blockedBy` — it can execute in parallel with Phase 1.
+3. If a plan has NO `depends_on` annotations on any phase, fall back to sequential `blockedBy` chains (current behavior above).
+
+This replaces the default sequential ordering with a graph-driven ordering that enables parallel dispatch of independent phases.
+
 **Task creation pattern** (two-step: create then set dependencies):
 ```
 taskId = TaskCreate(subject="Research GH-NNN", description="...", activeForm="Researching GH-NNN")
@@ -204,7 +216,9 @@ When an issue spans repos (detected during research or split), include in each t
 
 This metadata flows to builder sub-agents so they know which directories to work in.
 
-### Step 2.5: Stream Detection (Groups >= 3)
+### Step 2.5: Stream Detection (Groups >= 3) — Fallback
+
+**Note**: Stream detection is a fallback for plans without explicit `depends_on` annotations. If the plan dependency graph provides ordering (Step 2 above), use that instead. Stream detection remains useful for roster sizing (how many builders to spawn).
 
 After all research tasks complete (detectable when plan tasks become unblocked), if `isGroup=true` and `issues.length >= 3`:
 

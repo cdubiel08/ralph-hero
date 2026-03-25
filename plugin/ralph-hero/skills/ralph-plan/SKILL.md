@@ -47,6 +47,7 @@ allowed-tools:
   - ralph_hero__list_issues
   - ralph_hero__save_issue
   - ralph_hero__create_comment
+  - ralph_hero__sync_plan_graph
 ---
 
 # Ralph GitHub Plan - Naive Hero Mode
@@ -285,9 +286,19 @@ If no parent plan, document key architectural decisions and patterns for this fe
 ## Implementation Approach
 [How phases build on each other]
 
+**Phase dependency annotations** — Each phase MUST include a `depends_on` line immediately after the heading:
+- `depends_on: null` — no dependencies, can start immediately
+- `depends_on: [phase-1]` — blocked by Phase 1
+- `depends_on: [phase-1, phase-2]` — blocked by both
+- `depends_on: [GH-NNN]` — blocked by a specific issue (for cross-plan references)
+- If omitted, phases are treated as sequential (Phase N depends on Phase N-1)
+
+These annotations are consumed by orchestrators (hero, team) to determine which phases can execute in parallel vs. which must wait.
+
 ---
 
 ## Phase 1: [Atomic Issue GH-123 — title]
+- **depends_on**: null | [phase-N, GH-NNN, ...]
 
 ### Overview
 [What this phase accomplishes — 1-2 sentences]
@@ -428,11 +439,21 @@ For **each issue in the group**:
 
 3. **Move to Plan in Review**: `ralph_hero__save_issue(number=N, workflowState="__COMPLETE__", command="ralph_plan")`
 
-### Step 8: Team Result Reporting
+### Step 8: Sync Dependency Graph
+
+If the plan contains `depends_on` annotations on any phase, call `ralph_hero__sync_plan_graph` to sync the dependency graph to GitHub `blockedBy` edges:
+
+```
+ralph_hero__sync_plan_graph({ planPath: "<absolute path to plan>" })
+```
+
+This is a **required step** when `depends_on` annotations are present — the postcondition hook will warn if it detects annotations that haven't been synced.
+
+### Step 9: Team Result Reporting
 
 When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (artifact path, phase count, workflow state) and a human-readable summary in the description. Then check TaskList for more work matching your role.
 
-### Step 9: Report Completion
+### Step 10: Report Completion
 
 ```
 Plan complete for [N] issue(s):

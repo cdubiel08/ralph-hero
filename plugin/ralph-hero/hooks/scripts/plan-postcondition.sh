@@ -40,5 +40,18 @@ if [[ -n "$issue_number" ]] && [[ ! -f "$marker_dir/artifact-comment-${issue_num
   echo "WARNING: Artifact comment marker absent for #${issue_number} — '## Implementation Plan' comment may not have been posted." >&2
 fi
 
+# --- Dependency graph sync check ---
+# If the plan has depends_on annotations, verify sync_plan_graph was called.
+# We check for a marker file that the sync_plan_graph tool creates on success,
+# since the hook runs in bash without MCP access.
+if grep -q 'depends_on.*\[' "$doc" 2>/dev/null; then
+  log_file="/tmp/ralph-plan-sync-${ticket_id}"
+  if [[ ! -f "$log_file" ]]; then
+    echo "WARNING: Plan has depends_on annotations but sync_plan_graph may not have been called." >&2
+    echo "   Run: ralph_hero__sync_plan_graph({ planPath: \"$doc\" })" >&2
+    # Non-blocking warning for now — upgrade to block once proven reliable
+  fi
+fi
+
 echo "Plan postcondition passed: $doc"
 allow
