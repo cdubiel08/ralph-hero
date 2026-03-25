@@ -10,6 +10,7 @@ import { VectorSearch } from "./vector-search.js";
 import { HybridSearch } from "./hybrid-search.js";
 import { Traverser } from "./traverse.js";
 import { embed } from "./embedder.js";
+import { registerGraphTools } from "./graph-tools.js";
 
 const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
 
@@ -162,6 +163,8 @@ export function createServer(dbPath: string) {
       }
     },
   );
+
+  registerGraphTools(server, db);
 
   return { server, db, fts, vec, hybrid, traverser };
 }
