@@ -80,12 +80,6 @@ export function parsePlanGraph(content: string): PlanDependencyGraph {
   const phaseToIssue = new Map<number, number>();
   const edges: DependencyEdge[] = [];
 
-  // Build a map from GH-NNN → issue number for resolving GH- references
-  const ghToIssue = new Map<number, number>();
-  for (const num of issues) {
-    ghToIssue.set(num, num);
-  }
-
   const lines = content.split("\n");
 
   if (type === "plan") {
@@ -146,7 +140,7 @@ export function parsePlanGraph(content: string): PlanDependencyGraph {
     }
   } else {
     // plan-of-plans: scan for ### Feature ...: ... (GH-NNN) headings
-    const featurePattern = /^### Feature \w+:.*\(GH-(\d+)\)/;
+    const featurePattern = /^### Feature [^:]+:.*\(GH-(\d+)\)/;
 
     let currentFeatureIssue: number | null = null;
 
@@ -157,8 +151,8 @@ export function parsePlanGraph(content: string): PlanDependencyGraph {
         continue;
       }
 
-      // Check for heading that would end the current feature section
-      if (/^###\s/.test(line) && !featureMatch) {
+      // Check for any heading (h2 or h3) that would end the current feature section
+      if (/^##\s/.test(line) && !featureMatch) {
         currentFeatureIssue = null;
         continue;
       }

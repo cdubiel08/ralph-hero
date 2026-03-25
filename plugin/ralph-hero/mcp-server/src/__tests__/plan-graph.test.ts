@@ -113,4 +113,48 @@ primary_issue: 20
     expect(graph.edges).toHaveLength(1);
     expect(graph.edges[0]).toEqual({ blocked: 21, blocking: 20, source: "phase-level" });
   });
+
+  it("handles multi-word feature names in plan-of-plans", () => {
+    const content = `---
+type: plan-of-plans
+github_issues: [50, 51]
+primary_issue: 50
+---
+## Feature Decomposition
+
+### Feature Auth Core: middleware (GH-50)
+- **depends_on**: null
+
+### Feature Protected Routes: guards (GH-51)
+- **depends_on**: [GH-50]
+`;
+    const graph = parsePlanGraph(content);
+    expect(graph.type).toBe("plan-of-plans");
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0]).toEqual({ blocked: 51, blocking: 50, source: "feature-level" });
+  });
+
+  it("does not attribute depends_on from h2 sections to last feature", () => {
+    const content = `---
+type: plan-of-plans
+github_issues: [60, 61]
+primary_issue: 60
+---
+## Feature Decomposition
+
+### Feature A: auth (GH-60)
+- **depends_on**: null
+
+### Feature B: routes (GH-61)
+- **depends_on**: [GH-60]
+
+## Integration Strategy
+
+This section should not produce edges even if it mentions depends_on patterns.
+`;
+    const graph = parsePlanGraph(content);
+    expect(graph.edges).toHaveLength(1);
+    // Only the Feature B → Feature A edge, nothing from Integration Strategy
+    expect(graph.edges[0]).toEqual({ blocked: 61, blocking: 60, source: "feature-level" });
+  });
 });
