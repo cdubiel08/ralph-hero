@@ -48,14 +48,14 @@ Key gaps:
 ## Desired End State
 
 ### Verification
-- [ ] All `[[wikilinks]]` in document bodies are captured as `untyped` edges in the `relationships` table
-- [ ] Each untyped edge stores the enclosing paragraph as `context`
-- [ ] Typed wikilinks are not double-counted (no duplicate `untyped` edge for a wikilink already captured as `builds_on`/`tensions`/etc.)
-- [ ] Stub documents are created for wikilink targets that do not resolve to indexed files
-- [ ] The `post_mortem` type is accepted by the DB CHECK constraint (bug fix)
-- [ ] The `knowledge_traverse` MCP tool accepts `"untyped"` and `"post_mortem"` as type filters
-- [ ] Existing typed relationships continue to function identically
-- [ ] All tests pass: `npm test` from `plugin/ralph-knowledge/`
+- [x] All `[[wikilinks]]` in document bodies are captured as `untyped` edges in the `relationships` table
+- [x] Each untyped edge stores the enclosing paragraph as `context`
+- [x] Typed wikilinks are not double-counted (no duplicate `untyped` edge for a wikilink already captured as `builds_on`/`tensions`/etc.)
+- [x] Stub documents are created for wikilink targets that do not resolve to indexed files
+- [x] The `post_mortem` type is accepted by the DB CHECK constraint (bug fix)
+- [x] The `knowledge_traverse` MCP tool accepts `"untyped"` and `"post_mortem"` as type filters
+- [x] Existing typed relationships continue to function identically
+- [x] All tests pass: `npm test` from `plugin/ralph-knowledge/`
 
 ## What We're NOT Doing
 
@@ -174,8 +174,8 @@ Extend the ralph-knowledge parser to extract all `[[wikilinks]]` as untyped edge
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (from `plugin/ralph-knowledge/`) -- no TypeScript errors
-- [ ] `npm test` (from `plugin/ralph-knowledge/`) -- all tests passing
+- [x] `npm run build` (from `plugin/ralph-knowledge/`) -- no TypeScript errors
+- [x] `npm test` (from `plugin/ralph-knowledge/`) -- all tests passing
 
 #### Manual Verification:
 - [ ] Run `npm run reindex` against the actual `thoughts/` corpus and verify log output shows stub document creation

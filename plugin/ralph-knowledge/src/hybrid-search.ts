@@ -60,10 +60,11 @@ export class HybridSearch {
       } else {
         // Vector-only result: fetch document metadata from db
         const doc = this.db.getDocument(id);
-        if (!doc) continue;
+        // Skip stub documents — they have no real content or path
+        if (!doc || doc.isStub) continue;
         combined.push({
           id: doc.id,
-          path: doc.path,
+          path: doc.path as string,
           title: doc.title,
           type: doc.type,
           status: doc.status,

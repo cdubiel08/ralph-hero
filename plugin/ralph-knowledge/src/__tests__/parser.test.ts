@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDocument, inferTypeFromPath } from "../parser.js";
+import { parseDocument, inferTypeFromPath, extractUntypedWikilinks } from "../parser.js";
 
 const FULL_DOC = `---
 date: 2026-03-08
@@ -320,3 +320,117 @@ type: spec
     expect(doc.type).toBeNull();
   });
 });
+
+describe("extractUntypedWikilinks", () => {
+  it("extracts a wikilink from a simple paragraph", () => {
+    const body = "Some text referencing [[target-doc]] here.";
+    const edges = extractUntypedWikilinks("source-id", body, new Set());
+    expect(edges).toHaveLength(1);
+    expect(edges[0].sourceId).toBe("source-id");
+    expect(edges[0].targetId).toBe("target-doc");
+    expect(edges[0].context).toBe("Some text referencing [[target-doc]] here.");
+  });
+
+  it("returns context as trimmed paragraph text", () => {
+    const body = "\n  Paragraph with [[link-a]] inside.  \n";
+    const edges = extractUntypedWikilinks("src", body, new Set());
+    expect(edges[0].context).toBe("Paragraph with [[link-a]] inside.");
+  });
+
+  it("multiple wikilinks in one paragraph each produce an edge with the same context", () => {
+    const body = "See [[doc-a]] and also [[doc-b]] for more.";
+    const edges = extractUntypedWikilinks("src", body, new Set());
+    expect(edges).toHaveLength(2);
+    expect(edges[0].context).toBe(body);
+    expect(edges[1].context).toBe(body);
+  });
+
+  it("skips wikilinks inside fenced code blocks", () => {
+    const body = "Normal text.\n\n```\n[[should-be-skipped]]\n```\n\nMore text.";
+    const edges = extractUntypedWikilinks("src", body, new Set());
+    expect(edges).toHaveLength(0);
+  });
+
+  it("skips wikilinks whose target is in the typedTargets set", () => {
+    const body = "See [[typed-target]] and also [[untyped-target]].";
+    const edges = extractUntypedWikilinks("src", body, new Set(["typed-target"]));
+    expect(edges).toHaveLength(1);
+    expect(edges[0].targetId).toBe("untyped-target");
+  });
+
+  it("deduplicates targets within the same paragraph", () => {
+    const body = "Mentions [[doc-a]] twice: see [[doc-a]] again.";
+    const edges = extractUntypedWikilinks("src", body, new Set());
+    expect(edges).toHaveLength(1);
+    expect(edges[0].targetId).toBe("doc-a");
+  });
+
+  it("handles multiple paragraphs independently", () => {
+    const body = "Para one mentions [[doc-a]].\n\nPara two also mentions [[doc-a]].";
+    const edges = extractUntypedWikilinks("src", body, new Set());
+    // doc-a appears in two separate paragraphs — each paragraph gets its own edge
+    expect(edges).toHaveLength(2);
+    expect(edges[0].context).toBe("Para one mentions [[doc-a]].");
+    expect(edges[1].context).toBe("Para two also mentions [[doc-a]].");
+  });
+
+  it("returns empty array when body has no wikilinks", () => {
+    const body = "No links here at all.";
+    const edges = extractUntypedWikilinks("src", body, new Set());
+    expect(edges).toHaveLength(0);
+  });
+});
+
+describe("parseDocument untyped edges", () => {
+  it("populates untypedEdges array with correct sourceId, targetId, and context", () => {
+    const raw = `---
+date: 2026-03-01
+type: research
+---
+
+# My Research
+
+This references [[some-other-doc]] in the body.
+`;
+    const doc = parseDocument("my-research", "thoughts/shared/research/my-research.md", raw);
+    expect(doc.untypedEdges).toHaveLength(1);
+    expect(doc.untypedEdges[0].sourceId).toBe("my-research");
+    expect(doc.untypedEdges[0].targetId).toBe("some-other-doc");
+    expect(doc.untypedEdges[0].context).toContain("some-other-doc");
+  });
+
+  it("returns empty untypedEdges array when no untyped wikilinks exist", () => {
+    const raw = `---
+date: 2026-03-01
+type: research
+---
+
+# Clean Doc
+
+No wikilinks here.
+`;
+    const doc = parseDocument("clean-doc", "thoughts/shared/research/clean-doc.md", raw);
+    expect(doc.untypedEdges).toEqual([]);
+  });
+
+  it("does not include typed wikilink targets in untypedEdges", () => {
+    const raw = `---
+date: 2026-03-01
+type: plan
+---
+
+# My Plan
+
+## Prior Work
+
+- builds_on:: [[typed-target]]
+
+Some prose that also mentions [[typed-target]] and [[untyped-target]].
+`;
+    const doc = parseDocument("my-plan", "thoughts/shared/plans/my-plan.md", raw);
+    const untypedTargets = doc.untypedEdges.map(e => e.targetId);
+    expect(untypedTargets).not.toContain("typed-target");
+    expect(untypedTargets).toContain("untyped-target");
+  });
+});
+

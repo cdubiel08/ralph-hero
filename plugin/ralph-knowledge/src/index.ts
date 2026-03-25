@@ -65,10 +65,10 @@ export function createServer(dbPath: string) {
 
   server.tool(
     "knowledge_traverse",
-    "Walk typed relationship edges (builds_on, tensions, superseded_by) from a document.",
+    "Walk typed and untyped relationship edges from a document.",
     {
       from: z.string().describe("Document ID (filename without extension)"),
-      type: z.enum(["builds_on", "tensions", "superseded_by"]).optional().describe("Filter by relationship type"),
+      type: z.enum(["builds_on", "tensions", "superseded_by", "post_mortem", "untyped"]).optional().describe("Filter by relationship type"),
       depth: z.number().optional().describe("Max traversal depth (default: 3)"),
       direction: z.enum(["outgoing", "incoming"]).optional().describe("Edge direction (default: outgoing)"),
     },
