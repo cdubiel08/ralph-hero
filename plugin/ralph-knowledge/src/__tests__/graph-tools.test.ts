@@ -690,3 +690,326 @@ describe("knowledge_bridges tool", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Diamond topology fixture helper
+// ---------------------------------------------------------------------------
+//
+//  doc-a ──builds_on──> doc-b
+//  doc-a ──builds_on──> doc-c
+//  doc-a ──builds_on──> doc-d
+//  doc-d ──builds_on──> doc-b
+//  doc-d ──builds_on──> doc-c
+//
+// Paths from doc-a to doc-b: [doc-a, doc-b] and [doc-a, doc-d, doc-b]
+// Common connections of doc-a and doc-d: doc-b and doc-c
+
+function setupDiamondFixture(testDb: KnowledgeDB): void {
+  for (const [id, title] of [
+    ["doc-a", "Doc A"],
+    ["doc-b", "Doc B"],
+    ["doc-c", "Doc C"],
+    ["doc-d", "Doc D"],
+  ]) {
+    testDb.upsertDocument({
+      id,
+      path: `thoughts/shared/research/${id}.md`,
+      title,
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: `Diamond fixture document ${id}.`,
+    });
+  }
+  testDb.addRelationship("doc-a", "doc-b", "builds_on");
+  testDb.addRelationship("doc-a", "doc-c", "builds_on");
+  testDb.addRelationship("doc-a", "doc-d", "builds_on");
+  testDb.addRelationship("doc-d", "doc-b", "builds_on");
+  testDb.addRelationship("doc-d", "doc-c", "builds_on");
+}
+
+// ---------------------------------------------------------------------------
+// knowledge_paths tool tests
+// ---------------------------------------------------------------------------
+
+describe("knowledge_paths tool", () => {
+  it("finds multiple paths in diamond topology", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_paths", {
+      source: "doc-a",
+      target: "doc-b",
+    });
+    const parsed = JSON.parse(result.content[0].text) as Array<
+      Array<{ id: string; title: string }>
+    >;
+
+    expect(parsed).toBeInstanceOf(Array);
+    expect(parsed.length).toBeGreaterThanOrEqual(2);
+
+    // Extract path ID sequences for assertion
+    const pathIds = parsed.map((path) => path.map((n) => n.id));
+    expect(pathIds).toContainEqual(["doc-a", "doc-b"]);
+    expect(pathIds).toContainEqual(["doc-a", "doc-d", "doc-b"]);
+  });
+
+  it("each path node has id and title", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_paths", {
+      source: "doc-a",
+      target: "doc-b",
+    });
+    const parsed = JSON.parse(result.content[0].text) as Array<
+      Array<{ id: string; title: string }>
+    >;
+
+    for (const path of parsed) {
+      for (const node of path) {
+        expect(node).toHaveProperty("id");
+        expect(typeof node.id).toBe("string");
+        expect(node).toHaveProperty("title");
+        expect(typeof node.title).toBe("string");
+      }
+    }
+  });
+
+  it("maxDepth=1 returns only direct path", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_paths", {
+      source: "doc-a",
+      target: "doc-b",
+      maxDepth: 1,
+    });
+    const parsed = JSON.parse(result.content[0].text) as Array<
+      Array<{ id: string }>
+    >;
+
+    // Only [doc-a, doc-b] fits in maxDepth=1; [doc-a, doc-d, doc-b] needs depth 2
+    expect(parsed.length).toBe(1);
+    expect(parsed[0].map((n) => n.id)).toEqual(["doc-a", "doc-b"]);
+  });
+
+  it("returns empty array when no path exists between disconnected docs", async () => {
+    // Two disconnected docs
+    db.upsertDocument({
+      id: "isolated-x",
+      path: "thoughts/shared/research/isolated-x.md",
+      title: "Isolated X",
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Isolated doc X.",
+    });
+    db.upsertDocument({
+      id: "isolated-y",
+      path: "thoughts/shared/research/isolated-y.md",
+      title: "Isolated Y",
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Isolated doc Y.",
+    });
+
+    const result = await callTool(server, "knowledge_paths", {
+      source: "isolated-x",
+      target: "isolated-y",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed).toEqual([]);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("returns empty array when source equals target", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_paths", {
+      source: "doc-a",
+      target: "doc-a",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed).toEqual([]);
+  });
+
+  it("returns empty array when source is not in graph", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_paths", {
+      source: "nonexistent-node",
+      target: "doc-b",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed).toEqual([]);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("caps results at 20 paths maximum", async () => {
+    // Create a graph with many parallel paths: hub -> many intermediaries -> sink
+    db.upsertDocument({
+      id: "path-source",
+      path: "thoughts/shared/research/path-source.md",
+      title: "Path Source",
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Source node.",
+    });
+    db.upsertDocument({
+      id: "path-sink",
+      path: "thoughts/shared/research/path-sink.md",
+      title: "Path Sink",
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Sink node.",
+    });
+    // 25 intermediary nodes (each creates a distinct path)
+    for (let i = 0; i < 25; i++) {
+      const id = `path-mid-${i}`;
+      db.upsertDocument({
+        id,
+        path: `thoughts/shared/research/${id}.md`,
+        title: `Path Mid ${i}`,
+        date: "2026-01-01",
+        type: "research",
+        status: "approved",
+        githubIssue: null,
+        content: `Intermediary ${i}.`,
+      });
+      db.addRelationship("path-source", id, "builds_on");
+      db.addRelationship(id, "path-sink", "builds_on");
+    }
+
+    const result = await callTool(server, "knowledge_paths", {
+      source: "path-source",
+      target: "path-sink",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // Capped at 20
+    expect(parsed.length).toBeLessThanOrEqual(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// knowledge_common tool tests
+// ---------------------------------------------------------------------------
+
+describe("knowledge_common tool", () => {
+  it("returns shared neighbors in diamond topology", async () => {
+    setupDiamondFixture(db);
+
+    // doc-a and doc-d both connect to doc-b and doc-c
+    const result = await callTool(server, "knowledge_common", {
+      docA: "doc-a",
+      docB: "doc-d",
+    });
+    const parsed = JSON.parse(result.content[0].text) as Array<{
+      id: string;
+      title: string;
+      type: string | null;
+      connectionToA: string;
+      connectionToB: string;
+    }>;
+
+    expect(parsed).toBeInstanceOf(Array);
+    const ids = parsed.map((e) => e.id).sort();
+    expect(ids).toEqual(["doc-b", "doc-c"]);
+  });
+
+  it("each shared entry has required shape", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_common", {
+      docA: "doc-a",
+      docB: "doc-d",
+    });
+    const parsed = JSON.parse(result.content[0].text) as Array<
+      Record<string, unknown>
+    >;
+
+    for (const entry of parsed) {
+      expect(entry).toHaveProperty("id");
+      expect(typeof entry.id).toBe("string");
+      expect(entry).toHaveProperty("title");
+      expect(entry).toHaveProperty("type");
+      expect(entry).toHaveProperty("connectionToA");
+      expect(entry).toHaveProperty("connectionToB");
+    }
+  });
+
+  it("returns empty array for docs with no shared connections", async () => {
+    // Two completely disconnected docs
+    db.upsertDocument({
+      id: "solo-p",
+      path: "thoughts/shared/research/solo-p.md",
+      title: "Solo P",
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Solo doc P.",
+    });
+    db.upsertDocument({
+      id: "solo-q",
+      path: "thoughts/shared/research/solo-q.md",
+      title: "Solo Q",
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Solo doc Q.",
+    });
+
+    const result = await callTool(server, "knowledge_common", {
+      docA: "solo-p",
+      docB: "solo-q",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed).toEqual([]);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("returns empty array for nonexistent documents", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_common", {
+      docA: "nonexistent-1",
+      docB: "nonexistent-2",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed).toEqual([]);
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("connection type reflects edge relationship type", async () => {
+    setupDiamondFixture(db);
+
+    const result = await callTool(server, "knowledge_common", {
+      docA: "doc-a",
+      docB: "doc-d",
+    });
+    const parsed = JSON.parse(result.content[0].text) as Array<{
+      id: string;
+      connectionToA: string;
+      connectionToB: string;
+    }>;
+
+    // Both doc-a->doc-b and doc-d->doc-b are builds_on
+    const docBEntry = parsed.find((e) => e.id === "doc-b");
+    expect(docBEntry).toBeDefined();
+    expect(docBEntry!.connectionToA).toBe("builds_on");
+    expect(docBEntry!.connectionToB).toBe("builds_on");
+  });
+});

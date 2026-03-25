@@ -481,4 +481,165 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // knowledge_paths — find all simple paths between two documents
+  // -------------------------------------------------------------------------
+  server.tool(
+    "knowledge_paths",
+    "Find all simple paths between two documents in the knowledge graph (max 20, direction-agnostic). Uses DFS with cycle prevention.",
+    {
+      source: z.string().describe("ID of the source document."),
+      target: z.string().describe("ID of the target document."),
+      maxDepth: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Maximum path length in hops (default: 5)."),
+    },
+    async (args) => {
+      try {
+        const maxDepth = args.maxDepth ?? 5;
+        const graph = new GraphBuilder(db).buildGraph();
+
+        // Guard: source equals target, or either node not in graph
+        if (
+          args.source === args.target ||
+          !graph.hasNode(args.source) ||
+          !graph.hasNode(args.target)
+        ) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify([]) }],
+          };
+        }
+
+        // DFS to find all simple paths
+        const results: string[][] = [];
+        const visited = new Set<string>();
+
+        function dfs(current: string, depth: number, path: string[]): void {
+          if (results.length >= 20) return;
+          if (current === args.target) {
+            results.push([...path]);
+            return;
+          }
+          if (depth >= maxDepth) return;
+
+          for (const neighbor of graph.neighbors(current)) {
+            if (!visited.has(neighbor)) {
+              visited.add(neighbor);
+              path.push(neighbor);
+              dfs(neighbor, depth + 1, path);
+              path.pop();
+              visited.delete(neighbor);
+              if (results.length >= 20) return;
+            }
+          }
+        }
+
+        visited.add(args.source);
+        dfs(args.source, 0, [args.source]);
+
+        // Enrich paths: map node IDs to { id, title }
+        const enriched = results.map((path) =>
+          path.map((nodeId) => ({
+            id: nodeId,
+            title: graph.hasNode(nodeId)
+              ? (graph.getNodeAttribute(nodeId, "title") ?? nodeId)
+              : nodeId,
+          })),
+        );
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(enriched, null, 2) },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [
+            { type: "text" as const, text: `Error: ${(e as Error).message}` },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // knowledge_common — find shared neighbors of two documents
+  // -------------------------------------------------------------------------
+  server.tool(
+    "knowledge_common",
+    "Find documents that both docA and docB are connected to (shared neighbors). Returns enriched entries with relationship types.",
+    {
+      docA: z.string().describe("ID of the first document."),
+      docB: z.string().describe("ID of the second document."),
+    },
+    async (args) => {
+      try {
+        const graph = new GraphBuilder(db).buildGraph();
+
+        if (!graph.hasNode(args.docA) || !graph.hasNode(args.docB)) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify([]) }],
+          };
+        }
+
+        const neighborsA = new Set<string>(graph.neighbors(args.docA));
+        const neighborsB = new Set<string>(graph.neighbors(args.docB));
+
+        // Intersection: nodes connected to both docA and docB
+        const shared: Array<{
+          id: string;
+          title: string | null;
+          type: string | null;
+          connectionToA: string;
+          connectionToB: string;
+        }> = [];
+
+        for (const nodeId of neighborsA) {
+          if (!neighborsB.has(nodeId)) continue;
+
+          const attrs = graph.getNodeAttributes(nodeId);
+
+          // Get edge type connecting nodeId to docA
+          const edgesA = graph.edges(args.docA, nodeId).concat(graph.edges(nodeId, args.docA));
+          const connectionToA =
+            edgesA.length > 0
+              ? (graph.getEdgeAttribute(edgesA[0], "type") as string)
+              : "neighbor";
+
+          // Get edge type connecting nodeId to docB
+          const edgesB = graph.edges(args.docB, nodeId).concat(graph.edges(nodeId, args.docB));
+          const connectionToB =
+            edgesB.length > 0
+              ? (graph.getEdgeAttribute(edgesB[0], "type") as string)
+              : "neighbor";
+
+          shared.push({
+            id: nodeId,
+            title: attrs.title ?? null,
+            type: attrs.type ?? null,
+            connectionToA,
+            connectionToB,
+          });
+        }
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(shared, null, 2) },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [
+            { type: "text" as const, text: `Error: ${(e as Error).message}` },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
 }
