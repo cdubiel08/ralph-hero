@@ -53,6 +53,12 @@ export interface OutcomeEventRow {
   payload: string;
 }
 
+export interface SyncRecord {
+  path: string;
+  mtime: number;
+  indexed_at: number;
+}
+
 export interface OutcomeQueryParams {
   issueNumber?: number;
   eventType?: string;
@@ -139,6 +145,12 @@ export class KnowledgeDB {
       CREATE INDEX IF NOT EXISTS idx_oe_timestamp ON outcome_events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_oe_session ON outcome_events(session_id);
       CREATE INDEX IF NOT EXISTS idx_oe_type_component ON outcome_events(event_type, component_area);
+
+      CREATE TABLE IF NOT EXISTS sync (
+        path TEXT PRIMARY KEY,
+        mtime INTEGER NOT NULL,
+        indexed_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -338,9 +350,36 @@ export class KnowledgeDB {
     };
   }
 
+  getSyncRecord(path: string): SyncRecord | undefined {
+    return this.db.prepare(
+      "SELECT path, mtime, indexed_at AS indexed_at FROM sync WHERE path = ?"
+    ).get(path) as SyncRecord | undefined;
+  }
+
+  upsertSyncRecord(path: string, mtime: number): void {
+    const indexedAt = Date.now();
+    this.db.prepare(`
+      INSERT INTO sync (path, mtime, indexed_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(path) DO UPDATE SET mtime = ?, indexed_at = ?
+    `).run(path, mtime, indexedAt, mtime, indexedAt);
+  }
+
+  deleteSyncRecord(path: string): void {
+    this.db.prepare("DELETE FROM sync WHERE path = ?").run(path);
+  }
+
+  getAllSyncPaths(): string[] {
+    return (this.db.prepare("SELECT path FROM sync").all() as Array<{ path: string }>).map(r => r.path);
+  }
+
+  deleteDocument(id: string): void {
+    this.db.prepare("DELETE FROM documents WHERE id = ?").run(id);
+  }
+
   clearAll(): void {
     // outcome_events is intentionally NOT cleared — outcome data is preserved across rebuilds
-    this.db.exec("DELETE FROM relationships; DELETE FROM tags; DELETE FROM documents;");
+    this.db.exec("DELETE FROM relationships; DELETE FROM tags; DELETE FROM documents; DELETE FROM sync;");
   }
 
   close(): void {
