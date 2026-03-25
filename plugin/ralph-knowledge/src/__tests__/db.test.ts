@@ -269,3 +269,88 @@ describe("Outcome Events", () => {
     expect(rows).toHaveLength(1);
   });
 });
+
+describe("Sync Table", () => {
+  it("inserts and retrieves a sync record", () => {
+    db.upsertSyncRecord("/path/to/file.md", 1711234567890);
+    const record = db.getSyncRecord("/path/to/file.md");
+    expect(record).toBeTruthy();
+    expect(record!.path).toBe("/path/to/file.md");
+    expect(record!.mtime).toBe(1711234567890);
+    expect(record!.indexed_at).toBeGreaterThan(0);
+  });
+
+  it("returns undefined for absent sync record", () => {
+    const record = db.getSyncRecord("/nonexistent.md");
+    expect(record).toBeUndefined();
+  });
+
+  it("updates mtime and indexed_at via upsert", () => {
+    db.upsertSyncRecord("/path/to/file.md", 1000);
+    const first = db.getSyncRecord("/path/to/file.md");
+    expect(first!.mtime).toBe(1000);
+
+    // Small delay to ensure indexed_at differs
+    db.upsertSyncRecord("/path/to/file.md", 2000);
+    const second = db.getSyncRecord("/path/to/file.md");
+    expect(second!.mtime).toBe(2000);
+    expect(second!.indexed_at).toBeGreaterThanOrEqual(first!.indexed_at);
+  });
+
+  it("getAllSyncPaths returns all stored paths", () => {
+    db.upsertSyncRecord("/a.md", 100);
+    db.upsertSyncRecord("/b.md", 200);
+    db.upsertSyncRecord("/c.md", 300);
+    const paths = db.getAllSyncPaths();
+    expect(paths).toHaveLength(3);
+    expect(paths.sort()).toEqual(["/a.md", "/b.md", "/c.md"]);
+  });
+
+  it("getAllSyncPaths returns empty array when table is empty", () => {
+    const paths = db.getAllSyncPaths();
+    expect(paths).toEqual([]);
+  });
+
+  it("deleteSyncRecord removes the record", () => {
+    db.upsertSyncRecord("/path/to/file.md", 1000);
+    db.deleteSyncRecord("/path/to/file.md");
+    expect(db.getSyncRecord("/path/to/file.md")).toBeUndefined();
+  });
+
+  it("clearAll clears sync table", () => {
+    db.upsertSyncRecord("/a.md", 100);
+    db.upsertSyncRecord("/b.md", 200);
+    db.clearAll();
+    expect(db.getAllSyncPaths()).toEqual([]);
+  });
+
+  it("clearAll still preserves outcome events after sync addition", () => {
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 1 });
+    db.upsertSyncRecord("/a.md", 100);
+    db.clearAll();
+    const rows = db.queryOutcomeEvents({ issueNumber: 1 });
+    expect(rows).toHaveLength(1);
+    expect(db.getAllSyncPaths()).toEqual([]);
+  });
+});
+
+describe("deleteDocument", () => {
+  it("deletes a document by id", () => {
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.deleteDocument("doc-1");
+    expect(db.getDocument("doc-1")).toBeUndefined();
+  });
+
+  it("cascades deletion to tags and relationships", () => {
+    db.upsertDocument({ id: "doc-a", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "doc-b", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.setTags("doc-a", ["tag1", "tag2"]);
+    db.addRelationship("doc-a", "doc-b", "builds_on");
+
+    db.deleteDocument("doc-a");
+
+    expect(db.getDocument("doc-a")).toBeUndefined();
+    expect(db.getTags("doc-a")).toEqual([]);
+    expect(db.getRelationshipsFrom("doc-a")).toEqual([]);
+  });
+});
