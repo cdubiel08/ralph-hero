@@ -39,7 +39,7 @@ describe("KnowledgeDB", () => {
     db.addRelationship("doc-a", "doc-b", "builds_on");
     const outgoing = db.getRelationshipsFrom("doc-a");
     expect(outgoing).toHaveLength(1);
-    expect(outgoing[0]).toEqual({ sourceId: "doc-a", targetId: "doc-b", type: "builds_on" });
+    expect(outgoing[0]).toMatchObject({ sourceId: "doc-a", targetId: "doc-b", type: "builds_on", context: null });
     expect(db.getRelationshipsTo("doc-b")).toHaveLength(1);
   });
 
@@ -47,6 +47,65 @@ describe("KnowledgeDB", () => {
     db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
     db.clearAll();
     expect(db.getDocument("doc-1")).toBeUndefined();
+  });
+
+  it("addRelationship with type 'untyped' succeeds (not rejected by CHECK)", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    expect(() => db.addRelationship("src", "tgt", "untyped")).not.toThrow();
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe("untyped");
+  });
+
+  it("addRelationship with type 'post_mortem' succeeds (bug fix verified)", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    expect(() => db.addRelationship("src", "tgt", "post_mortem")).not.toThrow();
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows[0].type).toBe("post_mortem");
+  });
+
+  it("addRelationship with context parameter stores and retrieves context", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.addRelationship("src", "tgt", "untyped", "This is the paragraph context.");
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows[0].context).toBe("This is the paragraph context.");
+  });
+
+  it("addRelationship without context parameter stores NULL context", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.addRelationship("src", "tgt", "builds_on");
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows[0].context).toBeNull();
+  });
+
+  it("upsertStubDocument creates a document with is_stub=1, path=null, title=id", () => {
+    db.upsertStubDocument("stub-target-id");
+    const doc = db.getDocument("stub-target-id");
+    expect(doc).toBeTruthy();
+    expect(doc!.isStub).toBe(1);
+    expect(doc!.path).toBeNull();
+    expect(doc!.title).toBe("stub-target-id");
+  });
+
+  it("upsertStubDocument does not overwrite an existing real document", () => {
+    db.upsertDocument({ id: "real-doc", path: "real/path.md", title: "Real Title", date: "2026-01-01", type: "research", status: "draft", githubIssue: null, content: "real content" });
+    db.upsertStubDocument("real-doc");
+    const doc = db.getDocument("real-doc");
+    expect(doc!.isStub).toBe(0);
+    expect(doc!.path).toBe("real/path.md");
+    expect(doc!.title).toBe("Real Title");
+  });
+
+  it("clearAll removes stub documents along with regular documents", () => {
+    db.upsertDocument({ id: "real-doc", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertStubDocument("stub-target");
+    db.clearAll();
+    expect(db.getDocument("real-doc")).toBeUndefined();
+    expect(db.getDocument("stub-target")).toBeUndefined();
   });
 });
 

@@ -70,6 +70,10 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       db.addRelationship(rel.sourceId, rel.targetId, rel.type);
     }
 
+    for (const edge of parsed.untypedEdges) {
+      db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
+    }
+
     const text = prepareTextForEmbedding(parsed.title, parsed.content);
     try {
       const embedding = await embed(text);
@@ -85,6 +89,30 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
   }
 
   fts.rebuildIndex();
+
+  // Collect all known document IDs from the indexing pass
+  const knownIds = new Set(parsedDocs.map(p => p.id));
+
+  // Collect all target IDs referenced by both typed and untyped edges
+  const allTargetIds = new Set<string>();
+  for (const parsed of parsedDocs) {
+    for (const rel of parsed.relationships) {
+      allTargetIds.add(rel.targetId);
+    }
+    for (const edge of parsed.untypedEdges) {
+      allTargetIds.add(edge.targetId);
+    }
+  }
+
+  // Create stub documents for unresolved wikilink targets
+  let stubCount = 0;
+  for (const targetId of allTargetIds) {
+    if (!knownIds.has(targetId)) {
+      db.upsertStubDocument(targetId);
+      stubCount++;
+    }
+  }
+  console.log(`  Created ${stubCount} stub documents for unresolved links`);
 
   try {
     if (generate && dirs.length > 0) {
