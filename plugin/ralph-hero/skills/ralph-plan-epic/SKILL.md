@@ -219,39 +219,41 @@ For each feature child created:
 
 After all children are created and moved to "Ready for Plan", update the epic's plan-of-plans `## Feature Sequencing` section with the actual GH issue numbers assigned to each feature.
 
-### Step 7: Orchestrate Feature Planning in Waves
+### Step 7: Orchestrate Feature Planning by Dependency Graph
 
-Process waves sequentially. Within a wave, features with no shared dependencies can be planned in parallel (via parallel `Skill()` calls).
+Plan features in dependency order. Features with `depends_on: null` can be planned in parallel (via parallel `Skill()` calls). Features with `depends_on: [GH-NNN]` wait until the referenced feature's plan is complete.
 
-**For each wave**:
+**Execution loop**:
 
 ```
-features_in_wave = [features from plan-of-plans Feature Sequencing, this wave only]
+# Identify all unplanned features
+unplanned = [all features from plan-of-plans Feature Decomposition]
 
-For each feature in wave (parallel where independent):
-  # Build sibling context from completed plans in prior waves
-  sibling_context = ""
-  for each completed_sibling_plan in prior_waves:
-    sibling_context += extract_sibling_context(sibling_plan)
-    # Extract: ## Overview section, interface contracts (type names, function sigs, file paths)
+While unplanned is not empty:
+  # Find features whose depends_on are all satisfied (planned or depends_on: null)
+  ready = [f for f in unplanned if all deps in f.depends_on are planned or f.depends_on is null]
 
-  # Invoke ralph-plan for this feature
-  Skill("ralph-hero:ralph-plan",
-    "GH-{feature_number} --parent-plan {plan_of_plans_path} --sibling-context {sibling_context}")
+  For each feature in ready (parallel where independent):
+    # Build sibling context from completed plans of dependencies
+    sibling_context = ""
+    for each completed_dep_plan in feature.depends_on:
+      sibling_context += extract_sibling_context(dep_plan)
+      # Extract: ## Overview section, interface contracts (type names, function sigs, file paths)
 
-# Wave completion verification
-For each feature in wave:
-  issue = ralph_hero__get_issue(number=feature_number)
-  verify issue has exited Plan in Progress
-  # Expected states: Plan in Review, In Progress, or Human Needed
-  # If still Plan in Progress: wave is not complete — wait or investigate
+    # Invoke ralph-plan for this feature
+    Skill("ralph-hero:ralph-plan",
+      "GH-{feature_number} --parent-plan {plan_of_plans_path} --sibling-context {sibling_context}")
 
-# Next wave readiness check
-For each feature in next_wave:
-  verify all blocked_by features have completed plans (are in Plan in Review, In Progress, or Done)
+  # Completion verification
+  For each feature in ready:
+    issue = ralph_hero__get_issue(number=feature_number)
+    verify issue has exited Plan in Progress
+    # Expected states: Plan in Review, In Progress, or Human Needed
+    # If still Plan in Progress: not complete — wait or investigate
+    move feature from unplanned to planned
 ```
 
-**Wave completion detection**: Each `Skill()` call blocks until the feature plan is written. After all `Skill()` calls in a wave return, verify via `ralph_hero__get_issue` that all features have exited `Plan in Progress`.
+**Completion detection**: Each `Skill()` call blocks until the feature plan is written. After all `Skill()` calls in a round return, verify via `ralph_hero__get_issue` that all features have exited `Plan in Progress`.
 
 **Sibling context extraction**: From a completed feature plan, extract:
 - The `## Overview` section (what it produces)
@@ -268,8 +270,8 @@ For each feature in next_wave:
     [TypeName] { field: type, ... }
   ```
 
-**Plan revision during waves**: If a feature planner discovers a sibling's plan doesn't provide what's needed:
-- **Minor** (missing field, easily added): planner notes in its plan, posts `## Plan Revision Request` on the sibling issue
+**Plan revision during planning**: If a feature planner discovers a dependency's plan doesn't provide what's needed:
+- **Minor** (missing field, easily added): planner notes in its plan, posts `## Plan Revision Request` on the dependency issue
 - **Major** (fundamentally wrong interface): planner stops with BLOCKED status; escalate to Human Needed on the epic issue
 
 ### Step 8: Update Plan-of-Plans
@@ -298,11 +300,9 @@ Post completion comment on epic:
 ## Plan of Plans Complete
 
 All feature plans created:
-- Wave 1:
-  - #NNN — [feature A name] — plan at [path]
-  - #NNN — [feature C name] — plan at [path]
-- Wave 2:
-  - #NNN — [feature B name] — plan at [path]
+- #NNN — [feature A name] (no deps) — plan at [path]
+- #NNN — [feature C name] (no deps) — plan at [path]
+- #NNN — [feature B name] (depends on #NNN) — plan at [path]
 
 Epic is now In Progress. Feature implementations will be orchestrated by hero/team.
 ```
@@ -312,7 +312,7 @@ Epic is now In Progress. Feature implementations will be orchestrated by hero/te
 If running in a team, report via `TaskUpdate`. Include in metadata:
 - `artifact_path`: path to plan-of-plans document
 - `feature_count`: number of feature children created
-- `wave_count`: number of planning waves completed
+- `planning_rounds`: number of dependency-ordered planning rounds completed
 - `workflow_state`: "In Progress"
 
 Human-readable summary: "Plan-of-plans for GH-NNN complete. [N] features across [W] waves. Epic now In Progress."
