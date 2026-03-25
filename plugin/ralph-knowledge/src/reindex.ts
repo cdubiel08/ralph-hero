@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { KnowledgeDB } from "./db.js";
@@ -17,23 +17,49 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
   const vec = new VectorSearch(db);
   vec.createIndex();
 
-  db.clearAll();
-  vec.dropIndex();
-  vec.createIndex();
-
-  const files: string[] = [];
+  // Phase 1: Discover files on disk
+  const filesOnDisk: string[] = [];
   for (const dir of dirs) {
     const found = findMarkdownFiles(dir);
     console.log(`  ${dir}: ${found.length} files`);
-    files.push(...found);
+    filesOnDisk.push(...found);
   }
-  console.log(`Found ${files.length} total markdown files`);
+  console.log(`Found ${filesOnDisk.length} total markdown files`);
 
+  const filesOnDiskSet = new Set(filesOnDisk.map(f => resolve(f)));
+
+  // Phase 1: Delete stale entries for files no longer on disk
+  const syncedPaths = db.getAllSyncPaths();
+  let deleted = 0;
+  for (const syncedPath of syncedPaths) {
+    if (!filesOnDiskSet.has(syncedPath)) {
+      const id = basename(syncedPath, ".md");
+      db.deleteDocument(id);
+      vec.deleteEmbedding(id);
+      db.deleteSyncRecord(syncedPath);
+      deleted++;
+    }
+  }
+  if (deleted > 0) {
+    console.log(`  Removed ${deleted} stale entries`);
+  }
+
+  // Phase 2: Process changed and new files
   const parsedDocs: ParsedDocument[] = [];
   let indexed = 0;
-  for (const filePath of files) {
-    const raw = readFileSync(filePath, "utf-8");
+  let skipped = 0;
+  for (const filePath of filesOnDisk) {
     const absPath = resolve(filePath);
+    const mtime = Math.trunc(statSync(absPath).mtimeMs);
+
+    // Check if file is unchanged since last index
+    const syncRecord = db.getSyncRecord(absPath);
+    if (syncRecord && syncRecord.mtime === mtime) {
+      skipped++;
+      continue;
+    }
+
+    const raw = readFileSync(filePath, "utf-8");
     const sourceDir = dirs.find(d => absPath.startsWith(resolve(d)));
     const relPath = sourceDir
       ? relative(resolve(sourceDir, ".."), absPath)
@@ -66,8 +92,15 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       db.setTags(parsed.id, parsed.tags);
     }
 
+    // Delete old relationships before re-inserting so context updates propagate
+    db.db.prepare("DELETE FROM relationships WHERE source_id = ?").run(parsed.id);
+
     for (const rel of parsed.relationships) {
       db.addRelationship(rel.sourceId, rel.targetId, rel.type);
+    }
+
+    for (const edge of parsed.untypedEdges) {
+      db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
     }
 
     const text = prepareTextForEmbedding(parsed.title, parsed.content);
@@ -78,13 +111,40 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       console.warn(`Failed to embed ${id}: ${(e as Error).message}`);
     }
 
+    db.upsertSyncRecord(absPath, mtime);
+
     indexed++;
     if (indexed % 50 === 0) {
-      console.log(`  ${indexed}/${files.length} indexed`);
+      console.log(`  ${indexed}/${filesOnDisk.length} indexed`);
     }
   }
 
+  // Phase 3: Rebuild FTS index from scratch (required — FTS5 content tables don't support partial sync)
   fts.rebuildIndex();
+
+  // Collect all known document IDs from the indexing pass
+  const knownIds = new Set(parsedDocs.map(p => p.id));
+
+  // Collect all target IDs referenced by both typed and untyped edges
+  const allTargetIds = new Set<string>();
+  for (const parsed of parsedDocs) {
+    for (const rel of parsed.relationships) {
+      allTargetIds.add(rel.targetId);
+    }
+    for (const edge of parsed.untypedEdges) {
+      allTargetIds.add(edge.targetId);
+    }
+  }
+
+  // Create stub documents for unresolved wikilink targets
+  let stubCount = 0;
+  for (const targetId of allTargetIds) {
+    if (!knownIds.has(targetId)) {
+      db.upsertStubDocument(targetId);
+      stubCount++;
+    }
+  }
+  console.log(`  Created ${stubCount} stub documents for unresolved links`);
 
   try {
     if (generate && dirs.length > 0) {
@@ -93,7 +153,7 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       console.log("Index notes generated.");
     }
   } finally {
-    console.log(`Done. ${indexed} documents indexed.`);
+    console.log(`Done. ${indexed} documents indexed, ${skipped} skipped (unchanged).`);
     db.close();
   }
 }

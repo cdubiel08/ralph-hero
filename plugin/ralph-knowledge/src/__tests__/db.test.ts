@@ -39,7 +39,7 @@ describe("KnowledgeDB", () => {
     db.addRelationship("doc-a", "doc-b", "builds_on");
     const outgoing = db.getRelationshipsFrom("doc-a");
     expect(outgoing).toHaveLength(1);
-    expect(outgoing[0]).toEqual({ sourceId: "doc-a", targetId: "doc-b", type: "builds_on" });
+    expect(outgoing[0]).toMatchObject({ sourceId: "doc-a", targetId: "doc-b", type: "builds_on", context: null });
     expect(db.getRelationshipsTo("doc-b")).toHaveLength(1);
   });
 
@@ -47,6 +47,65 @@ describe("KnowledgeDB", () => {
     db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
     db.clearAll();
     expect(db.getDocument("doc-1")).toBeUndefined();
+  });
+
+  it("addRelationship with type 'untyped' succeeds (not rejected by CHECK)", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    expect(() => db.addRelationship("src", "tgt", "untyped")).not.toThrow();
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe("untyped");
+  });
+
+  it("addRelationship with type 'post_mortem' succeeds (bug fix verified)", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    expect(() => db.addRelationship("src", "tgt", "post_mortem")).not.toThrow();
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows[0].type).toBe("post_mortem");
+  });
+
+  it("addRelationship with context parameter stores and retrieves context", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.addRelationship("src", "tgt", "untyped", "This is the paragraph context.");
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows[0].context).toBe("This is the paragraph context.");
+  });
+
+  it("addRelationship without context parameter stores NULL context", () => {
+    db.upsertDocument({ id: "src", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "tgt", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.addRelationship("src", "tgt", "builds_on");
+    const rows = db.getRelationshipsFrom("src");
+    expect(rows[0].context).toBeNull();
+  });
+
+  it("upsertStubDocument creates a document with is_stub=1, path=null, title=id", () => {
+    db.upsertStubDocument("stub-target-id");
+    const doc = db.getDocument("stub-target-id");
+    expect(doc).toBeTruthy();
+    expect(doc!.isStub).toBe(1);
+    expect(doc!.path).toBeNull();
+    expect(doc!.title).toBe("stub-target-id");
+  });
+
+  it("upsertStubDocument does not overwrite an existing real document", () => {
+    db.upsertDocument({ id: "real-doc", path: "real/path.md", title: "Real Title", date: "2026-01-01", type: "research", status: "draft", githubIssue: null, content: "real content" });
+    db.upsertStubDocument("real-doc");
+    const doc = db.getDocument("real-doc");
+    expect(doc!.isStub).toBe(0);
+    expect(doc!.path).toBe("real/path.md");
+    expect(doc!.title).toBe("Real Title");
+  });
+
+  it("clearAll removes stub documents along with regular documents", () => {
+    db.upsertDocument({ id: "real-doc", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertStubDocument("stub-target");
+    db.clearAll();
+    expect(db.getDocument("real-doc")).toBeUndefined();
+    expect(db.getDocument("stub-target")).toBeUndefined();
   });
 });
 
@@ -208,5 +267,90 @@ describe("Outcome Events", () => {
     expect(db.getDocument("doc-1")).toBeUndefined();
     const rows = db.queryOutcomeEvents({ issueNumber: 1 });
     expect(rows).toHaveLength(1);
+  });
+});
+
+describe("Sync Table", () => {
+  it("inserts and retrieves a sync record", () => {
+    db.upsertSyncRecord("/path/to/file.md", 1711234567890);
+    const record = db.getSyncRecord("/path/to/file.md");
+    expect(record).toBeTruthy();
+    expect(record!.path).toBe("/path/to/file.md");
+    expect(record!.mtime).toBe(1711234567890);
+    expect(record!.indexed_at).toBeGreaterThan(0);
+  });
+
+  it("returns undefined for absent sync record", () => {
+    const record = db.getSyncRecord("/nonexistent.md");
+    expect(record).toBeUndefined();
+  });
+
+  it("updates mtime and indexed_at via upsert", () => {
+    db.upsertSyncRecord("/path/to/file.md", 1000);
+    const first = db.getSyncRecord("/path/to/file.md");
+    expect(first!.mtime).toBe(1000);
+
+    // Small delay to ensure indexed_at differs
+    db.upsertSyncRecord("/path/to/file.md", 2000);
+    const second = db.getSyncRecord("/path/to/file.md");
+    expect(second!.mtime).toBe(2000);
+    expect(second!.indexed_at).toBeGreaterThanOrEqual(first!.indexed_at);
+  });
+
+  it("getAllSyncPaths returns all stored paths", () => {
+    db.upsertSyncRecord("/a.md", 100);
+    db.upsertSyncRecord("/b.md", 200);
+    db.upsertSyncRecord("/c.md", 300);
+    const paths = db.getAllSyncPaths();
+    expect(paths).toHaveLength(3);
+    expect(paths.sort()).toEqual(["/a.md", "/b.md", "/c.md"]);
+  });
+
+  it("getAllSyncPaths returns empty array when table is empty", () => {
+    const paths = db.getAllSyncPaths();
+    expect(paths).toEqual([]);
+  });
+
+  it("deleteSyncRecord removes the record", () => {
+    db.upsertSyncRecord("/path/to/file.md", 1000);
+    db.deleteSyncRecord("/path/to/file.md");
+    expect(db.getSyncRecord("/path/to/file.md")).toBeUndefined();
+  });
+
+  it("clearAll clears sync table", () => {
+    db.upsertSyncRecord("/a.md", 100);
+    db.upsertSyncRecord("/b.md", 200);
+    db.clearAll();
+    expect(db.getAllSyncPaths()).toEqual([]);
+  });
+
+  it("clearAll still preserves outcome events after sync addition", () => {
+    db.insertOutcomeEvent({ eventType: "task_complete", issueNumber: 1 });
+    db.upsertSyncRecord("/a.md", 100);
+    db.clearAll();
+    const rows = db.queryOutcomeEvents({ issueNumber: 1 });
+    expect(rows).toHaveLength(1);
+    expect(db.getAllSyncPaths()).toEqual([]);
+  });
+});
+
+describe("deleteDocument", () => {
+  it("deletes a document by id", () => {
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.deleteDocument("doc-1");
+    expect(db.getDocument("doc-1")).toBeUndefined();
+  });
+
+  it("cascades deletion to tags and relationships", () => {
+    db.upsertDocument({ id: "doc-a", path: "a", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.upsertDocument({ id: "doc-b", path: "b", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.setTags("doc-a", ["tag1", "tag2"]);
+    db.addRelationship("doc-a", "doc-b", "builds_on");
+
+    db.deleteDocument("doc-a");
+
+    expect(db.getDocument("doc-a")).toBeUndefined();
+    expect(db.getTags("doc-a")).toEqual([]);
+    expect(db.getRelationshipsFrom("doc-a")).toEqual([]);
   });
 });

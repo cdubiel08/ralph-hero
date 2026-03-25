@@ -6,19 +6,21 @@ import { dirname } from "node:path";
 
 export interface DocumentRow {
   id: string;
-  path: string;
+  path: string | null;
   title: string;
   date: string | null;
   type: string | null;
   status: string | null;
   githubIssue: number | null;
   content: string;
+  isStub: number;
 }
 
 export interface RelationshipRow {
   sourceId: string;
   targetId: string;
   type: string;
+  context: string | null;
 }
 
 export interface OutcomeEventInput {
@@ -51,6 +53,12 @@ export interface OutcomeEventRow {
   agentType: string | null;
   iterationCount: number | null;
   payload: string;
+}
+
+export interface SyncRecord {
+  path: string;
+  mtime: number;
+  indexed_at: number;
 }
 
 export interface OutcomeQueryParams {
@@ -95,13 +103,14 @@ export class KnowledgeDB {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS documents (
         id TEXT PRIMARY KEY,
-        path TEXT NOT NULL,
+        path TEXT,
         title TEXT,
         date TEXT,
         type TEXT,
         status TEXT,
         github_issue INTEGER,
-        content TEXT
+        content TEXT,
+        is_stub INTEGER DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS tags (
         doc_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
@@ -110,8 +119,9 @@ export class KnowledgeDB {
       );
       CREATE TABLE IF NOT EXISTS relationships (
         source_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
-        target_id TEXT,
-        type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by')),
+        target_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by', 'post_mortem', 'untyped')),
+        context TEXT,
         PRIMARY KEY (source_id, target_id, type)
       );
       CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, type);
@@ -139,22 +149,39 @@ export class KnowledgeDB {
       CREATE INDEX IF NOT EXISTS idx_oe_timestamp ON outcome_events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_oe_session ON outcome_events(session_id);
       CREATE INDEX IF NOT EXISTS idx_oe_type_component ON outcome_events(event_type, component_area);
+
+      CREATE TABLE IF NOT EXISTS sync (
+        path TEXT PRIMARY KEY,
+        mtime INTEGER NOT NULL,
+        indexed_at INTEGER NOT NULL
+      );
     `);
   }
 
-  upsertDocument(doc: DocumentRow): void {
+  upsertDocument(doc: Omit<DocumentRow, "isStub"> & { isStub?: number }): void {
     this.db.prepare(`
-      INSERT INTO documents (id, path, title, date, type, status, github_issue, content)
-      VALUES (@id, @path, @title, @date, @type, @status, @githubIssue, @content)
+      INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub)
+      VALUES (@id, @path, @title, @date, @type, @status, @githubIssue, @content, 0)
       ON CONFLICT(id) DO UPDATE SET
         path = @path, title = @title, date = @date, type = @type,
-        status = @status, github_issue = @githubIssue, content = @content
+        status = @status, github_issue = @githubIssue, content = @content, is_stub = 0
     `).run(doc);
+  }
+
+  /**
+   * Creates a stub document for an unresolved wikilink target.
+   * Uses INSERT OR IGNORE so it never overwrites a real document.
+   */
+  upsertStubDocument(id: string): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO documents (id, path, title, date, type, status, github_issue, content, is_stub)
+      VALUES (?, NULL, ?, NULL, NULL, NULL, NULL, '', 1)
+    `).run(id, id);
   }
 
   getDocument(id: string): DocumentRow | undefined {
     return this.db.prepare(
-      `SELECT id, path, title, date, type, status, github_issue AS githubIssue, content FROM documents WHERE id = ?`
+      `SELECT id, path, title, date, type, status, github_issue AS githubIssue, content, is_stub AS isStub FROM documents WHERE id = ?`
     ).get(id) as DocumentRow | undefined;
   }
 
@@ -168,16 +195,16 @@ export class KnowledgeDB {
     return (this.db.prepare("SELECT tag FROM tags WHERE doc_id = ? ORDER BY tag").all(docId) as Array<{ tag: string }>).map(r => r.tag);
   }
 
-  addRelationship(sourceId: string, targetId: string, type: string): void {
-    this.db.prepare("INSERT OR IGNORE INTO relationships (source_id, target_id, type) VALUES (?, ?, ?)").run(sourceId, targetId, type);
+  addRelationship(sourceId: string, targetId: string, type: string, context?: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO relationships (source_id, target_id, type, context) VALUES (?, ?, ?, ?)").run(sourceId, targetId, type, context ?? null);
   }
 
   getRelationshipsFrom(sourceId: string): RelationshipRow[] {
-    return this.db.prepare("SELECT source_id AS sourceId, target_id AS targetId, type FROM relationships WHERE source_id = ?").all(sourceId) as RelationshipRow[];
+    return this.db.prepare("SELECT source_id AS sourceId, target_id AS targetId, type, context FROM relationships WHERE source_id = ?").all(sourceId) as RelationshipRow[];
   }
 
   getRelationshipsTo(targetId: string): RelationshipRow[] {
-    return this.db.prepare("SELECT source_id AS sourceId, target_id AS targetId, type FROM relationships WHERE target_id = ?").all(targetId) as RelationshipRow[];
+    return this.db.prepare("SELECT source_id AS sourceId, target_id AS targetId, type, context FROM relationships WHERE target_id = ?").all(targetId) as RelationshipRow[];
   }
 
   insertOutcomeEvent(input: OutcomeEventInput): { id: string; eventType: string; issueNumber: number; timestamp: string } {
@@ -338,9 +365,36 @@ export class KnowledgeDB {
     };
   }
 
+  getSyncRecord(path: string): SyncRecord | undefined {
+    return this.db.prepare(
+      "SELECT path, mtime, indexed_at AS indexed_at FROM sync WHERE path = ?"
+    ).get(path) as SyncRecord | undefined;
+  }
+
+  upsertSyncRecord(path: string, mtime: number): void {
+    const indexedAt = Date.now();
+    this.db.prepare(`
+      INSERT INTO sync (path, mtime, indexed_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(path) DO UPDATE SET mtime = ?, indexed_at = ?
+    `).run(path, mtime, indexedAt, mtime, indexedAt);
+  }
+
+  deleteSyncRecord(path: string): void {
+    this.db.prepare("DELETE FROM sync WHERE path = ?").run(path);
+  }
+
+  getAllSyncPaths(): string[] {
+    return (this.db.prepare("SELECT path FROM sync").all() as Array<{ path: string }>).map(r => r.path);
+  }
+
+  deleteDocument(id: string): void {
+    this.db.prepare("DELETE FROM documents WHERE id = ?").run(id);
+  }
+
   clearAll(): void {
     // outcome_events is intentionally NOT cleared — outcome data is preserved across rebuilds
-    this.db.exec("DELETE FROM relationships; DELETE FROM tags; DELETE FROM documents;");
+    this.db.exec("DELETE FROM relationships; DELETE FROM tags; DELETE FROM documents; DELETE FROM sync;");
   }
 
   close(): void {

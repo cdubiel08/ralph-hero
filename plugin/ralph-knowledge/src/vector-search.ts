@@ -47,6 +47,13 @@ export class VectorSearch {
       .run(id, buf);
   }
 
+  deleteEmbedding(id: string): void {
+    this.ensureVecLoaded();
+    this.knowledgeDb.db
+      .prepare("DELETE FROM documents_vec WHERE id = ?")
+      .run(id);
+  }
+
   search(queryEmbedding: Float32Array, limit: number = 10): VectorResult[] {
     this.ensureVecLoaded();
     const buf = float32ToBuffer(queryEmbedding);

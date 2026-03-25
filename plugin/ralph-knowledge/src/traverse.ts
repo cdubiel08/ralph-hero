@@ -10,6 +10,7 @@ export interface TraverseResult {
   targetId: string;
   type: string;
   depth: number;
+  context: string | null;
   doc: { title: string; status: string | null; date: string | null } | null;
 }
 
@@ -26,13 +27,13 @@ export class Traverser {
 
     const sql = `
       WITH RECURSIVE chain AS (
-        SELECT r.source_id, r.target_id, r.type, 1 AS depth
+        SELECT r.source_id, r.target_id, r.type, r.context, 1 AS depth
         FROM relationships r
         WHERE r.source_id = @fromId ${typeFilter}
 
         UNION ALL
 
-        SELECT r.source_id, r.target_id, r.type, c.depth + 1
+        SELECT r.source_id, r.target_id, r.type, r.context, c.depth + 1
         FROM relationships r
         JOIN chain c ON r.source_id = c.target_id
         WHERE c.depth < @depth ${typeFilter}
@@ -41,6 +42,7 @@ export class Traverser {
         chain.source_id AS sourceId,
         chain.target_id AS targetId,
         chain.type,
+        chain.context,
         chain.depth,
         d.title AS docTitle,
         d.status AS docStatus,
@@ -57,6 +59,7 @@ export class Traverser {
       sourceId: string;
       targetId: string;
       type: string;
+      context: string | null;
       depth: number;
       docTitle: string | null;
       docStatus: string | null;
@@ -68,6 +71,7 @@ export class Traverser {
       targetId: r.targetId,
       type: r.type,
       depth: r.depth,
+      context: r.context,
       doc: r.docTitle != null
         ? { title: r.docTitle, status: r.docStatus, date: r.docDate }
         : null,
@@ -80,13 +84,13 @@ export class Traverser {
 
     const sql = `
       WITH RECURSIVE chain AS (
-        SELECT r.source_id, r.target_id, r.type, 1 AS depth
+        SELECT r.source_id, r.target_id, r.type, r.context, 1 AS depth
         FROM relationships r
         WHERE r.target_id = @toId ${typeFilter}
 
         UNION ALL
 
-        SELECT r.source_id, r.target_id, r.type, c.depth + 1
+        SELECT r.source_id, r.target_id, r.type, r.context, c.depth + 1
         FROM relationships r
         JOIN chain c ON r.target_id = c.source_id
         WHERE c.depth < @depth ${typeFilter}
@@ -95,6 +99,7 @@ export class Traverser {
         chain.source_id AS sourceId,
         chain.target_id AS targetId,
         chain.type,
+        chain.context,
         chain.depth,
         d.title AS docTitle,
         d.status AS docStatus,
@@ -111,6 +116,7 @@ export class Traverser {
       sourceId: string;
       targetId: string;
       type: string;
+      context: string | null;
       depth: number;
       docTitle: string | null;
       docStatus: string | null;
@@ -122,6 +128,7 @@ export class Traverser {
       targetId: r.targetId,
       type: r.type,
       depth: r.depth,
+      context: r.context,
       doc: r.docTitle != null
         ? { title: r.docTitle, status: r.docStatus, date: r.docDate }
         : null,

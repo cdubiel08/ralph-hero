@@ -47,10 +47,10 @@ The `KnowledgeDB` class exposes per-document relationship queries (`getRelations
 ## Desired End State
 
 ### Verification
-- [ ] `graphology` and algorithm packages installed and importable
-- [ ] `GraphBuilder` class constructs a typed `Graph<NodeAttributes, EdgeAttributes>` from all documents and relationships
-- [ ] Exported types (`NodeAttributes`, `EdgeAttributes`, `KnowledgeGraph`) available for sibling issues to import
-- [ ] Tests pass for graph construction, metadata correctness, empty database, and multi-edge scenarios
+- [x] `graphology` and algorithm packages installed and importable
+- [x] `GraphBuilder` class constructs a typed `Graph<NodeAttributes, EdgeAttributes>` from all documents and relationships
+- [x] Exported types (`NodeAttributes`, `EdgeAttributes`, `KnowledgeGraph`) available for sibling issues to import
+- [x] Tests pass for graph construction, metadata correctness, empty database, and multi-edge scenarios
 
 ## What We're NOT Doing
 
@@ -81,16 +81,16 @@ Add graphology and its algorithm packages to ralph-knowledge, then implement a `
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `graphology` added to `dependencies`
-  - [ ] `graphology-communities-louvain` added to `dependencies`
-  - [ ] `graphology-metrics` added to `dependencies`
-  - [ ] `graphology-shortest-path` added to `dependencies`
-  - [ ] `graphology-simple-path` added to `dependencies`
-  - [ ] `graphology-traversal` added to `dependencies`
-  - [ ] `graphology-components` added to `dependencies`
-  - [ ] `graphology-types` added to `dependencies` (peer dependency for TypeScript declarations)
-  - [ ] `npm install` succeeds without errors in `plugin/ralph-knowledge/`
-  - [ ] `npm run build` succeeds (no TypeScript errors from new packages)
+  - [x] `graphology` added to `dependencies`
+  - [x] `graphology-communities-louvain` added to `dependencies`
+  - [x] `graphology-metrics` added to `dependencies`
+  - [x] `graphology-shortest-path` added to `dependencies`
+  - [x] `graphology-simple-path` added to `dependencies`
+  - [x] `graphology-traversal` added to `dependencies`
+  - [x] `graphology-components` added to `dependencies`
+  - [x] `graphology-types` added to `dependencies` (peer dependency for TypeScript declarations)
+  - [x] `npm install` succeeds without errors in `plugin/ralph-knowledge/`
+  - [x] `npm run build` succeeds (no TypeScript errors from new packages)
 
 #### Task 1.2: Create GraphBuilder class with type exports
 
@@ -99,19 +99,19 @@ Add graphology and its algorithm packages to ralph-knowledge, then implement a `
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] File exports `NodeAttributes` interface with fields: `title: string`, `type: string | null`, `date: string | null`, `status: string | null`
-  - [ ] File exports `EdgeAttributes` interface with field: `type: string`
-  - [ ] File exports `KnowledgeGraph` type alias as `Graph<NodeAttributes, EdgeAttributes>`
-  - [ ] `GraphBuilder` class constructor takes a single `KnowledgeDB` parameter stored as `private readonly db`
-  - [ ] `buildGraph()` method returns `KnowledgeGraph`
-  - [ ] `buildGraph()` creates the graph with `new Graph({ multi: true, type: "directed" })` to support parallel edges
-  - [ ] All documents loaded via `SELECT id, title, date, type, status FROM documents` using `this.db.db.prepare()`
-  - [ ] Each document added as a node with key = document `id` and attributes `{ title, type, date, status }`
-  - [ ] All relationships loaded via `SELECT source_id, target_id, type FROM relationships` using `this.db.db.prepare()`
-  - [ ] Each relationship added as a directed edge from `source_id` to `target_id` with attribute `{ type }`
-  - [ ] Edges where `source_id` or `target_id` do not exist as nodes are skipped (defensive -- the FK constraint should prevent this, but `target_id` in the relationships table has no FK)
-  - [ ] Import uses `import Graph from "graphology"` and `import { KnowledgeDB } from "./db.js"`
-  - [ ] All types are exported at module level for downstream import
+  - [x] File exports `NodeAttributes` interface with fields: `title: string`, `type: string | null`, `date: string | null`, `status: string | null`
+  - [x] File exports `EdgeAttributes` interface with field: `type: string`
+  - [x] File exports `KnowledgeGraph` type alias as `Graph<NodeAttributes, EdgeAttributes>`
+  - [x] `GraphBuilder` class constructor takes a single `KnowledgeDB` parameter stored as `private readonly db`
+  - [x] `buildGraph()` method returns `KnowledgeGraph`
+  - [x] `buildGraph()` creates the graph with `new Graph({ multi: true, type: "directed" })` to support parallel edges
+  - [x] All documents loaded via `SELECT id, title, date, type, status FROM documents` using `this.db.db.prepare()`
+  - [x] Each document added as a node with key = document `id` and attributes `{ title, type, date, status }`
+  - [x] All relationships loaded via `SELECT source_id, target_id, type FROM relationships` using `this.db.db.prepare()`
+  - [x] Each relationship added as a directed edge from `source_id` to `target_id` with attribute `{ type }`
+  - [x] Edges where `source_id` or `target_id` do not exist as nodes are skipped (defensive -- the FK constraint should prevent this, but `target_id` in the relationships table has no FK)
+  - [x] Import uses `import Graph from "graphology"` and `import { KnowledgeDB } from "./db.js"`
+  - [x] All types are exported at module level for downstream import
 
 #### Task 1.3: Write comprehensive tests for GraphBuilder
 
@@ -120,25 +120,25 @@ Add graphology and its algorithm packages to ralph-knowledge, then implement a `
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Uses `beforeEach` with `KnowledgeDB(":memory:")` following the pattern in [traverse.test.ts](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/traverse.test.ts)
-  - [ ] Fixture contains 5+ documents: `doc-a` (research, approved), `doc-b` (plan, draft), `doc-c` (plan, draft), `doc-d` (idea, draft), `doc-e` (research, complete)
-  - [ ] Fixture contains all 3 relationship types: `doc-b builds_on doc-a`, `doc-c builds_on doc-b`, `doc-d tensions doc-a`, `doc-e superseded_by doc-c`
-  - [ ] Test: graph has correct node count (5 nodes)
-  - [ ] Test: graph has correct edge count (4 edges)
-  - [ ] Test: node attributes match -- `graph.getNodeAttributes("doc-a")` returns `{ title: "Foundation Research", type: "research", date: "2026-02-01", status: "approved" }`
-  - [ ] Test: edge type attribute is correct -- iterate edges from `doc-b` and verify one has `type: "builds_on"`
-  - [ ] Test: parallel edges between same pair work -- add a second relationship between `doc-d` and `doc-a` (e.g., `doc-d builds_on doc-a` alongside existing `doc-d tensions doc-a`), verify 2 edges exist between them
-  - [ ] Test: empty database produces graph with 0 nodes and 0 edges
-  - [ ] Test: isolated node (document with no relationships) is included in graph -- add `doc-orphan`, verify `graph.hasNode("doc-orphan")` is true and `graph.degree("doc-orphan")` is 0
-  - [ ] Test: graph is directed -- `graph.type` equals `"directed"`
-  - [ ] Test: dangling edge target (relationship referencing non-existent target_id) is skipped without error
-  - [ ] All tests pass with `npx vitest run src/__tests__/graph-builder.test.ts`
+  - [x] Uses `beforeEach` with `KnowledgeDB(":memory:")` following the pattern in [traverse.test.ts](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/traverse.test.ts)
+  - [x] Fixture contains 5+ documents: `doc-a` (research, approved), `doc-b` (plan, draft), `doc-c` (plan, draft), `doc-d` (idea, draft), `doc-e` (research, complete)
+  - [x] Fixture contains all 3 relationship types: `doc-b builds_on doc-a`, `doc-c builds_on doc-b`, `doc-d tensions doc-a`, `doc-e superseded_by doc-c`
+  - [x] Test: graph has correct node count (5 nodes)
+  - [x] Test: graph has correct edge count (4 edges)
+  - [x] Test: node attributes match -- `graph.getNodeAttributes("doc-a")` returns `{ title: "Foundation Research", type: "research", date: "2026-02-01", status: "approved" }`
+  - [x] Test: edge type attribute is correct -- iterate edges from `doc-b` and verify one has `type: "builds_on"`
+  - [x] Test: parallel edges between same pair work -- add a second relationship between `doc-d` and `doc-a` (e.g., `doc-d builds_on doc-a` alongside existing `doc-d tensions doc-a`), verify 2 edges exist between them
+  - [x] Test: empty database produces graph with 0 nodes and 0 edges
+  - [x] Test: isolated node (document with no relationships) is included in graph -- add `doc-orphan`, verify `graph.hasNode("doc-orphan")` is true and `graph.degree("doc-orphan")` is 0
+  - [x] Test: graph is directed -- `graph.type` equals `"directed"`
+  - [x] Test: dangling edge target (relationship referencing non-existent target_id) is skipped without error
+  - [x] All tests pass with `npx vitest run src/__tests__/graph-builder.test.ts`
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` in `plugin/ralph-knowledge/` -- no TypeScript errors
-- [ ] `npm test` in `plugin/ralph-knowledge/` -- all tests passing (existing + new)
+- [x] `npm run build` in `plugin/ralph-knowledge/` -- no TypeScript errors
+- [x] `npm test` in `plugin/ralph-knowledge/` -- all tests passing (existing + new)
 
 #### Manual Verification:
 - [ ] `GraphBuilder` class can be imported from `graph-builder.js` in a Node REPL
@@ -150,9 +150,9 @@ Add graphology and its algorithm packages to ralph-knowledge, then implement a `
 
 ## Integration Testing
 
-- [ ] `npm run build && npm test` in `plugin/ralph-knowledge/` passes with zero failures
-- [ ] New `graph-builder.test.ts` covers node construction, edge construction, metadata, empty DB, isolated nodes, parallel edges, directed graph type, and dangling edge defense
-- [ ] Existing test files (`db.test.ts`, `traverse.test.ts`, `search.test.ts`, `vector-search.test.ts`, `hybrid-search.test.ts`) remain passing (no regressions)
+- [x] `npm run build && npm test` in `plugin/ralph-knowledge/` passes with zero failures
+- [x] New `graph-builder.test.ts` covers node construction, edge construction, metadata, empty DB, isolated nodes, parallel edges, directed graph type, and dangling edge defense
+- [x] Existing test files (`db.test.ts`, `traverse.test.ts`, `search.test.ts`, `vector-search.test.ts`, `hybrid-search.test.ts`) remain passing (no regressions)
 
 ## References
 

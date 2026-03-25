@@ -46,12 +46,12 @@ No `prove-claim` skill exists today. The closest existing patterns are skills th
 ## Desired End State
 
 ### Verification
-- [ ] `plugin/ralph-hero/skills/prove-claim/SKILL.md` exists with valid YAML frontmatter
-- [ ] Skill defines a 5-step workflow: decompose, find entities, find connections, read evidence, report
-- [ ] Allowed-tools list includes all current and planned knowledge tools
-- [ ] Anti-patterns section warns against community co-membership as evidence, hub node path weakness, and plan-doc-as-truth errors
-- [ ] Document type evidence weighting is documented in the skill prose
-- [ ] Report format includes verdict, confidence, evidence chains with quotes, and caveats
+- [x] `plugin/ralph-hero/skills/prove-claim/SKILL.md` exists with valid YAML frontmatter
+- [x] Skill defines a 5-step workflow: decompose, find entities, find connections, read evidence, report
+- [x] Allowed-tools list includes all current and planned knowledge tools
+- [x] Anti-patterns section warns against community co-membership as evidence, hub node path weakness, and plan-doc-as-truth errors
+- [x] Document type evidence weighting is documented in the skill prose
+- [x] Report format includes verdict, confidence, evidence chains with quotes, and caveats
 
 ## What We're NOT Doing
 
@@ -146,7 +146,7 @@ Create the complete SKILL.md for the prove-claim investigative skill, including 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `ls plugin/ralph-hero/skills/prove-claim/SKILL.md` -- file exists (no build/test commands apply to skill definitions)
+- [x] `ls plugin/ralph-hero/skills/prove-claim/SKILL.md` -- file exists (no build/test commands apply to skill definitions)
 
 #### Manual Verification:
 - [ ] YAML frontmatter parses correctly (valid YAML with expected fields)

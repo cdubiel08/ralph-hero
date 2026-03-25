@@ -6,6 +6,12 @@ export interface Relationship {
   type: "builds_on" | "tensions" | "superseded_by" | "post_mortem";
 }
 
+export interface UntypedEdge {
+  sourceId: string;
+  targetId: string;
+  context: string;
+}
+
 export interface ParsedDocument {
   id: string;
   path: string;
@@ -17,6 +23,7 @@ export interface ParsedDocument {
   githubIssues: number[];
   tags: string[];
   relationships: Relationship[];
+  untypedEdges: UntypedEdge[];
   content: string;
 }
 
@@ -24,6 +31,8 @@ const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/;
 const TITLE_RE = /^# (.+)$/m;
 const WIKILINK_REL_RE = /^- (builds_on|tensions|post_mortem):: \[\[(.+?)\]\]/gm;
 const SUPERSEDED_BY_RE = /\[\[(.+?)\]\]/;
+const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
+const FENCED_CODE_RE = /```[\s\S]*?```/g;
 
 const PATH_TYPE_MAP: Array<{ segment: string; type: string }> = [
   { segment: "/research/", type: "research" },
@@ -38,6 +47,45 @@ export function inferTypeFromPath(path: string): string | null {
     if (path.includes(segment)) return type;
   }
   return null;
+}
+
+/**
+ * Extracts untyped wikilink edges from a document body.
+ * Splits body into paragraphs (separated by blank lines), strips fenced code
+ * blocks from each paragraph before scanning for [[...]] wikilinks, and skips
+ * any target already captured as a typed relationship.
+ */
+export function extractUntypedWikilinks(
+  id: string,
+  body: string,
+  typedTargets: Set<string>,
+): UntypedEdge[] {
+  const edges: UntypedEdge[] = [];
+
+  // Split on one or more blank lines to get paragraph blocks
+  const paragraphs = body.split(/\n\n+/);
+
+  for (const paragraph of paragraphs) {
+    // Strip fenced code blocks before scanning
+    const stripped = paragraph.replace(FENCED_CODE_RE, "");
+
+    const seenInParagraph = new Set<string>();
+    const re = new RegExp(WIKILINK_RE.source, "g");
+    let match: RegExpExecArray | null;
+
+    while ((match = re.exec(stripped)) !== null) {
+      const target = match[1];
+      // Skip if already a typed relationship target
+      if (typedTargets.has(target)) continue;
+      // Deduplicate within the same paragraph
+      if (seenInParagraph.has(target)) continue;
+      seenInParagraph.add(target);
+
+      edges.push({ sourceId: id, targetId: target, context: paragraph.trim() });
+    }
+  }
+
+  return edges;
 }
 
 export function parseDocument(id: string, path: string, raw: string): ParsedDocument {
@@ -68,6 +116,10 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
     }
   }
 
+  // Build the set of typed targets to avoid double-counting in untyped extraction
+  const typedTargets = new Set(relationships.map(r => r.targetId));
+  const untypedEdges = extractUntypedWikilinks(id, body, typedTargets);
+
   const tags: string[] = Array.isArray(frontmatter.tags) ? frontmatter.tags.map(String) : [];
 
   return {
@@ -87,6 +139,6 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
     githubIssues: Array.isArray(frontmatter.github_issues)
       ? frontmatter.github_issues.filter((n: unknown) => typeof n === "number")
       : [],
-    tags, relationships, content: body,
+    tags, relationships, untypedEdges, content: body,
   };
 }
