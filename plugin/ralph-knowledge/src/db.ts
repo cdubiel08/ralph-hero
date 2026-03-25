@@ -119,7 +119,7 @@ export class KnowledgeDB {
       );
       CREATE TABLE IF NOT EXISTS relationships (
         source_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
-        target_id TEXT,
+        target_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
         type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by', 'post_mortem', 'untyped')),
         context TEXT,
         PRIMARY KEY (source_id, target_id, type)

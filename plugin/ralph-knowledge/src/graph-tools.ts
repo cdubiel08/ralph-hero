@@ -365,11 +365,16 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
 
           // Build subgraph: copy the full graph, drop non-community nodes
           const subgraph = graph.copy();
+          const communitySet = new Set(communityNodes);
+          const nodesToDrop: string[] = [];
           subgraph.forEachNode((nodeId) => {
-            if (!communityNodes.includes(nodeId)) {
-              subgraph.dropNode(nodeId);
+            if (!communitySet.has(nodeId)) {
+              nodesToDrop.push(nodeId);
             }
           });
+          for (const nodeId of nodesToDrop) {
+            subgraph.dropNode(nodeId);
+          }
           targetGraph = subgraph;
         }
 

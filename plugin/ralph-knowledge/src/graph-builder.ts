@@ -26,7 +26,7 @@ export class GraphBuilder {
 
     // Load all documents and add as nodes
     const docs = this.db.db
-      .prepare("SELECT id, title, date, type, status FROM documents")
+      .prepare("SELECT id, title, date, type, status FROM documents WHERE is_stub = 0 OR is_stub IS NULL")
       .all() as Array<{
       id: string;
       title: string;

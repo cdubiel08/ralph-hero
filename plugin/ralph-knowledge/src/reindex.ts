@@ -92,6 +92,9 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       db.setTags(parsed.id, parsed.tags);
     }
 
+    // Delete old relationships before re-inserting so context updates propagate
+    db.db.prepare("DELETE FROM relationships WHERE source_id = ?").run(parsed.id);
+
     for (const rel of parsed.relationships) {
       db.addRelationship(rel.sourceId, rel.targetId, rel.type);
     }

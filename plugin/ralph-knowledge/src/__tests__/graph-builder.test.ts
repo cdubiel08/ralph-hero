@@ -150,22 +150,16 @@ describe("GraphBuilder", () => {
     expect(graph.multi).toBe(true);
   });
 
-  it("dangling edge target is skipped without error", () => {
-    // Insert a relationship referencing a non-existent target — bypass FK via raw SQL
-    db.db
-      .prepare(
-        "INSERT OR IGNORE INTO relationships (source_id, target_id, type) VALUES (?, ?, ?)",
-      )
-      .run("doc-a", "non-existent-doc", "builds_on");
-
-    // buildGraph should not throw and the dangling edge should be skipped
-    let graph: KnowledgeGraph | undefined;
+  it("FK constraint prevents dangling edge target", () => {
+    // With ON DELETE CASCADE on target_id, inserting a relationship
+    // referencing a non-existent target violates the FK constraint
     expect(() => {
-      graph = builder.buildGraph();
-    }).not.toThrow();
-
-    // Size should still be 4 (original edges), not 5
-    expect(graph!.size).toBe(4);
+      db.db
+        .prepare(
+          "INSERT OR IGNORE INTO relationships (source_id, target_id, type) VALUES (?, ?, ?)",
+        )
+        .run("doc-a", "non-existent-doc", "builds_on");
+    }).toThrow(/FOREIGN KEY constraint failed/);
   });
 
   it("directed edges are directed — source and target are correct", () => {
