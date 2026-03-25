@@ -134,8 +134,8 @@ Create `src/graph-tools.ts` with the `registerGraphTools(server, db)` function t
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` from `plugin/ralph-knowledge/` — no TypeScript errors
-- [ ] `npm test` from `plugin/ralph-knowledge/` — all tests passing (including graph-tools.test.ts)
+- [x] `npm run build` from `plugin/ralph-knowledge/` — no TypeScript errors
+- [x] `npm test` from `plugin/ralph-knowledge/` — all tests passing (including graph-tools.test.ts)
 
 #### Manual Verification:
 - [ ] Call `knowledge_communities` via MCP client with an indexed knowledge base and confirm communities array is non-empty and each entry has `communityId`, `members`, `size`, `label`
