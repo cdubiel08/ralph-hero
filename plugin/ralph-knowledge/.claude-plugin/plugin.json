@@ -1,6 +1,6 @@
 {
   "name": "ralph-knowledge",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Knowledge graph for ralph-hero: semantic search, relationship traversal, and document indexing across thoughts/ documents. Optional companion to ralph-hero.",
   "author": {
     "name": "Chad Dubiel",
