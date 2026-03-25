@@ -54,19 +54,19 @@ The `relationships` table uses typed edges (`builds_on`, `tensions`, `superseded
 ## Desired End State
 
 ### Verification
-- [ ] `knowledge_central` MCP tool is callable and returns `{ results: [...], graphSize: { nodes, edges } }`
-- [ ] Each result entry contains `{ id, title, score, type, date }`
-- [ ] Optional `community` parameter scopes PageRank to a single Louvain community
-- [ ] Optional `limit` parameter controls result count (default: 10)
-- [ ] Isolated nodes (degree 0) get degree-centrality fallback score of 0, ranking below connected nodes
-- [ ] `knowledge_bridges` MCP tool is callable and returns `{ results: [...], graphSize: { nodes, edges } }`
-- [ ] Each bridge result entry contains `{ id, title, score, type }`
-- [ ] Betweenness centrality runs on an undirected conversion of the graph
-- [ ] Optional `limit` parameter controls result count (default: 10)
-- [ ] Tests verify PageRank ranking with star-topology fixture (hub ranks highest)
-- [ ] Tests verify betweenness with barbell-graph fixture (bridge node scores highest)
-- [ ] Tests verify empty graph returns empty results without error
-- [ ] Tests verify community-scoped PageRank filters to community members only
+- [x] `knowledge_central` MCP tool is callable and returns `{ results: [...], graphSize: { nodes, edges } }`
+- [x] Each result entry contains `{ id, title, score, type, date }`
+- [x] Optional `community` parameter scopes PageRank to a single Louvain community
+- [x] Optional `limit` parameter controls result count (default: 10)
+- [x] Isolated nodes (degree 0) get degree-centrality fallback score of 0, ranking below connected nodes
+- [x] `knowledge_bridges` MCP tool is callable and returns `{ results: [...], graphSize: { nodes, edges } }`
+- [x] Each bridge result entry contains `{ id, title, score, type }`
+- [x] Betweenness centrality runs on an undirected conversion of the graph
+- [x] Optional `limit` parameter controls result count (default: 10)
+- [x] Tests verify PageRank ranking with star-topology fixture (hub ranks highest)
+- [x] Tests verify betweenness with barbell-graph fixture (bridge node scores highest)
+- [x] Tests verify empty graph returns empty results without error
+- [x] Tests verify community-scoped PageRank filters to community members only
 
 ## What We're NOT Doing
 
@@ -160,8 +160,8 @@ Extend the existing `graph-tools.ts` with two centrality-based MCP tools and add
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` from `plugin/ralph-knowledge/` -- no TypeScript errors
-- [ ] `npm test` from `plugin/ralph-knowledge/` -- all tests passing (including new centrality tests in graph-tools.test.ts)
+- [x] `npm run build` from `plugin/ralph-knowledge/` -- no TypeScript errors
+- [x] `npm test` from `plugin/ralph-knowledge/` -- all tests passing (including new centrality tests in graph-tools.test.ts)
 
 #### Manual Verification:
 - [ ] Call `knowledge_central` via MCP client with an indexed knowledge base and confirm results array is non-empty with scores sorted descending
