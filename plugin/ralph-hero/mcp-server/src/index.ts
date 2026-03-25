@@ -25,6 +25,7 @@ import { registerHygieneTools } from "./tools/hygiene-tools.js";
 import { registerDebugTools } from "./tools/debug-tools.js";
 import { registerDecomposeTools } from "./tools/decompose-tools.js";
 import { registerViewTools } from "./tools/view-tools.js";
+import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -376,6 +377,9 @@ async function main(): Promise<void> {
 
   // View management tools (REST API view creation)
   registerViewTools(server, client, fieldCache);
+
+  // Plan graph sync tool (sync plan dependency edges to GitHub)
+  registerPlanGraphTools(server, client);
 
   // Debug tools (only when RALPH_DEBUG=true)
   if (process.env.RALPH_DEBUG === 'true') {
