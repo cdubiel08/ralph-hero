@@ -51,13 +51,13 @@ The `relationships` table constrains `type` to `('builds_on', 'tensions', 'super
 ## Desired End State
 
 ### Verification
-- [ ] `knowledge_paths` returns all simple paths between two connected documents, capped at 20
-- [ ] `knowledge_paths` returns empty array when no path exists
-- [ ] `knowledge_paths` respects `maxDepth` parameter (default: 5)
-- [ ] `knowledge_common` returns shared neighbors of two documents with full metadata
-- [ ] `knowledge_common` returns empty array when no shared connections exist
-- [ ] Tests pass with diamond-topology fixture covering both tools
-- [ ] `registerGraphTools` is called from `index.ts` and both tools are live in the MCP server
+- [x] `knowledge_paths` returns all simple paths between two connected documents, capped at 20
+- [x] `knowledge_paths` returns empty array when no path exists
+- [x] `knowledge_paths` respects `maxDepth` parameter (default: 5)
+- [x] `knowledge_common` returns shared neighbors of two documents with full metadata
+- [x] `knowledge_common` returns empty array when no shared connections exist
+- [x] Tests pass with diamond-topology fixture covering both tools
+- [x] `registerGraphTools` is called from `index.ts` and both tools are live in the MCP server
 
 ## What We're NOT Doing
 
@@ -160,8 +160,8 @@ Create `graph-tools.ts` with a module-private DFS function and two registered MC
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no TypeScript errors (run from `plugin/ralph-knowledge/`)
-- [ ] `npx vitest run src/__tests__/graph-tools.test.ts` — all tests passing (run from `plugin/ralph-knowledge/`)
+- [x] `npm run build` — no TypeScript errors (run from `plugin/ralph-knowledge/`)
+- [x] `npx vitest run src/__tests__/graph-tools.test.ts` — all tests passing (run from `plugin/ralph-knowledge/`)
 
 #### Manual Verification:
 - [ ] `knowledge_paths` and `knowledge_common` appear in the MCP server tool list when started locally
@@ -172,8 +172,8 @@ Create `graph-tools.ts` with a module-private DFS function and two registered MC
 ---
 
 ## Integration Testing
-- [ ] Full `npm test` passes (all existing tests continue to pass) after `registerGraphTools` is wired in
-- [ ] `knowledge_traverse` and `knowledge_search` tools remain unaffected (no regressions)
+- [x] Full `npm test` passes (all existing tests continue to pass) after `registerGraphTools` is wired in
+- [x] `knowledge_traverse` and `knowledge_search` tools remain unaffected (no regressions)
 
 ## References
 - Research: [thoughts/shared/research/2026-03-24-GH-0673-knowledge-paths-and-common-tools.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-03-24-GH-0673-knowledge-paths-and-common-tools.md)
