@@ -129,7 +129,7 @@ Two separate caches serve different purposes:
 
 - **`@octokit/graphql` v9 reserves `query`, `method`, and `url`** as option keys. Never use these as GraphQL variable names.
 - **ESM module system**: All internal imports require `.js` extensions (e.g., `import { foo } from "./bar.js"`). The project uses `"type": "module"` with `"module": "NodeNext"`.
-- **`resolveEnv()` pattern**: The MCP server inherits env vars from Claude Code's process. `resolveEnv()` in `index.ts` filters out unexpanded `${VAR}` literals that may appear when vars are unset. `.mcp.json` now has an `env` block with one entry — `RALPH_HERO_GITHUB_TOKEN` mapped from `${user_config.github_token}` (set via `claude plugin configure ralph-hero`). All other `RALPH_*` vars still flow through `settings.local.json`.
+- **`resolveEnv()` pattern**: The MCP server inherits env vars from Claude Code's process (set via `settings.local.json`). `resolveEnv()` in `index.ts` filters out unexpanded `${VAR}` literals that may appear when vars are unset. The `.mcp.json` has no `env` block — all configuration flows through `settings.local.json`.
 - **Split-owner support**: Repo and project can have different owners. `resolveProjectOwner()` handles this. `fetchProjectForCache()` tries both `user` and `organization` GraphQL types.
 - **Aliased GraphQL mutations**: Bulk operations (like `batch_update`) use GraphQL aliases (`m0:`, `m1:`, ...) to batch multiple mutations in a single request.
 - **mcptools args normalization**: `index.ts` patches `validateToolInput` to normalize `undefined` args to `{}` because mcptools 0.7.1 strips empty `{}` params.
@@ -150,7 +150,7 @@ Set in `.claude/settings.local.json` (gitignored) under `"env"`:
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and register debug tools |
 
-**Token setup**: `.mcp.json` maps `RALPH_HERO_GITHUB_TOKEN` from `${user_config.github_token}` — set it with `claude plugin configure ralph-hero`. All other `RALPH_*` vars should be set in `.claude/settings.local.json` (gitignored). Do not put other tokens directly in `.mcp.json`.
+**Do NOT put tokens in `.mcp.json`** — all env vars should be set in `.claude/settings.local.json` (gitignored). The `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
 
 ## GitHub Actions Workflows
 
