@@ -391,3 +391,32 @@ describe("save_issue structural", () => {
     expect(iterSection).toContain("args.iteration === null");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Lock guard integration tests (structural source code verification)
+// ---------------------------------------------------------------------------
+
+describe("save_issue lock guard integration", () => {
+  it("imports isLockConflict from lock-guard", () => {
+    expect(issueToolsSrc).toContain('import { isLockConflict } from "../lib/lock-guard.js"');
+  });
+
+  it("calls isLockConflict in the save_issue handler", () => {
+    expect(issueToolsSrc).toContain("isLockConflict");
+  });
+
+  it("calls getCurrentFieldValue as part of the lock guard check", () => {
+    // getCurrentFieldValue must be called conditionally inside the lock guard block
+    expect(issueToolsSrc).toContain("getCurrentFieldValue");
+    // Verify it is used specifically for the Workflow State field in the lock guard
+    expect(issueToolsSrc).toContain('"Workflow State"');
+  });
+
+  it("returns toolError with actionable message when lock conflict detected", () => {
+    expect(issueToolsSrc).toContain("already in a lock state");
+  });
+
+  it("guard is conditional on resolvedWorkflowState being a lock state", () => {
+    expect(issueToolsSrc).toContain("LOCK_STATES.includes(resolvedWorkflowState)");
+  });
+});
