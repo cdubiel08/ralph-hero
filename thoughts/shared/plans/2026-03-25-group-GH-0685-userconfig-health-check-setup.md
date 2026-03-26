@@ -247,9 +247,9 @@ Extract the inline health_check handler from `index.ts` into an exported, testab
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no type errors
-- [ ] `npm test` — all existing tests still pass
-- [ ] `npx vitest run src/__tests__/health-check.test.ts` — all 11 tests pass
+- [x] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no type errors
+- [x] `npm test` — all existing tests still pass (992/992 green)
+- [x] `npx vitest run src/__tests__/health-check.test.ts` — all 11 tests pass
 
 #### Manual Verification:
 - [ ] `ralph_hero__health_check` tool output includes `tokenSource` field in the `config` section
