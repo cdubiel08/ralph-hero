@@ -112,8 +112,8 @@ The corrected `userConfig` block must look exactly like:
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [x] `node -e "JSON.parse(require('fs').readFileSync('plugin/ralph-hero/.claude-plugin/plugin.json','utf8'))"` — exits 0, no errors
-- [x] `claude plugin validate plugin/ralph-hero` — passes with no `userConfig.github_token` errors
+- [ ] `node -e "JSON.parse(require('fs').readFileSync('plugin/ralph-hero/.claude-plugin/plugin.json','utf8'))"` — exits 0, no errors
+- [ ] `claude plugin validate plugin/ralph-hero` — passes with no `userConfig.github_token` errors
 
 #### Manual Verification:
 - [ ] Open `plugin/ralph-hero/.claude-plugin/plugin.json` and confirm `userConfig.github_token` has `title`, `type`, `description`, and `sensitive` keys in that order
