@@ -1,5 +1,8 @@
-import { MultiDirectedGraph } from "graphology";
+import graphology from "graphology";
+import type { MultiDirectedGraph as MultiDirectedGraphType } from "graphology";
 import type { KnowledgeDB } from "./db.js";
+
+const { MultiDirectedGraph } = graphology;
 
 export interface NodeAttributes {
   title: string;
@@ -12,7 +15,7 @@ export interface EdgeAttributes {
   type: string;
 }
 
-export type KnowledgeGraph = MultiDirectedGraph<NodeAttributes, EdgeAttributes>;
+export type KnowledgeGraph = MultiDirectedGraphType<NodeAttributes, EdgeAttributes>;
 
 export class GraphBuilder {
   private readonly db: KnowledgeDB;

@@ -95,11 +95,17 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
     // Delete old relationships before re-inserting so context updates propagate
     db.db.prepare("DELETE FROM relationships WHERE source_id = ?").run(parsed.id);
 
+    // Ensure relationship targets exist before insertion (better-sqlite3 enables
+    // PRAGMA foreign_keys by default, so inserting a relationship to a non-existent
+    // document throws). upsertStubDocument uses INSERT OR IGNORE, so it's a no-op
+    // when the target is already a real document.
     for (const rel of parsed.relationships) {
+      db.upsertStubDocument(rel.targetId);
       db.addRelationship(rel.sourceId, rel.targetId, rel.type);
     }
 
     for (const edge of parsed.untypedEdges) {
+      db.upsertStubDocument(edge.targetId);
       db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
     }
 
@@ -122,24 +128,16 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
   // Phase 3: Rebuild FTS index from scratch (required — FTS5 content tables don't support partial sync)
   fts.rebuildIndex();
 
-  // Collect all known document IDs from the indexing pass
-  const knownIds = new Set(parsedDocs.map(p => p.id));
+  // Collect all relationship targets from the database (covers both current batch and prior runs)
+  const allTargetIds = new Set<string>(
+    (db.db.prepare("SELECT DISTINCT target_id FROM relationships").all() as Array<{ target_id: string }>)
+      .map(r => r.target_id)
+  );
 
-  // Collect all target IDs referenced by both typed and untyped edges
-  const allTargetIds = new Set<string>();
-  for (const parsed of parsedDocs) {
-    for (const rel of parsed.relationships) {
-      allTargetIds.add(rel.targetId);
-    }
-    for (const edge of parsed.untypedEdges) {
-      allTargetIds.add(edge.targetId);
-    }
-  }
-
-  // Create stub documents for unresolved wikilink targets
+  // Create stub documents for targets that don't exist as real documents
   let stubCount = 0;
   for (const targetId of allTargetIds) {
-    if (!knownIds.has(targetId)) {
+    if (!db.documentExists(targetId)) {
       db.upsertStubDocument(targetId);
       stubCount++;
     }
