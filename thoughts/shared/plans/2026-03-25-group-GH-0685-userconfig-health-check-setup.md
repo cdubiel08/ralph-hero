@@ -297,9 +297,9 @@ Rewrite `plugin/ralph-hero/skills/setup/SKILL.md` to use `claude plugin configur
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `plugin/ralph-hero/skills/setup/SKILL.md` is valid markdown with parseable YAML frontmatter (`python3 -c "import yaml; yaml.safe_load(open('...').read().split('---')[1])"`)
-  - [ ] All tool names in `allowed-tools` exist in the MCP server tool registry: `ralph_hero__health_check`, `ralph_hero__get_project`, `ralph_hero__setup_project`
-  - [ ] No occurrences of `"RALPH_HERO_GITHUB_TOKEN": "ghp_` (the old manual token step pattern) in the primary flow
+- [x] `plugin/ralph-hero/skills/setup/SKILL.md` is valid markdown with parseable YAML frontmatter (`python3 -c "import yaml; yaml.safe_load(open('...').read().split('---')[1])"`)
+  - [x] All tool names in `allowed-tools` exist in the MCP server tool registry: `ralph_hero__health_check`, `ralph_hero__get_project`, `ralph_hero__setup_project`
+  - [x] No occurrences of `"RALPH_HERO_GITHUB_TOKEN": "ghp_` (the old manual token step pattern) in the primary flow
 
 #### Manual Verification:
 - [ ] Fresh setup on macOS: prompted for token via `claude plugin configure`, guided through owner/repo/project interactively, health_check passes
