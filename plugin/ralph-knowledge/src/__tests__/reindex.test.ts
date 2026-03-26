@@ -158,4 +158,46 @@ describe("incremental reindex", () => {
     // All files should be re-embedded since sync table was cleared
     expect(mockedEmbed).toHaveBeenCalledTimes(2);
   });
+
+  it("scenario 6: stub created for unresolved wikilink target, not for real documents", async () => {
+    // File A references file B via wikilink; both exist on disk
+    writeFileSync(join(dir, "doc-a.md"), `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Doc A\n\nSee also builds_on:: [[doc-b]]\n`);
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+    await reindex([dir], dbPath);
+
+    const db = new KnowledgeDB(dbPath);
+    // doc-b is a real document — should NOT be a stub
+    const docB = db.getDocument("doc-b");
+    expect(docB).toBeTruthy();
+    expect(docB!.isStub).toBe(0);
+    db.close();
+  });
+
+  it("scenario 7: stub survives incremental reindex when referencing file is skipped", async () => {
+    // File A references non-existent target "phantom"
+    writeFileSync(join(dir, "doc-a.md"), `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Doc A\n\nSee builds_on:: [[phantom]]\n`);
+
+    await reindex([dir], dbPath);
+
+    // Verify stub was created
+    const db1 = new KnowledgeDB(dbPath);
+    expect(db1.documentExists("phantom")).toBe(true);
+    const phantomDoc = db1.getDocument("phantom");
+    expect(phantomDoc!.isStub).toBe(1);
+    db1.close();
+
+    mockedEmbed.mockClear();
+
+    // Add a new file (doc-a is unchanged and will be skipped)
+    writeFileSync(join(dir, "doc-c.md"), makeDoc("Doc C"));
+    await reindex([dir], dbPath);
+
+    // phantom stub should still exist even though doc-a was skipped
+    const db2 = new KnowledgeDB(dbPath);
+    expect(db2.documentExists("phantom")).toBe(true);
+    const phantomDoc2 = db2.getDocument("phantom");
+    expect(phantomDoc2!.isStub).toBe(1);
+    db2.close();
+  });
 });

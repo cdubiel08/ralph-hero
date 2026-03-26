@@ -156,6 +156,15 @@ export class KnowledgeDB {
         indexed_at INTEGER NOT NULL
       );
     `);
+
+    // Migration: add is_stub column for databases created before it existed.
+    // SQLite has no IF NOT EXISTS for ALTER TABLE ADD COLUMN, so we catch the
+    // "duplicate column" error and ignore it.
+    try {
+      this.db.exec("ALTER TABLE documents ADD COLUMN is_stub INTEGER DEFAULT 0");
+    } catch {
+      // Column already exists — expected for new databases
+    }
   }
 
   upsertDocument(doc: Omit<DocumentRow, "isStub"> & { isStub?: number }): void {
@@ -386,6 +395,11 @@ export class KnowledgeDB {
 
   getAllSyncPaths(): string[] {
     return (this.db.prepare("SELECT path FROM sync").all() as Array<{ path: string }>).map(r => r.path);
+  }
+
+  documentExists(id: string): boolean {
+    const row = this.db.prepare("SELECT 1 FROM documents WHERE id = ?").get(id);
+    return row !== undefined;
   }
 
   deleteDocument(id: string): void {

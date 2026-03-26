@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import Database from "better-sqlite3";
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { KnowledgeDB } from "../db.js";
 
 let db: KnowledgeDB;
@@ -352,5 +356,69 @@ describe("deleteDocument", () => {
     expect(db.getDocument("doc-a")).toBeUndefined();
     expect(db.getTags("doc-a")).toEqual([]);
     expect(db.getRelationshipsFrom("doc-a")).toEqual([]);
+  });
+});
+
+describe("Schema migration: is_stub column", () => {
+  it("adds is_stub column to a database created without it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-migration-"));
+    const dbPath = join(dir, "legacy.db");
+
+    // Create a DB with the old schema (no is_stub column)
+    const rawDb = new Database(dbPath);
+    rawDb.exec(`
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY,
+        path TEXT,
+        title TEXT,
+        date TEXT,
+        type TEXT,
+        status TEXT,
+        github_issue INTEGER,
+        content TEXT
+      );
+    `);
+    rawDb.close();
+
+    // Opening via KnowledgeDB should migrate the schema
+    const migrated = new KnowledgeDB(dbPath);
+    expect(() => migrated.upsertStubDocument("stub-1")).not.toThrow();
+    const doc = migrated.getDocument("stub-1");
+    expect(doc).toBeTruthy();
+    expect(doc!.isStub).toBe(1);
+    migrated.close();
+  });
+
+  it("is idempotent on a database that already has is_stub", () => {
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-migration-"));
+    const dbPath = join(dir, "current.db");
+
+    // First open creates the full schema including is_stub
+    const db1 = new KnowledgeDB(dbPath);
+    db1.upsertStubDocument("stub-1");
+    db1.close();
+
+    // Second open should not error (migration is a no-op)
+    const db2 = new KnowledgeDB(dbPath);
+    const doc = db2.getDocument("stub-1");
+    expect(doc).toBeTruthy();
+    expect(doc!.isStub).toBe(1);
+    db2.close();
+  });
+});
+
+describe("documentExists", () => {
+  it("returns true for an existing document", () => {
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    expect(db.documentExists("doc-1")).toBe(true);
+  });
+
+  it("returns false for a non-existent document", () => {
+    expect(db.documentExists("nonexistent")).toBe(false);
+  });
+
+  it("returns true for stub documents", () => {
+    db.upsertStubDocument("stub-1");
+    expect(db.documentExists("stub-1")).toBe(true);
   });
 });
