@@ -291,7 +291,6 @@ export interface GitHubClientConfig {
   templateProjectNumber?: number; // Default template project for setup_project copy mode
   autoMode?: boolean; // When true, "In Review" maps to INTEGRATE instead of TERMINAL (RALPH_HERO_AUTO)
   repoRegistry?: import("./lib/repo-registry.js").RepoRegistry;
-  tokenSource?: string; // "RALPH_GH_REPO_TOKEN" | "RALPH_HERO_GITHUB_TOKEN"
 }
 
 export function resolveProjectOwner(

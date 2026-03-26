@@ -19,28 +19,23 @@ allowed-tools:
 
 One-time interactive setup skill for configuring a GitHub repository with the Ralph workflow. Creates a GitHub Project V2 with all required custom fields, views, and configuration.
 
-## Quick Start
+## Quick Start (Minimum Viable Config)
 
-Ralph needs **one token** and **three settings**. The token is stored securely via the Claude Code plugin config system.
+Ralph needs **one token** and **three settings**. That's it.
 
-### 1. Configure Your Token
+### 1. Create a GitHub Token
 
-Run `claude plugin configure ralph-hero` in your terminal. You will be prompted for your GitHub Personal Access Token.
-
-Go to https://github.com/settings/tokens > **Generate new token (classic)**
+Go to https://github.com/settings/tokens → **Generate new token (classic)**
 - Scopes needed: `repo`, `project`, `read:org` (if using org repos)
 
-Your token is stored securely:
-- **macOS**: System Keychain (encrypted, OS-managed)
-- **WSL2/Linux**: `~/.claude/.credentials.json` (mode 0600, user-only access)
-
-### 2. Add Non-Sensitive Config
+### 2. Add to Claude Code Settings
 
 Create or edit `.claude/settings.local.json` in your project (this file is gitignored):
 
 ```json
 {
   "env": {
+    "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here",
     "RALPH_GH_OWNER": "your-github-username-or-org",
     "RALPH_GH_REPO": "your-repo-name",
     "RALPH_GH_PROJECT_NUMBER": "1"
@@ -48,7 +43,7 @@ Create or edit `.claude/settings.local.json` in your project (this file is gitig
 }
 ```
 
-If you don't have a project number yet, omit it -- this skill will create one for you.
+If you don't have a project number yet, omit it — this skill will create one for you.
 
 ### 3. Restart Claude Code
 
@@ -56,17 +51,17 @@ The MCP server reads environment variables at startup. After changing settings, 
 
 ### Where NOT to put tokens
 
-- **Don't put tokens in `.mcp.json`** -- the plugin config system handles token delivery securely
-- **Don't put tokens in `.bashrc` after the interactive guard** -- non-interactive processes (like MCP servers) won't see them
-- **Don't commit tokens to git** -- use `claude plugin configure` for tokens, `settings.local.json` for non-sensitive config
+- **Don't put tokens in `.mcp.json`** — all env vars belong in `settings.local.json`, not in the plugin config
+- **Don't put tokens in `.bashrc` after the interactive guard** — non-interactive processes (like MCP servers) won't see them
+- **Don't commit tokens to git** — use `settings.local.json` (gitignored) or shell profile
 
 ### Advanced: Split-Owner / Dual-Token
 
-If your repo is in an org but the project is under your personal account, see Step 2 below for split-owner configuration and dual-token setup.
+If your repo is in an org but the project is under your personal account, see Step 2b below for dual-token configuration.
 
 ## Workflow
 
-### Step 1: Detect Token
+### Step 1: Health Check & Diagnosis
 
 1. Call `ralph_hero__health_check`
 2. Display all check results clearly:
@@ -74,10 +69,10 @@ If your repo is in an org but the project is under your personal account, see St
 ```
 Health Check Results
 ====================
-Auth:            [ok/fail] -- [detail]
-Repo Access:     [ok/fail/skip] -- [detail]
-Project Access:  [ok/fail/skip] -- [detail]
-Required Fields: [ok/fail/skip] -- [detail]
+Auth:            [ok/fail] — [detail]
+Repo Access:     [ok/fail/skip] — [detail]
+Project Access:  [ok/fail/skip] — [detail]
+Required Fields: [ok/fail/skip] — [detail]
 
 Config:
   Repo Owner:     [value]
@@ -85,34 +80,27 @@ Config:
   Project Owner:  [value]
   Project Number: [value]
   Token Mode:     [single-token/dual-token]
-  Token Source:   [RALPH_HERO_GITHUB_TOKEN/RALPH_GH_REPO_TOKEN]
 ```
 
-3. **If `auth` passes**: Skip to Step 3 (Collect Config) -- token is already configured.
-
-4. **If `auth` fails**: STOP. Display:
+3. **If `auth` fails**: STOP. Display:
    ```
-   Authentication failed. Your token may be missing, expired, or invalid.
+   Authentication failed. Your token may be expired or invalid.
 
-   Fix: Run this command in your terminal to configure your token:
+   Fix: Add a valid token to .claude/settings.local.json:
 
-     claude plugin configure ralph-hero
+     {
+       "env": {
+         "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here"
+       }
+     }
 
-   You will be prompted for your GitHub Personal Access Token.
-   Generate one at: https://github.com/settings/tokens
+   Generate a token at: https://github.com/settings/tokens
    Required scopes: repo, project
 
-   Your token will be stored securely:
-   - macOS: System Keychain (encrypted, OS-managed)
-   - WSL2/Linux: ~/.claude/.credentials.json (mode 0600, user-only access)
-
-   WSL2 note: If the browser does not open automatically, set the BROWSER
-   environment variable or copy the URL manually when prompted.
-
-   After configuring, restart Claude Code and re-run /ralph-hero:setup.
+   Then restart Claude Code (the MCP server reads env vars at startup).
    ```
 
-5. **If `repoAccess` fails**: STOP. Display:
+4. **If `repoAccess` fails**: STOP. Display:
    ```
    Cannot access repository [owner]/[repo].
 
@@ -121,38 +109,41 @@ Config:
    - Token lacks 'repo' scope
    - Token doesn't have access to this org
 
-   Fix: Verify your env vars in .claude/settings.local.json and token scopes,
-   then restart Claude Code.
+   Fix: Verify your env vars and token scopes, then restart Claude Code.
    ```
 
-6. **If `projectAccess` fails or is skipped**: This is expected for first-time setup or org repos without project access. **Do NOT stop** -- continue to Step 2 which will handle project creation.
+5. **If `projectAccess` fails or is skipped**: This is expected for first-time setup or org repos without project access. **Do NOT stop** — continue to Step 2 which will handle project creation.
 
-7. **If all checks pass**: Skip to Step 4 (Create or Verify Project).
+6. **If all checks pass**: Great — skip to Step 3 (verify existing project).
 
-### Step 2: Choose Setup Mode
+### Step 2: Determine Project Owner
+
+This step runs when there's no accessible project yet (projectAccess failed/skipped).
 
 Ask the user using AskUserQuestion:
 
-**Question**: "What kind of setup do you need?"
+**Question**: "Where should the GitHub Project be created?"
 **Options**:
-- **"Same owner for repo and project"** -- Simple setup. The repo owner and project owner are the same user or org.
-- **"Split setup (org repo + personal project)"** -- Your repo is in an org but the project is under your personal account.
+- **"Under [RALPH_GH_OWNER] (org/user)"** — Use the repo owner. Works when your token has org-level project permissions.
+- **"Under my personal account"** — Use your personal GitHub username. Works when you don't have org project access but want to track org repo issues in a personal project.
 
-**If split setup**, ask a follow-up:
+**If they choose personal account**, ask a follow-up:
 
 **Question**: "What is your GitHub username for the project?"
 - Pre-fill with the `authenticatedUser` from the health check if available
 
 Record the chosen project owner. If it differs from `RALPH_GH_OWNER`, note that we're in **split-owner mode**.
 
-#### Split-Owner: Check Token Configuration
+### Step 2b: Check Token Scopes for Split-Owner Mode
 
-If project owner differs from repo owner, ask using AskUserQuestion:
+If project owner differs from repo owner:
+
+Ask using AskUserQuestion:
 
 **Question**: "Does your current token have both org repo access AND personal project access?"
 **Options**:
-- **"Yes, one token works for both"** -- Single token mode. Continue.
-- **"No, I need separate tokens"** -- Guide them through dual-token setup.
+- **"Yes, one token works for both"** — Single token mode. Continue.
+- **"No, I need separate tokens"** — Guide them through dual-token setup.
 
 **If they need separate tokens**, display:
 
@@ -163,8 +154,8 @@ Dual-Token Setup
 You need two Personal Access Tokens. Create them at:
 https://github.com/settings/tokens
 
-1. Repo token -- scopes: repo, read:org
-2. Project token -- scopes: project
+1. Repo token — scopes: repo, read:org
+2. Project token — scopes: project
 
 Add both to .claude/settings.local.json:
 
@@ -176,103 +167,68 @@ Add both to .claude/settings.local.json:
   }
 }
 
-Note: The primary token (configured via `claude plugin configure`) is used
-for repo operations. RALPH_GH_REPO_TOKEN and RALPH_GH_PROJECT_TOKEN override
-the primary token when set. For most dual-token setups, set these two env
-vars in settings.local.json alongside the plugin-configured primary token.
-
 Then restart Claude Code and run /ralph-hero:setup again.
 ```
 
-**STOP here** if they need to create new tokens -- they must restart Claude Code for the MCP server to pick up new env vars.
+**STOP here** if they need to create new tokens — they must restart Claude Code for the MCP server to pick up new env vars.
 
-### Step 3: Collect Config
-
-Prompt the user interactively for non-sensitive configuration values:
-
-**For simple setup (same owner):**
-1. Ask for `RALPH_GH_OWNER` (GitHub username or org)
-2. Ask for `RALPH_GH_REPO` (repository name)
-3. Ask for `RALPH_GH_PROJECT_NUMBER` (if known; can be omitted if creating new project)
-
-**For split-owner setup:**
-1. Ask for `RALPH_GH_OWNER` (org or repo owner)
-2. Ask for `RALPH_GH_REPO` (repository name)
-3. Ask for `RALPH_GH_PROJECT_OWNER` (personal GitHub username)
-4. Ask for `RALPH_GH_PROJECT_NUMBER` (if known)
-
-Write the collected values to `.claude/settings.local.json` under `"env"`. Token is NOT written to `settings.local.json` -- it is delivered via the plugin config system.
-
-Example for simple setup:
-```json
-{
-  "env": {
-    "RALPH_GH_OWNER": "my-org",
-    "RALPH_GH_REPO": "my-repo",
-    "RALPH_GH_PROJECT_NUMBER": "3"
-  }
-}
-```
-
-Example for split-owner setup:
-```json
-{
-  "env": {
-    "RALPH_GH_OWNER": "my-org",
-    "RALPH_GH_REPO": "my-repo",
-    "RALPH_GH_PROJECT_OWNER": "my-username",
-    "RALPH_GH_PROJECT_NUMBER": "3"
-  }
-}
-```
-
-### Step 4: Create or Verify Project
+### Step 3: Create or Verify Project
 
 **If `RALPH_GH_PROJECT_NUMBER` is set and project was accessible in Step 1:**
 1. Call `ralph_hero__get_project` to verify the project exists
 2. Verify it has the required custom fields (Workflow State, Priority, Estimate)
 3. If fields are missing, report what's missing and offer to create them
-4. Skip to Step 5
+4. Skip to Step 4
 
 **If `RALPH_GH_PROJECT_NUMBER` is NOT set (or project wasn't accessible):**
 1. Call `ralph_hero__setup_project` with `owner` set to the **project owner** determined in Step 2 (NOT the repo owner, unless they're the same)
 2. This creates:
    - **Workflow State** single-select field with 11 options:
-     Backlog, Research Needed, Research in Progress, Ready for Plan, Plan in Progress, Plan in Review, In Progress, In Review, Done, Human Needed, Canceled
+     - Backlog, Research Needed, Research in Progress
+     - Ready for Plan, Plan in Progress, Plan in Review
+     - In Progress, In Review, Done, Human Needed, Canceled
    - **Priority** single-select field with 4 options:
-     P0 (Critical), P1 (High), P2 (Medium), P3 (Low)
+     - P0 (Critical), P1 (High), P2 (Medium), P3 (Low)
    - **Estimate** single-select field with 5 options:
-     XS(1), S(2), M(3), L(4), XL(5)
+     - XS(1), S(2), M(3), L(4), XL(5)
 3. Record the project number from the response
+
+### Step 4: Update Field Colors and Descriptions
+
+Use `gh api graphql` to update field option colors and descriptions if needed. Example:
+```
+gh api graphql -f query='mutation { updateProjectV2FieldOptionValue(input: { projectId: "PVT_xxx", fieldId: "PVTSSF_xxx", optionId: "xxx", color: "GREEN", description: "..." }) { projectV2FieldOption { id name } } }'
+```
+Or use the GitHub Projects UI to adjust field option colors after creation. The `setup_project` tool creates fields with the correct colors, so this step is usually not needed.
 
 ### Step 4b: Create Default Views (Manual)
 
 **Note**: GitHub's GraphQL API does NOT support creating views programmatically. Instruct the user to create these two views manually in the GitHub UI:
 
 #### 1. Ralph Table View
-1. Click **New view** > choose **Table**
+1. Click **New view** → choose **Table**
 2. Name it **Ralph Table**
-3. **Group by**: Click the group icon > select **Priority**
-4. **Enable sub-issue hierarchy**: Click the kebab menu > toggle on **Sub-issues**
+3. **Group by**: Click the group icon → select **Priority**
+4. **Enable sub-issue hierarchy**: Click the kebab menu (⋯) → toggle on **Sub-issues**
 5. **Filter**: Set the filter bar to `-has:parent-issue` (shows only top-level issues)
 6. **Save** the view
 
 #### 2. Ralph Kanban
-1. Click **New view** > choose **Board**
+1. Click **New view** → choose **Board**
 2. Name it **Ralph Kanban**
-3. **Set columns**: Click the column header dropdown > select **Workflow State** as the column field
+3. **Set columns**: Click the column header dropdown → select **Workflow State** as the column field
 4. **Hide non-active columns**: Set the filter bar to `-workflow-state:Canceled,Done,"Research in Progress","Plan in Progress","Plan in Review"`
 5. **Save** the view
 
 This gives two complementary views:
-- **Ralph Table** -- Priority-grouped hierarchy of all top-level issues with expandable sub-issues
-- **Ralph Kanban** -- Board showing only actionable workflow columns
+- **Ralph Table** — Priority-grouped hierarchy of all top-level issues with expandable sub-issues
+- **Ralph Kanban** — Board showing only actionable workflow columns (Backlog, Research Needed, Ready for Plan, In Progress, In Review, Human Needed)
 
-### Step 5: Store Local Config
+### Step 5: Store Configuration
 
 Create a local configuration file at `.claude/ralph-hero.local.md` in the current project.
 
-**For simple setup (same owner):**
+**If repo owner == project owner (simple setup):**
 
 ```markdown
 ---
@@ -291,15 +247,15 @@ Create a local configuration file at `.claude/ralph-hero.local.md` in the curren
 | Repository | [repo] |
 | Project Number | [number] |
 | Project URL | [url] |
-| Token Delivery | Plugin config (secure) |
 
-## Non-Sensitive Environment Variables
+## Environment Variables
 
-Set in `.claude/settings.local.json`:
+Add to `.claude/settings.local.json` (recommended — Claude Code native, gitignored):
 
 ```json
 {
   "env": {
+    "RALPH_HERO_GITHUB_TOKEN": "[token]",
     "RALPH_GH_OWNER": "[owner]",
     "RALPH_GH_REPO": "[repo]",
     "RALPH_GH_PROJECT_NUMBER": "[number]"
@@ -307,10 +263,19 @@ Set in `.claude/settings.local.json`:
 }
 ```
 
-Token is managed via `claude plugin configure ralph-hero` (stored in system keychain).
+Or set in shell profile (must be before any interactive guard):
+
+```bash
+export RALPH_HERO_GITHUB_TOKEN="[token]"
+export RALPH_GH_OWNER="[owner]"
+export RALPH_GH_REPO="[repo]"
+export RALPH_GH_PROJECT_NUMBER="[number]"
 ```
 
-**For split-owner setup:**
+**Important**: Do NOT put tokens in `.mcp.json` — all env vars belong in `settings.local.json`.
+```
+
+**If repo owner != project owner (split-owner setup):**
 
 ```markdown
 ---
@@ -331,11 +296,10 @@ Token is managed via `claude plugin configure ralph-hero` (stored in system keyc
 | Project Number | [number] |
 | Project URL | [url] |
 | Token Mode | [single-token or dual-token] |
-| Token Delivery | Plugin config (secure) |
 
-## Non-Sensitive Environment Variables
+## Environment Variables
 
-Set in `.claude/settings.local.json`:
+Add to `.claude/settings.local.json` (recommended — Claude Code native, gitignored):
 
 ```json
 {
@@ -343,13 +307,24 @@ Set in `.claude/settings.local.json`:
     "RALPH_GH_OWNER": "[repo-owner]",
     "RALPH_GH_REPO": "[repo]",
     "RALPH_GH_PROJECT_OWNER": "[project-owner]",
-    "RALPH_GH_PROJECT_NUMBER": "[number]"
+    "RALPH_GH_PROJECT_NUMBER": "[number]",
+    "RALPH_HERO_GITHUB_TOKEN": "ghp_..."
   }
 }
 ```
 
-Token is managed via `claude plugin configure ralph-hero` (stored in system keychain).
-For dual-token setups, add `RALPH_GH_REPO_TOKEN` and `RALPH_GH_PROJECT_TOKEN` to `settings.local.json`.
+For dual-token setups (separate org repo + personal project tokens):
+
+```json
+{
+  "env": {
+    "RALPH_GH_REPO_TOKEN": "ghp_...",
+    "RALPH_GH_PROJECT_TOKEN": "ghp_..."
+  }
+}
+```
+
+**Important**: Do NOT put tokens in `.mcp.json` — all env vars belong in `settings.local.json`.
 ```
 
 Also include the Workflow States table in both cases:
@@ -374,14 +349,8 @@ Also include the Workflow States table in both cases:
 ### Step 6: Verify Setup
 
 1. Call `ralph_hero__health_check` to confirm all checks pass
-2. Display the results including the `tokenSource` field from the config output:
-   ```
-   Verification: All checks passed.
-   Token source: [tokenSource from health_check config]
-   Token mode:   [tokenMode from health_check config]
-   ```
-3. Call `ralph_hero__get_project` to confirm project is accessible
-4. If verification fails, display what went wrong and remediation steps
+2. Call `ralph_hero__get_project` to confirm project is accessible
+3. If verification fails, display what went wrong and remediation steps
 
 ### Step 6b: Enable Routing & Sync (Optional)
 
@@ -404,10 +373,10 @@ The workflows are already installed in .github/workflows/.
 
 **Question**: "Would you like to enable automated issue routing and workflow state sync?"
 **Options**:
-- **"Yes, set it up now"** -- Continue with sub-steps below
-- **"Skip for now"** -- Record `routingEnabled: false` and skip to Step 7
+- **"Yes, set it up now"** — Continue with sub-steps below
+- **"Skip for now"** — Record `routingEnabled: false` and skip to Step 7
 
-**If "Skip for now"**: Record routing state and proceed to Step 7.
+**If "Skip for now"**: Record routing state and proceed to Step 7. No routing references will appear in the final report beyond a one-line note.
 
 **If "Yes, set it up now"**, guide through three sub-steps:
 
@@ -422,18 +391,18 @@ Go to: https://github.com/[owner]/[repo]/settings/secrets/actions
 Click "New repository secret"
 
 Name:  ROUTING_PAT
-Value: (paste your GitHub PAT -- the same token you configured via plugin config works)
+Value: (paste your GitHub PAT — same token as RALPH_HERO_GITHUB_TOKEN works)
 
 Required scopes: repo, project
-Note: GITHUB_TOKEN cannot write to Projects V2 -- a PAT is required.
+Note: GITHUB_TOKEN cannot write to Projects V2 — a PAT is required.
 ```
 
 Then ask using AskUserQuestion:
 
 **Question**: "Have you added the ROUTING_PAT secret?"
 **Options**:
-- **"Yes, it's added"** -- Record `routingPatAdded: true`, continue
-- **"I'll do it later"** -- Record `routingPatAdded: pending`, continue
+- **"Yes, it's added"** — Record `routingPatAdded: true`, continue
+- **"I'll do it later"** — Record `routingPatAdded: pending`, continue to next sub-step
 
 #### 6b-ii. Repository Variables (Optional)
 
@@ -459,9 +428,9 @@ Then ask using AskUserQuestion:
 
 **Question**: "Do you need to set any repository variables?"
 **Options**:
-- **"No, defaults are fine"** -- Record `repoVarsConfigured: true`, continue
-- **"Yes, I'll set them now"** -- Display the Settings > Variables URL, wait for confirmation, record `repoVarsConfigured: true`
-- **"I'll configure later"** -- Record `repoVarsConfigured: pending`, continue
+- **"No, defaults are fine"** — Record `repoVarsConfigured: true`, continue
+- **"Yes, I'll set them now"** — Display the Settings > Variables URL, wait for confirmation, record `repoVarsConfigured: true`
+- **"I'll configure later"** — Record `repoVarsConfigured: pending`, continue
 
 #### 6b-iii. Routing Config Stub (Optional)
 
@@ -469,7 +438,7 @@ Ask using AskUserQuestion:
 
 **Question**: "Would you like to create a starter `.ralph-routing.yml` config?"
 **Options**:
-- **"Yes, create a starter config"** -- Create or edit `.ralph-routing.yml`:
+- **"Yes, create a starter config"** — Create or edit `.ralph-routing.yml` directly using the Write tool:
   ```yaml
   rules:
     - match:
@@ -478,13 +447,20 @@ Ask using AskUserQuestion:
         workflowState: "Backlog"
         projectNumber: [project-number]
   ```
+  Then display:
+  ```
+  Created .ralph-routing.yml with a starter rule:
+  - Issues labeled "enhancement" → Project #[N], Workflow State: Backlog
+
+  Edit this file to add more rules. See docs/cross-repo-routing.md for the full config format.
+  ```
   Record `routingConfigCreated: true`
-- **"No, I'll create it manually"** -- Display: `See docs/cross-repo-routing.md for the full config format.` Record `routingConfigCreated: false`
-- **"Skip routing config"** -- Record `routingConfigCreated: false`, continue
+- **"No, I'll create it manually"** — Display: `See docs/cross-repo-routing.md for the full config format.` Record `routingConfigCreated: false`
+- **"Skip routing config"** — Record `routingConfigCreated: false`, continue
 
 #### Record Routing State
 
-After completing (or skipping) the sub-steps, record state for use in the config file and final report:
+After completing (or skipping) the sub-steps, record the following for use in the config file append and final report:
 
 - `routingEnabled`: true/false
 - `routingPatAdded`: true/false/pending
@@ -493,7 +469,7 @@ After completing (or skipping) the sub-steps, record state for use in the config
 
 **Append to `.claude/ralph-hero.local.md`** (written in Step 5):
 
-If `routingEnabled` is true, append:
+If `routingEnabled` is true, append the following section to the existing config file:
 
 ```markdown
 ## Routing & Sync
@@ -506,9 +482,9 @@ If `routingEnabled` is true, append:
 | Routing Config | [created at .ralph-routing.yml / not created] |
 
 Sync workflows (auto-activate when ROUTING_PAT is set):
-- sync-issue-state.yml -- Syncs Workflow State on close/reopen
-- sync-pr-merge.yml -- Advances linked issues on PR merge
-- sync-project-state.yml -- Cross-project state sync
+- sync-issue-state.yml — Syncs Workflow State on close/reopen
+- sync-pr-merge.yml — Advances linked issues on PR merge
+- sync-project-state.yml — Cross-project state sync
 
 For cross-repo routing setup, see: docs/cross-repo-routing.md
 ```
@@ -523,7 +499,6 @@ Setup Complete
 Project: [project title]
 URL: [project URL]
 Project Number: [number]
-Token: Stored securely via plugin config (tokenSource: [tokenSource from health_check])
 
 Custom Fields:
   - Workflow State: 11 options configured
@@ -535,6 +510,41 @@ Views (create manually in GitHub UI):
   - Ralph Kanban (Board, Workflow State columns, hidden: Canceled/Done/locked states)
 
 Configuration saved to: .claude/ralph-hero.local.md
+```
+
+**If routing was enabled (`routingEnabled: true`)**, append:
+```
+Routing & Sync:
+  - ROUTING_PAT secret: [Added / Pending — add at Settings > Secrets > Actions]
+  - Repository variables: [Defaults OK / Custom set / Pending]
+  - Routing config: [Created (.ralph-routing.yml) / Not created]
+  - Sync workflows: Pre-installed (activate when ROUTING_PAT is set)
+```
+
+**If routing was skipped**, append:
+```
+Routing & Sync: Skipped (run /ralph-hero:setup again to enable later)
+  See docs/cross-repo-routing.md for manual setup
+```
+
+Then display next steps. **If routing was enabled**, use:
+```
+Next steps:
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
+3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
+4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
+5. Run /ralph-triage to start processing issues
+Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
+```
+
+Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped**, use the original 3-item list:
+```
+Next steps:
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
+3. Run /ralph-triage to start processing issues
+Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
 **For split-owner setup:**
@@ -547,7 +557,6 @@ Project: [project title] (owned by [project-owner])
 URL: [project URL]
 Project Number: [number]
 Token Mode: [single-token/dual-token]
-Token: Stored securely via plugin config (tokenSource: [tokenSource from health_check])
 
 Custom Fields:
   - Workflow State: 11 options configured
@@ -561,10 +570,10 @@ Views (create manually in GitHub UI):
 Configuration saved to: .claude/ralph-hero.local.md
 ```
 
-**If routing was enabled**, append to either template:
+**If routing was enabled (`routingEnabled: true`)**, append:
 ```
 Routing & Sync:
-  - ROUTING_PAT secret: [Added / Pending -- add at Settings > Secrets > Actions]
+  - ROUTING_PAT secret: [Added / Pending — add at Settings > Secrets > Actions]
   - Repository variables: [Defaults OK / Custom set / Pending]
   - Routing config: [Created (.ralph-routing.yml) / Not created]
   - Sync workflows: Pre-installed (activate when ROUTING_PAT is set)
@@ -576,31 +585,43 @@ Routing & Sync: Skipped (run /ralph-hero:setup again to enable later)
   See docs/cross-repo-routing.md for manual setup
 ```
 
-**Next steps (if routing was enabled):**
+Then display:
+```
+IMPORTANT: Verify .claude/settings.local.json has:
+  RALPH_GH_PROJECT_OWNER: "[project-owner]"
+  RALPH_GH_PROJECT_NUMBER: "[number]"
+  [+ token vars]
+
+Then restart Claude Code (MCP server reads env vars at startup).
+```
+
+Next steps follow the same conditional pattern as the simple setup:
+
+**If routing was enabled:**
 ```
 Next steps:
-1. Restart Claude Code if you changed any env vars
-2. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
-3. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
-4. Run /ralph-triage to start processing issues
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
+3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
+4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
+5. Run /ralph-triage to start processing issues
 Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
-Items 2 and 3 are conditional -- only include them if the corresponding state is pending/not created.
-
-**Next steps (if routing was skipped):**
+Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped:**
 ```
 Next steps:
-1. Restart Claude Code if you changed any env vars
-2. Run /ralph-triage to start processing issues
+1. Verify .claude/settings.local.json has your token and config
+2. Restart Claude Code if you changed any env vars
+3. Run /ralph-triage to start processing issues
 Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
 ## Error Handling
 
-- If token validation fails: Report `claude plugin configure ralph-hero` as the fix, not manual settings editing
+- If token validation fails: Report required scopes and how to create a new token
 - If project creation fails on org: Suggest personal project as alternative
 - If project creation fails on personal: Check token has `project` scope
 - If view creation fails: Continue (views are optional, can be created manually)
 - If configuration file write fails: Print the configuration to stdout instead
-- If user needs new tokens: STOP with clear instructions, they must restart after reconfiguring
+- If user needs new tokens: STOP with clear instructions, they must restart after setting vars

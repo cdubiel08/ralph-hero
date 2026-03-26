@@ -21,11 +21,5 @@
     "naive-hero",
     "iteration",
     "sprint"
-  ],
-  "userConfig": {
-    "github_token": {
-      "description": "GitHub Personal Access Token with 'repo' and 'project' scopes. Create one at https://github.com/settings/tokens. Required scopes: repo (full control of private repos) and project (read:project + write:org). Your token will be stored securely in your system keychain or credentials file.",
-      "sensitive": true
-    }
-  }
+  ]
 }
