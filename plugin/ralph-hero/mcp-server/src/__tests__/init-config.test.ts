@@ -135,11 +135,66 @@ describe("Token resolution logic", () => {
   });
 });
 
+describe("userConfig delivery path", () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.RALPH_GH_REPO_TOKEN;
+    delete process.env.RALPH_GH_PROJECT_TOKEN;
+    delete process.env.RALPH_HERO_GITHUB_TOKEN;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  /**
+   * Mirrors the token resolution logic from index.ts initGitHubClient.
+   */
+  function resolveTokens() {
+    const repoToken =
+      process.env.RALPH_GH_REPO_TOKEN || process.env.RALPH_HERO_GITHUB_TOKEN;
+    const projectToken = process.env.RALPH_GH_PROJECT_TOKEN || repoToken;
+    return { repoToken, projectToken };
+  }
+
+  /**
+   * Mirrors resolveEnv() from index.ts (lines 33-37).
+   * Returns undefined if the value starts with "${" (unresolved template literal).
+   */
+  function resolveEnvMirror(key: string): string | undefined {
+    const value = process.env[key];
+    if (!value || value.startsWith("${")) return undefined;
+    return value;
+  }
+
+  it("token from userConfig arrives as RALPH_HERO_GITHUB_TOKEN", () => {
+    // Simulates Claude Code resolving ${user_config.github_token} from Keychain
+    // and injecting the real token value into RALPH_HERO_GITHUB_TOKEN via the
+    // .mcp.json env block before the MCP server process starts.
+    process.env.RALPH_HERO_GITHUB_TOKEN = "ghp_from_userconfig";
+    const { repoToken } = resolveTokens();
+    expect(repoToken).toBe("ghp_from_userconfig");
+  });
+
+  it("unresolved userConfig template is filtered by resolveEnv", () => {
+    // Simulates what happens when userConfig is not configured — Claude Code
+    // leaves the ${user_config.github_token} template literal unexpanded.
+    // resolveEnv() must filter this out so initGitHubClient gets undefined
+    // and can prompt the user to configure the token.
+    process.env.RALPH_HERO_GITHUB_TOKEN = "${user_config.github_token}";
+    const result = resolveEnvMirror("RALPH_HERO_GITHUB_TOKEN");
+    expect(result).toBeUndefined();
+  });
+});
+
 describe(".mcp.json contract", () => {
   it("should only accept RALPH_-prefixed env vars", () => {
-    // Contract: .mcp.json has no env block — the MCP server inherits
-    // the parent environment. Only RALPH_-prefixed vars are read by
-    // resolveEnv(). This test documents which vars the server accepts.
+    // Contract: .mcp.json env block maps only RALPH_HERO_GITHUB_TOKEN from
+    // userConfig. All other RALPH_* vars are inherited from the parent
+    // environment (settings.local.json). Only RALPH_-prefixed vars are read
+    // by resolveEnv(). This test documents which vars the server accepts.
     const acceptedVars = [
       "RALPH_GH_REPO_TOKEN",
       "RALPH_GH_PROJECT_TOKEN",

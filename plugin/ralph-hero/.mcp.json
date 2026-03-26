@@ -3,7 +3,10 @@
     "ralph-github": {
       "command": "npx",
       "args": ["-y", "ralph-hero-mcp-server@2.5.42"],
-      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+      "cwd": "${CLAUDE_PLUGIN_ROOT}",
+      "env": {
+        "RALPH_HERO_GITHUB_TOKEN": "${user_config.github_token}"
+      }
     }
   }
 }

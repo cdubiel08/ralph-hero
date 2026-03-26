@@ -150,8 +150,8 @@ Add `github_token` as a sensitive userConfig field to `plugin.json` and wire it 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no errors
-- [ ] `npx vitest run src/__tests__/init-config.test.ts` — all tests pass including the two new userConfig delivery tests
+- [x] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no errors
+- [x] `npx vitest run src/__tests__/init-config.test.ts` — all tests pass including the two new userConfig delivery tests
 
 #### Manual Verification:
 - [ ] `cat plugin/ralph-hero/.claude-plugin/plugin.json | python3 -m json.tool` validates cleanly
