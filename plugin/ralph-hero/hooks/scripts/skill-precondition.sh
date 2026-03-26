@@ -24,6 +24,11 @@ read_input > /dev/null
 # Validate environment
 command="${RALPH_COMMAND:-}"
 if [[ -z "$command" ]]; then
+  # Allow if running inside a sub-agent (agent_type present in hook input)
+  agent_type=$(get_agent_type)
+  if [[ -n "$agent_type" ]]; then
+    allow
+  fi
   block "Skill precondition failed: RALPH_COMMAND not set
 
 This hook validates that skills have required context.

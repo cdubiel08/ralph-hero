@@ -31,6 +31,11 @@ get_tool_input() {
   get_field '.tool_input'
 }
 
+# Extract agent_type from hook input (present when firing inside a sub-agent)
+get_agent_type() {
+  get_field '.agent_type'
+}
+
 # Get project root
 get_project_root() {
   echo "${CLAUDE_PROJECT_DIR:-$(pwd)}"
