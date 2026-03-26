@@ -53,7 +53,7 @@
       "description": "PR created, awaiting code review",
       "allowed_transitions": ["Done", "In Progress", "Human Needed"],
       "required_by_commands": [],
-      "produces_for_commands": ["ralph_impl"],
+      "produces_for_commands": ["ralph_impl", "ralph_pr"],
       "requires_human_action": true
     },
     "Human Needed": {
@@ -157,6 +157,21 @@
         "Plan URL posted as comment on ticket",
         "If standalone: ticket moved to Plan in Review",
         "If splitting: children created, ticket moved to In Progress"
+      ]
+    },
+    "ralph_pr": {
+      "description": "Create PR and transition issue to In Review",
+      "valid_input_states": ["In Progress"],
+      "valid_output_states": ["In Review", "Human Needed"],
+      "preconditions": [
+        "Implementation must be complete in worktree",
+        "All plan phases must be implemented",
+        "Branch must be pushed to remote"
+      ],
+      "postconditions": [
+        "PR created via gh pr create",
+        "Ticket moved to In Review",
+        "Worktree preserved for potential follow-up"
       ]
     },
     "ralph_plan_epic": {

@@ -115,6 +115,27 @@ handle_save_issue() {
   fi
 
   local event_type=""
+  # Map actual command:workflowState pairs to event types.
+  # Skills pass workflowState as either a semantic intent (__LOCK__, __COMPLETE__)
+  # or a direct state name. outcome-collector reads from tool_input (pre-resolution),
+  # so the value here is what the skill literally passed — not the resolved state.
+  #
+  # Skill → what it passes (command, workflowState):
+  #   ralph_research: save_issue(command="ralph_research", workflowState="__LOCK__")   → research_started
+  #   ralph_research: save_issue(command="ralph_research", workflowState="__COMPLETE__") → research_completed
+  #   ralph_plan:     save_issue(command="ralph_plan",     workflowState="__LOCK__")   → plan_started
+  #   ralph_plan:     save_issue(command="ralph_plan",     workflowState="__COMPLETE__") → plan_completed
+  #   ralph_review:   save_issue(command="ralph_review",   workflowState=<any>)        → review_completed
+  #   ralph_impl:     save_issue(command="ralph_impl",     workflowState="__LOCK__")   → phase_started
+  #   ralph_impl:     save_issue(command="ralph_impl",     workflowState="__COMPLETE__") → phase_completed
+  #   ralph_pr:       save_issue(command="ralph_pr",       workflowState="In Review")  → pr_completed
+  #                   (ralph_pr passes the direct state "In Review", not __COMPLETE__)
+  #                   (ralph_pr is a registered command in state-resolution.ts COMMAND_ALLOWED_STATES)
+  #   ralph_merge:    save_issue(command="ralph_merge",    workflowState="__COMPLETE__") → merge_completed
+  #
+  # NOTE: ralph_val does NOT call ralph_hero__save_issue. It is a read-only skill that
+  # produces a verdict comment; the integrator handles all state transitions based on
+  # that verdict. No validation_completed event can be emitted here.
   case "${command}:${workflow_state}" in
     ralph_research:__LOCK__)     event_type="research_started" ;;
     ralph_research:__COMPLETE__) event_type="research_completed" ;;
@@ -123,8 +144,7 @@ handle_save_issue() {
     ralph_review:*)              event_type="review_completed" ;;
     ralph_impl:__LOCK__)         event_type="phase_started" ;;
     ralph_impl:__COMPLETE__)     event_type="phase_completed" ;;
-    ralph_val:*)                 event_type="validation_completed" ;;
-    ralph_pr:__COMPLETE__)       event_type="pr_completed" ;;
+    "ralph_pr:In Review")        event_type="pr_completed" ;;
     ralph_merge:__COMPLETE__)    event_type="merge_completed" ;;
     *)                           exit 0 ;;
   esac
