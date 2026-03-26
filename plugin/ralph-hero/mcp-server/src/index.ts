@@ -51,7 +51,10 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
     console.error(
       "[ralph-hero] Error: No GitHub token found.\n" +
         "\n" +
-        "Quick fix — add to .claude/settings.local.json:\n" +
+        "Quick fix — run: claude plugin configure ralph-hero\n" +
+        "This sets RALPH_HERO_GITHUB_TOKEN via the plugin user config.\n" +
+        "\n" +
+        "Alternatively, add to .claude/settings.local.json:\n" +
         "\n" +
         '  {\n' +
         '    "env": {\n' +
