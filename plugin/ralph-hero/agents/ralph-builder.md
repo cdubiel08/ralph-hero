@@ -1,7 +1,7 @@
 ---
 name: ralph-builder
 description: Builder worker - reviews plans and implements code for the full build lifecycle
-tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Agent, TaskList, TaskGet, TaskUpdate, SendMessage, ralph_hero__get_issue, ralph_hero__list_issues, ralph_hero__save_issue, ralph_hero__create_comment, ralph_hero__list_sub_issues
+tools: Read, Write, Edit, Bash, Glob, Grep, Skill, Agent, TaskList, TaskGet, TaskUpdate, SendMessage, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues, mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment, mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
 model: sonnet
 color: yellow
 hooks:
