@@ -70,13 +70,15 @@ The `save_issue` handler flow (relevant path):
 ## Desired End State
 
 ### Verification
-- [ ] When `save_issue` is called with a lock-state target and the issue is already in a lock state, it returns `toolError` with an actionable message (no mutation occurs)
+- [ ] When `save_issue` is called with a lock-state target and the issue is already in a *different* lock state, it returns `toolError` with an actionable message (no mutation occurs)
+- [ ] When `save_issue` is called with a lock-state target and the issue is already in the *same* lock state, it proceeds normally (idempotent re-lock is allowed)
 - [ ] When `save_issue` is called with a lock-state target and the issue is NOT in a lock state, it proceeds normally
 - [ ] When `save_issue` is called with a non-lock-state target, the guard is skipped entirely (no extra API call)
+- [ ] When `save_issue(force=true)` is called, the lock guard is bypassed entirely regardless of the current state
 - [ ] `lock-claim-validator.sh` is deregistered from `hooks.json` (removed from the `ralph_hero__save_issue` PreToolUse matcher)
 - [ ] `specs/issue-lifecycle.md` Section 4 enablement entry for lock claim prevention reflects server-side enforcement
 - [ ] All existing tests continue to pass
-- [ ] New tests cover the lock guard logic: lock blocked, lock allowed, non-lock state bypass
+- [ ] New tests cover the lock guard logic: lock blocked, idempotent same-state re-lock, lock allowed from unlocked state, non-lock state bypass, force override bypass
 
 ## What We're NOT Doing
 
@@ -84,14 +86,13 @@ The `save_issue` handler flow (relevant path):
 - Not adding a lock guard to `batch_update` or `advance_issue` — these tools use dedicated internal helpers and do not accept external lock-state transitions directly
 - Not changing the `pre-ticket-lock-validator.sh` hook on `get_issue` — that advisory context remains valuable for skills that list or pick issues
 - Not refactoring `LOCK_STATES` or `getCurrentFieldValue` — they are correct as-is
-- Not adding a `forceOverride` parameter to `save_issue` — the server-side guard is intentionally strict
 - Not updating any skill prompts to remove `RALPH_CURRENT_STATE` references — that is a separate cleanup
 
 ## Implementation Approach
 
-Phase 1 adds the guard logic. Phase 2 adds tests before Phase 1 lands (TDD: tests written against the extracted pure function). Phase 3 removes the now-redundant hook registration. Phase 4 updates the spec. All four phases are staged for a single PR, with Phase 2 tests verifying Phase 1's behavior.
+Phase 1 adds the guard logic, including the `force: boolean` parameter and same-state idempotency in `isLockConflict`. Phase 2 adds tests before Phase 1 lands (TDD: tests written against the extracted pure function). Phase 3 removes the now-redundant hook registration. Phase 4 updates the spec. All four phases are staged for a single PR, with Phase 2 tests verifying Phase 1's behavior.
 
-The guard is extracted as a pure helper function `isLockConflict(currentState: string | undefined, targetState: string): boolean` in `lib/lock-guard.ts`. This makes it trivially unit-testable without mocking GitHub API calls. The `save_issue` handler calls `getCurrentFieldValue` then passes the result to `isLockConflict`.
+The guard is extracted as a pure helper function `isLockConflict(currentState: string | undefined, targetState: string): boolean` in `lib/lock-guard.ts`. This makes it trivially unit-testable without mocking GitHub API calls. The `save_issue` handler calls `getCurrentFieldValue` then passes the result to `isLockConflict`. The entire guard block is wrapped in `if (!args.force)` so that callers with `force=true` bypass both the `getCurrentFieldValue` call and the conflict check.
 
 ---
 
@@ -111,30 +112,41 @@ Add a live lock conflict check to `save_issue` that fetches the current workflow
 - **acceptance**:
   - [ ] File exists at `plugin/ralph-hero/mcp-server/src/lib/lock-guard.ts`
   - [ ] Exports `function isLockConflict(currentState: string | undefined, targetState: string): boolean`
-  - [ ] Returns `true` when both `currentState` and `targetState` are in `LOCK_STATES` (e.g., current="Research in Progress", target="Plan in Progress")
-  - [ ] Returns `true` when `currentState` is in `LOCK_STATES` and `targetState` is in `LOCK_STATES` (same lock state re-claim also blocked)
+  - [ ] Returns `false` when `currentState === targetState` — same-state re-lock is idempotent and always allowed; this check comes FIRST, before any `LOCK_STATES.includes()` check (e.g., `isLockConflict("In Progress", "In Progress")` returns `false`)
+  - [ ] Returns `true` when `currentState` and `targetState` are both in `LOCK_STATES` AND they differ (e.g., current="Research in Progress", target="Plan in Progress")
   - [ ] Returns `false` when `currentState` is undefined or empty string
   - [ ] Returns `false` when `targetState` is NOT in `LOCK_STATES` (non-lock transitions bypass the guard)
   - [ ] Returns `false` when `currentState` is NOT in `LOCK_STATES` (issue not currently locked)
   - [ ] Imports `LOCK_STATES` from `../lib/workflow-states.js`
   - [ ] Uses `.includes()` for membership checks (no external dependencies beyond workflow-states)
 
-#### Task 1.2: Integrate lock guard into save_issue handler
+#### Task 1.2: Add force parameter to save_issue schema
+- **files**: `plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` (modify)
+- **tdd**: false
+- **complexity**: low
+- **depends_on**: null
+- **acceptance**:
+  - [ ] The `save_issue` Zod schema includes `force: z.boolean().optional().describe("When true, bypass the lock guard and allow writing to any workflow state regardless of current lock status")`
+  - [ ] `force` defaults to `false` when not provided (no behavioral change for existing callers)
+  - [ ] `tsc` compiles without errors after the schema change
+
+#### Task 1.3: Integrate lock guard into save_issue handler
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/lib/lock-guard.ts` (read)
 - **tdd**: false
 - **complexity**: medium
-- **depends_on**: [1.1]
+- **depends_on**: [1.1, 1.2]
 - **acceptance**:
   - [ ] `issue-tools.ts` imports `isLockConflict` from `"../lib/lock-guard.js"`
   - [ ] `issue-tools.ts` imports `getCurrentFieldValue` from `"../lib/helpers.js"` (already imported — verify it's in the import list)
-  - [ ] In the `hasProjectFields` branch of `save_issue`, after `resolveProjectItemId` resolves and ONLY when `resolvedWorkflowState` is in `LOCK_STATES`, the handler calls `getCurrentFieldValue(client, fieldCache, owner, repo, args.number, "Workflow State", projectNumber)` to fetch the current state
+  - [ ] The entire lock guard block is wrapped in `if (!args.force)` as the outermost condition — when `force=true`, neither `getCurrentFieldValue` nor `isLockConflict` is called
+  - [ ] Inside the `!args.force` branch, and ONLY when `resolvedWorkflowState` is in `LOCK_STATES`, the handler calls `getCurrentFieldValue(client, fieldCache, owner, repo, args.number, "Workflow State", projectNumber)` to fetch the current state
   - [ ] The result is passed to `isLockConflict(currentWorkflowState, resolvedWorkflowState)`
-  - [ ] If `isLockConflict` returns `true`, the handler returns `toolError` with a message that includes: the issue number, the current (locked) state, the attempted target state, and guidance to skip this issue and work on a different ticket
+  - [ ] If `isLockConflict` returns `true`, the handler returns `toolError` with a message matching the template: `Issue #NNN is locked in '{currentState}'. Another agent has exclusive ownership.\nUse save_issue with force=true to override, or wait for the lock holder to release.`
   - [ ] If `isLockConflict` returns `false`, execution continues unchanged (no behavior change for non-conflicts)
   - [ ] The `getCurrentFieldValue` call is NOT made when `resolvedWorkflowState` is undefined or not in `LOCK_STATES` (avoid unnecessary API roundtrip)
   - [ ] `tsc` compiles the modified `issue-tools.ts` without errors
 
-**Creates for next phase**: `lib/lock-guard.ts` with exported `isLockConflict` function, and `issue-tools.ts` containing the import and integration pattern (used by Phase 2 structural tests).
+**Creates for next phase**: `lib/lock-guard.ts` with exported `isLockConflict` function, and `issue-tools.ts` containing the `force` parameter, `!args.force` guard, and integration pattern (used by Phase 2 structural tests).
 
 ### Phase Success Criteria
 
@@ -145,6 +157,8 @@ Add a live lock conflict check to `save_issue` that fetches the current workflow
 #### Manual Verification:
 - [ ] `grep -n "isLockConflict" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` — shows the import and call site
 - [ ] `grep -n "getCurrentFieldValue" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` — shows usage in save_issue handler
+- [ ] `grep -n "args.force" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` — shows the force bypass condition
+- [ ] `grep -n "z.boolean" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` — shows force parameter in schema
 
 ---
 
@@ -165,16 +179,18 @@ Write unit tests for `isLockConflict` (pure function tests) and structural tests
   - [ ] File exists at `plugin/ralph-hero/mcp-server/src/__tests__/lock-guard.test.ts`
   - [ ] Imports `isLockConflict` from `"../lib/lock-guard.js"`
   - [ ] Imports `LOCK_STATES` from `"../lib/workflow-states.js"`
-  - [ ] Test: `isLockConflict("Research in Progress", "Plan in Progress")` returns `true` (current locked, target locked)
-  - [ ] Test: `isLockConflict("In Progress", "In Progress")` returns `true` (same lock re-claim blocked)
-  - [ ] Test: `isLockConflict("Plan in Progress", "Research in Progress")` returns `true` (any lock-to-lock blocked)
+  - [ ] Test: `isLockConflict("Research in Progress", "Plan in Progress")` returns `true` (current locked, target different lock)
+  - [ ] Test: `isLockConflict("Plan in Progress", "Research in Progress")` returns `true` (any cross-lock transition blocked)
+  - [ ] Test: `isLockConflict("In Progress", "Research in Progress")` returns `true` (cross-lock transition blocked)
+  - [ ] Test: `isLockConflict("In Progress", "In Progress")` returns `false` (same-state re-lock is idempotent — ALLOWED)
+  - [ ] Test: `isLockConflict("Research in Progress", "Research in Progress")` returns `false` (same-state re-lock is idempotent — ALLOWED)
+  - [ ] Test: `isLockConflict("Plan in Progress", "Plan in Progress")` returns `false` (same-state re-lock is idempotent — ALLOWED)
   - [ ] Test: `isLockConflict(undefined, "In Progress")` returns `false` (unknown current state allows claim)
   - [ ] Test: `isLockConflict("", "In Progress")` returns `false` (empty current state allows claim)
   - [ ] Test: `isLockConflict("Research Needed", "Research in Progress")` returns `false` (non-locked current state allows acquisition)
   - [ ] Test: `isLockConflict("Ready for Plan", "Plan in Progress")` returns `false` (non-locked current state allows acquisition)
   - [ ] Test: `isLockConflict("Research in Progress", "Ready for Plan")` returns `false` (non-lock target bypasses guard)
   - [ ] Test: `isLockConflict("In Progress", "Done")` returns `false` (non-lock target bypasses guard)
-  - [ ] Test: All `LOCK_STATES` are blocked when current is any lock state (parametric test or explicit checks for all 3 lock states)
   - [ ] All tests pass via `npm test`
 
 #### Task 2.2: Structural tests for save_issue lock guard integration
@@ -185,9 +201,11 @@ Write unit tests for `isLockConflict` (pure function tests) and structural tests
 - **acceptance**:
   - [ ] A new `describe("save_issue lock guard integration")` block is added to `save-issue.test.ts`
   - [ ] Test: `issueToolsSrc` contains `"isLockConflict"` (verifies import and call site present)
-  - [ ] Test: `issueToolsSrc` contains `"getCurrentFieldValue"` in the context of the lock guard (verifies the API call is present)
-  - [ ] Test: `issueToolsSrc` contains `"already in a lock state"` or similar wording from the `toolError` message (verifies error message is present)
+  - [ ] Test: `issueToolsSrc` contains `"getCurrentFieldValue"` (verifies the API call is present in the handler)
+  - [ ] Test: `issueToolsSrc` contains `"force=true to override"` or the exact error message template wording (verifies error message includes force override guidance)
   - [ ] Test: `issueToolsSrc` contains `import { isLockConflict }` (verifies the import from lock-guard)
+  - [ ] Test: `issueToolsSrc` contains `"!args.force"` or `"args.force"` (verifies the outermost force bypass condition is present)
+  - [ ] Test: `issueToolsSrc` contains `z.boolean` in the save_issue schema section (verifies force parameter is in the schema)
   - [ ] All new tests pass via `npm test`
 
 **Creates for next phase**: No artifacts. Phase 3 is a hook deregistration that proceeds independently once Phase 1+2 are complete.
@@ -199,7 +217,7 @@ Write unit tests for `isLockConflict` (pure function tests) and structural tests
 
 #### Manual Verification:
 - [ ] `npx vitest run src/__tests__/lock-guard.test.ts` — all tests pass individually
-- [ ] Test count for `lock-guard.test.ts` shows at least 9 tests
+- [ ] Test count for `lock-guard.test.ts` shows at least 12 tests (including 3 same-state idempotency cases)
 
 ---
 
