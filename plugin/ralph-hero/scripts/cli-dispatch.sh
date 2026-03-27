@@ -2,6 +2,10 @@
 # cli-dispatch.sh — Shared dispatch functions for Ralph CLI
 # Modes: headless (default), interactive (-i), quick (-q)
 
+# Source shared env resolution
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/resolve-env.sh"
+
 MCP_VERSION="${RALPH_MCP_VERSION:-latest}"
 
 parse_mode() {
@@ -170,6 +174,8 @@ run_quick() {
         echo "   or: go install github.com/f/mcptools/cmd/mcptools@latest"
         exit 1
     fi
+    # Bridge env vars from settings files for direct MCP calls
+    ralph_bridge_env
     local raw
     raw=$(mcp call "$tool" --params "$params" \
         npx -y "ralph-hero-mcp-server@${MCP_VERSION}") || {

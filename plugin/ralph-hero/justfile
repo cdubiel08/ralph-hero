@@ -582,6 +582,9 @@ _mcp_call tool params:
         echo "   or: go install github.com/f/mcptools/cmd/mcptools@latest"
         exit 1
     fi
+    # Bridge env vars from settings hierarchy
+    source "{{justfile_directory()}}/scripts/resolve-env.sh"
+    ralph_bridge_env
     raw=$(mcp call "{{tool}}" --params '{{params}}' \
         npx -y "ralph-hero-mcp-server@${RALPH_MCP_VERSION:-latest}")
     if command -v jq &>/dev/null; then

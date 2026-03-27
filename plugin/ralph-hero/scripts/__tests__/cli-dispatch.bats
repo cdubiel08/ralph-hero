@@ -106,3 +106,16 @@ setup() {
     parse_mode
     [ "$TIMEOUT" = "15m" ]
 }
+
+# --- Env bridging ---
+
+@test "run_quick calls ralph_bridge_env before mcp" {
+    bridged=false
+    ralph_bridge_env() { bridged=true; }
+    mcp() { echo '{"content":[{"text":"ok"}]}'; }
+    export -f mcp
+    QUICK_TOOL="ralph_hero__pipeline_dashboard"
+    QUICK_PARAMS='{}'
+    run_quick "$QUICK_TOOL" "$QUICK_PARAMS"
+    [ "$bridged" = "true" ]
+}
