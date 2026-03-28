@@ -225,75 +225,51 @@ doctor:
     #!/usr/bin/env bash
     set -eu
     errors=0; warnings=0
-    # Read env var from settings.local.json (repo-local first, then global HOME)
-    # Optional second arg: explicit settings file path (skips auto-discovery)
-    read_settings_env() {
-        local var="$1"
-        local settings_file="${2:-}"
-        # If explicit path given, only check that path
-        if [ -n "$settings_file" ]; then
-            if [ ! -f "$settings_file" ]; then return 1; fi
-            local val
-            val=$(node -e "
-                const s = JSON.parse(require('fs').readFileSync('$settings_file','utf8'));
-                const v = (s.env || {})['$var'] || '';
-                if (!v || v.startsWith('\${')) process.exit(1);
-                process.stdout.write(v);
-            " 2>/dev/null) || return 1
-            echo "$val"
-            return 0
-        fi
-        # No explicit path — try all known locations
-        local paths=()
-        local repo_root
-        repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
-        if [ -n "$repo_root" ] && [ -f "$repo_root/.claude/settings.local.json" ]; then
-            paths+=("$repo_root/.claude/settings.local.json")
-        fi
-        if [ -f "$HOME/.claude/settings.local.json" ]; then
-            paths+=("$HOME/.claude/settings.local.json")
-        fi
-        for sf in ${paths[@]+"${paths[@]}"}; do
-            local val
-            val=$(node -e "
-                const s = JSON.parse(require('fs').readFileSync('$sf','utf8'));
-                const v = (s.env || {})['$var'] || '';
-                if (!v || v.startsWith('\${')) process.exit(1);
-                process.stdout.write(v);
-            " 2>/dev/null) || continue
-            echo "$val"
-            return 0
-        done
-        return 1
-    }
+    # Source shared env resolution
+    source "{{justfile_directory()}}/scripts/resolve-env.sh"
     resolved_token=""
     resolved_owner=""
     resolved_project=""
     echo "=== Ralph Doctor ==="
     echo ""
     echo "--- Environment Variables ---"
-    # Resolve repo root once for the loop (no 'local' — we're at recipe scope, not in a function)
     _repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    _scope=$(ralph_detect_scope)
+    if [ "$_scope" != "unknown" ]; then
+        echo "  Plugin scope: $_scope"
+    fi
     for var in RALPH_HERO_GITHUB_TOKEN RALPH_GH_OWNER RALPH_GH_PROJECT_NUMBER; do
-        val="${!var:-}"
+        val=""
         source_label=""
-        if [ -n "$val" ]; then
+        # Check shell env first
+        shell_val="${!var:-}"
+        if [ -n "$shell_val" ]; then
+            val="$shell_val"
             source_label=" (from shell env)"
-        else
-            # Try repo-local settings first, then global
-            if [ -n "$_repo_root" ] && [ -f "$_repo_root/.claude/settings.local.json" ]; then
-                val=$(read_settings_env "$var" "$_repo_root/.claude/settings.local.json") && source_label=" (from .claude/settings.local.json)" || val=""
-            fi
-            if [ -z "$val" ] && [ -f "$HOME/.claude/settings.local.json" ]; then
-                val=$(read_settings_env "$var" "$HOME/.claude/settings.local.json") && source_label=" (from ~/.claude/settings.local.json)" || val=""
-            fi
+        fi
+        # Check settings hierarchy with source tracking
+        if [ -z "$val" ] && [ -n "$_repo_root" ] && [ -f "$_repo_root/.claude/settings.local.json" ]; then
+            val=$(_ralph_read_json_env "$var" "$_repo_root/.claude/settings.local.json") && source_label=" (from .claude/settings.local.json)" || val=""
+        fi
+        if [ -z "$val" ] && [ -n "$_repo_root" ] && [ -f "$_repo_root/.claude/settings.json" ]; then
+            val=$(_ralph_read_json_env "$var" "$_repo_root/.claude/settings.json") && source_label=" (from .claude/settings.json)" || val=""
+        fi
+        if [ -z "$val" ] && [ -f "$HOME/.claude/settings.json" ]; then
+            val=$(_ralph_read_json_env "$var" "$HOME/.claude/settings.json") && source_label=" (from ~/.claude/settings.json)" || val=""
         fi
         if [ -z "$val" ]; then
             echo "FAIL: $var — not found in:"
             echo "      - shell environment"
-            if [ -n "$_repo_root" ]; then echo "      - .claude/settings.local.json (repo)"; fi
-            echo "      - ~/.claude/settings.local.json (global)"
+            if [ -n "$_repo_root" ]; then
+                echo "      - .claude/settings.local.json (repo)"
+                echo "      - .claude/settings.json (repo)"
+            fi
+            echo "      - ~/.claude/settings.json (global)"
             errors=$((errors + 1))
+            # Scope-aware hint
+            if [ "$_scope" = "user" ]; then
+                echo "      Hint: plugin is user-scoped — add to ~/.claude/settings.json for cross-repo use"
+            fi
         else
             if [ "$var" = "RALPH_HERO_GITHUB_TOKEN" ]; then
                 echo "  OK: $var (set, redacted)$source_label"
@@ -301,6 +277,11 @@ doctor:
             elif [ "$var" = "RALPH_GH_OWNER" ]; then
                 echo "  OK: $var = ${val}$source_label"
                 resolved_owner="$val"
+                # Scope mismatch warning
+                if [ "$_scope" = "user" ] && [[ "$source_label" == *"settings.local.json"* ]]; then
+                    echo "  WARN: user-scoped plugin but config in project-local file — CLI won't work outside this repo"
+                    warnings=$((warnings + 1))
+                fi
             elif [ "$var" = "RALPH_GH_PROJECT_NUMBER" ]; then
                 echo "  OK: $var = ${val}$source_label"
                 resolved_project="$val"
@@ -582,6 +563,9 @@ _mcp_call tool params:
         echo "   or: go install github.com/f/mcptools/cmd/mcptools@latest"
         exit 1
     fi
+    # Bridge env vars from settings hierarchy
+    source "{{justfile_directory()}}/scripts/resolve-env.sh"
+    ralph_bridge_env
     raw=$(mcp call "{{tool}}" --params '{{params}}' \
         npx -y "ralph-hero-mcp-server@${RALPH_MCP_VERSION:-latest}")
     if command -v jq &>/dev/null; then

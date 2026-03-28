@@ -129,14 +129,19 @@ Two separate caches serve different purposes:
 
 - **`@octokit/graphql` v9 reserves `query`, `method`, and `url`** as option keys. Never use these as GraphQL variable names.
 - **ESM module system**: All internal imports require `.js` extensions (e.g., `import { foo } from "./bar.js"`). The project uses `"type": "module"` with `"module": "NodeNext"`.
-- **`resolveEnv()` pattern**: The MCP server inherits env vars from Claude Code's process (set via `settings.local.json`). `resolveEnv()` in `index.ts` filters out unexpanded `${VAR}` literals that may appear when vars are unset. The `.mcp.json` has no `env` block — all configuration flows through `settings.local.json`.
+- **`resolveEnv()` pattern**: The MCP server inherits env vars from Claude Code's process. `resolveEnv()` in `index.ts` filters out unexpanded `${VAR}` literals that may appear when vars are unset. The `.mcp.json` has no `env` block — configuration flows through Claude Code's settings files (see Environment Variables below).
 - **Split-owner support**: Repo and project can have different owners. `resolveProjectOwner()` handles this. `fetchProjectForCache()` tries both `user` and `organization` GraphQL types.
 - **Aliased GraphQL mutations**: Bulk operations (like `batch_update`) use GraphQL aliases (`m0:`, `m1:`, ...) to batch multiple mutations in a single request.
 - **mcptools args normalization**: `index.ts` patches `validateToolInput` to normalize `undefined` args to `{}` because mcptools 0.7.1 strips empty `{}` params.
 
 ## Environment Variables
 
-Set in `.claude/settings.local.json` (gitignored) under `"env"`:
+The config file location depends on plugin install scope (detected from `~/.claude/plugins/installed_plugins.json`):
+
+- **Project-scoped install**: Set all env vars in `<project>/.claude/settings.local.json` (gitignored)
+- **User-scoped install**: Set all env vars in `~/.claude/settings.json` — this makes the CLI work from any directory
+
+The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local.json` → repo `settings.json` → `~/.claude/settings.json`.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -150,7 +155,7 @@ Set in `.claude/settings.local.json` (gitignored) under `"env"`:
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and register debug tools |
 
-**Do NOT put tokens in `.mcp.json`** — all env vars should be set in `.claude/settings.local.json` (gitignored). The `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
+**Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
 
 ## GitHub Actions Workflows
 

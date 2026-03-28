@@ -555,7 +555,8 @@ export function resolveConfig(
   const repo = args.repo || client.config.repo;
   if (!owner)
     throw new Error(
-      "owner is required (set RALPH_GH_OWNER env var or pass explicitly)",
+      "owner is required. Set RALPH_GH_OWNER in ~/.claude/settings.json (user-scoped) " +
+      "or .claude/settings.local.json (project-scoped), or pass owner explicitly.",
     );
   if (!repo)
     throw new Error(
@@ -579,7 +580,8 @@ export function resolveConfigOptionalRepo(
   const owner = args.owner || client.config.owner;
   if (!owner)
     throw new Error(
-      "owner is required (set RALPH_GH_OWNER env var or pass explicitly)",
+      "owner is required. Set RALPH_GH_OWNER in ~/.claude/settings.json (user-scoped) " +
+      "or .claude/settings.local.json (project-scoped), or pass owner explicitly.",
     );
   const repo = args.repo || client.config.repo;
   return { owner, repo };
