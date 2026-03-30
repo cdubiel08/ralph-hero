@@ -27,9 +27,13 @@ portable_timeout() {
         seconds="$duration"
     fi
     perl -e '
-        $SIG{ALRM} = sub { exit 142 };
-        alarm(shift @ARGV);
-        exec @ARGV or die "exec failed: $!";
+        my $secs = shift @ARGV;
+        my $pid = fork // die "fork: $!";
+        if ($pid == 0) { exec @ARGV; die "exec: $!" }
+        $SIG{ALRM} = sub { kill "TERM", $pid; kill "KILL", $pid; exit 142 };
+        alarm($secs);
+        waitpid($pid, 0);
+        exit($? >> 8);
     ' -- "$seconds" "$@"
     local rc=$?
     if [ "$rc" -eq 142 ]; then
