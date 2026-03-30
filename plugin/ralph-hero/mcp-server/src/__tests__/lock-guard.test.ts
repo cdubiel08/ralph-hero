@@ -18,23 +18,37 @@ describe("isLockConflict", () => {
     expect(isLockConflict("Research in Progress", "Plan in Progress")).toBe(true);
   });
 
-  it("returns true when current is In Progress and target is In Progress (same lock re-claim)", () => {
-    expect(isLockConflict("In Progress", "In Progress")).toBe(true);
-  });
-
   it("returns true when current is Plan in Progress and target is Research in Progress", () => {
     expect(isLockConflict("Plan in Progress", "Research in Progress")).toBe(true);
   });
 
-  it("returns true for all lock-to-lock combinations (parametric)", () => {
+  it("returns true for all cross-lock combinations (parametric)", () => {
     for (const current of LOCK_STATES) {
       for (const target of LOCK_STATES) {
-        expect(
-          isLockConflict(current, target),
-          `expected conflict: current="${current}", target="${target}"`,
-        ).toBe(true);
+        if (current !== target) {
+          expect(
+            isLockConflict(current, target),
+            `expected conflict: current="${current}", target="${target}"`,
+          ).toBe(true);
+        }
       }
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Same-state idempotency — should return false (re-claim is safe)
+  // -------------------------------------------------------------------------
+
+  it("returns false when current and target are both In Progress (idempotent re-claim)", () => {
+    expect(isLockConflict("In Progress", "In Progress")).toBe(false);
+  });
+
+  it("returns false when current and target are both Research in Progress (idempotent re-claim)", () => {
+    expect(isLockConflict("Research in Progress", "Research in Progress")).toBe(false);
+  });
+
+  it("returns false when current and target are both Plan in Progress (idempotent re-claim)", () => {
+    expect(isLockConflict("Plan in Progress", "Plan in Progress")).toBe(false);
   });
 
   // -------------------------------------------------------------------------

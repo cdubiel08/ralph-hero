@@ -414,9 +414,18 @@ describe("save_issue lock guard integration", () => {
 
   it("returns toolError with actionable message when lock conflict detected", () => {
     expect(issueToolsSrc).toContain("already in a lock state");
+    expect(issueToolsSrc).toContain("force=true to override");
   });
 
   it("guard is conditional on resolvedWorkflowState being a lock state", () => {
     expect(issueToolsSrc).toContain("LOCK_STATES.includes(resolvedWorkflowState)");
+  });
+
+  it("includes force parameter in save_issue schema", () => {
+    expect(issueToolsSrc).toContain("force: z.boolean()");
+  });
+
+  it("guard is bypassed when args.force is true", () => {
+    expect(issueToolsSrc).toContain("!args.force");
   });
 });

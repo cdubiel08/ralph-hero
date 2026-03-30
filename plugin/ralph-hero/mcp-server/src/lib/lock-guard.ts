@@ -37,5 +37,8 @@ export function isLockConflict(
   if (!LOCK_STATES.includes(targetState)) {
     return false;
   }
+  if (currentState === targetState) {
+    return false; // idempotent re-claim: same agent re-locking is safe
+  }
   return LOCK_STATES.includes(currentState);
 }

@@ -1213,6 +1213,8 @@ export function registerIssueTools(
         .describe("Iteration/sprint title (e.g., 'Sprint 1'), @current, @next, or null to clear."),
       command: z.string().optional()
         .describe("Ralph command for semantic intent resolution (e.g., 'ralph_impl'). Required when workflowState is a semantic intent."),
+      force: z.boolean().optional()
+        .describe("Bypass lock guard. Use only for recovery when an agent crash left an issue stuck in a lock state."),
     },
     async (args) => {
       try {
@@ -1422,7 +1424,7 @@ export function registerIssueTools(
           // Server-side lock guard: prevent two agents from claiming the same
           // lock state simultaneously. Only fires when the caller is trying to
           // SET a lock state — non-lock transitions skip this check entirely.
-          if (resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
+          if (!args.force && resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
             const currentWorkflowState = await getCurrentFieldValue(
               client, fieldCache, owner, repo, args.number, "Workflow State", projectNumber,
             );
@@ -1431,7 +1433,7 @@ export function registerIssueTools(
                 `Issue #${args.number} is already in a lock state ("${currentWorkflowState}") ` +
                 `and cannot be claimed as "${resolvedWorkflowState}". ` +
                 `Another agent is actively working on this issue. ` +
-                `Skip this issue and work on a different ticket.`,
+                `Use save_issue with force=true to override, or wait for the lock holder to release.`,
               );
             }
           }
