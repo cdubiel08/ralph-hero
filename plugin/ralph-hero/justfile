@@ -311,6 +311,15 @@ doctor:
         echo "WARN: claude CLI not found -- LLM-powered recipes unavailable"
         warnings=$((warnings + 1))
     fi
+    if command -v timeout &>/dev/null; then
+        echo "  OK: timeout ($(command -v timeout))"
+    elif command -v perl &>/dev/null; then
+        echo "WARN: timeout not found — using perl fallback for macOS compatibility"
+        warnings=$((warnings + 1))
+    else
+        echo "FAIL: timeout not found and perl not available — headless commands will fail"
+        errors=$((errors + 1))
+    fi
     echo ""
     echo "--- Plugin Files ---"
     if [ -f .claude-plugin/plugin.json ]; then
@@ -528,13 +537,41 @@ quick-draft title priority="" estimate="" state="Backlog":
 _run_skill skill issue budget timeout:
     #!/usr/bin/env bash
     set -eu
+    # Portable timeout — falls back to perl on macOS where GNU timeout is unavailable
+    portable_timeout() {
+        local duration="$1"; shift
+        if command -v timeout &>/dev/null; then
+            timeout "$duration" "$@"
+            return $?
+        fi
+        local seconds
+        if [[ "$duration" =~ ^([0-9]+)m$ ]]; then
+            seconds=$(( ${BASH_REMATCH[1]} * 60 ))
+        else
+            seconds="$duration"
+        fi
+        perl -e '
+            my $secs = shift @ARGV;
+            my $pid = fork // die "fork: $!";
+            if ($pid == 0) { exec @ARGV; die "exec: $!" }
+            $SIG{ALRM} = sub { kill "TERM", $pid; kill "KILL", $pid; exit 142 };
+            alarm($secs);
+            waitpid($pid, 0);
+            exit($? >> 8);
+        ' -- "$seconds" "$@"
+        local rc=$?
+        if [ "$rc" -eq 142 ]; then
+            return 124
+        fi
+        return "$rc"
+    }
     if [ -n "{{issue}}" ]; then
         cmd="/ralph-hero:{{skill}} {{issue}}"
     else
         cmd="/ralph-hero:{{skill}}"
     fi
     echo ">>> Running: $cmd (budget: \${{budget}}, timeout: {{timeout}})"
-    if timeout "{{timeout}}" claude -p "$cmd" \
+    if portable_timeout "{{timeout}}" claude -p "$cmd" \
         --max-budget-usd "{{budget}}" \
         --dangerously-skip-permissions \
         2>&1; then

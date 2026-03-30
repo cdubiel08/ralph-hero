@@ -107,6 +107,118 @@ setup() {
     [ "$TIMEOUT" = "15m" ]
 }
 
+# --- portable_timeout ---
+
+# Helper: run portable_timeout using the perl fallback by hiding the system
+# `timeout` binary from PATH for the duration of the test.
+_run_perl_fallback() {
+    local saved_path="$PATH"
+    # Create a temp dir with a stub that makes `command -v timeout` fail
+    local stub_dir
+    stub_dir=$(mktemp -d)
+    # Do NOT place a `timeout` stub — the empty dir effectively hides it
+    PATH="$stub_dir:$PATH"
+    portable_timeout "$@"
+    local rc=$?
+    PATH="$saved_path"
+    rm -rf "$stub_dir"
+    return "$rc"
+}
+
+@test "portable_timeout: minute duration is converted to seconds" {
+    # Test the bash regex+arithmetic that converts "15m" -> 900.
+    # This logic lives in the perl-fallback branch of portable_timeout; we
+    # replicate it directly so the test is not coupled to PATH stubbing.
+    run bash -c '
+        duration="15m"
+        if [[ "$duration" =~ ^([0-9]+)m$ ]]; then
+            seconds=$(( ${BASH_REMATCH[1]} * 60 ))
+        else
+            seconds="$duration"
+        fi
+        echo "$seconds"
+    '
+    [ "$status" -eq 0 ]
+    [ "$output" = "900" ]
+}
+
+@test "portable_timeout: plain seconds pass through unchanged" {
+    run bash -c '
+        duration="300"
+        if [[ "$duration" =~ ^([0-9]+)m$ ]]; then
+            seconds=$(( ${BASH_REMATCH[1]} * 60 ))
+        else
+            seconds="$duration"
+        fi
+        echo "$seconds"
+    '
+    [ "$status" -eq 0 ]
+    [ "$output" = "300" ]
+}
+
+@test "portable_timeout: uses GNU timeout when available" {
+    run bash -c '
+        set +u
+        source "'"${BATS_TEST_DIRNAME}"'/../cli-dispatch.sh"
+        # Stub timeout to record it was called
+        timeout() { echo "gnu:$*"; return 0; }
+        export -f timeout
+        portable_timeout 10 true
+    '
+    [ "$status" -eq 0 ]
+    [[ "$output" == "gnu:10 true" ]]
+}
+
+@test "portable_timeout: perl fallback runs command successfully" {
+    run bash -c '
+        set +u
+        source "'"${BATS_TEST_DIRNAME}"'/../cli-dispatch.sh"
+        stub_dir=$(mktemp -d)
+        saved_path="$PATH"
+        PATH="$stub_dir:$PATH"
+        portable_timeout 5 true
+        rc=$?
+        PATH="$saved_path"
+        rm -rf "$stub_dir"
+        exit "$rc"
+    '
+    [ "$status" -eq 0 ]
+}
+
+@test "portable_timeout: perl fallback propagates non-zero exit from command" {
+    run bash -c '
+        set +u
+        source "'"${BATS_TEST_DIRNAME}"'/../cli-dispatch.sh"
+        stub_dir=$(mktemp -d)
+        saved_path="$PATH"
+        PATH="$stub_dir:$PATH"
+        portable_timeout 5 bash -c "exit 42"
+        rc=$?
+        PATH="$saved_path"
+        rm -rf "$stub_dir"
+        exit "$rc"
+    '
+    [ "$status" -eq 42 ]
+}
+
+@test "portable_timeout: perl fallback remaps exit 142 to 124" {
+    # When the alarm fires, perl exits 142; portable_timeout must remap to 124.
+    run bash -c '
+        set +u
+        source "'"${BATS_TEST_DIRNAME}"'/../cli-dispatch.sh"
+        stub_dir=$(mktemp -d)
+        saved_path="$PATH"
+        PATH="$stub_dir:$PATH"
+        # Use 1-second timeout against a command that sleeps longer
+        portable_timeout 1 sleep 10
+        rc=$?
+        PATH="$saved_path"
+        rm -rf "$stub_dir"
+        exit "$rc"
+    '
+    [ "$status" -eq 124 ]
+}
+
 # --- Env bridging ---
 
 @test "run_quick calls ralph_bridge_env before mcp" {

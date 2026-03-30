@@ -13,6 +13,35 @@
 
 set -e
 
+# Portable timeout (mirrors cli-dispatch.sh — kept inline because this script runs standalone)
+portable_timeout() {
+    local duration="$1"; shift
+    if command -v timeout &>/dev/null; then
+        timeout "$duration" "$@"
+        return $?
+    fi
+    local seconds
+    if [[ "$duration" =~ ^([0-9]+)m$ ]]; then
+        seconds=$(( ${BASH_REMATCH[1]} * 60 ))
+    else
+        seconds="$duration"
+    fi
+    perl -e '
+        my $secs = shift @ARGV;
+        my $pid = fork // die "fork: $!";
+        if ($pid == 0) { exec @ARGV; die "exec: $!" }
+        $SIG{ALRM} = sub { kill "TERM", $pid; kill "KILL", $pid; exit 142 };
+        alarm($secs);
+        waitpid($pid, 0);
+        exit($? >> 8);
+    ' -- "$seconds" "$@"
+    local rc=$?
+    if [ "$rc" -eq 142 ]; then
+        return 124
+    fi
+    return "$rc"
+}
+
 ISSUE_NUMBER=""
 BUDGET="${RALPH_BUDGET:-10.00}"
 for arg in "$@"; do
@@ -51,7 +80,7 @@ echo ">>> Running: $COMMAND"
 echo ">>> Timeout: $TIMEOUT"
 echo ""
 
-timeout "$TIMEOUT" claude -p "$COMMAND" --max-budget-usd "$BUDGET" --dangerously-skip-permissions 2>&1 || {
+portable_timeout "$TIMEOUT" claude -p "$COMMAND" --max-budget-usd "$BUDGET" --dangerously-skip-permissions 2>&1 || {
     exit_code=$?
     if [ $exit_code -eq 124 ]; then
         echo ">>> Team orchestrator timed out after $TIMEOUT"

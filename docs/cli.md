@@ -17,12 +17,17 @@ just doctor
 | Category | What it checks |
 |----------|---------------|
 | Environment Variables | `RALPH_HERO_GITHUB_TOKEN`, `RALPH_GH_OWNER`, `RALPH_GH_PROJECT_NUMBER` are set |
-| Dependencies | `just`, `npx`, `node` are installed |
+| Dependencies | `just`, `npx`, `node`, `timeout` (or `perl` on macOS) are installed |
 | Optional Dependencies | `mcp` (mcptools) for quick-* recipes, `claude` CLI for LLM-powered recipes |
 | Plugin Files | `.claude-plugin/plugin.json` and `.mcp.json` exist and are valid JSON |
 | API Health | Calls `ralph_hero__health_check` via mcptools (skipped if mcptools or token unavailable) |
 
 Exits with code 1 if any errors are found. Warnings (missing optional dependencies) do not cause a non-zero exit.
+
+> **macOS note:** `timeout` is not available in the default macOS BSD userland. Ralph uses a `perl`-based
+> fallback (pre-installed on all macOS versions, Monterey+) so headless commands continue to work without
+> `brew install coreutils`. Run `just doctor` to verify your environment — it will report `OK` when GNU
+> `timeout` is present and `WARN` when the perl fallback is active.
 
 ## Quick Actions
 
