@@ -121,7 +121,7 @@ if [ $# -gt 0 ]; then
     case "$_recipe" in
         -*) ;;  # flags pass through to just
         *)
-            _recipes=$(just --justfile "$RALPH_JUSTFILE" --summary 2>/dev/null)
+            _recipes=$(just --justfile "$RALPH_JUSTFILE" --working-directory "$(pwd)" --summary 2>/dev/null)
             if ! echo "$_recipes" | tr ' ' '\n' | grep -qx "$_recipe"; then
                 # Try prefix match (e.g., "isue" → "issue") — try 2-char then 3-char prefix
                 _suggestion=$(echo "$_recipes" | tr ' ' '\n' | grep "^${_recipe:0:2}" | head -1 || true)
@@ -144,4 +144,4 @@ if [ $# -gt 0 ]; then
     esac
 fi
 
-exec just --justfile "$RALPH_JUSTFILE" "$@"
+exec just --justfile "$RALPH_JUSTFILE" --working-directory "$(pwd)" "$@"
