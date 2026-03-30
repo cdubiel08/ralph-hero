@@ -44,6 +44,7 @@ import {
   resolveIterationId,
 } from "../lib/helpers.js";
 import { lookupRepo, mergeDefaults } from "../lib/repo-registry.js";
+import { isLockConflict } from "../lib/lock-guard.js";
 
 // ---------------------------------------------------------------------------
 // Register issue tools
@@ -1212,6 +1213,8 @@ export function registerIssueTools(
         .describe("Iteration/sprint title (e.g., 'Sprint 1'), @current, @next, or null to clear."),
       command: z.string().optional()
         .describe("Ralph command for semantic intent resolution (e.g., 'ralph_impl'). Required when workflowState is a semantic intent."),
+      force: z.boolean().optional()
+        .describe("Bypass lock guard. Use only for recovery when an agent crash left an issue stuck in a lock state."),
     },
     async (args) => {
       try {
@@ -1416,6 +1419,23 @@ export function registerIssueTools(
           const projectId = fieldCache.getProjectId(projectNumber);
           if (!projectId) {
             return toolError("Could not resolve project ID");
+          }
+
+          // Server-side lock guard: prevent two agents from claiming the same
+          // lock state simultaneously. Only fires when the caller is trying to
+          // SET a lock state — non-lock transitions skip this check entirely.
+          if (!args.force && resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
+            const currentWorkflowState = await getCurrentFieldValue(
+              client, fieldCache, owner, repo, args.number, "Workflow State", projectNumber,
+            );
+            if (isLockConflict(currentWorkflowState, resolvedWorkflowState)) {
+              return toolError(
+                `Issue #${args.number} is already in a lock state ("${currentWorkflowState}") ` +
+                `and cannot be claimed as "${resolvedWorkflowState}". ` +
+                `Another agent is actively working on this issue. ` +
+                `Use save_issue with force=true to override, or wait for the lock holder to release.`,
+              );
+            }
           }
 
           // Collect field updates for aliased batch mutation
