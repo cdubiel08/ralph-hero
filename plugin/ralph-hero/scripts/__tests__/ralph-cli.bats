@@ -57,3 +57,29 @@ setup() {
     [ "$status" -ne 0 ]
     [[ "$output" =~ "not found" ]]
 }
+
+@test "ralph cli passes --working-directory to just" {
+    # Create a fake just that records its args and exits cleanly
+    local fake_just
+    fake_just=$(mktemp)
+    chmod +x "$fake_just"
+    cat > "$fake_just" <<'SH'
+#!/usr/bin/env bash
+echo "ARGS: $*"
+# Simulate --summary sub-command so pre-flight probe succeeds
+if [[ "$*" == *"--summary"* ]]; then echo "status"; fi
+exit 0
+SH
+    PATH_ORIG="$PATH"
+    # Inject fake just at front of PATH
+    local fake_bin
+    fake_bin=$(mktemp -d)
+    cp "$fake_just" "$fake_bin/just"
+    export PATH="$fake_bin:$PATH"
+
+    run "$RALPH_CLI" status
+    export PATH="$PATH_ORIG"
+    rm -rf "$fake_bin" "$fake_just"
+
+    [[ "$output" =~ "--working-directory" ]]
+}

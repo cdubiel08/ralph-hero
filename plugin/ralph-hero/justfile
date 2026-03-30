@@ -185,7 +185,7 @@ report *args:
 # Multi-agent team coordinator - spawns specialist workers
 [group('orchestrate')]
 team issue="" budget="10.00" timeout="30m":
-    RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" ./scripts/ralph-team-loop.sh {{issue}}
+    RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" "{{justfile_directory()}}"/scripts/ralph-team-loop.sh {{issue}}
 
 # Tree-expansion orchestrator - drives issue through full lifecycle
 [group('orchestrate')]
@@ -206,7 +206,7 @@ loop mode="all" review="skip" split="auto" hygiene="auto" budget="5.00" timeout=
     args=""
     if [ "{{mode}}" != "all" ]; then args="--{{mode}}-only"; fi
     args="$args --review={{review}} --split={{split}} --hygiene={{hygiene}}"
-    RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" ./scripts/ralph-loop.sh $args
+    RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" "{{justfile_directory()}}"/scripts/ralph-loop.sh $args
 
 # One-time project setup - create GitHub Project V2 with required fields
 [group('setup')]
