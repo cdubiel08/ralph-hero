@@ -58,10 +58,11 @@ setup() {
     [[ "$output" =~ "not found" ]]
 }
 
-@test "ralph cli passes --working-directory to just" {
+@test "ralph cli passes --working-directory with the user's CWD to just" {
     # Create a fake just that records its args and exits cleanly
-    local fake_just
+    local fake_just fake_bin
     fake_just=$(mktemp)
+    fake_bin=$(mktemp -d)
     chmod +x "$fake_just"
     cat > "$fake_just" <<'SH'
 #!/usr/bin/env bash
@@ -70,16 +71,21 @@ echo "ARGS: $*"
 if [[ "$*" == *"--summary"* ]]; then echo "status"; fi
 exit 0
 SH
-    PATH_ORIG="$PATH"
-    # Inject fake just at front of PATH
-    local fake_bin
-    fake_bin=$(mktemp -d)
     cp "$fake_just" "$fake_bin/just"
-    export PATH="$fake_bin:$PATH"
 
-    run "$RALPH_CLI" status
-    export PATH="$PATH_ORIG"
-    rm -rf "$fake_bin" "$fake_just"
+    # Capture the user's CWD before BATS captures the run
+    local expected_cwd
+    expected_cwd="$(pwd)"
 
+    # Use a trap so temp files are always cleaned up, even when assertions fail.
+    # Use /usr/bin/rm with absolute path so it is not affected by PATH changes.
+    trap '/usr/bin/rm -rf "$fake_bin" "$fake_just"' RETURN
+
+    # Set PATH inline for the run call only — avoids polluting the process
+    # environment (which would break BATS's own cleanup code that calls rm).
+    PATH="$fake_bin:$PATH" run "$RALPH_CLI" status
+
+    # Verify the flag AND its value (the user's CWD) are both present
     [[ "$output" =~ "--working-directory" ]]
+    [[ "$output" =~ "$expected_cwd" ]]
 }
