@@ -8,6 +8,41 @@ source "$SCRIPT_DIR/resolve-env.sh"
 
 MCP_VERSION="${RALPH_MCP_VERSION:-latest}"
 
+# portable_timeout — wraps GNU timeout with a perl fallback for macOS BSD userland.
+#
+# macOS ships without GNU coreutils, so `timeout` is not available by default.
+# When `timeout` is absent, this function uses `perl -e 'alarm(...); exec @ARGV'`
+# to enforce the deadline. perl ships pre-installed on all supported macOS versions
+# (Monterey+). Exit code 124 semantics are preserved in both paths so that callers
+# testing `$exit_code -eq 124` continue to work correctly.
+#
+# Usage: portable_timeout <duration> <command> [args...]
+# Duration: supports "Nm" (minutes, e.g. "15m") or bare seconds (e.g. "900").
+portable_timeout() {
+    local duration="$1"; shift
+    if command -v timeout &>/dev/null; then
+        timeout "$duration" "$@"
+        return $?
+    fi
+    # No GNU timeout — fall back to perl alarm
+    local seconds
+    if [[ "$duration" =~ ^([0-9]+)m$ ]]; then
+        seconds=$(( ${BASH_REMATCH[1]} * 60 ))
+    else
+        seconds="$duration"
+    fi
+    perl -e '
+        $SIG{ALRM} = sub { exit 142 };
+        alarm(shift @ARGV);
+        exec @ARGV or die "exec failed: $!";
+    ' -- "$seconds" "$@"
+    local rc=$?
+    if [ "$rc" -eq 142 ]; then
+        return 124
+    fi
+    return "$rc"
+}
+
 parse_mode() {
     MODE="${DEFAULT_MODE:-headless}"
     ARGS=()
@@ -48,7 +83,7 @@ run_headless() {
     start_time=$(date +%s)
 
     set +e
-    timeout "$TIMEOUT" claude -p "$cmd" \
+    portable_timeout "$TIMEOUT" claude -p "$cmd" \
         --max-budget-usd "$BUDGET" \
         --dangerously-skip-permissions \
         </dev/null \

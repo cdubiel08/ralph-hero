@@ -20,6 +20,31 @@
 
 set -e
 
+# Portable timeout (mirrors cli-dispatch.sh — kept inline because this script runs standalone)
+portable_timeout() {
+    local duration="$1"; shift
+    if command -v timeout &>/dev/null; then
+        timeout "$duration" "$@"
+        return $?
+    fi
+    local seconds
+    if [[ "$duration" =~ ^([0-9]+)m$ ]]; then
+        seconds=$(( ${BASH_REMATCH[1]} * 60 ))
+    else
+        seconds="$duration"
+    fi
+    perl -e '
+        $SIG{ALRM} = sub { exit 142 };
+        alarm(shift @ARGV);
+        exec @ARGV or die "exec failed: $!";
+    ' -- "$seconds" "$@"
+    local rc=$?
+    if [ "$rc" -eq 142 ]; then
+        return 124
+    fi
+    return "$rc"
+}
+
 # Parse all arguments
 MODE="all"
 REVIEW_MODE="${RALPH_REVIEW_MODE:-skip}"
@@ -76,7 +101,7 @@ run_claude() {
 
     # Run claude in print mode (non-interactive) with auto-accept permissions
     local output
-    if output=$(timeout "$TIMEOUT" claude -p "$command" --max-budget-usd "$BUDGET" --dangerously-skip-permissions 2>&1); then
+    if output=$(portable_timeout "$TIMEOUT" claude -p "$command" --max-budget-usd "$BUDGET" --dangerously-skip-permissions 2>&1); then
         echo "$output"
     else
         local exit_code=$?
