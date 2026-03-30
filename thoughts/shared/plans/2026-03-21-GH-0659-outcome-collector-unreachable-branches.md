@@ -1,6 +1,6 @@
 ---
 date: 2026-03-21
-status: complete
+status: draft
 type: plan
 github_issue: 659
 github_issues: [659, 660, 661]
@@ -53,16 +53,16 @@ Two case branches in [outcome-collector.sh:126-127](https://github.com/cdubiel08
 ## Desired End State
 
 ### Verification
-- [x] `ralph_pr` is a registered command in `COMMAND_ALLOWED_STATES` with `["In Review", "Human Needed"]`
-- [x] `resolveState("In Review", "ralph_pr")` returns successfully (no "Unknown command" error)
-- [x] Unit tests cover `ralph_pr` direct state and semantic intents
-- [x] `ralph-state-machine.json` is updated if needed for data consistency tests
-- [x] The `ralph_pr:In Review` case correctly maps to `pr_completed` event type
-- [x] The `ralph_val` branch is removed with an inline comment explaining why
-- [x] A comment in the case statement documents what each skill actually passes
-- [x] `bash -n outcome-collector.sh` passes (syntax check)
-- [x] `npm test` passes (state-resolution tests + full suite)
-- [x] Existing bats CI test infrastructure is unaffected
+- [ ] `ralph_pr` is a registered command in `COMMAND_ALLOWED_STATES` with `["In Review", "Human Needed"]`
+- [ ] `resolveState("In Review", "ralph_pr")` returns successfully (no "Unknown command" error)
+- [ ] Unit tests cover `ralph_pr` direct state and semantic intents
+- [ ] `ralph-state-machine.json` is updated if needed for data consistency tests
+- [ ] The `ralph_pr:In Review` case correctly maps to `pr_completed` event type
+- [ ] The `ralph_val` branch is removed with an inline comment explaining why
+- [ ] A comment in the case statement documents what each skill actually passes
+- [ ] `bash -n outcome-collector.sh` passes (syntax check)
+- [ ] `npm test` passes (state-resolution tests + full suite)
+- [ ] Existing bats CI test infrastructure is unaffected
 
 ## What We're NOT Doing
 - Adding custom hook emission for ralph-val (the integrator path handles val outcomes)
@@ -93,9 +93,9 @@ Add `ralph_pr` as a recognized command in the state resolution module so that `s
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [x] `COMMAND_ALLOWED_STATES` contains `ralph_pr: ["In Review", "Human Needed"]`
-  - [x] Entry placed alphabetically between `ralph_plan_epic` and `ralph_research`
-  - [x] `VALID_COMMANDS` (derived from `Object.keys()`) automatically includes `ralph_pr`
+  - [ ] `COMMAND_ALLOWED_STATES` contains `ralph_pr: ["In Review", "Human Needed"]`
+  - [ ] Entry placed alphabetically between `ralph_plan_epic` and `ralph_research`
+  - [ ] `VALID_COMMANDS` (derived from `Object.keys()`) automatically includes `ralph_pr`
 
 #### Task 1.2: Add unit tests for ralph_pr command
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/state-resolution.test.ts` (modify)
@@ -103,11 +103,11 @@ Add `ralph_pr` as a recognized command in the state resolution module so that `s
 - **complexity**: low
 - **depends_on**: null (write tests first, they fail, then Task 1.1 makes them pass)
 - **acceptance**:
-  - [x] Test: `resolveState("In Review", "ralph_pr")` returns `{ resolvedState: "In Review", wasIntent: false }`
-  - [x] Test: `resolveState("Human Needed", "ralph_pr")` returns successfully
-  - [x] Test: `resolveState("In Progress", "ralph_pr")` throws (not in allowed states)
-  - [x] Test: wildcard intents (`__ESCALATE__`, `__CLOSE__`, `__CANCEL__`) resolve correctly for `ralph_pr`
-  - [x] Test: `normalizeCommand("pr")` returns `"ralph_pr"`
+  - [ ] Test: `resolveState("In Review", "ralph_pr")` returns `{ resolvedState: "In Review", wasIntent: false }`
+  - [ ] Test: `resolveState("Human Needed", "ralph_pr")` returns successfully
+  - [ ] Test: `resolveState("In Progress", "ralph_pr")` throws (not in allowed states)
+  - [ ] Test: wildcard intents (`__ESCALATE__`, `__CLOSE__`, `__CANCEL__`) resolve correctly for `ralph_pr`
+  - [ ] Test: `normalizeCommand("pr")` returns `"ralph_pr"`
 
 #### Task 1.3: Update ralph-state-machine.json if needed
 - **files**: `plugin/ralph-hero/hooks/scripts/ralph-state-machine.json` (modify if it exists and data consistency tests reference it)
@@ -115,18 +115,18 @@ Add `ralph_pr` as a recognized command in the state resolution module so that `s
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [x] Data consistency test at `state-resolution.test.ts:258-323` passes
-  - [x] If JSON file doesn't exist or test is guarded by `fs.existsSync`, confirm it's a no-op
+  - [ ] Data consistency test at `state-resolution.test.ts:258-323` passes
+  - [ ] If JSON file doesn't exist or test is guarded by `fs.existsSync`, confirm it's a no-op
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [x] `cd plugin/ralph-hero/mcp-server && npm test` -- all tests pass, including new ralph_pr tests
-- [x] `cd plugin/ralph-hero/mcp-server && npm run build` -- TypeScript compiles cleanly
+- [ ] `cd plugin/ralph-hero/mcp-server && npm test` -- all tests pass, including new ralph_pr tests
+- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` -- TypeScript compiles cleanly
 
 #### Manual Verification:
-- [x] `ralph_pr` appears in `VALID_COMMANDS` export
-- [x] `resolveState("In Review", "ralph_pr")` does not throw
+- [ ] `ralph_pr` appears in `VALID_COMMANDS` export
+- [ ] `resolveState("In Review", "ralph_pr")` does not throw
 
 ---
 
@@ -143,9 +143,9 @@ Correct the case statement in `handle_save_issue()` to match the actual `command
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [x] Line 127 changed from `ralph_pr:__COMPLETE__)` to `"ralph_pr:In Review")`
-  - [x] The event_type remains `"pr_completed"`
-  - [x] The case pattern is quoted to handle the space: `"ralph_pr:In Review"`
+  - [ ] Line 127 changed from `ralph_pr:__COMPLETE__)` to `"ralph_pr:In Review")`
+  - [ ] The event_type remains `"pr_completed"`
+  - [ ] The case pattern is quoted to handle the space: `"ralph_pr:In Review"`
 
 #### Task 2.2: Remove the ralph_val branch
 - **files**: `plugin/ralph-hero/hooks/scripts/outcome-collector.sh` (modify, [line 126](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/hooks/scripts/outcome-collector.sh#L126))
@@ -153,8 +153,8 @@ Correct the case statement in `handle_save_issue()` to match the actual `command
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [x] Line 126 (`ralph_val:*)  event_type="validation_completed" ;;`) is removed
-  - [x] No other references to `ralph_val` or `validation_completed` remain in this file
+  - [ ] Line 126 (`ralph_val:*)  event_type="validation_completed" ;;`) is removed
+  - [ ] No other references to `ralph_val` or `validation_completed` remain in this file
 
 #### Task 2.3: Add inline documentation to the case statement
 - **files**: `plugin/ralph-hero/hooks/scripts/outcome-collector.sh` (modify)
@@ -162,17 +162,17 @@ Correct the case statement in `handle_save_issue()` to match the actual `command
 - **complexity**: low
 - **depends_on**: [2.1, 2.2]
 - **acceptance**:
-  - [x] A comment block above the case statement documents the mapping between skills and their actual `command:workflowState` values
-  - [x] The comment notes that ralph-val does not call save_issue (integrator handles state transitions)
-  - [x] The comment confirms `ralph_pr` is now a registered command in state-resolution.ts
+  - [ ] A comment block above the case statement documents the mapping between skills and their actual `command:workflowState` values
+  - [ ] The comment notes that ralph-val does not call save_issue (integrator handles state transitions)
+  - [ ] The comment confirms `ralph_pr` is now a registered command in state-resolution.ts
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [x] `bash -n plugin/ralph-hero/hooks/scripts/outcome-collector.sh` -- no syntax errors
+- [ ] `bash -n plugin/ralph-hero/hooks/scripts/outcome-collector.sh` -- no syntax errors
 
 #### Manual Verification:
-- [x] The case statement's branches all correspond to actual skill behavior:
+- [ ] The case statement's branches all correspond to actual skill behavior:
   - `ralph_research:__LOCK__` -- ralph-research calls `save_issue(workflowState="__LOCK__", command="ralph_research")`
   - `ralph_research:__COMPLETE__` -- ralph-research calls `save_issue(workflowState="__COMPLETE__", command="ralph_research")`
   - `ralph_plan:__LOCK__` -- ralph-plan calls `save_issue(workflowState="__LOCK__", command="ralph_plan")`
@@ -182,15 +182,15 @@ Correct the case statement in `handle_save_issue()` to match the actual `command
   - `ralph_impl:__COMPLETE__` -- ralph-impl calls `save_issue(workflowState="__COMPLETE__", command="ralph_impl")`
   - `"ralph_pr:In Review"` -- ralph-pr calls `save_issue(workflowState="In Review", command="ralph_pr")`
   - `ralph_merge:__COMPLETE__` -- ralph-merge calls `save_issue(workflowState="Done", command="ralph_merge")` via `__COMPLETE__` semantic intent
-- [x] No remaining unreachable branches exist in the case statement
+- [ ] No remaining unreachable branches exist in the case statement
 
 ---
 
 ## Integration Testing
-- [x] `cd plugin/ralph-hero/mcp-server && npm test` passes (state-resolution + full suite)
-- [x] `cd plugin/ralph-hero/mcp-server && npm run build` compiles cleanly
-- [x] `bash -n plugin/ralph-hero/hooks/scripts/outcome-collector.sh` passes
-- [x] No changes to hooks.json registration (PostToolUse matchers unchanged)
+- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes (state-resolution + full suite)
+- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` compiles cleanly
+- [ ] `bash -n plugin/ralph-hero/hooks/scripts/outcome-collector.sh` passes
+- [ ] No changes to hooks.json registration (PostToolUse matchers unchanged)
 
 ## References
 - Issue: https://github.com/cdubiel08/ralph-hero/issues/659

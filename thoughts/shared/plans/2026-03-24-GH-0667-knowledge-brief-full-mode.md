@@ -91,15 +91,15 @@ Add a `brief` parameter to `knowledge_search` and `knowledge_traverse` tool hand
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File `plugin/ralph-knowledge/src/format.ts` exists and exports `formatSearchResults` and `formatTraverseResults`
-  - [ ] `formatSearchResults` signature: `(results: EnrichedSearchResult[], brief: boolean) => object[]` where `EnrichedSearchResult` extends `SearchResult` with `tags: string[]` and optional `outcomes_summary`
-  - [ ] When `brief=true`, `formatSearchResults` returns objects with only: `id`, `title`, `type`, `date`, `tags`, `score` -- no `snippet`, `path`, `status`, or `outcomes_summary`
-  - [ ] When `brief=false`, `formatSearchResults` returns the full enriched result objects unchanged (passthrough)
-  - [ ] `formatTraverseResults` signature: `(results: TraverseResult[], getTagsFn: (id: string) => string[], brief: boolean) => object[]`
-  - [ ] When `brief=true`, `formatTraverseResults` returns objects with `sourceId`, `targetId`, `type`, `depth`, `doc: { title } | null`, and `tags: string[]` (tags of the target document)
-  - [ ] When `brief=false`, `formatTraverseResults` returns the original `TraverseResult` objects unchanged (passthrough, no tags added)
-  - [ ] Uses `.js` extension in all imports (ESM requirement)
-  - [ ] All types are properly imported from their source modules
+  - [x] File `plugin/ralph-knowledge/src/format.ts` exists and exports `formatSearchResults` and `formatTraverseResults`
+  - [x] `formatSearchResults` signature: `(results: EnrichedSearchResult[], brief: boolean) => object[]` where `EnrichedSearchResult` extends `SearchResult` with `tags: string[]` and optional `outcomes_summary`
+  - [x] When `brief=true`, `formatSearchResults` returns objects with only: `id`, `title`, `type`, `date`, `tags`, `score` -- no `snippet`, `path`, `status`, or `outcomes_summary`
+  - [x] When `brief=false`, `formatSearchResults` returns the full enriched result objects unchanged (passthrough)
+  - [x] `formatTraverseResults` signature: `(results: TraverseResult[], getTagsFn: (id: string) => string[], brief: boolean) => object[]`
+  - [x] When `brief=true`, `formatTraverseResults` returns objects with `sourceId`, `targetId`, `type`, `depth`, `doc: { title } | null`, and `tags: string[]` (tags of the target document)
+  - [x] When `brief=false`, `formatTraverseResults` returns the original `TraverseResult` objects unchanged (passthrough, no tags added)
+  - [x] Uses `.js` extension in all imports (ESM requirement)
+  - [x] All types are properly imported from their source modules
 
 #### Task 1.2: Add format.test.ts with comprehensive brief/full coverage
 
@@ -108,15 +108,15 @@ Add a `brief` parameter to `knowledge_search` and `knowledge_traverse` tool hand
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] File `plugin/ralph-knowledge/src/__tests__/format.test.ts` exists
-  - [ ] Test: `formatSearchResults` with `brief=true` omits `snippet`, `path`, `status`, `outcomes_summary` fields
-  - [ ] Test: `formatSearchResults` with `brief=false` preserves all fields including `snippet` and `outcomes_summary`
-  - [ ] Test: `formatSearchResults` with `brief=true` retains `id`, `title`, `type`, `date`, `tags`, `score`
-  - [ ] Test: `formatTraverseResults` with `brief=true` strips `doc` to `{ title }` only and adds `tags` array
-  - [ ] Test: `formatTraverseResults` with `brief=false` returns original results unchanged (no tags added)
-  - [ ] Test: `formatTraverseResults` handles `doc: null` case in both modes
-  - [ ] Test: `formatSearchResults` with empty results array returns empty array in both modes
-  - [ ] All tests pass via `npm test` from `plugin/ralph-knowledge/`
+  - [x] File `plugin/ralph-knowledge/src/__tests__/format.test.ts` exists
+  - [x] Test: `formatSearchResults` with `brief=true` omits `snippet`, `path`, `status`, `outcomes_summary` fields
+  - [x] Test: `formatSearchResults` with `brief=false` preserves all fields including `snippet` and `outcomes_summary`
+  - [x] Test: `formatSearchResults` with `brief=true` retains `id`, `title`, `type`, `date`, `tags`, `score`
+  - [x] Test: `formatTraverseResults` with `brief=true` strips `doc` to `{ title }` only and adds `tags` array
+  - [x] Test: `formatTraverseResults` with `brief=false` returns original results unchanged (no tags added)
+  - [x] Test: `formatTraverseResults` handles `doc: null` case in both modes
+  - [x] Test: `formatSearchResults` with empty results array returns empty array in both modes
+  - [x] All tests pass via `npm test` from `plugin/ralph-knowledge/`
 
 #### Task 1.3: Wire brief parameter into index.ts tool handlers
 
@@ -125,20 +125,20 @@ Add a `brief` parameter to `knowledge_search` and `knowledge_traverse` tool hand
 - **complexity**: low
 - **depends_on**: [1.1, 1.2]
 - **acceptance**:
-  - [ ] `knowledge_search` Zod schema includes `brief: z.boolean().optional().describe("Return minimal metadata only (default: false)")`
-  - [ ] `knowledge_traverse` Zod schema includes `brief: z.boolean().optional().describe("Return minimal metadata only (default: false)")`
-  - [ ] `knowledge_search` handler calls `formatSearchResults(enriched, args.brief ?? false)` before serializing
-  - [ ] `knowledge_traverse` handler calls `formatTraverseResults(results, (id) => db.getTags(id), args.brief ?? false)` before serializing
-  - [ ] Import statement: `import { formatSearchResults, formatTraverseResults } from "./format.js";`
-  - [ ] Existing behavior unchanged when `brief` is omitted (defaults to `false`)
-  - [ ] `npm run build` from `plugin/ralph-knowledge/` completes with no errors
-  - [ ] `npm test` from `plugin/ralph-knowledge/` -- all tests pass (existing + new)
+  - [x] `knowledge_search` Zod schema includes `brief: z.boolean().optional().describe("Return minimal metadata only (default: false)")`
+  - [x] `knowledge_traverse` Zod schema includes `brief: z.boolean().optional().describe("Return minimal metadata only (default: false)")`
+  - [x] `knowledge_search` handler calls `formatSearchResults(enriched, args.brief ?? false)` before serializing
+  - [x] `knowledge_traverse` handler calls `formatTraverseResults(results, (id) => db.getTags(id), args.brief ?? false)` before serializing
+  - [x] Import statement: `import { formatSearchResults, formatTraverseResults } from "./format.js";`
+  - [x] Existing behavior unchanged when `brief` is omitted (defaults to `false`)
+  - [x] `npm run build` from `plugin/ralph-knowledge/` completes with no errors
+  - [x] `npm test` from `plugin/ralph-knowledge/` -- all tests pass (existing + new)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (from `plugin/ralph-knowledge/`) -- no TypeScript errors
-- [ ] `npm test` (from `plugin/ralph-knowledge/`) -- all tests passing including new format tests
+- [x] `npm run build` (from `plugin/ralph-knowledge/`) -- no TypeScript errors
+- [x] `npm test` (from `plugin/ralph-knowledge/`) -- all tests passing including new format tests
 
 #### Manual Verification:
 - [ ] Calling `knowledge_search` with `brief: true` returns results without snippet fields
@@ -150,10 +150,10 @@ Add a `brief` parameter to `knowledge_search` and `knowledge_traverse` tool hand
 
 ## Integration Testing
 
-- [ ] Build succeeds: `npm run build` from `plugin/ralph-knowledge/`
-- [ ] Full test suite passes: `npm test` from `plugin/ralph-knowledge/`
-- [ ] Existing `index.test.ts` still passes (createServer with `:memory:` works)
-- [ ] Existing `search.test.ts`, `traverse.test.ts`, `hybrid-search.test.ts` pass unchanged
+- [x] Build succeeds: `npm run build` from `plugin/ralph-knowledge/`
+- [x] Full test suite passes: `npm test` from `plugin/ralph-knowledge/`
+- [x] Existing `index.test.ts` still passes (createServer with `:memory:` works)
+- [x] Existing `search.test.ts`, `traverse.test.ts`, `hybrid-search.test.ts` pass unchanged
 
 ## References
 

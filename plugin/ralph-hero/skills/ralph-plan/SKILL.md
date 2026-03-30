@@ -159,8 +159,9 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
       ralph_hero__create_comment(owner, repo, number, body="## Research Document\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
       ```
    8. **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
-2. **Build unified understanding**: shared patterns, data flow between phases, integration points
-3. **Spawn sub-tasks** for research gaps:
+2. **Read research-mapped files directly**: Extract the file paths from each research document's `## Files Affected` section (both "Will Modify" and "Will Read" subsections). Read those files in full — they are your primary codebase context. Do NOT run find, ls, or glob to re-discover source files that the research already identified. If after reading the listed files you have a specific reason to believe a critical file was missed, you may search for it — but note the gap in the plan as a research deficiency.
+3. **Build unified understanding**: shared patterns, data flow between phases, integration points
+4. **Spawn sub-tasks** for research gaps:
    - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
    - `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="Analyze [component] details. Return file:line refs.")`
    - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find existing research, plans, or decisions about [topic]")`
@@ -170,7 +171,7 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
    After locator agents return, dispatch analyzers on the most relevant findings:
    - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and constraints from thought documents about [topic]")`
 
-4. **Wait for sub-tasks** before proceeding
+5. **Wait for sub-tasks** before proceeding
 
 ### Sibling Context (if --sibling-context provided)
 
@@ -188,7 +189,7 @@ Use sibling context to:
 - Import from sibling-produced files in `depends_on` chains
 - Validate that this feature's plan is compatible with sibling interfaces
 
-5. **Discover project verification commands**: Search the target project directory for quality tooling. Check these sources in order (stop once found for each category):
+6. **Discover project verification commands**: Search the target project directory for quality tooling. Check these sources in order (stop once found for each category):
 
    | Category | Sources to check |
    |----------|-----------------|

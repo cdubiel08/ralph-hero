@@ -6,7 +6,7 @@ author: user
 tags: [ralph-knowledge, obsidian, mcp-tool, developer-experience]
 github_issue: null
 ---
-
+x
 # MCP Tool: Open in Obsidian
 
 ## The Idea

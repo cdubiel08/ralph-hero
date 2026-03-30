@@ -22,7 +22,7 @@ tags: [mcp-server, lock-guard, workflow-states, hooks, spec, testing]
 
 ## Overview
 
-4 related issues for atomic implementation in a single PR:
+4 related issues for atomic implementation in a single PR, plus one follow-on phase addressing gaps found in code review:
 
 | Phase | Issue | Title | Estimate |
 |-------|-------|-------|----------|
@@ -30,8 +30,11 @@ tags: [mcp-server, lock-guard, workflow-states, hooks, spec, testing]
 | 2 | GH-653 | Unit tests for server-side lock guard | S |
 | 3 | GH-654 | Remove lock-claim-validator hook | XS |
 | 4 | GH-655 | Update issue-lifecycle spec for server-side enforcement | XS |
+| 5 | GH-652 | Fix lock guard gaps: force override and same-state idempotency | S |
 
 **Why grouped**: These four issues form a complete atomic change: the guard is worthless without tests (652+653), and the client-side hook is confusing noise once the guard is in the server (654). The spec update (655) closes the documentation loop. All four touch related lines of the codebase and should ship as one coherent PR.
+
+**Phase 5 context**: Code review of PR #657 identified two gaps vs. the GH-652 spec that were not implemented: (1) the `force=true` override parameter for recovery scenarios, and (2) same-state idempotency (re-claiming the same lock state the issue is already in should be allowed). Phase 5 is additive — the Phase 1–4 lock guard code is correct and stays; these are targeted fixes on top of it.
 
 ## Shared Constraints
 
@@ -283,11 +286,109 @@ Update `specs/issue-lifecycle.md` Section 4 (Lock State Protocol) to reflect tha
 
 ---
 
+## Phase 5: Lock Guard Gaps — Force Override and Same-State Idempotency (GH-652)
+
+### Overview
+
+Code review of PR #657 found two gaps vs. the GH-652 spec that were not implemented in Phases 1–4:
+
+1. **Missing idempotency for same-state re-claim**: `isLockConflict("In Progress", "In Progress")` returns `true`. The spec requires same-state re-locking to be allowed (same agent safely re-entering its own lock).
+2. **Missing `force` parameter**: The spec requires `save_issue(force=true)` to bypass the lock guard entirely for recovery scenarios (e.g., an agent crash leaves an issue stuck in a lock state with no owner).
+
+Both are additive changes to the existing Phase 1–4 code. The lock guard structure, placement, and error message are all correct — only the idempotency logic and the force bypass need to be added.
+
+### Tasks
+
+#### Task 5.1: Fix isLockConflict to allow same-state re-claim (idempotency)
+- **files**: `plugin/ralph-hero/mcp-server/src/lib/lock-guard.ts` (modify)
+- **tdd**: true
+- **complexity**: low
+- **depends_on**: null
+- **acceptance**:
+  - [ ] `isLockConflict("In Progress", "In Progress")` returns `false` (same lock state — idempotent re-claim allowed)
+  - [ ] `isLockConflict("Research in Progress", "Research in Progress")` returns `false`
+  - [ ] `isLockConflict("Plan in Progress", "Plan in Progress")` returns `false`
+  - [ ] `isLockConflict("Research in Progress", "Plan in Progress")` still returns `true` (cross-lock conflict unchanged)
+  - [ ] `isLockConflict("In Progress", "Research in Progress")` still returns `true` (cross-lock conflict unchanged)
+  - [ ] All other existing behavior (undefined/empty/non-lock cases) is unchanged
+  - [ ] Implementation: add an early-return `if (currentState === targetState) return false;` check before the `LOCK_STATES.includes(currentState)` check
+
+**Implementation note**: The fix is a single guard line. In `lock-guard.ts`, after the `!LOCK_STATES.includes(targetState)` check, add:
+```typescript
+if (currentState === targetState) {
+  return false; // idempotent re-claim: same agent re-locking is safe
+}
+```
+
+#### Task 5.2: Update lock-guard.test.ts for corrected same-state behavior
+- **files**: `plugin/ralph-hero/mcp-server/src/__tests__/lock-guard.test.ts` (modify)
+- **tdd**: false
+- **complexity**: low
+- **depends_on**: [5.1]
+- **acceptance**:
+  - [ ] The test `"returns true when current is In Progress and target is In Progress (same lock re-claim)"` is updated to assert `false` (was `true`)
+  - [ ] The parametric test `"returns true for all lock-to-lock combinations (parametric)"` is narrowed to exclude same-state pairs — it should only cover cases where `current !== target`
+  - [ ] Three new explicit tests added for each same-state lock pair: `isLockConflict("Research in Progress", "Research in Progress")`, `isLockConflict("Plan in Progress", "Plan in Progress")`, `isLockConflict("In Progress", "In Progress")` — all assert `false`
+  - [ ] All tests pass via `npm test`
+
+#### Task 5.3: Add force parameter to save_issue schema and handler
+- **files**: `plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` (modify)
+- **tdd**: false
+- **complexity**: low
+- **depends_on**: null
+- **acceptance**:
+  - [ ] `save_issue` schema includes `force: z.boolean().optional().describe("Bypass lock guard. Use only for recovery when an agent crash left an issue stuck in a lock state.")`
+  - [ ] The parameter is added after the `command` parameter in the schema object (maintain schema ordering consistency)
+  - [ ] In the `hasProjectFields` branch, the lock guard block is guarded by `!args.force`: `if (!args.force && resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) { ... }`
+  - [ ] When `args.force` is `true`, `getCurrentFieldValue` is NOT called (no extra API roundtrip)
+  - [ ] The tool description string is updated to include: `"Use force=true only for recovery when an agent crash left an issue stuck in a lock state."` — append to the existing description
+  - [ ] `tsc` compiles without errors
+
+**Implementation note**: The change to the handler is a single condition prefix. Current:
+```typescript
+if (resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
+```
+Updated:
+```typescript
+if (!args.force && resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
+```
+
+#### Task 5.4: Update save-issue.test.ts structural tests for force and idempotency
+- **files**: `plugin/ralph-hero/mcp-server/src/__tests__/save-issue.test.ts` (modify)
+- **tdd**: false
+- **complexity**: low
+- **depends_on**: [5.2, 5.3]
+- **acceptance**:
+  - [ ] In the existing `"save_issue lock guard integration"` describe block, add a test: `issueToolsSrc` contains `"force"` and `"z.boolean"` (verifies force parameter is in schema)
+  - [ ] Add a test: `issueToolsSrc` contains `"!args.force"` (verifies bypass condition is present in the guard)
+  - [ ] The existing `"guard is conditional on resolvedWorkflowState being a lock state"` test is updated to also verify `!args.force` is in the condition (or a new separate test is added)
+  - [ ] All tests pass via `npm test`
+
+**Creates for spec update**: The force parameter error message template from GH-652 spec (`"Use save_issue with force=true to override"`) should be verified present in the `toolError` message from Phase 1. Check `issue-tools.ts` for `"force=true"` in the error message — if absent, add it to the existing `toolError` string in Task 5.3.
+
+### Phase Success Criteria
+
+#### Automated Verification:
+- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors
+- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all tests pass, zero regressions
+- [ ] `npx vitest run src/__tests__/lock-guard.test.ts` — all tests pass with corrected same-state assertions
+- [ ] `grep -n "force" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` — shows `z.boolean` schema entry and `!args.force` guard condition
+
+#### Manual Verification:
+- [ ] `grep "force=true" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` — the existing `toolError` message includes `"force=true"` guidance, or it was added in Task 5.3
+- [ ] Review `isLockConflict` in `lock-guard.ts` — same-state early return is present before the `LOCK_STATES.includes(currentState)` check
+- [ ] Review the `hasProjectFields` lock guard block in `issue-tools.ts` — `!args.force` is the outermost condition
+
+---
+
 ## Integration Testing
 - [ ] Build and test the MCP server after all phases: `cd plugin/ralph-hero/mcp-server && npm run build && npm test`
 - [ ] Verify `hooks.json` is valid JSON with 3 (not 4) hooks on the save_issue matcher
 - [ ] Verify `specs/issue-lifecycle.md` Section 4 no longer references `lock-claim-validator.sh`
 - [ ] Verify `lock-guard.test.ts` passes in isolation: `npx vitest run src/__tests__/lock-guard.test.ts`
+- [ ] Verify same-state idempotency: `isLockConflict("In Progress", "In Progress")` returns `false` in the test suite
+- [ ] Verify `force` parameter present in `save_issue` schema: `grep "z.boolean" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts`
+- [ ] Verify force bypass condition in handler: `grep "args.force" plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts`
 
 ## References
 - GH-652: [https://github.com/cdubiel08/ralph-hero/issues/652](https://github.com/cdubiel08/ralph-hero/issues/652)
