@@ -58,7 +58,7 @@ Workers are spawned via `Task()` call with specific parameters:
 
 ```
 Task(
-  subagent_type="ralph-analyst",   # matches agents/ralph-analyst.md filename
+  subagent_type="research-agent",   # matches agents/research-agent.md filename
   team_name=TEAM_NAME,             # binds worker to this team's TaskList scope
   name="analyst",                   # becomes $TEAMMATE for stop gate matching
   prompt="..."                      # spawn prompt with required fields

@@ -29,7 +29,7 @@ Defines per-agent tool whitelists, PreToolUse gates, and the permission layering
 | `require-skill-context.sh` MUST block mutating tools when `RALPH_COMMAND` is not set | [x] `require-skill-context.sh` |
 | All three layers MUST be enforced simultaneously — each is additive restriction | [x] Claude Code runtime + `require-skill-context.sh` |
 
-### Agent: ralph-analyst
+### Agent: research-agent / plan-agent / split-agent / triage-agent (analyst tier)
 
 | Property | Value |
 |----------|-------|
@@ -72,7 +72,7 @@ Defines per-agent tool whitelists, PreToolUse gates, and the permission layering
 | Analyst MUST have PreToolUse gate on all mutating MCP tools | [x] `require-skill-context.sh` registered in agent `.md` |
 | Analyst MUST NOT call mutating MCP tools outside a skill context | [x] `require-skill-context.sh` |
 
-### Agent: ralph-builder
+### Agent: review-agent / impl-agent (builder tier)
 
 | Property | Value |
 |----------|-------|
@@ -107,7 +107,7 @@ Defines per-agent tool whitelists, PreToolUse gates, and the permission layering
 | Builder MUST have PreToolUse gate on Write and Edit tools | [x] `require-skill-context.sh` registered in agent `.md` |
 | Builder MUST NOT write or edit files outside a skill context | [x] `require-skill-context.sh` |
 
-### Agent: ralph-integrator
+### Agent: pr-agent / merge-agent / val-agent (integrator tier)
 
 | Property | Value |
 |----------|-------|

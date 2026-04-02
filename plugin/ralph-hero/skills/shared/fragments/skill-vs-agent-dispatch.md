@@ -2,13 +2,22 @@
 
 Use `Agent()` when the sub-skill has `context: fork` or `user-invocable: false` -- these are autonomous skills designed to run in isolation. Use `Skill()` when the sub-skill needs to share the caller's context or interact with the user.
 
-### Subagent Type Mapping
+### Per-Phase Agent Mapping
 
-| subagent_type | Skills routed through it |
-|---------------|-------------------------|
-| `ralph-hero:ralph-analyst` | ralph-triage, ralph-split, ralph-research, ralph-plan, ralph-plan-epic |
-| `ralph-hero:ralph-builder` | ralph-review, ralph-impl, ralph-merge |
-| `ralph-hero:ralph-integrator` | ralph-val, ralph-pr |
+Each autonomous skill has a dedicated agent that preloads it via the `skills:` field:
+
+| subagent_type | Preloaded Skill | Model |
+|---------------|-----------------|-------|
+| `ralph-hero:research-agent` | ralph-research | sonnet |
+| `ralph-hero:plan-agent` | ralph-plan | opus |
+| `ralph-hero:plan-epic-agent` | ralph-plan-epic | opus |
+| `ralph-hero:split-agent` | ralph-split | opus |
+| `ralph-hero:triage-agent` | ralph-triage | sonnet |
+| `ralph-hero:review-agent` | ralph-review | opus |
+| `ralph-hero:impl-agent` | ralph-impl | opus |
+| `ralph-hero:pr-agent` | ralph-pr | haiku |
+| `ralph-hero:merge-agent` | ralph-merge | haiku |
+| `ralph-hero:val-agent` | ralph-val | haiku |
 
 ### Anti-Pattern: Autonomous Skill via Skill()
 
@@ -19,18 +28,18 @@ Skill("ralph-hero:ralph-research", "42")
 
 This forces the entire research execution (file reads, MCP calls, output) into the caller's context window. The skill declares `context: fork` precisely because it should not share context.
 
-### Correct Pattern: Autonomous Skill via Agent()
+### Correct Pattern: Per-Phase Agent via Agent()
 
 ```
-# RIGHT -- autonomous skill runs in isolated fork
+# RIGHT -- per-phase agent runs in isolated fork with preloaded skill
 Agent(
-  subagent_type="ralph-hero:ralph-analyst",
-  prompt="Run /ralph-hero:ralph-research 42",
+  subagent_type="ralph-hero:research-agent",
+  prompt="Research issue #42",
   description="Research GH-42"
 )
 ```
 
-The agent spawns with its own context window. Artifact paths are passed through the prompt string (e.g., `--research-doc`, `--plan-doc` flags) and results flow back via task metadata, not inline return values.
+The agent spawns with its own context window and the skill instructions already loaded. Artifact paths are passed as natural language in the prompt (e.g., "Plan doc: thoughts/shared/plans/...") and results flow back via task metadata, not inline return values.
 
 ### When Skill() Is Still Correct
 

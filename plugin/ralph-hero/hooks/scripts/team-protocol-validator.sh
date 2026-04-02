@@ -71,7 +71,7 @@ Worker spawns during a team session must include team_name to bind
 the worker to the team's TaskList scope.
 
 Example:
-  Agent(subagent_type=\"ralph-builder\", team_name=\"my-team\", name=\"builder\", ...)"
+  Agent(subagent_type=\"ralph-hero:impl-agent\", team_name=\"my-team\", name=\"builder\", ...)"
     fi
 
     exit 0

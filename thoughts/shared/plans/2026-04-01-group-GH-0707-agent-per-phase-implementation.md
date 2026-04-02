@@ -388,9 +388,9 @@ Delete the three old wrapper agent files and add a deprecation notice to the tea
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `ls plugin/ralph-hero/agents/ | grep -E "ralph-analyst|ralph-builder|ralph-integrator"` — zero matches
-- [ ] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/ plugin/ralph-hero/hooks/ specs/` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `ls plugin/ralph-hero/agents/ | grep -E "ralph-analyst|ralph-builder|ralph-integrator"` — zero matches
+- [x] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/ plugin/ralph-hero/hooks/ specs/` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] `/reload-plugins` loads without errors after deletion

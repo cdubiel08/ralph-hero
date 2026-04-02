@@ -119,12 +119,12 @@ Dispatch the corresponding autonomous skill via Agent() based on the direction t
 
 | Direction Type | Agent Dispatch |
 |---|---|
-| Issue in Research/Plan phase needing attention | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-triage NNN", description="Triage GH-NNN")` |
-| Plan waiting review | `Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-review NNN", description="Review plan for GH-NNN")` |
-| PR waiting merge or review | `Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-merge NNN", description="Merge PR #NNN")` |
-| Issue ready for research | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-research NNN", description="Research GH-NNN")` |
-| Issue ready for planning | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN", description="Plan GH-NNN")` |
-| Board healthy, user wants to pick work | `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-triage", description="Pick work from backlog")` |
+| Issue in Research/Plan phase needing attention | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Triage issue #NNN", description="Triage GH-NNN")` |
+| Plan waiting review | `Agent(subagent_type="ralph-hero:review-agent", prompt="Review plan for issue #NNN", description="Review plan for GH-NNN")` |
+| PR waiting merge or review | `Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR for issue #NNN", description="Merge PR #NNN")` |
+| Issue ready for research | `Agent(subagent_type="ralph-hero:research-agent", prompt="Research issue #NNN", description="Research GH-NNN")` |
+| Issue ready for planning | `Agent(subagent_type="ralph-hero:plan-agent", prompt="Plan issue #NNN", description="Plan GH-NNN")` |
+| Board healthy, user wants to pick work | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Pick work from backlog", description="Pick work from backlog")` |
 
 Replace `NNN` with the actual issue or PR number. Each Agent() call spawns an isolated context -- the autonomous skill runs in its own fork without bloating hello's context window.
 
