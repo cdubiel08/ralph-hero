@@ -12,19 +12,19 @@ allowed-tools:
   - Agent
   - Skill
   - Task
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_issue
-  - ralph_hero__create_comment
-  - ralph_hero__add_sub_issue
-  - ralph_hero__list_sub_issues
-  - ralph_hero__add_dependency
-  - ralph_hero__remove_dependency
-  - ralph_hero__decompose_feature
-  - ralph_hero__detect_stream_positions
-  - ralph_hero__pick_actionable_issue
-  - ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__decompose_feature
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__detect_stream_positions
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pick_actionable_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
   - AskUserQuestion

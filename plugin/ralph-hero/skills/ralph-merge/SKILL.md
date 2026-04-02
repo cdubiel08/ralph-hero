@@ -20,12 +20,12 @@ allowed-tools:
   - Bash
   - AskUserQuestion
   - Skill
-  - ralph_hero__get_issue
-  - ralph_hero__list_sub_issues
-  - ralph_hero__list_dependencies
-  - ralph_hero__advance_issue
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_dependencies
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__advance_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)

@@ -16,11 +16,11 @@ allowed-tools:
   - TaskGet
   - TaskUpdate
   - SendMessage
-  - ralph_hero__get_issue
-  - ralph_hero__pipeline_dashboard
-  - ralph_hero__detect_stream_positions
-  - ralph_hero__pick_actionable_issue
-  - ralph_hero__create_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__detect_stream_positions
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pick_actionable_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
 hooks:
   SessionStart:
     - hooks:

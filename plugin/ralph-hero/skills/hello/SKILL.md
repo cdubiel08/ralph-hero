@@ -17,7 +17,7 @@ allowed-tools:
   - Bash
   - Agent
   - AskUserQuestion
-  - ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
 ---
 
 # Session Companion

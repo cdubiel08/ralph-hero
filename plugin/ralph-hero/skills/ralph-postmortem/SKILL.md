@@ -8,8 +8,8 @@ allowed-tools:
   - Edit
   - Write
   - Bash
-  - ralph_hero__create_issue
-  - knowledge_record_outcome
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 
 # Ralph Post-Mortem

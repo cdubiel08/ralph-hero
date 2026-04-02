@@ -43,11 +43,11 @@ allowed-tools:
   - Bash
   - Task
   - Agent
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
-  - ralph_hero__sync_plan_graph
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__sync_plan_graph
 ---
 
 ## Configuration (resolved at load time)

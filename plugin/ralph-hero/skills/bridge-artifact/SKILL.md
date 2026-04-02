@@ -5,7 +5,7 @@ user-invocable: true
 argument-hint: <path-to-superpowers-artifact> [#issue-number]
 context: fork
 model: sonnet
-allowed-tools: [Read, Write, Glob, Grep, ralph_hero__get_issue, ralph_hero__create_comment]
+allowed-tools: [Read, Write, Glob, Grep, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment]
 ---
 
 ## Configuration (resolved at load time)

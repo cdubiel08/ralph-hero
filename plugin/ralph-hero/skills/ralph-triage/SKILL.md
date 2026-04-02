@@ -31,14 +31,14 @@ allowed-tools:
   - Task
   - Agent
   - WebSearch
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_issue
-  - ralph_hero__add_sub_issue
-  - ralph_hero__list_sub_issues
-  - ralph_hero__add_dependency
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)
