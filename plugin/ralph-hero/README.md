@@ -109,6 +109,56 @@ just quick-move 42 "In Progress"  # Move issue state (no LLM)
 
 See the full **[CLI Reference](docs/cli.md)** for all recipes, parameters, and shell completions.
 
+## How It Works
+
+Ralph drives GitHub issues through a fully automated development lifecycle with one command:
+
+```bash
+claude "/ralph-team 42"
+```
+
+A multi-agent team spins up automatically — analyst, builder, and integrator — each handling their phase of the pipeline in sequence:
+
+```
+Issue #42
+  │
+  ▼
+[Analyst]  Triage → Research → Plan
+  │         Backlog → Research Needed → Ready for Plan → Plan in Review
+  │
+  ▼
+[Builder]  Implement → PR
+  │         In Progress → In Review
+  │
+  ▼
+[Integrator]  Validate → Merge
+               In Review → Done
+```
+
+Each stage produces a durable artifact committed to git:
+- **Research** → `thoughts/shared/research/YYYY-MM-DD-GH-NNN-description.md`
+- **Plan** → `thoughts/shared/plans/YYYY-MM-DD-GH-NNN-description.md`
+- **Implementation** → feature branch in a git worktree
+- **PR** → GitHub pull request with `Closes #NNN`
+
+GitHub Projects V2 is the source of truth for state — the board updates in real-time as agents advance issues through workflow states.
+
+### Demo
+
+> **[Demo recording — coming soon]()**
+>
+> A real `/ralph-team` session processing an umbrella issue with 3 XS sub-issues end-to-end:
+> issue detection → triage → research → plan → implementation → PR merged → Done.
+
+**Key moments:**
+- `0:00` — Single command entry point: `/ralph-team NNN`
+- `0:30` — TeamCreate: analyst/builder/integrator spawned with task list coordination
+- `1:00` — Issues move on the GitHub Projects board as workflow states change
+- `3:00` — Research document committed to git; issue advances to Ready for Plan
+- `5:00` — Implementation plan committed; issue advances to Plan in Review
+- `7:00` — PR opens, CI runs — standard GitHub flow, nothing proprietary
+- `9:00` — PR merged, board shows Done; end-to-end traceability complete
+
 ## Configuration
 
 ### Environment Variables
