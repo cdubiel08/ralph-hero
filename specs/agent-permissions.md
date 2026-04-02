@@ -6,7 +6,7 @@ Defines per-agent tool whitelists, PreToolUse gates, and the permission layering
 
 ## Definitions
 
-- **Agent**: A Claude Code agent definition (`.md` file in `agents/`) that orchestrates skill invocations as a team worker
+- **Agent**: A Claude Code per-phase agent definition (`.md` file in `agents/`) that preloads a single skill via the `skills:` field and defines a hard tool allowlist
 - **PreToolUse gate**: A hook that runs before a tool call and can block it (exit 2 = block)
 - **`require-skill-context.sh`**: The gate that blocks mutating tool calls when `RALPH_COMMAND` is not set (i.e., outside a skill invocation)
 - **Stop gate**: A hook that runs when an agent tries to stop, enforcing that it checks for remaining work first
@@ -18,16 +18,17 @@ Defines per-agent tool whitelists, PreToolUse gates, and the permission layering
 
 | Layer | Scope | Mechanism | Example |
 |-------|-------|-----------|---------|
-| 1. Agent definition | Maximum tool surface | `tools:` field in agent `.md` | Builder can use Read, Write, Edit, Bash, ... |
-| 2. Skill `allowed-tools` | Subset for active skill | `allowed-tools:` in SKILL.md | ralph-review allows Read, Write, Glob, Grep, Bash, Task |
-| 3. `require-skill-context.sh` | Mutating tools blocked outside skill | PreToolUse hook checks `RALPH_COMMAND` | Write/Edit blocked if no skill is active |
+| 1. Agent definition | Hard tool allowlist | `tools:` field in agent `.md` | impl-agent can use Read, Write, Edit, Bash, ... |
+| 2. Skill `allowed-tools` | Permission grant (auto-approve) | `allowed-tools:` in SKILL.md | ralph-review grants Read, Write, Glob, Grep, Bash |
+| 3. Plugin hooks.json | Phase-specific enforcement by `agent_type` | `agent-phase-gate.sh` + per-skill gates | impl-agent: worktree isolation, staging constraints |
 
 | Requirement | Enablement |
 |-------------|------------|
 | Agent tool lists MUST define the maximum tool surface for that agent role | [x] Claude Code runtime (built-in) |
 | Skill `allowed-tools` MUST further restrict tools within a skill invocation | [x] Claude Code runtime (built-in) |
 | `require-skill-context.sh` MUST block mutating tools when `RALPH_COMMAND` is not set | [x] `require-skill-context.sh` |
-| All three layers MUST be enforced simultaneously — each is additive restriction | [x] Claude Code runtime + `require-skill-context.sh` |
+| All three layers MUST be enforced simultaneously — each is additive restriction | [x] Claude Code runtime + plugin hooks |
+| Plugin agent frontmatter MUST NOT include `hooks`, `mcpServers`, or `permissionMode` | [x] Plugin agent schema constraint |
 
 ### Agent: research-agent / plan-agent / split-agent / triage-agent (analyst tier)
 

@@ -6,7 +6,7 @@ Defines the tool access matrix for every `ralph-*` skill and the plugin-level ho
 
 ## Definitions
 
-- **`allowed-tools`**: SKILL.md frontmatter field that whitelists tools a skill can use. Claude Code's skill runtime enforces this — tools not listed are blocked.
+- **`allowed-tools`**: SKILL.md frontmatter field that grants tool permissions (auto-approve). When a skill is preloaded via an agent's `skills:` field, the agent's `tools:` is the hard enforcement boundary — `allowed-tools` acts as a permission grant, not an enforced restriction.
 - **Plugin-level overlay**: PreToolUse and PostToolUse hooks registered in `hooks.json` that apply to ALL skills regardless of skill-level `allowed-tools`.
 - **`Task` (shorthand)**: Refers to the aggregate of `TaskCreate`, `TaskList`, `TaskGet`, `TaskUpdate` tools. When a skill lists `Task`, all four are allowed.
 
@@ -36,6 +36,8 @@ Each cell: **allow** = tool is in `allowed-tools`, **—** = tool is not listed 
 | MCP tools (ralph_hero__*) | indirect | indirect | indirect | indirect | indirect | indirect | indirect | indirect | direct | direct | — | — | — | — | — | direct |
 
 **Note on MCP tools**: Most skills access `ralph_hero__*` tools indirectly through Bash/Task delegation. `ralph-merge` and `ralph-pr` have direct MCP tool access in their `allowed-tools`.
+
+**Agent tool enforcement**: When a skill is preloaded via an agent's `skills:` field, the agent's `tools:` is the hard enforcement boundary. Each per-phase agent defines a tool allowlist specific to its role (see `specs/agent-permissions.md` for the full matrix).
 
 | Requirement | Enablement |
 |-------------|------------|

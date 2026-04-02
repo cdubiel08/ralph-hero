@@ -454,8 +454,8 @@ Update four documentation files to reflect the final agent-per-phase architectur
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" CLAUDE.md specs/` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" CLAUDE.md specs/` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] CLAUDE.md agents table lists all 10 per-phase agents with correct models
