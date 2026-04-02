@@ -16,11 +16,11 @@ allowed-tools:
   - TaskGet
   - TaskUpdate
   - SendMessage
-  - ralph_hero__get_issue
-  - ralph_hero__pipeline_dashboard
-  - ralph_hero__detect_stream_positions
-  - ralph_hero__pick_actionable_issue
-  - ralph_hero__create_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__detect_stream_positions
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pick_actionable_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
 hooks:
   SessionStart:
     - hooks:
@@ -170,17 +170,7 @@ When creating implementation tasks for a group with 2+ issues:
    - Glob: `thoughts/shared/research/*GH-NNN*` for each issue
    - Parse backtick-wrapped paths under `### Will Modify` heading (regex: `` `[^`]+` ``)
 
-2. **Call `detect_stream_positions`** with file paths and blockedBy relationships:
-   ```
-   ralph_hero__detect_stream_positions(
-     issues: [
-       { number: 42, files: ["src/auth.ts"], blockedBy: [] },
-       { number: 43, files: ["src/auth.ts", "src/db.ts"], blockedBy: [42] },
-       { number: 44, files: ["src/config.ts"], blockedBy: [] }
-     ],
-     issueStates: [...]
-   )
-   ```
+2. **Detect stream positions** with file paths and blockedBy relationships — pass issues array (each with number, files, blockedBy) and issueStates to the detect_stream_positions tool.
 
 3. **Read `suggestedRoster.builder`** from the response (1–3, capped at stream count).
 

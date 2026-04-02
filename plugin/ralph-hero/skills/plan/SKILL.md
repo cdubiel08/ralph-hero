@@ -13,11 +13,11 @@ allowed-tools:
   - Agent
   - WebSearch
   - WebFetch
-  - ralph_hero__get_issue
-  - ralph_hero__create_comment
-  - ralph_hero__save_issue
-  - ralph_hero__create_issue
-  - ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
 ---
 
 ## Configuration (resolved at load time)
@@ -38,7 +38,7 @@ When this command is invoked:
 
 1. **Check if parameters were provided** (via `ARGUMENTS`):
    - If a file path, `#NNN` issue reference, or description was provided, skip the default message
-   - If `#NNN` is provided, fetch the issue: `ralph_hero__get_issue(number=NNN)` — read title, body, and comments for full context
+   - If `#NNN` is provided, fetch the full issue details — read title, body, and comments for full context
    - Immediately read any provided files FULLY
    - Begin the research process
 
@@ -71,16 +71,10 @@ Then wait for the user's input.
    - **CRITICAL**: DO NOT spawn sub-tasks before reading these files yourself in the main context
    - **NEVER** read files partially - if a file is mentioned, read it completely
 
-   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first to find related research:
-   ```
-   knowledge_search(query="research [topic keywords]", type="research", limit=5)
-   ```
+   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first to find related research documents on the topic keywords, type "research", limit 5.
    If results are returned, read the top matches for context. This supplements (not replaces) the issue comment check and thoughts-locator search below.
 
-2. **If a `#NNN` issue was provided**, fetch it directly:
-   ```
-   ralph_hero__get_issue(number=NNN)
-   ```
+2. **If a `#NNN` issue was provided**, fetch it directly: fetch the full issue details for issue NNN (title, body, comments, workflow state, relationships).
    Read the full response including comments. Check comments for linked research documents (look for `## Research Document` header per Artifact Comment Protocol).
 
 3. **Spawn initial research tasks to gather context**:
@@ -156,7 +150,7 @@ After getting initial clarifications:
    - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Analyze decisions and constraints from [area] documents")`
 
    **For existing issues:**
-   - Use `ralph_hero__list_issues(query=...)` to find related issues directly
+   - Search for related issues by keyword or topic
 
    > **Team Isolation**: Do NOT pass `team_name` to sub-agent `Agent()` calls.
 
@@ -363,16 +357,20 @@ After the plan is finalized and the user is satisfied:
    ```
 
 2. **If linking to existing issue**:
-   - Verify issue exists using `ralph_hero__get_issue(number=NNN)`
+   - Fetch the issue to verify it exists.
    - **Rename file if needed**: If the filename doesn't contain `GH-NNNN`, rename it:
      ```bash
      # Example: 2026-03-06-improve-error-handling.md -> 2026-03-06-GH-0542-improve-error-handling.md
      mv thoughts/shared/plans/YYYY-MM-DD-description.md thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-description.md
      ```
      Use zero-padded 4-digit issue number. Insert `GH-NNNN-` after the date prefix.
-   - Post plan link comment using the Artifact Comment Protocol (use the **new** filename):
-     ```
-     ralph_hero__create_comment(number=NNN, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/[filename].md\n\nSummary: [1-3 line summary of the plan]")
+   - Post a plan link comment on the issue using the Artifact Comment Protocol (use the **new** filename):
+     ```markdown
+     ## Implementation Plan
+
+     https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/[filename].md
+
+     Summary: [1-3 line summary of the plan]
      ```
    - Update plan frontmatter with issue reference:
      ```yaml
@@ -390,12 +388,12 @@ After the plan is finalized and the user is satisfied:
      2. Move to "In Progress" (you've reviewed the plan interactively — ready for implementation)
      3. Skip state transition
      ```
-     If option 1: `ralph_hero__save_issue(number=NNN, workflowState="Plan in Review")`
-     If option 2: `ralph_hero__save_issue(number=NNN, workflowState="In Progress")`
+     If option 1: Update the issue workflow state to "Plan in Review".
+     If option 2: Update the issue workflow state to "In Progress".
 
 3. **If creating new issue**:
-   - Use `ralph_hero__create_issue(title=..., body=...)` with plan summary as body
-   - Use `ralph_hero__save_issue(number=..., estimate="XS|S|M|L|XL")` to set estimate
+   - Create a GitHub issue with the plan summary as the body.
+   - Set the estimate to "XS", "S", "M", "L", or "XL" on the new issue.
    - **Rename file** to include the new issue number (same rename pattern as option 2)
    - Post plan link comment (same Artifact Comment Protocol as above, using renamed filename)
    - Update plan frontmatter with new issue reference (including `github_issue: NNN` for the knowledge indexer)

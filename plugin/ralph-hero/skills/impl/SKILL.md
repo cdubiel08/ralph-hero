@@ -12,9 +12,9 @@ allowed-tools:
   - Task
   - WebSearch
   - WebFetch
-  - ralph_hero__get_issue
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)
@@ -34,10 +34,7 @@ You are tasked with implementing an approved technical plan from `thoughts/share
 When given an argument, resolve it to both a **plan file** and a **GitHub issue**:
 
 **If argument matches `#NNN` or is a number** (e.g., `#348`, `348`):
-1. Fetch the issue:
-   ```
-   ralph_hero__get_issue(number=NNN)
-   ```
+1. Fetch the full issue details for issue NNN.
 2. Search issue comments for `## Implementation Plan` header (use the **most recent** match if multiple)
 3. Extract the GitHub URL from the first line after the header
 4. Convert to local path: strip `https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/` prefix
@@ -48,9 +45,13 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
    - If exactly one match, use it
    - If multiple matches, list them and ask user to specify
    - If no matches, error: "No plan found for #NNN. Create one with `/ralph-hero:plan`"
-6. If found via glob fallback only, self-heal by posting the missing comment:
-   ```
-   ralph_hero__create_comment(number=NNN, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
+6. If found via glob fallback only, self-heal by posting the missing artifact comment on the issue:
+   ```markdown
+   ## Implementation Plan
+
+   https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]
+
+   (Self-healed: artifact was found on disk but not linked via comment)
    ```
 
 **If argument is a file path**:
@@ -100,16 +101,15 @@ git pull origin "$(git branch --show-current)" --no-edit
 
 ### 3.2 Transition to In Progress
 
-If a linked issue exists and is not already "In Progress":
-
-```
-ralph_hero__save_issue(number=NNN, workflowState="In Progress")
-```
+If a linked issue exists and is not already "In Progress": update the issue workflow state to "In Progress".
 
 ### 3.3 Post Start Comment
 
-```
-ralph_hero__create_comment(number=NNN, body="## Implementation Started\n\nBeginning implementation of [plan title].")
+Post a comment on the issue:
+```markdown
+## Implementation Started
+
+Beginning implementation of [plan title].
 ```
 
 ## Step 4: Implement Phase by Phase
@@ -198,14 +198,18 @@ PR body must use `Closes #NNN` syntax (bare `#NNN` per GitHub convention, not `G
 
 ### 5.2 Transition to In Review
 
-```
-ralph_hero__save_issue(number=NNN, workflowState="In Review", command="implement_plan")
-```
+Update the issue workflow state to "In Review".
 
 ### 5.3 Post Completion Comment
 
-```
-ralph_hero__create_comment(number=NNN, body="## Implementation Complete\n\nPR: [PR URL]\nBranch: [branch-name]\n\nAll phases implemented and verified. Ready for code review.")
+Post a completion comment on the issue:
+```markdown
+## Implementation Complete
+
+PR: [PR URL]
+Branch: [branch-name]
+
+All phases implemented and verified. Ready for code review.
 ```
 
 ### 5.4 Report to User

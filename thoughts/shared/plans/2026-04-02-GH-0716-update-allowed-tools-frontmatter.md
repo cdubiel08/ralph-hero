@@ -51,9 +51,9 @@ Three skills (`prove-claim`, `hero`, `ralph-plan-epic`) already have correctly f
 Every `allowed-tools:` array entry that previously read `ralph_hero__*` now reads `mcp__plugin_ralph-hero_ralph-github__ralph_hero__*`. The `ralph-postmortem` bare knowledge entry is also updated.
 
 ### Verification
-- [ ] `grep -rn "^  - ralph_hero__" plugin/ralph-hero/skills/` returns zero matches
-- [ ] `grep -rn "^  - knowledge_" plugin/ralph-hero/skills/` returns zero matches
-- [ ] `grep -rn "mcp__plugin_ralph-hero_ralph-github__ralph_hero__" plugin/ralph-hero/skills/` returns 75+ matches
+- [x] `grep -rn "^  - ralph_hero__" plugin/ralph-hero/skills/` returns zero matches
+- [x] `grep -rn "^  - knowledge_" plugin/ralph-hero/skills/` returns zero matches
+- [x] `grep -rn "mcp__plugin_ralph-hero_ralph-github__ralph_hero__" plugin/ralph-hero/skills/` returns 75+ matches
 - [ ] Every edited SKILL.md is valid YAML frontmatter (no parse errors when invoked)
 - [ ] Manual: invoke `/ralph-hero:status` in a fresh session and confirm MCP tool resolves via ToolSearch
 
@@ -167,9 +167,9 @@ Apply these substitutions to every `allowed-tools` entry (frontmatter only):
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -rn "^  - ralph_hero__" plugin/ralph-hero/skills/` — zero matches
-- [ ] `grep -rn "^  - knowledge_" plugin/ralph-hero/skills/` — zero matches
-- [ ] `grep -rn "mcp__plugin_ralph-hero_ralph-github__ralph_hero__" plugin/ralph-hero/skills/` — 75+ matches
+- [x] `grep -rn "^  - ralph_hero__" plugin/ralph-hero/skills/` — zero matches
+- [x] `grep -rn "^  - knowledge_" plugin/ralph-hero/skills/` — zero matches
+- [x] `grep -rn "mcp__plugin_ralph-hero_ralph-github__ralph_hero__" plugin/ralph-hero/skills/` — 75+ matches
 
 #### Manual Verification:
 - [ ] Invoke `/ralph-hero:status` in a fresh Claude Code session and confirm the pipeline dashboard MCP tool resolves via ToolSearch (no "tool not found" errors)

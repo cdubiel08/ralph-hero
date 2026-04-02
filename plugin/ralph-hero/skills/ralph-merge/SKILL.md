@@ -20,12 +20,12 @@ allowed-tools:
   - Bash
   - AskUserQuestion
   - Skill
-  - ralph_hero__get_issue
-  - ralph_hero__list_sub_issues
-  - ralph_hero__list_dependencies
-  - ralph_hero__advance_issue
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_dependencies
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__advance_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)
@@ -53,9 +53,7 @@ Export: `export RALPH_TICKET_ID="GH-NNN"`
 
 ## Step 2: Fetch Issue
 
-```
-ralph_hero__get_issue(number=NNN)
-```
+Fetch the full issue details for issue NNN.
 
 Verify the issue is in "In Review" state. If not, output:
 
@@ -193,28 +191,19 @@ If merge fails, report the error and stop.
 
 ## Step 7: Move Issues to Done
 
-```
-ralph_hero__advance_issue(direction="children", number=NNN, targetState="Done")
-```
-
-Or for a standalone issue:
-
-```
-ralph_hero__save_issue(number=NNN, workflowState="Done", command="ralph_merge")
-```
+Advance all children of the issue to "Done". For a standalone issue: update the workflow state to "Done" (command: "ralph_merge").
 
 ## Step 8: Advance Parent
 
-If applicable:
-
-```
-ralph_hero__advance_issue(direction="parent", number=NNN)
-```
+If applicable: advance the parent issue to the next appropriate state based on its children's states.
 
 ## Step 9: Post Completion Comment
 
-```
-ralph_hero__create_comment(number=NNN, body="## Merged\n\nPR merged successfully. Issue moved to Done.")
+Post a completion comment on the issue:
+```markdown
+## Merged
+
+PR merged successfully. Issue moved to Done.
 ```
 
 ## Step 9a: Cross-Repo Unblock Check

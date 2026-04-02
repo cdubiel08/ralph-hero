@@ -18,11 +18,11 @@ allowed-tools:
   - Read
   - Glob
   - Bash
-  - ralph_hero__get_issue
-  - ralph_hero__list_sub_issues
-  - ralph_hero__advance_issue
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__advance_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)
@@ -50,9 +50,7 @@ Export: `export RALPH_TICKET_ID="GH-NNN"`
 
 ## Step 2: Fetch Issue
 
-```
-ralph_hero__get_issue(number=NNN)
-```
+Fetch the full issue details for issue NNN.
 
 Get issue title, state, group context, and sub-issues.
 
@@ -141,22 +139,17 @@ Capture the PR URL from the output.
 
 ## Step 6: Move Issues to In Review
 
-```
-ralph_hero__advance_issue(direction="children", number=NNN, targetState="In Review")
-```
-
-Or for a standalone issue:
-
-```
-ralph_hero__save_issue(number=NNN, workflowState="In Review", command="ralph_pr")
-```
+Advance all children of the issue to "In Review". For a standalone issue: update the workflow state to "In Review" (command: "ralph_pr").
 
 ## Step 7: Post Comment
 
 Post a comment on the issue with the PR URL:
+```markdown
+## Pull Request
 
-```
-ralph_hero__create_comment(number=NNN, body="## Pull Request\n\nPR created: [PR URL]\n\nIssue moved to In Review.")
+PR created: [PR URL]
+
+Issue moved to In Review.
 ```
 
 ## Step 8: Report Result

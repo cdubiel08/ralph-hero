@@ -13,9 +13,9 @@ allowed-tools:
   - Read
   - Glob
   - Bash
-  - ralph_hero__pipeline_dashboard
-  - ralph_hero__project_hygiene
-  - ralph_hero__archive_items
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__project_hygiene
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__archive_items
 ---
 
 # Ralph GitHub Hygiene - Board Cleanup
@@ -33,12 +33,10 @@ You are a hygiene specialist. You scan the project board for archive-eligible it
 
 ### Step 1: Run Pipeline Dashboard with Archive Stats
 
-```
-ralph_hero__pipeline_dashboard
-- format: "markdown"
-- includeHealth: true
-- archiveThresholdDays: 14
-```
+Fetch the pipeline dashboard with:
+- `format`: `"markdown"`
+- `includeHealth`: `true`
+- `archiveThresholdDays`: `14`
 
 This returns the full pipeline status including an `archive` section with:
 - `eligibleForArchive`: count of Done/Canceled items stale beyond threshold
@@ -66,7 +64,7 @@ Health Warnings: [from dashboard health section]
 
 ### Step 3: Check for project_hygiene Tool (Optional)
 
-Check if the `ralph_hero__project_hygiene` tool is available. If it exists, call it for a more detailed hygiene report covering stale items, orphaned issues, field gaps, and WIP violations.
+Check if the project_hygiene tool is available. If it exists, call it for a more detailed hygiene report covering stale items, orphaned issues, field gaps, and WIP violations.
 
 If the tool is NOT available (expected until #158 is implemented), output:
 ```
@@ -83,7 +81,7 @@ Read configuration from environment:
 **If dry-run mode** (default): Report what would be archived. Do not call any archive tools.
 
 **If NOT dry-run AND eligible count exceeds threshold**:
-1. Check if `ralph_hero__archive_items` tool is available
+1. Check if the archive_items tool is available.
 2. If available, call it with the eligible workflow states and threshold
 3. If NOT available, output:
    ```

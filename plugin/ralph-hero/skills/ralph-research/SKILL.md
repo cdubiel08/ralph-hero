@@ -37,12 +37,12 @@ allowed-tools:
   - Agent
   - WebSearch
   - WebFetch
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
-  - ralph_hero__add_dependency
-  - ralph_hero__remove_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
 ---
 
 ## Configuration (resolved at load time)
@@ -71,32 +71,24 @@ If NOT on `main`, STOP: "Cannot run /ralph-research from branch: [branch-name]. 
 
 ### Step 2: Select Issue
 
-**If issue number provided**: Call `ralph_hero__get_issue(owner, repo, number)`. Response includes group data (sub-issues, dependencies, parent).
+**If issue number provided**: Fetch the full issue details. Response includes group data (sub-issues, dependencies, parent).
 
 **If no issue number**:
 
-1. Call `ralph_hero__list_issues(owner, repo, profile="analyst-research", limit=50)`
-   <!-- Profile expands to: workflowState="Research Needed" -->
+1. List issues using profile "analyst-research" (expands to workflowState: "Research Needed"), limit 50.
 2. Filter to XS/Small estimates
 3. Filter to unblocked issues:
    - An issue is blocked only if `blockedBy` points to issues **outside** its group that are not Done
    - Within-group `blockedBy` is for phase ordering, not blocking
-   - **You MUST check each blocker's workflow state** via `ralph_hero__get_issue` -- this is the most common error source
+   - **You MUST check each blocker's workflow state** by fetching each blocker issue — this is the most common error source
 4. Select highest priority unblocked issue
-5. Call `ralph_hero__get_issue(owner, repo, number)` on the selected issue to get full context including group data
+5. Fetch full issue details on the selected issue to get context including group data
 
 If no eligible issues, respond: "No XS/Small issues need research. Queue empty." Then STOP.
 
 ### Step 3: Transition to Research in Progress
 
-```
-ralph_hero__save_issue
-- number: [issue-number]
-- workflowState: "__LOCK__"
-- command: "ralph_research"
-```
-
-If `save_issue` returns an error, read the error message for valid states/intents and retry with corrected parameters.
+Lock the issue (set workflowState to "__LOCK__", command "ralph_research"). If an error is returned, read the message for valid states/intents and retry with corrected parameters.
 
 ### Step 3a: Registry Lookup (Cross-Repo Detection)
 
@@ -176,7 +168,7 @@ This information is consumed by the hero skill during tree expansion to override
 After researching, refine dependency relationships based on code analysis:
 
 1. **Analyze implementation order**: Which issue creates foundational code? Which can be parallelized?
-2. **Update GitHub relationships** if order differs from initial triage using `ralph_hero__add_dependency` / `ralph_hero__remove_dependency`
+2. **Update GitHub relationships** if order differs from initial triage — add or remove dependency links as needed
 3. **Add research comment** with implementation order analysis
 
 ### Step 6: Create Research Document
@@ -266,25 +258,16 @@ git push origin main
 
 ### Step 8: Update GitHub Issue
 
-1. **Add research document link** as comment with the `## Research Document` header:
-   ```
-   ralph_hero__create_comment
-   - number: [issue-number]
-   - body: |
-       ## Research Document
+1. **Add research document link** as a comment on the issue (use `## Research Document` header):
+   ```markdown
+   ## Research Document
 
-       https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
+   https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
 
-       Key findings: [1-3 line summary]
+   Key findings: [1-3 line summary]
    ```
 2. **Add summary comment** with key findings, recommended approach, and group context (if multi-issue group)
-3. **Move to "Ready for Plan"**:
-   ```
-   ralph_hero__save_issue
-   - number: [issue-number]
-   - workflowState: "__COMPLETE__"
-   - command: "ralph_research"
-   ```
+3. **Move to "Ready for Plan"**: advance the issue to the next state (workflowState "__COMPLETE__", command "ralph_research").
 
 ### Step 9: Team Result Reporting
 

@@ -13,9 +13,9 @@ allowed-tools:
   - Agent
   - WebSearch
   - WebFetch
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)
@@ -44,7 +44,7 @@ You are tasked with conducting comprehensive research across the codebase to ans
 When this command is invoked:
 
 1. **If a research question or `#NNN` issue number was provided** (via `ARGUMENTS`):
-   - If `#NNN`: fetch the issue via `ralph_hero__get_issue(number=NNN)` to understand the context
+   - If `#NNN`: fetch the full issue details for issue NNN to understand the context
    - Set `LINKED_ISSUE = NNN` for optional linking later
    - Use the issue title/body as the research question, or let the user refine it
    - If a research question was provided directly, proceed with it
@@ -92,8 +92,8 @@ Create multiple Task agents to research different aspects concurrently. Use thes
 - IF you use web-research agents, instruct them to return LINKS with their findings, and please INCLUDE those links in your final report
 
 **For GitHub Issues (if relevant):**
-- Use `ralph_hero__get_issue(number=NNN)` directly for issue details
-- Use `ralph_hero__list_issues(query="...")` to search for related issues
+- Fetch issue details directly for known issue numbers
+- Search for related issues by keyword or topic
 
 **IMPORTANT**: All agents are documentarians, not critics. They will describe what exists without suggesting improvements or identifying issues.
 
@@ -215,7 +215,7 @@ If the user agrees:
    github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
    ```
 
-3. **Post artifact comment** via `ralph_hero__create_comment` (use the **new** filename):
+3. **Post an artifact comment** on the issue (use the **new** filename):
    ```markdown
    ## Research Document
 

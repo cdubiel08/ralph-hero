@@ -5,7 +5,7 @@ user-invocable: true
 argument-hint: <path-to-superpowers-artifact> [#issue-number]
 context: fork
 model: sonnet
-allowed-tools: [Read, Write, Glob, Grep, ralph_hero__get_issue, ralph_hero__create_comment]
+allowed-tools: [Read, Write, Glob, Grep, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment]
 ---
 
 ## Configuration (resolved at load time)
@@ -46,7 +46,7 @@ From the superpowers artifact:
 4. **Tags**: Infer 2-5 tags from the content (lowercase, hyphenated)
 
 If `#NNN` was provided in ARGUMENTS:
-1. Fetch the issue: `ralph_hero__get_issue(number=NNN)`
+1. Fetch the full issue details for issue NNN.
 2. Use issue context to refine tags
 
 ### Step 3: Build Ralph-Hero Artifact
@@ -96,11 +96,7 @@ Save to the appropriate `thoughts/shared/` subdirectory using the Write tool.
 ### Step 5: GitHub Integration (if issue provided)
 
 If `#NNN` was provided:
-1. Post artifact link comment via Artifact Comment Protocol:
-   ```
-   ralph_hero__create_comment(number=NNN, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-description.md\n\nBridged from superpowers artifact: docs/superpowers/plans/original-filename.md")
-   ```
-   Use `## Research Document` header for specs/research type.
+1. Post an artifact link comment via Artifact Comment Protocol using the `## Implementation Plan` header (or `## Research Document` for specs/research type), with the plan URL and a note that it was bridged from the original superpowers artifact path.
 
 2. Offer to update issue workflow state if appropriate.
 

@@ -50,11 +50,11 @@ allowed-tools:
   - Bash
   - Agent
   - Task
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
-  - ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
 ---
 
 ## Configuration (resolved at load time)
@@ -76,13 +76,7 @@ You are a naive hero implementer. You pick ONE issue (or group of related issues
 **If issue number provided**: Fetch issue details
 **If no issue number**: Pick highest-priority XS/Small issue in "In Progress" status
 
-```
-ralph_hero__list_issues
-- profile: "builder-active"
-# Profile expands to: workflowState: "In Progress"
-- orderBy: "priority"
-- limit: 1
-```
+List issues using profile "builder-active" (expands to workflowState: "In Progress"), ordered by priority, limit 1.
 
 If no eligible issues, respond:
 ```
@@ -104,19 +98,12 @@ After fetching the issue, check its current state:
 
 ### Step 3: Gather Context and Build Issue List
 
-1. **Read issue and all comments**:
-   ```
-   ralph_hero__get_issue
-   - number: [issue-number]
-   ```
+1. **Read issue and all comments**: Fetch the full issue details for the issue number.
 
 2. **Find linked plan document**:
 
-   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first:
-   ```
-   knowledge_search(query="implementation plan GH-${number} [issue title keywords]", type="plan", limit=3)
-   ```
-   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If `knowledge_search` is not available or returns no results, continue with standard Artifact Comment Protocol discovery below.
+   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "implementation plan GH-${number} [issue title keywords]", type "plan", limit 3.
+   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If not available or no results, continue with standard Artifact Comment Protocol discovery below.
 
    **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
 
@@ -135,9 +122,13 @@ After fetching the issue, check its current state:
       Use the most recent match if multiple found.
    6. **Group fallback**: If standard glob fails, try `thoughts/shared/plans/*group*GH-{primary}*` where `{primary}` is the primary issue number from the issue's group context.
    6b. **Stream fallback**: If group fallback also fails, try `thoughts/shared/plans/*stream*GH-{number}*` to find stream plans containing this issue.
-   7. **If fallback found, self-heal**: Post the missing comment to the issue:
-      ```
-      ralph_hero__create_comment(owner, repo, number, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
+   7. **If fallback found, self-heal**: Post the missing artifact comment to the issue:
+      ```markdown
+      ## Implementation Plan
+
+      https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]
+
+      (Self-healed: artifact was found on disk but not linked via comment)
       ```
    8. **If neither found**: STOP with "Issue #NNN has no implementation plan. Run /ralph-plan first."
 
@@ -177,14 +168,7 @@ If any issue is in wrong state, STOP: "Implementation blocked. #NNN: [state] (ex
 
 ### Step 5: Transition to In Progress
 
-Skip if already "In Progress". For each issue in `issues[]`:
-```
-ralph_hero__save_issue
-- number: [issue-number]
-- workflowState: "__LOCK__"
-- command: "ralph_impl"
-```
-On error: read message for valid states/recovery action, retry with corrected parameters.
+Skip if already "In Progress". For each issue in `issues[]`: lock the issue (set workflowState to "__LOCK__", command "ralph_impl"). On error: read message for valid states/recovery action, retry with corrected parameters.
 
 ### Step 6: Set Up or Reuse Worktree
 
@@ -415,7 +399,7 @@ If `IS_EPIC_MEMBER` was set to `true` in Step 6, this is an epic issue.
 
 **10.2. Verify Epic Completion (Epic Issues Only)**
 
-Query siblings via `ralph_hero__list_sub_issues` on the epic. For each sibling: verify "In Progress" state AND all plan checkboxes checked. If any incomplete, STOP: list status per issue, suggest `/ralph-impl [incomplete-issue]`.
+List sub-issues under the epic. For each sibling: verify "In Progress" state AND all plan checkboxes checked. If any incomplete, STOP: list status per issue, suggest `/ralph-impl [incomplete-issue]`.
 
 **10.3. Create PR** (single template, adapt sections by context)
 
@@ -461,26 +445,17 @@ Only execute when ALL phases are complete and PR is created.
 
 For each issue in `issues[]` (single: just one; group/epic: all issues):
 
-1. **Add completion comment**:
-   ```
-   ralph_hero__create_comment
-   - number: [issue-number]
-   - body: |
-       ## Implementation Complete
+1. **Add completion comment** on the issue:
+   ```markdown
+   ## Implementation Complete
 
-       PR: [GitHub PR URL]
-       Branch: [branch-name]
-       [If group/epic: list all issues and their status]
-       Ready for code review.
+   PR: [GitHub PR URL]
+   Branch: [branch-name]
+   [If group/epic: list all issues and their status]
+   Ready for code review.
    ```
 
-2. **Move to "In Review"**:
-   ```
-   ralph_hero__save_issue
-   - number: [issue-number]
-   - workflowState: "__COMPLETE__"
-   - command: "ralph_impl"
-   ```
+2. **Move to "In Review"**: advance the issue to the next state (workflowState "__COMPLETE__", command "ralph_impl").
 
 Note: PR auto-links via "Closes #NNN" in PR body. No explicit link attachment needed.
 

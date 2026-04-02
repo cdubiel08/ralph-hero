@@ -31,14 +31,14 @@ allowed-tools:
   - Task
   - Agent
   - WebSearch
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_issue
-  - ralph_hero__add_sub_issue
-  - ralph_hero__list_sub_issues
-  - ralph_hero__add_dependency
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)
@@ -76,39 +76,13 @@ Then STOP. Do not proceed.
 
 ### Step 2: Select Issue
 
-**If issue number provided**: Fetch it directly:
-```
-ralph_hero__get_issue
-- owner: [owner]
-- repo: [repo]
-- number: [issue-number]
-```
+**If issue number provided**: Fetch the full issue details for that issue number.
 
 **If no issue number**: Pick oldest untriaged issue in "Backlog" workflow state using two queries:
 
-**Query 1**: Get IDs of already-triaged Backlog issues:
-```
-ralph_hero__list_issues
-- owner: [owner]
-- repo: [repo]
-- profile: "analyst-triage"
-- label: "ralph-triage"
-# Profile expands to: workflowState: "Backlog"
-# Explicit label param composes with profile defaults
-- limit: 250
-```
-Store the returned issue numbers as `triaged_numbers`.
+**Query 1**: List Backlog issues that already have the "ralph-triage" label (profile: "analyst-triage", label: "ralph-triage", limit: 250). Store the returned issue numbers as `triaged_numbers`.
 
-**Query 2**: Get all Backlog issues ordered by creation date:
-```
-ralph_hero__list_issues
-- owner: [owner]
-- repo: [repo]
-- profile: "analyst-triage"
-# Profile expands to: workflowState: "Backlog"
-- orderBy: "createdAt"
-- limit: 250
-```
+**Query 2**: List all Backlog issues ordered by creation date (profile: "analyst-triage", orderBy: "createdAt", limit: 250).
 
 **Select**: Pick the **first issue from Query 2 whose number is NOT in `triaged_numbers`**.
 
@@ -131,14 +105,7 @@ Then STOP.
 
    > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
-   Also search GitHub for similar issues:
-   ```
-   ralph_hero__list_issues
-   - owner: [owner]
-   - repo: [repo]
-   - query: "[keywords from issue title]"
-   - limit: 5
-   ```
+   Also search GitHub for similar issues by keywords from the issue title (limit: 5).
 
 3. **Wait for sub-tasks to complete**
 
@@ -175,26 +142,13 @@ Choose ONE action:
 
 ### Step 5: Take Action
 
-**If CLOSE:**
-```
-ralph_hero__save_issue
-- number: [issue-number]
-- workflowState: "Done"
-- command: "ralph_triage"
-```
-Add comment explaining why closed.
+**If CLOSE:** Update the issue workflow state to "Done" (command: "ralph_triage"). Add a comment explaining why it was closed.
 
 **Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
 
 **If SPLIT:**
 
-First, discover existing children:
-```
-ralph_hero__list_sub_issues
-- owner: [owner]
-- repo: [repo]
-- number: [issue-number]
-```
+First, list existing sub-issues of the parent issue.
 
 **If children already exist**: Assess whether they cover the proposed split scope.
 - If coverage is sufficient, do NOT create new issues. Add a comment noting the existing children cover the scope and adjust estimates/descriptions on existing children if needed.
@@ -202,65 +156,23 @@ ralph_hero__list_sub_issues
 
 **If no children exist**: Create sub-issues using the three-step pattern:
 
-1. Create the issue:
-   ```
-   ralph_hero__create_issue
-   - owner: [owner]
-   - repo: [repo]
-   - title: [Sub-issue title]
-   ```
+1. Create the issue with a descriptive title.
+2. Link it as a sub-issue under the original issue.
+3. Set the estimate to "XS" and workflow state to "Backlog".
 
-2. Link as sub-issue:
-   ```
-   ralph_hero__add_sub_issue
-   - owner: [owner]
-   - repo: [repo]
-   - parentNumber: [original-issue-number]
-   - childNumber: [new-issue-number]
-   ```
-
-3. Set estimate and workflow state:
-   ```
-   ralph_hero__save_issue
-   - number: [new-issue-number]
-   - estimate: "XS"
-   - workflowState: "Backlog"
-   ```
-
-Add comment to original listing sub-issues (reused and/or created).
+Add a comment to the original listing sub-issues (reused and/or created).
 
 **Do NOT close the original issue.** The parent stays in its current state (Backlog). It reaches Done only when all children are Done.
 
-**If RE-ESTIMATE:**
-```
-ralph_hero__save_issue
-- number: [issue-number]
-- estimate: "[new estimate: XS/S/M/L/XL]"
-```
-Add comment explaining estimate reasoning.
+**If RE-ESTIMATE:** Update the issue with the new estimate (XS/S/M/L/XL). Add a comment explaining the estimate reasoning.
 
-**If RESEARCH:**
-```
-ralph_hero__save_issue
-- number: [issue-number]
-- workflowState: "Research Needed"
-- command: "ralph_triage"
-```
-Add comment: "Moved to Research Needed for investigation."
+**If RESEARCH:** Update the issue workflow state to "Research Needed" (command: "ralph_triage"). Add a comment: "Moved to Research Needed for investigation."
 
-**If KEEP:**
-Add comment with any clarifications or context discovered.
-Leave workflow state as Backlog.
+**If KEEP:** Add a comment with any clarifications or context discovered. Leave workflow state as Backlog.
 
 ### Step 6: Mark Issue as Triaged
 
-After completing any action (CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP), apply the `ralph-triage` label:
-
-```
-ralph_hero__save_issue
-- number: [issue-number]
-- labels: [existing-labels, "ralph-triage"]
-```
+After completing any action (CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP), update the issue labels to include "ralph-triage" while preserving existing labels.
 
 **Important**: Preserve existing labels when adding `ralph-triage`. Read the issue's current labels first, then include them all plus `ralph-triage` in the update.
 
@@ -268,30 +180,9 @@ ralph_hero__save_issue
 
 After triage action is complete, scan for related issues in Backlog or Research Needed:
 
-   **Knowledge context (optional)**: If `knowledge_search` is available, search for related research documents before querying issues:
-   ```
-   knowledge_search(query="[issue title and key concepts]", limit=5)
-   ```
-   Use any returned documents as additional context when analyzing relatedness in step 2. This helps surface conceptual relationships that aren't visible from issue titles alone.
+   **Knowledge context (optional)**: If a knowledge search tool is available, search for related research documents by issue title and key concepts (limit 5) before querying issues. Use any returned documents as additional context when analyzing relatedness. This helps surface conceptual relationships that aren't visible from issue titles alone.
 
-1. **Query candidate issues**:
-   ```
-   ralph_hero__list_issues
-   - owner: [owner]
-   - repo: [repo]
-   - profile: "analyst-triage"
-   # Profile expands to: workflowState: "Backlog"
-   - limit: 50
-   ```
-
-   ```
-   ralph_hero__list_issues
-   - owner: [owner]
-   - repo: [repo]
-   - profile: "analyst-research"
-   # Profile expands to: workflowState: "Research Needed"
-   - limit: 50
-   ```
+1. **Query candidate issues**: List Backlog issues (profile: "analyst-triage", limit: 50) and Research Needed issues (profile: "analyst-research", limit: 50).
 
 2. **Analyze for relatedness** using LLM judgment. Issues are related if they:
    - Touch the same **code layer** (frontend, backend, API, database, infrastructure)
@@ -308,21 +199,9 @@ After triage action is complete, scan for related issues in Backlog or Research 
    - API changes before frontend changes
    - Base components before dependent components
 
-   For each dependency pair:
-   ```
-   ralph_hero__add_dependency
-   - owner: [owner]
-   - repo: [repo]
-   - blockedNumber: [dependent-issue-number]
-   - blockingNumber: [earlier-phase-issue-number]
-   ```
+   For each dependency pair, add a dependency: set the dependent issue as blocked by the earlier-phase issue.
 
-   Example: A test config issue (GH-10) that must complete before test implementation issues (GH-11, GH-12) can start:
-   ```
-   # Config issue blocks the implementation issues
-   ralph_hero__add_dependency(blockedNumber=11, blockingNumber=10)
-   ralph_hero__add_dependency(blockedNumber=12, blockingNumber=10)
-   ```
+   Example: A test config issue (GH-10) that must complete before test implementation issues (GH-11, GH-12) can start — add dependencies so GH-11 and GH-12 are each blocked by GH-10.
 
    **Note**: Dependencies serve TWO purposes:
    - **Grouping**: Issues connected via dependency chains (or same parent) are in the same group

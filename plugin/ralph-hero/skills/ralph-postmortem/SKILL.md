@@ -8,8 +8,8 @@ allowed-tools:
   - Edit
   - Write
   - Bash
-  - ralph_hero__create_issue
-  - knowledge_record_outcome
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 
 # Ralph Post-Mortem
@@ -56,14 +56,14 @@ Review the session events collected in Step 1. Apply these rules:
 
 After classifying blockers and impediments, record each to the outcome ledger:
 
-For each **blocker**: call `knowledge_record_outcome` with:
+For each **blocker**: record outcome with:
 - `event_type`: `"blocker_recorded"`
 - `issue_number`: the primary issue number
 - `agent_type`: the worker that encountered the blocker
 - `session_id`: the team session identifier
 - `payload`: `{ blocker_type, description, created_issue_number }`
 
-For each **impediment**: call `knowledge_record_outcome` with:
+For each **impediment**: record outcome with:
 - `event_type`: `"impediment_recorded"`
 - `issue_number`: the primary issue number
 - `agent_type`: the worker that encountered the impediment
@@ -148,7 +148,7 @@ Where `{report-slug}` is the filename stem of the newly written post-mortem (wit
 
 For each entry in `## Blockers` (skip if "None."):
 
-Call `ralph_hero__create_issue` with:
+Create a new issue with:
 - `title`: `process: {brief description of the blocker}`
 - `body`: fuller description of what failed, what the retry cost was, and what improvement would prevent recurrence
 - `labels`: `["process-improvement"]`

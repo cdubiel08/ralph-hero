@@ -61,24 +61,20 @@ Search terms per entity: [what to search for each]
 
 For each entity, locate the most relevant documents in the corpus.
 
-1. Call `knowledge_search` with the entity as the query. Use `brief: true` when the parameter is supported (adds a summary field without full content). Try a specific term first; if zero results, broaden to related concepts.
+1. Search the knowledge corpus for each entity. Use `brief: true` when the parameter is supported (adds a summary field without full content). Try a specific term first; if zero results, broaden to related concepts.
 2. Record the top 3 document IDs per entity. Prefer `research` and `review` type documents over `plan` and `idea` when relevance is similar.
 3. If an entity produces zero matching documents after two attempts with different terms, note "no documents found for [entity]" and continue — this will factor into the confidence score.
-
-Tools: `knowledge_search`
 
 ### Step 3: Find Connections
 
 Trace how the entity documents relate to each other through the knowledge graph.
 
 For each pair of entity documents:
-1. Call `knowledge_paths` with `source` and `target` to find graph paths between them. Assess path quality — a path through topically relevant documents is stronger than a path through generic hub nodes. A shorter path with relevant intermediaries beats a longer one.
-2. Call `knowledge_traverse` from each entity document in both `outgoing` and `incoming` directions, filtering by relationship types (`builds_on`, `tensions`, `superseded_by`) to find direct typed connections.
-3. Optionally call `knowledge_common` for any pair of entity documents to find shared neighbors — documents that both entity documents connect to. Shared neighbors are candidate "bridge" documents that may explain the relationship.
+1. Find graph paths between the two documents (using `source` and `target`). Assess path quality — a path through topically relevant documents is stronger than a path through generic hub nodes. A shorter path with relevant intermediaries beats a longer one.
+2. Traverse from each entity document in both `outgoing` and `incoming` directions, filtering by relationship types (`builds_on`, `tensions`, `superseded_by`) to find direct typed connections.
+3. Optionally find shared neighbors for any pair of entity documents — documents that both entity documents connect to. Shared neighbors are candidate "bridge" documents that may explain the relationship.
 
-**Degradation**: If `knowledge_paths` is unavailable (tool-not-found error), fall back to `knowledge_traverse` with `builds_on` type at depth 3 from each entity document, supplemented by `knowledge_search` queries combining entity terms.
-
-Tools: `knowledge_paths`, `knowledge_traverse`, `knowledge_common`
+**Degradation**: If graph path tools are unavailable (tool-not-found error), fall back to traversal with `builds_on` type at depth 3 from each entity document, supplemented by knowledge searches combining entity terms.
 
 ### Step 4: Read Evidence
 
@@ -91,7 +87,7 @@ For each selected document:
 
 Do not use more than 5 documents. If the top documents are all `plan` type, note the evidence weakness explicitly.
 
-Tools: `Read`, optionally `knowledge_search` with document ID
+Use the Read tool on file paths found in search results; optionally search for a document by ID to retrieve it.
 
 ### Step 5: Report
 
@@ -162,9 +158,9 @@ Produce a structured verdict report. Do not speculate beyond the evidence. If ev
 
 ## Graceful Degradation
 
-**If graph algorithm tools are unavailable** (knowledge_paths, knowledge_common return tool-not-found errors):
-- Fall back entirely to `knowledge_traverse` with `builds_on`, `tensions`, and `superseded_by` relationship types at depth 3 from each entity document
-- Supplement with `knowledge_search` using combined entity terms (e.g., searching "entity1 entity2" together)
+**If graph algorithm tools are unavailable** (path-finding and common-neighbor tools return tool-not-found errors):
+- Fall back entirely to graph traversal with `builds_on`, `tensions`, and `superseded_by` relationship types at depth 3 from each entity document
+- Supplement with knowledge searches using combined entity terms (e.g., searching "entity1 entity2" together)
 - Note in the report: "Graph path analysis unavailable — results based on typed relationship traversal only"
 
 **If brief mode is unsupported** (`brief: true` parameter rejected):

@@ -41,10 +41,10 @@ allowed-tools:
   - Bash
   - Task
   - Agent
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 ## Configuration (resolved at load time)
@@ -80,13 +80,7 @@ Starting ralph-review in [INTERACTIVE/AUTO] mode
 **If issue number provided**: Fetch it directly
 **If no issue number**: Find highest-priority XS/Small issue in "Plan in Review"
 
-```
-ralph_hero__list_issues
-- profile: "review-queue"
-# Profile expands to: workflowState: "Plan in Review"
-- orderBy: "priority"
-- limit: 1
-```
+List issues using profile "review-queue" (expands to workflowState: "Plan in Review"), ordered by priority, limit 1.
 
 If no eligible issues:
 ```
@@ -96,19 +90,12 @@ Then STOP.
 
 ### Step 3: Validate Plan Exists
 
-1. Fetch the issue with full context:
-   ```
-   ralph_hero__get_issue
-   - number: [issue-number]
-   ```
+1. Fetch the full issue details with context.
 
 2. **Find linked plan document**:
 
-   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first:
-   ```
-   knowledge_search(query="implementation plan GH-${number} [issue title keywords]", type="plan", limit=3)
-   ```
-   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If `knowledge_search` is not available or returns no results, continue with standard Artifact Comment Protocol discovery below.
+   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "implementation plan GH-${number} [issue title keywords]", type "plan", limit 3.
+   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If not available or no results, continue with standard Artifact Comment Protocol discovery below.
 
    **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
 
@@ -122,9 +109,13 @@ Then STOP.
       - `thoughts/shared/plans/*GH-$(printf '%04d' ${number})*`
       Use the most recent match if multiple found.
    6. **Group fallback**: If standard glob fails, try `thoughts/shared/plans/*group*GH-{primary}*` where `{primary}` is the primary issue number from the issue's group context.
-   7. **If fallback found, self-heal**: Post the missing comment to the issue:
-      ```
-      ralph_hero__create_comment(owner, repo, number, body="## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
+   7. **If fallback found, self-heal**: Post the missing artifact comment on the issue:
+      ```markdown
+      ## Implementation Plan
+
+      https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]
+
+      (Self-healed: artifact was found on disk but not linked via comment)
       ```
    8. **If neither found**:
       ```
@@ -275,75 +266,48 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 
 #### Approval Flow (APPROVED)
 
-1. **Move issue to "In Progress"**:
-   ```
-   ralph_hero__save_issue
-   - number: [issue-number]
-   - workflowState: "__COMPLETE__"
-   - command: "ralph_review"
-   ```
+1. **Move issue to "In Progress"**: advance the issue to the next state (workflowState "__COMPLETE__", command "ralph_review"). If an error is returned, read the message — it contains valid states/intents and a Recovery action. Retry with corrected parameters.
 
-   **Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+2. **Add approval comment** on the issue:
+   ```markdown
+   ## Plan Review
 
-2. **Add approval comment**:
-   ```
-   ralph_hero__create_comment
-   - number: [issue-number]
-   - body: |
-       ## Plan Review
+   VERDICT: APPROVED
 
-       VERDICT: APPROVED
+   [INTERACTIVE]: Approved by human review.
+   [AUTO]: Approved by automated critique - no major issues found.
 
-       [INTERACTIVE]: Approved by human review.
-       [AUTO]: Approved by automated critique - no major issues found.
+   [If AUTO mode]: Full critique: [GitHub URL to critique_path]
 
-       [If AUTO mode]: Full critique: [GitHub URL to critique_path]
+   [If minor changes noted]: Minor adjustments requested: [list]
 
-       [If minor changes noted]: Minor adjustments requested: [list]
-
-       Ready for implementation. Run `/ralph-impl NNN` to begin.
+   Ready for implementation. Run `/ralph-impl NNN` to begin.
    ```
 
    **Note**: Do NOT use any link attachment mechanism. Reference critique in comment only.
 
 #### Rejection Flow (NEEDS_ITERATION)
 
-1. **Add `needs-iteration` label**:
-   ```
-   ralph_hero__save_issue
-   - number: [issue-number]
-   - labels: [existing_labels..., "needs-iteration"]
-   ```
+1. **Add `needs-iteration` label**: Update the issue labels to include "needs-iteration" (preserve existing labels — read current labels first, then append "needs-iteration").
 
-   Note: Read current labels first, then append "needs-iteration".
+2. **Move issue to "Ready for Plan"**: update the issue workflow state to "Ready for Plan" (command: "ralph_review").
 
-2. **Move issue to "Ready for Plan"**:
-   ```
-   ralph_hero__save_issue
-   - number: [issue-number]
-   - workflowState: "Ready for Plan"
-   - command: "ralph_review"
-   ```
+3. **Add feedback comment** on the issue:
+   ```markdown
+   ## Plan Review
 
-3. **Add feedback comment**:
-   ```
-   ralph_hero__create_comment
-   - number: [issue-number]
-   - body: |
-       ## Plan Review
+   VERDICT: NEEDS_ITERATION
 
-       VERDICT: NEEDS_ITERATION
+   Issues identified:
+   - [Issue 1]
+   - [Issue 2]
 
-       Issues identified:
-       - [Issue 1]
-       - [Issue 2]
+   [INTERACTIVE]: Based on human feedback.
+   [AUTO]: Based on automated critique. Full critique: [GitHub URL to critique_path]
 
-       [INTERACTIVE]: Based on human feedback.
-       [AUTO]: Based on automated critique. Full critique: [GitHub URL to critique_path]
+   Label `needs-iteration` added.
 
-       Label `needs-iteration` added.
-
-       Run `/ralph-plan NNN` to address these issues and update the plan.
+   Run `/ralph-plan NNN` to address these issues and update the plan.
    ```
 
    **Note**: Do NOT use any link attachment mechanism. Reference critique in comment only.

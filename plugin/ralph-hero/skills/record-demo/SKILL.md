@@ -10,8 +10,8 @@ allowed-tools:
   - Glob
   - Grep
   - AskUserQuestion
-  - ralph_hero__get_issue
-  - ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
 # Record Demo
@@ -40,7 +40,7 @@ If this fails, guide the user to start OBS and enable WebSocket.
 ### Step 2: Issue Context (if provided)
 
 If invoked with `#NNN`:
-1. Fetch issue: `ralph_hero__get_issue(number=NNN)`
+1. Fetch the full issue details for issue NNN.
 2. Display issue title and current state
 3. Suggest a demo script based on the issue type
 
@@ -80,7 +80,7 @@ Ask user:
 
 If uploading:
 1. Upload via `gh release upload` or issue attachment
-2. Post comment: `ralph_hero__create_comment(number=NNN, body="## Demo Recording\n\n...")`
+2. Post a comment on issue NNN with header `## Demo Recording` and the upload URL and details.
 
 ### Step 7: Summary
 

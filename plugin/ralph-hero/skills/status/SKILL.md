@@ -11,7 +11,7 @@ hooks:
 allowed-tools:
   - Read
   - Bash
-  - ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
 ---
 
 # Ralph Pipeline Status
@@ -20,10 +20,10 @@ Display the current pipeline status dashboard.
 
 ## Usage
 
-Call the `ralph_hero__pipeline_dashboard` tool with the requested format:
+Fetch the pipeline dashboard with the requested format:
 
 1. Parse the argument (if provided) as the output format. Default to `markdown`.
-2. Call `ralph_hero__pipeline_dashboard` with:
+2. Fetch the pipeline dashboard with:
    - `format`: parsed format or `"markdown"`
    - `includeHealth`: true
 3. Display the `formatted` field (for markdown/ascii) or the structured data (for json).

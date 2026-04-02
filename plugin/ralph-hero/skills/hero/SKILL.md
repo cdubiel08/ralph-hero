@@ -12,19 +12,19 @@ allowed-tools:
   - Agent
   - Skill
   - Task
-  - ralph_hero__get_issue
-  - ralph_hero__list_issues
-  - ralph_hero__save_issue
-  - ralph_hero__create_issue
-  - ralph_hero__create_comment
-  - ralph_hero__add_sub_issue
-  - ralph_hero__list_sub_issues
-  - ralph_hero__add_dependency
-  - ralph_hero__remove_dependency
-  - ralph_hero__decompose_feature
-  - ralph_hero__detect_stream_positions
-  - ralph_hero__pick_actionable_issue
-  - ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__decompose_feature
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__detect_stream_positions
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pick_actionable_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
   - AskUserQuestion
@@ -94,7 +94,7 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 
 If no issue number provided, scan the board for the best candidate:
 
-1. Call `ralph_hero__pick_actionable_issue()` to find the highest-priority actionable issue
+1. Pick the highest-priority actionable issue from the board
 2. If a candidate is found, present it to the user:
    ```
    No issue number provided. The highest-priority actionable issue is:
@@ -115,11 +115,7 @@ If no issue number provided, scan the board for the best candidate:
 
 ### Step 1: Detect Pipeline Position
 
-Query the pipeline position tool to determine what phase to execute:
-
-```
-ralph_hero__get_issue(number=[issue-number], includePipeline=true)
-```
+Fetch the issue with pipeline position included to determine what phase to execute.
 
 The result provides:
 - `phase`: SPLIT, RESEARCH, PLAN, REVIEW, HUMAN_GATE, IMPLEMENT, COMPLETE, TERMINAL
@@ -128,7 +124,7 @@ The result provides:
 - `issues`: Current state of all issues in the group
 - `isGroup` and `groupPrimary`: Group detection info
 
-Execute the phase indicated by `phase`. Do NOT interpret workflow states yourself -- trust the tool's decision.
+Execute the phase indicated by `phase`. Do NOT interpret workflow states yourself — trust the pipeline detection result.
 
 ### Step 1a: Registry Lookup
 
@@ -138,7 +134,7 @@ Load the repo registry to determine if cross-repo orchestration is needed:
    - If file exists: parse YAML to extract repos, `localDir` paths, and patterns
    - If file does not exist: proceed in single-repo mode (existing behavior)
 
-   > **Why `Read` instead of MCP tools?** Hero's `allowed-tools` are `[Read, Glob, Grep, Bash, Skill, Task]` — no MCP tools. It reads the registry file directly and delegates MCP tool calls (like `decompose_feature`) to sub-agents via `Task` when needed.
+   > **Why `Read` for the registry?** The registry is a local file — read it directly. Delegate any cross-repo feature decomposition to sub-agents as needed.
 
 2. Store registry context for use in later steps:
    - `registryAvailable: boolean`
@@ -230,7 +226,7 @@ This metadata flows to builder sub-agents so they know which directories to work
 
 After all research tasks complete (detectable when plan tasks become unblocked), if `isGroup=true` and `issues.length >= 3`:
 
-1. Call `ralph_hero__detect_stream_positions(issues=[issue-numbers])` to cluster by file overlap
+1. Detect stream positions for the issue numbers to cluster by file overlap
 2. If `totalStreams > 1`: restructure implementation tasks into per-stream parallel chains
    - Issues within the same stream: sequential `blockedBy` chain
    - Streams independent of each other: no cross-stream `blockedBy`
