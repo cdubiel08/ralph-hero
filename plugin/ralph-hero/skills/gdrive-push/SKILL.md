@@ -11,61 +11,49 @@ allowed-tools:
   - Bash
   - Glob
   - Grep
-  - Agent
-  - manage_drive
-  - manage_accounts
 ---
 
 # Push Files to Google Drive
 
-You push files from the local machine to a shared Google Drive folder called `claude-shared`. Files are stored flat with path-encoded names. A manifest tracks metadata.
+You push files from the local machine to a shared Google Drive folder called `claude-shared`. Files are stored flat with path-encoded names. A manifest tracks metadata for the pull side to reconstruct paths.
 
 ## Arguments
 
 `ARGUMENTS` contains: `<path> [optional description in quotes]`
 
 - If path is a file: push that single file
-- If path is a directory: push all non-hidden files recursively, skipping `.git/`, `node_modules/`, `__pycache__/`, `.venv/`
+- If path is a directory: push all non-hidden files recursively, skipping `.git/`, `node_modules/`, `__pycache__/`, `.venv/`, `target/`, `dist/`, `build/`
 - If no arguments: ask what to push
 
 ## Prerequisites Check
 
-Before doing anything, verify the MCP is available:
+Run `gws auth status` via Bash and parse the JSON output. Check that `token_valid` is `true`.
 
-1. Call `manage_accounts(operation: "list")` to check for authenticated accounts
-2. If no accounts are returned, print this and stop:
+If gws is not found or not authenticated, print this and stop:
 
 ```
-Google Workspace MCP not configured or not authenticated.
+gws CLI not configured or not authenticated.
 
 Setup steps:
-1. Add to .claude/settings.json under mcpServers:
-   "google-workspace": {
-     "command": "npx",
-     "args": ["@aaronsb/google-workspace-mcp"],
-     "env": { "GOOGLE_CLIENT_ID": "...", "GOOGLE_CLIENT_SECRET": "..." }
-   }
-2. Restart Claude Code
-3. Run: manage_accounts(operation: "authenticate", email: "you@gmail.com", category: "personal")
-
-See https://github.com/aaronsb/google-workspace-mcp for full setup.
+1. Install: npm install -g @googleworkspace/cli
+2. Create ~/.config/gws/client_secret.json with your OAuth client credentials
+3. Authenticate: gws auth login --services drive
 ```
-
-3. Save the authenticated email from the account list — use it for all subsequent `manage_drive` calls.
 
 ## Step 1: Find the `claude-shared` Folder
 
-```
-manage_drive(
-  email: "<email>",
-  operation: "search",
-  query: "name = 'claude-shared' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-)
+```bash
+gws drive files list --params '{"q": "name = '\''claude-shared'\'' and mimeType = '\''application/vnd.google-apps.folder'\'' and trashed = false", "pageSize": 5}'
 ```
 
-If not found, tell the user to create it manually in Google Drive and stop.
+Parse the JSON output. Extract the folder `id` from the first result in the `files` array.
 
-Save the folder's `id` as `SHARED_FOLDER_ID`.
+If `files` is empty, tell the user to create the folder:
+```bash
+gws drive files create --json '{"name": "claude-shared", "mimeType": "application/vnd.google-apps.folder"}'
+```
+
+Save the folder ID as `SHARED_FOLDER_ID` for subsequent commands.
 
 ## Step 2: Resolve Local Files
 
@@ -76,23 +64,21 @@ Save the folder's `id` as `SHARED_FOLDER_ID`.
 3. For each file, compute:
    - `local_path`: absolute path on disk
    - `relative_path`: path relative to the current working directory
-   - `drive_name`: `relative_path` with `/` replaced by `__` (e.g., `thoughts__shared__research__foo.md`)
+   - `drive_name`: `relative_path` with `/` replaced by `__` (e.g., `thoughts/shared/research/foo.md` becomes `thoughts__shared__research__foo.md`)
 
 ## Step 3: Download Existing Manifest
 
 Search for the manifest:
-```
-manage_drive(
-  email: "<email>",
-  operation: "search",
-  query: "name = 'manifest.json' and '<SHARED_FOLDER_ID>' in parents and trashed = false"
-)
+```bash
+gws drive files list --params '{"q": "name = '\''manifest.json'\'' and '\''SHARED_FOLDER_ID'\'' in parents and trashed = false", "pageSize": 1}'
 ```
 
-If found:
-1. Download it: `manage_drive(email: "<email>", operation: "download", fileId: "<manifest_file_id>", outputPath: "/tmp/gdrive-manifest.json")`
-2. Read and parse the JSON
-3. Save the manifest's `fileId` for later deletion
+If found, download it by capturing stdout (gws prints text/JSON content to stdout rather than saving to disk):
+```bash
+gws drive files get --params '{"fileId": "MANIFEST_FILE_ID", "alt": "media"}' 2>/dev/null > .gdrive-manifest-tmp.json
+```
+
+Read and parse the JSON. Save the manifest's file ID for later deletion.
 
 If not found, start with an empty manifest: `{"files": []}`
 
@@ -101,31 +87,21 @@ If not found, start with an empty manifest: `{"files": []}`
 For each file to push:
 
 1. Check if a file with the same `drive_name` already exists in `claude-shared`:
-   ```
-   manage_drive(
-     email: "<email>",
-     operation: "search",
-     query: "name = '<drive_name>' and '<SHARED_FOLDER_ID>' in parents and trashed = false"
-   )
+   ```bash
+   gws drive files list --params '{"q": "name = '\''DRIVE_NAME'\'' and '\''SHARED_FOLDER_ID'\'' in parents and trashed = false", "pageSize": 1}'
    ```
 
 2. If it exists, delete the old version:
-   ```
-   manage_drive(email: "<email>", operation: "delete", fileId: "<old_file_id>")
+   ```bash
+   gws drive files delete --params '{"fileId": "OLD_FILE_ID"}'
    ```
 
 3. Upload the new version:
-   ```
-   manage_drive(
-     email: "<email>",
-     operation: "upload",
-     filePath: "<local_path>",
-     name: "<drive_name>",
-     parentFolderId: "<SHARED_FOLDER_ID>"
-   )
+   ```bash
+   gws drive +upload LOCAL_PATH --name DRIVE_NAME --parent SHARED_FOLDER_ID
    ```
 
-4. Note the returned `fileId` for the manifest.
+4. Parse the JSON output to get the new `id` for the manifest.
 
 ## Step 5: Update and Upload Manifest
 
@@ -141,29 +117,21 @@ For each file to push:
    }
    ```
 
-2. Write the updated manifest to `/tmp/gdrive-manifest.json`
+2. Write the updated manifest to `.gdrive-manifest-tmp.json` in the current directory
 
 3. If an old manifest existed on Drive, delete it:
-   ```
-   manage_drive(email: "<email>", operation: "delete", fileId: "<old_manifest_file_id>")
+   ```bash
+   gws drive files delete --params '{"fileId": "OLD_MANIFEST_FILE_ID"}'
    ```
 
 4. Upload the new manifest:
-   ```
-   manage_drive(
-     email: "<email>",
-     operation: "upload",
-     filePath: "/tmp/gdrive-manifest.json",
-     name: "manifest.json",
-     parentFolderId: "<SHARED_FOLDER_ID>"
-   )
+   ```bash
+   gws drive +upload .gdrive-manifest-tmp.json --name manifest.json --parent SHARED_FOLDER_ID
    ```
 
-5. Clean up: `rm /tmp/gdrive-manifest.json`
+5. Clean up: `rm .gdrive-manifest-tmp.json`
 
 ## Step 6: Print Summary
-
-Print a summary like:
 
 ```
 Pushed to Google Drive (claude-shared):

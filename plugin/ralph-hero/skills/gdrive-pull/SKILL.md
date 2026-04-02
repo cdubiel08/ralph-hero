@@ -10,8 +10,6 @@ allowed-tools:
   - Write
   - Bash
   - Glob
-  - manage_drive
-  - manage_accounts
 ---
 
 # Pull Files from Google Drive
@@ -28,64 +26,43 @@ You pull files from a shared Google Drive folder called `claude-shared` to the l
 
 ## Prerequisites Check
 
-Before doing anything, verify the MCP is available:
+Run `gws auth status` via Bash and parse the JSON output. Check that `token_valid` is `true`.
 
-1. Call `manage_accounts(operation: "list")` to check for authenticated accounts
-2. If no accounts are returned, print this and stop:
+If gws is not found or not authenticated, print this and stop:
 
 ```
-Google Workspace MCP not configured or not authenticated.
+gws CLI not configured or not authenticated.
 
 Setup steps:
-1. Add to .claude/settings.json under mcpServers:
-   "google-workspace": {
-     "command": "npx",
-     "args": ["@aaronsb/google-workspace-mcp"],
-     "env": { "GOOGLE_CLIENT_ID": "...", "GOOGLE_CLIENT_SECRET": "..." }
-   }
-2. Restart Claude Code
-3. Run: manage_accounts(operation: "authenticate", email: "you@gmail.com", category: "personal")
-
-See https://github.com/aaronsb/google-workspace-mcp for full setup.
+1. Install: npm install -g @googleworkspace/cli
+2. Create ~/.config/gws/client_secret.json with your OAuth client credentials
+3. Authenticate: gws auth login --services drive
 ```
-
-3. Save the authenticated email from the account list — use it for all subsequent `manage_drive` calls.
 
 ## Step 1: Find the `claude-shared` Folder
 
-```
-manage_drive(
-  email: "<email>",
-  operation: "search",
-  query: "name = 'claude-shared' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-)
+```bash
+gws drive files list --params '{"q": "name = '\''claude-shared'\'' and mimeType = '\''application/vnd.google-apps.folder'\'' and trashed = false", "pageSize": 5}'
 ```
 
-If not found, tell the user: "No `claude-shared` folder found on Google Drive. Push some files first with `/gdrive-push` on your other machine." and stop.
+Parse the JSON output. Extract the folder `id` from the first result in the `files` array.
 
-Save the folder's `id` as `SHARED_FOLDER_ID`.
+If `files` is empty, tell the user: "No `claude-shared` folder found on Google Drive. Push some files first with `/gdrive-push` on your other machine." and stop.
+
+Save the folder ID as `SHARED_FOLDER_ID`.
 
 ## Step 2: Download Manifest
 
 Search for the manifest:
-```
-manage_drive(
-  email: "<email>",
-  operation: "search",
-  query: "name = 'manifest.json' and '<SHARED_FOLDER_ID>' in parents and trashed = false"
-)
+```bash
+gws drive files list --params '{"q": "name = '\''manifest.json'\'' and '\''SHARED_FOLDER_ID'\'' in parents and trashed = false", "pageSize": 1}'
 ```
 
-If not found, tell the user: "No manifest found in `claude-shared`. Nothing has been pushed yet." and stop.
+If `files` is empty, tell the user: "No manifest found in `claude-shared`. Nothing has been pushed yet." and stop.
 
-Download it:
-```
-manage_drive(
-  email: "<email>",
-  operation: "download",
-  fileId: "<manifest_file_id>",
-  outputPath: "/tmp/gdrive-manifest.json"
-)
+Download the manifest by capturing stdout (gws prints text/JSON content to stdout rather than saving to disk):
+```bash
+gws drive files get --params '{"fileId": "MANIFEST_FILE_ID", "alt": "media"}' 2>/dev/null > .gdrive-manifest-tmp.json
 ```
 
 Read and parse the JSON. The manifest has this structure:
@@ -103,6 +80,8 @@ Read and parse the JSON. The manifest has this structure:
   ]
 }
 ```
+
+Clean up the temp file after parsing: `rm .gdrive-manifest-tmp.json`
 
 ## Step 3: Read Local State
 
@@ -136,22 +115,19 @@ Based on the arguments:
 
 ## Step 5: Download Files
 
+The gws CLI restricts `--output` paths to within its current working directory. Since files go to `~/claude-inbox/`, run the download from `$HOME` so that `~/claude-inbox/...` is within cwd.
+
 For each file to pull:
 
-1. Create the local directory structure under `~/claude-inbox/`:
+1. Create the local directory structure:
    ```bash
    mkdir -p ~/claude-inbox/<parent-directories-of-path>
    ```
    Example: for `path: "thoughts/shared/research/foo.md"`, run `mkdir -p ~/claude-inbox/thoughts/shared/research/`
 
-2. Download the file:
-   ```
-   manage_drive(
-     email: "<email>",
-     operation: "download",
-     fileId: "<file_id>",
-     outputPath: "/Users/<username>/claude-inbox/<path>"
-   )
+2. Download the file (note the `cd $HOME &&` prefix):
+   ```bash
+   cd $HOME && gws drive files get --params '{"fileId": "FILE_ID", "alt": "media"}' --output claude-inbox/PATH
    ```
 
 3. Update local state for this file:
@@ -163,8 +139,6 @@ For each file to pull:
    ```
 
 After all downloads, write the updated state to `~/.claude/gdrive-pull-state.json`.
-
-Clean up: `rm /tmp/gdrive-manifest.json`
 
 ## Step 6: Print Summary
 
@@ -179,8 +153,6 @@ Pulled from Google Drive (claude-shared):
 ```
 
 **List mode (`--list`):**
-Print a table:
-
 ```
 Available in Google Drive (claude-shared):
 
