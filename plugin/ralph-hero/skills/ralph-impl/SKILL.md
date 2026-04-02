@@ -57,6 +57,14 @@ allowed-tools:
   - ralph_hero__list_sub_issues
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Ralph GitHub Implement - Naive Hero Mode
 
 You are a naive hero implementer. You pick ONE issue (or group of related issues), implement ONE phase, commit, and stop. Each invocation executes one phase, allowing resumption across context windows.
@@ -70,8 +78,6 @@ You are a naive hero implementer. You pick ONE issue (or group of related issues
 
 ```
 ralph_hero__list_issues
-- owner: $RALPH_GH_OWNER
-- repo: $RALPH_GH_REPO
 - profile: "builder-active"
 # Profile expands to: workflowState: "In Progress"
 - orderBy: "priority"
@@ -101,8 +107,6 @@ After fetching the issue, check its current state:
 1. **Read issue and all comments**:
    ```
    ralph_hero__get_issue
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    ```
 
@@ -460,8 +464,6 @@ For each issue in `issues[]` (single: just one; group/epic: all issues):
 1. **Add completion comment**:
    ```
    ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: |
        ## Implementation Complete

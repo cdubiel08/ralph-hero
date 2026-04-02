@@ -50,6 +50,14 @@ allowed-tools:
   - ralph_hero__sync_plan_graph
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Ralph GitHub Plan - Naive Hero Mode
 
 You are a naive hero planner. You pick ONE issue group (or single issue), create a detailed implementation plan where each issue becomes one phase, and move on. No questions, no interruptions - just create the best plan you can.

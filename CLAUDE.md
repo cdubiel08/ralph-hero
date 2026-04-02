@@ -42,7 +42,7 @@ plugin/
 ├── ralph-hero/              # Main plugin — MCP server, skills, agents, hooks
 │   ├── mcp-server/          # TypeScript MCP server (published as ralph-hero-mcp-server)
 │   ├── skills/              # 30+ skill definitions (YAML frontmatter + markdown)
-│   ├── agents/              # 10 agent definitions
+│   ├── agents/              # 10 per-phase agent definitions
 │   ├── hooks/               # 50+ lifecycle enforcement hooks
 │   └── scripts/             # CLI and automation scripts
 ├── ralph-knowledge/         # Semantic search over thoughts/ documents
@@ -54,6 +54,29 @@ plugin/
 └── ralph-demo/              # Sprint demo video generation (Remotion)
     └── remotion/            # React-based video compositing (pnpm)
 ```
+
+### Per-Phase Agents
+
+Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that preloads the skill via the `skills:` field. The hero orchestrator dispatches these agents via `Agent()` calls with natural language prompts.
+
+| Agent | Model | Preloaded Skill | Tier |
+|-------|-------|-----------------|------|
+| `research-agent` | sonnet | ralph-research | Analyst |
+| `plan-agent` | opus | ralph-plan | Analyst |
+| `plan-epic-agent` | opus | ralph-plan-epic | Analyst |
+| `split-agent` | opus | ralph-split | Analyst |
+| `triage-agent` | sonnet | ralph-triage | Analyst |
+| `review-agent` | opus | ralph-review | Builder |
+| `impl-agent` | opus | ralph-impl | Builder |
+| `pr-agent` | haiku | ralph-pr | Integrator |
+| `merge-agent` | haiku | ralph-merge | Integrator |
+| `val-agent` | haiku | ralph-val | Integrator |
+
+Key properties:
+- Skill content is injected into agent context with backtick preprocessing (env vars resolved at load time)
+- The agent's `tools:` field is a hard allowlist -- the runtime enforcement boundary
+- Plugin-level hooks in `hooks.json` discriminate by `agent_type` (e.g., `impl-agent` triggers worktree gates)
+- Plugin agents cannot declare `hooks`, `mcpServers`, or `permissionMode` in frontmatter -- only `name`, `description`, `model`, `tools`, `disallowedTools`, `skills`, `memory`, `background`, `isolation`, `effort`, `maxTurns`
 
 ### MCP Server Internals
 

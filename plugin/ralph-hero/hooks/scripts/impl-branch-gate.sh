@@ -14,9 +14,12 @@ source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-# Only enforce for impl command
+# Only enforce for impl command or impl-agent
 if [[ "${RALPH_COMMAND:-}" != "impl" ]]; then
-  allow
+  agent_type=$(get_agent_type 2>/dev/null || echo "")
+  if [[ "$agent_type" != "impl-agent" ]]; then
+    allow
+  fi
 fi
 
 command=$(get_field '.tool_input.command')

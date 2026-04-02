@@ -64,6 +64,15 @@
         ]
       },
       {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/agent-phase-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Write",
         "hooks": [
           {

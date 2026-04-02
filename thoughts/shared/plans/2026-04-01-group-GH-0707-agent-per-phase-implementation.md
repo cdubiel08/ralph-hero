@@ -66,7 +66,7 @@ No per-phase agents exist in `plugin/ralph-hero/agents/`.
 
 ## Desired End State
 ### Verification
-- [ ] GH-707: `agent-phase-gate.sh` exists, is executable, correctly delegates to child scripts, and is registered in hooks.json
+- [x] GH-707: `agent-phase-gate.sh` exists, is executable, correctly delegates to child scripts, and is registered in hooks.json
 - [ ] GH-708: All autonomous skills have a `## Configuration` block with backtick preprocessing; no `owner: $RALPH_GH_OWNER` params in MCP tool call instructions
 - [ ] GH-709: All 10 per-phase agent files exist with valid frontmatter (`name`, `model`, `tools`, `skills`)
 - [ ] GH-710: Hero dispatch uses per-phase agents; zero references to `ralph-analyst`/`ralph-builder`/`ralph-integrator` in hero SKILL.md
@@ -145,12 +145,12 @@ Complete the two remaining Phase 1 items: create `agent-phase-gate.sh` (the `age
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-agent-phase-gate.sh` — all assertions pass
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
-- [ ] `jq . plugin/ralph-hero/hooks/hooks.json` — valid JSON
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-agent-phase-gate.sh` — all assertions pass
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `jq . plugin/ralph-hero/hooks/hooks.json` — valid JSON
 
 #### Manual Verification:
-- [ ] `ls -la plugin/ralph-hero/hooks/scripts/agent-phase-gate.sh` shows executable bit set
+- [x] `ls -la plugin/ralph-hero/hooks/scripts/agent-phase-gate.sh` shows executable bit set
 
 **Creates for next phase**: `agent-phase-gate.sh` (needed by GH-713 for hook discrimination test)
 
@@ -201,9 +201,9 @@ Add a resolved `## Configuration` block to 18 skill files using backtick preproc
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -r "owner: \$RALPH_GH_OWNER" plugin/ralph-hero/skills/` — zero matches
-- [ ] `grep -r "repo: \$RALPH_GH_REPO" plugin/ralph-hero/skills/` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `grep -r "owner: \$RALPH_GH_OWNER" plugin/ralph-hero/skills/` — zero matches
+- [x] `grep -r "repo: \$RALPH_GH_REPO" plugin/ralph-hero/skills/` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] Open one modified skill file and verify the Configuration block appears at the top and shows correct structure
@@ -262,8 +262,8 @@ Create 10 new agent definition files in `plugin/ralph-hero/agents/`. Each file p
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `ls plugin/ralph-hero/agents/ | grep -E "research-agent|plan-agent|plan-epic-agent|split-agent|triage-agent|review-agent|impl-agent|pr-agent|merge-agent|val-agent" | wc -l` — output is `10`
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `ls plugin/ralph-hero/agents/ | grep -E "research-agent|plan-agent|plan-epic-agent|split-agent|triage-agent|review-agent|impl-agent|pr-agent|merge-agent|val-agent" | wc -l` — output is `10`
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] `/reload-plugins` completes without errors; agent count increases by 10
@@ -335,8 +335,8 @@ Rewrite the 6 dispatch sections in `plugin/ralph-hero/skills/hero/SKILL.md` (lin
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -n "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/hero/SKILL.md` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `grep -n "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/hero/SKILL.md` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] Hero SKILL.md dispatch sections read coherently with natural language prompts
@@ -388,9 +388,9 @@ Delete the three old wrapper agent files and add a deprecation notice to the tea
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `ls plugin/ralph-hero/agents/ | grep -E "ralph-analyst|ralph-builder|ralph-integrator"` — zero matches
-- [ ] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/ plugin/ralph-hero/hooks/ specs/` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `ls plugin/ralph-hero/agents/ | grep -E "ralph-analyst|ralph-builder|ralph-integrator"` — zero matches
+- [x] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/ plugin/ralph-hero/hooks/ specs/` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] `/reload-plugins` loads without errors after deletion
@@ -454,8 +454,8 @@ Update four documentation files to reflect the final agent-per-phase architectur
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" CLAUDE.md specs/` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `grep -r "ralph-analyst\|ralph-builder\|ralph-integrator" CLAUDE.md specs/` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] CLAUDE.md agents table lists all 10 per-phase agents with correct models

@@ -26,17 +26,19 @@ Defines the inputs, outputs, preconditions, and postconditions for every `ralph-
 
 | Variable | Set By | Purpose |
 |----------|--------|---------|
-| `RALPH_COMMAND` | `set-skill-env.sh` (SessionStart) | Identifies the active skill (e.g., `triage`, `research`, `plan`) |
+| `RALPH_COMMAND` | `set-skill-env.sh` (SessionStart) for direct invocation; inferred from `agent_type` for agent-based invocations | Identifies the active skill (e.g., `triage`, `research`, `plan`) |
 | `RALPH_TICKET_ID` | Skill prompt logic | Issue identifier in `GH-NNN` format |
-| `RALPH_GH_OWNER` | `settings.local.json` | GitHub repository owner |
-| `RALPH_GH_REPO` | `settings.local.json` | GitHub repository name |
-| `RALPH_GH_PROJECT_NUMBER` | `settings.local.json` | GitHub Projects V2 number |
+| `RALPH_GH_OWNER` | `settings.local.json`; resolved at load time via `## Configuration` block with backtick preprocessing | GitHub repository owner |
+| `RALPH_GH_REPO` | `settings.local.json`; resolved at load time via `## Configuration` block with backtick preprocessing | GitHub repository name |
+| `RALPH_GH_PROJECT_NUMBER` | `settings.local.json`; resolved at load time via `## Configuration` block with backtick preprocessing | GitHub Projects V2 number |
 | `RALPH_REQUIRED_BRANCH` | `set-skill-env.sh` (SessionStart) | Required git branch (usually `main`) |
 
 | Requirement | Enablement |
 |-------------|------------|
 | `RALPH_COMMAND` MUST be set by `set-skill-env.sh` at SessionStart for every skill | [x] `set-skill-env.sh` |
 | `RALPH_REQUIRED_BRANCH` MUST be set for skills that require main branch | [x] `set-skill-env.sh` |
+| Skills MUST use `## Configuration` block with backtick preprocessing for env var resolution | [x] All skills have config blocks |
+| MCP tools MUST use server defaults when `owner`/`repo` params are omitted (no `$VAR` literals) | [x] `resolveConfig()` in helpers.ts |
 
 ### Per-Skill Contract Table
 

@@ -47,6 +47,14 @@ allowed-tools:
   - ralph_hero__create_comment
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Ralph GitHub Review - Plan Quality Gate
 
 You are a plan reviewer. You assess ONE plan, determine if it's ready for implementation, and route accordingly. Two modes:
@@ -74,8 +82,6 @@ Starting ralph-review in [INTERACTIVE/AUTO] mode
 
 ```
 ralph_hero__list_issues
-- owner: $RALPH_GH_OWNER
-- repo: $RALPH_GH_REPO
 - profile: "review-queue"
 # Profile expands to: workflowState: "Plan in Review"
 - orderBy: "priority"
@@ -93,8 +99,6 @@ Then STOP.
 1. Fetch the issue with full context:
    ```
    ralph_hero__get_issue
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    ```
 
@@ -284,8 +288,6 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 2. **Add approval comment**:
    ```
    ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: |
        ## Plan Review
@@ -326,8 +328,6 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 3. **Add feedback comment**:
    ```
    ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: |
        ## Plan Review

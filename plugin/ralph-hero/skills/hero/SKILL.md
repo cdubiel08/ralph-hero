@@ -30,6 +30,14 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Ralph GitHub Hero - Tree Expansion Orchestrator
 
 You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands issues into trees, parallelizes research across all leaves, converges at planning, and executes implementation sequentially respecting dependencies.
@@ -243,7 +251,7 @@ Loop until pipeline is complete:
 
 #### SPLIT tasks
 ```
-Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-split NNN", description="Split GH-NNN")
+Agent(subagent_type="ralph-hero:split-agent", prompt="Split issue #NNN", description="Split GH-NNN")
 ```
 After all splits complete, re-call `get_issue(includePipeline=true)` and rebuild remaining task list.
 
@@ -306,7 +314,7 @@ During tree expansion, if research found evidence of cross-repo dependencies not
 
 #### RESEARCH tasks
 ```
-Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-research NNN", description="Research GH-NNN")
+Agent(subagent_type="ralph-hero:research-agent", prompt="Research issue #NNN", description="Research GH-NNN")
 ```
 After all research completes, run Stream Detection (Step 2.5) if applicable.
 
@@ -315,21 +323,21 @@ After all research completes, run Stream Detection (Step 2.5) if applicable.
 Before spawning, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, append `--research-doc {path}` to args:
 
 Determine planning approach from issue estimate:
-- **L/XL estimate** → `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan-epic NNN", description="Plan epic GH-NNN")` — handles wave orchestration internally
-- **M/S/XS estimate** → `Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN --research-doc thoughts/shared/research/...", description="Plan GH-NNN")` or without flag if no artifact_path
+- **L/XL estimate** → `Agent(subagent_type="ralph-hero:plan-epic-agent", prompt="Plan epic issue #NNN", description="Plan epic GH-NNN")` — handles wave orchestration internally
+- **M/S/XS estimate** → `Agent(subagent_type="ralph-hero:plan-agent", prompt="Plan issue #NNN. Research doc: <path>", description="Plan GH-NNN")` or without research doc reference if no artifact_path
 
 ```
 # For L/XL epics:
-Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan-epic NNN", description="Plan epic GH-NNN")
+Agent(subagent_type="ralph-hero:plan-epic-agent", prompt="Plan epic issue #NNN", description="Plan epic GH-NNN")
 
 # For M/S/XS with research doc:
-Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN --research-doc thoughts/shared/research/...", description="Plan GH-NNN")
+Agent(subagent_type="ralph-hero:plan-agent", prompt="Plan issue #NNN. Research doc: thoughts/shared/research/...", description="Plan GH-NNN")
 
 # For M/S/XS without research doc:
-Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan NNN", description="Plan GH-NNN")
+Agent(subagent_type="ralph-hero:plan-agent", prompt="Plan issue #NNN", description="Plan GH-NNN")
 
 # For multi-issue groups:
-Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-plan [PRIMARY] --research-doc {path}", description="Plan GH-[PRIMARY]")
+Agent(subagent_type="ralph-hero:plan-agent", prompt="Plan issue #[PRIMARY]. Research doc: {path}", description="Plan GH-[PRIMARY]")
 ```
 
 #### REVIEW tasks (if RALPH_REVIEW_MODE == "auto")
@@ -337,7 +345,7 @@ Agent(subagent_type="ralph-hero:ralph-analyst", prompt="Run /ralph-hero:ralph-pl
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-review NNN --plan-doc thoughts/shared/plans/...", description="Review GH-NNN")
+Agent(subagent_type="ralph-hero:review-agent", prompt="Review plan for issue #NNN. Plan doc: thoughts/shared/plans/...", description="Review GH-NNN")
 ```
 **Routing**: ALL APPROVED → continue. ANY NEEDS_ITERATION → STOP with critique links.
 
@@ -351,17 +359,21 @@ Then STOP.
 Before spawning, check the completed plan task's metadata for `artifact_path`. If present, append `--plan-doc {path}`:
 
 ```
-Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-impl NNN --plan-doc thoughts/shared/plans/...", description="Implement GH-NNN")
+Agent(subagent_type="ralph-hero:impl-agent", prompt="Implement issue #NNN. Plan doc: thoughts/shared/plans/...", description="Implement GH-NNN")
 ```
-If no `artifact_path` available, omit the flag:
+If no `artifact_path` available, omit the plan doc reference:
 ```
-Agent(subagent_type="ralph-hero:ralph-builder", prompt="Run /ralph-hero:ralph-impl NNN", description="Implement GH-NNN")
+Agent(subagent_type="ralph-hero:impl-agent", prompt="Implement issue #NNN", description="Implement GH-NNN")
 ```
 
 ### Agent Dispatch Notes
 
-Autonomous skills run via `Agent()` for context isolation — each gets a fresh context window:
-- The `prompt` must include the full slash command and all arguments (e.g., `"Run /ralph-hero:ralph-plan NNN --research-doc ..."`)
+Per-phase agents preload skill content via the `skills:` field in their agent definition. This means:
+- The agent already has the full skill instructions when it starts — no `Skill()` call is needed
+- The `prompt` passes artifact paths (research docs, plan docs) as natural language, not as slash command flags
+- The `model:` field in the agent definition is honored — opus for planning/review/impl, sonnet for research/triage, haiku for PR/merge/val
+- Skill content is preprocessed with resolved env vars via backtick preprocessing (e.g., `RALPH_GH_OWNER` is expanded at load time)
+- Plugin-level hooks fire with the agent's `agent_type` (e.g., `impl-agent`), enabling phase-specific enforcement
 - Agent results are not directly visible to the user — hero must relay key outcomes (plan path, review verdict, error messages) from task metadata
 - Agents report artifacts via `TaskUpdate(metadata.artifact_path=...)` — hero reads these via `TaskGet` before spawning downstream agents
 - `Skill()` is reserved for interactive skills invoked directly by the user (e.g., `/hello`, `/plan`, `/impl` in conversational mode) — hero does NOT use `Skill()` for pipeline phases

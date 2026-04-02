@@ -1,5 +1,5 @@
 ---
-description: Autonomous multi-agent team that spawns persistent specialist workers (analyst, builder, integrator) to process GitHub issues in parallel without human intervention. Unlike hero mode (which stops for plan approval), team mode runs fully autonomously with RALPH_AUTO_APPROVE=true. Use when you want to run a team, start agent teams, process issues with parallel workers, or need fully autonomous end-to-end processing. Choose team over hero when you have multiple issues that benefit from parallel execution, need triage + validation phases, or want autonomous operation without human gates.
+description: "[DEPRECATED] Use /ralph-hero:hero instead. Team skill uses the old wrapper-agent architecture which is superseded by per-phase agents."
 argument-hint: "[issue-number]"
 model: sonnet
 allowed-tools:
@@ -57,6 +57,9 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/team-stop-gate.sh"
 ---
 
+> **DEPRECATED**: This skill uses the old wrapper-agent architecture.
+> Use `/ralph-hero:hero` for orchestrated pipeline execution.
+
 # Ralph Team
 
 You coordinate a team of specialists to process GitHub issues. You never do substantive work yourself — no research, planning, reviewing, or implementing. Your job is to assess work, build a team, create tasks, and keep things moving.
@@ -88,9 +91,9 @@ Create a team named after the issue. Spawn workers based on the suggested roster
 
 | Station | Agent Type | Names | Cap | Scaling Rule |
 |---------|-----------|-------|-----|-------------|
-| Analyst | ralph-analyst | `analyst`, `analyst-2`, `analyst-3` | 3 | `suggestedRoster.analyst` (0 after research phase) |
-| Builder | ralph-builder | `builder`, `builder-2`, `builder-3` | 3 | `suggestedRoster.builder` (stream count, see below) |
-| Integrator | ralph-integrator | `integrator`, `integrator-2` | 2 | `suggestedRoster.integrator` (1 default, 2 if 5+ issues) |
+| Analyst | research-agent / plan-agent | `analyst`, `analyst-2`, `analyst-3` | 3 | `suggestedRoster.analyst` (0 after research phase) |
+| Builder | review-agent / impl-agent | `builder`, `builder-2`, `builder-3` | 3 | `suggestedRoster.builder` (stream count, see below) |
+| Integrator | pr-agent / merge-agent / val-agent | `integrator`, `integrator-2` | 2 | `suggestedRoster.integrator` (1 default, 2 if 5+ issues) |
 
 **Initial spawn**: At session start, spawn workers using `suggestedRoster` from the initial `pipeline_dashboard` / `detect_pipeline_position` result. Typically 1 builder is appropriate at this stage — stream count is unknown until research completes.
 
