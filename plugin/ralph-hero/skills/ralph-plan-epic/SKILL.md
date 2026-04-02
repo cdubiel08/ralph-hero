@@ -77,14 +77,14 @@ This skill creates plan-of-plans documents for 3+ tier work (epic -> features ->
 ### Step 1: Issue Selection
 
 **If issue number provided as argument:**
-1. Fetch via `ralph_hero__get_issue(number=NNN)`
+1. Fetch the full issue details for issue NNN.
 2. Verify estimate is L or XL
 3. Verify state is "Ready for Plan"
 4. If estimate is not L/XL, STOP: "Issue #NNN is not L/XL — use /ralph-plan for M/S/XS issues."
 5. If state is not "Ready for Plan", STOP: "Issue #NNN is not in Ready for Plan state (current: [state])."
 
 **If no issue number:**
-1. `ralph_hero__list_issues(profile="builder-planned")` — finds "Ready for Plan" issues
+1. List issues using profile "builder-planned" to find "Ready for Plan" issues.
 2. Filter for L or XL estimates only
 3. Select highest priority
 4. If no L/XL issues in "Ready for Plan", respond "No L/XL issues ready for planning. Queue empty." then STOP.
@@ -92,16 +92,13 @@ This skill creates plan-of-plans documents for 3+ tier work (epic -> features ->
 ### Step 2: Context Gathering
 
 1. **Research discovery**: Same chain as `ralph-plan` — try each source in order, stop when found:
-   a. `knowledge_search(query="research GH-${number} [title keywords]", type="research", limit=3)` — if high-relevance result, read that file
+   a. If a knowledge search tool is available, search for "research GH-${number} [title keywords]" with type "research", limit 3 — if high-relevance result, read that file
    b. `--research-doc` flag — if provided and file exists, read it directly
    c. Artifact Comment Protocol — search issue comments for `## Research Document` header; extract URL; convert to local path; read file
    d. Glob fallback — `thoughts/shared/research/*GH-${number}*` (try padded and unpadded)
    e. If none found: STOP — "Issue #NNN has no research document. Run /ralph-research first."
 
-   If found via glob (fallback), self-heal: post missing comment on issue:
-   ```
-   ralph_hero__create_comment(number=NNN, body="## Research Document\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
-   ```
+   If found via glob (fallback), self-heal: post a comment on the issue with header `## Research Document` and the file URL (noting it was self-healed).
 
 2. **Codebase research**: Spawn parallel subagents for full problem space understanding:
    - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [topic] in [relevant dirs]")`
@@ -115,11 +112,7 @@ This skill creates plan-of-plans documents for 3+ tier work (epic -> features ->
 
 ### Step 3: Lock Issue
 
-Transition epic to `__LOCK__` with `command="ralph_plan_epic"`:
-```
-ralph_hero__save_issue(number=NNN, workflowState="__LOCK__", command="ralph_plan_epic")
-```
-This moves the issue to "Plan in Progress".
+Update the epic issue: set `workflowState` to `"__LOCK__"` with `command="ralph_plan_epic"`. This moves the issue to "Plan in Progress".
 
 ### Step 4: Write Plan-of-Plans Document
 
@@ -181,7 +174,7 @@ Features with `depends_on: [GH-NNN]` wait until the referenced feature's plan is
 
 No separate wave section is needed — the dependency graph IS the sequencing.
 
-After committing the plan-of-plans document, call `ralph_hero__sync_plan_graph` to sync feature-level `depends_on` edges to GitHub `blockedBy` relationships.
+After committing the plan-of-plans document, sync feature-level `depends_on` edges to GitHub `blockedBy` relationships using the sync plan graph tool.
 
 ## What We're NOT Doing
 
@@ -204,10 +197,7 @@ git commit -m "docs(plan-of-plans): GH-NNN [epic name] strategic decomposition"
 git push origin main
 ```
 
-Post the plan link as a comment on the epic issue:
-```
-ralph_hero__create_comment(number=NNN, body="## Plan of Plans\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[plan-path]\n\nStrategic decomposition complete. Feature children will be created next.")
-```
+Post a comment on the epic issue with header `## Plan of Plans`, the plan URL, and a note that strategic decomposition is complete and feature children will be created next.
 
 ### Step 6: Create Feature Children
 
@@ -223,7 +213,7 @@ For each feature child created:
    Parent: #NNN (epic issue)
    Feature scope defined in parent plan-of-plans.
    ```
-2. Move child to "Ready for Plan": `ralph_hero__save_issue(number=child, workflowState="Ready for Plan")`
+2. Move child to "Ready for Plan": update the child issue's workflow state to "Ready for Plan".
 
 After all children are created and moved to "Ready for Plan", update the epic's plan-of-plans `## Feature Sequencing` section with the actual GH issue numbers assigned to each feature.
 
@@ -254,14 +244,14 @@ While unplanned is not empty:
 
   # Completion verification
   For each feature in ready:
-    issue = ralph_hero__get_issue(number=feature_number)
+    Fetch the issue details for feature_number.
     verify issue has exited Plan in Progress
     # Expected states: Plan in Review, In Progress, or Human Needed
     # If still Plan in Progress: not complete — wait or investigate
     move feature from unplanned to planned
 ```
 
-**Completion detection**: Each `Skill()` call blocks until the feature plan is written. After all `Skill()` calls in a round return, verify via `ralph_hero__get_issue` that all features have exited `Plan in Progress`.
+**Completion detection**: Each `Skill()` call blocks until the feature plan is written. After all `Skill()` calls in a round return, verify by fetching each feature issue that all features have exited `Plan in Progress`.
 
 **Sibling context extraction**: From a completed feature plan, extract:
 - The `## Overview` section (what it produces)
@@ -301,7 +291,7 @@ After all waves complete:
 
 ### Step 9: Transition Epic
 
-Move epic to "In Progress": `ralph_hero__save_issue(number=NNN, workflowState="In Progress")`
+Move epic to "In Progress": update the epic issue's workflow state to "In Progress".
 
 Post completion comment on epic:
 ```
@@ -332,5 +322,5 @@ Human-readable summary: "Plan-of-plans for GH-NNN complete. [N] features across 
 | Research document missing | STOP: "Issue #NNN has no research document. Run /ralph-research first." |
 | Issue not L/XL | STOP: "Issue #NNN is not L/XL — use /ralph-plan for M/S/XS issues." |
 | Feature dependency cycle detected | Escalate to Human Needed: post `## Dependency Cycle Detected` comment with cycle details |
-| Wave planning fails — feature planner reports BLOCKED (major drift) | Escalate: `ralph_hero__save_issue(number=NNN, workflowState="Human Needed")`; post `## Escalation` comment with BLOCKED feature number and drift details |
+| Wave planning fails — feature planner reports BLOCKED (major drift) | Escalate: update epic issue workflow state to "Human Needed"; post `## Escalation` comment with BLOCKED feature number and drift details |
 | Feature not exiting Plan in Progress after Skill() returns | Investigate: check if feature went to Human Needed; if so, pause and escalate epic |

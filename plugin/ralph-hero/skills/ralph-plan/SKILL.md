@@ -90,10 +90,7 @@ Then STOP. Do not proceed.
 
 #### 1a. Issue Number Provided
 
-1. **Fetch the issue** (response includes group members with workflow states):
-   ```
-   ralph_hero__get_issue(owner, repo, number)
-   ```
+1. **Fetch the issue** (response includes group members with workflow states).
 
 2. **Filter to plannable issues**:
    - All group members must be in "Ready for Plan" workflow state
@@ -105,15 +102,11 @@ Then STOP. Do not proceed.
 
 #### 1b. No Issue Number
 
-1. **Query issues in Ready for Plan**:
-   ```
-   ralph_hero__list_issues(owner, repo, profile="builder-planned", limit=50)
-   # Profile expands to: workflowState="Ready for Plan"
-   ```
+1. **Query issues in Ready for Plan**: list issues using profile "builder-planned" (expands to workflowState: "Ready for Plan"), limit 50.
 
 2. **Filter to XS/Small/Medium** estimates ("XS", "S", or "M")
 
-3. **Build groups**: For each candidate, call `ralph_hero__get_issue(number=N)`. The response includes group members with their workflow states. Standalone issues (no parent/blocking) are groups of 1.
+3. **Build groups**: For each candidate, fetch the full issue details. The response includes group members with their workflow states. Standalone issues (no parent/blocking) are groups of 1.
 
 4. **Filter to unblocked groups**:
    - Blocked = any issue has `blockedBy` pointing **outside** the group with state != "Done"
@@ -146,15 +139,12 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
 
 1. **For each issue** (dependency order):
 
-   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first:
-   ```
-   knowledge_search(query="research GH-${number} [issue title keywords]", type="research", limit=3)
-   ```
-   If a high-relevance result is returned, read that file directly and skip steps 1-7 below. If `knowledge_search` is not available or returns no results, continue with standard Artifact Comment Protocol discovery below.
+   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "research GH-${number} [issue title keywords]", type "research", limit 3.
+   If a high-relevance result is returned, read that file directly and skip steps 1-7 below. If not available or no results, continue with standard Artifact Comment Protocol discovery below.
 
    **Artifact shortcut**: If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-7 below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
 
-   1. Read issue via `ralph_hero__get_issue(owner, repo, number)` — response includes comments
+   1. Fetch the full issue details — response includes comments
    2. Search comments for `## Research Document` header. If multiple matches, use the **most recent** (last) match.
    3. Extract the URL from the line after the header
    4. Convert GitHub URL to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
@@ -162,9 +152,13 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
    6. **Fallback**: If no comment found, glob for the research doc. Try both padded and unpadded:
       - `thoughts/shared/research/*GH-${number}*`
       - `thoughts/shared/research/*GH-$(printf '%04d' ${number})*`
-   7. **If fallback found, self-heal**: Post the missing comment to the issue:
-      ```
-      ralph_hero__create_comment(owner, repo, number, body="## Research Document\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)")
+   7. **If fallback found, self-heal**: Post the missing artifact comment on the issue:
+      ```markdown
+      ## Research Document
+
+      https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]
+
+      (Self-healed: artifact was found on disk but not linked via comment)
       ```
    8. **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
 2. **Read research-mapped files directly**: Extract the file paths from each research document's `## Files Affected` section (both "Will Modify" and "Will Read" subsections). Read those files in full — they are your primary codebase context. Do NOT run find, ls, or glob to re-discover source files that the research already identified. If after reading the listed files you have a specific reason to believe a critical file was missed, you may search for it — but note the gap in the plan as a research deficiency.
@@ -211,7 +205,7 @@ Use sibling context to:
 
 ### Step 4: Transition to Plan in Progress
 
-Update **all group issues**: `ralph_hero__save_issue(number=N, workflowState="__LOCK__", command="ralph_plan")`
+Lock all group issues (set workflowState to "__LOCK__", command "ralph_plan") for each issue in the group.
 
 !cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/error-handling.md
 
@@ -412,8 +406,8 @@ If the issue estimate is M and the plan has multiple phases mapping to atomic ch
      Phase: N of M
      Shared constraints inherited from parent plan.
      ```
-3. Move each child to "In Progress" via `ralph_hero__save_issue(number=child, workflowState="In Progress")`
-4. Move parent to "In Progress" via `ralph_hero__save_issue(number=NNN, workflowState="In Progress")`
+3. Move each child to "In Progress" (update workflow state to "In Progress").
+4. Move parent to "In Progress" (update workflow state to "In Progress").
 
 If the issue is XS/S (standalone), skip this step — the plan goes through normal `Plan in Review` flow.
 
@@ -428,7 +422,7 @@ If the issue is XS/S (standalone), skip this step — the plan goes through norm
 
 For **each issue in the group**:
 
-1. **Add plan link comment**: `ralph_hero__create_comment` with body:
+1. **Add plan link comment** on the issue:
    ```
    ## Implementation Plan
 
@@ -446,15 +440,11 @@ For **each issue in the group**:
    ```
    For single issues, omit "Phase N of M" and just list phases.
 
-3. **Move to Plan in Review**: `ralph_hero__save_issue(number=N, workflowState="__COMPLETE__", command="ralph_plan")`
+3. **Move to Plan in Review**: advance the issue to the next state (workflowState "__COMPLETE__", command "ralph_plan").
 
 ### Step 8: Sync Dependency Graph
 
-If the plan contains `depends_on` annotations on any phase, call `ralph_hero__sync_plan_graph` to sync the dependency graph to GitHub `blockedBy` edges:
-
-```
-ralph_hero__sync_plan_graph({ planPath: "<absolute path to plan>" })
-```
+If the plan contains `depends_on` annotations on any phase, sync the dependency graph to GitHub `blockedBy` edges by calling the plan graph sync tool with the absolute plan path.
 
 This is a **required step** when `depends_on` annotations are present — the postcondition hook will warn if it detects annotations that haven't been synced.
 

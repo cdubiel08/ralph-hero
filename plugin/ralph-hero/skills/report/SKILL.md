@@ -33,7 +33,7 @@ All arguments are optional. Default behavior: 7-day window, auto-determined stat
 
 ### Step 2: Fetch Dashboard with Metrics
 
-Call `ralph_hero__pipeline_dashboard` with:
+Fetch the pipeline dashboard with:
 - `format`: `"json"`
 - `includeHealth`: `true`
 - `includeMetrics`: `true`
@@ -121,7 +121,7 @@ Valid values: `ON_TRACK`, `AT_RISK`, `OFF_TRACK`.
 4. STOP.
 
 **Otherwise:**
-1. Call `ralph_hero__create_status_update` with:
+1. Create a status update with:
    - `status`: the final status from Step 5
    - `body`: the composed report markdown from Step 4
 2. Display the response: status update ID, status, and a truncated preview of the body (first 200 characters).

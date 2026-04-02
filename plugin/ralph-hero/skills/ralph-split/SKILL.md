@@ -74,29 +74,7 @@ Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find issues with M/L/
 
 > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
-Or query directly:
-```
-# Note: No filter profile for split candidate selection.
-# Split uses multi-query pattern across estimates (M, L, XL) and workflow states.
-ralph_hero__list_issues
-- owner: [owner]
-- repo: [repo]
-- workflowState: "Backlog"
-- estimate: "M"
-- limit: 50
-```
-
-Also check Research Needed:
-```
-ralph_hero__list_issues
-- owner: [owner]
-- repo: [repo]
-- workflowState: "Research Needed"
-- estimate: "M"
-- limit: 50
-```
-
-Repeat for "L" and "XL" estimates. Pick the oldest issue found.
+Or query directly: list issues with workflowState "Backlog" and estimate "M" (limit 50), then with estimate "L", then "XL". Also repeat each query for workflowState "Research Needed". Pick the oldest issue found across all queries.
 
 If no eligible issues found, respond:
 ```
@@ -106,13 +84,7 @@ Then STOP.
 
 ### Step 2: Fetch and Analyze Issue
 
-1. **Get full issue details**:
-   ```
-   ralph_hero__get_issue
-   - owner: [owner]
-   - repo: [repo]
-   - number: [issue-number]
-   ```
+1. **Get full issue details**: Fetch the full issue details including comments.
 
 2. **Read any linked research documents** from comments
 
@@ -126,14 +98,7 @@ Then STOP.
 
 ### Step 3: Discover Existing Children
 
-Query for any existing sub-issues of the parent:
-
-```
-ralph_hero__list_sub_issues
-- owner: [owner]
-- repo: [repo]
-- number: [issue-number]
-```
+List any existing sub-issues of the parent issue.
 
 Record the results:
 - **No children found**: Proceed to Step 4 (research scope) and Step 6 (create all new)
@@ -195,58 +160,17 @@ Produce a split plan summary:
 
 **For each sub-issue in the split plan from Step 5:**
 
-**If reusing an existing child** (match found):
-```
-ralph_hero__save_issue
-- number: [existing-child-number]
-- body: [updated description if scope refined]
-```
-
-```
-ralph_hero__save_issue
-- number: [existing-child-number]
-- estimate: "[adjusted estimate if changed]"
-```
+**If reusing an existing child** (match found): Update the existing child's body and/or estimate if the scope or sizing has been refined.
 
 **If creating a new sub-issue** (no match), use the three-step pattern:
 
-1. **Create the issue**:
-   ```
-   ralph_hero__create_issue
-   - owner: [owner]
-   - repo: [repo]
-   - title: [Descriptive title]
-   - body: [Scope, references, acceptance criteria]
-   - labels: [inherit from parent]
-   ```
+1. **Create the issue** with a descriptive title, scoped body (scope, references, acceptance criteria), and labels inherited from the parent.
 
-2. **Link as sub-issue**:
-   ```
-   ralph_hero__add_sub_issue
-   - owner: [owner]
-   - repo: [repo]
-   - parentNumber: [original-issue-number]
-   - childNumber: [new-issue-number]
-   ```
+2. **Link as sub-issue** under the original issue. If linking fails, retry once; if still failing, document the orphan issue in a comment on the parent.
 
-   If `add_sub_issue` fails, retry once. If still failing, document the orphan issue in a comment on the parent.
+3. **Set estimate** to "XS".
 
-3. **Set estimate**:
-   ```
-   ralph_hero__save_issue
-   - number: [new-issue-number]
-   - estimate: "XS"
-   ```
-
-4. **Set initial workflow state**:
-   ```
-   ralph_hero__save_issue
-   - number: [new-issue-number]
-   - workflowState: "__COMPLETE__"
-   - command: "ralph_split"
-   ```
-
-   **Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+4. **Set initial workflow state**: advance the issue to the next appropriate state (command: "ralph_split"). If an error is returned, read the message — it contains valid states/intents and a Recovery action. Retry with corrected parameters.
 
 **Sub-issue description template**:
 ```markdown
@@ -270,16 +194,7 @@ ralph_hero__save_issue
 
 ### Step 7: Establish Dependencies
 
-Set up blocking relationships between sub-issues using per-pair calls:
-
-For each dependency pair:
-```
-ralph_hero__add_dependency
-- owner: [owner]
-- repo: [repo]
-- blockedNumber: [dependent-issue-number]
-- blockingNumber: [earlier-phase-issue-number]
-```
+Set up blocking relationships between sub-issues. For each dependency pair, add a dependency: the dependent issue is blocked by the earlier-phase issue.
 
 **Dependency rules**:
 - Schema issues block loader issues
@@ -289,41 +204,32 @@ ralph_hero__add_dependency
 
 ### Step 8: Update Original Issue
 
-1. **Add split summary comment**:
-   ```
-   ralph_hero__create_comment
-   - owner: [owner]
-   - repo: [repo]
-   - number: [original-issue-number]
-   - body: |
-       ## Issue Split
+1. **Add split summary comment** on the original issue:
+   ```markdown
+   ## Issue Split
 
-       This issue has been decomposed into [N] sub-issues:
+   This issue has been decomposed into [N] sub-issues:
 
-       | Order | Issue | Title | Estimate |
-       |-------|-------|-------|----------|
-       | 1 | #AA | [title] | XS |
-       | 2 | #BB | [title] | S |
-       | 3 | #CC | [title] | XS |
+   | Order | Issue | Title | Estimate |
+   |-------|-------|-------|----------|
+   | 1 | #AA | [title] | XS |
+   | 2 | #BB | [title] | S |
+   | 3 | #CC | [title] | XS |
 
-       **Dependency chain**: #AA -> #BB -> #CC
+   **Dependency chain**: #AA -> #BB -> #CC
 
-       Original estimate: [M/L/XL]
-       Total after split: [sum] points across [N] issues
+   Original estimate: [M/L/XL]
+   Total after split: [sum] points across [N] issues
 
-       ---
-       *Split by `/ralph-split`*
+   ---
+   *Split by `/ralph-split`*
    ```
 
 2. **Keep parent in Backlog** (do NOT mark as Done or Canceled):
 
    The parent issue stays in its current state (typically Backlog). It only reaches Done when all children are Done, which happens naturally through the pipeline.
 
-   ```
-   ralph_hero__save_issue
-   - number: [original-issue-number]
-   - body: [Prepend "## Split into Sub-Issues\nThis issue has been decomposed. See children and comments for details.\n\n" to existing body]
-   ```
+   Update the original issue body to prepend "## Split into Sub-Issues\nThis issue has been decomposed. See children and comments for details.\n\n" to the existing body.
 
    **Do NOT** set workflow state to Done or Canceled. The parent remains active as an epic/umbrella.
 
@@ -331,16 +237,9 @@ ralph_hero__add_dependency
 
 Based on research done during splitting:
 
-- **If scope is clear** -> Move to "Ready for Plan"
+- **If scope is clear** -> Update workflow state to "Ready for Plan" (command: "ralph_split")
 - **If scope needs more research** -> Keep in "Research Needed"
 - **If blocked by external issue** -> Keep in "Backlog" with blocker set
-
-```
-ralph_hero__save_issue
-- number: [sub-issue-number]
-- workflowState: [appropriate state]
-- command: "ralph_split"
-```
 
 ### Step 10: Team Result Reporting
 

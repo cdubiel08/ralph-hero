@@ -38,17 +38,10 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
 
 **If first argument matches `#\d+` pattern** (e.g., `#347`):
 
-   **Knowledge graph shortcut**: If `knowledge_search` is available, try it first:
-   ```
-   knowledge_search(query="implementation plan GH-${number}", type="plan", limit=3)
-   ```
-   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If `knowledge_search` is not available or returns no results, continue with standard discovery below.
+   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "implementation plan GH-${number}", type "plan", limit 3.
+   If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If not available or no results, continue with standard discovery below.
 
-1. Query GitHub for the issue:
-   ```
-   ralph_hero__get_issue
-   - number: [issue-number]
-   ```
+1. Fetch the full issue details for the issue number.
 2. Search issue comments for `## Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
 3. Extract the GitHub URL from the line immediately after the header.
 4. Convert to local path: strip `https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/` prefix.
@@ -57,11 +50,13 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
    - `thoughts/shared/plans/*GH-${number}*`
    - `thoughts/shared/plans/*GH-$(printf '%04d' ${number})*`
    Use the most recent match if multiple found.
-7. **Self-heal**: If plan found via glob but not linked via comment, post the missing comment:
-   ```
-   ralph_hero__create_comment
-   - number: [issue-number]
-   - body: "## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)"
+7. **Self-heal**: If plan found via glob but not linked via comment, post the missing artifact comment on the issue:
+   ```markdown
+   ## Implementation Plan
+
+   https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]
+
+   (Self-healed: artifact was found on disk but not linked via comment)
    ```
 8. **If no plan found**: STOP with "No implementation plan found for #NNN. Run /ralph-hero:plan first."
 9. Remaining arguments after the issue number are the feedback/requested changes.
@@ -73,13 +68,7 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
 
 ### Step 2: State Transition (Conditional)
 
-If issue is in "Plan in Review" or "Ready for Plan", offer to transition:
-```
-ralph_hero__save_issue
-- number: [issue-number]
-- workflowState: "Plan in Progress"
-- command: "iterate_plan"
-```
+If issue is in "Plan in Review" or "Ready for Plan", offer to update the issue workflow state to "Plan in Progress" (command: "iterate_plan").
 
 If issue is already in "Plan in Progress", skip this step.
 
@@ -241,28 +230,19 @@ Get user confirmation before proceeding.
 
 After changes are made, update the GitHub issue if linked:
 
-1. **Post an update comment**:
-   ```
-   ralph_hero__create_comment
-   - number: [issue-number]
-   - body: |
-       ## Plan Updated
+1. **Post an update comment** on the issue:
+   ```markdown
+   ## Plan Updated
 
-       Changes made:
-       - [Change 1]
-       - [Change 2]
+   Changes made:
+   - [Change 1]
+   - [Change 2]
 
-       Reason: [User's feedback that prompted changes]
+   Reason: [User's feedback that prompted changes]
    ```
 
 2. **Consider state transition**:
-   - If plan was in "Plan in Review" and major changes were made, offer to move back to "Plan in Progress":
-     ```
-     ralph_hero__save_issue
-     - number: [issue-number]
-     - workflowState: "Plan in Progress"
-     - command: "iterate_plan"
-     ```
+   - If plan was in "Plan in Review" and major changes were made, offer to update the issue workflow state to "Plan in Progress" (command: "iterate_plan").
 
 3. **Report result**:
    ```

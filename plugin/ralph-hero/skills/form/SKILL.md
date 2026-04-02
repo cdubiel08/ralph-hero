@@ -101,7 +101,7 @@ When this command is invoked:
 - **Skip** the codebase-locator and codebase-analyzer sub-tasks (the research doc is the investigation)
 - **Still run** the following (these provide project-management context the research doc may lack):
   - `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans about [topic from research doc]")` -- to find related work
-  - `ralph_hero__list_issues(query=...)` -- to find duplicate or overlapping issues
+  - Search for duplicate or overlapping issues by keyword
 - This avoids re-investigating what the research doc already covers while still grounding the idea in the project context
 
 **If `INPUT_TYPE` is "idea"** (input was an idea file or inline description):
@@ -119,7 +119,7 @@ When this command is invoked:
    Then analyze the most relevant findings:
    - `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and prior art from documents about [idea topic]")`
 
-3. **Existing issues** - Use `ralph_hero__list_issues(query=...)` to find:
+3. **Existing issues** - Search for issues by keyword or topic to find:
    - Duplicate or overlapping issues
    - Related work already planned or in progress
    - Parent epics this might fit under
@@ -201,20 +201,7 @@ If the user chose "GitHub issue":
    Shall I create this issue, or would you like to adjust anything?
    ```
 
-2. **Get approval**, then create via GitHub MCP tools:
-   ```
-   ralph_hero__create_issue
-   - title: [title]
-   - body: [description]
-   ```
-
-   Then set the estimate:
-   ```
-   ralph_hero__save_issue
-   - number: [created issue number]
-   - estimate: "XS"  (or S/M/L/XL as appropriate)
-   - workflowState: "Backlog"
-   ```
+2. **Get approval**, then create the issue (title and body as drafted), then set the estimate to "XS" (or S/M/L/XL as appropriate) and workflow state to "Backlog".
 
 3. **Update the source file** with issue link:
 
@@ -230,16 +217,13 @@ If the user chose "GitHub issue":
    github_issue: NNN
    github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
    ```
-   Then post an artifact comment linking the research doc to the new issue (same pattern as the research skill's Step 8):
-   ```
-   ralph_hero__create_comment
-   - number: NNN
-   - body: |
-       ## Research Document
+   Then post an artifact comment on the issue linking the research doc (same pattern as the research skill's Step 8):
+   ```markdown
+   ## Research Document
 
-       https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
+   https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/research/[filename].md
 
-       Key findings: [1-3 line summary from the research doc's Summary section]
+   Key findings: [1-3 line summary from the research doc's Summary section]
    ```
 
 4. **Report**:
@@ -290,23 +274,11 @@ If the user chose "Ticket tree":
 
 3. **Get approval**, then create parent + children:
 
-   a. Create the parent issue:
-   ```
-   ralph_hero__create_issue(title=..., body=...)
-   ralph_hero__save_issue(number=..., estimate="L", workflowState="Backlog")
-   ```
+   a. Create the parent issue with title and body; set estimate to "L" and workflow state to "Backlog".
 
-   b. Create each child issue:
-   ```
-   ralph_hero__create_issue(title=..., body=...)
-   ralph_hero__add_sub_issue(parentNumber=..., childNumber=...)
-   ralph_hero__save_issue(number=..., estimate="XS", workflowState="Backlog")
-   ```
+   b. For each child issue: create the issue, link it as a sub-issue under the parent, then set estimate to "XS" and workflow state to "Backlog".
 
-   c. Add ordering dependencies between children if sequential:
-   ```
-   ralph_hero__add_dependency(blockedNumber=..., blockingNumber=...)
-   ```
+   c. Add ordering dependency links between children if they are sequential.
 
 4. **Update the source file** with parent issue link:
 

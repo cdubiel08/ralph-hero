@@ -99,8 +99,7 @@ If your repo is in an org but the project is under your personal account, see St
 
 ### Step 1: Health Check & Diagnosis
 
-1. Call `ralph_hero__health_check`
-2. Display all check results clearly:
+1. Run a health check and display all check results clearly:
 
 ```
 Health Check Results
@@ -213,13 +212,13 @@ Then restart Claude Code and run /ralph-hero:setup again.
 ### Step 3: Create or Verify Project
 
 **If `RALPH_GH_PROJECT_NUMBER` is set and project was accessible in Step 1:**
-1. Call `ralph_hero__get_project` to verify the project exists
+1. Fetch the project to verify it exists.
 2. Verify it has the required custom fields (Workflow State, Priority, Estimate)
 3. If fields are missing, report what's missing and offer to create them
 4. Skip to Step 4
 
 **If `RALPH_GH_PROJECT_NUMBER` is NOT set (or project wasn't accessible):**
-1. Call `ralph_hero__setup_project` with `owner` set to the **project owner** determined in Step 2 (NOT the repo owner, unless they're the same)
+1. Run setup_project with `owner` set to the **project owner** determined in Step 2 (NOT the repo owner, unless they're the same)
 2. This creates:
    - **Workflow State** single-select field with 11 options:
      - Backlog, Research Needed, Research in Progress
@@ -421,8 +420,8 @@ Also include the Workflow States table in both cases:
 
 ### Step 6: Verify Setup
 
-1. Call `ralph_hero__health_check` to confirm all checks pass
-2. Call `ralph_hero__get_project` to confirm project is accessible
+1. Run a health check to confirm all checks pass.
+2. Fetch the project to confirm it is accessible.
 3. If verification fails, display what went wrong and remediation steps
 
 ### Step 6b: Enable Routing & Sync (Optional)

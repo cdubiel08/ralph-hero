@@ -48,9 +48,7 @@ Export: `export RALPH_TICKET_ID="NNN"`
 
 ## Step 2: Fetch Issue
 
-```
-ralph_hero__get_issue(number=NNN)
-```
+Fetch the full issue details for issue NNN.
 
 Get issue title, state, and comments for context.
 
@@ -113,7 +111,7 @@ Record each check as PASS or FAIL with details.
 
 ## Step 6.5: Drift Log Verification
 
-Search issue comments (from `ralph_hero__get_issue` response) for `## Drift Log — Phase N` headers.
+Search the issue comments (from the fetched issue response) for `## Drift Log — Phase N` headers.
 
 For each drift log found:
 1. Parse drift entries (lines starting with `- DRIFT:` or containing `DRIFT:` prefix)
@@ -181,7 +179,7 @@ Verdict: [PASS/FAIL]
 
 ## Step 8: Post GitHub Comment
 
-Post the validation report as a GitHub comment on the issue using `ralph_hero__create_comment`. Use the header `## Validation` to follow Artifact Comment Protocol.
+Post the validation report as a GitHub comment on the issue. Use the header `## Validation` to follow Artifact Comment Protocol.
 
 ## Notes
 

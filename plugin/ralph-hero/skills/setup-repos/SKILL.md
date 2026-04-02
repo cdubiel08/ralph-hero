@@ -58,7 +58,7 @@ If the file already exists at the target path, read it and display its contents,
 
 ### Step 2: Discover Linked Repos
 
-Call `ralph_hero__health_check` to verify connectivity, then call `ralph_hero__pipeline_dashboard` (or fall back to `ralph_hero__list_issues` with `repoFilter` unset) to enumerate repositories that have issues in the project.
+Run a health check to verify connectivity, then fetch the pipeline dashboard (or fall back to listing issues with `repoFilter` unset) to enumerate repositories that have issues in the project.
 
 Also attempt to enumerate linked repositories directly:
 
@@ -254,7 +254,7 @@ If "Yes":
 Display context:
 ```
 Decomposition patterns let you split a feature into repo-specific issues
-with a single call to ralph_hero__decompose_feature.
+with a single call to the decompose_feature tool.
 
 Example: A "full-stack" pattern might create issues in:
   - api: "Implement REST endpoint"
@@ -339,17 +339,17 @@ Generated .ralph-repos.yml
 
 Run a quick validation:
 
-1. Attempt to use `ralph_hero__decompose_feature` without a pattern to list available patterns. This exercises the registry loading path.
+1. Attempt to use the decompose_feature tool without a pattern to list available patterns. This exercises the registry loading path.
 
 If it returns the configured patterns, display:
 ```
-Registry verified: ralph_hero__decompose_feature lists {N} patterns.
+Registry verified: decompose_feature lists {N} patterns.
 ```
 
 If it returns an error or no patterns, display:
 ```
 Note: The MCP server loads .ralph-repos.yml at startup. Restart Claude Code
-to pick up the new file, then call ralph_hero__decompose_feature to verify.
+to pick up the new file, then call decompose_feature to verify.
 ```
 
 ### Step 9: Final Summary
@@ -365,9 +365,9 @@ Patterns defined:    {count} ({names, or "none"})
 
 Next steps:
 1. [If restart needed] Restart Claude Code to load the registry
-2. Use ralph_hero__decompose_feature to split feature work across repos
-3. Use ralph_hero__create_issue with repo="{name}" to apply defaults
-4. Use ralph_hero__pipeline_dashboard with groupBy="repo" to view by domain
+2. Use the decompose_feature tool to split feature work across repos
+3. Use create_issue with repo="{name}" to apply defaults
+4. Use the pipeline dashboard with groupBy="repo" to view by domain
 5. Edit {path} to refine defaults or add new patterns
 ```
 

@@ -32,12 +32,7 @@ Fetch all three sources simultaneously (make all tool calls in one turn):
    Read `MEMORY.md` from the project memory directory. Then read any referenced files with `type: project` or `type: feedback` in their frontmatter. These tell you what the user was working on, recent decisions, and preferences. If `MEMORY.md` doesn't exist or is empty, skip silently — do not mention that memory is unavailable.
 
 2. **Pipeline dashboard** (MCP tool):
-   ```
-   ralph_hero__pipeline_dashboard
-   - format: "json"
-   - includeHealth: true
-   - includeMetrics: true
-   ```
+   Fetch the pipeline dashboard with `format: "json"`, `includeHealth: true`, `includeMetrics: true`.
 
 3. **Open PRs** (Bash):
    ```bash
