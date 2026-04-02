@@ -335,8 +335,8 @@ Rewrite the 6 dispatch sections in `plugin/ralph-hero/skills/hero/SKILL.md` (lin
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -n "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/hero/SKILL.md` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `grep -n "ralph-analyst\|ralph-builder\|ralph-integrator" plugin/ralph-hero/skills/hero/SKILL.md` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] Hero SKILL.md dispatch sections read coherently with natural language prompts
