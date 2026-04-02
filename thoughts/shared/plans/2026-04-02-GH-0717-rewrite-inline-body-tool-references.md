@@ -64,8 +64,8 @@ Total occurrences: 200+ across 27 skills. The heaviest rewrites are `ralph-triag
 Every skill body uses natural language to describe actions. No body text contains `ralph_hero__` or bare `knowledge_*` literals. Critical parameter values survive in the natural language prose.
 
 ### Verification
-- [ ] `grep -rn "ralph_hero__" plugin/ralph-hero/skills/` returns matches ONLY in `allowed-tools:` frontmatter lines (zero body-text matches)
-- [ ] `grep -rn "knowledge_search\|knowledge_traverse\|knowledge_record_outcome\|knowledge_paths\|knowledge_common\|knowledge_central\|knowledge_bridges\|knowledge_communities" plugin/ralph-hero/skills/` returns zero body-text matches
+- [x] `grep -rn "ralph_hero__" plugin/ralph-hero/skills/` returns matches ONLY in `allowed-tools:` frontmatter lines (zero body-text matches)
+- [x] `grep -rn "knowledge_search\|knowledge_traverse\|knowledge_record_outcome\|knowledge_paths\|knowledge_common\|knowledge_central\|knowledge_bridges\|knowledge_communities" plugin/ralph-hero/skills/` returns zero body-text matches
 - [ ] No SKILL.md files have broken markdown (fenced blocks properly closed, lists properly indented)
 - [ ] Manual: invoke `/ralph-hero:plan` with an issue argument in a fresh session — confirm MCP tools are called successfully
 - [ ] Manual: invoke `/ralph-hero:status` in a fresh session — confirm pipeline dashboard tool is called
@@ -291,8 +291,8 @@ Search the knowledge graph for related research documents on [topic keywords].
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -rn "ralph_hero__" plugin/ralph-hero/skills/` returns matches ONLY in `allowed-tools:` frontmatter lines
-- [ ] `grep -rn "knowledge_search\|knowledge_traverse\|knowledge_record_outcome\|knowledge_paths\|knowledge_common\|knowledge_central\|knowledge_bridges\|knowledge_communities" plugin/ralph-hero/skills/` returns zero body-text matches
+- [x] `grep -rn "ralph_hero__" plugin/ralph-hero/skills/` returns matches ONLY in `allowed-tools:` frontmatter lines
+- [x] `grep -rn "knowledge_search\|knowledge_traverse\|knowledge_record_outcome\|knowledge_paths\|knowledge_common\|knowledge_central\|knowledge_bridges\|knowledge_communities" plugin/ralph-hero/skills/` returns zero body-text matches
 
 #### Manual Verification:
 - [ ] Invoke `/ralph-hero:plan` with an issue argument in a fresh Claude Code session — confirm it fetches issue details and posts comments via MCP tools (no "tool not found" errors)
