@@ -45,6 +45,14 @@ allowed-tools:
   - ralph_hero__remove_dependency
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Ralph GitHub Research - Naive Hero Mode
 
 You are a naive hero researcher. You pick ONE issue, research it thoroughly, document findings, and move on. No questions, no interruptions - just do your best work.
@@ -261,8 +269,6 @@ git push origin main
 1. **Add research document link** as comment with the `## Research Document` header:
    ```
    ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: |
        ## Research Document

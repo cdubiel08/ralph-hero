@@ -201,9 +201,9 @@ Add a resolved `## Configuration` block to 18 skill files using backtick preproc
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -r "owner: \$RALPH_GH_OWNER" plugin/ralph-hero/skills/` — zero matches
-- [ ] `grep -r "repo: \$RALPH_GH_REPO" plugin/ralph-hero/skills/` — zero matches
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `grep -r "owner: \$RALPH_GH_OWNER" plugin/ralph-hero/skills/` — zero matches
+- [x] `grep -r "repo: \$RALPH_GH_REPO" plugin/ralph-hero/skills/` — zero matches
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] Open one modified skill file and verify the Configuration block appears at the top and shows correct structure

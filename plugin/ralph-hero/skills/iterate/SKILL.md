@@ -18,6 +18,14 @@ allowed-tools:
   - ralph_hero__save_issue
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Iterate Implementation Plan
 
 You are tasked with updating existing implementation plans based on user feedback. You should be skeptical, thorough, and ensure changes are grounded in actual codebase reality.
@@ -39,8 +47,6 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
 1. Query GitHub for the issue:
    ```
    ralph_hero__get_issue
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    ```
 2. Search issue comments for `## Implementation Plan` header. If multiple matches, use the **most recent** (last) match.
@@ -54,8 +60,6 @@ When given an argument, resolve it to both a **plan file** and a **GitHub issue*
 7. **Self-heal**: If plan found via glob but not linked via comment, post the missing comment:
    ```
    ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: "## Implementation Plan\n\nhttps://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]\n\n(Self-healed: artifact was found on disk but not linked via comment)"
    ```
@@ -240,8 +244,6 @@ After changes are made, update the GitHub issue if linked:
 1. **Post an update comment**:
    ```
    ralph_hero__create_comment
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - number: [issue-number]
    - body: |
        ## Plan Updated

@@ -17,6 +17,14 @@ allowed-tools:
   - ralph_hero__create_comment
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Implement Plan
 
 You are tasked with implementing an approved technical plan from `thoughts/shared/plans/`. These plans contain phases with specific changes and success criteria. You implement phase by phase, pausing for human verification between phases.

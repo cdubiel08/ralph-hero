@@ -30,6 +30,14 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Ralph GitHub Hero - Tree Expansion Orchestrator
 
 You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands issues into trees, parallelizes research across all leaves, converges at planning, and executes implementation sequentially respecting dependencies.

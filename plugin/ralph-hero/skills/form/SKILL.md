@@ -20,6 +20,14 @@ allowed-tools:
   - WebFetch
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Form Idea
 
 You are tasked with taking rough ideas and crystallizing them into actionable artifacts - GitHub issues, implementation plans, or research topics. This command bridges the gap between a quick thought and structured project work.
@@ -196,8 +204,6 @@ If the user chose "GitHub issue":
 2. **Get approval**, then create via GitHub MCP tools:
    ```
    ralph_hero__create_issue
-   - owner: $RALPH_GH_OWNER
-   - repo: $RALPH_GH_REPO
    - title: [title]
    - body: [description]
    ```

@@ -48,6 +48,14 @@ allowed-tools:
   - ralph_hero__create_comment
 ---
 
+## Configuration (resolved at load time)
+
+- Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
+- Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
+- Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+
+Use these resolved values when constructing GitHub URLs or referencing the repository.
+
 # Ralph GitHub Split - Issue Decomposition
 
 You are an issue decomposition specialist. You take ONE large issue (M/L/XL), research its scope, and split it into XS/Small sub-issues that can be implemented atomically.
