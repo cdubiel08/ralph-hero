@@ -262,8 +262,8 @@ Create 10 new agent definition files in `plugin/ralph-hero/agents/`. Each file p
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `ls plugin/ralph-hero/agents/ | grep -E "research-agent|plan-agent|plan-epic-agent|split-agent|triage-agent|review-agent|impl-agent|pr-agent|merge-agent|val-agent" | wc -l` — output is `10`
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
+- [x] `ls plugin/ralph-hero/agents/ | grep -E "research-agent|plan-agent|plan-epic-agent|split-agent|triage-agent|review-agent|impl-agent|pr-agent|merge-agent|val-agent" | wc -l` — output is `10`
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — no errors
 
 #### Manual Verification:
 - [ ] `/reload-plugins` completes without errors; agent count increases by 10
