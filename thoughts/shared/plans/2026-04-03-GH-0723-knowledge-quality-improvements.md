@@ -480,9 +480,9 @@ Tests for:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] All tests pass: `npm test`
-- [ ] Type checking passes: `npm run build`
-- [ ] Reindex test: change one file, verify only that file's FTS entry is updated (not a full rebuild)
+- [x] All tests pass: `npm test`
+- [x] Type checking passes: `npm run build`
+- [x] Reindex test: change one file, verify only that file's FTS entry is updated (not a full rebuild)
 
 #### Manual Verification:
 - [ ] Run `npm run reindex` on a clean DB — full FTS rebuild occurs
