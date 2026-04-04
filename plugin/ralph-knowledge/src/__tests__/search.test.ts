@@ -68,7 +68,7 @@ describe("FtsSearch", () => {
   });
 
   it("filters by tags", () => {
-    const results = fts.search("cache OR auth", { tags: ["security"] });
+    const results = fts.search("auth", { tags: ["security"] });
     expect(results).toHaveLength(1);
     expect(results[0].id).toBe("auth-doc");
   });
@@ -169,6 +169,39 @@ describe("FtsSearch", () => {
       // Should be searchable with new terms
       const afterNew = fts.search("LRU");
       expect(afterNew.some(r => r.id === "cache-doc")).toBe(true);
+    });
+  });
+
+  describe("FTS5 query escaping", () => {
+    it("handles hyphenated tokens like GH-42", () => {
+      const results = fts.search("GH-42");
+      expect(Array.isArray(results)).toBe(true);
+    });
+
+    it("handles hyphenated path segments like cache-strategies", () => {
+      const results = fts.search("cache-strategies");
+      expect(Array.isArray(results)).toBe(true);
+      expect(results.some(r => r.id === "cache-doc")).toBe(true);
+    });
+
+    it("handles colon (FTS5 column filter) without crashing", () => {
+      const results = fts.search("column:injection");
+      expect(Array.isArray(results)).toBe(true);
+    });
+
+    it("handles asterisk (FTS5 prefix wildcard) without crashing", () => {
+      const results = fts.search("test*");
+      expect(Array.isArray(results)).toBe(true);
+    });
+
+    it("handles parentheses (FTS5 grouping) without crashing", () => {
+      const results = fts.search("(grouped)");
+      expect(Array.isArray(results)).toBe(true);
+    });
+
+    it("handles multi-word query with special chars", () => {
+      const results = fts.search("implementation plan GH-730 playwright-aware");
+      expect(Array.isArray(results)).toBe(true);
     });
   });
 
