@@ -791,4 +791,127 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // knowledge_subgraph — extract N-hop neighborhood around a document
+  // -------------------------------------------------------------------------
+  server.tool(
+    "knowledge_subgraph",
+    "Extract an N-hop neighborhood subgraph around a document. Returns deduplicated nodes and edges with distance from root.",
+    {
+      root: z.string().describe("Document ID to center the subgraph on."),
+      depth: z
+        .number()
+        .int()
+        .min(1)
+        .max(5)
+        .optional()
+        .describe(
+          "Max hops from root (default: 1). Use 1 for immediate neighbors, 2 for neighbors-of-neighbors.",
+        ),
+      brief: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, omit edge context and reduce node metadata (default: false).",
+        ),
+    },
+    async (args) => {
+      try {
+        const depth = args.depth ?? 1;
+        const graph = new GraphBuilder(db).buildGraph();
+
+        if (!graph.hasNode(args.root)) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error: Document '${args.root}' not found in graph.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // BFS to collect nodes within N hops
+        const visited = new Map<string, number>(); // nodeId -> distance
+        const queue: Array<[string, number]> = [[args.root, 0]];
+        visited.set(args.root, 0);
+
+        while (queue.length > 0) {
+          const [current, dist] = queue.shift()!;
+          if (dist >= depth) continue;
+          for (const neighbor of graph.neighbors(current)) {
+            if (!visited.has(neighbor)) {
+              visited.set(neighbor, dist + 1);
+              queue.push([neighbor, dist + 1]);
+            }
+          }
+        }
+
+        // Collect nodes
+        const nodes = [...visited.entries()].map(([id, dist]) => {
+          const attrs = graph.getNodeAttributes(id);
+          return {
+            id,
+            title: attrs.title ?? null,
+            type: attrs.type ?? null,
+            date: attrs.date ?? null,
+            distance: dist,
+            tags: db.getTags(id),
+          };
+        });
+
+        // Collect edges between visited nodes (use forEachOutEdge to avoid duplicates)
+        const edgeSet = new Set<string>();
+        const edges: Array<{
+          source: string;
+          target: string;
+          type: string;
+          context?: string | null;
+        }> = [];
+        for (const nodeId of visited.keys()) {
+          graph.forEachOutEdge(
+            nodeId,
+            (edgeKey, attrs, source, target) => {
+              if (visited.has(target) && !edgeSet.has(edgeKey)) {
+                edgeSet.add(edgeKey);
+                const entry: {
+                  source: string;
+                  target: string;
+                  type: string;
+                  context?: string | null;
+                } = { source, target, type: attrs.type };
+                if (!args.brief) {
+                  entry.context = attrs.context ?? null;
+                }
+                edges.push(entry);
+              }
+            },
+          );
+        }
+
+        const result = {
+          root: args.root,
+          depth,
+          nodes,
+          edges,
+          graphSize: { nodes: nodes.length, edges: edges.length },
+        };
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [
+            { type: "text" as const, text: `Error: ${(e as Error).message}` },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
 }

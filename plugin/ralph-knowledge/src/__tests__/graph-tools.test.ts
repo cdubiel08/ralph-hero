@@ -1247,3 +1247,258 @@ describe("knowledge_community tool", () => {
     expect(parsed.label).toBe("graphology");
   });
 });
+
+// ---------------------------------------------------------------------------
+// knowledge_subgraph tool tests
+// ---------------------------------------------------------------------------
+
+describe("knowledge_subgraph tool", () => {
+  /**
+   * Fixture for subgraph tests:
+   *
+   *   sg-a --builds_on--> sg-b --builds_on--> sg-d
+   *   sg-a --builds_on--> sg-c --tensions---> sg-d
+   *   sg-e (isolated, no edges)
+   *
+   * From sg-a at depth 1: nodes = {sg-a, sg-b, sg-c}
+   *   edges = sg-a->sg-b, sg-a->sg-c
+   * From sg-a at depth 2: nodes = {sg-a, sg-b, sg-c, sg-d}
+   *   edges = sg-a->sg-b, sg-a->sg-c, sg-b->sg-d, sg-c->sg-d
+   */
+  function setupSubgraphFixture(testDb: KnowledgeDB): void {
+    for (const [id, title, type] of [
+      ["sg-a", "Subgraph A", "research"],
+      ["sg-b", "Subgraph B", "plan"],
+      ["sg-c", "Subgraph C", "idea"],
+      ["sg-d", "Subgraph D", "research"],
+      ["sg-e", "Subgraph E (isolated)", "idea"],
+    ] as const) {
+      testDb.upsertDocument({
+        id,
+        path: `thoughts/shared/research/${id}.md`,
+        title,
+        date: "2026-01-01",
+        type,
+        status: "approved",
+        githubIssue: null,
+        content: `Subgraph fixture document ${id}.`,
+      });
+    }
+    testDb.addRelationship("sg-a", "sg-b", "builds_on");
+    testDb.addRelationship("sg-a", "sg-c", "builds_on");
+    testDb.addRelationship("sg-b", "sg-d", "builds_on");
+    testDb.addRelationship("sg-c", "sg-d", "tensions", "Some context about the tension");
+    testDb.setTags("sg-a", ["graphology", "testing"]);
+    testDb.setTags("sg-b", ["planning"]);
+  }
+
+  it("1-hop subgraph returns immediate neighbors and connecting edges", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+      depth: 1,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(result.isError).toBeUndefined();
+    expect(parsed.root).toBe("sg-a");
+    expect(parsed.depth).toBe(1);
+
+    // Nodes: sg-a (root), sg-b, sg-c (direct neighbors)
+    const nodeIds = parsed.nodes.map((n: { id: string }) => n.id).sort();
+    expect(nodeIds).toEqual(["sg-a", "sg-b", "sg-c"]);
+
+    // Edges: sg-a->sg-b, sg-a->sg-c only (sg-b->sg-d and sg-c->sg-d are outside depth)
+    expect(parsed.edges.length).toBe(2);
+    const edgePairs = parsed.edges
+      .map((e: { source: string; target: string }) => `${e.source}->${e.target}`)
+      .sort();
+    expect(edgePairs).toEqual(["sg-a->sg-b", "sg-a->sg-c"]);
+
+    expect(parsed.graphSize.nodes).toBe(3);
+    expect(parsed.graphSize.edges).toBe(2);
+  });
+
+  it("2-hop subgraph includes neighbors-of-neighbors", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+      depth: 2,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // Nodes: sg-a, sg-b, sg-c (depth 1), sg-d (depth 2)
+    const nodeIds = parsed.nodes.map((n: { id: string }) => n.id).sort();
+    expect(nodeIds).toEqual(["sg-a", "sg-b", "sg-c", "sg-d"]);
+
+    // Edges: all 4 edges between visited nodes
+    expect(parsed.edges.length).toBe(4);
+    const edgePairs = parsed.edges
+      .map((e: { source: string; target: string }) => `${e.source}->${e.target}`)
+      .sort();
+    expect(edgePairs).toEqual([
+      "sg-a->sg-b",
+      "sg-a->sg-c",
+      "sg-b->sg-d",
+      "sg-c->sg-d",
+    ]);
+  });
+
+  it("edges only between visited nodes (no edges to outside nodes)", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+      depth: 1,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    const visitedIds = new Set(
+      parsed.nodes.map((n: { id: string }) => n.id),
+    );
+
+    // Every edge source and target must be within visited nodes
+    for (const edge of parsed.edges) {
+      expect(visitedIds.has(edge.source)).toBe(true);
+      expect(visitedIds.has(edge.target)).toBe(true);
+    }
+
+    // sg-d should NOT appear in depth-1 results
+    expect(visitedIds.has("sg-d")).toBe(false);
+    // sg-e (isolated) should also NOT appear
+    expect(visitedIds.has("sg-e")).toBe(false);
+  });
+
+  it("brief: true omits edge context", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+      depth: 2,
+      brief: true,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // No edge should have a context property when brief=true
+    for (const edge of parsed.edges) {
+      expect(edge).not.toHaveProperty("context");
+    }
+  });
+
+  it("unknown root returns error", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "nonexistent-doc",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("nonexistent-doc");
+    expect(result.content[0].text).toContain("not found");
+  });
+
+  it("distance field is correct for each node", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+      depth: 2,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    const distanceMap = new Map<string, number>();
+    for (const node of parsed.nodes) {
+      distanceMap.set(node.id, node.distance);
+    }
+
+    // Root is at distance 0
+    expect(distanceMap.get("sg-a")).toBe(0);
+    // Direct neighbors at distance 1
+    expect(distanceMap.get("sg-b")).toBe(1);
+    expect(distanceMap.get("sg-c")).toBe(1);
+    // Neighbors-of-neighbors at distance 2
+    expect(distanceMap.get("sg-d")).toBe(2);
+  });
+
+  it("edge context is included when not brief", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+      depth: 2,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // The sg-c->sg-d edge has context "Some context about the tension"
+    const tensionEdge = parsed.edges.find(
+      (e: { source: string; target: string }) =>
+        e.source === "sg-c" && e.target === "sg-d",
+    );
+    expect(tensionEdge).toBeDefined();
+    expect(tensionEdge.context).toBe("Some context about the tension");
+
+    // Edges without context should have null
+    const buildsOnEdge = parsed.edges.find(
+      (e: { source: string; target: string }) =>
+        e.source === "sg-a" && e.target === "sg-b",
+    );
+    expect(buildsOnEdge).toBeDefined();
+    expect(buildsOnEdge.context).toBeNull();
+  });
+
+  it("nodes include tags from the database", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+      depth: 1,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    const rootNode = parsed.nodes.find(
+      (n: { id: string }) => n.id === "sg-a",
+    );
+    expect(rootNode.tags).toEqual(["graphology", "testing"]);
+
+    const bNode = parsed.nodes.find(
+      (n: { id: string }) => n.id === "sg-b",
+    );
+    expect(bNode.tags).toEqual(["planning"]);
+
+    const cNode = parsed.nodes.find(
+      (n: { id: string }) => n.id === "sg-c",
+    );
+    expect(cNode.tags).toEqual([]);
+  });
+
+  it("default depth is 1 when not specified", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-a",
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.depth).toBe(1);
+    // Same as explicit depth=1: only immediate neighbors
+    const nodeIds = parsed.nodes.map((n: { id: string }) => n.id).sort();
+    expect(nodeIds).toEqual(["sg-a", "sg-b", "sg-c"]);
+  });
+
+  it("isolated root returns only the root node with no edges", async () => {
+    setupSubgraphFixture(db);
+
+    const result = await callTool(server, "knowledge_subgraph", {
+      root: "sg-e",
+      depth: 2,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.nodes.length).toBe(1);
+    expect(parsed.nodes[0].id).toBe("sg-e");
+    expect(parsed.nodes[0].distance).toBe(0);
+    expect(parsed.edges.length).toBe(0);
+  });
+});

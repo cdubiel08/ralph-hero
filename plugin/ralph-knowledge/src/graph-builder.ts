@@ -13,6 +13,7 @@ export interface NodeAttributes {
 
 export interface EdgeAttributes {
   type: string;
+  context: string | null;
 }
 
 export type KnowledgeGraph = MultiDirectedGraphType<NodeAttributes, EdgeAttributes>;
@@ -49,11 +50,12 @@ export class GraphBuilder {
 
     // Load all relationships and add as directed edges
     const rels = this.db.db
-      .prepare("SELECT source_id, target_id, type FROM relationships")
+      .prepare("SELECT source_id, target_id, type, context FROM relationships")
       .all() as Array<{
       source_id: string;
       target_id: string;
       type: string;
+      context: string | null;
     }>;
 
     for (const rel of rels) {
@@ -61,7 +63,10 @@ export class GraphBuilder {
       if (!graph.hasNode(rel.source_id) || !graph.hasNode(rel.target_id)) {
         continue;
       }
-      graph.addDirectedEdge(rel.source_id, rel.target_id, { type: rel.type });
+      graph.addDirectedEdge(rel.source_id, rel.target_id, {
+        type: rel.type,
+        context: rel.context ?? null,
+      });
     }
 
     return graph;

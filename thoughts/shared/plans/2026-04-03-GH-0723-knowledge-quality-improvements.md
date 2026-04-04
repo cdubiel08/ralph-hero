@@ -259,9 +259,9 @@ Tests for:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] All tests pass: `npm test`
-- [ ] Type checking passes: `npm run build`
-- [ ] Existing graph tool tests still pass (adding context to EdgeAttributes is non-breaking)
+- [x] All tests pass: `npm test`
+- [x] Type checking passes: `npm run build`
+- [x] Existing graph tool tests still pass (adding context to EdgeAttributes is non-breaking)
 
 #### Manual Verification:
 - [ ] Call `knowledge_subgraph` with `root: "2026-03-24-knowledge-graph-plugin-comparison", depth: 1` — returns reasonable neighborhood
