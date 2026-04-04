@@ -157,4 +157,35 @@ This section should not produce edges even if it mentions depends_on patterns.
     // Only the Feature B → Feature A edge, nothing from Integration Strategy
     expect(graph.edges[0]).toEqual({ blocked: 61, blocking: 60, source: "feature-level" });
   });
+
+  it("parses depends_on from headings without parentheses around GH-NNN", () => {
+    const content = `---
+type: plan
+github_issues: [736, 737, 738, 739]
+primary_issue: 736
+---
+# Group Plan
+
+## Phase 1: GH-736 — foundation
+- **depends_on**: null
+
+## Phase 2: GH-737 — API layer
+- **depends_on**: [phase-1]
+
+## Phase 3: GH-738 — frontend
+- **depends_on**: [phase-1]
+
+## Phase 4: GH-739 — integration
+- **depends_on**: [phase-3]
+`;
+    const graph = parsePlanGraph(content);
+    expect(graph.phaseToIssue.get(1)).toBe(736);
+    expect(graph.phaseToIssue.get(2)).toBe(737);
+    expect(graph.phaseToIssue.get(3)).toBe(738);
+    expect(graph.phaseToIssue.get(4)).toBe(739);
+    expect(graph.edges).toHaveLength(3);
+    expect(graph.edges).toContainEqual({ blocked: 737, blocking: 736, source: "phase-level" });
+    expect(graph.edges).toContainEqual({ blocked: 738, blocking: 736, source: "phase-level" });
+    expect(graph.edges).toContainEqual({ blocked: 739, blocking: 738, source: "phase-level" });
+  });
 });
