@@ -262,6 +262,15 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
         };
       }
 
+      // Token source detection — re-derive which env vars resolved
+      const repoTokenSource = resolveEnv("RALPH_GH_REPO_TOKEN")
+        ? "RALPH_GH_REPO_TOKEN"
+        : "RALPH_HERO_GITHUB_TOKEN";
+
+      const projectTokenSource = resolveEnv("RALPH_GH_PROJECT_TOKEN")
+        ? "RALPH_GH_PROJECT_TOKEN"
+        : repoTokenSource;
+
       // Summary
       const allOk = Object.values(checks).every(
         (c) => c.status === "ok" || c.status === "skip",
@@ -275,10 +284,17 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
           projectOwner: resolveProjectOwner(client.config) || "(not set)",
           projectNumber: client.config.projectNumber || "(not set)",
           tokenMode:
-            client.config.projectToken &&
-            client.config.projectToken !== client.config.token
+            projectTokenSource !== repoTokenSource
               ? "dual-token"
               : "single-token",
+        },
+        tokenSources: {
+          repoToken: repoTokenSource,
+          projectToken: projectTokenSource,
+          note:
+            projectTokenSource !== repoTokenSource
+              ? `Repo operations use ${repoTokenSource}, project operations use ${projectTokenSource}`
+              : `Both repo and project operations use ${repoTokenSource}`,
         },
       });
     },
