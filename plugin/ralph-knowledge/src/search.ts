@@ -93,11 +93,17 @@ export class FtsSearch {
     `);
   }
 
+  private escapeFts5Query(raw: string): string {
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return '""';
+    return tokens.map(t => '"' + t.replace(/"/g, '""') + '"').join(" ");
+  }
+
   search(query: string, options: SearchOptions = {}): SearchResult[] {
     const { type, tags, includeSuperseded = false, limit = 20 } = options;
 
     const conditions: string[] = ["documents_fts MATCH @query"];
-    const params: Record<string, unknown> = { query, limit };
+    const params: Record<string, unknown> = { query: this.escapeFts5Query(query), limit };
 
     if (!includeSuperseded) {
       conditions.push("d.status IS NOT 'superseded'");
