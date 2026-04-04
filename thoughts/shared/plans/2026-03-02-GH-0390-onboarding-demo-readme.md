@@ -40,12 +40,12 @@ The README has a new "How It Works" section (between Usage and Configuration) co
 4. A link to the showcase demo recording from #389
 
 ### Verification
-- [ ] README has a "How It Works" or "Demo" section
-- [ ] Section includes the ASCII lifecycle diagram with all 7 stages and agent role labels
-- [ ] Section references `/ralph-team NNN` as the single-command entry point
-- [ ] Recording link is present (use placeholder `[Demo recording →]()` if URL not yet documented from #389)
-- [ ] Both audiences addressed: contributors (how to contribute) AND users (how to adopt)
-- [ ] Section renders correctly on GitHub (no broken markdown)
+- [x] README has a "How It Works" or "Demo" section
+- [x] Section includes the ASCII lifecycle diagram with all 7 stages and agent role labels
+- [x] Section references `/ralph-team NNN` as the single-command entry point
+- [x] Recording link is present (use placeholder `[Demo recording →]()` if URL not yet documented from #389)
+- [x] Both audiences addressed: contributors (how to contribute) AND users (how to adopt)
+- [x] Section renders correctly on GitHub (no broken markdown)
 
 ## What We're NOT Doing
 
@@ -131,19 +131,19 @@ GitHub Projects V2 is the source of truth for state — the board updates in rea
 **Implementation note for builder**: Replace `RECORDING_URL_FROM_GH_389` with the actual URL from the #389 deliverable. If the URL is not yet documented in issue comments, use a placeholder: `[Demo recording — coming soon]` and leave a TODO comment in the commit message.
 
 ### Success Criteria
-- [ ] Manual: README section renders correctly on GitHub (view raw markdown via gh CLI or browser)
-- [ ] Manual: ASCII diagram displays with correct alignment in a monospace font
-- [ ] Manual: All 7 lifecycle stages are represented in the diagram
-- [ ] Manual: Both contributor and user audiences addressed in the prose
-- [ ] Manual: Recording link is present (placeholder acceptable if URL not yet published)
+- [x] Manual: README section renders correctly on GitHub (view raw markdown via gh CLI or browser)
+- [x] Manual: ASCII diagram displays with correct alignment in a monospace font
+- [x] Manual: All 7 lifecycle stages are represented in the diagram
+- [x] Manual: Both contributor and user audiences addressed in the prose
+- [x] Manual: Recording link is present (placeholder acceptable if URL not yet published)
 
 ---
 
 ## Integration Testing
 
-- [ ] `git diff plugin/ralph-hero/README.md` shows only the new section inserted (no accidental deletions)
-- [ ] Markdown lint: no broken links, no unclosed fences
-- [ ] Section appears between Usage/CLI section and Configuration heading in the rendered output
+- [x] `git diff plugin/ralph-hero/README.md` shows only the new section inserted (no accidental deletions)
+- [x] Markdown lint: no broken links, no unclosed fences
+- [x] Section appears between Usage/CLI section and Configuration heading in the rendered output
 
 ## References
 
