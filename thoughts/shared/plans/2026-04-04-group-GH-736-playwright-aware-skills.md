@@ -116,15 +116,15 @@ Add playwright detection and UI baseline capture to `ralph-research`. This phase
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `head -10 plugin/ralph-hero/skills/ralph-research/SKILL.md` shows valid YAML frontmatter with updated argument-hint
-- [ ] `grep -c "Playwright UI Baseline" plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 1
-- [ ] `grep -c "installed_plugins.json" plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
-- [ ] `grep -c "explorer-agent" plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
-- [ ] `wc -l plugin/ralph-hero/skills/ralph-research/SKILL.md` shows ~420 lines (original 343 + ~75 new)
+- [x] `head -10 plugin/ralph-hero/skills/ralph-research/SKILL.md` shows valid YAML frontmatter with updated argument-hint
+- [x] `grep -c "Playwright UI Baseline" plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 1
+- [x] `grep -c "installed_plugins.json" plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
+- [x] `grep -c "explorer-agent" plugin/ralph-hero/skills/ralph-research/SKILL.md` returns >= 1
+- [x] `wc -l plugin/ralph-hero/skills/ralph-research/SKILL.md` shows ~420 lines (original 343 + ~75 new)
 
 #### Manual Verification:
-- [ ] Section reads naturally as skill instructions for an LLM agent
-- [ ] All flag behaviors documented clearly
+- [x] Section reads naturally as skill instructions for an LLM agent
+- [x] All flag behaviors documented clearly
 
 **Creates for next phase**: The `## UI Baseline` section format and plugin detection pattern that Phase 2 mirrors and Phase 3 consumes.
 
