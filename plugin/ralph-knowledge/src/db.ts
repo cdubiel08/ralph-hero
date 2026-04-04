@@ -165,6 +165,28 @@ export class KnowledgeDB {
     } catch {
       // Column already exists — expected for new databases
     }
+
+    // Migration: rebuild relationships table for databases created before the
+    // context column, post_mortem/untyped CHECK types, and target_id FK were added.
+    // SQLite cannot ALTER CHECK constraints, so a full table rebuild is required.
+    try {
+      this.db.prepare("SELECT context FROM relationships LIMIT 0").get();
+    } catch {
+      this.db.exec(`
+        CREATE TABLE relationships_new (
+          source_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+          target_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+          type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by', 'post_mortem', 'untyped')),
+          context TEXT,
+          PRIMARY KEY (source_id, target_id, type)
+        );
+        INSERT INTO relationships_new (source_id, target_id, type)
+          SELECT source_id, target_id, type FROM relationships;
+        DROP TABLE relationships;
+        ALTER TABLE relationships_new RENAME TO relationships;
+        CREATE INDEX IF NOT EXISTS idx_rel_target ON relationships(target_id, type);
+      `);
+    }
   }
 
   upsertDocument(doc: Omit<DocumentRow, "isStub"> & { isStub?: number }): void {

@@ -407,6 +407,127 @@ describe("Schema migration: is_stub column", () => {
   });
 });
 
+describe("Schema migration: relationships table rebuild", () => {
+  it("rebuilds old schema, preserves data, and enables new features", () => {
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-rel-migration-"));
+    const dbPath = join(dir, "legacy.db");
+
+    // Create a DB with the old relationships schema (no context, narrow CHECK, no target_id FK)
+    const rawDb = new Database(dbPath);
+    rawDb.exec(`
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY, path TEXT, title TEXT, date TEXT, type TEXT,
+        status TEXT, github_issue INTEGER, content TEXT, is_stub INTEGER DEFAULT 0
+      );
+      CREATE TABLE tags (doc_id TEXT REFERENCES documents(id) ON DELETE CASCADE, tag TEXT, PRIMARY KEY (doc_id, tag));
+      CREATE TABLE relationships (
+        source_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        target_id TEXT,
+        type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by')),
+        PRIMARY KEY (source_id, target_id, type)
+      );
+      CREATE TABLE outcome_events (
+        id TEXT PRIMARY KEY, event_type TEXT NOT NULL, issue_number INTEGER NOT NULL,
+        session_id TEXT, timestamp TEXT NOT NULL, duration_ms INTEGER, verdict TEXT,
+        component_area TEXT, estimate TEXT, drift_count INTEGER, model TEXT,
+        agent_type TEXT, iteration_count INTEGER, payload TEXT DEFAULT '{}'
+      );
+      CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, indexed_at INTEGER NOT NULL);
+    `);
+    // Insert test data
+    rawDb.exec(`
+      INSERT INTO documents (id, path, title, content) VALUES ('a', 'a.md', 'Doc A', '');
+      INSERT INTO documents (id, path, title, content) VALUES ('b', 'b.md', 'Doc B', '');
+      INSERT INTO relationships (source_id, target_id, type) VALUES ('a', 'b', 'builds_on');
+    `);
+    rawDb.close();
+
+    // Opening via KnowledgeDB should migrate the schema
+    const migrated = new KnowledgeDB(dbPath);
+
+    // Existing data preserved with context = null
+    const rels = migrated.getRelationshipsFrom("a");
+    expect(rels).toHaveLength(1);
+    expect(rels[0].targetId).toBe("b");
+    expect(rels[0].type).toBe("builds_on");
+    expect(rels[0].context).toBeNull();
+
+    // New context column is writable
+    migrated.addRelationship("b", "a", "tensions", "disagreement on approach");
+    const relsBack = migrated.getRelationshipsFrom("b");
+    expect(relsBack[0].context).toBe("disagreement on approach");
+
+    // New CHECK types accepted
+    expect(() => migrated.addRelationship("a", "b", "post_mortem")).not.toThrow();
+    expect(() => migrated.addRelationship("a", "b", "untyped")).not.toThrow();
+
+    migrated.close();
+  });
+
+  it("is idempotent on a database that already has the context column", () => {
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-rel-migration-"));
+    const dbPath = join(dir, "current.db");
+
+    const db1 = new KnowledgeDB(dbPath);
+    db1.upsertDocument({ id: "a", path: "a.md", title: "A", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db1.upsertDocument({ id: "b", path: "b.md", title: "B", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db1.addRelationship("a", "b", "builds_on", "some context");
+    db1.close();
+
+    // Second open should not error and data should be intact
+    const db2 = new KnowledgeDB(dbPath);
+    const rels = db2.getRelationshipsFrom("a");
+    expect(rels).toHaveLength(1);
+    expect(rels[0].context).toBe("some context");
+    db2.close();
+  });
+
+  it("traverse works after migration from old schema", async () => {
+    const { Traverser } = await import("../traverse.js");
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-rel-migration-"));
+    const dbPath = join(dir, "legacy.db");
+
+    // Create old-schema DB with test data
+    const rawDb = new Database(dbPath);
+    rawDb.exec(`
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY, path TEXT, title TEXT, date TEXT, type TEXT,
+        status TEXT, github_issue INTEGER, content TEXT, is_stub INTEGER DEFAULT 0
+      );
+      CREATE TABLE tags (doc_id TEXT REFERENCES documents(id) ON DELETE CASCADE, tag TEXT, PRIMARY KEY (doc_id, tag));
+      CREATE TABLE relationships (
+        source_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        target_id TEXT,
+        type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by')),
+        PRIMARY KEY (source_id, target_id, type)
+      );
+      CREATE TABLE outcome_events (
+        id TEXT PRIMARY KEY, event_type TEXT NOT NULL, issue_number INTEGER NOT NULL,
+        session_id TEXT, timestamp TEXT NOT NULL, duration_ms INTEGER, verdict TEXT,
+        component_area TEXT, estimate TEXT, drift_count INTEGER, model TEXT,
+        agent_type TEXT, iteration_count INTEGER, payload TEXT DEFAULT '{}'
+      );
+      CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, indexed_at INTEGER NOT NULL);
+      INSERT INTO documents (id, path, title, content) VALUES ('a', 'a.md', 'Doc A', '');
+      INSERT INTO documents (id, path, title, content) VALUES ('b', 'b.md', 'Doc B', '');
+      INSERT INTO relationships (source_id, target_id, type) VALUES ('a', 'b', 'builds_on');
+    `);
+    rawDb.close();
+
+    // Open via KnowledgeDB (triggers migration), then traverse
+    const migrated = new KnowledgeDB(dbPath);
+    const traverser = new Traverser(migrated);
+
+    const results = traverser.traverse("a");
+    expect(results).toHaveLength(1);
+    expect(results[0].targetId).toBe("b");
+    expect(results[0].context).toBeNull();
+    expect(results[0].doc?.title).toBe("Doc B");
+
+    migrated.close();
+  });
+});
+
 describe("documentExists", () => {
   it("returns true for an existing document", () => {
     db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
