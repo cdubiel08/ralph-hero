@@ -161,14 +161,14 @@ Add playwright detection and UI baseline capture to the interactive `research` s
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c "Step 6.5" plugin/ralph-hero/skills/research/SKILL.md` returns 1
-- [ ] `grep -c "installed_plugins.json" plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
-- [ ] `grep -c "explorer-agent" plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
-- [ ] `grep "RALPH_PLAYWRIGHT_DEV_CMD" plugin/ralph-hero/skills/research/SKILL.md` returns a match
+- [x] `grep -c "Step 6.5" plugin/ralph-hero/skills/research/SKILL.md` returns 1
+- [x] `grep -c "installed_plugins.json" plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
+- [x] `grep -c "explorer-agent" plugin/ralph-hero/skills/research/SKILL.md` returns >= 1
+- [x] `grep "RALPH_PLAYWRIGHT_DEV_CMD" plugin/ralph-hero/skills/research/SKILL.md` returns a match
 
 #### Manual Verification:
-- [ ] User prompt text is clear and actionable
-- [ ] Memory save offer reads naturally
+- [x] User prompt text is clear and actionable
+- [x] Memory save offer reads naturally
 
 **Creates for next phase**: Nothing directly — Phase 3 reads `## UI Baseline` from research docs written by both Phase 1 and Phase 2.
 
@@ -228,15 +228,15 @@ Make `ralph-plan` generate a UI Validation phase as the final plan phase when a 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `head -10 plugin/ralph-hero/skills/ralph-plan/SKILL.md` shows valid YAML with updated argument-hint
-- [ ] `grep -c "Playwright Flags" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns 1
-- [ ] `grep -c "UI Baseline" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 2 (item 2.5 + template)
-- [ ] `grep -c "UI Validation Phase" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
-- [ ] `grep -c "a11y-scan" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
+- [x] `head -10 plugin/ralph-hero/skills/ralph-plan/SKILL.md` shows valid YAML with updated argument-hint
+- [x] `grep -c "Playwright Flags" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns 1
+- [x] `grep -c "UI Baseline" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 2 (item 2.5 + template)
+- [x] `grep -c "UI Validation Phase" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
+- [x] `grep -c "a11y-scan" plugin/ralph-hero/skills/ralph-plan/SKILL.md` returns >= 1
 
 #### Manual Verification:
-- [ ] UI Validation phase template is complete and follows plan template conventions
-- [ ] Conditional task gating conditions are clear
+- [x] UI Validation phase template is complete and follows plan template conventions
+- [x] Conditional task gating conditions are clear
 
 **Creates for next phase**: The UI Validation phase template that Phase 4 references.
 
@@ -289,14 +289,14 @@ Add interactive playwright validation flow to the `plan` skill with user consult
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c "Playwright validation awareness" plugin/ralph-hero/skills/plan/SKILL.md` returns 1
-- [ ] `grep -c "a11y-scan" plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
-- [ ] `grep -c "story-gen" plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
-- [ ] `grep -c "UI Validation" plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
+- [x] `grep -c "Playwright validation awareness" plugin/ralph-hero/skills/plan/SKILL.md` returns 1
+- [x] `grep -c "a11y-scan" plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
+- [x] `grep -c "story-gen" plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
+- [x] `grep -c "UI Validation" plugin/ralph-hero/skills/plan/SKILL.md` returns >= 1
 
 #### Manual Verification:
-- [ ] User consultation prompts are clear and actionable
-- [ ] Checklist format is easy to modify
+- [x] User consultation prompts are clear and actionable
+- [x] Checklist format is easy to modify
 
 **Creates for next phase**: N/A — this is the final phase.
 
@@ -304,12 +304,12 @@ Add interactive playwright validation flow to the `plan` skill with user consult
 
 ## Integration Testing
 
-- [ ] Cross-file consistency: flag names `--playwright`/`--no-playwright`/`--ux-audit` identical in all 4 files
-- [ ] Cross-file consistency: plugin detection method (`installed_plugins.json` key containing `ralph-playwright`) identical in all 4 files
-- [ ] Cross-file consistency: dev server resolution order (env var -> memory -> auto-detect) identical in all 4 files
-- [ ] Cross-file consistency: `## UI Baseline` section format in both research skills matches spec
-- [ ] Cross-file consistency: skill tiering rules in both plan skills match spec
-- [ ] `git diff --stat` shows only the 4 skill files modified
+- [x] Cross-file consistency: flag names `--playwright`/`--no-playwright`/`--ux-audit` identical in all 4 files
+- [x] Cross-file consistency: plugin detection method (`installed_plugins.json` key containing `ralph-playwright`) identical in all 4 files (research skills + interactive plan; autonomous plan reads from research doc instead)
+- [x] Cross-file consistency: dev server resolution order (env var -> memory -> auto-detect) identical in all 4 files (research skills + interactive plan; autonomous plan reads from research doc instead)
+- [x] Cross-file consistency: `## UI Baseline` section format in both research skills matches spec
+- [x] Cross-file consistency: skill tiering rules in both plan skills match spec
+- [x] `git diff --stat` shows only the 4 skill files modified (+ plan checkpoint)
 
 ## References
 
