@@ -185,6 +185,12 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
         .describe(
           "Louvain resolution parameter (default 1.0). Higher values produce more, smaller communities.",
         ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Max communities to return, sorted by size descending (default: all)."),
     },
     async (args) => {
       try {
@@ -210,7 +216,7 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
 
         // Handle graph with no edges — each node is its own community
         if (graph.size === 0) {
-          const communities: Community[] = [];
+          const communities: Omit<Community, "label">[] = [];
           let communityId = 0;
           graph.forEachNode((nodeId, attrs) => {
             const member: CommunityMember = {
@@ -222,16 +228,22 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
               communityId,
               members: [member],
               size: 1,
-              label: computeLabel(db, [member]),
             });
             communityId++;
           });
 
-          // Sort by size descending
+          // Sort by size descending, then slice before computing labels
           communities.sort((a, b) => b.size - a.size);
+          const sliced = args.limit ? communities.slice(0, args.limit) : communities;
+
+          // Compute labels only for returned communities
+          const labeled: Community[] = sliced.map((c) => ({
+            ...c,
+            label: computeLabel(db, c.members),
+          }));
 
           const result: CommunitiesResult = {
-            communities,
+            communities: labeled,
             modularity: 0,
             totalDocuments,
           };
@@ -263,22 +275,28 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
           });
         }
 
-        // Build community entries with labels
-        const communities: Community[] = [];
+        // Build community entries without labels first (defer label computation)
+        const communities: Omit<Community, "label">[] = [];
         for (const [communityIndex, members] of communityMap) {
           communities.push({
             communityId: communityIndex,
             members,
             size: members.length,
-            label: computeLabel(db, members),
           });
         }
 
-        // Sort by size descending
+        // Sort by size descending, then slice before computing labels
         communities.sort((a, b) => b.size - a.size);
+        const sliced = args.limit ? communities.slice(0, args.limit) : communities;
+
+        // Compute labels only for returned communities
+        const labeled: Community[] = sliced.map((c) => ({
+          ...c,
+          label: computeLabel(db, c.members),
+        }));
 
         const result: CommunitiesResult = {
-          communities,
+          communities: labeled,
           modularity: detailed.modularity,
           totalDocuments,
         };
@@ -286,6 +304,132 @@ export function registerGraphTools(server: McpServer, db: KnowledgeDB): void {
         return {
           content: [
             { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: ${(e as Error).message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // knowledge_community — fetch a single community by ID
+  // -------------------------------------------------------------------------
+  server.tool(
+    "knowledge_community",
+    "Fetch a single community by ID from Louvain detection. Returns the community's members, size, and label.",
+    {
+      communityId: z.number().int().describe("Community ID from knowledge_communities results."),
+    },
+    async (args) => {
+      try {
+        const builder = new GraphBuilder(db);
+        const graph = builder.buildGraph();
+
+        // Handle empty graph
+        if (graph.order === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error: Community ${args.communityId} not found. Graph is empty.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Handle graph with no edges — each node is its own community
+        if (graph.size === 0) {
+          let communityId = 0;
+          let found: CommunityMember[] | null = null;
+          graph.forEachNode((nodeId, attrs) => {
+            if (communityId === args.communityId) {
+              found = [
+                {
+                  id: nodeId,
+                  title: attrs.title ?? null,
+                  type: attrs.type ?? null,
+                },
+              ];
+            }
+            communityId++;
+          });
+
+          if (found === null) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Error: Community ${args.communityId} not found. Valid IDs: 0-${graph.order - 1}.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const community: Community = {
+            communityId: args.communityId,
+            members: found,
+            size: (found as CommunityMember[]).length,
+            label: computeLabel(db, found),
+          };
+          return {
+            content: [
+              { type: "text" as const, text: JSON.stringify(community, null, 2) },
+            ],
+          };
+        }
+
+        // Run Louvain with same deterministic seed as knowledge_communities
+        const partition = louvain(graph, { rng: () => 0.5 });
+
+        // Extract members for the requested community ID
+        const members: CommunityMember[] = [];
+        for (const [nodeId, communityIndex] of Object.entries(partition)) {
+          if (communityIndex === args.communityId) {
+            const attrs = graph.getNodeAttributes(nodeId);
+            members.push({
+              id: nodeId,
+              title: attrs.title ?? null,
+              type: attrs.type ?? null,
+            });
+          }
+        }
+
+        if (members.length === 0) {
+          // Determine valid community IDs for a helpful error message
+          const validIds = new Set<number>(Object.values(partition));
+          const sortedIds = [...validIds].sort((a, b) => a - b);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Error: Community ${args.communityId} not found. Valid IDs: ${sortedIds.join(", ")}.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const community: Community = {
+          communityId: args.communityId,
+          members,
+          size: members.length,
+          label: computeLabel(db, members),
+        };
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(community, null, 2) },
           ],
         };
       } catch (e) {

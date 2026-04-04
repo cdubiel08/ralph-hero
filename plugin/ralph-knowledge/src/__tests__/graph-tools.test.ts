@@ -1013,3 +1013,237 @@ describe("knowledge_common tool", () => {
     expect(docBEntry!.connectionToB).toBe("builds_on");
   });
 });
+
+// ---------------------------------------------------------------------------
+// knowledge_communities limit parameter tests
+// ---------------------------------------------------------------------------
+
+describe("knowledge_communities limit parameter", () => {
+  it("returns at most `limit` communities", async () => {
+    setupFixtureDocs(db);
+
+    // The fixture produces 3 communities (2 pairs + 1 isolated)
+    const result = await callTool(server, "knowledge_communities", { limit: 2 });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.communities.length).toBe(2);
+    // They should still be sorted by size descending
+    expect(parsed.communities[0].size).toBeGreaterThanOrEqual(parsed.communities[1].size);
+    // totalDocuments is unchanged (reflects the full graph)
+    expect(parsed.totalDocuments).toBe(5);
+  });
+
+  it("returns all communities when limit exceeds community count", async () => {
+    setupFixtureDocs(db);
+
+    const result = await callTool(server, "knowledge_communities", { limit: 100 });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // Fixture has 3 communities
+    expect(parsed.communities.length).toBe(3);
+  });
+
+  it("limit=1 returns only the largest community", async () => {
+    setupFixtureDocs(db);
+
+    const result = await callTool(server, "knowledge_communities", { limit: 1 });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.communities.length).toBe(1);
+    expect(parsed.communities[0].size).toBeGreaterThanOrEqual(1);
+    // Should have label and all required fields
+    expect(typeof parsed.communities[0].label).toBe("string");
+  });
+
+  it("limit works on no-edges graph (each node is its own community)", async () => {
+    // Insert 3 isolated docs (no edges)
+    for (const id of ["iso-a", "iso-b", "iso-c"]) {
+      db.upsertDocument({
+        id,
+        path: `thoughts/shared/ideas/${id}.md`,
+        title: `Isolated ${id}`,
+        date: "2026-01-01",
+        type: "idea",
+        status: "draft",
+        githubIssue: null,
+        content: `Isolated document ${id}.`,
+      });
+    }
+
+    const result = await callTool(server, "knowledge_communities", { limit: 2 });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.communities.length).toBe(2);
+    expect(parsed.totalDocuments).toBe(3);
+  });
+
+  it("defers label computation to after slicing (labels only on returned communities)", async () => {
+    setupFixtureDocs(db);
+
+    // Set tags on docs in only one community (doc-a/doc-b)
+    db.setTags("doc-a", ["graphology"]);
+    db.setTags("doc-b", ["graphology"]);
+
+    // Requesting limit=1 should still work and have a label
+    const result = await callTool(server, "knowledge_communities", { limit: 1 });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.communities.length).toBe(1);
+    // The returned community should have a valid label
+    expect(typeof parsed.communities[0].label).toBe("string");
+    expect(parsed.communities[0].label.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// knowledge_community (singular) tool tests
+// ---------------------------------------------------------------------------
+
+describe("knowledge_community tool", () => {
+  it("returns correct members for a valid community ID", async () => {
+    setupFixtureDocs(db);
+
+    // First, get all communities to find a valid ID
+    const allResult = await callTool(server, "knowledge_communities");
+    const allParsed = JSON.parse(allResult.content[0].text);
+    const targetCommunity = allParsed.communities[0];
+
+    // Now fetch that single community
+    const result = await callTool(server, "knowledge_community", {
+      communityId: targetCommunity.communityId,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.communityId).toBe(targetCommunity.communityId);
+    expect(parsed.size).toBe(targetCommunity.size);
+    expect(parsed.members.length).toBe(targetCommunity.members.length);
+    expect(typeof parsed.label).toBe("string");
+
+    // Member IDs should match
+    const expectedIds = targetCommunity.members.map((m: { id: string }) => m.id).sort();
+    const actualIds = parsed.members.map((m: { id: string }) => m.id).sort();
+    expect(actualIds).toEqual(expectedIds);
+  });
+
+  it("returns error for invalid community ID", async () => {
+    setupFixtureDocs(db);
+
+    const result = await callTool(server, "knowledge_community", {
+      communityId: 9999,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("9999");
+    expect(result.content[0].text).toContain("not found");
+  });
+
+  it("returns error for empty graph", async () => {
+    const result = await callTool(server, "knowledge_community", {
+      communityId: 0,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not found");
+  });
+
+  it("works with no-edges graph (each node is its own community)", async () => {
+    // Single isolated doc
+    db.upsertDocument({
+      id: "solo-comm",
+      path: "thoughts/shared/ideas/solo-comm.md",
+      title: "Solo Community",
+      date: "2026-01-01",
+      type: "idea",
+      status: "draft",
+      githubIssue: null,
+      content: "A lone document.",
+    });
+
+    const result = await callTool(server, "knowledge_community", {
+      communityId: 0,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.communityId).toBe(0);
+    expect(parsed.size).toBe(1);
+    expect(parsed.members[0].id).toBe("solo-comm");
+    expect(typeof parsed.label).toBe("string");
+  });
+
+  it("returns error for invalid ID in no-edges graph", async () => {
+    db.upsertDocument({
+      id: "solo-only",
+      path: "thoughts/shared/ideas/solo-only.md",
+      title: "Only Doc",
+      date: "2026-01-01",
+      type: "idea",
+      status: "draft",
+      githubIssue: null,
+      content: "Only document.",
+    });
+
+    const result = await callTool(server, "knowledge_community", {
+      communityId: 5,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not found");
+  });
+
+  it("community has correct label from tags", async () => {
+    // Two connected docs with one dominant shared tag
+    db.upsertDocument({
+      id: "tag-x",
+      path: "thoughts/shared/research/tag-x.md",
+      title: "Tagged X",
+      date: "2026-01-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Tagged document X.",
+    });
+    db.upsertDocument({
+      id: "tag-y",
+      path: "thoughts/shared/research/tag-y.md",
+      title: "Tagged Y",
+      date: "2026-01-02",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Tagged document Y.",
+    });
+    db.upsertDocument({
+      id: "tag-z",
+      path: "thoughts/shared/research/tag-z.md",
+      title: "Tagged Z",
+      date: "2026-01-03",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Tagged document Z.",
+    });
+    db.addRelationship("tag-x", "tag-y", "builds_on");
+    db.addRelationship("tag-y", "tag-z", "builds_on");
+    // "graphology" appears in all 3 docs, "quality" only in 1
+    db.setTags("tag-x", ["graphology", "quality"]);
+    db.setTags("tag-y", ["graphology"]);
+    db.setTags("tag-z", ["graphology"]);
+
+    // Get communities to find the right ID
+    const allResult = await callTool(server, "knowledge_communities");
+    const allParsed = JSON.parse(allResult.content[0].text);
+    const community = allParsed.communities.find(
+      (c: { members: Array<{ id: string }> }) =>
+        c.members.some((m: { id: string }) => m.id === "tag-x"),
+    );
+
+    // Fetch the singular community
+    const result = await callTool(server, "knowledge_community", {
+      communityId: community.communityId,
+    });
+    const parsed = JSON.parse(result.content[0].text);
+
+    // "graphology" appears in all 3 docs (count=3), should be the label
+    expect(parsed.label).toBe("graphology");
+  });
+});
