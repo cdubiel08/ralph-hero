@@ -1,7 +1,7 @@
 ---
 description: Autonomous research on a GitHub issue — investigates codebase, creates research findings document, updates issue state. Called by hero/team orchestrators, not directly by users. No human interaction — picks an issue, researches it, writes findings, and advances the workflow state. Unlike the interactive research skill (collaborative with user), this runs fully autonomously.
 user-invocable: false
-argument-hint: [optional-issue-number]
+argument-hint: "[optional-issue-number] [--playwright] [--no-playwright] [--ux-audit]"
 context: fork
 model: sonnet
 hooks:
@@ -255,6 +255,83 @@ git add thoughts/shared/research/YYYY-MM-DD-GH-NNNN-*.md
 git commit -m "docs(research): GH-NNN research findings"
 git push origin main
 ```
+
+### Step 7.5: Playwright UI Baseline (conditional)
+
+After writing and committing the research document, optionally capture a UI baseline for frontend-relevant work.
+
+**Skip entirely if:**
+- `--no-playwright` was set in args
+
+**Detection (when not skipped):**
+1. Read `~/.claude/plugins/installed_plugins.json`
+2. Check for a key containing `ralph-playwright` (e.g., `ralph-playwright@ralph-hero`)
+3. If not found and `--playwright` not forced: skip — ralph-playwright is not installed
+
+**Frontend relevance (when ralph-playwright detected):**
+1. Review the research findings just written — affected files, issue description, component types
+2. If the work involves frontend files (.tsx, .jsx, .css, .html, .vue, .svelte), component directories, route/page modifications, UI/UX/visual/layout/accessibility concerns: mark as frontend-relevant
+3. If `--playwright` is set: always treat as frontend-relevant
+4. If not frontend-relevant: skip baseline capture
+
+**Dev server lifecycle:**
+1. Resolve the start command in priority order:
+   a. Env var `RALPH_PLAYWRIGHT_DEV_CMD`
+   b. Memory — check if a prior conversation saved the dev command for this project
+   c. Auto-detect from `package.json` (`dev`, `start`, or `serve` scripts)
+2. Start the dev server in background via `Bash(command, run_in_background=true)`
+3. Poll for readiness: `curl -s -o /dev/null -w "%{http_code}" http://localhost:<port>` every 2s, timeout 30s
+4. If the dev server fails to start: log warning, skip baseline, continue
+5. Teardown: use `RALPH_PLAYWRIGHT_DEV_TEARDOWN_CMD` if set, otherwise kill the background process PID
+
+**Baseline capture:**
+Dispatch an explorer-agent to capture the current UI state:
+```
+Agent(subagent_type="ralph-playwright:explorer-agent",
+      prompt="Explore http://localhost:<port> with goal: capture accessibility baseline and key user flows relevant to issue #NNN. Focus on routes mentioned in the research: [routes from findings]. Take accessibility snapshots at each page. Session: <date>-baseline-GH-NNN",
+      description="UI baseline GH-NNN")
+```
+
+**Detect tooling** (in parallel with explorer-agent):
+- Check `playwright-stories/` directory: `ls playwright-stories/*.yaml 2>/dev/null | wc -l`
+- Check `package.json` for storybook: `grep -E "storybook/addon-vitest|storybook/test-runner" package.json`
+- Check `package.json` for visual regression: `grep -E "chromatic|@applitools" package.json`
+
+**Append to research doc:**
+After explorer-agent completes, read the journey trace from `.playwright-cli/<session>/journey-trace.yaml` and append a `## UI Baseline` section to the research document:
+
+```markdown
+## UI Baseline
+
+**Captured**: YYYY-MM-DD
+**Dev server**: `<resolved command>` (port <port>)
+**Routes scanned**: /route1, /route2, ...
+
+### Accessibility
+- Total violations: N
+- Critical: N, Serious: N, Moderate: N
+- Categories: [category (count), ...]
+- Full report: [journey trace](.playwright-cli/<session>/journey-trace.yaml)
+
+### Flow State
+- Entry point: /route
+- Key flows: flow1 -> flow2, ...
+- Screenshots: [screenshots](.playwright-cli/<session>/)
+
+### Tooling Detected
+- Storybook: yes/no (addon name if yes)
+- Visual regression: chromatic/applitools/none
+- Existing user stories: N files in playwright-stories/
+```
+
+**Commit the updated research doc:**
+```bash
+git add thoughts/shared/research/...
+git commit -m "docs(research): add UI baseline for GH-NNN"
+git push origin main
+```
+
+**Tear down dev server** (use `RALPH_PLAYWRIGHT_DEV_TEARDOWN_CMD` if set, otherwise kill the background process PID).
 
 ### Step 8: Update GitHub Issue
 

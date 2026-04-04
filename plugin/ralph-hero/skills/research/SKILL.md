@@ -1,6 +1,6 @@
 ---
 description: Interactive codebase research with human collaboration. Asks for a research question, spawns parallel sub-agents, synthesizes findings into a research document. Documents what IS, not what SHOULD BE. Use when you want to research interactively, investigate a topic collaboratively, or explore the codebase with human guidance. Unlike ralph-research (autonomous, no questions), this skill works WITH the user to refine research questions and validate findings.
-argument-hint: "[optional: research question or #NNN issue number]"
+argument-hint: "[optional: research question or #NNN issue number] [--playwright] [--no-playwright]"
 model: opus
 allowed-tools:
   - Read
@@ -185,6 +185,66 @@ type: research
 ## Open Questions
 [Any areas that need further investigation]
 ```
+
+### Step 6.5: Playwright UI Baseline (conditional)
+
+If `--no-playwright` was NOT set in args:
+
+1. **Detect ralph-playwright**: Read `~/.claude/plugins/installed_plugins.json`, check for a key containing `ralph-playwright`
+2. **Assess frontend relevance**: Based on the research findings just written, decide if the work involves frontend/UI/UX changes. Consider: affected file types (.tsx, .jsx, .css, .html, .vue, .svelte), component directories, route/page modifications, visual or accessibility concerns. If `--playwright` is set, skip this assessment and treat as frontend-relevant.
+3. **If both conditions met**, offer baseline capture:
+   ```
+   This research involves frontend changes and ralph-playwright is installed.
+   Would you like me to capture a UI baseline? This establishes:
+   - Current accessibility violation count (for regression detection)
+   - Key user flow state (screenshots + accessibility snapshots)
+   - Available tooling (Storybook, Chromatic, existing user stories)
+
+   I'll need to start the dev server. [Y/n]
+   ```
+4. **If user agrees**:
+   a. Resolve dev server command:
+      - Check env var `RALPH_PLAYWRIGHT_DEV_CMD`
+      - Check memory for saved dev server command
+      - Auto-detect from `package.json` (`dev`, `start`, `serve` scripts)
+   b. Start dev server in background via `Bash(command, run_in_background=true)`, poll for readiness (curl every 2s, timeout 30s)
+   c. If this is the first auto-detection success, offer: "Want me to remember `<command>` as this project's dev server for future sessions?" (save to memory if yes)
+   d. Dispatch explorer-agent for baseline:
+      ```
+      Agent(subagent_type="ralph-playwright:explorer-agent",
+            prompt="Explore http://localhost:<port> with goal: capture accessibility baseline and key user flows. Focus on routes identified in this research. Session: <date>-baseline-GH-NNN",
+            description="UI baseline GH-NNN")
+      ```
+   e. In parallel, detect tooling:
+      - `playwright-stories/` directory existence and file count
+      - `package.json` entries for storybook (`@storybook/addon-vitest`, `@storybook/test-runner`)
+      - `package.json` entries for visual regression (`chromatic`, `@applitools`)
+   f. After explorer-agent completes, read the journey trace from `.playwright-cli/<session>/journey-trace.yaml` and append `## UI Baseline` section to the research document:
+      ```markdown
+      ## UI Baseline
+
+      **Captured**: YYYY-MM-DD
+      **Dev server**: `<resolved command>` (port <port>)
+      **Routes scanned**: /route1, /route2, ...
+
+      ### Accessibility
+      - Total violations: N
+      - Critical: N, Serious: N, Moderate: N
+      - Categories: [category (count), ...]
+      - Full report: [journey trace](.playwright-cli/<session>/journey-trace.yaml)
+
+      ### Flow State
+      - Entry point: /route
+      - Key flows: flow1 -> flow2, ...
+      - Screenshots: [screenshots](.playwright-cli/<session>/)
+
+      ### Tooling Detected
+      - Storybook: yes/no (addon name if yes)
+      - Visual regression: chromatic/applitools/none
+      - Existing user stories: N files in playwright-stories/
+      ```
+   g. Tear down dev server (use `RALPH_PLAYWRIGHT_DEV_TEARDOWN_CMD` if set, otherwise kill PID)
+5. **If user declines or ralph-playwright not installed**: Continue to Step 7 without baseline
 
 ### Step 7: Add GitHub permalinks (if applicable)
 - Check if on main branch or if commit is pushed: `git branch --show-current` and `git status`

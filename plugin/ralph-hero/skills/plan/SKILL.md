@@ -1,6 +1,6 @@
 ---
 description: Interactive implementation planning with human collaboration. Researches codebase, asks clarifying questions, proposes approaches, iterates on structure with the user, then writes a phased plan document. Use this skill when you want to plan interactively, create a spec collaboratively, or need human input during planning. This is the human-in-the-loop planner — unlike ralph-plan (autonomous, no questions), this skill works WITH the user through research, design options, and incremental approval.
-argument-hint: "[optional: #NNN issue number, file path, or description]"
+argument-hint: "[optional: #NNN issue number, file path, or description] [--playwright] [--no-playwright] [--ux-audit]"
 model: opus
 allowed-tools:
   - Read
@@ -175,6 +175,22 @@ After getting initial clarifications:
    Which approach aligns best with your vision?
    ```
 
+5. **Playwright validation awareness**:
+   If `--no-playwright` was NOT set in args:
+   a. Read `~/.claude/plugins/installed_plugins.json` and check for a key containing `ralph-playwright`
+   b. If installed AND the research reveals frontend-relevant work (or `--playwright` forced):
+      - Check the research document for a `## UI Baseline` section
+      - If no baseline exists, offer to capture one:
+        ```
+        I noticed this work involves frontend changes and ralph-playwright is available.
+        Would you like me to capture a UI baseline before we plan? This helps write
+        concrete verification criteria (e.g., "no new a11y violations beyond current 3").
+
+        I'll need to start the dev server to do this. [Y/n]
+        ```
+      - If user agrees: resolve dev server command (env var `RALPH_PLAYWRIGHT_DEV_CMD` -> memory -> auto-detect from package.json), start it, dispatch explorer-agent for baseline, append `## UI Baseline` to research doc, tear down
+      - If auto-detection succeeds for the first time, suggest: "Want me to save `<command>` as this project's dev server command for future sessions?"
+
 ### Step 3: Plan Structure Development
 
 Once aligned on approach:
@@ -193,6 +209,27 @@ Once aligned on approach:
 
    Does this phasing make sense? Should I adjust the order or granularity?
    ```
+
+   If ralph-playwright is available and the work is frontend-relevant, include the UI Validation phase in the proposed structure and consult the user:
+
+   ```
+   Since this involves frontend work and ralph-playwright is available, I'm including
+   a UI Validation phase at the end:
+
+   ## Proposed playwright validations:
+   - [x] a11y-scan (accessibility audit) — always recommended
+   [if user stories exist:] - [x] test-e2e (end-to-end story tests)
+   [if storybook detected:] - [x] storybook-test (component tests)
+   [if visual regression tool detected:] - [x] visual-diff (visual regression)
+
+   Would you also like to:
+   - Generate user stories with story-gen for new flows? [y/N]
+   - Include a ux-audit (UX trends evaluation)? [y/N]
+
+   You can add or remove any of these.
+   ```
+
+   Adjust the UI Validation phase based on the user's response.
 
 2. **Get feedback on structure** before writing details
 
@@ -319,6 +356,14 @@ primary_issue: NNN              # optional until linked to an issue
 - Related research: `thoughts/shared/research/[relevant].md`
 - Similar implementation: `[file:line]`
 ````
+
+   **UI Validation Phase**: If playwright validation was agreed upon in Step 3, append the UI Validation phase as the final phase using the same template structure defined in the ralph-plan skill (see `plugin/ralph-hero/skills/ralph-plan/SKILL.md` — "UI Validation Phase (conditional)" section). Adjust task selection based on the user's choices from the consultation:
+   - Always include: start dev server, a11y-scan, tear down dev server
+   - Include test-e2e if user confirmed (or if user stories exist and user didn't remove it)
+   - Include storybook-test if user confirmed (or if storybook detected and user didn't remove it)
+   - Include visual-diff if user confirmed (or if visual regression tool detected and user didn't remove it)
+   - Include story-gen task before test-e2e if user opted in
+   - Include ux-audit if user opted in
 
 ### Step 5: Review
 
