@@ -1,7 +1,7 @@
 ---
 description: Autonomous implementation planning — picks an issue group, reads research findings, creates a phased plan with file ownership and verification steps, commits to main, and updates GitHub. No questions asked, no human interaction. Called by hero/team orchestrators, not directly by users. Unlike the interactive plan skill, this runs fully autonomously with strict constraints (XS/S only, research required, 15-minute limit).
 user-invocable: false
-argument-hint: [optional-issue-number] [--research-doc path] [--parent-plan path] [--sibling-context text]
+argument-hint: "[optional-issue-number] [--research-doc path] [--parent-plan path] [--sibling-context text] [--playwright] [--no-playwright] [--ux-audit]"
 context: fork
 model: opus
 hooks:
@@ -57,6 +57,13 @@ allowed-tools:
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
+
+## Playwright Flags
+
+If `--playwright`, `--no-playwright`, or `--ux-audit` appear in the args:
+- `--no-playwright`: Do NOT generate a UI Validation phase, regardless of baseline data
+- `--playwright`: Generate a UI Validation phase even if no `## UI Baseline` section exists in research
+- `--ux-audit`: Include `ux-audit` in the UI Validation phase (implies `--playwright`)
 
 # Ralph GitHub Plan - Naive Hero Mode
 
@@ -162,6 +169,10 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
       ```
    8. **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
 2. **Read research-mapped files directly**: Extract the file paths from each research document's `## Files Affected` section (both "Will Modify" and "Will Read" subsections). Read those files in full — they are your primary codebase context. Do NOT run find, ls, or glob to re-discover source files that the research already identified. If after reading the listed files you have a specific reason to believe a critical file was missed, you may search for it — but note the gap in the plan as a research deficiency.
+2.5. **Check for UI Baseline**: After reading each research document, check if it contains a `## UI Baseline` section. If found:
+   - Extract: capture date, dev server command/port, routes scanned, a11y violation counts (total, critical, serious, moderate), tooling detected (storybook yes/no + addon name, visual regression tool, existing user story count)
+   - Store this data for use in Step 5 (UI Validation phase generation)
+   - If `--no-playwright` is set: ignore the baseline section entirely
 3. **Build unified understanding**: shared patterns, data flow between phases, integration points
 4. **Spawn sub-tasks** for research gaps:
    - `Agent(subagent_type="ralph-hero:codebase-pattern-finder", prompt="Find patterns for [feature] in [dir]")`
@@ -345,6 +356,100 @@ These annotations are consumed by orchestrators (hero, team) to determine which 
 - Research: [URLs]
 - Related issues: [URLs]
 ```
+
+### UI Validation Phase (conditional)
+
+If a `## UI Baseline` was found in the research document (or `--playwright` flag is set), append a final phase to the plan:
+
+```markdown
+## Phase N: UI Validation
+
+depends_on: [phase-N-1]
+
+### Overview
+Run browser-based validation against the completed implementation to verify UI quality, accessibility compliance, and visual correctness.
+
+### Tasks
+
+#### Task N.1: Start dev server
+- **files**: package.json (read)
+- **tdd**: false
+- **complexity**: low
+- **acceptance**:
+  - [ ] Dev server running and responding on expected port
+
+#### Task N.2: Accessibility audit
+- **skill**: /ralph-playwright:a11y-scan
+- **tdd**: false
+- **complexity**: medium
+- **acceptance**:
+  - [ ] No new a11y violations beyond baseline of {baseline_violation_count}
+
+[CONDITIONAL — include if existing user stories detected in baseline tooling:]
+#### Task N.3: End-to-end story tests
+- **skill**: /ralph-playwright:test-e2e
+- **tdd**: false
+- **complexity**: medium
+- **acceptance**:
+  - [ ] All user stories in playwright-stories/ pass
+
+[CONDITIONAL — include if storybook detected in baseline tooling:]
+#### Task N.4: Component tests
+- **skill**: /ralph-playwright:storybook-test
+- **tdd**: false
+- **complexity**: medium
+- **acceptance**:
+  - [ ] All Storybook interaction and a11y tests pass
+
+[CONDITIONAL — include if chromatic or applitools detected in baseline tooling:]
+#### Task N.5: Visual regression
+- **skill**: /ralph-playwright:visual-diff
+- **tdd**: false
+- **complexity**: medium
+- **acceptance**:
+  - [ ] No unintended visual regressions
+
+[CONDITIONAL — include only if --ux-audit flag is set:]
+#### Task N.6: UX audit
+- **skill**: /ralph-playwright:ux-audit
+- **tdd**: false
+- **complexity**: medium
+- **acceptance**:
+  - [ ] UX audit score meets target thresholds
+
+#### Task N.last: Tear down dev server
+- **tdd**: false
+- **complexity**: low
+- **acceptance**:
+  - [ ] Dev server process terminated
+
+### Phase Success Criteria
+
+#### Automated Verification:
+- [ ] a11y-scan — no new violations beyond baseline
+[CONDITIONAL] - [ ] test-e2e — all stories pass
+[CONDITIONAL] - [ ] storybook-test — all component tests pass
+[CONDITIONAL] - [ ] visual-diff — no unintended regressions
+[CONDITIONAL] - [ ] ux-audit — scores meet thresholds
+
+#### Manual Verification:
+- [ ] Review promoted screenshots for visual quality
+```
+
+**Phase number**: Set `N` to one more than the last implementation phase. Set `depends_on` to the last implementation phase.
+
+**Conditional tasks**: Only include tasks whose conditions are met per the UI Baseline's `### Tooling Detected` section. Always include Task N.1 (start server), Task N.2 (a11y-scan), and Task N.last (tear down).
+
+**When no UI Baseline exists but `--playwright` is set**: Generate the phase with only a11y-scan (default) and any tooling detectable from `package.json` at plan time. Omit baseline violation counts from acceptance criteria.
+
+**Ralph-playwright skill menu** (for LLM awareness — use judgment to include additional skills if the work warrants it):
+- `a11y-scan` — WCAG 2.2 AA accessibility audit
+- `test-e2e` — run user story YAML files
+- `story-gen` — generate user stories from feature description (not used in autonomous mode)
+- `explore` — freeform URL exploration
+- `storybook-test` — Storybook component tests
+- `visual-diff` — visual regression via Chromatic/Applitools
+- `ux-audit` — UX trends evaluation (explicit opt-in only)
 
 ### TDD Flag Decision Guide
 
