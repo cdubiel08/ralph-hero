@@ -262,6 +262,21 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
         };
       }
 
+      // Token source detection — re-derive which env vars resolved
+      const repoTokenSource = resolveEnv("RALPH_GH_REPO_TOKEN")
+        ? "RALPH_GH_REPO_TOKEN"
+        : resolveEnv("RALPH_HERO_GITHUB_TOKEN")
+          ? "RALPH_HERO_GITHUB_TOKEN"
+          : "(none)";
+
+      const projectTokenSource = resolveEnv("RALPH_GH_PROJECT_TOKEN")
+        ? "RALPH_GH_PROJECT_TOKEN"
+        : repoTokenSource; // falls back to repo token
+
+      const isDualToken =
+        client.config.projectToken &&
+        client.config.projectToken !== client.config.token;
+
       // Summary
       const allOk = Object.values(checks).every(
         (c) => c.status === "ok" || c.status === "skip",
@@ -274,11 +289,14 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
           repo: client.config.repo || "(not set)",
           projectOwner: resolveProjectOwner(client.config) || "(not set)",
           projectNumber: client.config.projectNumber || "(not set)",
-          tokenMode:
-            client.config.projectToken &&
-            client.config.projectToken !== client.config.token
-              ? "dual-token"
-              : "single-token",
+          tokenMode: isDualToken ? "dual-token" : "single-token",
+        },
+        tokenSources: {
+          repoToken: repoTokenSource,
+          projectToken: projectTokenSource,
+          note: isDualToken
+            ? "Repo and project operations use separate tokens"
+            : `Both repo and project operations use ${repoTokenSource}`,
         },
       });
     },
