@@ -14,8 +14,20 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
 
   const db = new KnowledgeDB(dbPath);
   const fts = new FtsSearch(db);
+  fts.ensureTable();
   const vec = new VectorSearch(db);
   vec.createIndex();
+
+  // Schema version check — force full re-embed when embedding algorithm changes
+  const SCHEMA_VERSION = "2";
+  const currentVersion = db.getMeta("schema_version");
+  let needsFullFtsRebuild = false;
+  if (currentVersion !== SCHEMA_VERSION) {
+    console.log("Schema version changed — clearing sync records to force full re-embed");
+    db.clearSyncRecords();
+    db.setMeta("schema_version", SCHEMA_VERSION);
+    needsFullFtsRebuild = true;
+  }
 
   // Phase 1: Discover files on disk
   const filesOnDisk: string[] = [];
@@ -34,6 +46,7 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
   for (const syncedPath of syncedPaths) {
     if (!filesOnDiskSet.has(syncedPath)) {
       const id = basename(syncedPath, ".md");
+      fts.deleteFtsEntry(id);
       db.deleteDocument(id);
       vec.deleteEmbedding(id);
       db.deleteSyncRecord(syncedPath);
@@ -77,6 +90,11 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       console.warn(`  Warning: ${id} missing frontmatter: ${missing.join(", ")}`);
     }
 
+    // Delete old FTS entry BEFORE upsert (only if document already exists)
+    if (db.documentExists(parsed.id)) {
+      fts.deleteFtsEntry(parsed.id);
+    }
+
     db.upsertDocument({
       id: parsed.id,
       path: parsed.path,
@@ -87,6 +105,9 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       githubIssue: parsed.githubIssue,
       content: parsed.content,
     });
+
+    // Insert new FTS entry AFTER upsert
+    fts.upsertFtsEntry(parsed.id);
 
     if (parsed.tags.length > 0) {
       db.setTags(parsed.id, parsed.tags);
@@ -109,7 +130,7 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
     }
 
-    const text = prepareTextForEmbedding(parsed.title, parsed.content);
+    const text = prepareTextForEmbedding(parsed.title, parsed.tags, parsed.content);
     try {
       const embedding = await embed(text);
       vec.upsertEmbedding(parsed.id, embedding);
@@ -125,8 +146,11 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
     }
   }
 
-  // Phase 3: Rebuild FTS index from scratch (required — FTS5 content tables don't support partial sync)
-  fts.rebuildIndex();
+  // Phase 3: Full FTS rebuild only when schema version changed or first-time indexing.
+  // Per-document FTS updates already applied in Phase 1 (stale deletion) and Phase 2 (upserts).
+  if (needsFullFtsRebuild) {
+    fts.rebuildIndex();
+  }
 
   // Collect all relationship targets from the database (covers both current batch and prior runs)
   const allTargetIds = new Set<string>(

@@ -31,7 +31,13 @@ export async function embed(text: string): Promise<Float32Array> {
 
 export function prepareTextForEmbedding(
   title: string,
-  content: string
+  tags: string[],
+  content: string,
 ): string {
-  return `${title}\n${content}`.slice(0, MAX_CHARS);
+  const tagLine = tags.length > 0 ? tags.join(", ") : "";
+  // Extract first paragraph: split on blank lines, take first non-empty segment
+  const paragraphs = content.split(/\n\n+/);
+  const firstParagraph = paragraphs.find(p => p.trim().length > 0)?.trim() ?? "";
+  const parts = [title, tagLine, firstParagraph].filter(p => p.length > 0);
+  return parts.join("\n").slice(0, MAX_CHARS);
 }

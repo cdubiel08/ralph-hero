@@ -3,10 +3,15 @@ import { mkdtempSync, writeFileSync, mkdirSync, unlinkSync, utimesSync } from "n
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { findMarkdownFiles } from "../file-scanner.js";
+import { FtsSearch } from "../search.js";
 
 vi.mock("../embedder.js", () => ({
   embed: vi.fn(async () => new Float32Array(384)),
-  prepareTextForEmbedding: vi.fn((title: string, content: string) => `${title}\n${content}`.slice(0, 500)),
+  prepareTextForEmbedding: vi.fn((title: string, tags: string[], content: string) => {
+    const tagLine = tags.length > 0 ? tags.join(", ") : "";
+    const parts = [title, tagLine, content].filter(p => p.length > 0);
+    return parts.join("\n").slice(0, 500);
+  }),
 }));
 
 import { embed } from "../embedder.js";
@@ -174,7 +179,42 @@ describe("incremental reindex", () => {
     db.close();
   });
 
-  it("scenario 7: stub survives incremental reindex when referencing file is skipped", async () => {
+  it("scenario 7: schema version change clears sync records and forces full re-embed", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(2);
+
+    // Verify schema version is set
+    const db1 = new KnowledgeDB(dbPath);
+    expect(db1.getMeta("schema_version")).toBe("2");
+    db1.close();
+
+    mockedEmbed.mockClear();
+
+    // Normal second run — files unchanged, schema version matches
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(0);
+
+    mockedEmbed.mockClear();
+
+    // Simulate schema version change by setting it to an old value
+    const db2 = new KnowledgeDB(dbPath);
+    db2.setMeta("schema_version", "1");
+    db2.close();
+
+    // Reindex should clear sync and re-embed everything
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(2);
+
+    // Verify version was updated
+    const db3 = new KnowledgeDB(dbPath);
+    expect(db3.getMeta("schema_version")).toBe("2");
+    db3.close();
+  });
+
+  it("scenario 8: stub survives incremental reindex when referencing file is skipped", async () => {
     // File A references non-existent target "phantom"
     writeFileSync(join(dir, "doc-a.md"), `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Doc A\n\nSee builds_on:: [[phantom]]\n`);
 
@@ -199,5 +239,118 @@ describe("incremental reindex", () => {
     const phantomDoc2 = db2.getDocument("phantom");
     expect(phantomDoc2!.isStub).toBe(1);
     db2.close();
+  });
+
+  it("scenario 9: incremental reindex updates only changed file's FTS entry", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Alpha Document"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Beta Document"));
+
+    await reindex([dir], dbPath);
+
+    // Both documents should be searchable via FTS
+    const db1 = new KnowledgeDB(dbPath);
+    const fts1 = new FtsSearch(db1);
+    fts1.ensureTable();
+    expect(fts1.search("Alpha").some(r => r.id === "doc-a")).toBe(true);
+    expect(fts1.search("Beta").some(r => r.id === "doc-b")).toBe(true);
+    db1.close();
+
+    mockedEmbed.mockClear();
+
+    // Modify doc-a with new content
+    const filePath = join(dir, "doc-a.md");
+    writeFileSync(filePath, makeDoc("Alpha Gamma Document"));
+    const futureTime = Date.now() / 1000 + 2;
+    utimesSync(filePath, futureTime, futureTime);
+
+    await reindex([dir], dbPath);
+
+    // Only doc-a should have been re-embedded
+    expect(mockedEmbed).toHaveBeenCalledTimes(1);
+
+    // FTS should reflect the update: "Gamma" now searchable, "Beta" still searchable
+    const db2 = new KnowledgeDB(dbPath);
+    const fts2 = new FtsSearch(db2);
+    fts2.ensureTable();
+    expect(fts2.search("Gamma").some(r => r.id === "doc-a")).toBe(true);
+    expect(fts2.search("Beta").some(r => r.id === "doc-b")).toBe(true);
+    db2.close();
+  });
+
+  it("scenario 10: deleted files are removed from FTS results", async () => {
+    const filePath = join(dir, "doc-a.md");
+    writeFileSync(filePath, makeDoc("Searchable Alpha"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Searchable Beta"));
+
+    await reindex([dir], dbPath);
+
+    // Both searchable
+    const db1 = new KnowledgeDB(dbPath);
+    const fts1 = new FtsSearch(db1);
+    fts1.ensureTable();
+    expect(fts1.search("Searchable").length).toBe(2);
+    db1.close();
+
+    mockedEmbed.mockClear();
+
+    // Delete doc-a
+    unlinkSync(filePath);
+
+    await reindex([dir], dbPath);
+
+    // Only doc-b should remain in FTS
+    const db2 = new KnowledgeDB(dbPath);
+    const fts2 = new FtsSearch(db2);
+    fts2.ensureTable();
+    const results = fts2.search("Searchable");
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe("doc-b");
+    db2.close();
+  });
+
+  it("scenario 11: full FTS rebuild occurs on schema version change", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+    await reindex([dir], dbPath);
+
+    // Verify FTS works
+    const db1 = new KnowledgeDB(dbPath);
+    const fts1 = new FtsSearch(db1);
+    fts1.ensureTable();
+    expect(fts1.search("Doc").length).toBe(2);
+    db1.close();
+
+    mockedEmbed.mockClear();
+
+    // Simulate schema version change
+    const db2 = new KnowledgeDB(dbPath);
+    db2.setMeta("schema_version", "1");
+    db2.close();
+
+    // Reindex — should trigger full re-embed AND full FTS rebuild
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(2);
+
+    // FTS should still work after full rebuild
+    const db3 = new KnowledgeDB(dbPath);
+    const fts3 = new FtsSearch(db3);
+    fts3.ensureTable();
+    expect(fts3.search("Doc").length).toBe(2);
+    db3.close();
+  });
+
+  it("scenario 12: new documents on first index get FTS entries correctly", async () => {
+    writeFileSync(join(dir, "fresh-doc.md"), makeDoc("Fresh Content Here"));
+
+    await reindex([dir], dbPath);
+
+    // Should be searchable
+    const db1 = new KnowledgeDB(dbPath);
+    const fts1 = new FtsSearch(db1);
+    fts1.ensureTable();
+    const results = fts1.search("Fresh");
+    expect(results.some(r => r.id === "fresh-doc")).toBe(true);
+    db1.close();
   });
 });

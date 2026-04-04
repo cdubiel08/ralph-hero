@@ -155,6 +155,11 @@ export class KnowledgeDB {
         mtime INTEGER NOT NULL,
         indexed_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
     `);
 
     // Migration: add is_stub column for databases created before it existed.
@@ -417,6 +422,19 @@ export class KnowledgeDB {
 
   getAllSyncPaths(): string[] {
     return (this.db.prepare("SELECT path FROM sync").all() as Array<{ path: string }>).map(r => r.path);
+  }
+
+  clearSyncRecords(): void {
+    this.db.prepare("DELETE FROM sync").run();
+  }
+
+  getMeta(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 
   documentExists(id: string): boolean {
