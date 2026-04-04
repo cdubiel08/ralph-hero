@@ -83,8 +83,8 @@ export function parsePlanGraph(content: string): PlanDependencyGraph {
   const lines = content.split("\n");
 
   if (type === "plan") {
-    // Scan for ## Phase N: ... (GH-NNN) headings
-    const phasePattern = /^## Phase (\d+):.*\(GH-(\d+)\)/;
+    // Scan for ## Phase N: ... GH-NNN headings (with or without parens)
+    const phasePattern = /^## Phase (\d+):.*GH-(\d+)/;
 
     // First pass: build phaseToIssue map
     for (const line of lines) {
@@ -139,8 +139,8 @@ export function parsePlanGraph(content: string): PlanDependencyGraph {
       }
     }
   } else {
-    // plan-of-plans: scan for ### Feature ...: ... (GH-NNN) headings
-    const featurePattern = /^### Feature [^:]+:.*\(GH-(\d+)\)/;
+    // plan-of-plans: scan for ### Feature ...: ... GH-NNN headings (with or without parens)
+    const featurePattern = /^### Feature [^:]+:.*GH-(\d+)/;
 
     let currentFeatureIssue: number | null = null;
 
