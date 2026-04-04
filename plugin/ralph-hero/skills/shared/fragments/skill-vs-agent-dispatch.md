@@ -1,10 +1,15 @@
 ## Skill() vs Agent() Dispatch Convention
 
-Use `Agent()` when the sub-skill has `context: fork` or `user-invocable: false` -- these are autonomous skills designed to run in isolation. Use `Skill()` when the sub-skill needs to share the caller's context or interact with the user.
+The correct dispatch mechanism depends on the **session type**:
+
+- **Single-session (hero orchestrator)**: Use `Skill()` — skills run inline and CAN dispatch sub-agents via `Agent()`. This is the default mode.
+- **Team mode (dark factory)**: Use `Agent()` with per-phase agents — each agent is a full session with its own context window and CAN dispatch sub-agents.
+
+The key constraint: Agent()-spawned sub-agents **cannot dispatch further sub-agents** (the Agent tool is unavailable at runtime in sub-agent contexts). This means sub-agent dispatch instructions inside autonomous skills (codebase-locator, thoughts-locator, etc.) are dead code when those skills are preloaded into agents via single-session dispatch. Skill() runs inline and preserves Agent() access, making those calls live.
 
 ### Per-Phase Agent Mapping
 
-Each autonomous skill has a dedicated agent that preloads it via the `skills:` field:
+Each autonomous skill has a dedicated agent for team mode dispatch:
 
 | subagent_type | Preloaded Skill | Model |
 |---------------|-----------------|-------|
@@ -19,19 +24,19 @@ Each autonomous skill has a dedicated agent that preloads it via the `skills:` f
 | `ralph-hero:merge-agent` | ralph-merge | haiku |
 | `ralph-hero:val-agent` | ralph-val | haiku |
 
-### Anti-Pattern: Autonomous Skill via Skill()
+### Single-Session: Skill() Dispatch
 
 ```
-# WRONG -- autonomous skill runs inline, bloating caller's context
-Skill("ralph-hero:ralph-research", "42")
+# Hero dispatches pipeline phases via Skill()
+Skill("ralph-hero:ralph-research", args="#42")
 ```
 
-This forces the entire research execution (file reads, MCP calls, output) into the caller's context window. The skill declares `context: fork` precisely because it should not share context.
+The skill runs inline with `model:` honored from frontmatter, `hooks:` firing automatically (SessionStart sets `RALPH_COMMAND`), and full Agent() access for sub-agent dispatch. Context cost is ~14k tokens per skill (<2% of 1M window).
 
-### Correct Pattern: Per-Phase Agent via Agent()
+### Team Mode: Per-Phase Agent Dispatch
 
 ```
-# RIGHT -- per-phase agent runs in isolated fork with preloaded skill
+# Team spawns per-phase agents as teammates
 Agent(
   subagent_type="ralph-hero:research-agent",
   prompt="Research issue #42",
@@ -39,17 +44,16 @@ Agent(
 )
 ```
 
-The agent spawns with its own context window and the skill instructions already loaded. Artifact paths are passed as natural language in the prompt (e.g., "Plan doc: thoughts/shared/plans/...") and results flow back via task metadata, not inline return values.
+Each agent is a full Claude Code session with its own context window and the skill instructions already loaded. Artifact paths are passed as natural language in the prompt. Results flow back via task metadata.
 
-### When Skill() Is Still Correct
+### When Agent() Is Still Correct in Single-Session
 
-- **Interactive skills** (`AskUserQuestion` in the call path) -- must run inline to relay user prompts
-- **Lightweight read-only skills** (status, report) -- context cost is negligible
-- **Skills that need caller state** -- e.g., a helper that reads variables from the caller's scope
+- **General-purpose sub-agents** (cross-repo decompose, codebase-locator, thoughts-locator) — these are utility agents, not pipeline phase agents
+- **Sub-agents dispatched from within skills** — skills running inline via Skill() CAN dispatch Agent() sub-agents
 
 ### Edge Case: ralph-review
 
-ralph-review is autonomous in AUTO mode (no `AskUserQuestion`) -- safe to dispatch via `Agent()`. INTERACTIVE mode uses `AskUserQuestion` in Step 4A and requires `Skill()`. Hero and hello only invoke AUTO mode, so `Agent()` is correct for both.
+ralph-review is autonomous in AUTO mode (no `AskUserQuestion`). INTERACTIVE mode uses `AskUserQuestion` in Step 4A and requires inline execution. Hero dispatches via `Skill()` which handles both modes. Hello dispatches via `Agent()` which works because hello runs inline (user-invocable).
 
 ### Include Directive
 
