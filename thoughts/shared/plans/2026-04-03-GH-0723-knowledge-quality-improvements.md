@@ -359,9 +359,9 @@ if (currentVersion !== SCHEMA_VERSION) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] All tests pass: `npm test`
-- [ ] Type checking passes: `npm run build`
-- [ ] `prepareTextForEmbedding("My Title", ["graphology", "search"], "First paragraph.\n\nSecond paragraph.")` returns `"My Title\ngraphology, search\nFirst paragraph."`
+- [x] All tests pass: `npm test`
+- [x] Type checking passes: `npm run build`
+- [x] `prepareTextForEmbedding("My Title", ["graphology", "search"], "First paragraph.\n\nSecond paragraph.")` returns `"My Title\ngraphology, search\nFirst paragraph."`
 
 #### Manual Verification:
 - [ ] Run `npm run reindex` — all documents are re-embedded (none skipped)

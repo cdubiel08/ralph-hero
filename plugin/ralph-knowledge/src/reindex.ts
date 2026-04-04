@@ -17,6 +17,15 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
   const vec = new VectorSearch(db);
   vec.createIndex();
 
+  // Schema version check — force full re-embed when embedding algorithm changes
+  const SCHEMA_VERSION = "2";
+  const currentVersion = db.getMeta("schema_version");
+  if (currentVersion !== SCHEMA_VERSION) {
+    console.log("Schema version changed — clearing sync records to force full re-embed");
+    db.clearSyncRecords();
+    db.setMeta("schema_version", SCHEMA_VERSION);
+  }
+
   // Phase 1: Discover files on disk
   const filesOnDisk: string[] = [];
   for (const dir of dirs) {
@@ -109,7 +118,7 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
       db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
     }
 
-    const text = prepareTextForEmbedding(parsed.title, parsed.content);
+    const text = prepareTextForEmbedding(parsed.title, parsed.tags, parsed.content);
     try {
       const embedding = await embed(text);
       vec.upsertEmbedding(parsed.id, embedding);

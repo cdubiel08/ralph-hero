@@ -6,7 +6,11 @@ import { findMarkdownFiles } from "../file-scanner.js";
 
 vi.mock("../embedder.js", () => ({
   embed: vi.fn(async () => new Float32Array(384)),
-  prepareTextForEmbedding: vi.fn((title: string, content: string) => `${title}\n${content}`.slice(0, 500)),
+  prepareTextForEmbedding: vi.fn((title: string, tags: string[], content: string) => {
+    const tagLine = tags.length > 0 ? tags.join(", ") : "";
+    const parts = [title, tagLine, content].filter(p => p.length > 0);
+    return parts.join("\n").slice(0, 500);
+  }),
 }));
 
 import { embed } from "../embedder.js";
@@ -174,7 +178,42 @@ describe("incremental reindex", () => {
     db.close();
   });
 
-  it("scenario 7: stub survives incremental reindex when referencing file is skipped", async () => {
+  it("scenario 7: schema version change clears sync records and forces full re-embed", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(2);
+
+    // Verify schema version is set
+    const db1 = new KnowledgeDB(dbPath);
+    expect(db1.getMeta("schema_version")).toBe("2");
+    db1.close();
+
+    mockedEmbed.mockClear();
+
+    // Normal second run — files unchanged, schema version matches
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(0);
+
+    mockedEmbed.mockClear();
+
+    // Simulate schema version change by setting it to an old value
+    const db2 = new KnowledgeDB(dbPath);
+    db2.setMeta("schema_version", "1");
+    db2.close();
+
+    // Reindex should clear sync and re-embed everything
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(2);
+
+    // Verify version was updated
+    const db3 = new KnowledgeDB(dbPath);
+    expect(db3.getMeta("schema_version")).toBe("2");
+    db3.close();
+  });
+
+  it("scenario 8: stub survives incremental reindex when referencing file is skipped", async () => {
     // File A references non-existent target "phantom"
     writeFileSync(join(dir, "doc-a.md"), `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Doc A\n\nSee builds_on:: [[phantom]]\n`);
 
