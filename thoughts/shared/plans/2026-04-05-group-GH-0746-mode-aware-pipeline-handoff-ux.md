@@ -116,16 +116,16 @@ Add AskUserQuestion to the `allowed-tools:` frontmatter list in 5 interactive sk
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/plan/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/research/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/impl/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/iterate/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/merge-agent.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/review-agent.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/plan/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/research/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/impl/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/iterate/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/merge-agent.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/review-agent.md` returns at least 1
 
 #### Manual Verification:
-- [ ] YAML frontmatter in all 7 files parses correctly
+- [x] YAML frontmatter in all 7 files parses correctly
 
 **Creates for next phase**: AskUserQuestion is now available (skip-prompt) in all interactive skills and (hard-enabled) in merge-agent and review-agent. Phases 4, 6, and 7 can now reference AskUserQuestion in skill prose.
 
