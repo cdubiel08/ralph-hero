@@ -15,6 +15,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - AskUserQuestion
 ---
 
 ## Configuration (resolved at load time)

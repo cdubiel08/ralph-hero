@@ -18,6 +18,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - AskUserQuestion
 ---
 
 ## Configuration (resolved at load time)
