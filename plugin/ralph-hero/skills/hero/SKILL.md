@@ -81,8 +81,8 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 |    |- HUMAN GATE: report and STOP                                  |
 |    v                                                               |
 |  INTEGRATOR PHASE                                                  |
-|    |- Report PR URLs and "In Review" status                        |
-|    |- (future: auto-merge if RALPH_AUTO_MERGE=true)                |
+|    |- Finish GH-[PRIMARY] (validate, review, fix, merge, CI watch) |
+|    |- via Skill("ralph-hero:finish", args="#NNN")                   |
 |    v                                                               |
 |  COMPLETE                                                          |
 +-------------------------------------------------------------------+
@@ -167,6 +167,7 @@ T-N+2:  Review plan GH-[PRIMARY] (if auto)     → blockedBy: [plan task]
     OR  Human gate (if interactive/skip)        → blockedBy: [plan task]
 T-N+3..M: Implement GH-AAA … GH-ZZZ           → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-M+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-M+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Starting from PLAN:**
@@ -176,6 +177,7 @@ T-2:  Review plan GH-[PRIMARY] (if auto)       → blockedBy: [plan task]
    OR Human gate (if interactive/skip)          → blockedBy: [plan task]
 T-3..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Starting from REVIEW/HUMAN_GATE:**
@@ -183,12 +185,14 @@ T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
 T-1:  Review plan / Human gate                → unblocked
 T-2..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Starting from IMPLEMENT:**
 ```
 T-1..N: Implement GH-AAA … GH-ZZZ             → each impl blockedBy prior impl (first is unblocked)
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Implementation task ordering (dependency-graph-aware)**:
@@ -383,15 +387,20 @@ If any implementation fails, STOP immediately. Do NOT continue to next issue.
 ```
 Skill("ralph-hero:ralph-pr", args="#NNN")
 ```
-After all implementations complete, report all issue numbers with PR URLs and "In Review" status.
+
+#### FINISH tasks
+```
+Skill("ralph-hero:finish", args="#NNN")
+```
+After finish completes, report final status including merge and CI results.
 
 ---
 
 ## PHASE: INTEGRATOR - COMPLETE
 
-Report PR URLs and final status. All issues should be in "In Review".
+After finish completes, all issues should be in "Done" with CI verified.
 
-Future: When `RALPH_AUTO_MERGE=true`, automatically merge approved PRs via `gh pr merge`. For now, report and wait for human merge.
+Report final status: issue numbers, PR URLs, merge status, CI results.
 
 ---
 
