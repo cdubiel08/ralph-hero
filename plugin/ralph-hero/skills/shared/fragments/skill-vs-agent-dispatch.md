@@ -28,7 +28,7 @@ Each autonomous skill has a dedicated agent for team mode dispatch:
 
 ```
 # Hero dispatches pipeline phases via Skill()
-Skill("ralph-hero:ralph-research", args="#42")
+Skill("ralph-hero:ralph-research", args="42")
 ```
 
 The skill runs inline with `model:` honored from frontmatter, `hooks:` firing automatically (SessionStart sets `RALPH_COMMAND`), and full Agent() access for sub-agent dispatch. Context cost is ~14k tokens per skill (<2% of 1M window).

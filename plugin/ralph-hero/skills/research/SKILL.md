@@ -1,6 +1,6 @@
 ---
 description: Interactive codebase research with human collaboration. Asks for a research question, spawns parallel sub-agents, synthesizes findings into a research document. Documents what IS, not what SHOULD BE. Use when you want to research interactively, investigate a topic collaboratively, or explore the codebase with human guidance. Unlike ralph-research (autonomous, no questions), this skill works WITH the user to refine research questions and validate findings.
-argument-hint: "[optional: research question or #NNN issue number] [--playwright] [--no-playwright]"
+argument-hint: "[optional: research question or issue-number] [--playwright] [--no-playwright]"
 model: opus
 allowed-tools:
   - Read

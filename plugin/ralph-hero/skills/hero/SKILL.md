@@ -81,8 +81,8 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 |    |- HUMAN GATE: report and STOP                                  |
 |    v                                                               |
 |  INTEGRATOR PHASE                                                  |
-|    |- Report PR URLs and "In Review" status                        |
-|    |- (future: auto-merge if RALPH_AUTO_MERGE=true)                |
+|    |- Finish GH-[PRIMARY] (validate, merge, CI watch)              |
+|    |- via Skill("ralph-hero:finish", args="NNN")                   |
 |    v                                                               |
 |  COMPLETE                                                          |
 +-------------------------------------------------------------------+
@@ -167,6 +167,7 @@ T-N+2:  Review plan GH-[PRIMARY] (if auto)     → blockedBy: [plan task]
     OR  Human gate (if interactive/skip)        → blockedBy: [plan task]
 T-N+3..M: Implement GH-AAA … GH-ZZZ           → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-M+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-M+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Starting from PLAN:**
@@ -176,6 +177,7 @@ T-2:  Review plan GH-[PRIMARY] (if auto)       → blockedBy: [plan task]
    OR Human gate (if interactive/skip)          → blockedBy: [plan task]
 T-3..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Starting from REVIEW/HUMAN_GATE:**
@@ -183,12 +185,14 @@ T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
 T-1:  Review plan / Human gate                → unblocked
 T-2..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Starting from IMPLEMENT:**
 ```
 T-1..N: Implement GH-AAA … GH-ZZZ             → each impl blockedBy prior impl (first is unblocked)
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
+T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
 **Implementation task ordering (dependency-graph-aware)**:
@@ -246,7 +250,7 @@ Loop until pipeline is complete:
 
 #### SPLIT tasks
 ```
-Skill("ralph-hero:ralph-split", args="#NNN")
+Skill("ralph-hero:ralph-split", args="NNN")
 ```
 After all splits complete, re-call `get_issue(includePipeline=true)` and rebuild remaining task list.
 
@@ -309,7 +313,7 @@ During tree expansion, if research found evidence of cross-repo dependencies not
 
 #### RESEARCH tasks
 ```
-Skill("ralph-hero:ralph-research", args="#NNN")
+Skill("ralph-hero:ralph-research", args="NNN")
 ```
 The research skill runs inline and handles its own parallelism — dispatching multiple Agent() sub-agents (codebase-locator, thoughts-locator, codebase-analyzer, etc.) in parallel. These sub-agent calls execute successfully because Skill() preserves Agent() access.
 
@@ -320,21 +324,21 @@ After all research completes, run Stream Detection (Step 2.5) if applicable.
 Before dispatching, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, include `--research-doc {path}` in args.
 
 Determine planning approach from issue estimate:
-- **L/XL estimate** → `Skill("ralph-hero:ralph-plan-epic", args="#NNN --research-doc {path}")` — handles wave orchestration internally
-- **M/S/XS estimate** → `Skill("ralph-hero:ralph-plan", args="#NNN --research-doc {path}")` or without `--research-doc` if no artifact_path
+- **L/XL estimate** → `Skill("ralph-hero:ralph-plan-epic", args="NNN --research-doc {path}")` — handles wave orchestration internally
+- **M/S/XS estimate** → `Skill("ralph-hero:ralph-plan", args="NNN --research-doc {path}")` or without `--research-doc` if no artifact_path
 
 ```
 # For L/XL epics:
-Skill("ralph-hero:ralph-plan-epic", args="#NNN --research-doc thoughts/shared/research/...")
+Skill("ralph-hero:ralph-plan-epic", args="NNN --research-doc thoughts/shared/research/...")
 
 # For M/S/XS with research doc:
-Skill("ralph-hero:ralph-plan", args="#NNN --research-doc thoughts/shared/research/...")
+Skill("ralph-hero:ralph-plan", args="NNN --research-doc thoughts/shared/research/...")
 
 # For M/S/XS without research doc:
-Skill("ralph-hero:ralph-plan", args="#NNN")
+Skill("ralph-hero:ralph-plan", args="NNN")
 
 # For multi-issue groups:
-Skill("ralph-hero:ralph-plan", args="#[PRIMARY] --research-doc {path}")
+Skill("ralph-hero:ralph-plan", args="[PRIMARY] --research-doc {path}")
 ```
 
 #### REVIEW tasks (if RALPH_REVIEW_MODE == "auto")
@@ -342,7 +346,7 @@ Skill("ralph-hero:ralph-plan", args="#[PRIMARY] --research-doc {path}")
 Before dispatching, check the completed plan task's metadata for `artifact_path`. If present, include `--plan-doc {path}` in args:
 
 ```
-Skill("ralph-hero:ralph-review", args="#NNN --plan-doc thoughts/shared/plans/...")
+Skill("ralph-hero:ralph-review", args="NNN --plan-doc thoughts/shared/plans/...")
 ```
 **Routing**: ALL APPROVED → continue. ANY NEEDS_ITERATION → STOP with critique links.
 
@@ -356,11 +360,11 @@ Then STOP.
 Before dispatching, check the completed plan task's metadata for `artifact_path`. If present, include `--plan-doc {path}` in args:
 
 ```
-Skill("ralph-hero:ralph-impl", args="#NNN --plan-doc thoughts/shared/plans/...")
+Skill("ralph-hero:ralph-impl", args="NNN --plan-doc thoughts/shared/plans/...")
 ```
 If no `artifact_path` available, omit the plan doc reference:
 ```
-Skill("ralph-hero:ralph-impl", args="#NNN")
+Skill("ralph-hero:ralph-impl", args="NNN")
 ```
 
 ### Dispatch Architecture
@@ -381,17 +385,22 @@ If any implementation fails, STOP immediately. Do NOT continue to next issue.
 
 #### PR tasks
 ```
-Skill("ralph-hero:ralph-pr", args="#NNN")
+Skill("ralph-hero:ralph-pr", args="NNN")
 ```
-After all implementations complete, report all issue numbers with PR URLs and "In Review" status.
+
+#### FINISH tasks
+```
+Skill("ralph-hero:finish", args="NNN")
+```
+After finish completes, report final status including merge and CI results.
 
 ---
 
 ## PHASE: INTEGRATOR - COMPLETE
 
-Report PR URLs and final status. All issues should be in "In Review".
+After finish completes, all issues should be in "Done" with CI verified.
 
-Future: When `RALPH_AUTO_MERGE=true`, automatically merge approved PRs via `gh pr merge`. For now, report and wait for human merge.
+Report final status: issue numbers, PR URLs, merge status, CI results.
 
 ---
 
