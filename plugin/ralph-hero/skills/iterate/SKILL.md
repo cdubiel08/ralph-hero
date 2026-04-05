@@ -1,6 +1,6 @@
 ---
 description: Iterate on an existing implementation plan - reads the linked plan, understands your feedback, confirms approach, and makes surgical updates. Use when you want to refine, extend, or correct an approved plan.
-argument-hint: "[#NNN or plan-path] [optional: feedback]"
+argument-hint: "[NNN or plan-path] [optional: feedback]"
 model: opus
 allowed-tools:
   - Read

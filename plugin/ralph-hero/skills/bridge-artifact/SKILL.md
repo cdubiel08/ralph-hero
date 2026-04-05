@@ -2,7 +2,7 @@
 name: bridge-artifact
 description: Use when migrating a superpowers artifact (spec or plan from docs/superpowers/) to ralph-hero format with frontmatter and optional GitHub issue linking
 user-invocable: true
-argument-hint: <path-to-superpowers-artifact> [#issue-number]
+argument-hint: <path-to-superpowers-artifact> [issue-number]
 context: fork
 model: sonnet
 allowed-tools: [Read, Write, Glob, Grep, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment]

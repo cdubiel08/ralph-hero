@@ -1,6 +1,6 @@
 ---
 description: Interactive implementation planning with human collaboration. Researches codebase, asks clarifying questions, proposes approaches, iterates on structure with the user, then writes a phased plan document. Use this skill when you want to plan interactively, create a spec collaboratively, or need human input during planning. This is the human-in-the-loop planner — unlike ralph-plan (autonomous, no questions), this skill works WITH the user through research, design options, and incremental approval.
-argument-hint: "[optional: #NNN issue number, file path, or description] [--playwright] [--no-playwright] [--ux-audit]"
+argument-hint: "[optional: issue-number, file path, or description] [--playwright] [--no-playwright] [--ux-audit]"
 model: opus
 allowed-tools:
   - Read

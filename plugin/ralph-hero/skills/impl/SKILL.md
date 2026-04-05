@@ -1,6 +1,6 @@
 ---
 description: Interactive implementation of an approved plan with human verification between phases. Pauses after each phase for manual testing, handles mismatches collaboratively, and creates PR when complete. Use when you want to implement interactively with oversight. Unlike ralph-impl (autonomous, one phase per invocation), this skill keeps a human in the loop throughout.
-argument-hint: "<#NNN issue number or plan-path>"
+argument-hint: "<issue-number or plan-path>"
 model: opus
 allowed-tools:
   - Read
