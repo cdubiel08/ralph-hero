@@ -213,19 +213,30 @@ Branch: [branch-name]
 All phases implemented and verified. Ready for code review.
 ```
 
-### 5.4 Report to User
+### 5.4 Next Steps
+
+Show implementation summary (PR URL, issue URL, status), then offer next actions via AskUserQuestion:
 
 ```
-Implementation complete for #NNN: [Title]
-
-PR: [PR URL]
-Issue: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
-Status: In Review
-
-Next steps:
-- Review the PR
-- Or iterate with /ralph-hero:iterate
+AskUserQuestion(
+  questions=[{
+    "question": "Implementation complete for #NNN. What would you like to do next?",
+    "header": "Next Steps",
+    "options": [
+      {"label": "Run finish", "description": "Validate implementation, merge PR, and watch CI"},
+      {"label": "Create PR only", "description": "Push branch and open a pull request without merging"},
+      {"label": "Iterate on plan", "description": "Refine the implementation plan before continuing"},
+      {"label": "Done for now", "description": "Stop here — continue later with /impl"}
+    ],
+    "multiSelect": false
+  }]
+)
 ```
+
+- **"Run finish"**: Invoke `Skill("ralph-hero:finish", args="NNN")`
+- **"Create PR only"**: Run `gh pr create` (Step 5.1 logic) if not already created
+- **"Iterate on plan"**: Suggest `/ralph-hero:iterate #NNN`
+- **"Done for now"**: Report current state and STOP
 
 ## Resuming Work
 
