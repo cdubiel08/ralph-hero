@@ -352,8 +352,27 @@ Skill("ralph-hero:ralph-review", args="NNN --plan-doc thoughts/shared/plans/..."
 
 #### HUMAN GATE tasks
 Report planned groups with plan URLs. All issues are in "Plan in Review".
-Instruct user to: (1) Review plans in GitHub, (2) Move to "In Progress", (3) Re-run `/ralph-hero [ROOT-NUMBER]`.
-Then STOP.
+
+Use AskUserQuestion to offer inline approval:
+```
+AskUserQuestion(
+  questions=[{
+    "question": "Plans are ready for review. How would you like to proceed?",
+    "header": "Plan Approval",
+    "options": [
+      {"label": "Approve and implement", "description": "Move all issues to In Progress and begin implementation immediately"},
+      {"label": "Open plan in editor", "description": "Review the plan document in your default editor, then decide"},
+      {"label": "Stop here", "description": "Review plans in GitHub and re-run /hero later"}
+    ],
+    "multiSelect": false
+  }]
+)
+```
+
+**Route based on response:**
+- **"Approve and implement"**: Batch update all group issues to "In Progress", mark human gate task completed, continue execution loop.
+- **"Open plan in editor"**: Open the plan file with `open` (macOS) or `xdg-open` (Linux), then re-present the same picker.
+- **"Stop here"**: Mark human gate task completed and STOP with: plan URL, issue numbers, and re-run command.
 
 #### IMPLEMENT tasks
 
