@@ -261,8 +261,6 @@ Sub-issues:
 3. #CC: [title] (XS) -> [state] [NEW]
 
 Dependency chain: #AA -> #BB -> #CC
-
-Next: Run /ralph-research or /ralph-plan on sub-issues as appropriate.
 ```
 
 ## Escalation Protocol

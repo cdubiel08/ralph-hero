@@ -45,6 +45,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - AskUserQuestion
 ---
 
 ## Configuration (resolved at load time)
@@ -327,8 +328,6 @@ Result: APPROVED
 
 Issue: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
 Status: In Progress
-
-Ready for implementation. Run /ralph-impl NNN
 ```
 
 **If NEEDS_ITERATION**:
@@ -345,8 +344,6 @@ Issues:
 Issue: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
 Status: Ready for Plan
 Label: needs-iteration
-
-Run /ralph-plan NNN to address critique and update plan.
 ```
 
 ## Escalation Protocol

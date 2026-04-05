@@ -386,93 +386,23 @@ Re-read plan. If ALL automated verification checkboxes are checked -> continue t
 
 **If NOT final phase**, STOP:
 ```
-Phase [N]/[M] complete. Next: Phase [N+1]. Run /ralph-impl NNN to continue.
+Phase [N]/[M] complete.
 ```
 
-### Step 10: Create PR (Final Phase Only)
-
-Only execute this step when ALL phases are complete.
-
-**10.1. Check for Epic Membership**
-
-If `IS_EPIC_MEMBER` was set to `true` in Step 6, this is an epic issue.
-
-**10.2. Verify Epic Completion (Epic Issues Only)**
-
-List sub-issues under the epic. For each sibling: verify "In Progress" state AND all plan checkboxes checked. If any incomplete, STOP: list status per issue, suggest `/ralph-impl [incomplete-issue]`.
-
-**10.3. Create PR** (single template, adapt sections by context)
-
-```bash
-gh pr create --title "[Title]" --body "$(cat <<'EOF'
-## Summary
-[Single: "Implements #NNN: [Title]"]
-[Group/Epic: "Atomic implementation of [N] related issues:"]
-
-[For each issue:]
-- Closes #NNN
-
-## Changes
-[Single: bullet list of changes]
-[Group/Epic: subsection per issue with change summary from plan]
-
-## Test Plan
-[From plan document - automated verification + integration testing]
-
-[If stream, add:]
-## Stream Context
-- Epic: #[EPIC_NUMBER]
-- Stream: [STREAM_ID] ([N] of [TOTAL_STREAMS] streams)
-- Stream issues: [list of #NNN]
-
-[If epic (non-stream), add:]
-## Epic
-- Parent: #[EPIC_NUMBER]
-
----
-Generated with Claude Code (Ralph GitHub Plugin)
-EOF
-)"
-```
-
-### Step 11: PR Gate
-
-Output PR URL and key changes summary. Execution pauses for review.
-
-### Step 12: Update GitHub Issues (Final Phase Only)
-
-Only execute when ALL phases are complete and PR is created.
-
-For each issue in `issues[]` (single: just one; group/epic: all issues):
-
-1. **Add completion comment** on the issue:
-   ```markdown
-   ## Implementation Complete
-
-   PR: [GitHub PR URL]
-   Branch: [branch-name]
-   [If group/epic: list all issues and their status]
-   Ready for code review.
-   ```
-
-2. **Move to "In Review"**: advance the issue to the next state (workflowState "__COMPLETE__", command "ralph_impl").
-
-Note: PR auto-links via "Closes #NNN" in PR body. No explicit link attachment needed.
-
-### Step 13: Team Result Reporting
+### Step 10: Team Result Reporting
 
 When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (worktree path, test status, commit, files changed) and a human-readable summary in the description. Then check TaskList for more work matching your role.
 
-### Step 14: Final Report
+### Step 11: Final Report
 
 ```
-Implementation complete.
+Implementation complete for #NNN: [Title]
 
-PR: [GitHub PR URL]
-[List all issues with titles and "In Review" status]
+Issues: [list all issues with titles]
+Branch: [branch-name]
+Worktree: $GIT_ROOT/worktrees/[WORKTREE_ID]
 
-Worktree preserved at: $GIT_ROOT/worktrees/[WORKTREE_ID]
-Worktree will be cleaned up automatically during merge.
+All phases implemented and verified.
 ```
 
 ---

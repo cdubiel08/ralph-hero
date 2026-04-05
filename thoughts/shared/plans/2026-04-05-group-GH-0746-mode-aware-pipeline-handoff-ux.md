@@ -116,16 +116,16 @@ Add AskUserQuestion to the `allowed-tools:` frontmatter list in 5 interactive sk
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/plan/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/research/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/impl/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/iterate/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/merge-agent.md` returns at least 1
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/review-agent.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/plan/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/research/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/impl/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/iterate/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/merge-agent.md` returns at least 1
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/agents/review-agent.md` returns at least 1
 
 #### Manual Verification:
-- [ ] YAML frontmatter in all 7 files parses correctly
+- [x] YAML frontmatter in all 7 files parses correctly
 
 **Creates for next phase**: AskUserQuestion is now available (skip-prompt) in all interactive skills and (hard-enabled) in merge-agent and review-agent. Phases 4, 6, and 7 can now reference AskUserQuestion in skill prose.
 
@@ -170,13 +170,13 @@ All phases implemented and verified.
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'Create PR' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0 (in step heading context)
-- [ ] `grep -c 'gh pr create' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0
-- [ ] `grep -c 'PR Gate' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0
+- [x] `grep -c 'Create PR' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0 (in step heading context)
+- [x] `grep -c 'gh pr create' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0
+- [x] `grep -c 'PR Gate' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0
 
 #### Manual Verification:
-- [ ] The skill reads coherently from Step 8 (commit) through new Step 11 (final report)
-- [ ] Address Mode section is intact and unchanged
+- [x] The skill reads coherently from Step 8 (commit) through new Step 11 (final report)
+- [x] Address Mode section is intact and unchanged
 
 **Creates for next phase**: ralph-impl no longer creates PRs. Phase 3 can safely modify Step 9's mid-phase closing without conflicting with removed steps.
 
@@ -233,15 +233,15 @@ Remove "Next: Run /ralph-foo" suggestions from autonomous skill closing template
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'Run /ralph-plan' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 0
-- [ ] `grep -c 'Run /ralph-research' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 0 (in closing context)
-- [ ] `grep -c 'Next: Run /ralph-research' plugin/ralph-hero/skills/ralph-split/SKILL.md` returns 0
-- [ ] `grep -c 'Run /ralph-impl' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns 0
-- [ ] `grep -c 'Run /ralph-plan' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns 0 (in closing context)
-- [ ] `grep -c 'Run /ralph-impl NNN to continue' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0
+- [x] `grep -c 'Run /ralph-plan' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 0
+- [x] `grep -c 'Run /ralph-research' plugin/ralph-hero/skills/ralph-research/SKILL.md` returns 0 (in closing context)
+- [x] `grep -c 'Next: Run /ralph-research' plugin/ralph-hero/skills/ralph-split/SKILL.md` returns 0
+- [x] `grep -c 'Run /ralph-impl' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns 0
+- [x] `grep -c 'Run /ralph-plan' plugin/ralph-hero/skills/ralph-review/SKILL.md` returns 0 (in closing context)
+- [x] `grep -c 'Run /ralph-impl NNN to continue' plugin/ralph-hero/skills/ralph-impl/SKILL.md` returns 0
 
 #### Manual Verification:
-- [ ] Each modified skill's closing template reads as clean status reporting (artifact path, workflow state, summary)
+- [x] Each modified skill's closing template reads as clean status reporting (artifact path, workflow state, summary)
 
 **Creates for next phase**: All autonomous skills now emit clean status output. No "Next:" noise for orchestrators to ignore.
 
@@ -278,11 +278,11 @@ Replace the two numbered-list decision points in the interactive plan skill's St
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/plan/SKILL.md` returns at least 2 (one per decision point, plus frontmatter)
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/plan/SKILL.md` returns at least 2 (one per decision point, plus frontmatter)
 
 #### Manual Verification:
-- [ ] Step 6 reads naturally with AskUserQuestion calls replacing numbered lists
-- [ ] Option labels follow AskUserQuestion convention (verb + target, max ~5 words)
+- [x] Step 6 reads naturally with AskUserQuestion calls replacing numbered lists
+- [x] Option labels follow AskUserQuestion convention (verb + target, max ~5 words)
 
 **Creates for next phase**: Interactive plan skill now uses structured pickers. Users get clear, self-contained options.
 
@@ -312,11 +312,11 @@ Replace the hero orchestrator's procedural HUMAN GATE instructions with an AskUs
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/hero/SKILL.md` returns at least 2 (frontmatter + gate)
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/hero/SKILL.md` returns at least 2 (frontmatter + gate)
 
 #### Manual Verification:
-- [ ] HUMAN GATE section reads as a clear interactive approval flow
-- [ ] The "Stop here" path still provides enough info for async review
+- [x] HUMAN GATE section reads as a clear interactive approval flow
+- [x] The "Stop here" path still provides enough info for async review
 
 **Creates for next phase**: Hero's human gate is now interactive. Users can approve plans inline without leaving the terminal.
 
@@ -349,11 +349,11 @@ Restructure the interactive research skill's closing flow so findings are presen
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/research/SKILL.md` returns at least 2 (frontmatter + findings step)
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/research/SKILL.md` returns at least 2 (frontmatter + findings step)
 
 #### Manual Verification:
-- [ ] Research skill flow reads naturally: research -> present findings -> user feedback -> write doc -> link/next steps
-- [ ] The autonomous ralph-research skill is NOT modified (confirmed unchanged)
+- [x] Research skill flow reads naturally: research -> present findings -> user feedback -> write doc -> link/next steps
+- [x] The autonomous ralph-research skill is NOT modified (confirmed unchanged)
 
 **Creates for next phase**: Interactive research now gathers user feedback before finalizing. Users shape the document before it's written.
 
@@ -384,11 +384,11 @@ Replace the interactive impl skill's Step 5.4 report output with an AskUserQuest
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/impl/SKILL.md` returns at least 2 (frontmatter + completion)
+- [x] `grep -c 'AskUserQuestion' plugin/ralph-hero/skills/impl/SKILL.md` returns at least 2 (frontmatter + completion)
 
 #### Manual Verification:
-- [ ] Step 5 reads naturally from 5.1 (create PR) through 5.4 (next steps picker)
-- [ ] Options cover the common next actions after interactive implementation
+- [x] Step 5 reads naturally from 5.1 (create PR) through 5.4 (next steps picker)
+- [x] Options cover the common next actions after interactive implementation
 
 **Creates for next phase**: Interactive impl now uses structured pickers. Implementation complete.
 

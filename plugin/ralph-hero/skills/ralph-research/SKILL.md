@@ -366,8 +366,6 @@ Research complete for #NNN: [Title]
 Findings: thoughts/shared/research/[filename].md
 Status: Ready for Plan
 Group status: [M of N] issues researched
-[If all done]: Group ready for planning. Run /ralph-plan.
-[If not]: Run /ralph-research to continue group research.
 Key recommendation: [One sentence]
 ```
 

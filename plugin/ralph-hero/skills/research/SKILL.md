@@ -16,6 +16,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - AskUserQuestion
 ---
 
 ## Configuration (resolved at load time)
@@ -123,7 +124,32 @@ The key is to use these agents intelligently:
 - Get current date: `date +%Y-%m-%d`
 - Get current branch: `git branch --show-current`
 
-### Step 6: Generate research document
+### Step 6: Present findings for feedback
+
+Before writing the document, present the synthesized findings to the user for review:
+
+1. Display a concise summary of key findings with file references
+2. Use AskUserQuestion to gather feedback:
+   ```
+   AskUserQuestion(
+     questions=[{
+       "question": "How do these findings look?",
+       "header": "Research Findings Review",
+       "options": [
+         {"label": "Looks good, write it", "description": "Finalize the research document as-is"},
+         {"label": "Go deeper on a topic", "description": "Investigate a specific area further before writing"},
+         {"label": "Correct something", "description": "Fix an inaccuracy or misunderstanding in the findings"}
+       ],
+       "multiSelect": false
+     }]
+   )
+   ```
+3. **Route based on response:**
+   - **"Looks good, write it"**: Proceed to Step 7 (generate document)
+   - **"Go deeper on a topic"**: Ask what topic, spawn targeted sub-agents, update findings, re-present this step
+   - **"Correct something"**: Ask what's wrong, incorporate correction, re-present this step
+
+### Step 7: Generate research document
 
 Filename: `thoughts/shared/research/YYYY-MM-DD-GH-NNNN-description.md`
 - Format: `YYYY-MM-DD-GH-NNNN-description.md` where:
@@ -244,15 +270,15 @@ If `--no-playwright` was NOT set in args:
       - Existing user stories: N files in playwright-stories/
       ```
    g. Tear down dev server (use `RALPH_PLAYWRIGHT_DEV_TEARDOWN_CMD` if set, otherwise kill PID)
-5. **If user declines or ralph-playwright not installed**: Continue to Step 7 without baseline
+5. **If user declines or ralph-playwright not installed**: Continue to Step 8 without baseline
 
-### Step 7: Add GitHub permalinks (if applicable)
+### Step 8: Add GitHub permalinks (if applicable)
 - Check if on main branch or if commit is pushed: `git branch --show-current` and `git status`
 - If on main/master or pushed, generate GitHub permalinks:
   - Create permalinks: `https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/{commit}/{file}#L{line}`
 - Replace local file references with permalinks in the document
 
-### Step 8: Optional issue linking
+### Step 9: Optional issue linking
 
 If `LINKED_ISSUE` was set (user provided `#NNN`), or the user asks to link to an issue, offer to post an Artifact Comment:
 
@@ -284,19 +310,30 @@ If the user agrees:
    Key findings: [1-3 line summary of the most important discoveries]
    ```
 
-### Step 9: Present findings
-- Present a concise summary of findings to the user
-- Include key file references for easy navigation
-- If the research findings reveal actionable work AND `LINKED_ISSUE` was NOT set:
-  - Suggest creating an issue from the findings via the composable `/form` chain:
-    ```
-    This research identified actionable work. To create a GitHub issue from these findings, run:
+### Step 10: Next steps
 
-    `/ralph-hero:form thoughts/shared/research/[filename].md`
-    ```
-- Ask if they have follow-up questions or need clarification
+The user already reviewed findings in Step 6. Offer next actions via AskUserQuestion:
 
-### Step 10: Handle follow-up questions
+```
+AskUserQuestion(
+  questions=[{
+    "question": "Research document written. What would you like to do next?",
+    "header": "Next Steps",
+    "options": [
+      {"label": "Create issue from findings", "description": "Turn these findings into a GitHub issue via /form"},
+      {"label": "Ask follow-up questions", "description": "Dig deeper into specific areas of the research"},
+      {"label": "Done", "description": "Research is complete — no further action needed"}
+    ],
+    "multiSelect": false
+  }]
+)
+```
+
+- **"Create issue from findings"**: Run `/ralph-hero:form thoughts/shared/research/[filename].md`
+- **"Ask follow-up questions"**: Proceed to Step 11
+- **"Done"**: STOP
+
+### Step 11: Handle follow-up questions
 - If the user has follow-up questions, append to the same research document
 - Update the frontmatter: add `last_updated: YYYY-MM-DD` and `last_updated_note: "Added follow-up research for [brief description]"`
 - Add a new section: `## Follow-up Research [timestamp]`

@@ -18,6 +18,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - AskUserQuestion
 ---
 
 ## Configuration (resolved at load time)
@@ -391,14 +392,20 @@ primary_issue: NNN              # optional until linked to an issue
 
 After the plan is finalized and the user is satisfied:
 
-1. **Offer to link to a GitHub issue**:
+1. **Offer to link to a GitHub issue** via AskUserQuestion:
    ```
-   Would you like to link this plan to a GitHub issue?
-
-   Options:
-   1. Link to existing issue (provide issue number like #123)
-   2. Create new issue from this plan
-   3. Skip GitHub integration
+   AskUserQuestion(
+     questions=[{
+       "question": "Would you like to link this plan to a GitHub issue?",
+       "header": "GitHub Integration",
+       "options": [
+         {"label": "Link to existing issue", "description": "Provide an issue number to attach this plan to"},
+         {"label": "Create new issue", "description": "Create a GitHub issue from this plan and link it"},
+         {"label": "Skip GitHub linking", "description": "Keep the plan as a standalone document"}
+       ],
+       "multiSelect": false
+     }]
+   )
    ```
 
 2. **If linking to existing issue**:
@@ -426,15 +433,23 @@ After the plan is finalized and the user is satisfied:
      primary_issue: NNN
      ```
      Set `github_issue` to the same value as `primary_issue` (singular integer for the knowledge indexer).
-   - Offer to advance the issue:
+   - Offer to advance the issue via AskUserQuestion:
      ```
-     Would you like to advance #NNN?
-     1. Move to "Plan in Review" (for later autonomous review via /ralph-review)
-     2. Move to "In Progress" (you've reviewed the plan interactively — ready for implementation)
-     3. Skip state transition
+     AskUserQuestion(
+       questions=[{
+         "question": "What would you like to do with #NNN?",
+         "header": "Next Steps",
+         "options": [
+           {"label": "Queue for review", "description": "Ralph will review this plan in a later session before implementation begins"},
+           {"label": "Start implementation", "description": "You've reviewed the plan — move straight to implementation with /impl"},
+           {"label": "Leave as-is", "description": "Keep the plan in draft — decide later what to do with it"}
+         ],
+         "multiSelect": false
+       }]
+     )
      ```
-     If option 1: Update the issue workflow state to "Plan in Review".
-     If option 2: Update the issue workflow state to "In Progress".
+     If "Queue for review": Update the issue workflow state to "Plan in Review".
+     If "Start implementation": Update the issue workflow state to "In Progress".
 
 3. **If creating new issue**:
    - Create a GitHub issue with the plan summary as the body.
@@ -442,7 +457,7 @@ After the plan is finalized and the user is satisfied:
    - **Rename file** to include the new issue number (same rename pattern as option 2)
    - Post plan link comment (same Artifact Comment Protocol as above, using renamed filename)
    - Update plan frontmatter with new issue reference (including `github_issue: NNN` for the knowledge indexer)
-   - Offer to advance the issue (same 3 options as above)
+   - Offer to advance the issue (same AskUserQuestion picker as above)
 
 4. **Report result**:
    ```
