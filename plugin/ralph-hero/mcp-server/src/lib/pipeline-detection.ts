@@ -26,7 +26,7 @@ export type PipelinePhase =
   | "TERMINAL";
 
 export interface DetectionOptions {
-  /** When true, "In Review" maps to INTEGRATE instead of TERMINAL */
+  /** Reserved for future use (In Review now always maps to INTEGRATE) */
   autoMode?: boolean;
   /** Total number of independent work streams (drives builder scaling) */
   streamCount?: number;
@@ -109,7 +109,8 @@ export const OVERSIZED_ESTIMATES = new Set(["M", "L", "XL"]);
  * 6. Any issues in Plan in Progress or Plan in Review -> REVIEW
  * 7. All issues in Plan in Review -> HUMAN_GATE (plans awaiting human approval)
  * 8. Any issues in In Progress -> IMPLEMENT
- * 9. All issues in In Review/Done -> TERMINAL
+ * 9. Any issues in In Review (with rest Done/Canceled) -> INTEGRATE
+ * 9b. All issues Done/Canceled -> TERMINAL
  * 10. Any issues in Human Needed -> TERMINAL (need human)
  * 11. Fallback -> TRIAGE
  *
@@ -292,14 +293,14 @@ export function detectPipelinePosition(
     );
   }
 
-  // Step 9: All issues terminal (In Review or Done or Canceled)
-  const terminal = inReview.length + done.length + canceled.length;
-  if (terminal === issues.length) {
-    // In auto mode, "In Review" issues are actionable (integrator can merge)
-    if (options.autoMode && inReview.length > 0 && done.length + canceled.length < issues.length) {
+  // Step 9: All issues in In Review, Done, or Canceled
+  const completed = inReview.length + done.length + canceled.length;
+  if (completed === issues.length) {
+    // "In Review" = PRs awaiting review/merge — actionable, not terminal
+    if (inReview.length > 0) {
       return buildResult(
         "INTEGRATE",
-        `${inReview.length} issue(s) awaiting integration`,
+        `${inReview.length} issue(s) in review`,
         issues,
         isGroup,
         groupPrimary,
@@ -307,9 +308,10 @@ export function detectPipelinePosition(
         options.streamCount,
       );
     }
+    // All Done/Canceled — truly terminal
     return buildResult(
       "TERMINAL",
-      "All issues in review or done",
+      `All issues done or canceled (${done.length} done, ${canceled.length} canceled)`,
       issues,
       isGroup,
       groupPrimary,

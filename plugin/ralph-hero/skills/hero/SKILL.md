@@ -140,7 +140,7 @@ If no issue number provided, scan the board for the best candidate:
 Fetch the issue with pipeline position included to determine what phase to execute.
 
 The result provides:
-- `phase`: SPLIT, RESEARCH, PLAN, REVIEW, HUMAN_GATE, IMPLEMENT, COMPLETE, TERMINAL
+- `phase`: SPLIT, RESEARCH, PLAN, REVIEW, HUMAN_GATE, IMPLEMENT, INTEGRATE, COMPLETE, TERMINAL
 - `reason`: Why this phase was selected
 - `convergence`: Whether all issues are ready for the next gate
 - `issues`: Current state of all issues in the group
@@ -264,7 +264,10 @@ Loop until pipeline is complete:
 
 1. `TaskList()` → filter to tasks with `status=pending` AND `blockedBy=[]` (empty/all resolved)
 2. If no pending unblocked tasks: check for `in_progress` tasks — if all tasks are `completed`, STOP (pipeline complete)
-3. For each unblocked task, execute the corresponding pipeline skill via `Skill()` (see phase-specific details below). The skill runs inline and can dispatch parallel Agent() sub-agents internally.
+3. Dispatch unblocked tasks:
+   - **Multiple unblocked impl tasks**: dispatch as parallel `Agent()` calls in a single message (they have no dependencies between them — that's why they're all unblocked)
+   - **Single unblocked task**: dispatch one agent
+   - **Non-impl tasks** (research, plan, PR): use the phase-specific dispatch below
 4. `TaskUpdate(status="completed")` for each completed task
 5. Repeat from step 1
 
@@ -409,14 +412,14 @@ AskUserQuestion(
 
 #### IMPLEMENT tasks
 
-Before dispatching, check the completed plan task's metadata for `artifact_path`. If present, include `--plan-doc {path}` in args:
+Before dispatching, check the completed plan task's metadata for `artifact_path`. If present, include the plan doc path in the prompt:
 
 ```
-Skill("ralph-hero:ralph-impl", args="NNN --plan-doc thoughts/shared/plans/...")
+Agent(subagent_type="ralph-hero:impl-agent", prompt="Implement GH-NNN. Plan doc: thoughts/shared/plans/...")
 ```
-If no `artifact_path` available, omit the plan doc reference:
+If no `artifact_path` available:
 ```
-Skill("ralph-hero:ralph-impl", args="NNN")
+Agent(subagent_type="ralph-hero:impl-agent", prompt="Implement GH-NNN")
 ```
 
 ### Dispatch Architecture
