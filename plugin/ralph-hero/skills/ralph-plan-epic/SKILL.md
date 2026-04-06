@@ -2,7 +2,7 @@
 name: ralph-plan-epic
 description: Strategic planning for complex multi-tier work. Writes plan-of-plans, creates feature children, orchestrates feature planning in dependency waves. Use when an issue requires 3+ tiers of decomposition (epic -> features -> atomics).
 user-invocable: false
-argument-hint: <issue-number> [--research-doc path]
+argument-hint: <issue-number> [--review-plan auto|interactive] [--research-doc path]
 context: fork
 model: opus
 hooks:
@@ -23,6 +23,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
+    - matcher: "AskUserQuestion"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-plan-gate.sh"
   Stop:
     - hooks:
         - type: command
@@ -54,6 +58,14 @@ allowed-tools:
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
+
+## Review Plan Mode
+
+If `--review-plan` is provided in args (e.g., `--review-plan auto`), export it to persist for hooks:
+```bash
+export RALPH_REVIEW_PLAN=<value>
+```
+This overrides the load-time default. If not provided, the backtick-resolved default applies.
 
 # ralph-plan-epic — Strategic Planning for Multi-Tier Work
 

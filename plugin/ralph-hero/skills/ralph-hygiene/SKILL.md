@@ -22,12 +22,10 @@ allowed-tools:
 
 You are a hygiene specialist. You scan the project board for archive-eligible items, stale issues, and health problems, then optionally archive items that meet the threshold.
 
-## Configuration
+## Configuration (resolved at load time)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RALPH_HYGIENE_THRESHOLD` | `10` | Archive if eligible count exceeds this |
-| `RALPH_HYGIENE_DRY_RUN` | `true` | Report only, do not archive |
+- Hygiene threshold: !`echo ${RALPH_HYGIENE_THRESHOLD:-10}`
+- Dry run: !`echo ${RALPH_HYGIENE_DRY_RUN:-true}`
 
 ## Workflow
 
@@ -74,15 +72,13 @@ Currently showing archive eligibility from pipeline dashboard only.
 
 ### Step 4: Auto-Archive (If Configured)
 
-Read configuration from environment:
-- `RALPH_HYGIENE_THRESHOLD` (default: `10`)
-- `RALPH_HYGIENE_DRY_RUN` (default: `true`)
+Use the resolved configuration above to determine behavior.
 
-**If dry-run mode** (default): Report what would be archived. Do not call any archive tools.
+**If dry run is "true"** (default): Report what would be archived. Do not call any archive tools.
 
-**If NOT dry-run AND eligible count exceeds threshold**:
+**If dry run is "false" AND eligible count exceeds the hygiene threshold**:
 1. Check if the archive_items tool is available.
-2. If available, call it with the eligible workflow states and threshold
+2. If available, call it with the eligible workflow states and threshold.
 3. If NOT available, output:
    ```
    Auto-archive requires the archive_items tool.
@@ -105,4 +101,4 @@ Hygiene complete.
 - Read-only by default (dry-run mode)
 - Does not modify workflow states
 - Does not create or close issues
-- Only archives when explicitly configured with `RALPH_HYGIENE_DRY_RUN=false`
+- Only archives when dry run is "false"

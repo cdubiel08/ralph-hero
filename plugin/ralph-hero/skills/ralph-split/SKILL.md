@@ -8,7 +8,7 @@ hooks:
   SessionStart:
     - hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=split RALPH_REQUIRED_BRANCH=main RALPH_MIN_ESTIMATE=M RALPH_MAX_SUBTICKET_ESTIMATE=S"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=split RALPH_REQUIRED_BRANCH=main RALPH_MIN_ESTIMATE=M RALPH_VALID_SUB_ESTIMATES='XS,S'"
   PreToolUse:
     - matcher: "Bash"
       hooks:

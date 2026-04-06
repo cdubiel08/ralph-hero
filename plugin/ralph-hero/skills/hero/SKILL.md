@@ -2,6 +2,16 @@
 description: Single-orchestrator pipeline that drives a GitHub issue through the full lifecycle with a human plan-approval gate. Expands issue trees, parallelizes research, then implements sequentially. Unlike team mode (fully autonomous with persistent workers), hero mode stops for human review before implementation and uses ephemeral sub-agents per task. Use when you want to process an issue end-to-end with human oversight, need a plan approval gate, or prefer a lighter-weight orchestrator for small groups.
 argument-hint: <issue-number>
 context: inline
+hooks:
+  SessionStart:
+    - hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=hero"
+  PreToolUse:
+    - matcher: "Skill"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hero-dispatch-gate.sh"
 allowed-tools:
   - Read
   - Write
@@ -35,6 +45,8 @@ allowed-tools:
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+- Plan review: !`echo ${RALPH_REVIEW_PLAN:-auto}`
+- Merge review: !`echo ${RALPH_REVIEW_MODE:-interactive}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
 
@@ -71,14 +83,24 @@ You are the **Ralph GitHub Hero** - a state-machine orchestrator that expands is
 |    v                                                               |
 |  BUILDER PHASE                                                     |
 |    |- PLAN (per group) -- create implementation plans              |
-|    |- REVIEW (if RALPH_REVIEW_MODE == "auto")                      |
-|    |   | APPROVED -> continue                                      |
-|    |   | NEEDS_ITERATION -> re-plan (loop)                         |
+|    |- PLAN REVIEW GATE                                             |
+|    |   | plan review is "auto":                                    |
+|    |   |   review-agent critiques plan                             |
+|    |   |   APPROVED -> report plan location, advance, continue     |
+|    |   |   NEEDS_ITERATION -> return critique to planner           |
+|    |   |   ESCALATE -> move to Human Needed, STOP                  |
+|    |   | plan review is "interactive":                              |
+|    |   |   report plan location, ask human for approval            |
+|    |   |   APPROVED -> advance, continue                           |
+|    |   |   REJECTED -> STOP                                        |
 |    |- IMPLEMENT (sequential) -- execute plan phases                |
-|    | all "In Review"                                               |
+|    |- PR (per issue)                                               |
 |    v                                                               |
-|  REVIEW PHASE (if RALPH_REVIEW_MODE == "interactive")              |
-|    |- HUMAN GATE: report and STOP                                  |
+|  MERGE GATE                                                        |
+|    | merge review is "interactive" (default):                      |
+|    |   report PR URLs, STOP -- human must request merge            |
+|    | merge review is "auto":                                       |
+|    |   proceed to finish (validate, merge, CI watch)               |
 |    v                                                               |
 |  INTEGRATOR PHASE                                                  |
 |    |- Finish GH-[PRIMARY] (validate, merge, CI watch)              |
@@ -324,34 +346,45 @@ After all research completes, run Stream Detection (Step 2.5) if applicable.
 Before dispatching, check the completed research task's metadata via `TaskGet` for `artifact_path`. If present, include `--research-doc {path}` in args.
 
 Determine planning approach from issue estimate:
-- **L/XL estimate** → `Skill("ralph-hero:ralph-plan-epic", args="NNN --research-doc {path}")` — handles wave orchestration internally
-- **M/S/XS estimate** → `Skill("ralph-hero:ralph-plan", args="NNN --research-doc {path}")` or without `--research-doc` if no artifact_path
+- **L/XL estimate** → `Skill("ralph-hero:ralph-plan-epic", args="NNN --review-plan auto --research-doc {path}")` — handles wave orchestration internally
+- **M/S/XS estimate** → `Skill("ralph-hero:ralph-plan", args="NNN --review-plan auto --research-doc {path}")` or without `--research-doc` if no artifact_path
+
+Always pass `--review-plan` with the resolved plan review value to every plan and review dispatch.
 
 ```
 # For L/XL epics:
-Skill("ralph-hero:ralph-plan-epic", args="NNN --research-doc thoughts/shared/research/...")
+Skill("ralph-hero:ralph-plan-epic", args="NNN --review-plan auto --research-doc thoughts/shared/research/...")
 
 # For M/S/XS with research doc:
-Skill("ralph-hero:ralph-plan", args="NNN --research-doc thoughts/shared/research/...")
+Skill("ralph-hero:ralph-plan", args="NNN --review-plan auto --research-doc thoughts/shared/research/...")
 
 # For M/S/XS without research doc:
-Skill("ralph-hero:ralph-plan", args="NNN")
+Skill("ralph-hero:ralph-plan", args="NNN --review-plan auto")
 
 # For multi-issue groups:
-Skill("ralph-hero:ralph-plan", args="[PRIMARY] --research-doc {path}")
+Skill("ralph-hero:ralph-plan", args="[PRIMARY] --review-plan auto --research-doc {path}")
 ```
 
-#### REVIEW tasks (if RALPH_REVIEW_MODE == "auto")
+#### PLAN REVIEW GATE
 
-Before dispatching, check the completed plan task's metadata for `artifact_path`. If present, include `--plan-doc {path}` in args:
+After all plans are created, review them based on the resolved plan review mode.
+
+**When plan review is "auto":**
+
+Dispatch the review-agent for each plan. Always pass `--review-plan` with the resolved value. Include the plan document path if available from the completed plan task's metadata:
 
 ```
-Skill("ralph-hero:ralph-review", args="NNN --plan-doc thoughts/shared/plans/...")
+Skill("ralph-hero:ralph-review", args="NNN --review-plan auto --plan-doc thoughts/shared/plans/...")
 ```
-**Routing**: ALL APPROVED → continue. ANY NEEDS_ITERATION → STOP with critique links.
 
-#### HUMAN GATE tasks
-Report planned groups with plan URLs. All issues are in "Plan in Review".
+Route based on review-agent verdict:
+- **ALL APPROVED** → Report plan locations and state transitions to the user. Batch update all group issues to "In Progress". Continue to implementation.
+- **NEEDS_ITERATION** → Return the critique to the planner for revision. Re-dispatch planning, then re-review. Max 2 iterations before escalating to Human Needed.
+- **ESCALATE** → The review-agent flagged something beyond automated resolution (architecture decisions, permissions, scope concerns). Move issues to Human Needed and STOP with the critique.
+
+**When plan review is "interactive":**
+
+Report planned groups with plan URLs and state transitions. All issues are in "Plan in Review".
 
 Use AskUserQuestion to offer inline approval:
 ```
@@ -407,6 +440,20 @@ If any implementation fails, STOP immediately. Do NOT continue to next issue.
 Skill("ralph-hero:ralph-pr", args="NNN")
 ```
 
+#### MERGE GATE
+
+After all PRs are created, check the resolved merge review mode.
+
+**When merge review is "interactive" (default):**
+
+Report all PR URLs and issue numbers. Present a clear summary of what was implemented and where to review.
+
+STOP here. The human must review the code and explicitly request merge — either by re-running `/ralph-hero:finish NNN` or by merging the PR manually.
+
+**When merge review is "auto":**
+
+Proceed directly to finish. The pipeline trusts the automated control plane (validation, code review gate in ralph-merge, CI checks) to catch issues.
+
 #### FINISH tasks
 ```
 Skill("ralph-hero:finish", args="NNN")
@@ -459,8 +506,8 @@ Ralph Hero is **resumable** across context windows:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RALPH_AUTO_APPROVE` | `false` | Skip human gate (not recommended) |
-| `RALPH_REVIEW_MODE` | `skip` | Review mode: skip, interactive, auto |
+| `RALPH_REVIEW_PLAN` | `auto` | Plan review: `auto` (review-agent), `interactive` (human approval) |
+| `RALPH_REVIEW_MODE` | `interactive` | Merge review: `interactive` (stop at PR), `auto` (trust control plane) |
 | `RALPH_COMMAND` | `hero` | Command identifier for hooks |
 | `RALPH_GH_OWNER` | required | GitHub repository owner |
 | `RALPH_GH_REPO` | required | GitHub repository name |

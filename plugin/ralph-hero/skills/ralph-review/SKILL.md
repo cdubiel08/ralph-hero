@@ -1,7 +1,7 @@
 ---
 description: Review and critique implementation plans before coding begins. INTERACTIVE mode for human review, AUTO mode for automated critique. Use when you want to review a plan, approve or reject a spec, or run quality gates on plans.
 user-invocable: false
-argument-hint: <issue-number> [--interactive] [--plan-doc path]
+argument-hint: <issue-number> [--review-plan auto|interactive] [--interactive] [--plan-doc path]
 context: fork
 model: opus
 hooks:
@@ -22,6 +22,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-state-gate.sh"
+    - matcher: "AskUserQuestion"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-plan-gate.sh"
   PostToolUse:
     - matcher: "Write"
       hooks:
@@ -53,6 +57,7 @@ allowed-tools:
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+- Plan review mode: !`echo ${RALPH_REVIEW_PLAN:-auto}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
 
@@ -67,9 +72,15 @@ You are a plan reviewer. You assess ONE plan, determine if it's ready for implem
 
 ### Step 1: Detect Execution Mode
 
+If `--review-plan` is provided in args (e.g., `--review-plan auto`), export it to persist for hooks:
+```bash
+export RALPH_REVIEW_PLAN=<value>
+```
+This overrides the load-time default. If not provided, the backtick-resolved default applies.
+
 Parse arguments for mode flag:
-- If `--interactive` flag present OR `RALPH_INTERACTIVE=true` -> INTERACTIVE mode
-- Otherwise -> AUTO mode
+- If `--interactive` flag present OR plan review mode is "interactive" → INTERACTIVE mode
+- Otherwise → AUTO mode
 
 Report mode:
 ```
