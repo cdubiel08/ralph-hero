@@ -2,6 +2,12 @@
 description: Interactive implementation planning with human collaboration. Researches codebase, asks clarifying questions, proposes approaches, iterates on structure with the user, then writes a phased plan document. Use this skill when you want to plan interactively, create a spec collaboratively, or need human input during planning. This is the human-in-the-loop planner — unlike ralph-plan (autonomous, no questions), this skill works WITH the user through research, design options, and incremental approval.
 argument-hint: "[optional: issue-number, file path, or description] [--playwright] [--no-playwright] [--ux-audit]"
 model: opus
+hooks:
+  PreToolUse:
+    - matcher: "AskUserQuestion"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-plan-gate.sh"
 allowed-tools:
   - Read
   - Write
@@ -26,6 +32,7 @@ allowed-tools:
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+- Plan review: !`echo ${RALPH_REVIEW_PLAN:-interactive}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
 
@@ -367,6 +374,10 @@ primary_issue: NNN              # optional until linked to an issue
    - Include ux-audit if user opted in
 
 ### Step 5: Review
+
+If plan review is "auto", skip human review — proceed directly to Step 6 (GitHub Integration) with the plan as-is. Report the plan location but do not ask for feedback.
+
+Otherwise (plan review is "interactive", the default), present the draft for human review:
 
 1. **Present the draft plan location**:
    ```

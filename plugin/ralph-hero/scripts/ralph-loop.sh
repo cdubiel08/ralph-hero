@@ -51,7 +51,7 @@ portable_timeout() {
 
 # Parse all arguments
 MODE="all"
-REVIEW_MODE="${RALPH_REVIEW_MODE:-skip}"
+REVIEW_MODE="${RALPH_REVIEW_MODE:-interactive}"
 SPLIT_MODE="${RALPH_SPLIT_MODE:-auto}"
 HYGIENE_MODE="${RALPH_HYGIENE_MODE:-auto}"
 for arg in "$@"; do
@@ -196,9 +196,9 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
         if [ "$REVIEW_MODE" != "skip" ]; then
             echo "--- Review Phase (mode: $REVIEW_MODE) ---"
             if [ "$REVIEW_MODE" = "interactive" ]; then
-                export RALPH_INTERACTIVE="true"
+                export RALPH_REVIEW_PLAN="interactive"
             else
-                export RALPH_INTERACTIVE="false"
+                export RALPH_REVIEW_PLAN="auto"
             fi
             if run_claude "/ralph-hero:ralph-review" "review"; then
                 work_done=true

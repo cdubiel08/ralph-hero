@@ -13,7 +13,7 @@ read_input > /dev/null
 
 COMMAND="${RALPH_COMMAND:-review}"
 TICKET_ID="${RALPH_TICKET_ID:-}"
-INTERACTIVE="${RALPH_INTERACTIVE:-false}"
+REVIEW_PLAN="${RALPH_REVIEW_PLAN:-auto}"
 ARTIFACT_DIR="${RALPH_ARTIFACT_DIR:-thoughts/shared/reviews}"
 
 PASSED=()
@@ -23,7 +23,7 @@ WARNINGS=()
 if [[ -z "$TICKET_ID" ]]; then
   WARNINGS+=("No ticket ID tracked - cannot verify postconditions")
 else
-  if [[ "$INTERACTIVE" != "true" ]]; then
+  if [[ "$REVIEW_PLAN" != "interactive" ]]; then
     project_root=$(get_project_root)
     critique=$(find "$project_root/$ARTIFACT_DIR" -name "*${TICKET_ID}*" -type f 2>/dev/null | head -1)
     if [[ -n "$critique" ]]; then
@@ -47,7 +47,7 @@ echo "              ralph-review Postcondition Check"
 echo "==================================================================="
 echo ""
 echo "Ticket: ${TICKET_ID:-unknown}"
-echo "Mode: $([ "$INTERACTIVE" = "true" ] && echo "INTERACTIVE" || echo "AUTO")"
+echo "Mode: $([ "$REVIEW_PLAN" = "interactive" ] && echo "INTERACTIVE" || echo "AUTO")"
 echo ""
 
 if [[ ${#PASSED[@]} -gt 0 ]]; then

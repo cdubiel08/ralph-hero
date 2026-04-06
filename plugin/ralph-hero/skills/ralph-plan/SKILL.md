@@ -1,7 +1,7 @@
 ---
 description: Autonomous implementation planning — picks an issue group, reads research findings, creates a phased plan with file ownership and verification steps, commits to main, and updates GitHub. No questions asked, no human interaction. Called by hero/team orchestrators, not directly by users. Unlike the interactive plan skill, this runs fully autonomously with strict constraints (XS/S only, research required, 15-minute limit).
 user-invocable: false
-argument-hint: "[optional-issue-number] [--research-doc path] [--parent-plan path] [--sibling-context text] [--playwright] [--no-playwright] [--ux-audit]"
+argument-hint: "[optional-issue-number] [--review-plan auto|interactive] [--research-doc path] [--parent-plan path] [--sibling-context text] [--playwright] [--no-playwright] [--ux-audit]"
 context: fork
 model: opus
 hooks:
@@ -22,6 +22,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
+    - matcher: "AskUserQuestion"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-plan-gate.sh"
   PostToolUse:
     - matcher: "ralph_hero__save_issue"
       hooks:
@@ -57,6 +61,14 @@ allowed-tools:
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
+
+## Review Plan Mode
+
+If `--review-plan` is provided in args (e.g., `--review-plan auto`), export it to persist for hooks:
+```bash
+export RALPH_REVIEW_PLAN=<value>
+```
+This overrides the load-time default. If not provided, the backtick-resolved default applies.
 
 ## Playwright Flags
 

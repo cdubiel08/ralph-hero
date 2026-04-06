@@ -15,7 +15,7 @@ tags: [playwright, planning, cross-plugin, a11y, ui-testing]
 
 **Architecture:** Four skill markdown files are modified — both research skills gain playwright detection and baseline capture, both plan skills gain UI Validation phase generation. No hero/SKILL.md changes needed (prerequisite GH-732 migrates hero to Skill() dispatch, which gives skills sub-agent access for explorer-agent dispatch).
 
-**Prerequisite:** GH-732 — Migrate hero from Agent() to Skill() dispatch. Without this, ralph-research's Agent() calls for explorer-agent won't execute in autonomous mode.
+**Prerequisite:** ~~GH-732 — Migrate hero from Agent() to Skill() dispatch.~~ **Done** (merged as PR #733). ralph-research's Agent() calls for explorer-agent now execute in autonomous mode via Skill() dispatch.
 
 **Tech Stack:** Markdown skill files (no TypeScript, no tests, no build)
 
