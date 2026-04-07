@@ -1,5 +1,5 @@
 ---
-description: Validate, merge, and watch CI for a completed implementation. Chains ralph-val → ralph-merge → CI watch into one command. Code review is handled by ralph-merge's built-in gate.
+description: Validate, merge, and watch CI for a completed implementation. Chains ralph-val → ralph-merge → CI watch into one command. Code review is handled by ralph-merge's built-in gate; when RALPH_REVIEW_MODE=auto and code review flags issues, dispatches impl-agent to fix them.
 user-invocable: true
 argument-hint: <issue-number> [--pr-url url] [--plan-doc path]
 context: fork
@@ -40,7 +40,7 @@ Use these resolved values when constructing GitHub URLs or referencing the repos
 
 # Ralph Finish
 
-Validate, merge, and watch CI for a completed implementation. Code review is handled by ralph-merge's built-in gate — finish does not invoke code-review directly.
+Validate, merge, and watch CI for a completed implementation. Code review is handled by ralph-merge's built-in gate — when `RALPH_REVIEW_MODE=auto`, finish also orchestrates a code-review → impl-fix → re-merge cycle if the automated review flags issues (max 1 fix cycle).
 
 ## Step 1: Parse Arguments
 
@@ -119,6 +119,26 @@ Check the skill output:
 
 - If output contains `MERGE BLOCKED` or `MERGE NOT READY`: report the status and stop.
 - If output contains `MERGED`: continue to Step 5.
+- If output contains `CODE_REVIEW_FEEDBACK`: automated code review flagged issues. Proceed to Step 4a.
+
+## Step 4a: Code Review Fix Cycle
+
+Dispatch impl-agent in Address Mode to fix the flagged issues. The issue is already "In Review" with an open PR that has review comments — impl-agent will auto-detect Address Mode.
+
+```
+Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback for GH-NNN. The automated code review flagged issues on PR #PR_NUMBER. Fix the MUST_FIX and SHOULD_FIX items, push, and reply to comments.")
+```
+
+After impl-agent completes, re-run ralph-merge:
+
+```
+Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")
+```
+
+Check the output again:
+
+- If `MERGED`: continue to Step 5.
+- If `MERGE BLOCKED`, `MERGE NOT READY`, or `CODE_REVIEW_FEEDBACK` again: stop. Max 1 fix cycle — report the status and let the human intervene.
 
 ## Step 5: CI Watch
 
