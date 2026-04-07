@@ -119,6 +119,26 @@ Check the skill output:
 
 - If output contains `MERGE BLOCKED` or `MERGE NOT READY`: report the status and stop.
 - If output contains `MERGED`: continue to Step 5.
+- If output contains `CODE_REVIEW_FEEDBACK`: automated code review flagged issues. Proceed to Step 4a.
+
+## Step 4a: Code Review Fix Cycle
+
+Dispatch impl-agent in Address Mode to fix the flagged issues. The issue is already "In Review" with an open PR that has review comments — impl-agent will auto-detect Address Mode.
+
+```
+Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback for GH-NNN. The automated code review flagged issues on PR #PR_NUMBER. Fix the MUST_FIX and SHOULD_FIX items, push, and reply to comments.")
+```
+
+After impl-agent completes, re-run ralph-merge:
+
+```
+Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")
+```
+
+Check the output again:
+
+- If `MERGED`: continue to Step 5.
+- If `MERGE BLOCKED`, `MERGE NOT READY`, or `CODE_REVIEW_FEEDBACK` again: stop. Max 1 fix cycle — report the status and let the human intervene.
 
 ## Step 5: CI Watch
 
