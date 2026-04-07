@@ -375,7 +375,40 @@ primary_issue: NNN              # optional until linked to an issue
 
 ### Step 5: Review
 
-If plan review is "auto", skip human review — proceed directly to Step 6 (GitHub Integration) with the plan as-is. Report the plan location but do not ask for feedback.
+If plan review is "auto", skip human review and proceed to autonomous GitHub integration:
+
+1. **Search for matching open issues**: Use `list_issues` to search by keywords from the plan title. Look for issues in Backlog, Research Needed, or Ready for Plan states that match the plan's scope.
+
+2. **If a matching issue exists**: Link the plan to it:
+   - Rename the plan file to include `GH-NNNN` if not already present
+   - Update plan frontmatter with `github_issue`, `github_issues`, `github_urls`, `primary_issue`
+   - Post an Artifact Comment on the issue (per the Artifact Comment Protocol):
+     ```markdown
+     ## Implementation Plan
+
+     https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/[filename].md
+
+     Summary: [1-3 line summary of the plan]
+     ```
+
+3. **If no matching issue exists**: Create a new issue:
+   - Create a GitHub issue with the plan summary as the body
+   - Set estimate based on plan complexity (XS/S/M)
+   - Rename the plan file to include the new issue number
+   - Post the Artifact Comment (same as above)
+   - Update plan frontmatter with the new issue reference
+
+4. **Auto-advance**: Update the issue workflow state to "Plan in Review" so the review-agent can pick it up.
+
+5. **Report result**:
+   ```
+   Plan linked to GitHub issue: #NNN
+   URL: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
+   State: Plan in Review
+   Ready for review. Use /ralph-hero:ralph-review #NNN or /ralph-hero:impl #NNN after approval.
+   ```
+
+   Then STOP — do not proceed to Step 6 (which is interactive-only).
 
 Otherwise (plan review is "interactive", the default), present the draft for human review:
 
@@ -399,7 +432,9 @@ Otherwise (plan review is "interactive", the default), present the draft for hum
 
 3. **Continue refining** until the user is satisfied
 
-### Step 6: GitHub Integration (Optional)
+### Step 6: GitHub Integration (Interactive Mode Only)
+
+> This step only applies when plan review is "interactive". When "auto", GitHub integration is handled autonomously in Step 5.
 
 After the plan is finalized and the user is satisfied:
 
