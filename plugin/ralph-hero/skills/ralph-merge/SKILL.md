@@ -33,6 +33,7 @@ allowed-tools:
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+- Review mode: !`echo ${RALPH_REVIEW_MODE:-interactive}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
 
@@ -103,7 +104,31 @@ And stop.
 
 1. Check if the `code-review:code-review` skill is available by looking for it in the available skills list (it is an official Anthropic plugin).
 
-2. **If the skill is available**, present a choice:
+2. **If the skill is available AND review mode is "auto":**
+
+   Run code review automatically — do NOT prompt the user:
+
+   ```
+   Skill("code-review:code-review", "PR_NUMBER")
+   ```
+
+   After the review completes, re-check `reviewDecision` via `gh pr view`.
+
+   - If the PR was approved: continue to Step 5.
+   - If changes were requested: output the review findings with a distinct status so the caller (finish) can dispatch a fix cycle:
+
+   ```
+   CODE_REVIEW_FEEDBACK
+   Issue: #NNN
+   PR: #PR_NUMBER
+   Reason: Automated code review flagged issues — impl-agent fix cycle available.
+   ```
+
+   And stop. Do NOT output `MERGE BLOCKED` for automated review feedback — the `CODE_REVIEW_FEEDBACK` status signals that finish should attempt a fix cycle.
+
+3. **If the skill is available AND review mode is "interactive" (default):**
+
+   Present a choice:
 
    !cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
 
@@ -125,7 +150,7 @@ And stop.
    - If user selects **"Merge without review"**: proceed to Step 5.
    - If user selects **"Other"**: stop.
 
-3. **If the skill is NOT available**, inform the user:
+4. **If the skill is NOT available**, inform the user:
 
    ```
    This PR has no code review. Consider installing the code-review plugin:
