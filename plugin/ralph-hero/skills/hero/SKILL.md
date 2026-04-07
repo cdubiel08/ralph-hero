@@ -510,7 +510,7 @@ Ralph Hero is **resumable** across context windows:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RALPH_REVIEW_PLAN` | `auto` | Plan review: `auto` (review-agent), `interactive` (human approval) |
-| `RALPH_REVIEW_MODE` | `interactive` | Merge review: `interactive` (stop at PR), `auto` (trust control plane) |
+| `RALPH_REVIEW_MODE` | `interactive` | Merge review: `interactive` (stop at PR, prompt for code review), `auto` (auto-run code review, fix flagged issues via impl-agent, merge) |
 | `RALPH_COMMAND` | `hero` | Command identifier for hooks |
 | `RALPH_GH_OWNER` | required | GitHub repository owner |
 | `RALPH_GH_REPO` | required | GitHub repository name |

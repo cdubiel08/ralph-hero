@@ -1,5 +1,5 @@
 ---
-description: Validate, merge, and watch CI for a completed implementation. Chains ralph-val → ralph-merge → CI watch into one command. Code review is handled by ralph-merge's built-in gate.
+description: Validate, merge, and watch CI for a completed implementation. Chains ralph-val → ralph-merge → CI watch into one command. Code review is handled by ralph-merge's built-in gate; when RALPH_REVIEW_MODE=auto and code review flags issues, dispatches impl-agent to fix them.
 user-invocable: true
 argument-hint: <issue-number> [--pr-url url] [--plan-doc path]
 context: fork
@@ -40,7 +40,7 @@ Use these resolved values when constructing GitHub URLs or referencing the repos
 
 # Ralph Finish
 
-Validate, merge, and watch CI for a completed implementation. Code review is handled by ralph-merge's built-in gate — finish does not invoke code-review directly.
+Validate, merge, and watch CI for a completed implementation. Code review is handled by ralph-merge's built-in gate — when `RALPH_REVIEW_MODE=auto`, finish also orchestrates a code-review → impl-fix → re-merge cycle if the automated review flags issues (max 1 fix cycle).
 
 ## Step 1: Parse Arguments
 
