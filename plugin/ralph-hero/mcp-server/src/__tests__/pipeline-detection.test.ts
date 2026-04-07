@@ -98,9 +98,9 @@ describe("detectPipelinePosition - single issue", () => {
     expect(result.phase).toBe("IMPLEMENT");
   });
 
-  it("returns TERMINAL for In Review", () => {
+  it("returns INTEGRATE for In Review", () => {
     const result = detectSingle(makeIssue(1, "In Review"));
-    expect(result.phase).toBe("TERMINAL");
+    expect(result.phase).toBe("INTEGRATE");
   });
 
   it("returns TERMINAL for Done", () => {
@@ -176,13 +176,13 @@ describe("detectPipelinePosition - groups", () => {
     expect(result.phase).toBe("IMPLEMENT");
   });
 
-  it("returns TERMINAL when all issues done or in review", () => {
+  it("returns INTEGRATE when group has In Review issues", () => {
     const result = detectGroup([
       makeIssue(1, "In Review"),
       makeIssue(2, "Done"),
       makeIssue(3, "In Review"),
     ]);
-    expect(result.phase).toBe("TERMINAL");
+    expect(result.phase).toBe("INTEGRATE");
   });
 
   it("returns TERMINAL when mixed terminal + canceled", () => {
@@ -514,9 +514,9 @@ describe("detectPipelinePosition - auto mode (RALPH_HERO_AUTO)", () => {
     expect(result.phase).toBe("TERMINAL");
   });
 
-  it("without autoMode, In Review still returns TERMINAL (backward compat)", () => {
+  it("In Review returns INTEGRATE regardless of autoMode", () => {
     const result = detectSingle(makeIssue(1, "In Review"));
-    expect(result.phase).toBe("TERMINAL");
+    expect(result.phase).toBe("INTEGRATE");
   });
 
   it("INTEGRATE roster is integrator-only", () => {

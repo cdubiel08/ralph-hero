@@ -20,6 +20,7 @@ allowed-tools:
   - Grep
   - Bash
   - Skill
+  - Agent
   - AskUserQuestion
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
@@ -90,26 +91,19 @@ And stop.
 
 Store PR_NUMBER and PR_URL for use in later steps.
 
-## Step 3: Validate (dispatch ralph-val)
+## Step 3: Validate (dispatch val-agent)
 
-Build args for ralph-val:
-- Always include the issue number
-- If `--plan-doc` was provided, pass it through
+Dispatch validation as an agent:
 
 ```
-Skill("ralph-hero:ralph-val", args="NNN --plan-doc {plan_doc}")
+Agent(subagent_type="ralph-hero:val-agent", prompt="Validate GH-NNN. Plan doc: {plan_doc or 'discover from issue comments'}")
 ```
 
-Or without plan doc:
+Check the agent output for the verdict:
 
-```
-Skill("ralph-hero:ralph-val", args="NNN")
-```
-
-Check the skill output for the verdict:
-
-- If output contains `VALIDATION FAIL`: stop with the validation report. The implementation must pass automated checks before proceeding.
 - If output contains `VALIDATION PASS`: continue to Step 4.
+- If output contains `VALIDATION FIX`: mechanical issues only (formatting, lint). Dispatch impl-agent to apply the listed fix commands in the worktree, commit, then re-run val-agent. Max 1 fix cycle — if it still fails after fixes, treat as FAIL.
+- If output contains `VALIDATION FAIL`: stop with the validation report. Substantive failures require implementation work.
 
 ## Step 4: Merge (dispatch ralph-merge)
 

@@ -149,13 +149,21 @@ If the plan has only one phase, report: `Cross-Phase Integration: Single-phase p
 
 ## Step 7: Produce Verdict
 
-If all automated criteria pass: `PASS`
-If any criterion fails: `FAIL`
+Classify each failure, then choose the verdict:
+
+**Failure classification:**
+- **Mechanical**: has a deterministic auto-fix — formatter (`prettier --write`), linter (`eslint --fix`), missing trailing newline, import sorting. No judgment needed.
+- **Substantive**: tests fail, missing functionality, wrong behavior, missing files the plan requires. Requires implementation work.
+
+**Verdict rules:**
+- All checks pass → `PASS`
+- Only mechanical failures → `FIX` (list the fix commands)
+- Any substantive failure → `FAIL`
 
 Output the validation report:
 
 ```
-VALIDATION [PASS/FAIL]
+VALIDATION [PASS/FIX/FAIL]
 Issue: #NNN
 Plan: [plan path]
 Worktree: [worktree path]
@@ -164,7 +172,7 @@ Worktree: [worktree path]
 - [x] npm test — passed (exit 0)
 - [x] npm run build — passed (exit 0)
 - [x] test -f plugin/ralph-hero/skills/ralph-val/SKILL.md — exists
-- [ ] grep "RALPH_COMMAND: \"val\"" ... — MISSING
+- [ ] prettier --check — FAILED (mechanical, fix: prettier --write .)
 
 ### Drift Analysis:
 - Phase 1: 1 minor drift (documented)
@@ -173,8 +181,9 @@ Worktree: [worktree path]
 ### Cross-Phase Integration:
 - All phase outputs verified ✓
 
-Verdict: [PASS/FAIL]
-[If FAIL: list each failing criterion with specific details]
+Verdict: [PASS/FIX/FAIL]
+[If FIX: list each mechanical fix command]
+[If FAIL: list each substantive failure with specific details]
 ```
 
 ## Step 8: Post GitHub Comment
@@ -184,6 +193,7 @@ Post the validation report as a GitHub comment on the issue. Use the header `## 
 ## Notes
 
 - Do NOT change workflow state — integrator handles that based on verdict
+- Do NOT fix issues yourself — report the verdict and let the caller route to impl for fixes
 - Run all checks even after first failure (collect full picture)
 - If a command times out or errors unexpectedly, count it as FAIL with the error details
 - Focus on automated checks only; do not try to interpret code quality subjectively
