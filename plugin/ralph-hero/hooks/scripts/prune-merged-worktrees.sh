@@ -20,7 +20,7 @@ if [[ ! -d "$WORKTREE_DIR" ]]; then
 fi
 
 # Fetch latest main to ensure merge checks are accurate
-git fetch origin main --quiet 2>/dev/null || exit 0
+timeout 10 git fetch origin main --quiet 2>/dev/null || exit 0
 
 pruned=0
 for wt_path in "$WORKTREE_DIR"/*/; do

@@ -1,0 +1,795 @@
+strip-minions-transcript.txt
+0:00
+Are you vibe coding or are you a gentic engineering? The difference is massive.
+0:05
+Keep that question in mind as you look at one of the best engineering teams on the planet to determine if they're vibe
+0:12
+coding or agentic engineering. Stripe engineers are shipping 1,300 pull
+0:18
+requests every single week. Get this. There is zero human written code and
+0:24
+they're doing it right. Imagine what will happen to their insane numbers of 1.9 trillion in total volume up 34%
+0:33
+which is the equivalent to 1.6 of global GDP. Stripe's doing 1 billion this year
+0:39
+and they power all of the best companies that you and I use and you yourself might be running on Stripe as well. What
+0:46
+happens when Stripe multiplies all this with agents? And not just agents, what happens when they multiply it with their
+0:52
+custom end-to-end solution they're calling minions, fully unattended coding
+0:58
+agents that start from a Slack message and end in a production ready PR. This
+1:03
+is Stripe's oneshot endto-end coding agent. To me, the minions aren't even
+1:08
+the interesting part here. The interesting stat here to me is that their agents operate a code base with
+1:15
+millions of lines of code operating a uncommon stack with a number of
+1:20
+homegrown libraries that are unique to Stripe and therefore unknown to LLMs. On
+1:27
+top of that, the stakes that Stripe operates in are extremely high. The code
+1:32
+they write moves over 1 trillion per year of payment volume. They have a
+1:37
+number of real world dependencies, regulatory and compliance obligations that their code must honor. Now, here's
+1:43
+a simple important question for you. Do you think Stripe can afford to vibe code? I personally have written millions
+1:51
+of lines of code with agents and without agents. I've been building with agents
+1:56
+since it was first possible way, way back in the day when we were using GPT 3.5 Turbo. Many engineers don't even
+2:03
+know that model exists or once existed. So allow me to clarify these terms a little bit. Aentic engineering is
+2:10
+knowing what will happen in your system so well you don't need to look. Vibe
+2:16
+coding is not knowing and not looking. It's very clear stripe engineers are
+2:21
+agentic engineering. And in this video we'll break down stripes aentic layer so
+2:26
+you can take the best pieces and add it to your agentic systems. Vibe coding is
+2:32
+the lowest hanging fruit. When you agentic engineer systems just like Stripe has, from the prompt to your
+2:38
+skills to your custom agents to your agent harness all the way up through your tech stack, you capitalize on the
+2:44
+greatest opportunity for engineers to ever exist. Agents,
+2:53
+let's look at their agendic system at a high level so that we can analyze the key pieces of their system. If these
+2:59
+components interest you, definitely stick around. We're going to be breaking down Stripe's key components. And as we
+3:04
+do this, you'll see what you have and what you're missing. All right. So, the first thing is the API layer. They have a way to communicate to their agents. As
+3:11
+you'll see, they have many ways to do this. Then they have a warm devbox pool. What is this? This is an agent sandbox,
+3:18
+a space to place their agent. Fantastic. They then have the agent harness. Stripe built their agent harness. They forked
+3:24
+it from a tool we'll cover in a second here. And then they have this blueprint engine, the marriage of the old world
+3:30
+and the new world, code and agents. This is super super important. This single piece has given Stripe a massive edge.
+3:37
+You'll see why in a second. All right. Then we have the rules file. How did they manage the context problem? Agents
+3:43
+cannot read their 100 million line of code codebase. So how do they solve that problem? We'll then talk about the meta
+3:49
+layer of their tool shed. You can imagine they have hundreds of tools and tens of services that they want their agents to operate with. How do they
+3:56
+solve that problem? They built a tool shed. All right. Then of course they have a way to validate all their agents work. This is a critical validation
+4:02
+layer that they can use to give their agents feedback and to validate that they're not breaking existing working
+4:09
+features that's helping them generate and maintain that movement of that $1 trillion. All right, so we're talking
+4:15
+about real stakes that the Stripe engineers are facing. All right, this is not a green field rapid prototype application. All right, these are
+4:21
+serious stakes with real world consequences. And then of course you need a place to review your agents work. They're using GitHub PRs. Everyone's
+4:27
+using GitHub PRS. This is the standard. Nothing new here. All right. But these are the critical pieces. We're going to walk through these piece by piece and
+4:34
+understand how they put these together to build their Agentic layer. Let's go ahead and start with their minions. So
+4:39
+what is Stripe's take on agentic coding? Let's find out. Aentic coding has gone from new and exciting to table stakes.
+4:46
+Unattended coding agents have gone from possibility to reality. You know, Stripe engineers know what they're talking
+4:52
+about because this is true. If you are not agentic coding, the gap between you and the agent coding team within a week,
+5:00
+within a month is going to be astronomical. Okay? It's going to be exponential. This is the last moment to
+5:05
+hop on the train. Stripe minions are Stripe's homegrown coding agents. They're fully unattended, built to
+5:11
+oneshot tasks. Thousands of pull requests merge each week. So one week goes by, Stripe engineers merge a
+5:18
+thousand pull requests. Let's just really understand that scale. All right. And as I mentioned, they contain no
+5:24
+human written code. They realize you have to stop coding to get the real scale, to get the real power out of
+5:30
+these agents. You work on the agents, not the application. Right? This is a weird mindset shift that you need to
+5:36
+make if you're going to be building with agents. Now, interesting to note here, our developers can still plan and
+5:41
+collaborate with traditional agent decoding tools, Claude and Cursor. But in a world where one of our most
+5:48
+constrained resources is developer attention, the agents allow for parallelization of tasks. This is super
+5:54
+super super critical. All right, they realize that the most important resource and really any software company's most
+6:00
+important resource is your developers time. It's your developer attention. And when you maximize the leverage your
+6:06
+developers get, you can do crazy things like this. They see their engineers spinning up multiple minions in parallel and able to solve multiple problems at
+6:13
+the same time in different conditions. All right, so this is fantastic. So the first thing we need to figure out is why
+6:18
+they built the minions in the first place. Why did they build it themselves? What's the point of this? Isn't cloud
+6:24
+code good enough? Vibe coding a prototype from scratch is fundamentally different from contributing to Stripe's
+6:30
+codebase. Okay, interesting. Say more. Stress codebase encompasses hundreds of millions of code across a few large
+6:35
+repositories. Okay. Written in Ruby, uncommon stack, homegrown libraries, LLMs don't have it baked in, right? It's
+6:42
+not in the models training data. Stakes are high. Stripe moves over 1 trillion
+6:48
+per year in payment volume. As mentioned, they have real world dependencies and compliance obligations.
+6:53
+LLM agents are really great at building from scratch when there are no constraints on the system. However,
+6:59
+iterating on any codebase of scale, complexity, and maturity is inherently much harder. Very, very true. Engineers
+7:06
+build sophisticated models to make changes inside their large repo. This is huge. And we talk about this on the
+7:13
+channel all the time. Specialization is how you win. When you're building a great product, it is literally a
+7:20
+specialized solution to a specialized problem. So, why would you stop at your
+7:25
+tooling? Your tooling and your code must also be specialized. So, this is why
+7:30
+they built their own custom agent. It's because they're solving specific problems in specific ways better than
+7:36
+anyone. And again, this is a theme we talk about on the channel all the time. Specialization is your advantage. And in
+7:43
+last week's video, we talked about the PI coding agent because there are many coding agents, but this one is mine. We
+7:50
+emphasized this very idea. You can customize your prompt. You can customize your skills. You can customize your
+7:56
+custom agents and you can specialize your agent harness. The more you're specializing, the more you're building
+8:02
+specific solutions to specific problems, the bigger your edge is. And the more you distance yourself from the out-
+8:08
+of-the-box experiences that a lot of agentic coding tools are driving everyone toward, the better off you're
+8:13
+going to be. So, Stripe built minions to solve their specific problem and to operate their large code base better
+8:20
+than anyone. Makes sense, right? Big shout out to everyone who shared that video. That one went absolutely viral and for a good reason. Engineers are
+8:27
+realizing that we don't want to be super locked in to a single tool like cloud code or cursor or codeex or whatever.
+8:33
+Every tool is going to have a problem, but the tool that won't have a problem is the one you customize to solve your specific problems better than anyone.
+8:40
+There are many coding agents, but this one is mine. I love this slogan. Let's see how Stripe customized their minions.
+8:47
+So, what is it like to use a minion? Right away, we jump into another critical idea. There are several entry
+8:53
+points for minions. They're designed to integrate as ergonomically as possible where Stripe engineers are. All right,
+9:00
+so they use a CLI, a web interface, and they have Slack. Already they have three
+9:05
+points of contact for kicking off their API, I assume, right? They they have a separate application which kicks off
+9:12
+their agents, right? Their pool of agents, but they have multiple ways to interface with that primary service.
+9:18
+Very important. And so we can see here, you know, here's a clear example of an engineer in Stripe using that at symbol at devbox and then they write their
+9:25
+prompt to the agent, right? Makes sense. Nothing new there. Okay. And so we can see here they have a custom UI that they
+9:30
+built, right? They have an interface to allow them to interface with their custom agent. So you know on the left
+9:36
+you can see kind of a typical view. We have that log of tools and the thought process that their agents go through.
+9:42
+And then on the right we can see that they have all the modified files. So they can see very very quickly what's going on with that agent. And then of
+9:48
+course in the top right here they have their actions. All right, so create pull request. And I'm sure they have some prompt interface here as well. So nice
+9:55
+and simple, very concise. You can see that they're just surfacing the most important information. And this hints at another key aspect of your agents and
+10:02
+your agentic system. You need to be able to observe what's going on. Once a task has been completed, a minion will create
+10:08
+a branch, pushes it to CI, and prepares a pull request following Stripe's PR template. And then they're going to
+10:14
+request another review from a Stripe engineer. And they can also iterate. So this is a classic end of process setup.
+10:21
+When you're a genta coding, you show up at the beginning and the end during planning and during review and ideally
+10:27
+not once in the middle. All right? And that is what creates an outloop agent coding system. You just write the prompt
+10:33
+and you just do the review. There's inloop agent coding and then there's outloop agent coding. All right? We'll
+10:38
+circle back to that idea in a second. So how do their minions actually work? A minion starts in an isolated developer
+10:45
+environment or a dev box. Fascinating. So, this is a concept we've talked about on the channel. They're giving their
+10:50
+agents their own environment to operate in, right? Which is the same type of machine that Stripes engineers write on.
+10:57
+This is a simple yet powerful idea. If you want your agent to do what you can, you must give it the tools and the
+11:03
+environment that you have. So, Stripe realizes this. They reuse their developer setup for their agents. They
+11:09
+give them everything that the engineer has. Super super powerful idea here. Dead boxes are pre-warmed, so one can be
+11:15
+spun up in 10 seconds. Love that. Uh, not very fast, but for the machine that they're booting up, which I think
+11:21
+they'll mention in a moment, that is very fast. They're booting up full-on AWS EC2 instances. All right, with
+11:26
+Stripe's code and services preloaded, they're isolated. This is a safe space to place their agent. And they do this
+11:33
+so that they can run minions on dev boxes without human permission checks. Of course, this also gives you
+11:38
+parallelization without the overhead of something like Git Work trees, which just falls apart at certain scales. All
+11:44
+right, after some time, the Git Work trees just fall apart. You're going to need your own dedicated device. I have a
+11:50
+Mac Mini here as a local personal kind of private device. But recently, I also
+11:55
+just said, "Screw it. I'm going to need more scale." And I started spinning up entire dev boxes for my agents on, you
+12:01
+know, use your favorite cloud hosting tool, GCP, AWS, and some of the other ephemeral agent sandbox tools like E2B,
+12:08
+modal, so on so forth. But this is a really big idea, right? Um, the more autonomy you give your agents and the more you set up their environment to be
+12:14
+yours, the more they can act and perform as you would. The core agent loop runs on a fork of blocks coding agent, goose.
+12:22
+One of the first widely used coding agents, which they forked early on. So shout out Goose. They took this and they
+12:28
+customized the orchestration flow in an opinionated way to interle agent loops
+12:33
+and deterministic code. Huge huge huge idea here and they're going to expand on this even more in a moment here with one
+12:40
+of the big ideas they talk about later which is their blueprint engine. Okay, so this is a huge huge huge idea. Let me
+12:47
+just emphasize this. You want to be interle agent loop with deterministic code and what type of operations right
+12:52
+we're talking get liners and most importantly testing. Okay, this lets your agents, your system operate with
+12:58
+feedback. And this gives you the best of both worlds. You get the deterministic world and the non-deterministic
+13:05
+reasoning creativity world. And they explicitly say that here they run a mix of creativity of the agent with
+13:10
+asurances that they'll always complete stripe specific steps like llinters. So
+13:16
+here we have stripe agentic engineering determinism with agents. All right. So a couple additional things to note here.
+13:22
+connected to MCP. They use cursor and clawed code and some conditions. They operate agent rule files. We'll talk
+13:28
+about that more in a second. This solves the large context problem for Stripe. All agent rules are conditionally
+13:34
+applied based on subdirectories. Super important. They have MCP as I mentioned. They have this tool shed idea which is
+13:41
+basically a meta tool to help them select one or more of their 400 MCP tools. Okay. A really big piece of why
+13:49
+this blog post is so incredible, you know, shout out to the Stripe engineers, shout out to Alistar Gray, is the fact
+13:54
+that they're operating at such a massive scale, at such success, and they're still gaining massive value from their
+14:00
+agents and from their agentic layer that they're building. All right, managers are built with a goal of oneshotting, but if they don't, the key is to give
+14:06
+them feedback. Key key idea. Two more ideas here. We seek to shift feedback left when thinking about developer
+14:12
+productivity. The best thing for humans and agents is basically you want the issues to happen earlier rather than
+14:18
+later, right? On the engineers's device, on the agents device as early in the process as possible. All right? And then
+14:24
+if local testing doesn't catch anything, they have a whole suite of tests over 3 million tests that run upon push. Key
+14:31
+idea here, they figured out a way to selectively run tests on push. All right? And they're choosing from many of
+14:38
+3 million tests. Okay? And this is going to, as you can imagine, offer feedback to their agentic system. Now, here's
+14:44
+something that I would critique Stripe on a little bit here. Due to the cost constraints, they only let their minion
+14:50
+run at most two rounds of CI. All right, so you can imagine at this scale that they have to just limit this for it to
+14:56
+be costefficient. This is where I would push back a little bit. We'll talk about that later, but this is a interesting thing here, right? So, they basically
+15:02
+limited the rounds of feedback for their minion to just two. This is part one of their blog. Let's look at part two and
+15:08
+dig into some of the details of some of these key nodes, right? Specifically, their agent sandbox and their powerful
+15:14
+blueprint engine because their blueprint engine sits at the center of how they operate their strike minions at scale.
+15:25
+So, here's part two, dev boxes hot and ready. So for maximum effectiveness, their minion agents requires a cloud
+15:32
+developer environment that's paralyzable, predictable, and isolated. So this is very clearly an agent
+15:38
+sandbox. Okay, it gives them a place to operate at scale with full autonomy. And if something goes wrong, if they destroy
+15:45
+something, the agent can't cause as much damage as they could if they were operating your device or god forbid a
+15:51
+device connected to the production system. And I completely agree. Containerization, get work trees,
+15:56
+they're great, but they have hard limits and it's hard to really really scale without giving each agent their own
+16:03
+device, right? Again, if you want your agent to perform like you, give them the tools that you have. All right. What
+16:08
+else can we learn about Stripes Devbox here? So, very cool. Stripes Devbox is a
+16:14
+full-on computer, right? It's an EC2 instance and it contains their source
+16:19
+code and services under development. Very, very cool. Many engineers use one dev box per tasks and this means that
+16:26
+every engineer might have half a dozen running at a time. Check out how awesome this is, right? They're allowing their
+16:31
+engineers to scale their impact by allowing parallelization of their agents and every agent has their own sandbox.
+16:38
+Okay, so a question I would ask them is, do their minions have access to additional minion sub agents or not even
+16:45
+sub agents, other primary agents that are specialized across their code base? Very cool stuff here. This is again part
+16:51
+of their agentic system, right? It's giving and servicing scale very very quickly so that engineers can knock out
+16:58
+more problems than ever before. All right, we want it to feel effortless to spin up new dev boxes. Right, ready in
+17:04
+10 seconds. Hot and ready. So fantastic. The raw pieces of engineering should feel effortless. You want to be building
+17:10
+systems that allow you to move at the agentic speed, the speed of agents. Something kind of funny happened to me
+17:17
+the other day while I was reading this blog. Actually, I'll throw the image on the screen. I had to save it. The agentic speed is just insane. Your
+17:23
+agents can process information much, much faster than you can. I was reading through this blog, you know, took me
+17:28
+maybe, you know, 20 minutes to read through part one and part two, take notes on this. I also spun up a cloud
+17:34
+code agent to read the blog alongside me. It read the whole thing, of course, in what was it, 5 seconds. And so I just
+17:41
+had like a really funny interaction where uh you know I was shocked and then you know I said something and the agent
+17:48
+literally said nothing. It was the first time I've ever had my agent respond with nothing. It was just a really
+17:53
+interesting interaction point. And and this is the agentic speed, right? It's this multiplied by every single agent
+17:59
+you can spin up. Your agents can read, they can code, they can engineer at agentic speed. So you need to build the
+18:04
+system that allows you to tap into that. And you can see here Stripe is doing that with their powerful dev boxes that
+18:10
+spin up in just 10 seconds and it somehow sets up their entire gigantic repository. Millions of lines of code,
+18:17
+tens and thousands, probably hundreds of thousands of files. All right. And you know, props to Stripe. We built out dev
+18:22
+boxes for the needs of human engineers long before LLM coding agents. As it turns out, parallelism, predictability,
+18:29
+isolation were very, very good properties for engineers as well as agents. Fantastic. We're almost at the
+18:35
+blueprint, which is a really, really big idea. But let's talk about their agent a little bit more, right? So, they built this on their own. They forked Goose.
+18:42
+Let me be clear about that. They forked Goose and then they customized it to work within Stripe's LLM infrastructure.
+18:49
+Okay? So, you can imagine they have custom prompts, custom skills, custom agents, and then they customize the
+18:55
+agent harness. All right? And again, this was the big idea we talked about in last week's video. I'll leave that
+19:00
+linked in the description for you if you're interested. Customizing your Aentic harness gives you a massive edge.
+19:06
+You can do it your way. You can build it to fit the needs of your specific problem. Okay, once again, I want to
+19:12
+beat this idea over the head. Specialization is the advantage of every engineer. Now, you can build specialized
+19:19
+solutions, specialized developer tools to help you solve your problems at the agentic speed. Okay, the speed of
+19:26
+agents, not the speed of humans. And so they focus their use on the needs of minions rather than human supervised
+19:33
+tools. And this is another big idea we need to double click into. That's the use case well filled by third-party
+19:39
+tools such as cursor and claw code. Okay, which are made readily available for our engineers. So a couple things
+19:44
+here. They're not limiting, they're not forcing their engineers to use any specific tooling. That's a terrible idea in general. But what they are doing is
+19:51
+building two types of agent coding tools. Inloop and outloop. I've talked about this on the channel before. This
+19:58
+is a critical idea to get right if you want to do more with your agentic engineering. When you are in loop
+20:03
+agentic coding, your butts in the seat at your desk and you're prompting back and forth and back and forth and back
+20:09
+and forth. This is great for highly specialized work. This is great for when you're building the system that builds
+20:14
+the system, but this is bad for everything else. Okay? Uh as a general rule, I recommend to engineers now that
+20:20
+you spend more than 50% of your time building the system of agents that build
+20:25
+your application for you. That's inloop, right? And that's really the value prop of inloop. You get full control. You can
+20:30
+see everything. It's very manual, but it is very slow and expensive. You're using human engineered time. Then there's
+20:36
+outloop agent coding. And this is what Stripe's minions offer Stripe. Okay, they are building an Outloop system that
+20:42
+operates at scale in parallel in the dev box, right? In dedicated agent
+20:47
+sandboxes. This is a big big idea. Why is that? It's because now instead of having one engineer with one terminal or
+20:54
+one engineer with three terminals, you can have one engineer with six agent sandboxes operating and solving problems
+21:01
+at scale in parallel, right? And six is just the beginning of this. The whole idea here is that you should be handing
+21:06
+off more work over time to your Outloop system. If you're building a great agentic layer, if you're building a
+21:12
+great system that has agents operating your services for you, you should slowly
+21:17
+be handing off more work to them. Okay? And that saves you from the expensive time that you'll spend. And you know,
+21:24
+never forget your time is your most important resource. It is constantly running out. Okay? Let me just be super
+21:30
+clear about that. But your your agentic systems, you can clone, you can dupe, you can parallelize these as far as your
+21:37
+system allows you to. All right? And that's the lever that agentic engineering unlocks. If you build the
+21:43
+system that builds the system, you get massive, massive reasoning at scale. you
+21:48
+get access to intelligence that engineers your way and at some point better than your way. But uh that's key.
+21:54
+So I just wanted to to really dial into that. Minions give Stripe engineers access to outloop agentic coding. Very
+22:01
+very powerful. And so they talk about specialization a little bit more. And you know they're really hitting on this
+22:06
+this idea I just mentioned there. Offtheshelf local coding agents are usually optimized for workflows where
+22:12
+the engineer is sitting looking over his shoulder, right? And I just call this babysitting the agent. Minions are fully
+22:18
+unattended and so their agent harness can't use humanfacing features. Okay, they built the minion to be fully
+22:25
+autonomous, right? They're built so that humans cannot interject. That's not the point, right? The point is that they
+22:31
+operate on their own. Again, inloop agent coding, outloop agentic coding. Cloud code minions. Okay? And just to
+22:37
+emphasize it once again, you know, cloud code has the ability cursor has the cursor CLI. And of course, there are
+22:42
+great tools we've covered on the channel like pi.dev dev or you can programmatically inject these into your
+22:48
+Outloop systems, right? You can deploy an agent outside the loop and have them run on a cron job, have them run via an
+22:54
+API request, so on and so forth. All right, that is where all agent engineers must move to get massive leverage. You
+23:01
+can see stripes engineers using minions to do just that. All right, so uh they
+23:06
+talk about permissions. Uh let's focus on the big idea here right next to dev boxes. The next most important thing
+23:12
+here for sure is their blueprint engine. So let's talk about this thing. So what is this? So they talk about workflows
+23:17
+versus agents. They talk about loops. They talk about, you know, series of steps, which is like the workflow. This
+23:23
+is what a lot of prompts and skills actually are. They're just steps that you want to work through. Sometimes you
+23:28
+have an agent that's actually doing some intelligent reasoning, right? Loop with tools. But you can do much better than
+23:34
+that. You can push a lot further. And that's exactly what Stripe has done. Minions are orchestrated with a primitive we call blueprints. Blueprints
+23:41
+are workflows designed in code that direct a minion run. Okay. And then they go on to say blueprints combine the
+23:48
+determinism of workflows with agents flexibility in dealing with the unknown.
+23:54
+What is this? Every tactical agent coding member knows this as an ADW, an
+23:59
+AI developer workflow. This is the past and the future. This is code plus your agent. Okay, this is the highest
+24:06
+leverage point of agent coding is when you put these two together. You have step-by-step workflows that have
+24:11
+determinism and non-determinism put together. In essence, a blueprint is like a collection of Asian skills
+24:17
+interwoven with deterministic code so that particular subtasks can be handled most appropriately. Okay, there are some
+24:25
+things like a llinter for instance or like a git commit or a whole number of things, right? Running tests, creating
+24:31
+certain structures, creating certain templates, certain reusable pieces, certain hard deterministic code
+24:37
+pathways. There are certain pieces that an agent would perform worse in. Adding an agent to specific steps actually
+24:43
+makes the whole system worse, more brittle, and more expensive, frankly. So, for these steps, why would you throw
+24:49
+an agent at that problem? Right? The real advantage that Stripe has completely identified here with blueprints is the fact that agents plus
+24:56
+code beats agents alone and agents plus code beats code alone. That's the big idea here. So, Alistar goes on to break
+25:03
+this concept down here. You have the agent call here implement the task fix the CI failures whatever but you also
+25:10
+have the actual nodes run configuration lenders push changes which are fully deterministic okay they don't invoke an
+25:16
+LM at all they just run code so imagine you know some toptobottom process where you have agent running and then you have
+25:22
+code running and then you have agent running and then you have code running right so on and so forth this is what you want to build right it's this it's
+25:28
+the combination of both the agent and your code okay because not everything needs an agent and not Everything needs
+25:35
+code. Okay, very very powerful idea here. Another advantage of creating these blueprints of combining code plus
+25:41
+agents is that their blueprint machinery makes contact engineering with sub agents easy. Why is that? It's because
+25:46
+they're operating at a specific step. And so at that step, you might constrain the tools, you might constrain the system prompt, right? Or you might
+25:52
+modify the conversation required by the subtask at hand. Okay? And again, we're hitting on this idea of specialization.
+25:59
+There are specific steps in your engineering, in your product, in your tool that you've uniquely implemented.
+26:05
+Okay? And so when you can break that down into determinism or in a gentic process step by step, this allows you to
+26:12
+specialize, right? And so, you know, once again, what are we doing? We're back at foundational engineering. If
+26:17
+you're trying to tackle a big problem, chunk it up into small pieces. every big problem is just a you know a few small
+26:23
+problems put together and then chunk those problems into types and then give it to code or give it to agents. Okay,
+26:30
+that's what their blueprint system is effectively doing. To me, this is the highest leverage point. This is what
+26:35
+makes their agentic layer, their agentic system so powerful. It's the combination
+26:40
+of code and agents inside of a repeatable format for success. Okay?
+26:46
+Because guess what they can do? They can now deploy meta aentics. they can effectively create an agent that builds
+26:52
+their blueprint just in the right way and then they can validate it, right? They I wouldn't be surprised if they had
+26:58
+a blueprint for creating blueprints. All right. Anyway, let's move into context. So, they use the rule files setup that
+27:05
+you know is much like claude.md or agents.md due to the size of the
+27:10
+repository they can't have unconditional job rules. So, they need a specific solution to do this. They're using a standardized rule format much like
+27:17
+cursors. All right. So this is a rule format that looks like this. So you have your primary directory whatever tool
+27:22
+you're using you know tries to claim that name and then you have / rules and
+27:27
+then you have some markdown files right but the interesting part is that you have a markdown file with some front matter. All right, front matter is going
+27:34
+to be you know MDC files are like the most popular file format and for good reason right so they have these rules
+27:40
+here where you can specify the glob pattern in which to activate this context or you know a specific subset of
+27:47
+this context and then they have rule anatomy you can imply intelligently or you can apply only when specific files
+27:54
+are being accessed. All right. And so this gives you more control over the context that's loaded as you're
+28:00
+accessing different directories throughout your codebase. Okay. And so this is the structure that Stripe
+28:05
+Minions use, right? And the big line is right here. We almost exclusively give minions context from files that are
+28:12
+scoped to specific subdirectories or patterns automatically attached as the agent traverses the file system. And
+28:19
+they're using the, you know, kind of cursor rules to do that. And so they've combined it with a format from cloud
+28:24
+code. Once again here you can see that they're building customized agentic solutions that best solves the problems
+28:31
+they're facing. Okay and they're combining the best for the industry. I'm not saying that you know cursor agents or claw code agents or how they do
+28:37
+things is wrong. That's not the point. There are many ways to do things. The question is what's the best way for you
+28:42
+and how do you get the most leverage out of what's available? We can see stripe engineers doing exactly that. Last important idea to mention here is
+28:49
+Stripes gathering MCPs. Right. So what are and and how does Stripe put together
+28:55
+the tools? So as we all know tools are an essential element of the core for
+29:00
+context model prompt tools. Tools is what created agentic coding, right? It's the only reason that any of this is
+29:06
+possible because our agents can now use tools to take actions as we can. So how does Stripe handle their 500 MCP tools?
+29:14
+Won't this immediately cause a token explosion? Absolutely right. It totally would. What they've done here is they've
+29:20
+built a tool shed. They built a centralized internal MCP server called a tool shed which makes it easy for Stripe
+29:26
+engineers to make new tools and they're automatically discoverable in their agentic systems. Very very powerful
+29:32
+stuff here. Okay. All very agentic systems are able to use the tool shed. I want to be super clear about this. We're
+29:37
+talking about meta agentics. This is something that keeps coming up over and over. You build prompts that create
+29:42
+prompts. You make agents that build agents. You have skills that build skills. You have tools that allow you to select tools. Okay. The tool shed is a
+29:50
+tool that unlocks tools for their agents. Okay, so these are called
+29:55
+metaagentics and they're a powerful way to solve the class of problems, right?
+30:00
+To to solve repeat problems in the space of agents. And you know, to be clear, this is not new at all, right? OG
+30:06
+engineers watching, you've heard of like things like meta programming, right? Passing functions into functions. This
+30:12
+is not a new phenomenon, but what is new and what's really important for you and I to focus on when we're building out these powerful agentic layers is to
+30:18
+think about when we need to build the thing that builds the thing, right? So, Stripe uses a tool shed to create and
+30:26
+connect to over 500 or nearly 500 MCP tools. Okay? Very, very powerful. And
+30:32
+you can imagine they have all types of internal and external services that they want to connect to. And the tool shed lets them do that. This was completely
+30:39
+net new to me. I had not seen a concept like this before. I think this is really cool. A tool shed centralized location
+30:44
+to load specific tools. So, you know, big shout out to the team for uh for building something like this. And then
+30:51
+lastly, you know, one of the big ideas they talk about and that's just super critical for engineering. Like this is just great engineering. You just
+30:56
+iterate, right? All this stuff is so new. All this stuff is moving so quickly. You and I strip engineers. Doesn't really matter who you are. It's
+31:02
+not about what you can do anymore. It's about what you can teach your agents to do for you. Okay? This is a big idea.
+31:08
+It's one of the central thesis we talk about in tactical agentic coding in addition to building agentic layers like
+31:15
+handing off work and thinking about your agents as tools that you're templating into and templating your engineering
+31:21
+into. That's the name of the game, right? Teach your agents how to build like you would so you can scale them to
+31:27
+the moon. All right, so what else do we have here? A lot of really great ideas. I'm curious what you think if you've operated in code bases with more than
+31:34
+10,000 files. Comment down below what would you rank Stripe's agentic layer based on everything we've gone through
+31:40
+here and you know our highle understanding of their system right they have multiple CI entry points they have
+31:46
+EC2 agent sandboxes that mirror developer environments they have their own custom agent harness they have a
+31:52
+customizable blueprint engine that lets them combine code and agents together to outperform either they have rules file
+31:59
+for context engineering they have tool shed for selecting one of 500 tools or
+32:04
+many of 500 tools tools. They of course have CI for self validation and they have GitHub PRs to review the work their
+32:10
+agents have done on their dedicated agent sandboxes. All right, so rank this. I'm super curious what you think.
+32:16
+Rank Stripes agentic layer out of 10. I'm going to go ahead and give them and and you know again if you've worked on
+32:23
+code bases that are larger than 10,000 files, no offense, guys, but I don't want to hear a vibe coders opinion on Stripe's endto-end system. But for mid
+32:29
+to senior level plus engineers, I'd love to hear what you think. I'm going to give Stripe an eight out of 10. Okay, so
+32:35
+very very very powerful agent layer. And let me be super clear here. I have no ego in this. Let me say it this way. I
+32:41
+cannot solve Stripe's programmable financial infrastructure problems better than any one of their engineers on their
+32:46
+team could. They own that problem in this problem space. So that's not what I'm saying at all. They are the experts there for sure. My expertise is in
+32:53
+agentic engineering. It's in building agentic layers. And so I only have two notes of of feedback for them here that
+32:59
+I would pitch to them as potential improvements. The first thing is this. you know, they they identify this right away. Why only two rounds of feedback in
+33:06
+their CI for their agents? Okay. And so they say, you know, speed, completeness, cost, time, compute, blah blah blah.
+33:11
+These are fair constraints and reasons to only run two rounds. But I think this is a mistake, frankly. Think about
+33:17
+yourself as an engineer. Has anyone ever said to you, "Solve this problem. You have two attempts."
+33:22
+All right? You just have two shots at this. Uh, no. No one said that. Right? It often takes us tens and hundreds of
+33:28
+times to get something right. So, I think limiting their minions to just two shots is potentially going to cost them
+33:35
+more developer time and also increase the gap between the next learning of how
+33:41
+to improve their agentic system by letting their agents run more, right? Like, I think the learnings you get from
+33:46
+running five rounds of your agent is going to be a lot more informative than running just two. All right, but I could be totally wrong. Again, they know their
+33:52
+system better than we do. All right, but that's my first note. And my last note here is in the language of their
+33:59
+minions. So, you know, they call these end to-end agents, but you might have noticed they have a prompt step and they
+34:07
+have a review step. Okay, that's two steps. End to end is this, right? And
+34:13
+you take out the review, right? It's prompt to production, P2P. Okay? And this is something we've talked about
+34:19
+inside of Tactical Agentic Coding. This is the northstar for all agentic engineers. This is an idea, a concept
+34:26
+called ZTE, zero touch engineering, prompt to production. No review, no
+34:31
+human in the loop. I want to be a little critical about their language here. I know that this is industry standard and
+34:36
+of course, again, of course, they're operating on a scale most of us engineers will never get to, but that's
+34:43
+what I would push Stripe to think about next. What are the lowlevel simple tasks? maybe some lower risk tasks,
+34:49
+developer tools stuff, you know, some non-userfacing stuff and even some userfacing stuff that they could ship
+34:54
+actually end to end. And the value isn't in doing it. It's in answering the question, what would it take for you to
+35:01
+run a prompt and trust that your agentic system can deliver this to production
+35:06
+without human oversight, right? The value is in the journey of the question. So, that's that's another area where I
+35:12
+would just like really try to push the Stripe engineers to that next next level. Um, I made a prediction on this
+35:17
+at the end of last year in our 2026 top 2% engineering video. I think in 2026
+35:23
+we're going to see a blog post very similar to this where an engineer operating at serious scale, we're
+35:28
+talking tens of millions in revenue. I predict we're going to see a blog post where they break down their agentic layer and talk about how they ship from
+35:35
+prompt to production with ZTE zero touch engineering. So those are the only two notes I have. Again, you know, I'm not
+35:42
+trying to Stripe has some of the most cracked engineers on the planet. This is just a note on the agentic system and not a
+35:49
+note on any of their true core domain problem because again, if you operate a
+35:55
+specific domain for years and years, no one knows how to solve it better than you do. All right, so those are my two notes. Big shout out to the Strap
+36:01
+Engineering team and you know, Alistar Gray for writing this up. This is a great post. This really caught my eye
+36:07
+and I thought it would be valuable to share with you here because it really emphasizes that point that building a
+36:12
+powerful agentic layer really comes down to owning all the pieces bottom to top.
+36:18
+Now there is a point in which you want to start owning your agentic technology,
+36:23
+right? And again, if you're like creating a brand new net new product, you probably don't need to do that for a
+36:29
+while. You just don't have the scale for it out of the box. It's going to work for you for a while. But then there's
+36:34
+going to be a point where you're going to need a specific solution, right? A customized solution to solve a specific
+36:40
+problem. And you want to boil that all the way down just like your application is a is a, you know, a detailed edge
+36:47
+case covering solution. Your agent should reflect that too. That's why we covered the PI coding agent. There are
+36:54
+many, but this one is mine. And the whole idea here that I want to, you know, connect with you on is that
+36:59
+specialization goes all the way up the chain, all the way into the agent harness, all the way to your stack of
+37:05
+technology that you operate. So anyway, big shout out to Stripe Engineers. This was really fun. I like blogs like this.
+37:11
+You know, frankly, I'm getting a bit tired of everyone hyperfixating on models and prompts and skills. Like
+37:18
+let's let's uplevel this and talk about the systems that have agents inside of them that contain agents and that
+37:25
+contain code and that contain, you know, modern engineering technology that puts it all together to generate real value
+37:32
+for you, your team, your company, and ultimately your users and customers, right? Because that's where the value
+37:37
+really is. That's what makes all this stuff actually matter at all. All right? If you're still watching, first off, you
+37:42
+know, big thanks to you. I hope these ideas make sense. You really want to be thinking about the agentic layer as a
+37:48
+whole, not just your coding tool, not just the models. Let's let's ease up on the obsession on these, you know, models
+37:54
+and who's winning and what genera company is more just let's focus on solving problems by building agentic
+38:01
+layers with the key pieces. All right? And Stripe has outlined a lot of them, right? Like every agentic layer, every
+38:08
+product is going to run into the problems that each one of these nodes is a solution to. So let's pay attention to
+38:14
+them, right? Let's think about how these are pieces to the puzzle of building at scale with agents. All right? And this
+38:20
+is just one interpretation. Uh no one has all the answers right now. But it's about collecting the right context to
+38:26
+solving the problem of agentic engineering. Right? And and pushing what you can do further beyond before the
+38:33
+industry before the mainstream catches up. All right. Everything we do in engineering represents an asymmetry of
+38:39
+information and then technology and then results with your product, with your tool, with your team, so on and so
+38:45
+forth. All right? So, you want to be pushing forward on this stuff. Don't let up the gas. Stay focused on valuable
+38:51
+information like this blog and, you know, me being biased, but like this channel. I really try to focus in on
+38:57
+concrete signal in the industry, not hype, not slop. There's going to be a lot of both of those as we move week
+39:03
+after week. But I want this to be a place where you, the engineer, can come to focus and get some serious insight on
+39:09
+how you can continue to win in the age of agents. If you made it to the end and you like this content, definitely feel
+39:15
+free to check out tactical agentic coding. This is my take on how to scale far beyond AI coding and vibe coding
+39:21
+with advanced agentic engineering so powerful your codebase runs itself. As
+39:26
+you can imagine, a lot of the ideas detailed in this blog, detailed in the architecture of how Stripes built their
+39:33
+agentic coding tool has been detailed in here. All right, I'll I'll be honest, I'm not like gloating or anything. I've
+39:40
+been early to this. This is what happens when you're a first mover, when you bet big on an emerging technology.
+39:45
+Everything you're going to see over the next year, I have in tactical Agenta coding and Agenta Horizon, the second
+39:50
+part of this course detailed here. So, if you're interested, I'm going to leave a link to this. You can see all the
+39:56
+ideas are really in stone here and thousands of engineers, some of your favorite engineers mind you, are inside
+40:02
+of this course, have taken this course and have gotten massive value and are moving ahead of the curve. So, I'm going
+40:07
+to leave this in here, link in the description for you. Of course, I'm also going to link the minions post.
+40:13
+Definitely give this a look and I'll bet that if we search hiring. Yeah, so Stripe is hiring. If you're an agent
+40:18
+that's interested in this, you can tell them that Andy Deb Dan sent you if you want. And again, just big shout out to the Stripe team. This is really great
+40:24
+stuff. really great engineering in the age of agents. No matter what, stay focused and keep building.
