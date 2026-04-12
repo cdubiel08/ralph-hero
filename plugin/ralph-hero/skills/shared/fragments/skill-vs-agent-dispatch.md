@@ -23,6 +23,7 @@ Each autonomous skill has a dedicated agent for team mode dispatch:
 | `ralph-hero:pr-agent` | ralph-pr | haiku |
 | `ralph-hero:merge-agent` | ralph-merge | haiku |
 | `ralph-hero:val-agent` | ralph-val | haiku |
+| `ralph-hero:finish-agent` | finish | sonnet |
 
 ### Single-Session: Skill() Dispatch
 

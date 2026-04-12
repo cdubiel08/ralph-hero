@@ -1,5 +1,5 @@
 ---
-date: 2026-04-03
+date: 2026-04-07
 status: approved
 type: plan
 tags: [ralph-hero, autonomous-mode, loop-runner, code-review, integrator]
@@ -16,6 +16,7 @@ primary_issue: 731
 
 - builds_on:: [[2026-01-19-naive-hero-autonomous-loop]]
 - builds_on:: [[2026-02-13-group-LAN-361-ralph-github-plugin]]
+- supersedes:: prior approved plan (2026-04-03) — updated to reflect PRs #743 and #757
 
 ## Overview
 
@@ -30,21 +31,24 @@ Complete the ralph-hero autonomous loop (`ralph-loop.sh`) so it drives issues fr
 - All analyst/builder skills (`ralph-triage` through `ralph-impl`) are `context: fork` with hooks
 - `ralph-pr`, `ralph-val`, `ralph-merge` skills exist but are NOT in the loop
 - `code-review:code-review` plugin runs headlessly and posts PR comments
+- `finish` skill (PR #743) chains val → merge → CI watch with a code-review fix cycle
+- `ralph-merge` (PR #757) already handles `RALPH_REVIEW_MODE=auto` — runs code review headlessly and outputs `CODE_REVIEW_FEEDBACK` status when changes requested
 
 **What's broken/missing:**
-1. **Queue-empty text mismatch** — `run_claude` greps for `"Queue empty"` but `ralph-triage` outputs `"Triage complete"` (never signals empty to the loop)
-2. **Review defaults to `skip`** — Full auto should default to `auto` (Opus auto-approves good plans)
-3. **No integrator phases** — After impl, issues sit in "In Review" with no PR, no code review, no merge
-4. **`ralph-merge` is interactive** — Step 4 uses `AskUserQuestion` which blocks headless execution
-5. **No `ralph-code-review` skill** — Nothing orchestrates: find PR → run code-review → address feedback → re-review loop
-6. **Integrator placeholder** — `ralph-loop.sh:220-223` has `# Future: run_claude "/ralph-hero:ralph-integrate"` but no implementation
+1. **Queue-empty text mismatch** — `run_claude` greps for `"Queue empty"` (`ralph-loop.sh:128`) but `ralph-triage` outputs `"Triage complete"` (`ralph-triage/SKILL.md:93`), never signaling empty to the loop
+2. **Review defaults to `interactive`** — `ralph-loop.sh:54` has `RALPH_REVIEW_MODE:-interactive`; justfile has `review="skip"` (`justfile:203`). Full auto should default to `auto` in both places.
+3. **No integrator phases** — After impl, issues sit in "In Progress" with no validation, PR, code review, or merge. `ralph-loop.sh:220-223` is a stub.
+4. **No queue-picking in integrator skills** — `ralph-val`, `ralph-pr`, `ralph-merge` all require an explicit issue number; none have `list_issues` in allowed-tools.
+5. **No `ralph-code-review` skill** — Nothing orchestrates: find PR → run code-review → address feedback → re-review. (The `finish` skill handles this for single-issue use, but the loop needs a standalone per-phase skill.)
+6. **No autonomous merge gate** — `ralph-merge` merges without checking CI status. Need `RALPH_AUTO_MERGE` flag with CI validation.
 
 ### Key Discoveries:
 - `ralph-impl` Step 2 already detects "In Review" + PR comments → enters **Address Mode** automatically (`ralph-impl/SKILL.md:88-95`)
-- `code-review:code-review` auto-detects PR from `gh` context, posts comments above confidence 80, uses 5 parallel Sonnet reviewers (`commands/code-review.md`)
-- `ralph-merge` checks `gh pr view NNN --json reviewDecision` for approval status (`ralph-merge/SKILL.md:86-89`)
-- `ralph-pr` is model `haiku` — lightweight, just pushes branch + creates PR via `gh` (`ralph-pr/SKILL.md:6`)
-- `ralph-val` runs automated verification from the plan document before PR creation (`ralph-val/SKILL.md:100-110`)
+- `code-review:code-review` auto-detects PR from `gh` context, posts comments above confidence 80, uses 5 parallel Sonnet reviewers
+- `ralph-merge` Step 4 already handles `RALPH_REVIEW_MODE=auto` for code review (`ralph-merge/SKILL.md:107-127`). The `RALPH_AUTO_MERGE` flag is a separate concern — CI gate for the merge itself.
+- `ralph-pr` is model `haiku` — lightweight, just pushes branch + creates PR via `gh`
+- `ralph-val` runs automated verification from the plan document before PR creation
+- Agent tools lists and skill allowed-tools both need updating — loop invokes skills via `claude -p`, hero/finish dispatches agents via `Agent()`
 
 ## Desired End State
 
@@ -67,12 +71,14 @@ hygiene → triage → split → research → plan → review → impl → val �
 - No postmortem generation at loop completion (exists as a skill, wire later)
 - No parallel ticket processing within a single phase (one ticket per phase per iteration)
 - No GitHub Actions integration for CI triggering (we rely on existing CI via `gh pr checks`)
-- No changes to the hero orchestrator skill — this plan targets `ralph-loop.sh` only
-- No new MCP server tools — all needed tools already exist
+- No changes to the hero orchestrator skill or finish skill — this plan targets `ralph-loop.sh` and integrator skills only
+- No new MCP server tools — all needed tools already exist (but `state-resolution.ts` needs a new command entry for `ralph_code_review`)
 
 ## Implementation Approach
 
-One new skill (`ralph-code-review`), queue-picking logic added to three existing skills (`ralph-val`, `ralph-pr`, `ralph-merge`), and loop script extension. The queue-picking additions are mechanical — each skill gets a "If no issue number" branch that queries `list_issues` for the appropriate workflow state, identical to the pattern used by `ralph-impl` and `ralph-research`.
+One new skill (`ralph-code-review`), one new agent (`code-review-agent`), queue-picking logic added to three existing skills + agents (`ralph-val`, `ralph-pr`, `ralph-merge`), and loop script extension. The queue-picking additions are mechanical — each skill gets a "If no issue number" branch that queries `list_issues` for the appropriate workflow state, identical to the pattern used by `ralph-impl` and `ralph-research`.
+
+**Relationship to finish skill**: The `finish` skill already chains val→merge→CI with a code-review fix cycle for single-issue use (hero/interactive). The loop uses individual phases so different issues can be at different pipeline stages. These stay fully separate — no changes to `finish` or `hero`.
 
 ---
 
@@ -99,26 +105,38 @@ No untriaged issues in Backlog. Queue empty.
 #### 2. Note: `ralph-hygiene` is always-run (no queue-empty needed)
 `ralph-hygiene` is a board-scanning skill that always produces an archive eligibility report. It has no concept of "no work" — it always runs. The loop already handles it correctly: line 149 calls `run_claude` without checking the return value for queue-empty, and `work_done=true` is set unconditionally. **No changes needed for hygiene.**
 
-#### 3. Change review default from `skip` to `auto` (script AND justfile together)
+#### 3. Change review default from `interactive` to `auto` (script AND justfile together)
 **File**: `plugin/ralph-hero/scripts/ralph-loop.sh`
 **Changes**: Line 54 — change `REVIEW_MODE` default:
 
 ```bash
-# Before
-REVIEW_MODE="${RALPH_REVIEW_MODE:-skip}"
+# Before (line 54)
+REVIEW_MODE="${RALPH_REVIEW_MODE:-interactive}"
 
 # After
 REVIEW_MODE="${RALPH_REVIEW_MODE:-auto}"
 ```
 
-This means `just loop` now auto-reviews plans instead of skipping review. Users who want to skip can still pass `--review=skip`.
+Also update the usage comment at line 14:
+```bash
+# Before
+#   --review=skip        Skip review phase (default, backwards compatible)
+# After
+#   --review=auto        Opus critiques plan automatically (default)
+```
 
-#### 4. Change justfile `loop` recipe review default to match
+This means `just loop` now auto-reviews plans instead of using interactive review. Users who want the old behavior can pass `--review=interactive` or `--review=skip`.
+
+#### 4. Change justfile `loop` recipe review default and budget
 **File**: `plugin/ralph-hero/justfile`
-**Changes**: In the `loop` recipe (around line 203), change the `review` parameter default from `"skip"` to `"auto"`:
+**Changes**: Line 203 — change the `review` default from `"skip"` to `"auto"` and bump budget from `"5.00"` to `"8.00"`:
 
 ```just
-loop mode="all" review="auto" split="auto" ...
+# Before (line 203)
+loop mode="all" review="skip" split="auto" hygiene="auto" budget="5.00" timeout="60m":
+
+# After
+loop mode="all" review="auto" split="auto" hygiene="auto" budget="8.00" timeout="60m":
 ```
 
 This keeps the script default and justfile default in sync (both changed in Phase 1).
@@ -132,18 +150,18 @@ This keeps the script default and justfile default in sync (both changed in Phas
 if echo "$output" | grep -qi "Queue empty"; then
 
 # After
-if echo "$output" | grep -qiE "Queue empty|No .* issues|Triage complete"; then
+if echo "$output" | grep -qiE "Queue empty|Triage complete"; then
 ```
 
-This catches existing skills that haven't been updated yet and provides a safety net.
+This catches ralph-triage's legacy output as a safety net. We intentionally do NOT use a broad pattern like `No .* issues` — it would false-positive on normal skill output (e.g., "No substantive issues found" in val reports), causing the loop to misinterpret successful work as "queue empty".
 
 ### Success Criteria:
 
 #### Automated Verification:
 - [ ] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns ≥1
-- [ ] `grep 'REVIEW_MODE.*:-' plugin/ralph-hero/scripts/ralph-loop.sh` shows `auto` not `skip`
+- [ ] `grep 'REVIEW_MODE.*:-' plugin/ralph-hero/scripts/ralph-loop.sh` shows `auto` not `interactive`
 - [ ] `grep 'review="auto"' plugin/ralph-hero/justfile` confirms justfile default matches
-- [ ] `grep -E 'Queue empty|No .* issues' plugin/ralph-hero/scripts/ralph-loop.sh` matches the broadened pattern
+- [ ] `grep -E 'Queue empty\|Triage complete' plugin/ralph-hero/scripts/ralph-loop.sh` matches the safety-net pattern
 
 #### Manual Verification:
 - [ ] Run `just triage` on an empty backlog — output includes "Queue empty"
@@ -156,23 +174,24 @@ This catches existing skills that haven't been updated yet and provides a safety
 ### Overview
 `ralph-val`, `ralph-pr`, and `ralph-merge` all require an issue number argument and have no self-selection logic. The loop invokes skills without arguments (like `ralph-triage` and `ralph-impl` which self-select). Add "If no issue number" queue-picking branches to each skill, following the same pattern used by `ralph-impl` Step 1.
 
-**Note**: Each skill also needs `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to its `allowed-tools` frontmatter to support the queue-picking queries.
+Each skill needs `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to its `allowed-tools` frontmatter (for loop invocation via `claude -p`). Each corresponding agent definition needs `list_issues` added to its `tools:` field (for hero/finish invocation via `Agent()`).
 
 ### Changes Required:
 
 #### 1. Add queue-picking to `ralph-val`
 **File**: `plugin/ralph-hero/skills/ralph-val/SKILL.md`
-**Changes**: Add `list_issues` to `allowed-tools` frontmatter. In Step 1, add a fallback when no issue number is provided:
+**Changes**: Add `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` to `allowed-tools` frontmatter (after line 23). In Step 1, add a fallback when no issue number is provided:
 
 ```markdown
-**If no issue number**: List issues in "In Progress" state where all plan phases
-are complete (all automated verification checkboxes checked), XS/Small, ordered
-by priority, limit 1.
+**If no issue number**: List issues in "In Progress" state, ordered by priority, limit 10.
 
-Use profile "builder-active" (workflowState: "In Progress").
+Use: `list_issues(workflowState: "In Progress", limit: 10)`
 
-For each candidate, check if a worktree exists at `$GIT_ROOT/worktrees/GH-NNN`.
-Skip candidates without worktrees.
+For each candidate:
+1. Check if a worktree exists at `worktrees/GH-NNN` (relative to git root)
+2. Skip candidates without worktrees (not yet implemented)
+
+Select the first candidate that has a worktree.
 
 If no eligible issues:
 ```
@@ -181,20 +200,23 @@ No issues ready for validation. Queue empty.
 Then STOP.
 ```
 
+**File**: `plugin/ralph-hero/agents/val-agent.md`
+**Changes**: Add `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` to the `tools:` field (line 5).
+
 #### 2. Add queue-picking to `ralph-pr`
 **File**: `plugin/ralph-hero/skills/ralph-pr/SKILL.md`
-**Changes**: Add `list_issues` to `allowed-tools` frontmatter. In Step 1, add a fallback when no issue number is provided:
+**Changes**: Add `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` to `allowed-tools` frontmatter (after line 26). In Step 1, add a fallback when no issue number is provided:
 
 ```markdown
-**If no issue number**: List issues in "In Progress" state, XS/Small, ordered
-by priority, limit 10.
+**If no issue number**: List issues in "In Progress" state, ordered by priority, limit 10.
+
+Use: `list_issues(workflowState: "In Progress", limit: 10)`
 
 For each candidate:
-1. Check if a worktree exists at `$GIT_ROOT/worktrees/GH-NNN`
+1. Check if a worktree exists at `worktrees/GH-NNN`
 2. Check if there is NO existing open PR: `gh pr list --head feature/GH-NNN --json number --jq length` returns 0
-3. Check if all plan phases are complete (read plan, verify all automated checkboxes checked)
 
-Select the first candidate that passes all checks.
+Select the first candidate that has a worktree and no open PR.
 
 If no eligible issues:
 ```
@@ -203,21 +225,23 @@ No issues ready for PR creation. Queue empty.
 Then STOP.
 ```
 
+**File**: `plugin/ralph-hero/agents/pr-agent.md`
+**Changes**: Add `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` to the `tools:` field (line 5).
+
 #### 3. Add queue-picking to `ralph-merge`
 **File**: `plugin/ralph-hero/skills/ralph-merge/SKILL.md`
-**Changes**: Add `list_issues` to `allowed-tools` frontmatter. In Step 1, add a fallback when no issue number is provided:
+**Changes**: Add `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` to `allowed-tools` frontmatter (after line 28). Insert queue-picking logic before Step 2, as a new fallback in Step 1:
 
 ```markdown
-**If no issue number**: List issues in "In Review" state, XS/Small, ordered
-by priority, limit 10.
+**If no issue number**: List issues in "In Review" state, ordered by priority, limit 10.
+
+Use: `list_issues(workflowState: "In Review", limit: 10)`
 
 For each candidate:
 1. Find its PR: `gh pr list --head feature/GH-NNN --json number,state --jq '.[0]'`
 2. Skip if no open PR exists
-3. Check merge readiness: `gh pr view NNN --json mergeable,reviewDecision,state`
-4. Skip if not mergeable
 
-Select the first candidate with an open, mergeable PR.
+Select the first candidate with an open PR.
 
 If no eligible issues:
 ```
@@ -225,6 +249,9 @@ No issues ready for merge. Queue empty.
 ```
 Then STOP.
 ```
+
+**File**: `plugin/ralph-hero/agents/merge-agent.md`
+**Changes**: Add `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` to the `tools:` field (line 5).
 
 ### Success Criteria:
 
@@ -237,12 +264,14 @@ Then STOP.
 - [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-val/SKILL.md` returns ≥1
 - [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥1
 - [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥1
+- [ ] `grep -c "list_issues" plugin/ralph-hero/agents/val-agent.md` returns ≥1
+- [ ] `grep -c "list_issues" plugin/ralph-hero/agents/pr-agent.md` returns ≥1
+- [ ] `grep -c "list_issues" plugin/ralph-hero/agents/merge-agent.md` returns ≥1
 
 #### Manual Verification:
-- [ ] `just val` (no args) with no "In Progress" issues → outputs "Queue empty"
+- [ ] `just val` (no args, via justfile recipe added in Phase 4) with no "In Progress" issues → outputs "Queue empty"
 - [ ] `just pr` (no args) with no eligible issues → outputs "Queue empty"
 - [ ] `just merge` (no args) with no "In Review" issues → outputs "Queue empty"
-- [ ] `just val` (no args) with one eligible issue → validates that issue
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation from the human that the manual testing was successful before proceeding to the next phase.
 
@@ -252,6 +281,8 @@ Then STOP.
 
 ### Overview
 New skill that picks an "In Review" issue with a PR, runs code review on it, and orchestrates a fix loop (address feedback via `ralph-impl` address mode, then re-review) until the PR is clean or max attempts reached. On 3-round exhaustion, moves issue to "Human Needed" to prevent infinite retry across loop iterations.
+
+**Why not use `finish` or `ralph-merge`'s built-in code review?** The `finish` skill chains val→merge→CI — it's a single-issue shortcut. `ralph-merge` runs code review as part of its merge gate. The loop needs a **standalone** code-review phase so different issues can be at different pipeline stages within the same loop iteration.
 
 ### Changes Required:
 
@@ -295,7 +326,7 @@ until the PR is clean (max 3 rounds).
 ## Step 1: Select Issue
 
 **If issue number provided**: Fetch it directly.
-**If no issue number**: List issues in "In Review" state, XS/Small, ordered by priority, limit 1.
+**If no issue number**: List issues in "In Review" state, ordered by priority, limit 10.
 
 If no eligible issues:
 ```
@@ -440,23 +471,28 @@ Status: [Clean / Issues remain]
 name: code-review-agent
 description: Runs code review on PRs and orchestrates fix loops
 model: sonnet
+tools: Read, Glob, Grep, Bash, Agent, Skill, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues, mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 skills:
   - ralph-hero:ralph-code-review
-tools:
-  - Read
-  - Glob
-  - Grep
-  - Bash
-  - Agent
-  - Skill
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
+
+You are a code review agent. Follow the preloaded ralph-code-review instructions to review the PR for the issue specified in your task prompt.
 ```
 
-**Note on nested tool permissions**: The `ralph-code-review` skill invokes `impl-agent` (via `Agent()`) for address mode. The `impl-agent` has its own `allowed-tools` including Write, Edit, etc. — these are resolved at the agent level, not inherited from the calling skill. The `code-review-agent` does NOT need Write/Edit because it never writes files itself; only the nested `impl-agent` does. This chain works because each agent resolves its own tool permissions independently.
+#### 4a. Register `ralph_code_review` command in state-resolution.ts
+**File**: `plugin/ralph-hero/mcp-server/src/lib/state-resolution.ts`
+**Changes**: Add `ralph_code_review` to `COMMAND_ALLOWED_STATES` (after line 52) and to `SEMANTIC_INTENTS.__ESCALATE__` is already `"*"` so no change needed there:
+
+```typescript
+// Add to COMMAND_ALLOWED_STATES:
+ralph_code_review: ["In Review", "Human Needed"],
+```
+
+This allows the skill to call `save_issue(command="ralph_code_review", workflowState="Human Needed")` when escalating after 3 failed review rounds.
+
+Also update `plugin/ralph-hero/hooks/scripts/ralph-command-contracts.json` if command contracts are enforced for this command.
+
+**Note on nested tool permissions**: The `ralph-code-review` skill invokes `impl-agent` (via `Agent()`) for address mode. The `impl-agent` has its own tools including Write, Edit, etc. — resolved at the agent level, not inherited from the calling skill. The `code-review-agent` does NOT need Write/Edit because it never writes files itself; only the nested `impl-agent` does.
 
 #### 4. Justfile recipe
 **File**: `plugin/ralph-hero/justfile`
@@ -482,6 +518,8 @@ code-review *args:
 - [ ] `test -f plugin/ralph-hero/agents/code-review-agent.md`
 - [ ] `grep -c "code-review" plugin/ralph-hero/justfile` returns ≥1
 - [ ] Skill frontmatter has `context: fork` and `user-invocable: false`
+- [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-code-review/SKILL.md` returns ≥1
+- [ ] `grep -c "list_issues" plugin/ralph-hero/agents/code-review-agent.md` returns ≥1
 
 #### Manual Verification:
 - [ ] `just code-review NNN` on an issue with an open PR runs code review and reports results
@@ -556,7 +594,8 @@ export RALPH_AUTO_MERGE="$AUTO_MERGE"
         fi
     fi
 
-    # Auto-merge phase (only when flag is set)
+    # Auto-merge phase (only when --auto-merge flag is set)
+    # NOTE: --merge-only also requires --auto-merge to have any effect
     if [ "$AUTO_MERGE" = "true" ]; then
         if [ "$MODE" = "all" ] || [ "$MODE" = "--merge-only" ] || [ "$MODE" = "--integrator-only" ]; then
             echo "--- Integrator: Auto-Merge Phase ---"
@@ -579,7 +618,7 @@ export RALPH_AUTO_MERGE="$AUTO_MERGE"
 
 #### 4. Update justfile `loop` recipe with auto-merge parameter
 **File**: `plugin/ralph-hero/justfile`
-**Changes**: Update the loop recipe signature (around line 203):
+**Changes**: Update the loop recipe (lines 201-209). The `review` default and `budget` were already changed in Phase 1. Add `auto-merge` parameter:
 
 ```just
 # Sequential autonomous loop - full pipeline through PR + code review + optional merge
@@ -593,8 +632,6 @@ loop mode="all" review="auto" split="auto" hygiene="auto" budget="8.00" timeout=
     if [ "{{auto-merge}}" = "true" ]; then args="$args --auto-merge"; fi
     RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" "{{justfile_directory()}}"/scripts/ralph-loop.sh $args
 ```
-
-Note: `review` default already changed to `"auto"` in Phase 1. Budget bumped from `5.00` to `8.00` to accommodate code-review + address rounds.
 
 #### 5. Add justfile recipes for new individual phases
 **File**: `plugin/ralph-hero/justfile`
@@ -652,23 +689,25 @@ merge *args:
 
 ---
 
-## Phase 5: Make `ralph-merge` Headless-Compatible
+## Phase 5: Add Autonomous Merge Gate
 
 ### Overview
-The merge skill's Step 4 uses `AskUserQuestion` to prompt about code review before merge. In autonomous mode (`RALPH_AUTO_MERGE=true`), skip the interactive prompt and enforce: merge only if `reviewDecision == "APPROVED"` AND `gh pr checks` all pass.
+Add `RALPH_AUTO_MERGE` support to `ralph-merge`. When set, the skill enforces strict merge criteria (review approved + CI passing) before merging, without human confirmation. Without it, behavior is unchanged (interactive code review gate via AskUserQuestion).
+
+**Scope note**: This phase does NOT touch the existing `RALPH_REVIEW_MODE=auto` code review path in ralph-merge Step 4 — that already works correctly for the `finish` skill (PR #757). `RALPH_AUTO_MERGE` is a separate concern: whether to proceed with the merge itself after the code review gate passes.
 
 ### Changes Required:
 
-#### 1. Add autonomous mode detection to ralph-merge
+#### 1. Add autonomous merge gate to ralph-merge
 **File**: `plugin/ralph-hero/skills/ralph-merge/SKILL.md`
-**Changes**: In Step 4 (Code Review Gate), add an autonomous path before the AskUserQuestion block.
-
-Insert before the existing `**If no review decision exists**` section:
+**Changes**: Insert a new Step 4a between the existing Step 4 (Code Review Gate) and Step 5 (Check PR Readiness):
 
 ```markdown
-**Autonomous mode** (when `RALPH_AUTO_MERGE` env var is `true`):
+## Step 4a: Autonomous Merge Gate
 
-Skip the AskUserQuestion entirely. Apply strict merge criteria:
+**Only when `RALPH_AUTO_MERGE` env var is `true`:**
+
+Apply strict merge criteria before proceeding:
 
 1. Check review decision:
    ```bash
@@ -677,15 +716,14 @@ Skip the AskUserQuestion entirely. Apply strict merge criteria:
 
 2. Check CI status:
    ```bash
-   gh pr checks PR_NUMBER --json name,state,conclusion --jq '[.[] | select(.state == "completed" and .conclusion == "success")] | length'
-   gh pr checks PR_NUMBER --json name,state --jq '[.[] | select(.state != "completed")] | length'
+   gh pr checks PR_NUMBER --json name,state,conclusion
    ```
 
 3. Merge criteria (ALL must be true):
-   - `reviewDecision` is `"APPROVED"` or issue estimate is `"XS"` with no review comments
-   - All CI checks are completed
-   - All CI checks have conclusion `"success"`
-   - PR state is `OPEN` and `mergeable` is `MERGEABLE`
+   - `reviewDecision` is `"APPROVED"`, or no review comments exist (XS issue, clean)
+   - All CI checks have `state: "completed"`
+   - All CI checks have `conclusion: "success"`
+   - PR is `OPEN` and `mergeable` is `MERGEABLE`
 
 4. If criteria not met:
    ```
@@ -698,27 +736,18 @@ Skip the AskUserQuestion entirely. Apply strict merge criteria:
    ```
    STOP. (The next loop iteration will retry.)
 
-5. If all criteria met: proceed to Step 5 (merge).
+5. If all criteria met: proceed to Step 5 (existing merge flow).
+
+**When `RALPH_AUTO_MERGE` is not set or `false`**: skip this step entirely (existing behavior).
 ```
 
-#### 2. Add `AskUserQuestion` to allowed-tools only in interactive mode
-**File**: `plugin/ralph-hero/skills/ralph-merge/SKILL.md`
-**Changes**: `AskUserQuestion` is already in allowed-tools. The skill text should check `RALPH_AUTO_MERGE` at runtime and skip the interactive prompt. No frontmatter change needed — the autonomous path simply doesn't call `AskUserQuestion`.
-
-#### 3. Ensure the merge skill outputs "Queue empty" when no mergeable issues exist
-**File**: `plugin/ralph-hero/skills/ralph-merge/SKILL.md`
-**Changes**: Add a queue-empty path at Step 2. If the issue is not in "In Review":
-
-```
-No issues ready for auto-merge. Queue empty.
-```
+No frontmatter changes needed — `RALPH_AUTO_MERGE` is read from the environment at runtime.
 
 ### Success Criteria:
 
 #### Automated Verification:
 - [ ] `grep -c "RALPH_AUTO_MERGE" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥2
 - [ ] `grep -c "AUTO-MERGE BLOCKED" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥1
-- [ ] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥1
 - [ ] `grep -c "gh pr checks" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥1
 
 #### Manual Verification:
@@ -737,14 +766,17 @@ No issues ready for auto-merge. Queue empty.
 4. Run `just loop --plan-only` → plan created, issue at Plan in Review
 5. Run `just loop --review-only` → auto-approved, issue at In Progress
 6. Run `just loop --impl-only` → implementation complete, all phases checked
-7. Run `just loop --integrator-only` → val passes, PR created, code review runs, feedback addressed
-8. Run `just loop --merge-only` → (should block without `--auto-merge`, or skip)
-9. Run `just loop auto-merge=true --merge-only` → merges PR, issue at Done
+7. Run `just loop --val-only` → validation passes
+8. Run `just loop --pr-only` → PR created, issue at In Review
+9. Run `just loop --code-review-only` → code review runs, feedback addressed
+10. Run `just loop auto-merge=true --merge-only` → merges PR, issue at Done
 
 ### Regression Tests:
 - `just loop --triage-only` with empty backlog → exits after 1 iteration
 - `just loop --review=skip` → skips review phase (backwards compatible)
+- `just loop --review=interactive` → uses interactive review (backwards compatible)
 - `just loop` (no args) → runs full pipeline with auto review (new default)
+- `just merge NNN` without RALPH_AUTO_MERGE → interactive behavior unchanged
 
 ### Unit-Level Verification:
 - Each new phase's "Queue empty" output matches the grep pattern in `run_claude`
@@ -754,16 +786,18 @@ No issues ready for auto-merge. Queue empty.
 ## Performance Considerations
 
 - `code-review:code-review` spawns 5 parallel Sonnet reviewers — budget ~$2-3 per review round
-- Address mode via `ralph-impl` uses `impl-agent` which is **Opus** (`impl-agent.md:model: opus`). Each address round could cost $3-5, not $2-3. Worst case with 3 rounds: ~$9-15 for address mode alone.
+- Address mode via `ralph-impl` uses `impl-agent` (Opus). Each address round could cost $3-5.
 - Max 3 review rounds = worst case ~$24 total (3× review at $3 + 3× address at $5)
-- The `ralph-code-review` justfile recipe sets `DEFAULT_BUDGET=8.00` and `DEFAULT_TIMEOUT=30m`.
-- Loop `budget=8.00` is per-task, but code-review + address spans multiple internal agent invocations within a single `claude -p` call. The `--max-budget-usd` flag applies to the entire session, so $8 should cover 1-2 rounds. For 3 rounds, the session may hit budget limits. Consider `DEFAULT_BUDGET=15.00` for the code-review recipe if budget isn't a concern.
+- The `ralph-code-review` justfile recipe sets `DEFAULT_BUDGET=8.00` and `DEFAULT_TIMEOUT=30m`. This covers 1-2 rounds comfortably. For 3 rounds, the session may hit budget limits — the skill exits cleanly on budget exhaustion.
+- Loop per-task budget bumped from $5 to $8 to accommodate integrator phases.
 
 ## Migration Notes
 
 - **Backwards compatible**: `just loop --review=skip` still works. `--auto-merge` is opt-in.
-- **Default behavior change**: Review mode defaults to `auto` instead of `skip`. Users who relied on the skip default should add `--review=skip` explicitly or set `RALPH_REVIEW_MODE=skip`.
+- **Default behavior change**: Review mode defaults to `auto` instead of `interactive`/`skip`. Users who want the old behavior: `--review=interactive` or `--review=skip`.
 - **No schema changes**: No MCP server changes, no new GitHub Project fields.
+- **No changes to finish or hero**: These skills are unaffected. Note: the loop exports `RALPH_REVIEW_MODE=auto` which ralph-merge reads at load time — this is intentional within the loop (merge runs headless code review). Standalone `just merge` does not set this export, so interactive behavior is preserved.
+- **`--merge-only` requires `auto-merge=true`**: The merge phase is gated behind the auto-merge flag. Running `just loop --merge-only` without `auto-merge=true` is a no-op by design.
 
 ## File Ownership Summary
 
@@ -772,16 +806,22 @@ No issues ready for auto-merge. Queue empty.
 | `skills/ralph-triage/SKILL.md` | 1 | Edit queue-empty text |
 | `scripts/ralph-loop.sh` | 1, 4 | Fix defaults, add integrator phases, add flags |
 | `justfile` | 1, 3, 4 | Fix review default, add recipes, update loop recipe |
-| `skills/ralph-val/SKILL.md` | 2 | Add queue-picking + "Queue empty" path + `list_issues` tool |
-| `skills/ralph-pr/SKILL.md` | 2 | Add queue-picking + "Queue empty" path + `list_issues` tool |
-| `skills/ralph-merge/SKILL.md` | 2, 5 | Add queue-picking + "Queue empty" path + `list_issues` tool; add autonomous mode |
+| `skills/ralph-val/SKILL.md` | 2 | Add queue-picking + `list_issues` tool |
+| `agents/val-agent.md` | 2 | Add `list_issues` tool |
+| `skills/ralph-pr/SKILL.md` | 2 | Add queue-picking + `list_issues` tool |
+| `agents/pr-agent.md` | 2 | Add `list_issues` tool |
+| `skills/ralph-merge/SKILL.md` | 2, 5 | Add queue-picking + `list_issues` tool; add autonomous merge gate |
+| `agents/merge-agent.md` | 2 | Add `list_issues` tool |
 | `skills/ralph-code-review/SKILL.md` | 3 | **New file** |
 | `agents/code-review-agent.md` | 3 | **New file** |
+| `mcp-server/src/lib/state-resolution.ts` | 3 | Add `ralph_code_review` command |
+| `docs/cli.md` | 1 | Update review default from `skip` to `auto` |
 
 ## References
 
-- Original naive hero loop: `landcrawler-ai/scripts/ralph-loop.sh` (Linear-backed, archived)
-- Original design: `thoughts/shared/plans/2026-01-19-naive-hero-autonomous-loop.md`
-- GitHub migration plan: `thoughts/shared/plans/2026-02-13-group-LAN-361-ralph-github-plugin.md`
+- Original issue: #731
+- Original naive hero loop: `thoughts/shared/plans/2026-01-19-naive-hero-autonomous-loop.md`
+- Finish skill: `plugin/ralph-hero/skills/finish/SKILL.md` (PR #743)
+- Code review gate in merge: `plugin/ralph-hero/skills/ralph-merge/SKILL.md` (PR #757)
 - Current loop: `plugin/ralph-hero/scripts/ralph-loop.sh`
 - Code review plugin: `~/.claude/plugins/cache/claude-plugins-official/code-review/unknown/commands/code-review.md`

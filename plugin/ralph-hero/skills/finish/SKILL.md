@@ -2,8 +2,7 @@
 description: Validate, merge, and watch CI for a completed implementation. Chains ralph-val → ralph-merge → CI watch into one command. Code review is handled by ralph-merge's built-in gate; when RALPH_REVIEW_MODE=auto and code review flags issues, dispatches impl-agent to fix them.
 user-invocable: true
 argument-hint: <issue-number> [--pr-url url] [--plan-doc path]
-context: fork
-model: sonnet
+context: inline
 hooks:
   SessionStart:
     - hooks:

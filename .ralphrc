@@ -1,0 +1,10 @@
+{
+  "github": {
+    "owner": "cdubiel08",
+    "repo": "ralph-hero",
+    "token": "$GITHUB_TOKEN"
+  },
+  "anthropic": {
+    "apiKey": "$ANTHROPIC_API_KEY"
+  }
+}
