@@ -1,10 +1,13 @@
 import type { KnowledgeDB } from "./db.js";
 
+export type MemoryTier = "doc" | "raw" | "reflection" | "any";
+
 export interface SearchOptions {
   type?: string;
   tags?: string[];
   includeSuperseded?: boolean;
   limit?: number;
+  memoryTier?: MemoryTier;
 }
 
 export interface SearchResult {
@@ -16,6 +19,13 @@ export interface SearchResult {
   date: string | null;
   score: number;
   snippet: string;
+  // Optional chunk-level metadata. Populated when chunk data is available
+  // for the best-scoring chunk of this document.
+  chunkIndex?: number;
+  charStart?: number;
+  charEnd?: number;
+  contextPrefix?: string;
+  bestChunkId?: string;
 }
 
 export class FtsSearch {
@@ -99,8 +109,19 @@ export class FtsSearch {
     return tokens.map(t => '"' + t.replace(/"/g, '""') + '"').join(" ");
   }
 
+  /**
+   * Returns true when the `documents.memory_tier` column exists (schema v3+).
+   * On v2 schemas this is false and the memoryTier filter is silently ignored.
+   */
+  private memoryTierColumnExists(): boolean {
+    const rows = this.db.db
+      .prepare("PRAGMA table_info(documents)")
+      .all() as Array<{ name: string }>;
+    return rows.some((r) => r.name === "memory_tier");
+  }
+
   search(query: string, options: SearchOptions = {}): SearchResult[] {
-    const { type, tags, includeSuperseded = false, limit = 20 } = options;
+    const { type, tags, includeSuperseded = false, limit = 20, memoryTier } = options;
 
     const conditions: string[] = ["documents_fts MATCH @query"];
     const params: Record<string, unknown> = { query: this.escapeFts5Query(query), limit };
@@ -112,6 +133,11 @@ export class FtsSearch {
     if (type) {
       conditions.push("d.type = @type");
       params.type = type;
+    }
+
+    if (memoryTier && memoryTier !== "any" && this.memoryTierColumnExists()) {
+      conditions.push("d.memory_tier = @memoryTier");
+      params.memoryTier = memoryTier;
     }
 
     let joinClause = "";

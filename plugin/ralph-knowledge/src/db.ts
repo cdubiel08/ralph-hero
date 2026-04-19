@@ -442,6 +442,23 @@ export class KnowledgeDB {
     return row !== undefined;
   }
 
+  /**
+   * Returns the `memory_tier` for the given document id. Returns `undefined`
+   * when the document does not exist OR when the `memory_tier` column is
+   * absent from the schema (pre-v3 databases). Used by MCP `knowledge_*`
+   * tools that need to post-filter result sets by tier.
+   */
+  getMemoryTier(id: string): string | undefined {
+    const columns = this.db
+      .prepare("PRAGMA table_info(documents)")
+      .all() as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === "memory_tier")) return undefined;
+    const row = this.db
+      .prepare("SELECT memory_tier AS memoryTier FROM documents WHERE id = ?")
+      .get(id) as { memoryTier: string } | undefined;
+    return row?.memoryTier;
+  }
+
   deleteDocument(id: string): void {
     this.db.prepare("DELETE FROM documents WHERE id = ?").run(id);
   }
