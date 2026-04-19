@@ -452,12 +452,12 @@ Standalone LLM client module with `available()` probe + `contextualize()` call. 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File exports `interface LlmClientOptions { baseUrl?: string; model?: string; timeoutMs?: number }`
-  - [ ] File exports `interface LlmClient { available(): Promise<boolean>; contextualize(fullDocument: string, chunkContent: string): Promise<string> }`
-  - [ ] File exports `function createLlmClient(opts?: LlmClientOptions): LlmClient`
-  - [ ] Default `baseUrl`: `process.env.RALPH_LLM_URL ?? "http://localhost:8000"`
-  - [ ] Default `model`: `process.env.RALPH_LLM_MODEL ?? "mlx-community/gemma-4-26b-a4b-it-mxfp8"`
-  - [ ] Default `timeoutMs`: `30000`
+  - [x] File exports `interface LlmClientOptions { baseUrl?: string; model?: string; timeoutMs?: number }`
+  - [x] File exports `interface LlmClient { available(): Promise<boolean>; contextualize(fullDocument: string, chunkContent: string): Promise<string> }`
+  - [x] File exports `function createLlmClient(opts?: LlmClientOptions): LlmClient`
+  - [x] Default `baseUrl`: `process.env.RALPH_LLM_URL ?? "http://localhost:8000"`
+  - [x] Default `model`: `process.env.RALPH_LLM_MODEL ?? "mlx-community/gemma-4-26b-a4b-it-mxfp8"`
+  - [x] Default `timeoutMs`: `30000`
 
 #### Task 5.2: Implement available() with 2s timeout probe
 - **files**: `plugin/ralph-knowledge/src/llm-client.ts` (modify)
@@ -465,10 +465,10 @@ Standalone LLM client module with `available()` probe + `contextualize()` call. 
 - **complexity**: medium
 - **depends_on**: [5.1]
 - **acceptance**:
-  - [ ] `available()` issues `fetch(${baseUrl}/v1/models)` with `AbortController` scheduled to abort after 2000ms
-  - [ ] Returns `true` only when response status is 200
-  - [ ] Returns `false` on timeout, connection refused, non-200, or any thrown exception (try/catch around fetch)
-  - [ ] No SDK deps — native Node fetch only
+  - [x] `available()` issues `fetch(${baseUrl}/v1/models)` with `AbortController` scheduled to abort after 2000ms
+  - [x] Returns `true` only when response status is 200
+  - [x] Returns `false` on timeout, connection refused, non-200, or any thrown exception (try/catch around fetch)
+  - [x] No SDK deps — native Node fetch only
 
 #### Task 5.3: Implement contextualize() with Anthropic prompt
 - **files**: `plugin/ralph-knowledge/src/llm-client.ts` (modify)
@@ -476,11 +476,11 @@ Standalone LLM client module with `available()` probe + `contextualize()` call. 
 - **complexity**: medium
 - **depends_on**: [5.1]
 - **acceptance**:
-  - [ ] Prompt text is the verbatim Anthropic Contextual Retrieval template from parent plan Phase 2 (with `{fullDocument}` and `{chunkContent}` placeholders)
-  - [ ] POST to `${baseUrl}/v1/chat/completions` with `{ model, messages: [{role:"user", content: prompt}], max_tokens: 120 }`
-  - [ ] Content-Type `application/json`; `AbortController` with `timeoutMs`
-  - [ ] On success: return `response.choices[0].message.content.trim()`
-  - [ ] On any error (network, timeout, missing `.choices`, JSON parse error): return empty string `""` (fail-open)
+  - [x] Prompt text is the verbatim Anthropic Contextual Retrieval template from parent plan Phase 2 (with `{fullDocument}` and `{chunkContent}` placeholders)
+  - [x] POST to `${baseUrl}/v1/chat/completions` with `{ model, messages: [{role:"user", content: prompt}], max_tokens: 120 }`
+  - [x] Content-Type `application/json`; `AbortController` with `timeoutMs`
+  - [x] On success: return `response.choices[0].message.content.trim()`
+  - [x] On any error (network, timeout, missing `.choices`, JSON parse error): return empty string `""` (fail-open)
 
 #### Task 5.4: Test llm-client with mocked fetch
 - **files**: `plugin/ralph-knowledge/src/__tests__/llm-client.test.ts` (create)
@@ -488,21 +488,21 @@ Standalone LLM client module with `available()` probe + `contextualize()` call. 
 - **complexity**: medium
 - **depends_on**: [5.2, 5.3]
 - **acceptance**:
-  - [ ] Test: `available()` returns `true` when mock fetch resolves with status 200
-  - [ ] Test: `available()` returns `false` when mock fetch rejects with `AbortError` (simulate timeout)
-  - [ ] Test: `available()` returns `false` when mock fetch returns status 404 or 500
-  - [ ] Test: `available()` returns `false` when mock fetch throws `ECONNREFUSED`
-  - [ ] Test: `contextualize("doc body", "chunk")` returns mocked content on happy path
-  - [ ] Test: `contextualize()` returns `""` on timeout
-  - [ ] Test: `contextualize()` returns `""` on malformed response (no `choices` key)
-  - [ ] Test: custom `baseUrl` and `model` options honored (fetch called with those values)
-  - [ ] Uses vitest's `vi.fn()` + global fetch stub pattern
+  - [x] Test: `available()` returns `true` when mock fetch resolves with status 200
+  - [x] Test: `available()` returns `false` when mock fetch rejects with `AbortError` (simulate timeout)
+  - [x] Test: `available()` returns `false` when mock fetch returns status 404 or 500
+  - [x] Test: `available()` returns `false` when mock fetch throws `ECONNREFUSED`
+  - [x] Test: `contextualize("doc body", "chunk")` returns mocked content on happy path
+  - [x] Test: `contextualize()` returns `""` on timeout
+  - [x] Test: `contextualize()` returns `""` on malformed response (no `choices` key)
+  - [x] Test: custom `baseUrl` and `model` options honored (fetch called with those values)
+  - [x] Uses vitest's `vi.fn()` + global fetch stub pattern
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test -- llm-client.test.ts` — all cases pass
+- [x] `npm run build` passes
+- [x] `npm test -- llm-client.test.ts` — all cases pass
 
 #### Manual Verification:
 - [ ] With gemma-lab running at `http://localhost:8000`, ad-hoc call to `createLlmClient().available()` returns `true`
