@@ -188,7 +188,7 @@ describe("incremental reindex", () => {
 
     // Verify schema version is set
     const db1 = new KnowledgeDB(dbPath);
-    expect(db1.getMeta("schema_version")).toBe("2");
+    expect(db1.getMeta("schema_version")).toBe("3");
     db1.close();
 
     mockedEmbed.mockClear();
@@ -210,7 +210,7 @@ describe("incremental reindex", () => {
 
     // Verify version was updated
     const db3 = new KnowledgeDB(dbPath);
-    expect(db3.getMeta("schema_version")).toBe("2");
+    expect(db3.getMeta("schema_version")).toBe("3");
     db3.close();
   });
 

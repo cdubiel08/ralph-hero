@@ -19,7 +19,7 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
   vec.createIndex();
 
   // Schema version check — force full re-embed when embedding algorithm changes
-  const SCHEMA_VERSION = "2";
+  const SCHEMA_VERSION = "3";
   const currentVersion = db.getMeta("schema_version");
   let needsFullFtsRebuild = false;
   if (currentVersion !== SCHEMA_VERSION) {

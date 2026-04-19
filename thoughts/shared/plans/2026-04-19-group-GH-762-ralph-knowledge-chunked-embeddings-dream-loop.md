@@ -148,9 +148,9 @@ Add `chunks` table and `memory_tier` column with check constraint + index. Bump 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `createSchema()` block at [db.ts:102-163](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/db.ts#L102-L163) contains `CREATE TABLE IF NOT EXISTS chunks` with columns: `id TEXT PRIMARY KEY`, `document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE`, `chunk_index INTEGER NOT NULL`, `content TEXT NOT NULL`, `char_start INTEGER NOT NULL`, `char_end INTEGER NOT NULL`, `context_prefix TEXT NOT NULL DEFAULT ''`, `UNIQUE(document_id, chunk_index)`
-  - [ ] `CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)` appears in the same exec block
-  - [ ] Schema executes cleanly on fresh DB (new test in `db.test.ts` verifies `PRAGMA table_info(chunks)` returns expected rows)
+  - [x] `createSchema()` block at [db.ts:102-163](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/db.ts#L102-L163) contains `CREATE TABLE IF NOT EXISTS chunks` with columns: `id TEXT PRIMARY KEY`, `document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE`, `chunk_index INTEGER NOT NULL`, `content TEXT NOT NULL`, `char_start INTEGER NOT NULL`, `char_end INTEGER NOT NULL`, `context_prefix TEXT NOT NULL DEFAULT ''`, `UNIQUE(document_id, chunk_index)`
+  - [x] `CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)` appears in the same exec block
+  - [x] Schema executes cleanly on fresh DB (new test in `db.test.ts` verifies `PRAGMA table_info(chunks)` returns expected rows)
 
 #### Task 1.2: Add memory_tier column with CHECK + index
 - **files**: `plugin/ralph-knowledge/src/db.ts` (modify)
@@ -158,10 +158,10 @@ Add `chunks` table and `memory_tier` column with check constraint + index. Bump 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] `createSchema()` includes a try/catch ALTER pattern matching the `is_stub` migration at [db.ts:168-172](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/db.ts#L168-L172): `ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))`
-  - [ ] `CREATE INDEX IF NOT EXISTS idx_documents_memory_tier ON documents(memory_tier)` executes
-  - [ ] Existing `documents` rows preserved with default `'doc'` when ALTER runs on a v2 DB
-  - [ ] Attempting to insert a document with `memory_tier='garbage'` fails with CHECK constraint error (new test case)
+  - [x] `createSchema()` includes a try/catch ALTER pattern matching the `is_stub` migration at [db.ts:168-172](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/db.ts#L168-L172): `ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))`
+  - [x] `CREATE INDEX IF NOT EXISTS idx_documents_memory_tier ON documents(memory_tier)` executes
+  - [x] Existing `documents` rows preserved with default `'doc'` when ALTER runs on a v2 DB
+  - [x] Attempting to insert a document with `memory_tier='garbage'` fails with CHECK constraint error (new test case)
 
 #### Task 1.3: Update clearAll() to include chunks
 - **files**: `plugin/ralph-knowledge/src/db.ts` (modify)
@@ -169,8 +169,8 @@ Add `chunks` table and `memory_tier` column with check constraint + index. Bump 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] `clearAll()` at [db.ts:449-452](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/db.ts#L449-L452) includes `DELETE FROM chunks;` in the exec statement (ON DELETE CASCADE from documents would handle this via FK, but `clearAll()` deletes relationships/tags/sync/documents explicitly; match that pattern)
-  - [ ] Test in `db.test.ts` inserts a chunk row, calls `clearAll()`, verifies `SELECT COUNT(*) FROM chunks` returns 0
+  - [x] `clearAll()` at [db.ts:449-452](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/db.ts#L449-L452) includes `DELETE FROM chunks;` in the exec statement (ON DELETE CASCADE from documents would handle this via FK, but `clearAll()` deletes relationships/tags/sync/documents explicitly; match that pattern)
+  - [x] Test in `db.test.ts` inserts a chunk row, calls `clearAll()`, verifies `SELECT COUNT(*) FROM chunks` returns 0
 
 #### Task 1.4: Bump SCHEMA_VERSION to "3"
 - **files**: `plugin/ralph-knowledge/src/reindex.ts` (modify)
@@ -178,8 +178,8 @@ Add `chunks` table and `memory_tier` column with check constraint + index. Bump 
 - **complexity**: low
 - **depends_on**: [1.1, 1.2]
 - **acceptance**:
-  - [ ] Constant at [reindex.ts:22](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L22) changes from `"2"` to `"3"`
-  - [ ] No other code change in `reindex.ts` for this task — the existing `clearSyncRecords()` + `setMeta()` pattern at [reindex.ts:25-30](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L25-L30) handles the migration
+  - [x] Constant at [reindex.ts:22](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L22) changes from `"2"` to `"3"`
+  - [x] No other code change in `reindex.ts` for this task — the existing `clearSyncRecords()` + `setMeta()` pattern at [reindex.ts:25-30](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L25-L30) handles the migration
 
 #### Task 1.5: Test: schema migration verifies DDL + CHECK
 - **files**: `plugin/ralph-knowledge/src/__tests__/db.test.ts` (modify)
@@ -187,15 +187,15 @@ Add `chunks` table and `memory_tier` column with check constraint + index. Bump 
 - **complexity**: medium
 - **depends_on**: [1.1, 1.2, 1.3]
 - **acceptance**:
-  - [ ] New test group "schema v3" covers: chunks table DDL columns match spec, idx_chunks_document_id exists, ON DELETE CASCADE removes chunks when parent document deleted, memory_tier CHECK rejects invalid values, idx_documents_memory_tier exists
-  - [ ] `npm test -- db.test.ts` passes
+  - [x] New test group "schema v3" covers: chunks table DDL columns match spec, idx_chunks_document_id exists, ON DELETE CASCADE removes chunks when parent document deleted, memory_tier CHECK rejects invalid values, idx_documents_memory_tier exists
+  - [x] `npm test -- db.test.ts` passes
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` in `plugin/ralph-knowledge` — no TypeScript errors
-- [ ] `npm test` — all existing tests plus new v3 schema tests pass
-- [ ] On a fresh DB: `schema_version` meta row is `"3"` after reindex
+- [x] `npm run build` in `plugin/ralph-knowledge` — no TypeScript errors
+- [x] `npm test` — all existing tests plus new v3 schema tests pass
+- [x] On a fresh DB: `schema_version` meta row is `"3"` after reindex
 
 #### Manual Verification:
 - [ ] Run reindex against an existing v2 DB; `sqlite3 ~/.ralph-hero/knowledge.db ".schema chunks"` matches spec
