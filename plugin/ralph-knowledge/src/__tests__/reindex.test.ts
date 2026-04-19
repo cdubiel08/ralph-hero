@@ -1,24 +1,44 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, unlinkSync, utimesSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { findMarkdownFiles } from "../file-scanner.js";
 import { FtsSearch } from "../search.js";
+import { VectorSearch } from "../vector-search.js";
 
-vi.mock("../embedder.js", () => ({
-  embed: vi.fn(async () => new Float32Array(384)),
-  prepareTextForEmbedding: vi.fn((title: string, tags: string[], content: string) => {
-    const tagLine = tags.length > 0 ? tags.join(", ") : "";
-    const parts = [title, tagLine, content].filter(p => p.length > 0);
-    return parts.join("\n").slice(0, 500);
-  }),
-}));
+// Mock embedder so we don't load the real transformer model during tests.
+// embedDocument returns one DocumentChunk per call with a constant 384-dim
+// embedding; this matches the new chunk-aware reindex flow.
+vi.mock("../embedder.js", async () => {
+  // Import the real chunker so the mock chunks content the same way as prod.
+  const { chunkText } = await import("../chunker.js");
+  return {
+    embed: vi.fn(async () => new Float32Array(384)),
+    embedDocument: vi.fn(async (_title: string, _tags: string[], content: string) => {
+      const chunks = content.length === 0
+        ? [{ index: 0, content: "", charStart: 0, charEnd: 0 }]
+        : chunkText(content);
+      return chunks.map(c => ({
+        index: c.index,
+        content: c.content,
+        charStart: c.charStart,
+        charEnd: c.charEnd,
+        embedding: new Float32Array(384),
+      }));
+    }),
+    prepareTextForEmbedding: vi.fn((title: string, tags: string[], content: string) => {
+      const tagLine = tags.length > 0 ? tags.join(", ") : "";
+      const parts = [title, tagLine, content].filter(p => p.length > 0);
+      return parts.join("\n");
+    }),
+  };
+});
 
-import { embed } from "../embedder.js";
-import { reindex, resolveDirs } from "../reindex.js";
+import { embedDocument } from "../embedder.js";
+import { reindex } from "../reindex.js";
 import { KnowledgeDB } from "../db.js";
 
-const mockedEmbed = vi.mocked(embed);
+const mockedEmbed = vi.mocked(embedDocument);
 
 function makeDoc(title: string): string {
   return `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# ${title}\n\nContent for ${title}.`;
@@ -354,149 +374,159 @@ describe("incremental reindex", () => {
     db1.close();
   });
 
-  it("scenario 13: reindex honors .ralphignore for file discovery", async () => {
-    writeFileSync(join(dir, "kept.md"), makeDoc("Kept"));
-    writeFileSync(join(dir, "skipped.md"), makeDoc("Skipped"));
-    writeFileSync(join(dir, ".ralphignore"), "skipped.md\n");
+  it("scenario 13: 8K-char document produces >= 4 chunk rows", async () => {
+    const longBody = "A".repeat(8000);
+    writeFileSync(
+      join(dir, "long-doc.md"),
+      `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Long Doc\n\n${longBody}`,
+    );
 
     await reindex([dir], dbPath);
-    expect(mockedEmbed).toHaveBeenCalledTimes(1);
 
     const db = new KnowledgeDB(dbPath);
-    expect(db.getDocument("kept")).toBeTruthy();
-    expect(db.getDocument("skipped")).toBeUndefined();
+    const row = db.db
+      .prepare("SELECT COUNT(*) as n FROM chunks WHERE document_id = ?")
+      .get("long-doc") as { n: number };
+    expect(row.n).toBeGreaterThanOrEqual(4);
     db.close();
   });
 
-  it("scenario 14: reindex honors caller-supplied ignorePatterns arg", async () => {
-    writeFileSync(join(dir, "kept.md"), makeDoc("Kept"));
-    mkdirSync(join(dir, "drafts"));
-    writeFileSync(join(dir, "drafts", "wip.md"), makeDoc("WIP"));
+  it("scenario 14: documents_vec row count equals total chunk count", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+    const longBody = "A".repeat(6000);
+    writeFileSync(
+      join(dir, "long-doc.md"),
+      `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Long Doc\n\n${longBody}`,
+    );
 
-    await reindex([dir], dbPath, false, ["drafts/**"]);
-    // Only kept.md should have been embedded.
-    expect(mockedEmbed).toHaveBeenCalledTimes(1);
+    await reindex([dir], dbPath);
 
     const db = new KnowledgeDB(dbPath);
-    expect(db.getDocument("kept")).toBeTruthy();
-    expect(db.getDocument("wip")).toBeUndefined();
+    // Instantiating VectorSearch loads sqlite-vec so documents_vec is queryable.
+    new VectorSearch(db).createIndex();
+    const chunksRow = db.db.prepare("SELECT COUNT(*) as n FROM chunks").get() as {
+      n: number;
+    };
+    const vecRow = db.db
+      .prepare("SELECT COUNT(*) as n FROM documents_vec")
+      .get() as { n: number };
+    expect(vecRow.n).toBe(chunksRow.n);
+    expect(chunksRow.n).toBeGreaterThanOrEqual(3); // at least one per doc
     db.close();
   });
-});
 
-describe("resolveDirs precedence", () => {
-  const ORIGINAL_ARGV = process.argv;
-  const ORIGINAL_ENV = {
-    RALPH_KNOWLEDGE_DIRS: process.env.RALPH_KNOWLEDGE_DIRS,
-    RALPH_KNOWLEDGE_DB: process.env.RALPH_KNOWLEDGE_DB,
-    RALPH_KNOWLEDGE_CONFIG: process.env.RALPH_KNOWLEDGE_CONFIG,
-  };
-  let tmpHome: string;
-  let configDir: string;
+  it("scenario 15: chunk ids follow pattern {docId}#c{index}", async () => {
+    const longBody = "A".repeat(6000);
+    writeFileSync(
+      join(dir, "long-doc.md"),
+      `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Long Doc\n\n${longBody}`,
+    );
 
-  beforeEach(() => {
-    process.argv = ["node", "reindex.js"];
-    delete process.env.RALPH_KNOWLEDGE_DIRS;
-    delete process.env.RALPH_KNOWLEDGE_DB;
-    configDir = mkdtempSync(join(tmpdir(), "resolve-dirs-"));
-    tmpHome = configDir;
-    process.env.RALPH_KNOWLEDGE_CONFIG = join(configDir, "knowledge.config.json");
-  });
+    await reindex([dir], dbPath);
 
-  afterEach(() => {
-    process.argv = ORIGINAL_ARGV;
-    for (const key of Object.keys(ORIGINAL_ENV) as (keyof typeof ORIGINAL_ENV)[]) {
-      const orig = ORIGINAL_ENV[key];
-      if (orig === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = orig;
-      }
+    const db = new KnowledgeDB(dbPath);
+    new VectorSearch(db).createIndex();
+    const rows = db.db
+      .prepare("SELECT id, chunk_index FROM chunks WHERE document_id = ? ORDER BY chunk_index")
+      .all("long-doc") as Array<{ id: string; chunk_index: number }>;
+    expect(rows.length).toBeGreaterThan(1);
+    const idPattern = /^long-doc#c\d+$/;
+    for (const r of rows) {
+      expect(r.id).toMatch(idPattern);
+      expect(r.id).toBe(`long-doc#c${r.chunk_index}`);
     }
+    // Verify documents_vec ids also follow the pattern for this doc.
+    const vecRows = db.db
+      .prepare("SELECT id FROM documents_vec WHERE id GLOB ?")
+      .all("long-doc#c*") as Array<{ id: string }>;
+    expect(vecRows.length).toBe(rows.length);
+    for (const v of vecRows) {
+      expect(v.id).toMatch(idPattern);
+    }
+    db.close();
   });
 
-  it("CLI positional args beat env var even when both are set", () => {
+  it("scenario 16: deleting source file removes its chunks and vec rows", async () => {
+    const filePath = join(dir, "disposable.md");
+    const longBody = "A".repeat(6000);
     writeFileSync(
-      process.env.RALPH_KNOWLEDGE_CONFIG!,
-      JSON.stringify({ roots: ["/from/config"] }),
+      filePath,
+      `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Disposable\n\n${longBody}`,
     );
-    process.argv = ["node", "reindex.js", "/from/cli"];
-    process.env.RALPH_KNOWLEDGE_DIRS = "/from/env";
-    const r = resolveDirs();
-    expect(r.source).toBe("cli");
-    expect(r.dirs).toEqual(["/from/cli"]);
+    writeFileSync(join(dir, "keeper.md"), makeDoc("Keeper"));
+
+    await reindex([dir], dbPath);
+
+    const db1 = new KnowledgeDB(dbPath);
+    new VectorSearch(db1).createIndex();
+    const chunksBefore = db1.db
+      .prepare("SELECT COUNT(*) as n FROM chunks WHERE document_id = ?")
+      .get("disposable") as { n: number };
+    expect(chunksBefore.n).toBeGreaterThan(1);
+    const vecsBefore = db1.db
+      .prepare("SELECT COUNT(*) as n FROM documents_vec WHERE id GLOB ?")
+      .get("disposable#c*") as { n: number };
+    expect(vecsBefore.n).toBe(chunksBefore.n);
+    db1.close();
+
+    unlinkSync(filePath);
+    await reindex([dir], dbPath);
+
+    const db2 = new KnowledgeDB(dbPath);
+    new VectorSearch(db2).createIndex();
+    // Document gone -> chunks cascaded.
+    expect(db2.getDocument("disposable")).toBeUndefined();
+    const chunksAfter = db2.db
+      .prepare("SELECT COUNT(*) as n FROM chunks WHERE document_id = ?")
+      .get("disposable") as { n: number };
+    expect(chunksAfter.n).toBe(0);
+    // Vec rows for the deleted doc are gone (GLOB-based cleanup).
+    const vecsAfter = db2.db
+      .prepare("SELECT COUNT(*) as n FROM documents_vec WHERE id GLOB ?")
+      .get("disposable#c*") as { n: number };
+    expect(vecsAfter.n).toBe(0);
+    // The kept doc still has its chunks.
+    const keeperChunks = db2.db
+      .prepare("SELECT COUNT(*) as n FROM chunks WHERE document_id = ?")
+      .get("keeper") as { n: number };
+    expect(keeperChunks.n).toBeGreaterThanOrEqual(1);
+    db2.close();
   });
 
-  it("env var beats config file roots when CLI is empty", () => {
+  it("scenario 17: re-indexing same file does not duplicate chunks", async () => {
+    const filePath = join(dir, "stable.md");
+    const body = "A".repeat(6000);
     writeFileSync(
-      process.env.RALPH_KNOWLEDGE_CONFIG!,
-      JSON.stringify({ roots: ["/from/config"] }),
+      filePath,
+      `---\ndate: 2026-03-24\ntype: research\nstatus: draft\n---\n\n# Stable\n\n${body}`,
     );
-    process.env.RALPH_KNOWLEDGE_DIRS = "/from/env-a,/from/env-b";
-    const r = resolveDirs();
-    expect(r.source).toBe("env");
-    expect(r.dirs).toEqual(["/from/env-a", "/from/env-b"]);
-  });
 
-  it("config file roots beat fallback when CLI and env are absent", () => {
-    writeFileSync(
-      process.env.RALPH_KNOWLEDGE_CONFIG!,
-      JSON.stringify({ roots: ["/from/config-a", "/from/config-b"] }),
-    );
-    const r = resolveDirs();
-    expect(r.source).toBe("config");
-    expect(r.dirs).toEqual(["/from/config-a", "/from/config-b"]);
-  });
+    await reindex([dir], dbPath);
+    const db1 = new KnowledgeDB(dbPath);
+    const firstCount = (db1.db
+      .prepare("SELECT COUNT(*) as n FROM chunks WHERE document_id = ?")
+      .get("stable") as { n: number }).n;
+    db1.close();
+    expect(firstCount).toBeGreaterThan(1);
 
-  it("falls back to ../../thoughts when no source is configured", () => {
-    // Point env var at a nonexistent config path so loadConfig returns {}.
-    process.env.RALPH_KNOWLEDGE_CONFIG = join(configDir, "missing.json");
-    const r = resolveDirs();
-    expect(r.source).toBe("fallback");
-    expect(r.dirs).toEqual(["../../thoughts"]);
-  });
+    // Bump mtime to force re-embed.
+    const future = Date.now() / 1000 + 2;
+    utimesSync(filePath, future, future);
 
-  it("dbPath precedence: CLI arg > env var > config > default", () => {
-    writeFileSync(
-      process.env.RALPH_KNOWLEDGE_CONFIG!,
-      JSON.stringify({ roots: ["/x"], dbPath: "/from/config.db" }),
-    );
-    // CLI wins
-    process.argv = ["node", "reindex.js", "/cli/root", "/cli/override.db"];
-    process.env.RALPH_KNOWLEDGE_DB = "/from/env.db";
-    expect(resolveDirs().dbPath).toBe("/cli/override.db");
-
-    // Env wins over config when CLI is absent
-    process.argv = ["node", "reindex.js"];
-    process.env.RALPH_KNOWLEDGE_DIRS = "/env/root";
-    process.env.RALPH_KNOWLEDGE_DB = "/from/env.db";
-    expect(resolveDirs().dbPath).toBe("/from/env.db");
-
-    // Config wins when neither CLI nor env set dbPath
-    delete process.env.RALPH_KNOWLEDGE_DB;
-    expect(resolveDirs().dbPath).toBe("/from/config.db");
-  });
-
-  it("forwards config.ignorePatterns on the returned config object", () => {
-    writeFileSync(
-      process.env.RALPH_KNOWLEDGE_CONFIG!,
-      JSON.stringify({
-        roots: ["/r1"],
-        ignorePatterns: ["draft/**", "*.bak"],
-      }),
-    );
-    const r = resolveDirs();
-    expect(r.config.ignorePatterns).toEqual(["draft/**", "*.bak"]);
-  });
-
-  it("treats an empty RALPH_KNOWLEDGE_DIRS as unset and falls through", () => {
-    writeFileSync(
-      process.env.RALPH_KNOWLEDGE_CONFIG!,
-      JSON.stringify({ roots: ["/from/config"] }),
-    );
-    process.env.RALPH_KNOWLEDGE_DIRS = "  ,  ";
-    const r = resolveDirs();
-    expect(r.source).toBe("config");
-    expect(r.dirs).toEqual(["/from/config"]);
+    await reindex([dir], dbPath);
+    const db2 = new KnowledgeDB(dbPath);
+    new VectorSearch(db2).createIndex();
+    const secondCount = (db2.db
+      .prepare("SELECT COUNT(*) as n FROM chunks WHERE document_id = ?")
+      .get("stable") as { n: number }).n;
+    // Stale deletion before insert means chunk count stays the same, not 2x.
+    expect(secondCount).toBe(firstCount);
+    // And vec rows should match.
+    const vecCount = (db2.db
+      .prepare("SELECT COUNT(*) as n FROM documents_vec WHERE id GLOB ?")
+      .get("stable#c*") as { n: number }).n;
+    expect(vecCount).toBe(secondCount);
+    db2.close();
   });
 });

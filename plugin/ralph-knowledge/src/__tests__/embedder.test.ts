@@ -1,5 +1,20 @@
-import { describe, it, expect } from "vitest";
-import { prepareTextForEmbedding } from "../embedder.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock @huggingface/transformers so we don't need to load the real ONNX
+// model during unit tests. The fake pipeline returns a constant 384-dim
+// vector; we track call count via the `embedCalls` array below.
+const embedCalls: string[] = [];
+vi.mock("@huggingface/transformers", () => {
+  const fakePipeline = async (text: string, _opts: unknown) => {
+    embedCalls.push(text);
+    return { data: new Float32Array(384) };
+  };
+  return {
+    pipeline: vi.fn(async () => fakePipeline),
+  };
+});
+
+import { prepareTextForEmbedding, embedDocument } from "../embedder.js";
 
 describe("prepareTextForEmbedding", () => {
   it("includes title, tags, and first paragraph", () => {
@@ -40,14 +55,15 @@ describe("prepareTextForEmbedding", () => {
     expect(result).not.toContain("\n\n");
   });
 
-  it("truncates at MAX_CHARS (500) total", () => {
+  it("no longer truncates at 500 chars (MAX_CHARS removed)", () => {
     const longParagraph = "A".repeat(600);
     const result = prepareTextForEmbedding(
       "Title",
       ["tag1", "tag2"],
       longParagraph,
     );
-    expect(result.length).toBe(500);
+    // Title (5) + \n + tag1, tag2 (10) + \n + 600 A's = 617 chars
+    expect(result.length).toBe(617);
     expect(result.startsWith("Title\ntag1, tag2\n")).toBe(true);
   });
 
@@ -96,5 +112,88 @@ describe("prepareTextForEmbedding", () => {
       "First paragraph.\n\nSecond paragraph.",
     );
     expect(result).toBe("My Title\ngraphology, search\nFirst paragraph.");
+  });
+});
+
+describe("embedDocument", () => {
+  beforeEach(() => {
+    embedCalls.length = 0;
+  });
+
+  it("returns exactly one chunk for short content", async () => {
+    const result = await embedDocument("Title", ["tag"], "short content");
+    expect(result).toHaveLength(1);
+    expect(result[0]!.index).toBe(0);
+    expect(result[0]!.content).toBe("short content");
+    expect(result[0]!.charStart).toBe(0);
+    expect(result[0]!.charEnd).toBe("short content".length);
+    expect(result[0]!.embedding).toBeInstanceOf(Float32Array);
+  });
+
+  it("embeds with title + tagLine + chunk.content prepended", async () => {
+    await embedDocument("My Title", ["graphology", "search"], "body text");
+    expect(embedCalls).toHaveLength(1);
+    expect(embedCalls[0]).toBe("My Title\ngraphology, search\nbody text");
+  });
+
+  it("omits empty title/tags/content from the embed input", async () => {
+    await embedDocument("", [], "only content here");
+    expect(embedCalls).toContain("only content here");
+
+    embedCalls.length = 0;
+    await embedDocument("Just Title", [], "");
+    // Empty content -> one chunk with empty string, only title is non-empty.
+    expect(embedCalls).toContain("Just Title");
+  });
+
+  it("yields >= 4 chunks for an 8K-char document", async () => {
+    const longContent = "A".repeat(8000);
+    const result = await embedDocument("Title", [], longContent);
+    expect(result.length).toBeGreaterThanOrEqual(4);
+    // Each chunk gets its own embedding.
+    expect(embedCalls).toHaveLength(result.length);
+  });
+
+  it("produces Float32Array embeddings of length 384", async () => {
+    const result = await embedDocument("T", [], "hello world");
+    expect(result[0]!.embedding).toBeInstanceOf(Float32Array);
+    expect(result[0]!.embedding.length).toBe(384);
+  });
+
+  it("chunk indexes are monotonically increasing from 0", async () => {
+    const longContent = "word ".repeat(3000); // ~15K chars, many chunks
+    const result = await embedDocument("T", [], longContent);
+    expect(result.length).toBeGreaterThan(1);
+    for (let i = 0; i < result.length; i++) {
+      expect(result[i]!.index).toBe(i);
+    }
+  });
+
+  it("chunk offsets reconstruct the original content", async () => {
+    const content = "A".repeat(5000);
+    const result = await embedDocument("T", [], content);
+    for (const chunk of result) {
+      expect(content.slice(chunk.charStart, chunk.charEnd)).toBe(chunk.content);
+    }
+  });
+
+  it("empty content yields one chunk with empty content (anchors on title/tags)", async () => {
+    const result = await embedDocument("Just Title", ["some-tag"], "");
+    expect(result).toHaveLength(1);
+    expect(result[0]!.content).toBe("");
+    expect(result[0]!.charStart).toBe(0);
+    expect(result[0]!.charEnd).toBe(0);
+    // Still got embedded using title + tag.
+    expect(embedCalls).toContain("Just Title\nsome-tag");
+  });
+
+  it("respects custom chunker options", async () => {
+    const content = "A".repeat(500);
+    const result = await embedDocument("T", [], content, {
+      chunkSize: 100,
+      chunkOverlap: 10,
+    });
+    // With chunkSize=100 over 500 chars, we expect multiple chunks.
+    expect(result.length).toBeGreaterThan(1);
   });
 });
