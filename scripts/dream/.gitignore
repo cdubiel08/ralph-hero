@@ -1,0 +1,13 @@
+# Python virtualenv managed by `uv sync`
+.venv/
+
+# Bytecode + test caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Coverage + build artifacts
+.coverage
+dist/
+build/
+*.egg-info/

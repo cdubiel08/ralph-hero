@@ -1,0 +1,393 @@
+"""Tests for the dream-loop ingester.
+
+Covers each source function, CLI parsing, and — most importantly — the
+idempotency contract: re-running the ingester on the same memory must
+overwrite with byte-identical content so the downstream reindexer
+treats it as a no-op.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import subprocess
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+import ingest  # noqa: E402 (tests/conftest.py puts scripts/dream on sys.path)
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+# ---------------------------------------------------------------------------
+# parse_since
+# ---------------------------------------------------------------------------
+
+
+class TestParseSince:
+    def test_relative_hours(self) -> None:
+        now = datetime(2026, 4, 19, 12, 0, tzinfo=timezone.utc)
+        got = ingest.parse_since("24h", now=now)
+        assert got == now - timedelta(hours=24)
+
+    def test_relative_days(self) -> None:
+        now = datetime(2026, 4, 19, 12, 0, tzinfo=timezone.utc)
+        got = ingest.parse_since("3d", now=now)
+        assert got == now - timedelta(days=3)
+
+    def test_relative_minutes(self) -> None:
+        now = datetime(2026, 4, 19, 12, 0, tzinfo=timezone.utc)
+        got = ingest.parse_since("30m", now=now)
+        assert got == now - timedelta(minutes=30)
+
+    def test_iso_datetime(self) -> None:
+        got = ingest.parse_since("2026-04-19T00:00:00+00:00")
+        assert got == datetime(2026, 4, 19, 0, 0, tzinfo=timezone.utc)
+
+    def test_iso_bare_date(self) -> None:
+        got = ingest.parse_since("2026-04-19")
+        assert got == datetime(2026, 4, 19, 0, 0, tzinfo=timezone.utc)
+
+    def test_rejects_garbage(self) -> None:
+        with pytest.raises(ValueError, match="Cannot parse"):
+            ingest.parse_since("tomorrow")
+
+
+# ---------------------------------------------------------------------------
+# write_memory + RawMemory
+# ---------------------------------------------------------------------------
+
+
+class TestWriteMemory:
+    def _memory(self) -> ingest.RawMemory:
+        return ingest.RawMemory(
+            source="gemma-lab",
+            source_id="2026-04-19:7",
+            timestamp="2026-04-19T12:34:56+00:00",
+            content="## Prompt\n\nHello\n\n## Response\n\nWorld",
+        )
+
+    def test_path_matches_contract(self, tmp_path: Path) -> None:
+        m = self._memory()
+        path = ingest.write_memory(m, tmp_path)
+        assert path.parent == tmp_path / "2026" / "04" / "19"
+        # filename is `source-hash12.md`
+        assert path.name.startswith("gemma-lab-")
+        assert path.suffix == ".md"
+        # 12-char hex digest after the source prefix (use rsplit because
+        # sources like ``gemma-lab`` contain dashes themselves).
+        stem_hash = path.stem.rsplit("-", 1)[1]
+        assert len(stem_hash) == 12
+        assert all(c in "0123456789abcdef" for c in stem_hash)
+
+    def test_frontmatter_and_body(self, tmp_path: Path) -> None:
+        m = self._memory()
+        path = ingest.write_memory(m, tmp_path)
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---\n")
+        # deterministic key order
+        head = text.split("---\n", 2)[1]
+        assert "date: 2026-04-19T12:34:56+00:00\n" in head
+        assert "memory_tier: raw\n" in head
+        assert "source: gemma-lab\n" in head
+        assert "source_id: 2026-04-19:7\n" in head
+        assert "tags: [dream, raw]\n" in head
+        # body follows the closing fence
+        assert text.endswith("## Response\n\nWorld\n")
+
+    def test_idempotent_same_input_same_output(self, tmp_path: Path) -> None:
+        """Running the ingester twice on identical input must not diverge."""
+        m = self._memory()
+        path_a = ingest.write_memory(m, tmp_path)
+        contents_a = path_a.read_bytes()
+        path_b = ingest.write_memory(m, tmp_path)
+        contents_b = path_b.read_bytes()
+        assert path_a == path_b
+        assert contents_a == contents_b
+
+    def test_different_source_id_different_file(self, tmp_path: Path) -> None:
+        m1 = self._memory()
+        m2 = ingest.RawMemory(
+            source=m1.source,
+            source_id=m1.source_id + ":other",
+            timestamp=m1.timestamp,
+            content=m1.content,
+        )
+        p1 = ingest.write_memory(m1, tmp_path)
+        p2 = ingest.write_memory(m2, tmp_path)
+        assert p1 != p2
+
+
+# ---------------------------------------------------------------------------
+# ingest_gemma_lab_sessions
+# ---------------------------------------------------------------------------
+
+
+class TestGemmaLabIngester:
+    def test_reads_five_entry_fixture(self) -> None:
+        """All 5 lines in the 2026-04-19 fixture land inside the window."""
+        since = datetime(2026, 4, 18, 0, 0, tzinfo=timezone.utc)
+        memories = ingest.ingest_gemma_lab_sessions(
+            since, FIXTURES / "sessions"
+        )
+        assert len(memories) == 5
+        for m in memories:
+            assert m.source == "gemma-lab"
+            assert m.source_id.startswith("2026-04-19:")
+            assert "## Prompt" in m.content
+            assert "## Response" in m.content
+
+    def test_filters_by_since(self) -> None:
+        # Only entries after 12:00 on 2026-04-19 should survive (1 of 5,
+        # the 18:45 entry — the 11:00 entry falls just before the cut).
+        since = datetime(2026, 4, 19, 12, 0, tzinfo=timezone.utc)
+        memories = ingest.ingest_gemma_lab_sessions(
+            since, FIXTURES / "sessions"
+        )
+        assert len(memories) == 1
+
+    def test_missing_dir_returns_empty(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="ralph.dream.ingest")
+        memories = ingest.ingest_gemma_lab_sessions(
+            datetime.now(tz=timezone.utc), tmp_path / "nope"
+        )
+        assert memories == []
+        assert any(
+            "sessions dir not found" in rec.message for rec in caplog.records
+        )
+
+    def test_skips_malformed_json(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        # Mix of good + bad lines; good line is within window.
+        good = json.dumps(
+            {
+                "ts": "2026-04-19T10:00:00Z",
+                "prompt": "p",
+                "response": "r",
+            }
+        )
+        (sessions / "mixed.jsonl").write_text(
+            good + "\nnot-json\n" + good + "\n", encoding="utf-8"
+        )
+        caplog.set_level(logging.WARNING, logger="ralph.dream.ingest")
+        memories = ingest.ingest_gemma_lab_sessions(
+            datetime(2026, 4, 18, 0, 0, tzinfo=timezone.utc), sessions
+        )
+        assert len(memories) == 2
+        assert any("malformed JSON" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# ingest_git_commits
+# ---------------------------------------------------------------------------
+
+
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def throwaway_repo(tmp_path: Path) -> Path:
+    """Create a tiny git repo with two commits for ingest_git_commits tests."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git("init", "-q", "-b", "main", cwd=repo)
+    _git("config", "user.email", "test@example.com", cwd=repo)
+    _git("config", "user.name", "Test User", cwd=repo)
+    # Disable GPG signing for test repos regardless of global config.
+    _git("config", "commit.gpgsign", "false", cwd=repo)
+
+    (repo / "a.txt").write_text("hello\n")
+    _git("add", "a.txt", cwd=repo)
+    _git("commit", "-q", "-m", "first commit", cwd=repo)
+
+    (repo / "b.txt").write_text("world\n")
+    _git("add", "b.txt", cwd=repo)
+    _git("commit", "-q", "-m", "second commit", cwd=repo)
+    return repo
+
+
+class TestGitCommitIngester:
+    def test_extracts_two_commits(self, throwaway_repo: Path) -> None:
+        since = datetime.now(tz=timezone.utc) - timedelta(days=1)
+        memories = ingest.ingest_git_commits(since, [throwaway_repo])
+        assert len(memories) == 2
+        subjects = [m.content.splitlines()[0] for m in memories]
+        assert "# first commit" in subjects
+        assert "# second commit" in subjects
+        for m in memories:
+            assert m.source == "git-commit"
+            # SHA is 40 hex chars
+            assert len(m.source_id) == 40
+            assert all(c in "0123456789abcdef" for c in m.source_id)
+            # Content carries diff fenced block
+            assert "```diff" in m.content
+
+    def test_nonexistent_repo_yields_empty_with_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="ralph.dream.ingest")
+        memories = ingest.ingest_git_commits(
+            datetime.now(tz=timezone.utc) - timedelta(days=1),
+            [tmp_path / "does-not-exist"],
+        )
+        assert memories == []
+        assert any("non-existent" in rec.message for rec in caplog.records)
+
+    def test_truncates_large_patches(
+        self, tmp_path: Path, throwaway_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Force a tight cap so we don't have to generate 4K of diff.
+        monkeypatch.setattr(ingest, "GIT_PATCH_CHAR_LIMIT", 200)
+        big = "\n".join(f"line {i}" for i in range(500))
+        (throwaway_repo / "big.txt").write_text(big)
+        _git("add", "big.txt", cwd=throwaway_repo)
+        _git("commit", "-q", "-m", "add big file", cwd=throwaway_repo)
+
+        since = datetime.now(tz=timezone.utc) - timedelta(days=1)
+        memories = ingest.ingest_git_commits(since, [throwaway_repo])
+        big_mem = next(m for m in memories if "add big file" in m.content)
+        assert "[truncated at 200 chars]" in big_mem.content
+
+
+# ---------------------------------------------------------------------------
+# ingest_llm_cli_logs
+# ---------------------------------------------------------------------------
+
+
+class TestLlmCliIngester:
+    def test_none_path_returns_empty(self) -> None:
+        memories = ingest.ingest_llm_cli_logs(
+            datetime.now(tz=timezone.utc), None
+        )
+        assert memories == []
+
+    def test_nonexistent_path_returns_empty(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="ralph.dream.ingest")
+        memories = ingest.ingest_llm_cli_logs(
+            datetime.now(tz=timezone.utc), Path("/nonexistent/logs.db")
+        )
+        assert memories == []
+        assert any("llm-cli log not found" in rec.message for rec in caplog.records)
+
+    def test_reads_rows(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "logs.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE responses ("
+            "  id INTEGER PRIMARY KEY, "
+            "  datetime_utc TEXT, "
+            "  prompt TEXT, "
+            "  response TEXT"
+            ")"
+        )
+        conn.executemany(
+            "INSERT INTO responses (datetime_utc, prompt, response) VALUES (?, ?, ?)",
+            [
+                ("2026-04-19T09:00:00+00:00", "p1", "r1"),
+                ("2026-04-19T10:00:00+00:00", "p2", "r2"),
+                # Before window — should be filtered out.
+                ("2026-04-10T00:00:00+00:00", "p-old", "r-old"),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        since = datetime(2026, 4, 19, 0, 0, tzinfo=timezone.utc)
+        memories = ingest.ingest_llm_cli_logs(since, db_path)
+        assert len(memories) == 2
+        assert all(m.source == "llm-cli" for m in memories)
+        # Body contains both prompt and response
+        assert "## Prompt\n\np1" in memories[0].content
+        assert "## Response\n\nr1" in memories[0].content
+
+
+# ---------------------------------------------------------------------------
+# CLI main() integration
+# ---------------------------------------------------------------------------
+
+
+class TestMain:
+    def _config_file(self, tmp_path: Path, **overrides: object) -> Path:
+        # Point base_dir at a temp dir and disable sources we do not test here.
+        base = {
+            "base_dir": str(tmp_path / "dream"),
+            "gemma_lab_sessions": str(FIXTURES / "sessions"),
+            "git_repos": [],
+        }
+        base.update(overrides)
+        import yaml
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(yaml.safe_dump(base), encoding="utf-8")
+        return cfg_path
+
+    def test_dry_run_writes_nothing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = self._config_file(tmp_path)
+        rc = ingest.main(
+            [
+                "--config",
+                str(cfg),
+                "--since",
+                "2026-04-18",
+                "--dry-run",
+            ]
+        )
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "dry-run" in out
+        # no YYYY/MM/DD layout produced
+        assert not (tmp_path / "dream" / "2026").exists()
+
+    def test_real_run_writes_files_and_is_idempotent(
+        self, tmp_path: Path
+    ) -> None:
+        cfg = self._config_file(tmp_path)
+        rc = ingest.main(
+            [
+                "--config",
+                str(cfg),
+                "--since",
+                "2026-04-18",
+                "--no-reindex",
+            ]
+        )
+        assert rc == 0
+        out_dir = tmp_path / "dream" / "2026" / "04" / "19"
+        assert out_dir.is_dir()
+        files = sorted(out_dir.glob("gemma-lab-*.md"))
+        assert len(files) == 5
+        before = {p: p.read_bytes() for p in files}
+
+        # Re-run — same files, same contents.
+        rc2 = ingest.main(
+            [
+                "--config",
+                str(cfg),
+                "--since",
+                "2026-04-18",
+                "--no-reindex",
+            ]
+        )
+        assert rc2 == 0
+        files2 = sorted(out_dir.glob("gemma-lab-*.md"))
+        assert files2 == files
+        for p in files2:
+            assert p.read_bytes() == before[p], f"{p} diverged on re-run"
