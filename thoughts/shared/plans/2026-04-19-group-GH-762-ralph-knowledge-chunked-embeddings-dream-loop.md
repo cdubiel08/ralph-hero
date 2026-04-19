@@ -771,9 +771,9 @@ Extend `knowledge_search` Zod schema with `memory_tier` + `return_chunk_meta`; e
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `knowledge_search` schema at [index.ts:33-43](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L33-L43) adds `memory_tier: z.enum(["doc","raw","reflection","any"]).optional().default("any")` and `return_chunk_meta: z.boolean().optional().default(false)`
-  - [ ] Handler at [index.ts:44-67](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L44-L67) passes `memory_tier` into the hybrid search path (via new `SearchOptions.memoryTier?` field added in Task 8.2)
-  - [ ] When `return_chunk_meta=true`, each result is enriched with `chunk_index`, `char_start`, `char_end`, `context_prefix` (looked up via chunk id extracted from best-chunk-id stored on the search path — requires `HybridSearch` to expose best-chunk-id on results)
+  - [x] `knowledge_search` schema at [index.ts:33-43](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L33-L43) adds `memory_tier: z.enum(["doc","raw","reflection","any"]).optional().default("any")` and `return_chunk_meta: z.boolean().optional().default(false)`
+  - [x] Handler at [index.ts:44-67](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L44-L67) passes `memory_tier` into the hybrid search path (via new `SearchOptions.memoryTier?` field added in Task 8.2)
+  - [x] When `return_chunk_meta=true`, each result is enriched with `chunk_index`, `char_start`, `char_end`, `context_prefix` (looked up via chunk id extracted from best-chunk-id stored on the search path — requires `HybridSearch` to expose best-chunk-id on results)
 
 #### Task 8.2: Thread memoryTier through SearchOptions + HybridSearch
 - **files**: `plugin/ralph-knowledge/src/search.ts` (modify), `plugin/ralph-knowledge/src/hybrid-search.ts` (modify)
@@ -781,10 +781,10 @@ Extend `knowledge_search` Zod schema with `memory_tier` + `return_chunk_meta`; e
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `interface SearchOptions` in [search.ts:3-8](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L3-L8) gains `memoryTier?: "doc" | "raw" | "reflection" | "any"`
-  - [ ] `FtsSearch.search()` at [search.ts:102](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L102) adds `AND d.memory_tier = @memoryTier` to conditions when `memoryTier` is set and not `"any"`; params.memoryTier set accordingly
-  - [ ] `HybridSearch.search()` in `hybrid-search.ts` forwards `memoryTier` to `fts.search()` and post-filters vector-only results by re-fetching `doc.memory_tier` (when `memoryTier !== "any"`, skip docs whose memory_tier differs)
-  - [ ] `SearchResult` (search.ts) gains optional fields `chunkIndex?`, `charStart?`, `charEnd?`, `contextPrefix?`, `bestChunkId?` — populated from the HybridSearch bucket when chunk data is available
+  - [x] `interface SearchOptions` in [search.ts:3-8](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L3-L8) gains `memoryTier?: "doc" | "raw" | "reflection" | "any"`
+  - [x] `FtsSearch.search()` at [search.ts:102](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L102) adds `AND d.memory_tier = @memoryTier` to conditions when `memoryTier` is set and not `"any"`; params.memoryTier set accordingly
+  - [x] `HybridSearch.search()` in `hybrid-search.ts` forwards `memoryTier` to `fts.search()` and post-filters vector-only results by re-fetching `doc.memory_tier` (when `memoryTier !== "any"`, skip docs whose memory_tier differs)
+  - [x] `SearchResult` (search.ts) gains optional fields `chunkIndex?`, `charStart?`, `charEnd?`, `contextPrefix?`, `bestChunkId?` — populated from the HybridSearch bucket when chunk data is available
 
 #### Task 8.3: Extend knowledge_traverse schema
 - **files**: `plugin/ralph-knowledge/src/index.ts` (modify)
@@ -792,9 +792,9 @@ Extend `knowledge_search` Zod schema with `memory_tier` + `return_chunk_meta`; e
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `knowledge_traverse` schema at [index.ts:70-79](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L70-L79) adds `memory_tier: z.enum(["doc","raw","reflection","any"]).optional().default("any")`
-  - [ ] Handler post-filters the traverse result set by looking up `doc.memory_tier` for each id, dropping those that don't match when `memory_tier !== "any"`
-  - [ ] Add a helper on `KnowledgeDB` (`getMemoryTier(id: string): string | undefined` — selects the `memory_tier` column) so `index.ts` doesn't have to rewrite SQL
+  - [x] `knowledge_traverse` schema at [index.ts:70-79](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L70-L79) adds `memory_tier: z.enum(["doc","raw","reflection","any"]).optional().default("any")`
+  - [x] Handler post-filters the traverse result set by looking up `doc.memory_tier` for each id, dropping those that don't match when `memory_tier !== "any"`
+  - [x] Add a helper on `KnowledgeDB` (`getMemoryTier(id: string): string | undefined` — selects the `memory_tier` column) so `index.ts` doesn't have to rewrite SQL
 
 #### Task 8.4: Implement knowledge_memory_stats tool
 - **files**: `plugin/ralph-knowledge/src/index.ts` (modify)
@@ -802,11 +802,11 @@ Extend `knowledge_search` Zod schema with `memory_tier` + `return_chunk_meta`; e
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `server.tool("knowledge_memory_stats", ...)` registered with Zod schema `{ since: z.string().optional() }`
-  - [ ] Default `since` is 24h ago (`new Date(Date.now() - 24*3600*1000).toISOString()`)
-  - [ ] Returns JSON with keys: `total_documents`, `by_tier` (object keyed doc/raw/reflection), `new_since` (object same shape counting docs where `documents.date >= since`), `chunks_per_doc_p50`, `chunks_per_doc_p90`, `last_reflection_at`
-  - [ ] `last_reflection_at` = ISO timestamp of most-recent document with `memory_tier='reflection'`, or `null` when none exist
-  - [ ] `chunks_per_doc_p50`/`_p90` computed from `SELECT COUNT(*) FROM chunks GROUP BY document_id` with in-JS percentile math (sort, pick index at floor(n*0.5) and floor(n*0.9))
+  - [x] `server.tool("knowledge_memory_stats", ...)` registered with Zod schema `{ since: z.string().optional() }`
+  - [x] Default `since` is 24h ago (`new Date(Date.now() - 24*3600*1000).toISOString()`)
+  - [x] Returns JSON with keys: `total_documents`, `by_tier` (object keyed doc/raw/reflection), `new_since` (object same shape counting docs where `documents.date >= since`), `chunks_per_doc_p50`, `chunks_per_doc_p90`, `last_reflection_at`
+  - [x] `last_reflection_at` = ISO timestamp of most-recent document with `memory_tier='reflection'`, or `null` when none exist
+  - [x] `chunks_per_doc_p50`/`_p90` computed from `SELECT COUNT(*) FROM chunks GROUP BY document_id` with in-JS percentile math (sort, pick index at floor(n*0.5) and floor(n*0.9))
 
 #### Task 8.5: Test memory_tier filter + stats tool
 - **files**: `plugin/ralph-knowledge/src/__tests__/index.test.ts` (modify), `plugin/ralph-knowledge/src/__tests__/memory-stats.test.ts` (create)
@@ -814,19 +814,19 @@ Extend `knowledge_search` Zod schema with `memory_tier` + `return_chunk_meta`; e
 - **complexity**: medium
 - **depends_on**: [8.1, 8.2, 8.3, 8.4]
 - **acceptance**:
-  - [ ] `index.test.ts`: seed 3 docs with memory_tier `doc`, `raw`, `reflection`; `knowledge_search` with `memory_tier=reflection` returns only the reflection doc
-  - [ ] `index.test.ts`: `memory_tier="any"` returns all three
-  - [ ] `index.test.ts`: `return_chunk_meta=true` produces a payload with `chunk_index` populated for at least one hit
-  - [ ] `index.test.ts`: `knowledge_traverse` with `memory_tier=reflection` filter drops non-reflection nodes from results
-  - [ ] `memory-stats.test.ts`: seed a fixture with known tier counts; assert `by_tier.doc=X`, `by_tier.raw=Y`, `by_tier.reflection=Z`
-  - [ ] `memory-stats.test.ts`: `chunks_per_doc_p50` on a fixture with chunk counts `[1,2,3,4,5]` returns `3`
-  - [ ] `memory-stats.test.ts`: empty reflection set produces `last_reflection_at: null`
+  - [x] `index.test.ts`: seed 3 docs with memory_tier `doc`, `raw`, `reflection`; `knowledge_search` with `memory_tier=reflection` returns only the reflection doc
+  - [x] `index.test.ts`: `memory_tier="any"` returns all three
+  - [x] `index.test.ts`: `return_chunk_meta=true` produces a payload with `chunk_index` populated for at least one hit
+  - [x] `index.test.ts`: `knowledge_traverse` with `memory_tier=reflection` filter drops non-reflection nodes from results
+  - [x] `memory-stats.test.ts`: seed a fixture with known tier counts; assert `by_tier.doc=X`, `by_tier.raw=Y`, `by_tier.reflection=Z`
+  - [x] `memory-stats.test.ts`: `chunks_per_doc_p50` on a fixture with chunk counts `[1,2,3,4,5]` returns `3`
+  - [x] `memory-stats.test.ts`: empty reflection set produces `last_reflection_at: null`
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test` — index.test.ts, memory-stats.test.ts, and full suite pass
+- [x] `npm run build` passes
+- [x] `npm test` — index.test.ts, memory-stats.test.ts, and full suite pass
 
 #### Manual Verification:
 - [ ] From Claude Code (with MCP server reloaded): `knowledge_memory_stats` returns expected shape; `knowledge_search` with `memory_tier=reflection` runs against an empty reflection set and returns `[]` without error

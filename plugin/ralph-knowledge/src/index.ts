@@ -22,12 +22,60 @@ function resolveEnv(name: string): string | undefined {
   return val;
 }
 
-export function createServer(dbPath: string) {
+/**
+ * True when the `chunks` table exists in the schema (v3+). When absent,
+ * `knowledge_memory_stats` reports 0 chunks-per-doc percentiles.
+ */
+function chunksTableExists(db: KnowledgeDB): boolean {
+  const row = db.db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'",
+    )
+    .get();
+  return row !== undefined;
+}
+
+/**
+ * True when the `documents.memory_tier` column exists (v3+). Used to decide
+ * whether tier-level stats can be produced from the schema at all.
+ */
+function memoryTierColumnExists(db: KnowledgeDB): boolean {
+  const rows = db.db
+    .prepare("PRAGMA table_info(documents)")
+    .all() as Array<{ name: string }>;
+  return rows.some((r) => r.name === "memory_tier");
+}
+
+/**
+ * Percentile helper using nearest-rank. For n sorted values returns the value
+ * at index `floor(n * p)` clamped to [0, n-1]. Returns 0 on empty input.
+ * Matches the spec in Phase 8 Task 8.4: "pick index at floor(n*0.5)".
+ */
+function percentile(sortedValues: number[], p: number): number {
+  if (sortedValues.length === 0) return 0;
+  const idx = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.floor(sortedValues.length * p)),
+  );
+  return sortedValues[idx];
+}
+
+/**
+ * Options for `createServer`. When `embedFn` is provided it replaces the
+ * production `embed` import, allowing tests to bypass the HuggingFace model
+ * download.
+ */
+export interface CreateServerOptions {
+  embedFn?: (text: string) => Promise<Float32Array>;
+}
+
+export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
   const server = new McpServer({ name: "ralph-hero-knowledge", version: "0.1.0" });
   const db = new KnowledgeDB(dbPath);
   const fts = new FtsSearch(db);
   const vec = new VectorSearch(db);
-  const hybrid = new HybridSearch(db, fts, vec, embed);
+  const embedImpl = opts.embedFn ?? embed;
+  const hybrid = new HybridSearch(db, fts, vec, embedImpl);
   const traverser = new Traverser(db);
 
   server.tool(
@@ -40,6 +88,16 @@ export function createServer(dbPath: string) {
       limit: z.number().optional().describe("Max results (default: 10)"),
       includeSuperseded: z.boolean().optional().describe("Include superseded documents (default: false)"),
       brief: z.boolean().optional().describe("Return minimal metadata only (default: false)"),
+      memory_tier: z
+        .enum(["doc", "raw", "reflection", "any"])
+        .optional()
+        .default("any")
+        .describe("Filter by memory tier: 'doc' (curated), 'raw' (dream-loop ingest), 'reflection' (synthesized), 'any' (default)"),
+      return_chunk_meta: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Include chunk_index/char_start/char_end/context_prefix in each hit when chunk data is available"),
     },
     async (args) => {
       try {
@@ -48,18 +106,33 @@ export function createServer(dbPath: string) {
           type: args.type,
           limit: args.limit ?? 10,
           includeSuperseded: args.includeSuperseded,
+          memoryTier: args.memory_tier,
         });
-        const enriched = results.map(r => {
-          const base = { ...r, tags: db.getTags(r.id) };
+        const enriched = results.map((r) => {
+          // Start with the camelCase SearchResult shape so existing callers
+          // keep working, then optionally add snake_case aliases for new
+          // chunk fields and strip them when callers didn't opt in.
+          const { chunkIndex, charStart, charEnd, contextPrefix, bestChunkId, ...rest } = r;
+          const base: Record<string, unknown> = { ...rest, tags: db.getTags(r.id) };
+          if (args.return_chunk_meta) {
+            if (chunkIndex !== undefined) base.chunk_index = chunkIndex;
+            if (charStart !== undefined) base.char_start = charStart;
+            if (charEnd !== undefined) base.char_end = charEnd;
+            if (contextPrefix !== undefined) base.context_prefix = contextPrefix;
+            if (bestChunkId !== undefined) base.best_chunk_id = bestChunkId;
+          }
           // SearchResult does not carry githubIssue — fetch from documents table
           const doc = db.getDocument(r.id);
           if (doc?.githubIssue) {
             const outcomes = db.getOutcomeSummary(doc.githubIssue);
-            if (outcomes) return { ...base, outcomes_summary: outcomes };
+            if (outcomes) base.outcomes_summary = outcomes;
           }
           return base;
         });
-        const formatted = formatSearchResults(enriched, args.brief ?? false);
+        const formatted = formatSearchResults(
+          enriched as unknown as Parameters<typeof formatSearchResults>[0],
+          args.brief ?? false,
+        );
         return { content: [{ type: "text" as const, text: JSON.stringify(formatted, null, 2) }] };
       } catch (e) {
         return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
@@ -76,15 +149,137 @@ export function createServer(dbPath: string) {
       depth: z.number().optional().describe("Max traversal depth (default: 3)"),
       direction: z.enum(["outgoing", "incoming"]).optional().describe("Edge direction (default: outgoing)"),
       brief: z.boolean().optional().describe("Return minimal metadata only (default: false)"),
+      memory_tier: z
+        .enum(["doc", "raw", "reflection", "any"])
+        .optional()
+        .default("any")
+        .describe("Filter traversed nodes by memory tier (default: 'any')"),
     },
     async (args) => {
       try {
         const opts = { type: args.type, depth: args.depth ?? 3 };
-        const results = args.direction === "incoming"
+        let results = args.direction === "incoming"
           ? traverser.traverseIncoming(args.from, opts)
           : traverser.traverse(args.from, opts);
+        if (args.memory_tier && args.memory_tier !== "any") {
+          const wantedTier = args.memory_tier;
+          results = results.filter((r) => {
+            const tier = db.getMemoryTier(r.targetId);
+            // When memory_tier column is absent (pre-v3 DB) treat as "doc"
+            return (tier ?? "doc") === wantedTier;
+          });
+        }
         const formatted = formatTraverseResults(results, (id) => db.getTags(id), args.brief ?? false);
         return { content: [{ type: "text" as const, text: JSON.stringify(formatted, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    },
+  );
+
+  server.tool(
+    "knowledge_memory_stats",
+    "Return counts of documents by memory_tier plus chunk percentiles and last-reflection timestamp. Used by the dream-loop to confirm ingest/reflection completion.",
+    {
+      since: z
+        .string()
+        .optional()
+        .describe("ISO timestamp — counts for 'new_since' are computed against this. Defaults to 24 hours ago."),
+    },
+    async (args) => {
+      try {
+        const since = args.since ?? new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+        const hasTier = memoryTierColumnExists(db);
+        const hasChunks = chunksTableExists(db);
+
+        const totalRow = db.db
+          .prepare("SELECT COUNT(*) AS c FROM documents")
+          .get() as { c: number };
+        const totalDocuments = totalRow.c;
+
+        const byTier: Record<"doc" | "raw" | "reflection", number> = {
+          doc: 0,
+          raw: 0,
+          reflection: 0,
+        };
+        const newSince: Record<"doc" | "raw" | "reflection", number> = {
+          doc: 0,
+          raw: 0,
+          reflection: 0,
+        };
+
+        if (hasTier) {
+          const rows = db.db
+            .prepare(
+              `SELECT memory_tier AS tier, COUNT(*) AS c
+               FROM documents GROUP BY memory_tier`,
+            )
+            .all() as Array<{ tier: string; c: number }>;
+          for (const r of rows) {
+            if (r.tier === "doc" || r.tier === "raw" || r.tier === "reflection") {
+              byTier[r.tier] = r.c;
+            }
+          }
+          const newRows = db.db
+            .prepare(
+              `SELECT memory_tier AS tier, COUNT(*) AS c
+               FROM documents
+               WHERE date IS NOT NULL AND date >= @since
+               GROUP BY memory_tier`,
+            )
+            .all({ since }) as Array<{ tier: string; c: number }>;
+          for (const r of newRows) {
+            if (r.tier === "doc" || r.tier === "raw" || r.tier === "reflection") {
+              newSince[r.tier] = r.c;
+            }
+          }
+        } else {
+          // v2 schema — everything treated as "doc"
+          byTier.doc = totalDocuments;
+          const newDocRow = db.db
+            .prepare(
+              "SELECT COUNT(*) AS c FROM documents WHERE date IS NOT NULL AND date >= ?",
+            )
+            .get(since) as { c: number };
+          newSince.doc = newDocRow.c;
+        }
+
+        let chunksPerDocP50 = 0;
+        let chunksPerDocP90 = 0;
+        if (hasChunks) {
+          const perDoc = db.db
+            .prepare(
+              `SELECT COUNT(*) AS c FROM chunks GROUP BY document_id`,
+            )
+            .all() as Array<{ c: number }>;
+          const counts = perDoc.map((r) => r.c).sort((a, b) => a - b);
+          chunksPerDocP50 = percentile(counts, 0.5);
+          chunksPerDocP90 = percentile(counts, 0.9);
+        }
+
+        let lastReflectionAt: string | null = null;
+        if (hasTier) {
+          const row = db.db
+            .prepare(
+              `SELECT date FROM documents
+               WHERE memory_tier = 'reflection' AND date IS NOT NULL
+               ORDER BY date DESC LIMIT 1`,
+            )
+            .get() as { date: string } | undefined;
+          lastReflectionAt = row?.date ?? null;
+        }
+
+        const payload = {
+          total_documents: totalDocuments,
+          by_tier: byTier,
+          new_since: newSince,
+          chunks_per_doc_p50: chunksPerDocP50,
+          chunks_per_doc_p90: chunksPerDocP90,
+          last_reflection_at: lastReflectionAt,
+          since,
+        };
+
+        return { content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }] };
       } catch (e) {
         return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
       }

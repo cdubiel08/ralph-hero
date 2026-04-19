@@ -205,6 +205,51 @@ describe("FtsSearch", () => {
     });
   });
 
+  describe("memory_tier filter", () => {
+    it("filters by memory_tier when schema has the column", () => {
+      // Phase 1 (GH-762) owns the production migration; add the column here
+      // so we can exercise the Phase 8 filter independently.
+      db.db.exec(
+        "ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))",
+      );
+      db.db
+        .prepare("UPDATE documents SET memory_tier = ? WHERE id = ?")
+        .run("reflection", "auth-doc");
+      fts.rebuildIndex();
+
+      // auth-doc is "reflection", so search for terms in auth-doc should hit.
+      const reflectionHits = fts.search("authentication", { memoryTier: "reflection" });
+      const ids = reflectionHits.map((r) => r.id);
+      expect(ids).toContain("auth-doc");
+
+      // A "doc" filter should omit the reflection-tagged doc.
+      const docHits = fts.search("authentication", { memoryTier: "doc" });
+      expect(docHits.some((r) => r.id === "auth-doc")).toBe(false);
+    });
+
+    it("ignores memory_tier silently when column is absent (v2 schema)", () => {
+      // beforeEach gives us a v2 schema — column does not exist.
+      const results = fts.search("cache", { memoryTier: "reflection" });
+      // Filter is a no-op on v2; regular FTS results come through.
+      expect(Array.isArray(results)).toBe(true);
+    });
+
+    it("returns all tiers when memoryTier='any'", () => {
+      db.db.exec(
+        "ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))",
+      );
+      db.db
+        .prepare("UPDATE documents SET memory_tier = ? WHERE id = ?")
+        .run("reflection", "auth-doc");
+      fts.rebuildIndex();
+
+      const authHits = fts.search("authentication", { memoryTier: "any" });
+      expect(authHits.some((r) => r.id === "auth-doc")).toBe(true);
+      const cacheHits = fts.search("cache", { memoryTier: "any" });
+      expect(cacheHits.some((r) => r.id === "cache-doc")).toBe(true);
+    });
+  });
+
   describe("ensureTable", () => {
     it("creates FTS table if it does not exist", () => {
       // Create a fresh DB without FTS table
