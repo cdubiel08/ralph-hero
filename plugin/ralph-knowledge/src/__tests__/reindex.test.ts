@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, unlinkSync, utimesSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -15,7 +15,7 @@ vi.mock("../embedder.js", () => ({
 }));
 
 import { embed } from "../embedder.js";
-import { reindex } from "../reindex.js";
+import { reindex, resolveDirs } from "../reindex.js";
 import { KnowledgeDB } from "../db.js";
 
 const mockedEmbed = vi.mocked(embed);
@@ -352,5 +352,151 @@ describe("incremental reindex", () => {
     const results = fts1.search("Fresh");
     expect(results.some(r => r.id === "fresh-doc")).toBe(true);
     db1.close();
+  });
+
+  it("scenario 13: reindex honors .ralphignore for file discovery", async () => {
+    writeFileSync(join(dir, "kept.md"), makeDoc("Kept"));
+    writeFileSync(join(dir, "skipped.md"), makeDoc("Skipped"));
+    writeFileSync(join(dir, ".ralphignore"), "skipped.md\n");
+
+    await reindex([dir], dbPath);
+    expect(mockedEmbed).toHaveBeenCalledTimes(1);
+
+    const db = new KnowledgeDB(dbPath);
+    expect(db.getDocument("kept")).toBeTruthy();
+    expect(db.getDocument("skipped")).toBeUndefined();
+    db.close();
+  });
+
+  it("scenario 14: reindex honors caller-supplied ignorePatterns arg", async () => {
+    writeFileSync(join(dir, "kept.md"), makeDoc("Kept"));
+    mkdirSync(join(dir, "drafts"));
+    writeFileSync(join(dir, "drafts", "wip.md"), makeDoc("WIP"));
+
+    await reindex([dir], dbPath, false, ["drafts/**"]);
+    // Only kept.md should have been embedded.
+    expect(mockedEmbed).toHaveBeenCalledTimes(1);
+
+    const db = new KnowledgeDB(dbPath);
+    expect(db.getDocument("kept")).toBeTruthy();
+    expect(db.getDocument("wip")).toBeUndefined();
+    db.close();
+  });
+});
+
+describe("resolveDirs precedence", () => {
+  const ORIGINAL_ARGV = process.argv;
+  const ORIGINAL_ENV = {
+    RALPH_KNOWLEDGE_DIRS: process.env.RALPH_KNOWLEDGE_DIRS,
+    RALPH_KNOWLEDGE_DB: process.env.RALPH_KNOWLEDGE_DB,
+    RALPH_KNOWLEDGE_CONFIG: process.env.RALPH_KNOWLEDGE_CONFIG,
+  };
+  let tmpHome: string;
+  let configDir: string;
+
+  beforeEach(() => {
+    process.argv = ["node", "reindex.js"];
+    delete process.env.RALPH_KNOWLEDGE_DIRS;
+    delete process.env.RALPH_KNOWLEDGE_DB;
+    configDir = mkdtempSync(join(tmpdir(), "resolve-dirs-"));
+    tmpHome = configDir;
+    process.env.RALPH_KNOWLEDGE_CONFIG = join(configDir, "knowledge.config.json");
+  });
+
+  afterEach(() => {
+    process.argv = ORIGINAL_ARGV;
+    for (const key of Object.keys(ORIGINAL_ENV) as (keyof typeof ORIGINAL_ENV)[]) {
+      const orig = ORIGINAL_ENV[key];
+      if (orig === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = orig;
+      }
+    }
+  });
+
+  it("CLI positional args beat env var even when both are set", () => {
+    writeFileSync(
+      process.env.RALPH_KNOWLEDGE_CONFIG!,
+      JSON.stringify({ roots: ["/from/config"] }),
+    );
+    process.argv = ["node", "reindex.js", "/from/cli"];
+    process.env.RALPH_KNOWLEDGE_DIRS = "/from/env";
+    const r = resolveDirs();
+    expect(r.source).toBe("cli");
+    expect(r.dirs).toEqual(["/from/cli"]);
+  });
+
+  it("env var beats config file roots when CLI is empty", () => {
+    writeFileSync(
+      process.env.RALPH_KNOWLEDGE_CONFIG!,
+      JSON.stringify({ roots: ["/from/config"] }),
+    );
+    process.env.RALPH_KNOWLEDGE_DIRS = "/from/env-a,/from/env-b";
+    const r = resolveDirs();
+    expect(r.source).toBe("env");
+    expect(r.dirs).toEqual(["/from/env-a", "/from/env-b"]);
+  });
+
+  it("config file roots beat fallback when CLI and env are absent", () => {
+    writeFileSync(
+      process.env.RALPH_KNOWLEDGE_CONFIG!,
+      JSON.stringify({ roots: ["/from/config-a", "/from/config-b"] }),
+    );
+    const r = resolveDirs();
+    expect(r.source).toBe("config");
+    expect(r.dirs).toEqual(["/from/config-a", "/from/config-b"]);
+  });
+
+  it("falls back to ../../thoughts when no source is configured", () => {
+    // Point env var at a nonexistent config path so loadConfig returns {}.
+    process.env.RALPH_KNOWLEDGE_CONFIG = join(configDir, "missing.json");
+    const r = resolveDirs();
+    expect(r.source).toBe("fallback");
+    expect(r.dirs).toEqual(["../../thoughts"]);
+  });
+
+  it("dbPath precedence: CLI arg > env var > config > default", () => {
+    writeFileSync(
+      process.env.RALPH_KNOWLEDGE_CONFIG!,
+      JSON.stringify({ roots: ["/x"], dbPath: "/from/config.db" }),
+    );
+    // CLI wins
+    process.argv = ["node", "reindex.js", "/cli/root", "/cli/override.db"];
+    process.env.RALPH_KNOWLEDGE_DB = "/from/env.db";
+    expect(resolveDirs().dbPath).toBe("/cli/override.db");
+
+    // Env wins over config when CLI is absent
+    process.argv = ["node", "reindex.js"];
+    process.env.RALPH_KNOWLEDGE_DIRS = "/env/root";
+    process.env.RALPH_KNOWLEDGE_DB = "/from/env.db";
+    expect(resolveDirs().dbPath).toBe("/from/env.db");
+
+    // Config wins when neither CLI nor env set dbPath
+    delete process.env.RALPH_KNOWLEDGE_DB;
+    expect(resolveDirs().dbPath).toBe("/from/config.db");
+  });
+
+  it("forwards config.ignorePatterns on the returned config object", () => {
+    writeFileSync(
+      process.env.RALPH_KNOWLEDGE_CONFIG!,
+      JSON.stringify({
+        roots: ["/r1"],
+        ignorePatterns: ["draft/**", "*.bak"],
+      }),
+    );
+    const r = resolveDirs();
+    expect(r.config.ignorePatterns).toEqual(["draft/**", "*.bak"]);
+  });
+
+  it("treats an empty RALPH_KNOWLEDGE_DIRS as unset and falls through", () => {
+    writeFileSync(
+      process.env.RALPH_KNOWLEDGE_CONFIG!,
+      JSON.stringify({ roots: ["/from/config"] }),
+    );
+    process.env.RALPH_KNOWLEDGE_DIRS = "  ,  ";
+    const r = resolveDirs();
+    expect(r.source).toBe("config");
+    expect(r.dirs).toEqual(["/from/config"]);
   });
 });
