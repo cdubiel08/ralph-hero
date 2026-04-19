@@ -1113,9 +1113,9 @@ Commit a launchd plist template (lives in repo; installed copy goes to `~/Librar
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `plutil -lint scripts/dream/launchd/com.dubiel.dream-loop.plist.template` passes
-- [ ] `ls -l scripts/dream/logrotate.sh` shows executable bit set
-- [ ] `bash scripts/dream/logrotate.sh` runs without error on an empty or large tmp file (cover both via quick smoke test in CI script if added)
+- [x] `plutil -lint scripts/dream/launchd/com.dubiel.dream-loop.plist.template` passes
+- [x] `ls -l scripts/dream/logrotate.sh` shows executable bit set
+- [x] `bash scripts/dream/logrotate.sh` runs without error on an empty or large tmp file (cover both via quick smoke test in CI script if added)
 
 #### Manual Verification:
 - [ ] Copy template to `~/Library/LaunchAgents/com.dubiel.dream-loop.plist`; `launchctl load` succeeds
