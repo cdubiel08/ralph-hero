@@ -217,3 +217,230 @@ describe("HybridSearch chunk metadata enrichment", () => {
     expect(hit!.chunkIndex).toBeUndefined();
   });
 });
+
+describe("HybridSearch chunk-to-doc dedup", () => {
+  let dedupDb: KnowledgeDB;
+  let dedupFts: FtsSearch;
+  let dedupVec: VectorSearch;
+  let dedupHybrid: HybridSearch;
+
+  /**
+   * Deterministic embed function for dedup tests: always returns the same
+   * vector as mockEmbedding(42). Paired with chunk embeddings that use the
+   * same seed so the chunks rank near-perfectly for any query.
+   */
+  const fixedEmbedFn: EmbedFn = async () => mockEmbedding(42);
+
+  /** Insert a chunk row into the chunks table. */
+  function insertChunk(
+    db: KnowledgeDB,
+    chunkId: string,
+    docId: string,
+    index: number,
+    content: string,
+  ): void {
+    db.db
+      .prepare(
+        `INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(chunkId, docId, index, content, 0, content.length);
+  }
+
+  beforeEach(() => {
+    dedupDb = new KnowledgeDB(":memory:");
+
+    dedupDb.upsertDocument({
+      id: "chunk-doc",
+      path: "thoughts/shared/research/chunking-strategies.md",
+      title: "Chunking Strategies Deep Dive",
+      date: "2026-03-01",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content:
+        "Header paragraph not a chunk match. Body discusses recursive character splitter tradeoffs.",
+    });
+
+    dedupDb.upsertDocument({
+      id: "other-doc",
+      path: "thoughts/shared/plans/other.md",
+      title: "Unrelated Plan",
+      date: "2026-03-02",
+      type: "plan",
+      status: "draft",
+      githubIssue: null,
+      content: "This is a completely different topic unrelated to the query.",
+    });
+
+    ensureV3Schema(dedupDb);
+
+    dedupFts = new FtsSearch(dedupDb);
+    dedupFts.rebuildIndex();
+
+    dedupVec = new VectorSearch(dedupDb);
+    dedupVec.createIndex();
+
+    // Five chunks from chunk-doc, all seeded identically so they rank as
+    // the top-5 vector hits for fixedEmbedFn. Distinct content per chunk so
+    // we can verify which one becomes the snippet.
+    for (let i = 0; i < 5; i++) {
+      const id = `chunk-doc#c${i}`;
+      const content = `Chunk ${i} content about recursive character splitter tradeoffs — paragraph ${i}.`;
+      insertChunk(dedupDb, id, "chunk-doc", i, content);
+      // Slight seed variation so distance differs per chunk; chunk 0 is best.
+      dedupVec.upsertEmbedding(id, mockEmbedding(42 + i * 0.0001));
+    }
+
+    // other-doc has a single chunk embedded with a very different seed so
+    // it ranks well below chunk-doc's chunks.
+    insertChunk(
+      dedupDb,
+      "other-doc#c0",
+      "other-doc",
+      0,
+      "Unrelated single chunk content.",
+    );
+    dedupVec.upsertEmbedding("other-doc#c0", mockEmbedding(900));
+
+    dedupHybrid = new HybridSearch(
+      dedupDb,
+      dedupFts,
+      dedupVec,
+      fixedEmbedFn,
+    );
+  });
+
+  it("deduplicates: 5 chunks from same doc yield exactly 1 result entry", async () => {
+    const results = await dedupHybrid.search("anything");
+
+    const chunkDocHits = results.filter((r) => r.id === "chunk-doc");
+    expect(chunkDocHits).toHaveLength(1);
+    // Also ensure no chunk-level id leaks into the results
+    const chunkIds = results.filter((r) => r.id.includes("#c"));
+    expect(chunkIds).toHaveLength(0);
+  });
+
+  it("surfaced entry's snippet comes from the highest-ranked chunk", async () => {
+    const results = await dedupHybrid.search("anything");
+
+    const chunkDocHit = results.find((r) => r.id === "chunk-doc");
+    expect(chunkDocHit).toBeDefined();
+    // Chunk 0 has the smallest seed offset (mockEmbedding(42 + 0)) so it
+    // should have the smallest distance to fixedEmbedFn = mockEmbedding(42).
+    expect(chunkDocHit!.snippet).toContain("Chunk 0");
+  });
+
+  it("snippet length is at most 300 characters", async () => {
+    // Add a chunk with very long content to chunk-doc and re-embed so it
+    // becomes chunk 0's rival.
+    const longContent = "X".repeat(5000);
+    dedupDb.db
+      .prepare(
+        `INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("chunk-doc#c99", "chunk-doc", 99, longContent, 0, longContent.length);
+    // Embed with seed exactly 42 so it becomes the best hit (distance 0).
+    dedupVec.upsertEmbedding("chunk-doc#c99", mockEmbedding(42));
+
+    const results = await dedupHybrid.search("anything");
+    const hit = results.find((r) => r.id === "chunk-doc");
+    expect(hit).toBeDefined();
+    expect(hit!.snippet.length).toBeLessThanOrEqual(300);
+  });
+
+  it("title-only FTS match still returns the doc (no regression on legacy doc-level hits)", async () => {
+    // Document with a doc-level vec row (no chunks) — simulates a legacy
+    // record that predates the chunks table.
+    dedupDb.upsertDocument({
+      id: "legacy-doc",
+      path: "thoughts/legacy.md",
+      title: "Legacy Title Only Matching Query",
+      date: "2026-02-01",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Legacy body text",
+    });
+    dedupFts.rebuildIndex();
+    dedupVec.upsertEmbedding("legacy-doc", mockEmbedding(800));
+
+    const results = await dedupHybrid.search("Legacy");
+    const legacyHit = results.find((r) => r.id === "legacy-doc");
+    expect(legacyHit).toBeDefined();
+    // FTS contributed the snippet (no chunk content to override it).
+    expect(legacyHit!.snippet).toBeDefined();
+  });
+
+  it("RRF score: bucketed rank 0 + FTS rank 2 equals 1/(60+1) + 1/(60+3)", async () => {
+    // Force a known configuration by clearing and rebuilding:
+    // - chunk-doc is the #1 vector hit (bucketed rank 0)
+    // - chunk-doc is the #3 FTS hit (index 2)
+    // We arrange this by inserting three docs that match "match" in FTS,
+    // ordered by BM25 so chunk-doc ends up at rank 2.
+    //
+    // Simpler: test this using a fresh controlled fixture.
+    const tdb = new KnowledgeDB(":memory:");
+
+    tdb.upsertDocument({
+      id: "d-fts-top",
+      path: "a.md",
+      title: "match match match match",
+      date: "2026-01-01",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "match match match match match",
+    });
+    tdb.upsertDocument({
+      id: "d-fts-second",
+      path: "b.md",
+      title: "match match match",
+      date: "2026-01-02",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "match match match",
+    });
+    tdb.upsertDocument({
+      id: "target",
+      path: "c.md",
+      title: "Target Doc",
+      date: "2026-01-03",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "target doc with match keyword once",
+    });
+
+    const tfts = new FtsSearch(tdb);
+    tfts.rebuildIndex();
+
+    const tvec = new VectorSearch(tdb);
+    tvec.createIndex();
+
+    // One chunk for target, seeded exactly 42 so it's the only/best vec hit.
+    insertChunk(tdb, "target#c0", "target", 0, "Chunk content for target.");
+    tvec.upsertEmbedding("target#c0", mockEmbedding(42));
+    // Add far-away embeddings for the other docs so they don't contribute
+    // to the vector bucket's top ranks for target.
+    tvec.upsertEmbedding("d-fts-top", mockEmbedding(900));
+    tvec.upsertEmbedding("d-fts-second", mockEmbedding(901));
+
+    const thybrid = new HybridSearch(tdb, tfts, tvec, fixedEmbedFn);
+    const results = await thybrid.search("match");
+
+    const target = results.find((r) => r.id === "target");
+    expect(target).toBeDefined();
+
+    // Verify FTS rank of target is 2 (third position) by fetching raw FTS.
+    const ftsRaw = tfts.search("match", { includeSuperseded: true, limit: 40 });
+    const ftsRankOfTarget = ftsRaw.findIndex((r) => r.id === "target");
+    expect(ftsRankOfTarget).toBe(2);
+
+    const K = 60;
+    const expected = 1 / (K + 0 + 1) + 1 / (K + 2 + 1);
+    expect(target!.score).toBeCloseTo(expected, 10);
+  });
+});

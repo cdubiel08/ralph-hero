@@ -1,6 +1,6 @@
 import type { KnowledgeDB } from "./db.js";
 import type { FtsSearch, SearchOptions, SearchResult } from "./search.js";
-import type { VectorSearch } from "./vector-search.js";
+import type { VectorResult, VectorSearch } from "./vector-search.js";
 
 export type EmbedFn = (text: string) => Promise<Float32Array>;
 
@@ -12,6 +12,23 @@ interface ChunkRow {
   char_end: number;
   context_prefix: string;
   content: string;
+}
+
+/**
+ * Maximum snippet length (in characters) when the snippet is sourced from a
+ * chunk's content. Keeps the MCP payload compact while still representative.
+ */
+const SNIPPET_MAX_CHARS = 300;
+
+/**
+ * Per-document bucket tracking the best-ranked chunk for a given doc_id in
+ * the vector result list. The "rank" is the index of the first occurrence of
+ * the document in the distance-sorted vector results (smaller = better).
+ */
+interface DocBucket {
+  bestRank: number;
+  bestChunkId: string;
+  bestContent: string;
 }
 
 export class HybridSearch {
@@ -75,11 +92,27 @@ export class HybridSearch {
     });
 
     const queryEmbedding = await this.embedFn(query);
-    const vecResults = this.vec.search(queryEmbedding, limit * 2);
+    const vecResults: VectorResult[] = this.vec.search(
+      queryEmbedding,
+      limit * 2,
+    );
 
-    // Build RRF score map, keyed by document_id. When vec ids are chunk ids
-    // like `{doc}#c{n}`, we collapse to the parent doc for scoring but
-    // remember the best-scoring chunk id per doc for later meta enrichment.
+    // Bucket vector results by doc_id, keeping the best-ranked chunk per doc.
+    // vecResults is already sorted by distance ascending, so the first
+    // occurrence of a given doc_id has the smallest rank (best match).
+    const buckets = new Map<string, DocBucket>();
+    for (let i = 0; i < vecResults.length; i++) {
+      const hit = vecResults[i];
+      const docId = this.docIdFromVecId(hit.id);
+      if (buckets.has(docId)) continue; // Already have best rank for this doc
+      buckets.set(docId, {
+        bestRank: i,
+        bestChunkId: hit.id,
+        bestContent: hit.content ?? "",
+      });
+    }
+
+    // Build RRF score map (keyed by doc_id for both FTS and vector buckets)
     const scores = new Map<string, number>();
     const bestChunkByDoc = new Map<string, { chunkId: string; rank: number }>();
 
@@ -89,16 +122,13 @@ export class HybridSearch {
       scores.set(id, (scores.get(id) ?? 0) + rrfScore);
     }
 
-    for (let i = 0; i < vecResults.length; i++) {
-      const vecId = vecResults[i].id;
-      const docId = this.docIdFromVecId(vecId);
-      const rrfScore = 1 / (HybridSearch.RRF_K + i + 1);
+    for (const [docId, bucket] of buckets) {
+      const rrfScore = 1 / (HybridSearch.RRF_K + bucket.bestRank + 1);
       scores.set(docId, (scores.get(docId) ?? 0) + rrfScore);
-      if (vecId !== docId) {
-        const existing = bestChunkByDoc.get(docId);
-        if (!existing || i < existing.rank) {
-          bestChunkByDoc.set(docId, { chunkId: vecId, rank: i });
-        }
+      // Track best chunk for later enrichment
+      const existing = bestChunkByDoc.get(docId);
+      if (!existing || bucket.bestRank < existing.rank) {
+        bestChunkByDoc.set(docId, { chunkId: bucket.bestChunkId, rank: bucket.bestRank });
       }
     }
 
@@ -108,18 +138,30 @@ export class HybridSearch {
       ftsById.set(r.id, r);
     }
 
-    // Assemble combined results
+    // Assemble combined results. For vector-hit docs, replace the snippet
+    // with the winning chunk's content (truncated). FTS-only hits keep the
+    // FTS snippet.
     const combined: SearchResult[] = [];
 
     for (const [id, rrfScore] of scores) {
       const ftsHit = ftsById.get(id);
+      const bucket = buckets.get(id);
       if (ftsHit) {
-        combined.push({ ...ftsHit, score: rrfScore });
+        // FTS hit (possibly also a vector hit): prefer the chunk snippet when
+        // the vector side contributed real chunk content.
+        const snippet =
+          bucket && bucket.bestContent
+            ? bucket.bestContent.slice(0, SNIPPET_MAX_CHARS)
+            : ftsHit.snippet;
+        combined.push({ ...ftsHit, score: rrfScore, snippet });
       } else {
         // Vector-only result: fetch document metadata from db
         const doc = this.db.getDocument(id);
         // Skip stub documents — they have no real content or path
         if (!doc || doc.isStub) continue;
+        const snippet = bucket
+          ? bucket.bestContent.slice(0, SNIPPET_MAX_CHARS)
+          : "";
         combined.push({
           id: doc.id,
           path: doc.path as string,
@@ -128,7 +170,7 @@ export class HybridSearch {
           status: doc.status,
           date: doc.date,
           score: rrfScore,
-          snippet: "",
+          snippet,
         });
       }
     }

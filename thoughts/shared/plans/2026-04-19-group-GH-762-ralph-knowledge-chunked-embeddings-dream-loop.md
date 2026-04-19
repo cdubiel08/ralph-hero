@@ -383,9 +383,9 @@ Make HybridSearch aware that vector hits are now chunk-level; deduplicate to one
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `interface VectorResult` extended with optional `content?: string` field (preserves back-compat for pre-chunks callers)
-  - [ ] `search()` method at [vector-search.ts:57-70](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/vector-search.ts#L57-L70) updated SQL: `SELECT documents_vec.id, distance, chunks.content FROM documents_vec LEFT JOIN chunks ON chunks.id = documents_vec.id WHERE embedding MATCH ? AND k = ? ORDER BY distance`
-  - [ ] `content` is populated when the vec id matches a chunks row; null/undefined when no match (keeps test fixtures working with doc-level ids)
+  - [x] `interface VectorResult` extended with optional `content?: string` field (preserves back-compat for pre-chunks callers)
+  - [x] `search()` method at [vector-search.ts:57-70](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/vector-search.ts#L57-L70) updated SQL: `SELECT documents_vec.id, distance, chunks.content FROM documents_vec LEFT JOIN chunks ON chunks.id = documents_vec.id WHERE embedding MATCH ? AND k = ? ORDER BY distance`
+  - [x] `content` is populated when the vec id matches a chunks row; null/undefined when no match (keeps test fixtures working with doc-level ids)
 
 #### Task 4.2: Test VectorSearch LEFT JOIN
 - **files**: `plugin/ralph-knowledge/src/__tests__/vector-search.test.ts` (modify)
@@ -393,8 +393,8 @@ Make HybridSearch aware that vector hits are now chunk-level; deduplicate to one
 - **complexity**: low
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] Test: when `chunks` table has a row matching the vec id, `search()` returns `content` populated
-  - [ ] Test: when no matching chunks row, `content` is null (back-compat preserved)
+  - [x] Test: when `chunks` table has a row matching the vec id, `search()` returns `content` populated
+  - [x] Test: when no matching chunks row, `content` is null (back-compat preserved)
 
 #### Task 4.3: Update HybridSearch to bucket by doc_id
 - **files**: `plugin/ralph-knowledge/src/hybrid-search.ts` (modify)
@@ -402,12 +402,12 @@ Make HybridSearch aware that vector hits are now chunk-level; deduplicate to one
 - **complexity**: high
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] After vector search at [hybrid-search.ts:30](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L30), loop over `vecResults` and split each `hit.id` on `#c` to derive `docId`
-  - [ ] Build a `Map<docId, { bestRank: number; bestChunkId: string; bestContent: string }>` keeping only the entry with smallest rank index for each doc
-  - [ ] Replace the vector-results RRF loop at [hybrid-search.ts:41-45](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L41-L45) so that the RRF score is computed from the best-rank-per-doc bucket (bucket rank = index of first occurrence of that doc_id in the sorted vector result list)
-  - [ ] When assembling `combined` results, populate `snippet` from the bucket's `bestContent` truncated to <=300 chars; for FTS-only hits, leave existing FTS snippet in place
-  - [ ] RRF K=60 constant unchanged
-  - [ ] When `hit.id` has no `#c` in it (back-compat with doc-level ids, e.g., from fixtures or pre-v3 vec rows), treat the entire id as `docId` and use `hit.id` as `bestChunkId`
+  - [x] After vector search at [hybrid-search.ts:30](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L30), loop over `vecResults` and split each `hit.id` on `#c` to derive `docId`
+  - [x] Build a `Map<docId, { bestRank: number; bestChunkId: string; bestContent: string }>` keeping only the entry with smallest rank index for each doc
+  - [x] Replace the vector-results RRF loop at [hybrid-search.ts:41-45](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L41-L45) so that the RRF score is computed from the best-rank-per-doc bucket (bucket rank = index of first occurrence of that doc_id in the sorted vector result list)
+  - [x] When assembling `combined` results, populate `snippet` from the bucket's `bestContent` truncated to <=300 chars; for FTS-only hits, leave existing FTS snippet in place
+  - [x] RRF K=60 constant unchanged
+  - [x] When `hit.id` has no `#c` in it (back-compat with doc-level ids, e.g., from fixtures or pre-v3 vec rows), treat the entire id as `docId` and use `hit.id` as `bestChunkId`
 
 #### Task 4.4: HybridSearch dedup + best-chunk tests
 - **files**: `plugin/ralph-knowledge/src/__tests__/hybrid-search.test.ts` (modify)
@@ -415,18 +415,18 @@ Make HybridSearch aware that vector hits are now chunk-level; deduplicate to one
 - **complexity**: medium
 - **depends_on**: [4.3]
 - **acceptance**:
-  - [ ] Test: 5 chunks from same doc all match query; result set contains exactly 1 entry for that doc
-  - [ ] Test: surfaced entry's `snippet` comes from the highest-ranked chunk's content (smallest rank index)
-  - [ ] Test: `snippet.length <= 300`
-  - [ ] Test: title-only matching queries still return the same top document (no regression on legacy doc-level hits)
-  - [ ] Test: RRF score for a doc with bucketed rank 0 + FTS rank 2 == `1/(60+1) + 1/(60+3)`
+  - [x] Test: 5 chunks from same doc all match query; result set contains exactly 1 entry for that doc
+  - [x] Test: surfaced entry's `snippet` comes from the highest-ranked chunk's content (smallest rank index)
+  - [x] Test: `snippet.length <= 300`
+  - [x] Test: title-only matching queries still return the same top document (no regression on legacy doc-level hits)
+  - [x] Test: RRF score for a doc with bucketed rank 0 + FTS rank 2 == `1/(60+1) + 1/(60+3)`
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test` — hybrid-search + vector-search tests + full suite pass
-- [ ] No regression: existing `search.test.ts` cases still pass
+- [x] `npm run build` passes
+- [x] `npm test` — hybrid-search + vector-search tests + full suite pass
+- [x] No regression: existing `search.test.ts` cases still pass
 
 #### Manual Verification:
 - [ ] From Claude Code: `knowledge_search "chunking strategies recursive character"` returns a snippet drawn from the body of the doc, not the title or first paragraph
