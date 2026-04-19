@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, unlinkSync, utimesSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,24 +7,46 @@ import { FtsSearch } from "../search.js";
 import { VectorSearch } from "../vector-search.js";
 
 // Mock embedder so we don't load the real transformer model during tests.
-// embedDocument returns one DocumentChunk per call with a constant 384-dim
-// embedding; this matches the new chunk-aware reindex flow.
+// embedDocument honors the Phase 6 `opts.llm` contract: when present it calls
+// `llm.contextualize(fullDoc, chunk.content)` and surfaces the returned string
+// on `DocumentChunk.contextPrefix` (empty on fail-open). When `cachedPrefixes`
+// is provided and has a value for a chunk's index, the live LLM call is skipped.
 vi.mock("../embedder.js", async () => {
   // Import the real chunker so the mock chunks content the same way as prod.
   const { chunkText } = await import("../chunker.js");
+  type LlmLike = { contextualize: (fullDoc: string, chunk: string) => Promise<string> };
+  type EmbedOpts = { llm?: LlmLike; cachedPrefixes?: Map<number, string> };
   return {
     embed: vi.fn(async () => new Float32Array(384)),
-    embedDocument: vi.fn(async (_title: string, _tags: string[], content: string) => {
+    embedDocument: vi.fn(async (
+      _title: string,
+      _tags: string[],
+      content: string,
+      opts?: EmbedOpts,
+    ) => {
       const chunks = content.length === 0
         ? [{ index: 0, content: "", charStart: 0, charEnd: 0 }]
         : chunkText(content);
-      return chunks.map(c => ({
-        index: c.index,
-        content: c.content,
-        charStart: c.charStart,
-        charEnd: c.charEnd,
-        embedding: new Float32Array(384),
-      }));
+      const out = [];
+      for (const c of chunks) {
+        let contextPrefix = "";
+        if (opts?.llm) {
+          if (opts.cachedPrefixes && opts.cachedPrefixes.has(c.index)) {
+            contextPrefix = opts.cachedPrefixes.get(c.index) ?? "";
+          } else {
+            contextPrefix = await opts.llm.contextualize(content, c.content);
+          }
+        }
+        out.push({
+          index: c.index,
+          content: c.content,
+          charStart: c.charStart,
+          charEnd: c.charEnd,
+          embedding: new Float32Array(384),
+          contextPrefix,
+        });
+      }
+      return out;
     }),
     prepareTextForEmbedding: vi.fn((title: string, tags: string[], content: string) => {
       const tagLine = tags.length > 0 ? tags.join(", ") : "";
@@ -33,6 +55,17 @@ vi.mock("../embedder.js", async () => {
     }),
   };
 });
+
+// Mock the LLM client so tests can deterministically control availability and
+// contextualize() return values without touching the network.
+const mockLlmAvailable = vi.fn(async () => true);
+const mockLlmContextualize = vi.fn(async (_fullDoc: string, _chunk: string) => "");
+vi.mock("../llm-client.js", () => ({
+  createLlmClient: vi.fn(() => ({
+    available: mockLlmAvailable,
+    contextualize: mockLlmContextualize,
+  })),
+}));
 
 import { embedDocument } from "../embedder.js";
 import { reindex } from "../reindex.js";
@@ -77,11 +110,30 @@ describe("findMarkdownFiles", () => {
 describe("incremental reindex", () => {
   let dir: string;
   let dbPath: string;
+  const originalFlag = process.env.RALPH_CONTEXTUAL_RETRIEVAL;
 
   beforeEach(() => {
     mockedEmbed.mockClear();
+    // Reset LLM mocks to defaults: available returns true, contextualize returns "".
+    // Individual tests override these before calling `reindex(...)`.
+    mockLlmAvailable.mockReset();
+    mockLlmAvailable.mockResolvedValue(true);
+    mockLlmContextualize.mockReset();
+    mockLlmContextualize.mockResolvedValue("");
+    // Default the flag to disabled for legacy tests so the existing 17 scenarios
+    // don't accidentally call the mocked LLM — the Phase 6 tests opt back in
+    // explicitly via `process.env.RALPH_CONTEXTUAL_RETRIEVAL = "1"`.
+    process.env.RALPH_CONTEXTUAL_RETRIEVAL = "0";
     dir = mkdtempSync(join(tmpdir(), "knowledge-reindex-"));
     dbPath = join(dir, "test.db");
+  });
+
+  afterEach(() => {
+    if (originalFlag === undefined) {
+      delete process.env.RALPH_CONTEXTUAL_RETRIEVAL;
+    } else {
+      process.env.RALPH_CONTEXTUAL_RETRIEVAL = originalFlag;
+    }
   });
 
   it("scenario 1: unchanged files are skipped on second run", async () => {
@@ -528,5 +580,158 @@ describe("incremental reindex", () => {
       .get("stable#c*") as { n: number }).n;
     expect(vecCount).toBe(secondCount);
     db2.close();
+  });
+
+  // ---- Phase 6 (GH-767): Contextual Retrieval wiring ----
+
+  it("scenario 18: RALPH_CONTEXTUAL_RETRIEVAL=0 skips LLM entirely", async () => {
+    process.env.RALPH_CONTEXTUAL_RETRIEVAL = "0";
+    mockLlmContextualize.mockResolvedValue("SHOULD NOT APPEAR");
+
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+
+    await reindex([dir], dbPath);
+
+    // Zero LLM activity when the flag is off.
+    expect(mockLlmAvailable).not.toHaveBeenCalled();
+    expect(mockLlmContextualize).not.toHaveBeenCalled();
+
+    // All chunks should have empty context_prefix.
+    const db = new KnowledgeDB(dbPath);
+    const rows = db.db
+      .prepare("SELECT context_prefix FROM chunks WHERE document_id = ?")
+      .all("doc-a") as Array<{ context_prefix: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.context_prefix).toBe("");
+    }
+    db.close();
+  });
+
+  it("scenario 19: flag on + LLM unreachable -> empty context_prefix + single warning", async () => {
+    process.env.RALPH_CONTEXTUAL_RETRIEVAL = "1";
+    mockLlmAvailable.mockResolvedValue(false);
+    // contextualize should never be called because available() returned false.
+    mockLlmContextualize.mockResolvedValue("UNREACHED");
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+      writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+      await reindex([dir], dbPath);
+
+      // available() probed exactly once per reindex call.
+      expect(mockLlmAvailable).toHaveBeenCalledTimes(1);
+      // contextualize() never invoked on the fail-open path.
+      expect(mockLlmContextualize).not.toHaveBeenCalled();
+
+      // Exactly one "unreachable" warning (other warnings like frontmatter are allowed).
+      const unreachableWarnings = warnSpy.mock.calls.filter(args =>
+        args.some(a => typeof a === "string" && /LLM endpoint unreachable/.test(a)),
+      );
+      expect(unreachableWarnings).toHaveLength(1);
+
+      const db = new KnowledgeDB(dbPath);
+      const rows = db.db
+        .prepare("SELECT context_prefix FROM chunks")
+        .all() as Array<{ context_prefix: string }>;
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of rows) {
+        expect(r.context_prefix).toBe("");
+      }
+      db.close();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("scenario 20: flag on + reachable LLM -> non-empty context_prefix persisted", async () => {
+    process.env.RALPH_CONTEXTUAL_RETRIEVAL = "1";
+    mockLlmAvailable.mockResolvedValue(true);
+    mockLlmContextualize.mockResolvedValue("GENERATED CONTEXT");
+
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+
+    await reindex([dir], dbPath);
+
+    expect(mockLlmAvailable).toHaveBeenCalledTimes(1);
+    expect(mockLlmContextualize).toHaveBeenCalled();
+
+    const db = new KnowledgeDB(dbPath);
+    const rows = db.db
+      .prepare("SELECT context_prefix FROM chunks WHERE document_id = ?")
+      .all("doc-a") as Array<{ context_prefix: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.context_prefix).toBe("GENERATED CONTEXT");
+    }
+    db.close();
+  });
+
+  it("scenario 21: flag defaults on (undefined env) and probes LLM", async () => {
+    delete process.env.RALPH_CONTEXTUAL_RETRIEVAL;
+    mockLlmAvailable.mockResolvedValue(true);
+    mockLlmContextualize.mockResolvedValue("DEFAULT ON");
+
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+
+    await reindex([dir], dbPath);
+
+    // available() probed because flag was not "0" / "false".
+    expect(mockLlmAvailable).toHaveBeenCalledTimes(1);
+    expect(mockLlmContextualize).toHaveBeenCalled();
+  });
+
+  it("scenario 22: 'false' also disables contextual retrieval", async () => {
+    process.env.RALPH_CONTEXTUAL_RETRIEVAL = "false";
+    mockLlmContextualize.mockResolvedValue("SHOULD NOT APPEAR");
+
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+
+    await reindex([dir], dbPath);
+
+    expect(mockLlmAvailable).not.toHaveBeenCalled();
+    expect(mockLlmContextualize).not.toHaveBeenCalled();
+  });
+
+  it("scenario 23: re-running with unchanged content reuses cached context_prefix (no new LLM calls)", async () => {
+    process.env.RALPH_CONTEXTUAL_RETRIEVAL = "1";
+    mockLlmAvailable.mockResolvedValue(true);
+    mockLlmContextualize.mockResolvedValue("INITIAL CTX");
+
+    const filePath = join(dir, "doc-a.md");
+    writeFileSync(filePath, makeDoc("Doc A"));
+
+    await reindex([dir], dbPath);
+    const firstCallCount = mockLlmContextualize.mock.calls.length;
+    expect(firstCallCount).toBeGreaterThan(0);
+
+    // Bump mtime without changing content — this defeats the outer mtime skip
+    // and forces the inner content-hash cache check to fire.
+    const future = Date.now() / 1000 + 2;
+    utimesSync(filePath, future, future);
+
+    mockLlmContextualize.mockClear();
+    // Swap the mock return so we can prove cached prefixes were reused: if the
+    // cache missed and a live call happened, the new return value would show up
+    // in the DB.
+    mockLlmContextualize.mockResolvedValue("LIVE (SHOULD NOT OCCUR)");
+
+    await reindex([dir], dbPath);
+
+    // Zero fresh calls because content hash matched the meta cache.
+    expect(mockLlmContextualize).not.toHaveBeenCalled();
+
+    const db = new KnowledgeDB(dbPath);
+    const rows = db.db
+      .prepare("SELECT context_prefix FROM chunks WHERE document_id = ?")
+      .all("doc-a") as Array<{ context_prefix: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.context_prefix).toBe("INITIAL CTX");
+    }
+    db.close();
   });
 });

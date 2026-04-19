@@ -3,6 +3,7 @@ import {
   type FeatureExtractionPipeline,
 } from "@huggingface/transformers";
 import { chunkText, type Chunk, type ChunkerOptions } from "./chunker.js";
+import type { LlmClient } from "./llm-client.js";
 
 const MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 
@@ -40,11 +41,36 @@ export interface DocumentChunk extends Chunk {
 }
 
 /**
+ * Options accepted by `embedDocument`. Extends `ChunkerOptions` with optional
+ * Contextual Retrieval inputs:
+ *
+ * - `llm`: when present, each chunk is run through `llm.contextualize(fullDoc, chunkContent)`
+ *   and the returned string is prepended to the embed text (and persisted on the
+ *   resulting `DocumentChunk.contextPrefix`). Empty-string returns (fail-open from
+ *   the LLM client) cause the embed text to fall back to the legacy
+ *   `${title}\n${tagLine}\n${chunk.content}` shape.
+ * - `cachedPrefixes`: optional `Map<chunkIndex, contextPrefix>` from a prior run.
+ *   When a chunk's index has a cached prefix, the LLM call is skipped and the
+ *   cached string is reused verbatim. Used by the reindex content-hash cache
+ *   fast-path (Task 6.4) so unchanged docs don't re-contact the LLM endpoint.
+ */
+export interface EmbedDocumentOptions extends ChunkerOptions {
+  llm?: LlmClient;
+  cachedPrefixes?: Map<number, string>;
+}
+
+/**
  * Embed a document by splitting it into chunks and emitting one embedding
  * per chunk. The embedded text for each chunk is
  * `${title}\n${tagLine}\n${chunk.content}` so the semantic anchors (title +
  * tags) travel with every chunk embedding — matching the shape of the legacy
  * `prepareTextForEmbedding()` but without the 500-char truncation.
+ *
+ * When `opts.llm` is provided (Phase 6 — Contextual Retrieval), a short
+ * context prefix is generated per chunk via `opts.llm.contextualize(content, chunk.content)`
+ * and prepended to the embed text as `${contextPrefix}\n${title}\n${tagLine}\n${chunk.content}`.
+ * If `contextualize` returns `""` (fail-open path), the embed text reverts to the
+ * no-context shape so we never emit a leading blank line.
  *
  * Short documents (<= chunkSize) produce exactly one chunk covering the whole
  * content. Empty content yields a single chunk with empty content (so callers
@@ -54,7 +80,7 @@ export async function embedDocument(
   title: string,
   tags: string[],
   content: string,
-  opts?: ChunkerOptions,
+  opts?: EmbedDocumentOptions,
 ): Promise<DocumentChunk[]> {
   const tagLine = tags.length > 0 ? tags.join(", ") : "";
 
@@ -65,10 +91,30 @@ export async function embedDocument(
     ? [{ index: 0, content: "", charStart: 0, charEnd: 0 }]
     : chunkText(content, opts);
 
+  const llm = opts?.llm;
+  const cached = opts?.cachedPrefixes;
+
   const out: DocumentChunk[] = [];
   for (const chunk of chunks) {
-    const parts = [title, tagLine, chunk.content].filter(p => p.length > 0);
-    const embedText = parts.join("\n");
+    let contextPrefix = "";
+    if (llm) {
+      // Cache hit: reuse prior context_prefix when the caller supplied a map
+      // keyed by chunk.index. Avoids an LLM round-trip per unchanged chunk.
+      if (cached && cached.has(chunk.index)) {
+        contextPrefix = cached.get(chunk.index) ?? "";
+      } else {
+        // `contextualize` is fail-open: it returns "" on any network/timeout/
+        // malformed-response error. That empty string propagates into the
+        // returned `DocumentChunk.contextPrefix` (persisted by the caller) and
+        // causes the embed text to skip the leading blank line below.
+        contextPrefix = await llm.contextualize(content, chunk.content);
+      }
+    }
+
+    const parts = contextPrefix.length > 0
+      ? [contextPrefix, title, tagLine, chunk.content]
+      : [title, tagLine, chunk.content];
+    const embedText = parts.filter(p => p.length > 0).join("\n");
     const embedding = await embed(embedText);
     out.push({
       index: chunk.index,
@@ -76,6 +122,7 @@ export async function embedDocument(
       charStart: chunk.charStart,
       charEnd: chunk.charEnd,
       embedding,
+      contextPrefix,
     });
   }
   return out;
