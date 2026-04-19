@@ -543,3 +543,168 @@ describe("documentExists", () => {
     expect(db.documentExists("stub-1")).toBe(true);
   });
 });
+
+describe("schema v3: chunks table", () => {
+  it("creates the chunks table with expected columns", () => {
+    // PRAGMA table_info(chunks) returns one row per column with name, type, notnull, dflt_value, pk
+    const cols = db.db
+      .prepare("PRAGMA table_info(chunks)")
+      .all() as Array<{ name: string; type: string; notnull: number; dflt_value: unknown; pk: number }>;
+    const byName = Object.fromEntries(cols.map(c => [c.name, c]));
+
+    expect(byName.id).toMatchObject({ type: "TEXT", pk: 1 });
+    expect(byName.document_id).toMatchObject({ type: "TEXT", notnull: 1 });
+    expect(byName.chunk_index).toMatchObject({ type: "INTEGER", notnull: 1 });
+    expect(byName.content).toMatchObject({ type: "TEXT", notnull: 1 });
+    expect(byName.char_start).toMatchObject({ type: "INTEGER", notnull: 1 });
+    expect(byName.char_end).toMatchObject({ type: "INTEGER", notnull: 1 });
+    expect(byName.context_prefix).toMatchObject({ type: "TEXT", notnull: 1 });
+  });
+
+  it("creates idx_chunks_document_id index", () => {
+    const indexes = db.db
+      .prepare("PRAGMA index_list(chunks)")
+      .all() as Array<{ name: string }>;
+    const names = indexes.map(i => i.name);
+    expect(names).toContain("idx_chunks_document_id");
+  });
+
+  it("enforces UNIQUE(document_id, chunk_index)", () => {
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.db.prepare(
+      "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("doc-1#c0", "doc-1", 0, "hello", 0, 5);
+
+    expect(() => {
+      db.db.prepare(
+        "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run("doc-1#c0-dup", "doc-1", 0, "hello again", 0, 11);
+    }).toThrow();
+  });
+
+  it("cascades ON DELETE from documents", () => {
+    // better-sqlite3 needs foreign_keys pragma enabled to enforce FK constraints
+    db.db.pragma("foreign_keys = ON");
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.db.prepare(
+      "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("doc-1#c0", "doc-1", 0, "hello", 0, 5);
+
+    db.deleteDocument("doc-1");
+
+    const remaining = db.db.prepare("SELECT COUNT(*) AS c FROM chunks WHERE document_id = ?").get("doc-1") as { c: number };
+    expect(remaining.c).toBe(0);
+  });
+
+  it("defaults context_prefix to empty string", () => {
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.db.prepare(
+      "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("doc-1#c0", "doc-1", 0, "hello", 0, 5);
+    const row = db.db.prepare("SELECT context_prefix FROM chunks WHERE id = ?").get("doc-1#c0") as { context_prefix: string };
+    expect(row.context_prefix).toBe("");
+  });
+});
+
+describe("schema v3: memory_tier column", () => {
+  it("adds memory_tier column with default 'doc'", () => {
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    const row = db.db.prepare("SELECT memory_tier FROM documents WHERE id = ?").get("doc-1") as { memory_tier: string };
+    expect(row.memory_tier).toBe("doc");
+  });
+
+  it("accepts 'raw' memory_tier values", () => {
+    expect(() => {
+      db.db.prepare(
+        "INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'raw')"
+      ).run("raw-doc", "raw/path.md", "Raw Memory", null, null, null, null, "");
+    }).not.toThrow();
+    const row = db.db.prepare("SELECT memory_tier FROM documents WHERE id = ?").get("raw-doc") as { memory_tier: string };
+    expect(row.memory_tier).toBe("raw");
+  });
+
+  it("accepts 'reflection' memory_tier values", () => {
+    expect(() => {
+      db.db.prepare(
+        "INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'reflection')"
+      ).run("refl-doc", "refl/path.md", "Reflection", null, null, null, null, "");
+    }).not.toThrow();
+    const row = db.db.prepare("SELECT memory_tier FROM documents WHERE id = ?").get("refl-doc") as { memory_tier: string };
+    expect(row.memory_tier).toBe("reflection");
+  });
+
+  it("rejects invalid memory_tier values via CHECK constraint", () => {
+    expect(() => {
+      db.db.prepare(
+        "INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'garbage')"
+      ).run("bad-doc", "bad/path.md", "Bad", null, null, null, null, "");
+    }).toThrow();
+  });
+
+  it("creates idx_documents_memory_tier index", () => {
+    const indexes = db.db
+      .prepare("PRAGMA index_list(documents)")
+      .all() as Array<{ name: string }>;
+    const names = indexes.map(i => i.name);
+    expect(names).toContain("idx_documents_memory_tier");
+  });
+
+  it("preserves existing documents with default 'doc' when migrating from v2", () => {
+    // Simulate a v2 database without memory_tier column
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-v3-migration-"));
+    const dbPath = join(dir, "legacy-v2.db");
+
+    const rawDb = new Database(dbPath);
+    rawDb.exec(`
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY, path TEXT, title TEXT, date TEXT, type TEXT,
+        status TEXT, github_issue INTEGER, content TEXT, is_stub INTEGER DEFAULT 0
+      );
+      CREATE TABLE tags (doc_id TEXT REFERENCES documents(id) ON DELETE CASCADE, tag TEXT, PRIMARY KEY (doc_id, tag));
+      CREATE TABLE relationships (
+        source_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        target_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by', 'post_mortem', 'untyped')),
+        context TEXT,
+        PRIMARY KEY (source_id, target_id, type)
+      );
+      CREATE TABLE outcome_events (
+        id TEXT PRIMARY KEY, event_type TEXT NOT NULL, issue_number INTEGER NOT NULL,
+        session_id TEXT, timestamp TEXT NOT NULL, duration_ms INTEGER, verdict TEXT,
+        component_area TEXT, estimate TEXT, drift_count INTEGER, model TEXT,
+        agent_type TEXT, iteration_count INTEGER, payload TEXT DEFAULT '{}'
+      );
+      CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, indexed_at INTEGER NOT NULL);
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+      INSERT INTO documents (id, path, title, content) VALUES ('existing', 'existing.md', 'Existing Doc', 'content');
+    `);
+    rawDb.close();
+
+    const migrated = new KnowledgeDB(dbPath);
+    const row = migrated.db
+      .prepare("SELECT memory_tier FROM documents WHERE id = ?")
+      .get("existing") as { memory_tier: string };
+    expect(row.memory_tier).toBe("doc");
+    migrated.close();
+  });
+});
+
+describe("schema v3: clearAll includes chunks", () => {
+  it("deletes chunks along with documents", () => {
+    db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });
+    db.db.prepare(
+      "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("doc-1#c0", "doc-1", 0, "hello", 0, 5);
+    db.db.prepare(
+      "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("doc-1#c1", "doc-1", 1, "world", 5, 10);
+
+    const before = db.db.prepare("SELECT COUNT(*) AS c FROM chunks").get() as { c: number };
+    expect(before.c).toBe(2);
+
+    db.clearAll();
+
+    const after = db.db.prepare("SELECT COUNT(*) AS c FROM chunks").get() as { c: number };
+    expect(after.c).toBe(0);
+  });
+});

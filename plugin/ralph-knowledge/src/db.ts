@@ -160,6 +160,18 @@ export class KnowledgeDB {
         key TEXT PRIMARY KEY,
         value TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS chunks (
+        id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        chunk_index INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        char_start INTEGER NOT NULL,
+        char_end INTEGER NOT NULL,
+        context_prefix TEXT NOT NULL DEFAULT '',
+        UNIQUE(document_id, chunk_index)
+      );
+      CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id);
     `);
 
     // Migration: add is_stub column for databases created before it existed.
@@ -170,6 +182,20 @@ export class KnowledgeDB {
     } catch {
       // Column already exists — expected for new databases
     }
+
+    // Migration: add memory_tier column (schema v3) for databases created before it existed.
+    // Uses the same try/catch pattern as is_stub. CHECK constraint restricts values to
+    // 'doc' (existing documents), 'raw' (dream-loop raw memories), 'reflection' (synthesized).
+    try {
+      this.db.exec(
+        "ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))"
+      );
+    } catch {
+      // Column already exists — expected for new databases
+    }
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_documents_memory_tier ON documents(memory_tier)"
+    );
 
     // Migration: rebuild relationships table for databases created before the
     // context column, post_mortem/untyped CHECK types, and target_id FK were added.
@@ -448,7 +474,7 @@ export class KnowledgeDB {
 
   clearAll(): void {
     // outcome_events is intentionally NOT cleared — outcome data is preserved across rebuilds
-    this.db.exec("DELETE FROM relationships; DELETE FROM tags; DELETE FROM documents; DELETE FROM sync;");
+    this.db.exec("DELETE FROM chunks; DELETE FROM relationships; DELETE FROM tags; DELETE FROM documents; DELETE FROM sync;");
   }
 
   close(): void {
