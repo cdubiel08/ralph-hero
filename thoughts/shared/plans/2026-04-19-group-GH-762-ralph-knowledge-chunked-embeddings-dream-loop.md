@@ -132,7 +132,7 @@ The `scripts/` directory exists at [scripts/](https://github.com/cdubiel08/ralph
 
 ---
 
-## Phase 1: Schema v3 migration (chunks table + memory_tier)
+## Phase 1: GH-762 — Schema v3 migration (chunks table + memory_tier)
 
 - **depends_on**: null
 
@@ -205,9 +205,9 @@ Add `chunks` table and `memory_tier` column with check constraint + index. Bump 
 
 ---
 
-## Phase 2: RecursiveCharacterTextSplitter chunker module
+## Phase 2: GH-763 — RecursiveCharacterTextSplitter chunker module
 
-- **depends_on**: null
+- **depends_on**: null  # Pure module, no DB/schema dep
 
 ### Overview
 
@@ -270,9 +270,9 @@ New `chunker.ts` implementing LangChain-style recursive character splitting. Emi
 
 ---
 
-## Phase 3: Chunk-aware embedder + reindex persistence
+## Phase 3: GH-764 — Chunk-aware embedder + reindex persistence
 
-- **depends_on**: [phase-1, phase-2]
+- **depends_on**: [GH-762, GH-763]
 
 ### Overview
 
@@ -367,9 +367,9 @@ Add `embedDocument()` that emits one embedding per chunk; remove the 500-char sl
 
 ---
 
-## Phase 4: HybridSearch chunk-to-doc dedup + snippet
+## Phase 4: GH-765 — HybridSearch chunk-to-doc dedup + snippet
 
-- **depends_on**: [phase-3]
+- **depends_on**: [GH-764]
 
 ### Overview
 
@@ -436,9 +436,9 @@ Make HybridSearch aware that vector hits are now chunk-level; deduplicate to one
 
 ---
 
-## Phase 5: LLM client for Contextual Retrieval (Gemma @ localhost)
+## Phase 5: GH-766 — LLM client for Contextual Retrieval (Gemma @ localhost)
 
-- **depends_on**: null
+- **depends_on**: null  # Standalone module, no dependencies
 
 ### Overview
 
@@ -512,9 +512,9 @@ Standalone LLM client module with `available()` probe + `contextualize()` call. 
 
 ---
 
-## Phase 6: Wire contextual retrieval into embedder + reindex
+## Phase 6: GH-767 — Wire contextual retrieval into embedder + reindex
 
-- **depends_on**: [phase-3, phase-5]
+- **depends_on**: [GH-764, GH-766]
 
 ### Overview
 
@@ -607,9 +607,9 @@ Integrate LLM client into chunk embedding flow. Per chunk: generate context via 
 
 ---
 
-## Phase 7: `.ralphignore` + knowledge.config.json + scanner wiring
+## Phase 7: GH-768 — `.ralphignore` + knowledge.config.json + scanner wiring
 
-- **depends_on**: null
+- **depends_on**: [GH-762]
 
 ### Overview
 
@@ -755,9 +755,9 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 
 ---
 
-## Phase 8: MCP tool extensions (memory_tier filter + knowledge_memory_stats)
+## Phase 8: GH-769 — MCP tool extensions (memory_tier filter + knowledge_memory_stats)
 
-- **depends_on**: [phase-1, phase-3]
+- **depends_on**: [GH-762, GH-764]
 
 ### Overview
 
@@ -835,9 +835,9 @@ Extend `knowledge_search` Zod schema with `memory_tier` + `return_chunk_meta`; e
 
 ---
 
-## Phase 9: Dream-loop ingester (gemma-lab + git + llm-cli)
+## Phase 9: GH-770 — Dream-loop ingester (gemma-lab + git + llm-cli)
 
-- **depends_on**: [phase-8]
+- **depends_on**: [GH-769]
 
 ### Overview
 
@@ -957,9 +957,9 @@ Python + `uv` project at `scripts/dream/`. Pulls last 24h of raw memories from t
 
 ---
 
-## Phase 10: Dream-loop reflection synthesis (HDBSCAN + Gemma)
+## Phase 10: GH-771 — Dream-loop reflection synthesis (HDBSCAN + Gemma)
 
-- **depends_on**: [phase-9]
+- **depends_on**: [GH-770]
 
 ### Overview
 
@@ -1055,9 +1055,9 @@ Python script that clusters raw memories via HDBSCAN on UMAP-reduced embeddings,
 
 ---
 
-## Phase 11: launchd plist template + log rotation
+## Phase 11: GH-772 — launchd plist template + log rotation
 
-- **depends_on**: [phase-9, phase-10]
+- **depends_on**: [GH-770, GH-771]
 
 ### Overview
 
