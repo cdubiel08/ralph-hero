@@ -8,8 +8,15 @@ import { embed, prepareTextForEmbedding } from "./embedder.js";
 import { parseDocument, type ParsedDocument } from "./parser.js";
 import { findMarkdownFiles } from "./file-scanner.js";
 import { generateIndexes } from "./generate-indexes.js";
+import { loadConfig, type KnowledgeConfig } from "./config.js";
+import { loadIgnoreForRoot } from "./ignore.js";
 
-export async function reindex(dirs: string[], dbPath: string, generate: boolean = false): Promise<void> {
+export async function reindex(
+  dirs: string[],
+  dbPath: string,
+  generate: boolean = false,
+  ignorePatterns?: string[],
+): Promise<void> {
   console.log(`Indexing ${dirs.join(", ")} -> ${dbPath}`);
 
   const db = new KnowledgeDB(dbPath);
@@ -32,7 +39,8 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
   // Phase 1: Discover files on disk
   const filesOnDisk: string[] = [];
   for (const dir of dirs) {
-    const found = findMarkdownFiles(dir);
+    const matcher = loadIgnoreForRoot(dir, ignorePatterns);
+    const found = findMarkdownFiles(dir, matcher);
     console.log(`  ${dir}: ${found.length} files`);
     filesOnDisk.push(...found);
   }
@@ -182,31 +190,94 @@ export async function reindex(dirs: string[], dbPath: string, generate: boolean 
 
 const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
 
-export function resolveDirs(): { dirs: string[]; dbPath: string; generate: boolean } {
+export type ResolvedDirsSource = "cli" | "env" | "config" | "fallback";
+
+export interface ResolvedDirs {
+  dirs: string[];
+  dbPath: string;
+  generate: boolean;
+  source: ResolvedDirsSource;
+  config: KnowledgeConfig;
+}
+
+/**
+ * Resolve the set of roots, database path, and generate flag for a reindex
+ * run. Precedence (highest to lowest):
+ *   1. CLI positional args
+ *   2. `RALPH_KNOWLEDGE_DIRS` environment variable
+ *   3. `config.roots` from `~/.ralph/knowledge.config.json`
+ *   4. `"../../thoughts"` fallback
+ *
+ * `dbPath` precedence is independent: CLI `.db` positional > `RALPH_KNOWLEDGE_DB`
+ * env var > `config.dbPath` > {@link DEFAULT_DB_PATH}.
+ *
+ * The returned `config` is forwarded to the caller so `ignorePatterns` can be
+ * threaded into {@link reindex}.
+ */
+export function resolveDirs(): ResolvedDirs {
   const cliArgs = process.argv.slice(2);
   const noGenerate = cliArgs.includes("--no-generate");
   const positional = cliArgs.filter(a => !a.startsWith("--"));
   const cliDb = positional.find(a => a.endsWith(".db"));
   const cliDirs = positional.filter(a => !a.endsWith(".db"));
 
+  const config = loadConfig();
+
+  const resolveDbPath = (): string =>
+    cliDb ??
+    process.env.RALPH_KNOWLEDGE_DB ??
+    config.dbPath ??
+    DEFAULT_DB_PATH;
+
   if (cliDirs.length > 0) {
-    return { dirs: cliDirs, dbPath: cliDb ?? DEFAULT_DB_PATH, generate: !noGenerate };
+    console.log("Using roots from: CLI");
+    return {
+      dirs: cliDirs,
+      dbPath: resolveDbPath(),
+      generate: !noGenerate,
+      source: "cli",
+      config,
+    };
   }
 
   const envDirs = process.env.RALPH_KNOWLEDGE_DIRS;
   if (envDirs) {
+    const parsed = envDirs.split(",").map(d => d.trim()).filter(Boolean);
+    if (parsed.length > 0) {
+      console.log("Using roots from: env");
+      return {
+        dirs: parsed,
+        dbPath: resolveDbPath(),
+        generate: !noGenerate,
+        source: "env",
+        config,
+      };
+    }
+  }
+
+  if (config.roots && config.roots.length > 0) {
+    console.log("Using roots from: config");
     return {
-      dirs: envDirs.split(",").map(d => d.trim()).filter(Boolean),
-      dbPath: cliDb ?? process.env.RALPH_KNOWLEDGE_DB ?? DEFAULT_DB_PATH,
+      dirs: config.roots,
+      dbPath: resolveDbPath(),
       generate: !noGenerate,
+      source: "config",
+      config,
     };
   }
 
-  return { dirs: ["../../thoughts"], dbPath: cliDb ?? DEFAULT_DB_PATH, generate: !noGenerate };
+  console.log("Using roots from: fallback");
+  return {
+    dirs: ["../../thoughts"],
+    dbPath: resolveDbPath(),
+    generate: !noGenerate,
+    source: "fallback",
+    config,
+  };
 }
 
 const isMain = process.argv[1]?.endsWith("reindex.js");
 if (isMain) {
-  const { dirs, dbPath, generate } = resolveDirs();
-  reindex(dirs, dbPath, generate).catch(console.error);
+  const { dirs, dbPath, generate, config } = resolveDirs();
+  reindex(dirs, dbPath, generate, config.ignorePatterns).catch(console.error);
 }

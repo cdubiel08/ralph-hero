@@ -623,9 +623,9 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `dependencies` in `package.json` includes `"ignore": "^5.3.0"` (or latest stable at implementation time)
-  - [ ] `npm install` succeeds; `node_modules/ignore/` exists
-  - [ ] `package-lock.json` updated
+  - [x] `dependencies` in `package.json` includes `"ignore": "^5.3.0"` (or latest stable at implementation time)
+  - [x] `npm install` succeeds; `node_modules/ignore/` exists
+  - [x] `package-lock.json` updated
 
 #### Task 7.2: Create ignore.ts with loadIgnoreForRoot()
 - **files**: `plugin/ralph-knowledge/src/ignore.ts` (create)
@@ -633,11 +633,11 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.1]
 - **acceptance**:
-  - [ ] Exports `interface IgnoreMatcher { isIgnored(relativePath: string): boolean }`
-  - [ ] Exports `function loadIgnoreForRoot(rootDir: string, globalPatterns?: string[]): IgnoreMatcher`
-  - [ ] Implementation: reads `${rootDir}/.ralphignore` via `readFileSync` if present; combines with `globalPatterns`; instantiates `ignore()` instance from the `ignore` package
-  - [ ] Default global patterns (applied even without config): `.claude/`, `node_modules/`, `dist/`, `.git/`, `*.log`
-  - [ ] `isIgnored()` delegates to `ign.ignores(relativePath)` on the ignore instance
+  - [x] Exports `interface IgnoreMatcher { isIgnored(relativePath: string): boolean }`
+  - [x] Exports `function loadIgnoreForRoot(rootDir: string, globalPatterns?: string[]): IgnoreMatcher`
+  - [x] Implementation: reads `${rootDir}/.ralphignore` via `readFileSync` if present; combines with `globalPatterns`; instantiates `ignore()` instance from the `ignore` package
+  - [x] Default global patterns (applied even without config): `.claude/`, `node_modules/`, `dist/`, `.git/`, `*.log`
+  - [x] `isIgnored()` delegates to `ign.ignores(relativePath)` on the ignore instance
 
 #### Task 7.3: Test ignore.ts gitignore semantics
 - **files**: `plugin/ralph-knowledge/src/__tests__/ignore.test.ts` (create)
@@ -645,11 +645,11 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.2]
 - **acceptance**:
-  - [ ] Test: glob pattern `**/node_modules/**` matches `foo/node_modules/bar.js`
-  - [ ] Test: negation `!keep-me.md` overrides earlier `*.md`
-  - [ ] Test: directory-only pattern `dist/` matches `dist/file.js` but not a file named `dist`
-  - [ ] Test: `loadIgnoreForRoot(tmpDir, ["custom/**"])` honors caller-provided globals even when `.ralphignore` is absent
-  - [ ] Test: missing `.ralphignore` file falls back to globals-only behavior (no thrown error)
+  - [x] Test: glob pattern `**/node_modules/**` matches `foo/node_modules/bar.js`
+  - [x] Test: negation `!keep-me.md` overrides earlier `*.md`
+  - [x] Test: directory-only pattern `dist/` matches `dist/file.js` but not a file named `dist`
+  - [x] Test: `loadIgnoreForRoot(tmpDir, ["custom/**"])` honors caller-provided globals even when `.ralphignore` is absent
+  - [x] Test: missing `.ralphignore` file falls back to globals-only behavior (no thrown error)
 
 #### Task 7.4: Create config.ts with loadConfig()
 - **files**: `plugin/ralph-knowledge/src/config.ts` (create)
@@ -657,12 +657,12 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Exports `interface KnowledgeConfig { roots?: string[]; ignorePatterns?: string[]; dbPath?: string }`
-  - [ ] Exports `function loadConfig(): KnowledgeConfig`
-  - [ ] Priority order for config file path: `process.env.RALPH_KNOWLEDGE_CONFIG` env var > `path.join(os.homedir(), ".ralph", "knowledge.config.json")`
-  - [ ] Returns `{}` if no file present (no exception)
-  - [ ] On file read, expands `~` prefixes in `roots[]` and `dbPath` to `os.homedir()` + rest
-  - [ ] Malformed JSON caught; logs one warning; returns `{}`
+  - [x] Exports `interface KnowledgeConfig { roots?: string[]; ignorePatterns?: string[]; dbPath?: string }`
+  - [x] Exports `function loadConfig(): KnowledgeConfig`
+  - [x] Priority order for config file path: `process.env.RALPH_KNOWLEDGE_CONFIG` env var > `path.join(os.homedir(), ".ralph", "knowledge.config.json")`
+  - [x] Returns `{}` if no file present (no exception)
+  - [x] On file read, expands `~` prefixes in `roots[]` and `dbPath` to `os.homedir()` + rest
+  - [x] Malformed JSON caught; logs one warning; returns `{}`
 
 #### Task 7.5: Test config.ts loading paths
 - **files**: `plugin/ralph-knowledge/src/__tests__/config.test.ts` (create)
@@ -670,10 +670,10 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.4]
 - **acceptance**:
-  - [ ] Test: missing config file returns `{}`
-  - [ ] Test: malformed JSON returns `{}` and logs warning (capture console.warn)
-  - [ ] Test: tilde expansion: `{"roots":["~/thoughts"]}` produces absolute path with `os.homedir()` prefix
-  - [ ] Test: `RALPH_KNOWLEDGE_CONFIG` env var override is honored (write fixture to tmp path, set env, call `loadConfig()`)
+  - [x] Test: missing config file returns `{}`
+  - [x] Test: malformed JSON returns `{}` and logs warning (capture console.warn)
+  - [x] Test: tilde expansion: `{"roots":["~/thoughts"]}` produces absolute path with `os.homedir()` prefix
+  - [x] Test: `RALPH_KNOWLEDGE_CONFIG` env var override is honored (write fixture to tmp path, set env, call `loadConfig()`)
 
 #### Task 7.6: Extend findMarkdownFiles to accept IgnoreMatcher
 - **files**: `plugin/ralph-knowledge/src/file-scanner.ts` (modify)
@@ -681,11 +681,11 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.2]
 - **acceptance**:
-  - [ ] Signature updates to `findMarkdownFiles(dir: string, matcher?: IgnoreMatcher): string[]`
-  - [ ] Walker computes `relativeToRoot = relative(dir, fullPath)` for each entry; skips when `matcher?.isIgnored(relativeToRoot)` returns true
-  - [ ] Existing `.`/`_`-prefix skip retained as fast-path before matcher check
-  - [ ] Back-compat: calling without matcher preserves existing behavior
-  - [ ] `import { relative } from "node:path"` added
+  - [x] Signature updates to `findMarkdownFiles(dir: string, matcher?: IgnoreMatcher): string[]`
+  - [x] Walker computes `relativeToRoot = relative(dir, fullPath)` for each entry; skips when `matcher?.isIgnored(relativeToRoot)` returns true
+  - [x] Existing `.`/`_`-prefix skip retained as fast-path before matcher check
+  - [x] Back-compat: calling without matcher preserves existing behavior
+  - [x] `import { relative } from "node:path"` added
 
 #### Task 7.7: Test file-scanner with .ralphignore
 - **files**: `plugin/ralph-knowledge/src/__tests__/file-scanner.test.ts` (modify)
@@ -693,9 +693,9 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.6]
 - **acceptance**:
-  - [ ] Test: tmp directory with 3 `.md` files where one is covered by `.ralphignore` — `findMarkdownFiles(tmpDir, matcher)` returns 2
-  - [ ] Test: directory excluded by pattern `subdir/**` has its children skipped even if they contain `.md`
-  - [ ] Test: calling without matcher returns all `.md` files (back-compat)
+  - [x] Test: tmp directory with 3 `.md` files where one is covered by `.ralphignore` — `findMarkdownFiles(tmpDir, matcher)` returns 2
+  - [x] Test: directory excluded by pattern `subdir/**` has its children skipped even if they contain `.md`
+  - [x] Test: calling without matcher returns all `.md` files (back-compat)
 
 #### Task 7.8: Update resolveDirs() precedence
 - **files**: `plugin/ralph-knowledge/src/reindex.ts` (modify)
@@ -703,11 +703,11 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.4]
 - **acceptance**:
-  - [ ] `resolveDirs()` at [reindex.ts:185-206](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L185-L206) imports `loadConfig` and calls it once
-  - [ ] New precedence order: (1) CLI positional args, (2) `RALPH_KNOWLEDGE_DIRS` env, (3) `config.roots`, (4) `"../../thoughts"` fallback
-  - [ ] `dbPath` precedence: CLI `.db` arg > `process.env.RALPH_KNOWLEDGE_DB` > `config.dbPath` > `DEFAULT_DB_PATH`
-  - [ ] Returns new field `config: KnowledgeConfig` so `reindex()` can forward `ignorePatterns`
-  - [ ] Log line added: `console.log("Using roots from: CLI|env|config|fallback")` indicating the selected source
+  - [x] `resolveDirs()` at [reindex.ts:185-206](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L185-L206) imports `loadConfig` and calls it once
+  - [x] New precedence order: (1) CLI positional args, (2) `RALPH_KNOWLEDGE_DIRS` env, (3) `config.roots`, (4) `"../../thoughts"` fallback
+  - [x] `dbPath` precedence: CLI `.db` arg > `process.env.RALPH_KNOWLEDGE_DB` > `config.dbPath` > `DEFAULT_DB_PATH`
+  - [x] Returns new field `config: KnowledgeConfig` so `reindex()` can forward `ignorePatterns`
+  - [x] Log line added: `console.log("Using roots from: CLI|env|config|fallback")` indicating the selected source
 
 #### Task 7.9: Wire ignore matcher per-root into reindex()
 - **files**: `plugin/ralph-knowledge/src/reindex.ts` (modify)
@@ -715,9 +715,9 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.2, 7.6, 7.8]
 - **acceptance**:
-  - [ ] `reindex()` accepts optional `ignorePatterns` (either via extended signature or from the extended `resolveDirs()` return shape)
-  - [ ] For each root, `matcher = loadIgnoreForRoot(root, ignorePatterns)` built before `findMarkdownFiles(root, matcher)`
-  - [ ] The `main()` branch at [reindex.ts:208-212](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L208-L212) forwards config.ignorePatterns to reindex
+  - [x] `reindex()` accepts optional `ignorePatterns` (either via extended signature or from the extended `resolveDirs()` return shape)
+  - [x] For each root, `matcher = loadIgnoreForRoot(root, ignorePatterns)` built before `findMarkdownFiles(root, matcher)`
+  - [x] The `main()` branch at [reindex.ts:208-212](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L208-L212) forwards config.ignorePatterns to reindex
 
 #### Task 7.10: Update reindex.test.ts precedence cases
 - **files**: `plugin/ralph-knowledge/src/__tests__/reindex.test.ts` (modify)
@@ -725,10 +725,10 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: medium
 - **depends_on**: [7.8]
 - **acceptance**:
-  - [ ] Test: CLI args beat env var even when both set
-  - [ ] Test: env var beats config file roots
-  - [ ] Test: config file roots beat fallback when CLI + env absent
-  - [ ] Test: fallback used when all other sources absent
+  - [x] Test: CLI args beat env var even when both set
+  - [x] Test: env var beats config file roots
+  - [x] Test: config file roots beat fallback when CLI + env absent
+  - [x] Test: fallback used when all other sources absent
 
 #### Task 7.11: Document config + .ralphignore in README
 - **files**: `plugin/ralph-knowledge/README.md` (modify if exists, create if not)
@@ -736,15 +736,15 @@ Add per-root `.ralphignore` (gitignore syntax) + optional `~/.ralph/knowledge.co
 - **complexity**: low
 - **depends_on**: [7.4]
 - **acceptance**:
-  - [ ] Section "Configuration" documents `~/.ralph/knowledge.config.json` path, schema, example with 3 roots + ignore patterns
-  - [ ] Section "Ignoring files" documents `.ralphignore` with gitignore syntax example
+  - [x] Section "Configuration" documents `~/.ralph/knowledge.config.json` path, schema, example with 3 roots + ignore patterns
+  - [x] Section "Ignoring files" documents `.ralphignore` with gitignore syntax example
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test` — new ignore/config tests + updated file-scanner/reindex tests pass
-- [ ] `npm install` completes with `ignore` dep resolved
+- [x] `npm run build` passes
+- [x] `npm test` — new ignore/config tests + updated file-scanner/reindex tests pass
+- [x] `npm install` completes with `ignore` dep resolved
 
 #### Manual Verification:
 - [ ] Write `~/.ralph/knowledge.config.json` with 3 roots; run `npm run reindex`; log line shows `"Using roots from: config"` and all 3 roots appear in output
