@@ -973,11 +973,11 @@ Python script that clusters raw memories via HDBSCAN on UMAP-reduced embeddings,
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Signature: `def fetch_recent_raw_memories(db_path: Path, since: datetime) -> list[dict]` where each dict has `id`, `content`, `path`, `date`, `embedding` (numpy array of len 384)
-  - [ ] Reads directly from sqlite (`better-sqlite3` not needed in Python — use `sqlite3` stdlib)
-  - [ ] Joins `documents` + `chunks` + `documents_vec` (via `sqlite-vec` extension loaded through `vec0` virtual table; use `sqlite_vec` Python package)
-  - [ ] Mean-pools chunk embeddings per document (one vector per document)
-  - [ ] Filters `documents.memory_tier='raw' AND documents.date >= since`
+  - [x] Signature: `def fetch_recent_raw_memories(db_path: Path, since: datetime) -> list[dict]` where each dict has `id`, `content`, `path`, `date`, `embedding` (numpy array of len 384)
+  - [x] Reads directly from sqlite (`better-sqlite3` not needed in Python — use `sqlite3` stdlib)
+  - [x] Joins `documents` + `chunks` + `documents_vec` (via `sqlite-vec` extension loaded through `vec0` virtual table; use `sqlite_vec` Python package)
+  - [x] Mean-pools chunk embeddings per document (one vector per document)
+  - [x] Filters `documents.memory_tier='raw' AND documents.date >= since`
 
 #### Task 10.2: Implement cluster_memories()
 - **files**: `scripts/dream/reflect.py` (modify)
@@ -985,11 +985,11 @@ Python script that clusters raw memories via HDBSCAN on UMAP-reduced embeddings,
 - **complexity**: medium
 - **depends_on**: [10.1]
 - **acceptance**:
-  - [ ] Signature: `def cluster_memories(memories: list[dict]) -> list[list[dict]]` — returns list of clusters, each cluster is a list of memory dicts
-  - [ ] Stacks embeddings to `(N, 384)` numpy array; UMAP-reduces with `n_neighbors=15, min_dist=0.1, n_components=50`
-  - [ ] HDBSCAN with `min_cluster_size=5, min_samples=3`
-  - [ ] Noise points (label == -1) discarded
-  - [ ] Returns one list per non-noise cluster label, sorted by cluster size descending
+  - [x] Signature: `def cluster_memories(memories: list[dict]) -> list[list[dict]]` — returns list of clusters, each cluster is a list of memory dicts
+  - [x] Stacks embeddings to `(N, 384)` numpy array; UMAP-reduces with `n_neighbors=15, min_dist=0.1, n_components=50`
+  - [x] HDBSCAN with `min_cluster_size=5, min_samples=3`
+  - [x] Noise points (label == -1) discarded
+  - [x] Returns one list per non-noise cluster label, sorted by cluster size descending
 
 #### Task 10.3: Implement synthesize_reflection()
 - **files**: `scripts/dream/reflect.py` (modify)
@@ -997,12 +997,12 @@ Python script that clusters raw memories via HDBSCAN on UMAP-reduced embeddings,
 - **complexity**: medium
 - **depends_on**: [10.2]
 - **acceptance**:
-  - [ ] Signature: `def synthesize_reflection(cluster: list[dict], llm_url: str, model: str) -> dict | None`
-  - [ ] Builds prompt using the A-Mem template from parent plan Phase 6 (verbatim structure)
-  - [ ] Posts to `${llm_url}/v1/chat/completions` with `max_tokens=1500`, `timeout=60`
-  - [ ] Parses LLM response: expects YAML frontmatter + markdown body
-  - [ ] Returns dict: `{title, summary, insights (list), source_ids (list), cluster_size}`
-  - [ ] On parse error or network failure: returns `None` and logs single warning (no reflection written)
+  - [x] Signature: `def synthesize_reflection(cluster: list[dict], llm_url: str, model: str) -> dict | None`
+  - [x] Builds prompt using the A-Mem template from parent plan Phase 6 (verbatim structure)
+  - [x] Posts to `${llm_url}/v1/chat/completions` with `max_tokens=1500`, `timeout=60`
+  - [x] Parses LLM response: expects YAML frontmatter + markdown body
+  - [x] Returns dict: `{title, summary, insights (list), source_ids (list), cluster_size}`
+  - [x] On parse error or network failure: returns `None` and logs single warning (no reflection written)
 
 #### Task 10.4: Implement write_reflection()
 - **files**: `scripts/dream/reflect.py` (modify)
@@ -1010,11 +1010,11 @@ Python script that clusters raw memories via HDBSCAN on UMAP-reduced embeddings,
 - **complexity**: low
 - **depends_on**: [10.3]
 - **acceptance**:
-  - [ ] Signature: `def write_reflection(r: dict, base_dir: Path) -> Path`
-  - [ ] File path: `${base_dir}/reflections/YYYY/MM/DD/${slugified-title}.md`
-  - [ ] Slugify title to ASCII kebab-case (truncate to 60 chars)
-  - [ ] Frontmatter: `date`, `memory_tier: reflection`, `source: dream-loop`, `cluster_size`, `source_ids` (list), `tags: [dream, reflection]`
-  - [ ] Body: `# {title}\n\n## Summary\n{summary}\n\n## Insights\n- ...\n\n## Links\n- builds_on:: [[{source_id}]]\n...` (one line per source)
+  - [x] Signature: `def write_reflection(r: dict, base_dir: Path) -> Path`
+  - [x] File path: `${base_dir}/reflections/YYYY/MM/DD/${slugified-title}.md`
+  - [x] Slugify title to ASCII kebab-case (truncate to 60 chars)
+  - [x] Frontmatter: `date`, `memory_tier: reflection`, `source: dream-loop`, `cluster_size`, `source_ids` (list), `tags: [dream, reflection]`
+  - [x] Body: `# {title}\n\n## Summary\n{summary}\n\n## Insights\n- ...\n\n## Links\n- builds_on:: [[{source_id}]]\n...` (one line per source)
 
 #### Task 10.5: CLI entry point for reflect.py
 - **files**: `scripts/dream/reflect.py` (modify)
@@ -1022,10 +1022,10 @@ Python script that clusters raw memories via HDBSCAN on UMAP-reduced embeddings,
 - **complexity**: medium
 - **depends_on**: [10.1, 10.2, 10.3, 10.4]
 - **acceptance**:
-  - [ ] `argparse`: `--since`, `--db-path`, `--base-dir`, `--llm-url`, `--model`, `--dry-run`
-  - [ ] Reads config.yaml for defaults
-  - [ ] `--dry-run` prints cluster count + titles without invoking LLM or writing files
-  - [ ] After each reflection written, appends path to summary log
+  - [x] `argparse`: `--since`, `--db-path`, `--base-dir`, `--llm-url`, `--model`, `--dry-run`
+  - [x] Reads config.yaml for defaults
+  - [x] `--dry-run` prints cluster count + titles without invoking LLM or writing files
+  - [x] After each reflection written, appends path to summary log
 
 #### Task 10.6: Test reflect.py on fixture embeddings
 - **files**: `scripts/dream/tests/test_reflect.py` (create)
@@ -1033,18 +1033,18 @@ Python script that clusters raw memories via HDBSCAN on UMAP-reduced embeddings,
 - **complexity**: medium
 - **depends_on**: [10.1, 10.2, 10.3, 10.4]
 - **acceptance**:
-  - [ ] Fixture: seed sqlite DB with 15 raw memories; manually craft embeddings so 2 clusters are separable (e.g., 8 memories near `[1,0,0,...]`, 7 near `[0,1,0,...]`)
-  - [ ] Test: `cluster_memories(fixture)` returns 2 clusters (noise discarded)
-  - [ ] Test: `synthesize_reflection` with mock LLM returning well-formed YAML produces parseable dict
-  - [ ] Test: `synthesize_reflection` with mock returning garbage returns `None`
-  - [ ] Test: `write_reflection` creates correctly structured file with `builds_on::` wikilinks matching `source_ids`
-  - [ ] `--dry-run` prints expected cluster count without writes
+  - [x] Fixture: seed sqlite DB with 15 raw memories; manually craft embeddings so 2 clusters are separable (e.g., 8 memories near `[1,0,0,...]`, 7 near `[0,1,0,...]`)
+  - [x] Test: `cluster_memories(fixture)` returns 2 clusters (noise discarded)
+  - [x] Test: `synthesize_reflection` with mock LLM returning well-formed YAML produces parseable dict
+  - [x] Test: `synthesize_reflection` with mock returning garbage returns `None`
+  - [x] Test: `write_reflection` creates correctly structured file with `builds_on::` wikilinks matching `source_ids`
+  - [x] `--dry-run` prints expected cluster count without writes
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `uv run pytest scripts/dream/tests/test_reflect.py` passes
-- [ ] `uv run reflect.py --dry-run --since 24h` on seeded fixture DB prints expected cluster count
+- [x] `uv run pytest scripts/dream/tests/test_reflect.py` passes
+- [x] `uv run reflect.py --dry-run --since 24h` on seeded fixture DB prints expected cluster count
 
 #### Manual Verification:
 - [ ] `uv run ingest.py --since 24h && uv run reflect.py --since 24h` produces >=1 reflection file
