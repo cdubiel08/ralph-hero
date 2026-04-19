@@ -944,9 +944,9 @@ Python + `uv` project at `scripts/dream/`. Pulls last 24h of raw memories from t
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `uv sync` in `scripts/dream/` succeeds
-- [ ] `uv run pytest scripts/dream/tests/` passes
-- [ ] `uv run ingest.py --dry-run --since 24h` prints summary line without writes
+- [x] `uv sync` in `scripts/dream/` succeeds
+- [x] `uv run pytest scripts/dream/tests/` passes
+- [x] `uv run ingest.py --dry-run --since 24h` prints summary line without writes
 
 #### Manual Verification:
 - [ ] `uv run ingest.py --since 24h`: files appear in `thoughts/dream-memories/YYYY/MM/DD/`

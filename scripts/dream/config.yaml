@@ -1,0 +1,18 @@
+# Dream-loop configuration template.
+#
+# Paths can use ~ for home expansion. Missing files are skipped gracefully
+# (with an info log line) so this config works even on machines where some
+# sources are not installed.
+
+base_dir: /Users/dubiel/projects/thoughts/dream-memories
+gemma_lab_sessions: /Users/dubiel/projects/gemma-lab/sessions
+llm_cli_db: ~/.llm/logs.db
+git_repos:
+  - /Users/dubiel/projects/ralph-hero
+  - /Users/dubiel/projects/ralph-engine
+  - /Users/dubiel/projects/gemma-lab
+
+# Command invoked at the end of ingest to re-embed the new raw memories.
+# Override this (or pass --no-reindex) if you want to run ingest without
+# rebuilding the knowledge index.
+reindex_cmd: npm --prefix /Users/dubiel/projects/ralph-hero/plugin/ralph-knowledge run reindex
