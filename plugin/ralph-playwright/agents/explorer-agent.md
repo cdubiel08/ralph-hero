@@ -42,7 +42,7 @@ playwright-cli -s=<session> eval "window.__consoleErrors = []; window.__consoleW
 
 ## Exploration Loop
 
-At each page state:
+Applies when `mode=ref` (default). At each page state:
 
 1. **Snapshot** the accessibility tree:
 ```bash
@@ -72,13 +72,62 @@ playwright-cli -s=<session> eval "JSON.stringify({ errors: window.__consoleError
    - You're stuck in a loop
    - No new interactive paths remain
 
+## Vision-First Loop
+
+Applies when `mode=vision-first`. Parallels the Exploration Loop above — steps 1, 2, 3, 5, and 6 are identical — but step 4 is driven by the screenshot rather than the accessibility snapshot. Both snapshot and screenshot are still captured at every state; the snapshot is kept for the record (and for reflect) but is NOT consulted when deciding the next action.
+
+At each page state:
+
+1. **Snapshot** the accessibility tree (same command as ref mode — keep it for the record):
+```bash
+playwright-cli -s=<session> snapshot --filename=".playwright-cli/<session>/<index>_<slug>.md"
+```
+
+2. **Screenshot** the current state (same command as ref mode — this is the primary input to step 4):
+```bash
+playwright-cli -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+```
+
+3. **Read console state** (same command as ref mode):
+```bash
+playwright-cli -s=<session> eval "JSON.stringify({ errors: window.__consoleErrors || [], warnings: window.__consoleWarnings || [] })"
+```
+
+4. **Decide next action (vision-driven)**. Examine the screenshot. Identify interactive regions. Select the next target by naming it in human-readable form — use some combination of color, shape, position, and visible label. Extract an approximate bounding box or center-coordinate for the target. Use the rubric:
+
+   - Prefer obvious primary CTAs (brand-colored buttons, largest clickable affordances, top-right account/cart controls).
+   - Avoid revisiting visually-identical states — if the current screenshot looks indistinguishable from a prior one at the same URL, that path is a dead end; try a different region.
+   - Bias toward unexplored visual regions — sidebars, footers, secondary tabs, modal triggers.
+   - Consider the goal: if you're working toward "reach confirmation screen", the target on a product page is the add-to-cart CTA, not the site logo.
+
+   Examples of good `target` descriptions in this mode:
+   - `"blue primary CTA, top-right — 'Add to cart'"`
+   - `"large green button, center of the hero section"`
+   - `"hamburger icon, top-left corner"`
+
+5. **Take the action** (click, fill, navigate) and record it as a step. **Target-resolution contract** for vision-first actions:
+
+   - **Primary path** — If the nearest accessibility-snapshot ref is confidently visible at the target coordinates (i.e., the snapshot has an interactive element at or very near the chosen pixel region), use `playwright-cli click <ref>`. This gracefully converges with ref mode for the subset of targets where the a11y tree and the visual tree agree.
+   - **Fallback path** — If no ref resolves at the target coordinates, emit a coordinate-based click. Coordinate-click primitive depends on the vision-fallback element targeting feature ([#792](https://github.com/cdubiel08/ralph-hero/issues/792)). Until #792 lands: record the visual target and skip the action, surfacing the miss in the journey-trace `error` field (e.g., `error: "vision-first target resolved to coordinates but coordinate-click primitive not available (depends on #792)"`) and mark `outcome: skip`. This is a graceful-degradation contract, not a blocker for this feature.
+   - **Target field contract** — When `mode=vision-first`, the step's `target` field is the human-readable visual description (e.g., `"blue primary CTA top-right"`), NOT an element ref or URL. This is the primary distinguishing marker of a vision-first step in the trace, alongside `decision_mode: vision-first` and `vision_rationale: "..."`.
+
+6. **Stop when** (reused verbatim from the Exploration Loop):
+   - The goal is achieved
+   - You've explored 20 unique interactions (max)
+   - You're stuck in a loop
+   - No new interactive paths remain
+
+The vision-first loop does NOT require a new signal type, a new schema, or a model swap. The agent runs on the same `sonnet` model declared in frontmatter; the behavior change is a prompt-shape change only.
+
 ## Recording
 
-For each action, record a step:
+For each action, record a step. The base step shape is identical in both modes — in vision-first mode, the `target` field becomes a visual description (e.g., `"blue primary CTA, top-right"`) instead of an element-ref label.
+
 ```yaml
 - index: <N>
   action: "click"           # navigate, click, fill, type, verify
-  target: "Products link"   # human-readable description of what was acted on
+  target: "Products link"   # ref mode: human-readable description of the acted-on element
+                            # vision-first mode: visual description of the target region
   outcome: pass             # pass, fail, skip
   screenshot: ".playwright-cli/<session>/<NN>_<slug>.png"
   snapshot: ".playwright-cli/<session>/<NN>_<slug>.md"
@@ -86,6 +135,8 @@ For each action, record a step:
   duration_ms: <ms>
   error: null
 ```
+
+Schema additions for vision-first (`decision_mode` and `vision_rationale`) are introduced in a sibling sub-issue ([#810](https://github.com/cdubiel08/ralph-hero/issues/810)); until that lands, this phase emits only the base step shape. Once the schema fields land, a vision-first step additionally carries `decision_mode: vision-first` and a short `vision_rationale`.
 
 ## Output
 
