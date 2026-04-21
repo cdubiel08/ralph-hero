@@ -90,9 +90,70 @@ Read the signal report. For each signal:
 
 ### Step 4: Summary
 
-Report:
+#### Exploration Metrics
+
+Before printing the human summary, compute per-session metrics and write them to `.playwright-cli/<session>/exploration-metrics.yaml`. Metrics are emitted for BOTH modes (`ref` and `vision-first`) so later runs can compare.
+
+**Schema** (inline — no separate schema file):
+
+```yaml
+mode: ref | vision-first          # required; default `ref` if the trace has no `input.mode`
+url: <starting URL>               # verbatim from input.url
+goal: <verbatim goal string>     # verbatim from input.goal
+session: <session name>           # for provenance when comparing across sessions
+goal_achieved: <boolean>          # operator judgment; default false if uncertain
+total_steps: <int>                # from journey-trace summary
+passed: <int>                     # from journey-trace summary
+failed: <int>                     # from journey-trace summary
+duration_ms: <int>                # from journey-trace summary
+unique_urls: <int>                # distinct URLs visited (navigate targets + starting URL)
+dead_ends: <int>                  # approximated; see computation notes below
+```
+
+**Field computation**:
+
+- `mode` — Read from `input.mode` on the journey-trace. Missing value records as `ref` (backward compat with legacy traces).
+- `url`, `goal` — Verbatim from `input.url` and `input.goal`.
+- `session` — The session name (the `.playwright-cli/` subdirectory).
+- `goal_achieved` — `true` iff the terminal step's `outcome == pass` AND its `action`/`target` references a goal-fulfilling condition. This is operator judgment; default to `false` if uncertain. Document your reasoning briefly in the Step 3 research note if you set it to `true`.
+- `total_steps`, `passed`, `failed`, `duration_ms` — Carried directly from `summary` in the journey-trace.
+- `unique_urls` — Count of distinct URLs from steps where `action == "navigate"` (the `target` is a URL in that case), PLUS the starting `input.url`. De-duplicate exact string matches.
+- `dead_ends` — Approximated: count of steps where the post-action snapshot path would equal the pre-action snapshot path AND no URL change occurred. We use filename-hash comparison as the cheap proxy (two consecutive snapshot files with identical content hashes and no intervening navigate action). Documented as an approximation because two different pages can theoretically hash-collide on snapshot content.
+
+Write the metrics file at `.playwright-cli/<session>/exploration-metrics.yaml` BEFORE printing the human report below.
+
+#### Prior-run Discovery and Comparison Table
+
+After writing the current session's metrics, look for prior runs to compare against:
+
+1. Walk sibling directories under `.playwright-cli/` for other `exploration-metrics.yaml` files.
+2. Keep only files with the SAME `url` AND `goal` AND a DIFFERENT `mode` from the current run.
+3. If any match, pick the MOST RECENT (by session directory mtime). Older matches are noted as "also found: N prior runs for this URL/goal" in the report line.
+4. If none match, skip the comparison silently — no error, no warning. First-ever runs on a new goal are expected to have no prior.
+
+When a prior run is paired, print a side-by-side comparison table in the Step 4 human report:
+
+```
+Metric          Ref    Vision-first
+------          ---    ------------
+goal_achieved   true   true
+total_steps     12     14
+passed          11     13
+failed          1      1
+duration_ms     45120  58300
+unique_urls     6      7
+dead_ends       2      0
+```
+
+The columns are ordered `ref` then `vision-first` regardless of which run is "current". The signs of rows are interpreted in the research note, not the table (we do not annotate "better"/"worse" — the metrics speak for themselves).
+
+#### Report
+
+Report (human-readable summary):
 - N steps explored, N signals found (by severity)
 - Research note written to `thoughts/shared/research/<path>`
 - N screenshots promoted
 - N user stories generated (if any)
+- Metrics: `.playwright-cli/<session>/exploration-metrics.yaml`
+- Compared against: `.playwright-cli/<prior-session>/exploration-metrics.yaml` (<prior mode>) — only if a prior run was discovered
 - Suggest: `/ralph-playwright:test-e2e` to run generated stories
