@@ -64,9 +64,22 @@ Based on the signal report:
    - Body includes step details, expected vs actual, console errors
    - Tags from the story's tags
 
-2. **Promote failure screenshots** to `thoughts/local/assets/<date>-test-e2e/`
+2. **Render annotated siblings for failure screenshots that carry bboxes.** If the signal's `evidence.bboxes[]` is populated, invoke the zero-dep renderer to emit `<stem>.annotated.png` next to the original:
+   ```bash
+   yq '[.signals[].evidence.bboxes[]? | select(.screenshot == "<screenshot>")]' \
+     ".playwright-cli/<date>-test-e2e/signal-report.yaml" -o=json > "/tmp/<screenshot>.bboxes.json"
 
-3. Write the action log to `.playwright-cli/<date>-test-e2e/action-log.yaml`
+   if [[ "$(jq 'length' "/tmp/<screenshot>.bboxes.json")" -gt 0 ]]; then
+     node "${CLAUDE_PLUGIN_ROOT}/scripts/annotate.mjs" \
+       --input ".playwright-cli/<session>/<screenshot>" \
+       --bboxes "/tmp/<screenshot>.bboxes.json"
+   fi
+   ```
+   Signals without `bboxes` produce no annotated sibling (no regression on the existing flow).
+
+3. **Promote failure screenshots** to `thoughts/local/assets/<date>-test-e2e/`. If an annotated sibling was produced in step 2, copy it alongside the original with matching stem.
+
+4. Write the action log to `.playwright-cli/<date>-test-e2e/action-log.yaml`. Emit ONE `screenshot_promoted` entry per file — so a failure screenshot with bboxes produces two entries (original + annotated).
 
 ### Step 5: Report
 
