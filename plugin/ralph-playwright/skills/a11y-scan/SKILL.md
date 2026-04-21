@@ -44,6 +44,24 @@ Classify all findings as `a11y_violation` signals with WCAG success criteria ref
 
 Write signal report to `.playwright-cli/<session>/signal-report.yaml`.
 
+#### When to request `--high-res` captures
+
+A subset of a11y criteria require reading pixels from the rendered image rather than inspecting the DOM. For those, pass `high_res_steps` to `explorer-agent` (see [browser/SKILL.md § High-resolution captures](../browser/SKILL.md#high-resolution-captures) for the canonical flag syntax):
+
+- **Pixel-computed color contrast** — computed DOM contrast lies when text sits on gradients, background images, or composited overlays. High-res captures enable sampling actual rendered pixels. (Precursor to Feature D #788.)
+- **Alt-text relevance** — an alt attribute can be present and syntactically valid while being wholly unrelated to the image content. High-res makes it feasible to compare the alt text to what the image actually shows. (Precursor to Feature E #789.)
+- **Small-type form labels** — labels rendered at 10-12px on hi-DPI displays can look correct in the snapshot but be unreadable in practice. High-res makes it possible to observe the rendered typography.
+- **Thin / faint focus indicators** — a 1px outline at 40% opacity may technically exist but be invisible to users with mild visual impairment. Default resolution can hide this; high-res shows it clearly.
+
+Current a11y criteria that do NOT benefit from high-res (use default resolution):
+
+- Missing labels, missing alt attributes (DOM-only — the accessibility snapshot tells you this)
+- Broken tab order, keyboard inoperability (interaction-based)
+- Heading hierarchy, landmark structure (DOM-only)
+- Missing ARIA attributes (DOM-only)
+
+Rule of thumb: if the snapshot `.md` file can answer the question, use default resolution. If the question requires looking at the rendered pixels, request high-res for that specific step. Do not request high-res across the whole audit — blanket high-res roughly triples image-input token cost, which compounds against the already-aggressive screenshot cadence a11y audits use.
+
 ### Step 3: Act
 
 For each signal:

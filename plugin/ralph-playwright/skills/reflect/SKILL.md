@@ -28,6 +28,21 @@ For each step in the trace:
 3. **Check console entries** — any errors or warnings indicate issues
 4. **Check the outcome** — failed steps need investigation
 
+#### Capture resolution
+
+When a step has a `capture` sub-object with `mode: high-res`, the screenshot was captured at elevated pixel density (≈2560x1440 or similar, up to 2576px longest-edge / 3.75MP). This means the screenshot is suitable for:
+
+- **OCR-style reading** — extracting text that appears *inside* the rendered image (receipt totals, table cell values, chart labels, invoice line items).
+- **Dense tabular data** — reading specific values from tables too dense to render legibly at default resolution.
+- **Fine chart annotations** — small axis labels, data point values, legend text.
+- **Small-type forms** — receipts, contracts, or compliance-style pages with fine print.
+
+High-res steps carry an implicit expectation: the caller spent extra tokens specifically so that reflect could observe detail invisible at default resolution. Produce observations that exercise this detail — a generic "page loaded successfully" signal on a high-res receipt step is a wasted capture.
+
+**Pairing rule.** High-res screenshots + Sonnet-at-1568px is wasted tokens — Sonnet downsamples the image before reading it. High-res pairs best with Opus 4.7 reflect (routed by Feature A #785 once landed). If you are running as Sonnet and encounter high-res captures, note this in the signal report so callers can correct the pairing.
+
+Steps WITHOUT a `capture` sub-object (or with `mode: default`) were captured at viewport resolution — apply normal layout/structure analysis. Do not attempt OCR-style observation on default-resolution screenshots; the model cannot reliably read small text at those densities.
+
 ### Step 3: Classify signals
 
 For each finding, classify as:

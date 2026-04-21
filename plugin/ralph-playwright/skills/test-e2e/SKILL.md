@@ -35,10 +35,15 @@ Optional filters (from arguments):
 For each story file, spawn a `story-runner-agent` with:
 - The story object (name, type, url, persona, workflow)
 - Session name: `<date>-test-e2e-<story-kebab>`
+- Optional: `high_res_steps` — list of step indices that require high-resolution capture
 
 Spawn agents in parallel — each gets its own named playwright-cli session (fully isolated).
 
 Each agent writes a journey trace to `.playwright-cli/<session>/journey-trace.yaml`.
+
+**Optional: high-resolution on critical assertion steps.** Story YAML files MAY declare `high_res_steps` when specific verification steps require reading fine detail from the rendered page — e.g., "verify the subtotal on the receipt is $42.17", "verify the chart legend shows April-2026", "verify the invoice line-items match the order". Default is OFF — omit `high_res_steps` entirely for stories that just need default-resolution captures. The story-runner-agent accepts this as an agent-level input (story workflow is free-text today, so it cannot be declared per-step inside the YAML). See [browser/SKILL.md § High-resolution captures](../browser/SKILL.md#high-resolution-captures) for cost and pairing guidance.
+
+This feature does NOT auto-recapture failed steps at high-res. If a verification step fails at default resolution and you want to investigate with high-res, re-run the story manually with `high_res_steps` set, or use `/ralph-playwright:capture` on the failing URL. Automatic failure-driven escalation is tracked separately (#787).
 
 ### Step 3: Reflect (aggregate)
 
