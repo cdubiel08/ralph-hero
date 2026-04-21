@@ -1,0 +1,257 @@
+<!--
+  Poor-a11y demo fixture for the --vision-first exploration mode.
+  Issue: https://github.com/cdubiel08/ralph-hero/issues/818
+  Parent: https://github.com/cdubiel08/ralph-hero/issues/795
+
+  This page INTENTIONALLY violates accessibility best practices so that
+  ref-mode exploration (which picks targets from the accessibility snapshot)
+  is expected to stall or wander. Vision-first mode should be able to
+  navigate the happy path by recognising visual affordances.
+
+  Goal for explorers: "add the green widget to the cart and reach the
+  confirmation screen".
+
+  The happy path is 3 clicks:
+    1. "green widget" card on the home screen -> product page
+    2. big orange "add" div on the product page -> cart page
+    3. big pink "finish" div on the cart page -> confirmation page
+
+  DO NOT clean up the a11y violations in this file. They are the point.
+-->
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>poor a11y demo</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 24px;
+        background: #fafafa;
+      }
+      .screen {
+        display: none;
+      }
+      .screen.active {
+        display: block;
+      }
+      .card {
+        display: inline-block;
+        width: 180px;
+        height: 180px;
+        margin: 12px;
+        text-align: center;
+        line-height: 180px;
+        color: white;
+        font-weight: 700;
+        cursor: pointer;
+        user-select: none;
+      }
+      .card.blue {
+        background: #3b82f6;
+      }
+      .card.green {
+        background: #22c55e;
+      }
+      .card.grey {
+        background: #9ca3af;
+      }
+      .cta-add {
+        display: block;
+        width: 320px;
+        height: 80px;
+        margin: 40px auto;
+        line-height: 80px;
+        text-align: center;
+        background: #f97316;
+        color: white;
+        font-size: 24px;
+        font-weight: 700;
+        cursor: pointer;
+        user-select: none;
+      }
+      .cta-finish {
+        display: block;
+        width: 320px;
+        height: 80px;
+        margin: 40px auto;
+        line-height: 80px;
+        text-align: center;
+        background: #ec4899;
+        color: white;
+        font-size: 24px;
+        font-weight: 700;
+        cursor: pointer;
+        user-select: none;
+      }
+      .decoy {
+        display: inline-block;
+        width: 120px;
+        height: 40px;
+        margin: 8px;
+        line-height: 40px;
+        text-align: center;
+        background: #e5e7eb;
+        color: #6b7280;
+        cursor: pointer;
+        user-select: none;
+      }
+      h1,
+      h2 {
+        margin-top: 0;
+      }
+      .success {
+        font-size: 40px;
+        color: #22c55e;
+        text-align: center;
+        margin-top: 80px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- NO landmark regions (no <header>, <nav>, <main>, <footer>) -->
+    <!-- NO h1 on screens other than home -->
+
+    <!--
+      Home screen.
+      Three "product" cards rendered as generic <div>s with aria-hidden="true".
+      No role="button", no aria-label, no tabindex, no <button>.
+      Sighted users see three colored squares labelled "blue widget", "green
+      widget", "grey widget". The a11y tree sees three hidden <div>s with
+      nothing interactable — exactly the case the vision-first mode exists
+      to handle.
+    -->
+    <div id="home" class="screen active">
+      <h1>store</h1>
+      <p>pick a widget.</p>
+      <div
+        class="card blue"
+        aria-hidden="true"
+        onclick="showScreen('product-blue')"
+      >
+        blue widget
+      </div>
+      <div
+        class="card green"
+        aria-hidden="true"
+        onclick="showScreen('product-green')"
+      >
+        green widget
+      </div>
+      <div
+        class="card grey"
+        aria-hidden="true"
+        onclick="showScreen('product-grey')"
+      >
+        grey widget
+      </div>
+
+      <!--
+        Decoy links. Actual <a> tags with href="#" but no text content — the
+        accessibility tree WILL surface these as refs. A ref-mode explorer
+        will likely try them first and hit the decoy screen.
+      -->
+      <p>links</p>
+      <a href="#" onclick="showScreen('decoy'); return false;">&nbsp;</a>
+      <a href="#" onclick="showScreen('decoy'); return false;">&nbsp;</a>
+      <a href="#" onclick="showScreen('decoy'); return false;">&nbsp;</a>
+    </div>
+
+    <!--
+      Green product screen (happy path).
+      The "add to cart" CTA is a generic <div> styled orange, no role,
+      no aria-label. Vision-first mode should pick it out as "large
+      orange button, center of page".
+    -->
+    <div id="product-green" class="screen">
+      <h2>green widget</h2>
+      <p>a green widget. $19.99.</p>
+      <div class="cta-add" aria-hidden="true" onclick="showScreen('cart')">
+        add
+      </div>
+      <!-- Decoy controls to confuse ref-mode -->
+      <div
+        class="decoy"
+        aria-hidden="true"
+        onclick="showScreen('decoy')"
+      >
+        share
+      </div>
+      <div
+        class="decoy"
+        aria-hidden="true"
+        onclick="showScreen('decoy')"
+      >
+        save
+      </div>
+      <div
+        class="decoy"
+        aria-hidden="true"
+        onclick="showScreen('decoy')"
+      >
+        compare
+      </div>
+    </div>
+
+    <!-- Blue / grey product screens are dead ends (do not advance the goal) -->
+    <div id="product-blue" class="screen">
+      <h2>blue widget</h2>
+      <p>a blue widget. $19.99. (not the one we want)</p>
+      <div class="cta-add" aria-hidden="true" onclick="showScreen('home')">
+        add
+      </div>
+    </div>
+
+    <div id="product-grey" class="screen">
+      <h2>grey widget</h2>
+      <p>a grey widget. $19.99. (not the one we want)</p>
+      <div class="cta-add" aria-hidden="true" onclick="showScreen('home')">
+        add
+      </div>
+    </div>
+
+    <!--
+      Cart screen.
+      "Finish" CTA is again a generic <div>, styled pink this time.
+    -->
+    <div id="cart" class="screen">
+      <h2>cart</h2>
+      <p>1x green widget. $19.99.</p>
+      <!-- Unlabeled input — common a11y violation -->
+      <p>promo:</p>
+      <input type="text" />
+      <div class="cta-finish" aria-hidden="true" onclick="showScreen('done')">
+        finish
+      </div>
+    </div>
+
+    <!-- Confirmation screen (goal) -->
+    <div id="done" class="screen">
+      <div class="success">ordered</div>
+      <p style="text-align: center">thanks for your purchase</p>
+    </div>
+
+    <!-- Decoy dead-end screen -->
+    <div id="decoy" class="screen">
+      <h2>404 - nothing here</h2>
+      <div
+        class="decoy"
+        aria-hidden="true"
+        onclick="showScreen('home')"
+        style="margin-top: 40px"
+      >
+        back home
+      </div>
+    </div>
+
+    <script>
+      function showScreen(id) {
+        document
+          .querySelectorAll(".screen")
+          .forEach((el) => el.classList.remove("active"));
+        document.getElementById(id).classList.add("active");
+      }
+    </script>
+  </body>
+</html>

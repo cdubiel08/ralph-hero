@@ -19,7 +19,7 @@ properties:
     description: "ISO-8601 execution timestamp"
   input:
     type: object
-    description: "Echo of the execute input for reproducibility"
+    description: "Echo of the execute input for reproducibility. When the caller passes a `mode` field (`ref` or `vision-first`), it MUST be echoed here (e.g., `input.mode: vision-first`). Remains a free-form object — no nested `properties` block — so callers can extend the input shape without a schema bump."
   session:
     type: string
     pattern: "^[a-z0-9-]+$"
@@ -70,6 +70,13 @@ properties:
         error:
           type: ["string", "null"]
           description: "Error message if outcome is fail, null otherwise"
+        decision_mode:
+          type: string
+          enum: [ref, vision-first]
+          description: "Decision mode that produced this step. Defaults to `ref` when omitted for backward compatibility. Optional at the schema level; existing traces without the field remain valid."
+        vision_rationale:
+          type: ["string", "null"]
+          description: "Short free-text describing what the agent saw and why it picked the target (e.g., 'primary blue CTA, top-right, only enabled button on page'). Expected to be non-null when `decision_mode: vision-first`, null otherwise. Not enforced at the schema level to keep the validator simple."
         # --- Vision-fallback telemetry (Phase 5 / GH-801, additive, backward-compatible) ---
         # `targeting_method` defaults to `a11y_ref` when absent (pre-existing traces pass unchanged).
         # `vision_fallback` is populated ONLY when `targeting_method == vision_fallback`.

@@ -88,6 +88,12 @@ if [[ "$SCHEMA" == "journey-trace.schema.yaml" ]]; then
     echo "ERROR: Invalid step outcomes in ${FILE_PATH}: ${INVALID_OUTCOMES}" >&2
     exit 1
   fi
+  # decision_mode is optional; absent values surface as `null` from yq and MUST pass
+  INVALID_DECISION_MODES=$(yq '.steps[].decision_mode' "$FILE_PATH" 2>/dev/null | grep -v -E '^(ref|vision-first|null)$' || true)
+  if [[ -n "$INVALID_DECISION_MODES" ]]; then
+    echo "ERROR: Invalid step decision_mode in ${FILE_PATH}: ${INVALID_DECISION_MODES}" >&2
+    exit 1
+  fi
 
   # Vision-fallback targeting_method enum check (Phase 5 / GH-801, additive).
   # Absence of `targeting_method` is allowed (backward compatibility — pre-existing
