@@ -136,11 +136,11 @@ Add `model: claude-opus-4-7` to the reflect SKILL.md frontmatter. Append a `## M
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Frontmatter block (lines 1-7) has a new `model: claude-opus-4-7` line, placed between the `description:` field and the `allowed-tools:` field.
-  - [ ] Frontmatter remains valid YAML (no indentation errors, no duplicate keys).
-  - [ ] `name`, `description`, and `allowed-tools` are otherwise unchanged.
-  - [ ] No other sections of the file are touched.
-  - [ ] `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` still read `model: sonnet` (verify by reading after the edit).
+  - [x] Frontmatter block (lines 1-7) has a new `model: claude-opus-4-7` line, placed between the `description:` field and the `allowed-tools:` field.
+  - [x] Frontmatter remains valid YAML (no indentation errors, no duplicate keys).
+  - [x] `name`, `description`, and `allowed-tools` are otherwise unchanged.
+  - [x] No other sections of the file are touched.
+  - [x] `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` still read `model: sonnet` (verify by reading after the edit).
 
 #### Task 1.2: Append `## Model Routing` section documenting env override and execute/reflect split
 
@@ -149,23 +149,23 @@ Add `model: claude-opus-4-7` to the reflect SKILL.md frontmatter. Append a `## M
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] New `## Model Routing` section appended at the end of the file, after the existing `### Step 5: Report` section.
-  - [ ] Section explains: (a) reflect runs on Opus 4.7 by default per the frontmatter hint, (b) the reason (vision-heavy workload; see research link), (c) execute stays on Sonnet via `agents/explorer-agent.md` and `agents/story-runner-agent.md`, (d) `RALPH_PLAYWRIGHT_REFLECT_MODEL` env var overrides the hint (example: `export RALPH_PLAYWRIGHT_REFLECT_MODEL=claude-sonnet-4-6` to roll back).
-  - [ ] Section includes a link to the parent research doc: `thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md` (the §Part 3 Item 1 anchor if possible, or at minimum the doc).
-  - [ ] Section notes the scope caveat: the frontmatter hint fires on direct `Skill("ralph-playwright:reflect")` invocations; for reflect-as-step-inside-parent-skill (explore, test-e2e, a11y-scan, capture, ux-audit), the parent caller's model applies and the env var is the user-facing override.
-  - [ ] Section is <= 40 lines (concise — this is a skill doc, not a full explainer; the README in Phase 2 carries the longer narrative).
+  - [x] New `## Model Routing` section appended at the end of the file, after the existing `### Step 5: Report` section.
+  - [x] Section explains: (a) reflect runs on Opus 4.7 by default per the frontmatter hint, (b) the reason (vision-heavy workload; see research link), (c) execute stays on Sonnet via `agents/explorer-agent.md` and `agents/story-runner-agent.md`, (d) `RALPH_PLAYWRIGHT_REFLECT_MODEL` env var overrides the hint (example: `export RALPH_PLAYWRIGHT_REFLECT_MODEL=claude-sonnet-4-6` to roll back).
+  - [x] Section includes a link to the parent research doc: `thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md` (the §Part 3 Item 1 anchor if possible, or at minimum the doc).
+  - [x] Section notes the scope caveat: the frontmatter hint fires on direct `Skill("ralph-playwright:reflect")` invocations; for reflect-as-step-inside-parent-skill (explore, test-e2e, a11y-scan, capture, ux-audit), the parent caller's model applies and the env var is the user-facing override.
+  - [x] Section is <= 40 lines (concise — this is a skill doc, not a full explainer; the README in Phase 2 carries the longer narrative).
 
 ### Phase Success Criteria
 
 #### Automated Verification
 
-- [ ] Manual: YAML frontmatter parses cleanly — verify by opening the file in an editor or running any YAML linter on the frontmatter block (e.g., `yq -o=yaml eval 'del(.)' skills/reflect/SKILL.md` returns without error — optional, ralph-playwright has no formal lint target).
-- [ ] No build step to run (ralph-playwright is skills/agents-only per `CLAUDE.md:26` — "ralph-playwright is skills/agents-only — no build step").
+- [x] Manual: YAML frontmatter parses cleanly — verify by opening the file in an editor or running any YAML linter on the frontmatter block (e.g., `yq -o=yaml eval 'del(.)' skills/reflect/SKILL.md` returns without error — optional, ralph-playwright has no formal lint target).
+- [x] No build step to run (ralph-playwright is skills/agents-only per `CLAUDE.md:26` — "ralph-playwright is skills/agents-only — no build step").
 
 #### Manual Verification
 
-- [ ] Read the updated `skills/reflect/SKILL.md` top-to-bottom and confirm: frontmatter valid, `## Process` unchanged, `## Model Routing` appended with env-override example.
-- [ ] Confirm `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` still say `model: sonnet` (diff check).
+- [x] Read the updated `skills/reflect/SKILL.md` top-to-bottom and confirm: frontmatter valid, `## Process` unchanged, `## Model Routing` appended with env-override example.
+- [x] Confirm `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` still say `model: sonnet` (diff check).
 
 **Creates for next phase**: The canonical Opus-4.7 hint and env-override documentation inside `skills/reflect/SKILL.md`. Phase 2's README cross-links to this section.
 
