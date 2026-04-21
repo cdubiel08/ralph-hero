@@ -218,6 +218,54 @@ if [[ "$SCHEMA" == "signal-report.schema.yaml" ]]; then
       done
     done
   fi
+
+  # Validate reflect_meta (optional, per GH-787): per-step model attribution.
+  # Absence is a valid pass (backward compatibility for pre-GH-787 signal-reports).
+  # When present, each by_step entry MUST have a non-empty `model` and a `reason`
+  # in the enum [default, fail_escalation, prior_signal_escalation, env_override].
+  # Test cases documented:
+  #   (a) old signal-report with no `reflect_meta` passes (absent -> skip)
+  #   (b) report with fully-populated `reflect_meta.by_step` passes
+  #   (c) report with an out-of-enum `reason` fails, naming the offending step
+  #   (d) report with a `by_step` entry missing `model` fails, naming the step
+  REFLECT_META_PRESENT=$(yq '.reflect_meta' "$FILE_PATH" 2>/dev/null || echo "null")
+  if [[ -n "$REFLECT_META_PRESENT" && "$REFLECT_META_PRESENT" != "null" && "$REFLECT_META_PRESENT" != "~" ]]; then
+    # Enumerate by_step keys (stringified step indices).
+    BY_STEP_KEYS=$(yq '.reflect_meta.by_step | keys | .[]' "$FILE_PATH" 2>/dev/null || true)
+    if [[ -n "$BY_STEP_KEYS" ]]; then
+      while IFS= read -r step_key; do
+        # Strip any surrounding quotes yq might emit for stringified integer keys.
+        step_key="${step_key%\"}"
+        step_key="${step_key#\"}"
+        [[ -z "$step_key" ]] && continue
+
+        STEP_MODEL=$(yq ".reflect_meta.by_step[\"${step_key}\"].model" "$FILE_PATH" 2>/dev/null || true)
+        STEP_REASON=$(yq ".reflect_meta.by_step[\"${step_key}\"].reason" "$FILE_PATH" 2>/dev/null || true)
+
+        # `model` must be a non-empty, non-null string.
+        if [[ -z "$STEP_MODEL" || "$STEP_MODEL" == "null" || "$STEP_MODEL" == "~" ]]; then
+          echo "ERROR: reflect_meta.by_step[${step_key}].model missing or empty in ${FILE_PATH}" >&2
+          exit 1
+        fi
+
+        # `reason` must be present and in the enum. Uses the same BSD-grep-safe
+        # null-passthrough idiom as the targeting_method/trigger_reason checks
+        # above — filter absent/null values first, then enum-match.
+        INVALID_REASON=$(printf '%s\n' "$STEP_REASON" \
+          | grep -v -E '^(null|~)$' \
+          | grep -v '^$' \
+          | grep -v -E '^(default|fail_escalation|prior_signal_escalation|env_override)$' || true)
+        if [[ -z "$STEP_REASON" || "$STEP_REASON" == "null" || "$STEP_REASON" == "~" ]]; then
+          echo "ERROR: reflect_meta.by_step[${step_key}].reason must be one of [default, fail_escalation, prior_signal_escalation, env_override], got <missing> in ${FILE_PATH}" >&2
+          exit 1
+        fi
+        if [[ -n "$INVALID_REASON" ]]; then
+          echo "ERROR: reflect_meta.by_step[${step_key}].reason must be one of [default, fail_escalation, prior_signal_escalation, env_override], got ${STEP_REASON} in ${FILE_PATH}" >&2
+          exit 1
+        fi
+      done <<< "$BY_STEP_KEYS"
+    fi
+  fi
 fi
 
 if [[ "$SCHEMA" == "action-log.schema.yaml" ]]; then

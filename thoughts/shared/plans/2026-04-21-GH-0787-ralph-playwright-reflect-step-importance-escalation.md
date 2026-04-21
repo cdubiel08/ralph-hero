@@ -288,12 +288,12 @@ Add an optional top-level `reflect_meta` block to `signal-report.schema.yaml` de
 
 #### Automated Verification
 
-- [ ] `validate-primitive-io.sh` exits 0 on the `pre-787.yaml` fixture (backward compat).
-- [ ] `validate-primitive-io.sh` exits 0 on the `valid-787.yaml` fixture.
-- [ ] `validate-primitive-io.sh` exits 1 on the `invalid-reason.yaml` fixture, stderr names the step index.
-- [ ] `validate-primitive-io.sh` exits 1 on the `missing-model.yaml` fixture, stderr names the step index.
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check; ralph-hero MCP server is unchanged by this feature but CI must stay green).
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (ralph-playwright is skills-only but CI runs this across all plugins).
+- [x] `validate-primitive-io.sh` exits 0 on the `pre-787.yaml` fixture (backward compat).
+- [x] `validate-primitive-io.sh` exits 0 on the `valid-787.yaml` fixture.
+- [x] `validate-primitive-io.sh` exits 1 on the `invalid-reason.yaml` fixture, stderr names the step index.
+- [x] `validate-primitive-io.sh` exits 1 on the `missing-model.yaml` fixture, stderr names the step index.
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check; ralph-hero MCP server is unchanged by this feature but CI must stay green).
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (ralph-playwright is skills-only but CI runs this across all plugins).
 
 #### Manual Verification
 
