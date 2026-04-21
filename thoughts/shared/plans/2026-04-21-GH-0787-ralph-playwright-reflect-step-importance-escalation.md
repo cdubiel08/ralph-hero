@@ -165,16 +165,16 @@ After this feature merges:
 
 ### Verification
 
-- [ ] `signal-report.schema.yaml` defines `reflect_meta` as an optional top-level property with the shape above.
-- [ ] `validate-primitive-io.sh` passes a pre-#787 signal-report (no `reflect_meta`) — backward compatibility.
-- [ ] `validate-primitive-io.sh` passes a #787-compliant signal-report with `reflect_meta` populated and all `reason` values in the enum.
-- [ ] `validate-primitive-io.sh` rejects a signal-report where any `reflect_meta.by_step[*].reason` is outside the enum, naming the offending step index.
-- [ ] `validate-primitive-io.sh` rejects a signal-report where `reflect_meta.by_step[N].model` is missing (required sub-field).
-- [ ] `skills/reflect/SKILL.md` contains a `## Step-Importance Escalation` section covering: the two triggers (fail, prior-signal), the default vs escalated model, the env-override dominance, the iteration-order requirement, and the recording obligation.
-- [ ] `skills/reflect/SKILL.md` Step 2 begins with a 3-5 line prelude instructing the model to apply the escalation ladder.
-- [ ] Pilot signal-report against the synthesized trace validates against the updated schema and has `reflect_meta.by_step` entries for each of the 4 steps, with reasons matching the expected ladder.
-- [ ] `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` still read `model: sonnet` (unchanged — not in diff).
-- [ ] `skills/reflect/SKILL.md` frontmatter still reads `model: claude-opus-4-7` (unchanged — the direct-invocation default from #785 is preserved).
+- [x] `signal-report.schema.yaml` defines `reflect_meta` as an optional top-level property with the shape above.
+- [x] `validate-primitive-io.sh` passes a pre-#787 signal-report (no `reflect_meta`) — backward compatibility.
+- [x] `validate-primitive-io.sh` passes a #787-compliant signal-report with `reflect_meta` populated and all `reason` values in the enum.
+- [x] `validate-primitive-io.sh` rejects a signal-report where any `reflect_meta.by_step[*].reason` is outside the enum, naming the offending step index.
+- [x] `validate-primitive-io.sh` rejects a signal-report where `reflect_meta.by_step[N].model` is missing (required sub-field).
+- [x] `skills/reflect/SKILL.md` contains a `## Step-Importance Escalation` section covering: the two triggers (fail, prior-signal), the default vs escalated model, the env-override dominance, the iteration-order requirement, and the recording obligation.
+- [x] `skills/reflect/SKILL.md` Step 2 begins with a 3-5 line prelude instructing the model to apply the escalation ladder.
+- [x] Pilot signal-report against the synthesized trace validates against the updated schema and has `reflect_meta.by_step` entries for each of the 4 steps, with reasons matching the expected ladder.
+- [x] `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` still read `model: sonnet` (unchanged — not in diff).
+- [x] `skills/reflect/SKILL.md` frontmatter still reads `model: claude-opus-4-7` (unchanged — the direct-invocation default from #785 is preserved).
 
 ## What We're NOT Doing
 
@@ -458,10 +458,10 @@ Construct (or reuse) a 4-step journey-trace with a known distribution of `outcom
 
 #### Automated Verification
 
-- [ ] `validate-primitive-io.sh` exits 0 on the pilot signal-report.
-- [ ] `reflect_meta.by_step` contains entries for all 4 step indices.
-- [ ] All `reason` values in the pilot are within the enum `[default, fail_escalation, prior_signal_escalation, env_override]`.
-- [ ] All `model` values are non-empty strings.
+- [x] `validate-primitive-io.sh` exits 0 on the pilot signal-report.
+- [x] `reflect_meta.by_step` contains entries for all 4 step indices.
+- [x] All `reason` values in the pilot are within the enum `[default, fail_escalation, prior_signal_escalation, env_override]`.
+- [x] All `model` values are non-empty strings.
 
 #### Manual Verification
 
@@ -475,19 +475,19 @@ Construct (or reuse) a 4-step journey-trace with a known distribution of `outcom
 
 ## Integration Testing
 
-- [ ] Full PR diff shows exactly four files changed:
+- [x] Full PR diff shows exactly four files changed:
   1. `plugin/ralph-playwright/schemas/signal-report.schema.yaml` (Phase 1 schema addition).
   2. `plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` (Phase 1 hook addition).
   3. `plugin/ralph-playwright/skills/reflect/SKILL.md` (Phase 2 policy and prelude and Step 4 example extension).
   4. `plugin/ralph-playwright/README.md` (Phase 2 cross-ref).
   5. `thoughts/shared/plans/2026-04-21-GH-0787-ralph-playwright-reflect-step-importance-escalation.md` (this plan document itself, committed with the implementation PR per project convention).
-- [ ] `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` are NOT in the diff (execute agents stay on Sonnet).
-- [ ] `schemas/journey-trace.schema.yaml` and `schemas/action-log.schema.yaml` are NOT in the diff.
-- [ ] `skills/explore/SKILL.md`, `skills/test-e2e/SKILL.md`, `skills/a11y-scan/SKILL.md`, `skills/capture/SKILL.md`, `skills/ux-audit/SKILL.md` are NOT in the diff (sibling reflect-embedding skills are not propagated in this PR).
-- [ ] A pre-existing signal-report without `reflect_meta` (e.g., from a #785 / #786 verification run) passes the updated hook — backward compatibility confirmed.
-- [ ] A #787-compliant signal-report with `reflect_meta` populated passes the updated hook.
-- [ ] The hook rejects enum violations and missing-`model` errors with actionable messages naming the step index.
-- [ ] Verification pilot (Phase 3) produced a valid signal-report.yaml with `reflect_meta.by_step` covering all 4 steps and all `reason` values in enum.
+- [x] `agents/explorer-agent.md:4` and `agents/story-runner-agent.md:4` are NOT in the diff (execute agents stay on Sonnet).
+- [x] `schemas/journey-trace.schema.yaml` and `schemas/action-log.schema.yaml` are NOT in the diff.
+- [x] `skills/explore/SKILL.md`, `skills/test-e2e/SKILL.md`, `skills/a11y-scan/SKILL.md`, `skills/capture/SKILL.md`, `skills/ux-audit/SKILL.md` are NOT in the diff (sibling reflect-embedding skills are not propagated in this PR).
+- [x] A pre-existing signal-report without `reflect_meta` (e.g., from a #785 / #786 verification run) passes the updated hook — backward compatibility confirmed.
+- [x] A #787-compliant signal-report with `reflect_meta` populated passes the updated hook.
+- [x] The hook rejects enum violations and missing-`model` errors with actionable messages naming the step index.
+- [x] Verification pilot (Phase 3) produced a valid signal-report.yaml with `reflect_meta.by_step` covering all 4 steps and all `reason` values in enum.
 
 ## Unblocks
 
