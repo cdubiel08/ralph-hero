@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ralph-playwright low-contrast fixture</title>
+  <style>
+    /* Keep the stylesheet minimal and inlined so the page is self-contained. The
+       colors below are chosen deliberately to exercise specific WCAG 2.x
+       contrast outcomes. See README.md for the expected ratios and verdicts. */
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: #000000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    main {
+      max-width: 720px;
+      margin: 32px auto;
+      padding: 16px;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 16px 0;
+    }
+    .case {
+      padding: 16px;
+      margin: 0 0 24px 0;
+      border: 1px solid #dddddd;
+    }
+    .case h2 {
+      font-size: 16px;
+      margin: 0 0 8px 0;
+      color: #000000;
+    }
+    /* Sample A: 16 px normal-weight text, #888 on #fff (~3.54:1). Fails 4.5:1. */
+    .case-a .sample {
+      font-size: 16px;
+      font-weight: 400;
+      color: #888888;
+      background: #ffffff;
+    }
+    /* Sample B: 16 px normal-weight text, #595959 on #fff (~7:1). Passes 4.5:1. */
+    .case-b .sample {
+      font-size: 16px;
+      font-weight: 400;
+      color: #595959;
+      background: #ffffff;
+    }
+    /* Sample C: 24 px bold text (large-text per WCAG), #9a9a9a on #fff (~2.81:1).
+       Fails 3:1 large-text threshold (and 4.5:1 normal threshold). */
+    .case-c .sample {
+      font-size: 24px;
+      font-weight: 700;
+      color: #9a9a9a;
+      background: #ffffff;
+    }
+    /* Sample D: 16 px white text on a photographic/gradient background via
+       CSS background-image. The mid-tone gradient exercises the variable
+       background code path; worst-case local background pixels under some
+       glyph strokes approach #ffffff, producing insufficient contrast. */
+    .case-d .sample {
+      font-size: 16px;
+      font-weight: 400;
+      color: #ffffff;
+      padding: 12px;
+      background-image: linear-gradient(
+        to right,
+        #222222 0%,
+        #555555 30%,
+        #a0a0a0 60%,
+        #e8e8e8 100%
+      );
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Low-contrast fixture (ralph-playwright / a11y-scan)</h1>
+
+    <section class="case case-a" data-contrast-case="A">
+      <h2>Case A: normal text, failing contrast (expected FAIL 4.5:1)</h2>
+      <p class="sample">
+        The quick brown fox jumps over the lazy dog. This 16 px normal-weight
+        paragraph uses color <code>#888</code> on a <code>#fff</code> background,
+        which produces a WCAG 2.x contrast ratio of approximately 3.54:1 and
+        fails the 4.5:1 normal-text threshold.
+      </p>
+    </section>
+
+    <section class="case case-b" data-contrast-case="B">
+      <h2>Case B: normal text, passing contrast (expected PASS 4.5:1)</h2>
+      <p class="sample">
+        The quick brown fox jumps over the lazy dog. This 16 px normal-weight
+        paragraph uses color <code>#595959</code> on a <code>#fff</code>
+        background, which produces a WCAG 2.x contrast ratio of approximately
+        7.00:1 and passes the 4.5:1 normal-text threshold.
+      </p>
+    </section>
+
+    <section class="case case-c" data-contrast-case="C">
+      <h2>Case C: large text, failing large-text contrast (expected FAIL 3:1)</h2>
+      <p class="sample">
+        Headline sample: 24 px bold. Color <code>#9a9a9a</code> on <code>#fff</code>.
+        Approximate ratio 2.81:1 — fails the 3:1 large-text threshold.
+      </p>
+    </section>
+
+    <section class="case case-d" data-contrast-case="D">
+      <h2>Case D: text on variable background (expected partial FAIL, [variable-background])</h2>
+      <p class="sample">
+        The quick brown fox jumps over the lazy dog — white text on a
+        dark-to-light horizontal gradient. The right-hand portion of the text
+        fails contrast against the near-white background; the left-hand portion
+        passes against the dark background. A conservative worst-case sample
+        should flag this as a <code>[variable-background]</code> violation.
+      </p>
+    </section>
+  </main>
+</body>
+</html>

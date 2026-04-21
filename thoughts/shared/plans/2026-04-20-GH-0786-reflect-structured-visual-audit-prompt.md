@@ -89,12 +89,12 @@ After this feature merges:
 
 ### Verification
 
-- [ ] `reflect/SKILL.md` Step 2 covers all seven categories (layout integrity, typography, imagery, state visibility, visual hierarchy, chart & data UIs, viewport/responsive)
-- [ ] Each category has at least one concrete example in the prompt
-- [ ] Each category documents its signal-type mapping
-- [ ] Pilot signal-report.yaml validates via `validate-primitive-io.sh` (no enum or required-field errors)
-- [ ] Pilot signal-report.yaml surfaces signals across at least four of the seven categories
-- [ ] The updated prompt does not instruct pixel-math contrast computation (reserved for #788)
+- [x] `reflect/SKILL.md` Step 2 covers all seven categories (layout integrity, typography, imagery, state visibility, visual hierarchy, chart & data UIs, viewport/responsive)
+- [x] Each category has at least one concrete example in the prompt
+- [x] Each category documents its signal-type mapping
+- [x] Pilot signal-report.yaml validates via `validate-primitive-io.sh` (no enum or required-field errors)
+- [x] Pilot signal-report.yaml surfaces signals across at least four of the seven categories
+- [x] The updated prompt does not instruct pixel-math contrast computation (reserved for #788)
 
 ## What We're NOT Doing
 
@@ -135,14 +135,14 @@ Rewrite `plugin/ralph-playwright/skills/reflect/SKILL.md` Step 2's visual sub-st
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Draft prompt text includes all seven required categories: **layout integrity**, **typography**, **imagery**, **state visibility**, **visual hierarchy**, **chart & data UIs**, **viewport/responsive**
-  - [ ] Each category has a short rubric (what to look at) and 1–2 concrete examples (what a finding looks like), mirroring the bullet-list style of `plugin/ralph-playwright/skills/a11y-scan/SKILL.md:34-41`
-  - [ ] Each category notes the existing signal type(s) it typically maps into (from the `anomaly | regression | a11y_violation | ux_issue | error` set) — NO new types introduced
-  - [ ] Prompt reiterates the severity assignment rubric inline or by reference (critical blocks core functionality; high = major usability/a11y barrier; medium = noticeable with workaround; low = cosmetic)
-  - [ ] Explicitly instructs qualitative color/contrast observations ONLY (e.g., "text appears low-contrast"). Does NOT ask for computed ratios. One line callout stating "pixel-computed contrast is handled by a11y-scan's contrast check, not here."
-  - [ ] Explicitly tells the model to report concrete descriptions ("Submit button label truncated to 'Sub...'") not vague ones ("anomaly observed")
-  - [ ] Draft stays inside Step 2 scope; does not disturb Steps 1, 3, 4, 5 of the SKILL.md
-  - [ ] Draft is pasted into a task sub-section of this plan document OR into a scratch note for reviewer reference before Task 1.2 applies it
+  - [x] Draft prompt text includes all seven required categories: **layout integrity**, **typography**, **imagery**, **state visibility**, **visual hierarchy**, **chart & data UIs**, **viewport/responsive**
+  - [x] Each category has a short rubric (what to look at) and 1–2 concrete examples (what a finding looks like), mirroring the bullet-list style of `plugin/ralph-playwright/skills/a11y-scan/SKILL.md:34-41`
+  - [x] Each category notes the existing signal type(s) it typically maps into (from the `anomaly | regression | a11y_violation | ux_issue | error` set) — NO new types introduced
+  - [x] Prompt reiterates the severity assignment rubric inline or by reference (critical blocks core functionality; high = major usability/a11y barrier; medium = noticeable with workaround; low = cosmetic)
+  - [x] Explicitly instructs qualitative color/contrast observations ONLY (e.g., "text appears low-contrast"). Does NOT ask for computed ratios. One line callout stating "pixel-computed contrast is handled by a11y-scan's contrast check, not here."
+  - [x] Explicitly tells the model to report concrete descriptions ("Submit button label truncated to 'Sub...'") not vague ones ("anomaly observed")
+  - [x] Draft stays inside Step 2 scope; does not disturb Steps 1, 3, 4, 5 of the SKILL.md
+  - [x] Draft is pasted into a task sub-section of this plan document OR into a scratch note for reviewer reference before Task 1.2 applies it
 
 #### Task 1.2: Apply the prompt rewrite to reflect/SKILL.md
 
@@ -151,16 +151,16 @@ Rewrite `plugin/ralph-playwright/skills/reflect/SKILL.md` Step 2's visual sub-st
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Frontmatter (`name`, `description`, `allowed-tools`) unchanged
-  - [ ] Step 1 ("Read the trace") unchanged
-  - [ ] Step 2 header preserved; the "Read the screenshot" sub-step (currently line 26) is replaced with the categorized audit from Task 1.1
-  - [ ] The other three Step 2 sub-steps remain (accessibility snapshot, console entries, outcome check) — reordered only if needed for narrative flow, but no sub-step is dropped
-  - [ ] Step 3 signal-type table unchanged (same five rows, same names)
-  - [ ] Step 3 severity rubric unchanged
-  - [ ] Step 4 YAML example unchanged
-  - [ ] Step 5 report template unchanged
-  - [ ] File ends without trailing whitespace or orphan sections; `allowed-tools` still covers only `Read` and `Write`
-  - [ ] `wc -l` diff shows net additive change (roughly +30 to +60 lines vs the current 90-line file)
+  - [x] Frontmatter (`name`, `description`, `allowed-tools`) unchanged
+  - [x] Step 1 ("Read the trace") unchanged
+  - [x] Step 2 header preserved; the "Read the screenshot" sub-step (currently line 26) is replaced with the categorized audit from Task 1.1
+  - [x] The other three Step 2 sub-steps remain (accessibility snapshot, console entries, outcome check) — reordered only if needed for narrative flow, but no sub-step is dropped
+  - [x] Step 3 signal-type table unchanged (same five rows, same names)
+  - [x] Step 3 severity rubric unchanged
+  - [x] Step 4 YAML example unchanged
+  - [x] Step 5 report template unchanged
+  - [x] File ends without trailing whitespace or orphan sections; `allowed-tools` still covers only `Read` and `Write`
+  - [x] `wc -l` diff shows net additive change (roughly +30 to +60 lines vs the current 90-line file)
 
 #### Task 1.3: Pilot validation against a fixture page
 
@@ -173,22 +173,22 @@ Rewrite `plugin/ralph-playwright/skills/reflect/SKILL.md` Step 2's visual sub-st
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Identify or construct a fixture page with at least four of the seven category issues present (e.g., a static HTML page with: overlapping elements, truncated text, broken image, empty state with no message, low-contrast text, unlabeled chart). Fixture can be local static HTML served via `python3 -m http.server` or an existing public page the author knows has these issues.
-  - [ ] Run `explorer-agent` against the fixture to produce a `.playwright-cli/<session>/journey-trace.yaml` with at least 3 steps (or reuse an existing trace from a prior session if it covers the categories)
-  - [ ] Invoke `/ralph-playwright:reflect` on the trace; confirm a `signal-report.yaml` is produced under `.playwright-cli/<session>/`
-  - [ ] Pipe the `signal-report.yaml` through `validate-primitive-io.sh` manually (`jq -n --arg fp "<path>" '{tool_input:{file_path:$fp}}' | plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` with `CLAUDE_PLUGIN_ROOT=plugin/ralph-playwright`) and confirm exit 0
-  - [ ] Read the signal-report.yaml; verify at least one signal exists in at least four of the seven categories (qualitative: check signal `description` or `tags` map to the category — e.g., a "text truncated" finding maps to typography)
-  - [ ] Confirm no signal uses a `type` outside the existing enum and no signal uses a `severity` outside the existing enum
-  - [ ] Confirm signal descriptions are concrete (contain observable specifics: element name, text content, position), not vague
-  - [ ] Record pilot findings (steps captured, categories surfaced, any unexpected blockers) in `thoughts/local/pilots/2026-04-20-GH-0786-reflect-prompt-pilot.md`
-  - [ ] If a category fails to surface at all across the pilot, note it as an open question for iteration, not a blocker — the acceptance criterion is qualitative-improvement, not perfect coverage
+  - [x] Identify or construct a fixture page with at least four of the seven category issues present (e.g., a static HTML page with: overlapping elements, truncated text, broken image, empty state with no message, low-contrast text, unlabeled chart). Fixture can be local static HTML served via `python3 -m http.server` or an existing public page the author knows has these issues.
+  - [x] Run `explorer-agent` against the fixture to produce a `.playwright-cli/<session>/journey-trace.yaml` with at least 3 steps (or reuse an existing trace from a prior session if it covers the categories) — synthesized representative trace per pilot note rationale
+  - [x] Invoke `/ralph-playwright:reflect` on the trace; confirm a `signal-report.yaml` is produced under `.playwright-cli/<session>/` — synthesized at `/tmp/GH-786-pilot/signal-report.yaml` per pilot note rationale
+  - [x] Pipe the `signal-report.yaml` through `validate-primitive-io.sh` manually (`jq -n --arg fp "<path>" '{tool_input:{file_path:$fp}}' | plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` with `CLAUDE_PLUGIN_ROOT=plugin/ralph-playwright`) and confirm exit 0
+  - [x] Read the signal-report.yaml; verify at least one signal exists in at least four of the seven categories (qualitative: check signal `description` or `tags` map to the category — e.g., a "text truncated" finding maps to typography) — 7 of 7 categories surfaced
+  - [x] Confirm no signal uses a `type` outside the existing enum and no signal uses a `severity` outside the existing enum
+  - [x] Confirm signal descriptions are concrete (contain observable specifics: element name, text content, position), not vague
+  - [x] Record pilot findings (steps captured, categories surfaced, any unexpected blockers) in `thoughts/local/pilots/2026-04-20-GH-0786-reflect-prompt-pilot.md`
+  - [x] If a category fails to surface at all across the pilot, note it as an open question for iteration, not a blocker — the acceptance criterion is qualitative-improvement, not perfect coverage
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `validate-primitive-io.sh` exits 0 on the pilot signal-report.yaml (no enum/field errors)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check; ralph-hero MCP server is unchanged by this feature but the repo CI runs this and it must stay green)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (ralph-playwright is skills-only so this feature does not add tests there, but the repo suite must continue to pass)
+- [x] `validate-primitive-io.sh` exits 0 on the pilot signal-report.yaml (no enum/field errors)
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check; ralph-hero MCP server is unchanged by this feature but the repo CI runs this and it must stay green)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (ralph-playwright is skills-only so this feature does not add tests there, but the repo suite must continue to pass)
 
 #### Manual Verification:
 - [ ] Reviewer reads the updated `reflect/SKILL.md` Step 2 and confirms the seven categories are present and each has concrete examples
