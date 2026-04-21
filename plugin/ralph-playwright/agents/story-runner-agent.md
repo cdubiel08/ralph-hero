@@ -44,7 +44,14 @@ Parse the `workflow` field line by line. For each non-empty line:
 playwright-cli -s=<session> snapshot --filename=".playwright-cli/<session>/<index>_<slug>.md"
 ```
 
-2. **Find the target element** by label, role, or text in the snapshot — use element refs (e.g., `e8`, `e21`). NEVER use CSS selectors.
+2. **Find the target element** by label, role, or text in the snapshot — use element refs (e.g., `e8`, `e21`). NEVER use CSS selectors. Use element refs (e.g., `e8`, `e21`) OR fall back to vision-locator per `../skills/browser/references/vision-fallback-sequence.md`.
+
+   **A11y-first invariant**: always attempt the ref lookup first. Only if no ref matches, consult the trigger heuristic in `../skills/browser/references/vision-fallback-trigger.md` to decide whether to escalate to vision fallback. The "NEVER use CSS selectors" rule is absolute for a11y-reachable elements; vision fallback is strictly additive and activates only when the trigger returns `true`.
+
+   **Fallback sub-flow** (full detail in `../skills/browser/references/vision-fallback-sequence.md`):
+   - If no ref matches AND the trigger returns `true`, invoke the vision-locator (`../skills/browser/references/vision-locator-prompt.md`) with the step's screenshot + target description.
+   - If the locator returns coordinates, validate bounds per `../skills/browser/references/click-by-coordinate.md`, apply DPR reconciliation if needed, and dispatch the click via the `eval page.mouse.click` shim.
+   - One vision attempt per action. No retry.
 
 3. **Execute the action** using the appropriate command:
    - Navigate: `playwright-cli -s=<session> goto "<url>"`
@@ -52,6 +59,7 @@ playwright-cli -s=<session> snapshot --filename=".playwright-cli/<session>/<inde
    - Fill: `playwright-cli -s=<session> fill <ref> "<value>"`
    - Type: `playwright-cli -s=<session> type "<text>"`
    - Verify: Read the snapshot and confirm the expected text/element/state is present
+   - If no ref was found AND the trigger fires, invoke the fallback sequence instead of failing.
 
 4. **Take screenshot**:
 ```bash
@@ -63,7 +71,10 @@ playwright-cli -s=<session> screenshot --filename=".playwright-cli/<session>/<in
 playwright-cli -s=<session> eval "JSON.stringify({ errors: window.__consoleErrors || [], warnings: window.__consoleWarnings || [] })"
 ```
 
-6. Record step result: `{ index, action, target, outcome, screenshot, snapshot, console, duration_ms, error }`
+6. Record step result: `{ index, action, target, outcome, screenshot, snapshot, console, duration_ms, error, targeting_method, vision_fallback }`
+   - `targeting_method` is one of `a11y_ref` (default, emit explicitly on the a11y path) or `vision_fallback` (when the fallback sub-flow fired).
+   - When `targeting_method == vision_fallback`, populate the nested `vision_fallback` block per `../schemas/journey-trace.schema.yaml`: `target_description`, `resolved_x`, `resolved_y`, `confidence`, `rationale`, `trigger_reason`, `click_outcome`.
+   - For confidence < 0.5 cases (low-confidence success), still emit `click_outcome: pass`; keep the confidence value verbatim so downstream audit queries can surface it for human review.
 
 ### On Step Failure
 - Record the error message
@@ -95,6 +106,26 @@ steps:
     console: []
     duration_ms: 1200
     error: null
+    targeting_method: a11y_ref  # explicit default; optional for navigation steps
+  # Example vision-fallback step (only populated when the a11y path fails):
+  # - index: 3
+  #   action: "click"
+  #   target: "Blue Submit button"
+  #   outcome: pass
+  #   screenshot: ".playwright-cli/<session>/03_click.png"
+  #   snapshot: ".playwright-cli/<session>/03_click.md"
+  #   console: []
+  #   duration_ms: 2100
+  #   error: null
+  #   targeting_method: vision_fallback
+  #   vision_fallback:
+  #     target_description: "Blue Submit button"
+  #     resolved_x: 720
+  #     resolved_y: 780
+  #     confidence: 0.94
+  #     rationale: "Center of the blue filled button labeled 'Submit' near form bottom."
+  #     trigger_reason: canvas_region
+  #     click_outcome: pass
   # ... one entry per workflow step
 summary:
   total_steps: <count>

@@ -52,7 +52,7 @@ playwright-cli eval "JSON.stringify({ errors: window.__consoleErrors || [], warn
 |----------|----------|
 | Browser | `open [url]`, `close` |
 | Navigation | `goto <url>`, `go-back`, `go-forward`, `reload` |
-| Interaction | `click <ref>`, `dblclick <ref>`, `fill <ref> <value>`, `type <text>`, `hover <ref>`, `select <ref> <values>`, `check <ref>`, `uncheck <ref>` |
+| Interaction | `click <ref>`, `dblclick <ref>`, `fill <ref> <value>`, `type <text>`, `hover <ref>`, `select <ref> <values>`, `check <ref>`, `uncheck <ref>`; coordinate clicks via `eval page.mouse.click` — see `references/click-by-coordinate.md` |
 | Capture | `screenshot [ref] [--filename=path.png]`, `snapshot [--filename=path.md]` |
 | Keyboard | `press <key>`, `keydown <key>`, `keyup <key>` |
 | Eval | `eval <js-expression>` |
@@ -70,3 +70,35 @@ playwright-cli -s=<session-name> <command>  # Run command in named session
 playwright-cli list                          # List active sessions
 playwright-cli close-all                     # Close all sessions
 ```
+
+## Vision-Fallback Trigger
+
+When an a11y snapshot yields no ref for the target (canvas / map / bad-a11y / empty snapshot), the agents consult a trigger heuristic to decide whether to escalate to vision-based targeting. The reference doc enumerates exactly four trigger conditions plus worked positive and negative examples:
+
+- Reference: [`references/vision-fallback-trigger.md`](references/vision-fallback-trigger.md)
+
+The a11y-first invariant holds: a matching ref ALWAYS wins. The trigger is consulted only after ref-lookup fails.
+
+## Vision Locator
+
+When the trigger fires, an Opus 4.7 prompt resolves the target's pixel coordinates from the current screenshot. Input: screenshot path + plain-language target description. Output: parsed JSON or `None`. Model is pinned to Opus 4.7 via env var `RALPH_PLAYWRIGHT_VISION_LOCATOR_MODEL` (default `opus`).
+
+- Reference: [`references/vision-locator-prompt.md`](references/vision-locator-prompt.md)
+
+## Click by Coordinate
+
+Dispatch a browser click at resolved pixel coordinates. `@playwright/cli` at current release does not expose a native `click --x --y`; the canonical dispatch uses the `eval page.mouse.click(X, Y)` shim. Bounds validation + DPR reconciliation are mandatory per the reference.
+
+- Reference: [`references/click-by-coordinate.md`](references/click-by-coordinate.md)
+
+## Vision-Fallback Orchestrator
+
+The three primitives above compose into a single a11y-first sequence. The orchestrator doc is the canonical flow that both story-runner-agent and explorer-agent consume, including guardrails (no CSS selectors, one vision attempt per action) and worked test cases.
+
+- Reference: [`references/vision-fallback-sequence.md`](references/vision-fallback-sequence.md)
+
+## Vision-Fallback Fixtures
+
+Integration fixtures (canvas / map / bad-a11y + a11y-good negative control) live at `plugin/ralph-playwright/fixtures/vision-fallback/`. This is the canonical shared-fixtures home for the ralph-playwright plugin per the vision-epic Integration Strategy — future vision-related features (e.g., Feature K / GH-795, Feature G / GH-791) may add pages here rather than creating parallel directories.
+
+- Reference: [`../../fixtures/vision-fallback/README.md`](../../fixtures/vision-fallback/README.md)

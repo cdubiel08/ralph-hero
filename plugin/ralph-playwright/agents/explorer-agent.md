@@ -61,7 +61,11 @@ playwright-cli -s=<session> eval "JSON.stringify({ errors: window.__consoleError
    - Interactive elements visible in the snapshot (links, buttons, forms, tabs)
    - URLs you've already visited (track them — avoid loops)
 
-5. **Take the action** (click, fill, navigate) and record it as a step
+   **A11y-first invariant**: always search the snapshot for a matching ref first. Only if no ref matches, consult the trigger heuristic in `../skills/browser/references/vision-fallback-trigger.md` to decide whether to escalate. The "NEVER use CSS selectors" rule is absolute for a11y-reachable elements; vision fallback activates only when the trigger returns `true`.
+
+5. **Take the action** (click, fill, navigate) and record it as a step.
+
+   If the a11y lookup failed AND the trigger fired, invoke the fallback sequence documented in `../skills/browser/references/vision-fallback-sequence.md`: locate via `../skills/browser/references/vision-locator-prompt.md`, bounds-validate and dispatch via `../skills/browser/references/click-by-coordinate.md`. One vision attempt per action.
 
 6. **Stop when**:
    - The goal is achieved
@@ -82,7 +86,29 @@ For each action, record a step:
   console: []
   duration_ms: <ms>
   error: null
+  targeting_method: a11y_ref  # one of [a11y_ref, vision_fallback]; default a11y_ref when absent
+# Example vision-fallback step (only populated when the a11y path fails):
+# - index: 4
+#   action: "click"
+#   target: "Pin for San Francisco"
+#   outcome: pass
+#   screenshot: ".playwright-cli/<session>/04_click.png"
+#   snapshot: ".playwright-cli/<session>/04_click.md"
+#   console: []
+#   duration_ms: 2500
+#   error: null
+#   targeting_method: vision_fallback
+#   vision_fallback:
+#     target_description: "Pin for San Francisco"
+#     resolved_x: 210
+#     resolved_y: 420
+#     confidence: 0.88
+#     rationale: "Leftmost pin with 'SF' callout label."
+#     trigger_reason: map_region
+#     click_outcome: pass
 ```
+
+When emitting a vision-fallback step, populate all fields of the `vision_fallback` sub-object per `../schemas/journey-trace.schema.yaml`. For confidence < 0.5 cases, still emit `click_outcome: pass` when the click succeeds; keep the confidence verbatim for downstream audit.
 
 ## Output
 
