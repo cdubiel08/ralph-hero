@@ -121,13 +121,13 @@ The vision-first loop does NOT require a new signal type, a new schema, or a mod
 
 ## Recording
 
-For each action, record a step. The base step shape is identical in both modes — in vision-first mode, the `target` field becomes a visual description (e.g., `"blue primary CTA, top-right"`) instead of an element-ref label.
+For each action, record a step. The base step shape is identical in both modes — `decision_mode` and `vision_rationale` are optional additions that MUST be emitted in vision-first mode and omitted (or set to `ref` / `null`) in ref mode.
 
+**Ref-mode step (default — backward compatible)**:
 ```yaml
 - index: <N>
   action: "click"           # navigate, click, fill, type, verify
-  target: "Products link"   # ref mode: human-readable description of the acted-on element
-                            # vision-first mode: visual description of the target region
+  target: "Products link"   # human-readable description of what was acted on
   outcome: pass             # pass, fail, skip
   screenshot: ".playwright-cli/<session>/<NN>_<slug>.png"
   snapshot: ".playwright-cli/<session>/<NN>_<slug>.md"
@@ -136,7 +136,22 @@ For each action, record a step. The base step shape is identical in both modes �
   error: null
 ```
 
-Schema additions for vision-first (`decision_mode` and `vision_rationale`) are introduced in a sibling sub-issue ([#810](https://github.com/cdubiel08/ralph-hero/issues/810)); until that lands, this phase emits only the base step shape. Once the schema fields land, a vision-first step additionally carries `decision_mode: vision-first` and a short `vision_rationale`.
+**Vision-first-mode step** (add `decision_mode` and `vision_rationale`; `target` is a visual description):
+```yaml
+- index: <N>
+  action: "click"
+  target: "blue primary CTA, top-right"   # visual description in vision-first mode
+  decision_mode: vision-first              # optional; omit for ref mode
+  vision_rationale: "only enabled button visible above the fold"
+  outcome: pass
+  screenshot: ".playwright-cli/<session>/<NN>_<slug>.png"
+  snapshot: ".playwright-cli/<session>/<NN>_<slug>.md"
+  console: []
+  duration_ms: <ms>
+  error: null
+```
+
+The `decision_mode` and `vision_rationale` fields are optional at the schema level. When `mode=vision-first`, emit both; when `mode=ref`, omit both (or set `decision_mode: ref` explicitly — either is valid).
 
 ## Output
 
@@ -145,10 +160,10 @@ Write the journey trace to `.playwright-cli/<session>/journey-trace.yaml` follow
 The trace must include:
 - `id`: Generated UUID
 - `timestamp`: ISO-8601
-- `input`: Echo of `{ kind: freeform, url, goal, persona }`
+- `input`: Echo of `{ kind: freeform, url, goal, persona, mode }` — include `mode` verbatim when provided (`ref` or `vision-first`); omit if the caller did not pass it (schema treats it as optional)
 - `session`: The session name
 - `runtime`: `{ backend: cli, version: "<version>" }`
-- `steps`: All recorded steps
+- `steps`: All recorded steps (with `decision_mode` and `vision_rationale` populated per-step when `mode=vision-first`)
 - `summary`: `{ total_steps, passed, failed, duration_ms }`
 
 After writing the trace, close the session:
