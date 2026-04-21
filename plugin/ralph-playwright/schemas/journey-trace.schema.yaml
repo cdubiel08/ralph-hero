@@ -1,6 +1,10 @@
 # ralph-playwright journey trace schema
 # Output of the execute primitive, input to the reflect primitive
 # Same format regardless of structured or freeform execution
+#
+# Optional per-step `capture` object records the resolution and mode used
+# when a step opted into --high-res (GH-794). Absence means default viewport
+# capture; existing journey-traces without `capture` remain valid.
 
 type: object
 required: [id, timestamp, input, session, runtime, steps, summary]
@@ -15,7 +19,7 @@ properties:
     description: "ISO-8601 execution timestamp"
   input:
     type: object
-    description: "Echo of the execute input for reproducibility"
+    description: "Echo of the execute input for reproducibility. When the caller passes a `mode` field (`ref` or `vision-first`), it MUST be echoed here (e.g., `input.mode: vision-first`). Remains a free-form object — no nested `properties` block — so callers can extend the input shape without a schema bump."
   session:
     type: string
     pattern: "^[a-z0-9-]+$"
@@ -66,6 +70,67 @@ properties:
         error:
           type: ["string", "null"]
           description: "Error message if outcome is fail, null otherwise"
+        decision_mode:
+          type: string
+          enum: [ref, vision-first]
+          description: "Decision mode that produced this step. Defaults to `ref` when omitted for backward compatibility. Optional at the schema level; existing traces without the field remain valid."
+        vision_rationale:
+          type: ["string", "null"]
+          description: "Short free-text describing what the agent saw and why it picked the target (e.g., 'primary blue CTA, top-right, only enabled button on page'). Expected to be non-null when `decision_mode: vision-first`, null otherwise. Not enforced at the schema level to keep the validator simple."
+        # --- Vision-fallback telemetry (Phase 5 / GH-801, additive, backward-compatible) ---
+        # `targeting_method` defaults to `a11y_ref` when absent (pre-existing traces pass unchanged).
+        # `vision_fallback` is populated ONLY when `targeting_method == vision_fallback`.
+        # Neither field appears in the step `required` list above — both are optional.
+        targeting_method:
+          type: string
+          enum: [a11y_ref, vision_fallback]
+          description: "Which targeting method resolved this step's target. Default a11y_ref when absent."
+        vision_fallback:
+          type: object
+          description: "Populated only when targeting_method == vision_fallback. Captures the Opus 4.7 vision-locator response + dispatch outcome."
+          properties:
+            target_description:
+              type: string
+              description: "Plain-language target description passed to the locator prompt."
+            resolved_x:
+              type: ["integer", "null"]
+              description: "Pixel x-coordinate returned by the locator (device pixels, pre-DPR-reconciliation). Null if target not found."
+            resolved_y:
+              type: ["integer", "null"]
+              description: "Pixel y-coordinate returned by the locator (device pixels, pre-DPR-reconciliation). Null if target not found."
+            confidence:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              description: "Locator-reported confidence in the coordinate (0..1). Clamped to range."
+            rationale:
+              type: string
+              description: "Locator-reported explanation of what it saw and why it chose the target."
+            trigger_reason:
+              type: string
+              enum: [no_matching_ref, canvas_region, map_region, empty_snapshot]
+              description: "Which trigger fired to escalate from a11y to vision."
+            click_outcome:
+              type: string
+              enum: [pass, fail, out_of_bounds]
+              description: "Dispatch-level outcome: pass = eval click succeeded; fail = locator returned None or eval errored; out_of_bounds = pre-dispatch bounds check rejected coords."
+        capture:
+          type: object
+          description: "Optional capture metadata. Present when step opted into --high-res or otherwise used a non-default resolution. Absence means default viewport capture. Added in GH-794."
+          required: [resolution, device_scale_factor, mode]
+          properties:
+            resolution:
+              type: string
+              pattern: "^\\d+x\\d+$"
+              description: "Actual pixel dimensions of the PNG, WxH (e.g., '2560x1440')"
+            device_scale_factor:
+              type: number
+              minimum: 1
+              description: "deviceScaleFactor (DPR) used at capture time. 1 = default, 2 = high-res preset."
+            mode:
+              type: string
+              enum: [default, high-res]
+              description: "Caller-declared intent. 'high-res' means the caller explicitly opted in via --high-res or equivalent; 'default' means a non-default resolution was used but via a different mechanism (e.g., ux-audit multi-viewport)."
   summary:
     type: object
     required: [total_steps, passed, failed, duration_ms]

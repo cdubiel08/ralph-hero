@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vision-Fallback Fixture: Bad-A11y Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background: #fafbfc; }
+    h1 { margin-top: 0; }
+    .fake-button {
+      display: inline-block;
+      padding: 14px 28px;
+      background: #2266cc;
+      color: #fff;
+      font-weight: 700;
+      font-size: 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      user-select: none;
+      margin-right: 16px;
+    }
+    .fake-button:hover { background: #3377dd; }
+    .fake-checkbox {
+      display: inline-flex;
+      align-items: center;
+      margin-top: 24px;
+      cursor: pointer;
+    }
+    .fake-checkbox .box {
+      display: inline-block;
+      width: 22px;
+      height: 22px;
+      border: 2px solid #333;
+      margin-right: 10px;
+      background: #fff;
+      text-align: center;
+      font-weight: bold;
+      line-height: 18px;
+      color: #333;
+    }
+    .fake-checkbox.checked .box::after { content: "\2713"; }
+    .fake-link {
+      display: block;
+      margin-top: 24px;
+      color: #2266cc;
+      text-decoration: underline;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    #debug { margin-top: 24px; font-family: monospace; font-size: 12px; color: #333; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Bad-A11y Demo (vision-fallback fixture)</h1>
+  <p>Three interactive widgets are rendered as bare &lt;div&gt; / &lt;span&gt; elements with no role, no aria-*, no tabindex. They look interactive but are invisible to accessibility tooling.</p>
+
+  <!-- Deliberately no role, aria-*, tabindex -->
+  <div id="fake-submit" class="fake-button">Submit Order</div>
+  <div id="fake-cancel" class="fake-button" style="background: #cc3333;">Cancel</div>
+
+  <div id="fake-check" class="fake-checkbox">
+    <div class="box"></div>
+    <span>I agree to the terms</span>
+  </div>
+
+  <span id="fake-link" class="fake-link">Terms and conditions</span>
+
+  <div id="debug">click log (updated live): (none yet)</div>
+
+  <script>
+    (function () {
+      const debug = document.getElementById('debug');
+      window.__divClicks = [];
+
+      function recordClick(target) {
+        window.__divClicks.push({ target });
+        debug.textContent = 'click log: ' + JSON.stringify(window.__divClicks, null, 2);
+      }
+
+      document.getElementById('fake-submit').addEventListener('click', function () {
+        recordClick('submit');
+      });
+      document.getElementById('fake-cancel').addEventListener('click', function () {
+        recordClick('cancel');
+      });
+      const checkbox = document.getElementById('fake-check');
+      checkbox.addEventListener('click', function () {
+        checkbox.classList.toggle('checked');
+        recordClick('checkbox');
+      });
+      document.getElementById('fake-link').addEventListener('click', function () {
+        recordClick('link');
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -34,6 +34,55 @@ playwright-cli screenshot --filename=".playwright-cli/<session>/<index>_<slug>.p
 playwright-cli snapshot --filename=".playwright-cli/<session>/<index>_<slug>.md"
 ```
 
+## High-resolution captures
+
+Default screenshot capture uses the current viewport resolution (typically ~1280x720 to ~1920x1080 depending on viewport settings, ≈1.15MP area). For steps that need fine-grained pixel detail — OCR of table cells, receipt verification, dense chart labels, pixel-computed color contrast, thin focus indicators — callers can opt into high-resolution capture for a specific step.
+
+### Canonical flag spelling
+
+High-res capture is controlled at the **top-level CLI** (analogous to `--viewport WxH`), not as a screenshot sub-command flag. This applies at session open time so subsequent screenshots in that session inherit the density. Two forms are supported:
+
+```bash
+# Canonical form — explicit device scale factor
+playwright-cli --device-scale-factor 2 -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+
+# Semantic alias — "just give me the high-res preset"
+playwright-cli --high-res -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+```
+
+The `--high-res` alias expands to `--device-scale-factor 2` with automatic clamping (below). Both forms are equivalent when the viewport is ≤1280px wide.
+
+> **Fallback for older playwright-cli versions without native flag support**: if neither `--high-res` nor `--device-scale-factor` is recognized by your installed `@playwright/cli`, use an eval-based scale at session open time:
+> ```bash
+> playwright-cli -s=<session> eval "await page.evaluate(() => { window.devicePixelRatio = 2; }); await page.setViewportSize({ width: <W>, height: <H>, deviceScaleFactor: 2 })"
+> ```
+> Prefer the native flag when available — it is layout-preserving.
+
+### Resolution ceiling and clamping
+
+The target when `--high-res` is on:
+- Longest dimension ≤ **2576 px** (Opus 4.7 vision ceiling)
+- Total pixel area ≤ **3.75 MP**
+
+If the viewport × device-scale-factor exceeds either bound, the CLI clamps to the nearest safe scale factor. Concretely:
+- Viewport 1280x720 × DSF 2 → 2560x1440 → **1.84 MP, 2560 longest-edge** — no clamp.
+- Viewport 1920x1080 × DSF 2 → 3840x2160 → exceeds 2576 longest-edge → clamp to DSF ≈ 1.34 → ~2576x1449.
+- Viewport 2576x1448 × DSF 1 → already at ceiling → no scaling applied.
+
+The clamp preserves the layout (deviceScaleFactor, not viewport) — only pixel density changes.
+
+### Token cost warning
+
+High-res screenshots consume approximately **3.25x more image-input tokens** than default viewport captures (≈1.15 MP → ≈3.75 MP). At Opus 4.7 prices, blanket high-res on a 20-step journey is materially expensive. Use `--high-res` ONLY when the downstream reflect phase needs the extra precision:
+- OCR-style reading of dense tables, receipts, invoices
+- Chart or graph label fidelity
+- Pixel-computed color contrast or thin focus indicator checks
+- Small-type form label audits
+
+**Pair-with-model discipline.** High-res + Sonnet-at-1568px wastes tokens — Sonnet downsamples. Pair `--high-res` with Opus 4.7 reflect (see [`skills/reflect/SKILL.md`](../reflect/SKILL.md)) or with OCR-heavy manual review. For a11y-focused uses (contrast, alt relevance), see [`skills/a11y-scan/SKILL.md`](../a11y-scan/SKILL.md).
+
+This flag does NOT automatically escalate on failure — that behavior is tracked separately (#787). Callers opt in per-step, per-session, or per-story.
+
 ## Console Capture Setup
 
 At journey start, inject the console error interceptor:
@@ -52,7 +101,7 @@ playwright-cli eval "JSON.stringify({ errors: window.__consoleErrors || [], warn
 |----------|----------|
 | Browser | `open [url]`, `close` |
 | Navigation | `goto <url>`, `go-back`, `go-forward`, `reload` |
-| Interaction | `click <ref>`, `dblclick <ref>`, `fill <ref> <value>`, `type <text>`, `hover <ref>`, `select <ref> <values>`, `check <ref>`, `uncheck <ref>` |
+| Interaction | `click <ref>`, `dblclick <ref>`, `fill <ref> <value>`, `type <text>`, `hover <ref>`, `select <ref> <values>`, `check <ref>`, `uncheck <ref>`; coordinate clicks via `eval page.mouse.click` — see `references/click-by-coordinate.md` |
 | Capture | `screenshot [ref] [--filename=path.png]`, `snapshot [--filename=path.md]` |
 | Keyboard | `press <key>`, `keydown <key>`, `keyup <key>` |
 | Eval | `eval <js-expression>` |
@@ -70,3 +119,35 @@ playwright-cli -s=<session-name> <command>  # Run command in named session
 playwright-cli list                          # List active sessions
 playwright-cli close-all                     # Close all sessions
 ```
+
+## Vision-Fallback Trigger
+
+When an a11y snapshot yields no ref for the target (canvas / map / bad-a11y / empty snapshot), the agents consult a trigger heuristic to decide whether to escalate to vision-based targeting. The reference doc enumerates exactly four trigger conditions plus worked positive and negative examples:
+
+- Reference: [`references/vision-fallback-trigger.md`](references/vision-fallback-trigger.md)
+
+The a11y-first invariant holds: a matching ref ALWAYS wins. The trigger is consulted only after ref-lookup fails.
+
+## Vision Locator
+
+When the trigger fires, an Opus 4.7 prompt resolves the target's pixel coordinates from the current screenshot. Input: screenshot path + plain-language target description. Output: parsed JSON or `None`. Model is pinned to Opus 4.7 via env var `RALPH_PLAYWRIGHT_VISION_LOCATOR_MODEL` (default `opus`).
+
+- Reference: [`references/vision-locator-prompt.md`](references/vision-locator-prompt.md)
+
+## Click by Coordinate
+
+Dispatch a browser click at resolved pixel coordinates. `@playwright/cli` at current release does not expose a native `click --x --y`; the canonical dispatch uses the `eval page.mouse.click(X, Y)` shim. Bounds validation + DPR reconciliation are mandatory per the reference.
+
+- Reference: [`references/click-by-coordinate.md`](references/click-by-coordinate.md)
+
+## Vision-Fallback Orchestrator
+
+The three primitives above compose into a single a11y-first sequence. The orchestrator doc is the canonical flow that both story-runner-agent and explorer-agent consume, including guardrails (no CSS selectors, one vision attempt per action) and worked test cases.
+
+- Reference: [`references/vision-fallback-sequence.md`](references/vision-fallback-sequence.md)
+
+## Vision-Fallback Fixtures
+
+Integration fixtures (canvas / map / bad-a11y + a11y-good negative control) live at `plugin/ralph-playwright/fixtures/vision-fallback/`. This is the canonical shared-fixtures home for the ralph-playwright plugin per the vision-epic Integration Strategy — future vision-related features (e.g., Feature K / GH-795, Feature G / GH-791) may add pages here rather than creating parallel directories.
+
+- Reference: [`../../fixtures/vision-fallback/README.md`](../../fixtures/vision-fallback/README.md)
