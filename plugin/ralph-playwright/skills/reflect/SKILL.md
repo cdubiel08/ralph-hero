@@ -112,3 +112,7 @@ The frontmatter hint fires on **direct** `Skill("ralph-playwright:reflect")` inv
 ### Rationale
 
 See [`thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md`](../../../../thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md) §Part 3 Item 1 for the empirical motivation — Opus 4.7's vision improvements on screenshot-heavy analysis workloads justify the per-phase split.
+
+### See also
+
+For the plugin-level narrative on the execute/reflect model split and the full pipeline orientation, see [`plugin/ralph-playwright/README.md`](../../README.md).

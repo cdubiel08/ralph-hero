@@ -208,13 +208,13 @@ Create a top-level `plugin/ralph-playwright/README.md` that documents the plugin
 
 #### Automated Verification
 
-- [ ] No build step to run (ralph-playwright is skills/agents-only).
+- [x] No build step to run (ralph-playwright is skills/agents-only).
 
 #### Manual Verification
 
-- [ ] Read the new README top-to-bottom: links resolve to real files (manually spot-check 3 links including the research doc and the two agents).
-- [ ] Read `skills/reflect/SKILL.md` and confirm the See-also cross-ref is present in the Model Routing section.
-- [ ] Confirm no other files changed in this phase.
+- [x] Read the new README top-to-bottom: links resolve to real files (manually spot-check 3 links including the research doc and the two agents).
+- [x] Read `skills/reflect/SKILL.md` and confirm the See-also cross-ref is present in the Model Routing section.
+- [x] Confirm no other files changed in this phase.
 
 **Creates for next phase**: The complete documentation surface. Phase 3 executes the skill and reads the README to confirm documented behavior matches observed behavior.
 
