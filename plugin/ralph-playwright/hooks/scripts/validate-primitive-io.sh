@@ -101,6 +101,65 @@ if [[ "$SCHEMA" == "signal-report.schema.yaml" ]]; then
     echo "ERROR: Invalid signal severities in ${FILE_PATH}: ${INVALID_SEVS}" >&2
     exit 1
   fi
+
+  # Validate bboxes (optional, per #805/#808): if present, each entry must have
+  # non-negative x,y; positive w,h; and screenshot must also appear in the
+  # parent signal's evidence.screenshots.
+  SIGNAL_COUNT=$(yq '.signals | length' "$FILE_PATH" 2>/dev/null || echo 0)
+  if [[ -n "$SIGNAL_COUNT" && "$SIGNAL_COUNT" != "null" && "$SIGNAL_COUNT" -gt 0 ]]; then
+    for i in $(seq 0 $((SIGNAL_COUNT - 1))); do
+      BBOX_COUNT=$(yq ".signals[${i}].evidence.bboxes | length" "$FILE_PATH" 2>/dev/null || echo 0)
+      if [[ -z "$BBOX_COUNT" || "$BBOX_COUNT" == "null" || "$BBOX_COUNT" -eq 0 ]]; then
+        continue  # No bboxes on this signal — skip
+      fi
+      # Collect the parent signal's declared screenshot list.
+      SCREENSHOTS=$(yq ".signals[${i}].evidence.screenshots[]" "$FILE_PATH" 2>/dev/null || true)
+      for j in $(seq 0 $((BBOX_COUNT - 1))); do
+        BX=$(yq ".signals[${i}].evidence.bboxes[${j}].x" "$FILE_PATH" 2>/dev/null)
+        BY=$(yq ".signals[${i}].evidence.bboxes[${j}].y" "$FILE_PATH" 2>/dev/null)
+        BW=$(yq ".signals[${i}].evidence.bboxes[${j}].w" "$FILE_PATH" 2>/dev/null)
+        BH=$(yq ".signals[${i}].evidence.bboxes[${j}].h" "$FILE_PATH" 2>/dev/null)
+        BSCR=$(yq ".signals[${i}].evidence.bboxes[${j}].screenshot" "$FILE_PATH" 2>/dev/null)
+        # Required fields
+        if [[ -z "$BX" || "$BX" == "null" || -z "$BY" || "$BY" == "null" \
+           || -z "$BW" || "$BW" == "null" || -z "$BH" || "$BH" == "null" \
+           || -z "$BSCR" || "$BSCR" == "null" ]]; then
+          echo "ERROR: signals[${i}].evidence.bboxes[${j}] missing required field(s) in ${FILE_PATH} (need screenshot, x, y, w, h)" >&2
+          exit 1
+        fi
+        # Non-negative x,y
+        if [[ "$BX" -lt 0 ]]; then
+          echo "ERROR: signals[${i}].evidence.bboxes[${j}].x must be >= 0 in ${FILE_PATH} (got ${BX})" >&2
+          exit 1
+        fi
+        if [[ "$BY" -lt 0 ]]; then
+          echo "ERROR: signals[${i}].evidence.bboxes[${j}].y must be >= 0 in ${FILE_PATH} (got ${BY})" >&2
+          exit 1
+        fi
+        # Positive w,h
+        if [[ "$BW" -le 0 ]]; then
+          echo "ERROR: signals[${i}].evidence.bboxes[${j}].w must be > 0 in ${FILE_PATH} (got ${BW})" >&2
+          exit 1
+        fi
+        if [[ "$BH" -le 0 ]]; then
+          echo "ERROR: signals[${i}].evidence.bboxes[${j}].h must be > 0 in ${FILE_PATH} (got ${BH})" >&2
+          exit 1
+        fi
+        # Screenshot must appear in evidence.screenshots
+        FOUND=""
+        while IFS= read -r s; do
+          if [[ "$s" == "$BSCR" ]]; then
+            FOUND="yes"
+            break
+          fi
+        done <<< "$SCREENSHOTS"
+        if [[ -z "$FOUND" ]]; then
+          echo "ERROR: signals[${i}].evidence.bboxes[${j}].screenshot '${BSCR}' not found in signals[${i}].evidence.screenshots in ${FILE_PATH}" >&2
+          exit 1
+        fi
+      done
+    done
+  fi
 fi
 
 if [[ "$SCHEMA" == "action-log.schema.yaml" ]]; then
