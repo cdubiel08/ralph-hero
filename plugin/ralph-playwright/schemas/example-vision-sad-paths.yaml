@@ -1,0 +1,59 @@
+# Example vision-inferred sad paths output (pre-merge, pre-review shape).
+# Demonstrates three of the four named detection categories, with both
+# bbox and description forms of `evidence.bbox_or_description`.
+#
+# This file is a sibling illustration to example-auth.yaml. It does NOT
+# replace any existing example; it shows the `inferred_sad_paths:` section
+# shape produced by the vision step before the user-review gate prunes it
+# and merges kept entries into the final stories YAML.
+
+inferred_sad_paths:
+  - category: missing_validation_hint
+    evidence:
+      screenshot_path: "fixtures/01-form-no-validation-hints.png"
+      bbox_or_description: "Email and Password input fields at top of login form — no asterisks, no helper text, no placeholder format hints visible"
+      rationale: "Users cannot determine whether fields are required or what format is expected before submitting the form."
+    proposed_story:
+      name: "Login form exposes required and format expectations before submit"
+      type: sad
+      url: "http://localhost:3000/login"
+      workflow: |
+        Navigate to http://localhost:3000/login
+        Observe the Email and Password field labels and nearby text
+        Verify at least one of: asterisk marker, "Required" text, or helper text describing expected format is visible
+        (Expected: guidance present; observed in fixture: none visible)
+    source: "vision"
+
+  - category: missing_error_handler
+    evidence:
+      screenshot_path: "fixtures/01-form-no-validation-hints.png"
+      bbox_or_description: "{x: 180, y: 320, w: 420, h: 60}"
+      rationale: "No visible error-surfacing container exists between the form fields and the submit button; server-side errors have no obvious render target."
+    proposed_story:
+      name: "Login form surfaces server-side authentication errors in a visible container"
+      type: sad
+      url: "http://localhost:3000/login"
+      workflow: |
+        Navigate to http://localhost:3000/login
+        Fill Email with "test@example.com"
+        Fill Password with "wrong-password"
+        Click the Sign In button
+        Verify a visible error message appears (role=alert, red-bordered container, or inline error text)
+        (Expected: error visible; observed in fixture: no container appears to exist)
+    source: "vision"
+
+  - category: empty_state_gap
+    evidence:
+      screenshot_path: "fixtures/02-list-no-empty-state.png"
+      bbox_or_description: "Dashboard activity list region, center of viewport — table header rendered with column labels but no body rows and no empty-state message, illustration, or populate-CTA below"
+      rationale: "First-time users and users with filters that exclude all rows see only an empty table with no guidance on how to populate it."
+    proposed_story:
+      name: "Activity list shows an empty-state message when no items exist"
+      type: sad
+      url: "http://localhost:3000/dashboard"
+      workflow: |
+        Navigate to http://localhost:3000/dashboard as a first-time user (no activity yet)
+        Locate the activity list region
+        Verify an empty-state message, illustration, or "Add your first item" CTA is visible
+        (Expected: empty-state UI present; observed in fixture: blank table body)
+    source: "vision"
