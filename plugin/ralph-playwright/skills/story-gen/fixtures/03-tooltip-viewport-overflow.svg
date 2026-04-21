@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture 03: tooltip clipping at viewport right edge.
+  Primary category: tooltip_overflow
+
+  Rendered state: a toolbar at the top right of the viewport. A tooltip
+  emerging from an icon near the right edge extends past the viewport
+  right boundary and its content is visibly truncated.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="768" viewBox="0 0 1024 768">
+  <rect width="1024" height="768" fill="#f5f6f8"/>
+
+  <!-- Top nav -->
+  <rect x="0" y="0" width="1024" height="56" fill="#ffffff"/>
+  <text x="32" y="36" font-family="Inter, sans-serif" font-size="18" fill="#111827" font-weight="600">Acme</text>
+
+  <!-- Icon toolbar near right edge -->
+  <circle cx="920" cy="28" r="14" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"/>
+  <text x="920" y="33" font-family="Inter, sans-serif" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="600">?</text>
+
+  <circle cx="972" cy="28" r="14" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1"/>
+  <text x="972" y="33" font-family="Inter, sans-serif" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="600">i</text>
+
+  <!-- Tooltip: anchored at the rightmost icon, extends past right edge.
+       Viewport ends at x=1024. Tooltip spans x=900 to x=1180 — the
+       final 156px are OFF-SCREEN, truncating the message. -->
+  <rect x="900" y="60" width="280" height="80" fill="#1f2937" rx="6"/>
+  <polygon points="970,60 978,52 986,60" fill="#1f2937"/>
+  <text x="914" y="86" font-family="Inter, sans-serif" font-size="13" fill="#ffffff">Information about this</text>
+  <text x="914" y="106" font-family="Inter, sans-serif" font-size="13" fill="#ffffff">particular feature — user</text>
+  <text x="914" y="126" font-family="Inter, sans-serif" font-size="13" fill="#ffffff">cannot see the full messa</text>
+
+  <!-- Viewport right-edge marker (conceptual — shows where the tooltip gets clipped) -->
+  <line x1="1024" y1="0" x2="1024" y2="200" stroke="#ef4444" stroke-width="2" stroke-dasharray="4,4"/>
+  <text x="1028" y="158" font-family="Inter, sans-serif" font-size="10" fill="#ef4444">viewport edge</text>
+
+  <!-- Rest of page content (so the fixture is not tiny) -->
+  <text x="32" y="112" font-family="Inter, sans-serif" font-size="24" fill="#111827" font-weight="600">Settings</text>
+  <rect x="32" y="156" width="960" height="500" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" rx="8"/>
+  <text x="56" y="190" font-family="Inter, sans-serif" font-size="14" fill="#374151">Account</text>
+  <text x="56" y="220" font-family="Inter, sans-serif" font-size="13" fill="#6b7280">Manage your account preferences.</text>
+</svg>
