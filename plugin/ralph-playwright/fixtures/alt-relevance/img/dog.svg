@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <title>Golden retriever sitting on a wooden porch</title>
+  <desc>A simplified illustration of a golden-colored dog seated on brown wooden porch planks.</desc>
+
+  <!-- Sky / background -->
+  <rect x="0" y="0" width="200" height="130" fill="#cfe9f2"/>
+
+  <!-- Porch floor planks -->
+  <rect x="0" y="130" width="200" height="70" fill="#8b5a2b"/>
+  <line x1="0" y1="145" x2="200" y2="145" stroke="#6b4a1b" stroke-width="1"/>
+  <line x1="0" y1="165" x2="200" y2="165" stroke="#6b4a1b" stroke-width="1"/>
+  <line x1="0" y1="185" x2="200" y2="185" stroke="#6b4a1b" stroke-width="1"/>
+
+  <!-- Porch railing post (left) -->
+  <rect x="12" y="40" width="10" height="100" fill="#a67b4c"/>
+  <!-- Porch railing post (right) -->
+  <rect x="178" y="40" width="10" height="100" fill="#a67b4c"/>
+
+  <!-- Dog body (sitting) -->
+  <ellipse cx="100" cy="155" rx="45" ry="28" fill="#e3b663"/>
+
+  <!-- Dog front legs -->
+  <rect x="80" y="150" width="12" height="35" rx="4" fill="#e3b663"/>
+  <rect x="108" y="150" width="12" height="35" rx="4" fill="#e3b663"/>
+
+  <!-- Dog tail -->
+  <path d="M 140 140 Q 160 120 150 100" stroke="#c99a4a" stroke-width="10" fill="none" stroke-linecap="round"/>
+
+  <!-- Dog head -->
+  <ellipse cx="100" cy="108" rx="28" ry="26" fill="#e8c278"/>
+
+  <!-- Dog snout -->
+  <ellipse cx="100" cy="120" rx="14" ry="9" fill="#d9af5d"/>
+
+  <!-- Dog nose -->
+  <ellipse cx="100" cy="117" rx="4" ry="3" fill="#2a1a0a"/>
+
+  <!-- Dog eyes -->
+  <circle cx="91" cy="104" r="2.5" fill="#2a1a0a"/>
+  <circle cx="109" cy="104" r="2.5" fill="#2a1a0a"/>
+
+  <!-- Dog ears (floppy) -->
+  <path d="M 76 92 Q 68 102 74 120 L 84 114 Z" fill="#c99a4a"/>
+  <path d="M 124 92 Q 132 102 126 120 L 116 114 Z" fill="#c99a4a"/>
+
+  <!-- Dog tongue (small pink) -->
+  <ellipse cx="100" cy="126" rx="3" ry="2" fill="#d47070"/>
+</svg>

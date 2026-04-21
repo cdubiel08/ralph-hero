@@ -20,7 +20,7 @@ properties:
       properties:
         type:
           type: string
-          enum: [anomaly, regression, a11y_violation, ux_issue, error]
+          enum: [anomaly, regression, a11y_violation, ux_issue, error, data_interpretation]
         severity:
           type: string
           enum: [critical, high, medium, low]
