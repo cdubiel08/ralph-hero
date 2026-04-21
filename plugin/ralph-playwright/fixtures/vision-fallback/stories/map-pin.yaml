@@ -1,0 +1,12 @@
+# Integration fixture story: click the San Francisco pin on a canvas-rendered map.
+# Expected path: vision-fallback (trigger_reason: map_region).
+stories:
+  - name: map-pin-sf
+    type: happy
+    url: http://localhost:8765/map-demo.html
+    persona: anonymous
+    tags: [vision-fallback, map]
+    workflow: |
+      Navigate to the map demo page
+      Click the pin for San Francisco
+      Verify window.__mapClicks contains an entry with nearest == "SF"

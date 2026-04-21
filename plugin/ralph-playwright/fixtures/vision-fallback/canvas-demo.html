@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vision-Fallback Fixture: Canvas Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background: #f7f8fa; }
+    h1 { margin-top: 0; }
+    #canvas-host { border: 1px solid #ccc; display: block; background: #fff; }
+    #debug { margin-top: 12px; font-family: monospace; font-size: 12px; color: #333; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Canvas Demo (vision-fallback fixture)</h1>
+  <p>Submit (blue) and Cancel (red) buttons are painted into a &lt;canvas&gt; element. The a11y tree sees only one ref for the canvas itself; the painted buttons are invisible to accessibility tooling. Vision fallback must fire.</p>
+  <canvas id="canvas-host" width="800" height="400"></canvas>
+  <div id="debug">click log (updated live): (none yet)</div>
+
+  <script>
+    (function () {
+      const canvas = document.getElementById('canvas-host');
+      const ctx = canvas.getContext('2d');
+      const debug = document.getElementById('debug');
+
+      // Regions (canvas-local coords).
+      const submit = { x: 150, y: 240, w: 180, h: 60, label: 'Submit', fill: '#3366ff' };
+      const cancel = { x: 480, y: 240, w: 180, h: 60, label: 'Cancel', fill: '#cc3333' };
+
+      function drawButton(b) {
+        ctx.fillStyle = b.fill;
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = '#000';
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 22px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2);
+      }
+
+      function drawLabel(text, x, y, color) {
+        ctx.fillStyle = color || '#333';
+        ctx.font = '16px system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(text, x, y);
+      }
+
+      function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#fafafa';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawLabel('Canvas-rendered form (no a11y)', 20, 40);
+        drawLabel('Choose an action:', 20, 200);
+        drawButton(submit);
+        drawButton(cancel);
+      }
+
+      function hitTest(rect, x, y) {
+        return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+      }
+
+      function dist(ax, ay, bx, by) {
+        return Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
+      }
+
+      function nearest(x, y) {
+        const submitCenter = { x: submit.x + submit.w / 2, y: submit.y + submit.h / 2 };
+        const cancelCenter = { x: cancel.x + cancel.w / 2, y: cancel.y + cancel.h / 2 };
+        if (hitTest(submit, x, y)) return 'submit';
+        if (hitTest(cancel, x, y)) return 'cancel';
+        const ds = dist(x, y, submitCenter.x, submitCenter.y);
+        const dc = dist(x, y, cancelCenter.x, cancelCenter.y);
+        // Still return the nearest named target if within 40px for test tolerance.
+        if (ds < 40 && ds <= dc) return 'submit';
+        if (dc < 40 && dc < ds) return 'cancel';
+        return 'none';
+      }
+
+      window.__canvasClicks = [];
+      canvas.addEventListener('click', function (e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.round(e.clientX - rect.left);
+        const y = Math.round(e.clientY - rect.top);
+        const entry = { x, y, nearest: nearest(x, y) };
+        window.__canvasClicks.push(entry);
+        debug.textContent = 'click log: ' + JSON.stringify(window.__canvasClicks, null, 2);
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>

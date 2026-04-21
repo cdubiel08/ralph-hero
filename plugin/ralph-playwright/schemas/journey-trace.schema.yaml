@@ -70,6 +70,43 @@ properties:
         error:
           type: ["string", "null"]
           description: "Error message if outcome is fail, null otherwise"
+        # --- Vision-fallback telemetry (Phase 5 / GH-801, additive, backward-compatible) ---
+        # `targeting_method` defaults to `a11y_ref` when absent (pre-existing traces pass unchanged).
+        # `vision_fallback` is populated ONLY when `targeting_method == vision_fallback`.
+        # Neither field appears in the step `required` list above — both are optional.
+        targeting_method:
+          type: string
+          enum: [a11y_ref, vision_fallback]
+          description: "Which targeting method resolved this step's target. Default a11y_ref when absent."
+        vision_fallback:
+          type: object
+          description: "Populated only when targeting_method == vision_fallback. Captures the Opus 4.7 vision-locator response + dispatch outcome."
+          properties:
+            target_description:
+              type: string
+              description: "Plain-language target description passed to the locator prompt."
+            resolved_x:
+              type: ["integer", "null"]
+              description: "Pixel x-coordinate returned by the locator (device pixels, pre-DPR-reconciliation). Null if target not found."
+            resolved_y:
+              type: ["integer", "null"]
+              description: "Pixel y-coordinate returned by the locator (device pixels, pre-DPR-reconciliation). Null if target not found."
+            confidence:
+              type: number
+              minimum: 0.0
+              maximum: 1.0
+              description: "Locator-reported confidence in the coordinate (0..1). Clamped to range."
+            rationale:
+              type: string
+              description: "Locator-reported explanation of what it saw and why it chose the target."
+            trigger_reason:
+              type: string
+              enum: [no_matching_ref, canvas_region, map_region, empty_snapshot]
+              description: "Which trigger fired to escalate from a11y to vision."
+            click_outcome:
+              type: string
+              enum: [pass, fail, out_of_bounds]
+              description: "Dispatch-level outcome: pass = eval click succeeded; fail = locator returned None or eval errored; out_of_bounds = pre-dispatch bounds check rejected coords."
         capture:
           type: object
           description: "Optional capture metadata. Present when step opted into --high-res or otherwise used a non-default resolution. Absence means default viewport capture. Added in GH-794."

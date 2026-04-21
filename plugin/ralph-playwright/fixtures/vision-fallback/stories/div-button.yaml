@@ -1,0 +1,12 @@
+# Integration fixture story: click the div-as-button "Submit Order".
+# Expected path: vision-fallback (trigger_reason: no_matching_ref or empty_snapshot).
+stories:
+  - name: div-button-submit-order
+    type: happy
+    url: http://localhost:8765/bad-a11y.html
+    persona: anonymous
+    tags: [vision-fallback, bad-a11y]
+    workflow: |
+      Navigate to the bad-a11y demo page
+      Click the "Submit Order" button
+      Verify window.__divClicks contains an entry with target == "submit"

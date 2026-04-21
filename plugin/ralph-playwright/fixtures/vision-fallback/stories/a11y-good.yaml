@@ -1,0 +1,12 @@
+# Integration fixture story: negative control — click the Submit button on a fully-accessible form.
+# Expected path: a11y_ref (vision-fallback MUST NOT fire).
+stories:
+  - name: a11y-good-submit
+    type: happy
+    url: http://localhost:8765/a11y-good-control.html
+    persona: anonymous
+    tags: [vision-fallback, negative-control]
+    workflow: |
+      Navigate to the a11y-good control page
+      Click the Submit button
+      Verify window.__submitClicks is 1

@@ -88,6 +88,58 @@ if [[ "$SCHEMA" == "journey-trace.schema.yaml" ]]; then
     echo "ERROR: Invalid step outcomes in ${FILE_PATH}: ${INVALID_OUTCOMES}" >&2
     exit 1
   fi
+
+  # Vision-fallback targeting_method enum check (Phase 5 / GH-801, additive).
+  # Absence of `targeting_method` is allowed (backward compatibility — pre-existing
+  # traces read as `a11y_ref` by convention). When present, value must be in
+  # [a11y_ref, vision_fallback].
+  # Test cases documented:
+  #   (a) old trace with no `targeting_method` passes (yq returns "null" which is filtered)
+  #   (b) trace with `targeting_method: a11y_ref` passes
+  #   (c) trace with `targeting_method: vision_fallback` + metadata passes
+  #   (d) trace with `targeting_method: bogus` fails
+  # Note: BSD grep does not accept empty alternation branches; we filter
+  # absent/null values via a separate pass before the enum check.
+  INVALID_TARGETING=$(yq '.steps[].targeting_method' "$FILE_PATH" 2>/dev/null \
+    | grep -v -E '^(null|~)$' \
+    | grep -v '^$' \
+    | grep -v -E '^(a11y_ref|vision_fallback)$' || true)
+  if [[ -n "$INVALID_TARGETING" ]]; then
+    echo "ERROR: Invalid targeting_method in ${FILE_PATH}: ${INVALID_TARGETING}" >&2
+    echo "  (allowed: a11y_ref, vision_fallback, or absent)" >&2
+    exit 1
+  fi
+
+  # trigger_reason enum check (only applies when vision_fallback block is present).
+  INVALID_TRIGGER=$(yq '.steps[].vision_fallback.trigger_reason' "$FILE_PATH" 2>/dev/null \
+    | grep -v -E '^(null|~)$' \
+    | grep -v '^$' \
+    | grep -v -E '^(no_matching_ref|canvas_region|map_region|empty_snapshot)$' || true)
+  if [[ -n "$INVALID_TRIGGER" ]]; then
+    echo "ERROR: Invalid vision_fallback.trigger_reason in ${FILE_PATH}: ${INVALID_TRIGGER}" >&2
+    echo "  (allowed: no_matching_ref, canvas_region, map_region, empty_snapshot)" >&2
+    exit 1
+  fi
+
+  # click_outcome enum check (only applies when vision_fallback block is present).
+  INVALID_CLICK=$(yq '.steps[].vision_fallback.click_outcome' "$FILE_PATH" 2>/dev/null \
+    | grep -v -E '^(null|~)$' \
+    | grep -v '^$' \
+    | grep -v -E '^(pass|fail|out_of_bounds)$' || true)
+  if [[ -n "$INVALID_CLICK" ]]; then
+    echo "ERROR: Invalid vision_fallback.click_outcome in ${FILE_PATH}: ${INVALID_CLICK}" >&2
+    echo "  (allowed: pass, fail, out_of_bounds)" >&2
+    exit 1
+  fi
+
+  # Warn (not error) if targeting_method == vision_fallback but the vision_fallback
+  # block is missing required fields. This avoids breaking traces written during
+  # the transition window; writers are expected to populate all fields.
+  VISION_STEPS_MISSING_META=$(yq '.steps[] | select(.targeting_method == "vision_fallback") | select(.vision_fallback == null or .vision_fallback.target_description == null or .vision_fallback.trigger_reason == null or .vision_fallback.click_outcome == null) | .index' "$FILE_PATH" 2>/dev/null || true)
+  if [[ -n "$VISION_STEPS_MISSING_META" ]]; then
+    echo "WARN: step(s) with targeting_method=vision_fallback missing complete vision_fallback block in ${FILE_PATH}: indexes ${VISION_STEPS_MISSING_META}" >&2
+    # Intentionally no exit 1 — warn only.
+  fi
 fi
 
 if [[ "$SCHEMA" == "signal-report.schema.yaml" ]]; then
