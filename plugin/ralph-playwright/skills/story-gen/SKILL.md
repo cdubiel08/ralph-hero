@@ -147,3 +147,5 @@ Persona is optional but recommended.
 Show the generated file path and count:
 - N happy paths, N sad paths, N edge paths
 - Ask: any missing cases? Should we run them now? (`/ralph-playwright:test-e2e`)
+
+**Testing**: see `fixtures/TESTING.md` for fixture-based confidence tests of the vision sad-path step.

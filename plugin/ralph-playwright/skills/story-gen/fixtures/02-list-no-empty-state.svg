@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fixture 02: table / list UI rendered with zero items and NO empty-state message.
+  Primary category: empty_state_gap
+
+  Rendered state: a dashboard with a table header ("Name", "Status", "Updated")
+  but no rows in the body, and no empty-state text, illustration, or CTA
+  telling the user how to populate the list.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="768" viewBox="0 0 1024 768">
+  <rect width="1024" height="768" fill="#f5f6f8"/>
+
+  <!-- Top nav -->
+  <rect x="0" y="0" width="1024" height="56" fill="#ffffff"/>
+  <text x="32" y="36" font-family="Inter, sans-serif" font-size="18" fill="#111827" font-weight="600">Acme Dashboard</text>
+  <text x="932" y="36" font-family="Inter, sans-serif" font-size="14" fill="#6b7280">user@acme.com</text>
+
+  <!-- Page heading -->
+  <text x="32" y="112" font-family="Inter, sans-serif" font-size="24" fill="#111827" font-weight="600">Your Activity</text>
+  <text x="32" y="140" font-family="Inter, sans-serif" font-size="14" fill="#6b7280">Recent items across your workspace</text>
+
+  <!-- Table container -->
+  <rect x="32" y="176" width="960" height="368" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" rx="8"/>
+
+  <!-- Table header row -->
+  <rect x="32" y="176" width="960" height="48" fill="#f9fafb" rx="8"/>
+  <rect x="32" y="220" width="960" height="4" fill="#e5e7eb"/>
+  <text x="56" y="206" font-family="Inter, sans-serif" font-size="13" fill="#374151" font-weight="600">Name</text>
+  <text x="420" y="206" font-family="Inter, sans-serif" font-size="13" fill="#374151" font-weight="600">Status</text>
+  <text x="680" y="206" font-family="Inter, sans-serif" font-size="13" fill="#374151" font-weight="600">Updated</text>
+
+  <!-- Table body: EMPTY.
+       No rows.
+       No "No items yet" empty-state text.
+       No illustration.
+       No "Add item" CTA button.
+       Just a blank region. -->
+
+  <!-- (Intentionally blank from y=224 to y=544 — this is the whole failure mode) -->
+</svg>
