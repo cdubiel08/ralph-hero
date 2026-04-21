@@ -28,6 +28,10 @@ Spawn `explorer-agent` with:
 
 The agent navigates the app via `playwright-cli`, captures screenshots and accessibility snapshots at each step, and writes a journey trace to `.playwright-cli/<session>/journey-trace.yaml`.
 
+**Optional: high-resolution captures for specific steps.** If the exploration goal involves OCR-style observation — reading table cells, receipts, invoices, dense charts, or fine-print UIs — pass `high_res_steps` to `explorer-agent` (a list of step indices or a predicate string). Those specific steps will capture at ≈2560x1440 (or the 2576px / 3.75MP ceiling) and the rest stay at default resolution. See [browser/SKILL.md § High-resolution captures](../browser/SKILL.md#high-resolution-captures) for cost and pairing guidance.
+
+Explore already captures more screenshots than most skills (one per interaction, plus snapshots). Blanket `--high-res` on an exploration run would multiply image-input token cost roughly 3.25x for every captured state. Prefer step-specific opt-in: identify the 1-3 states where OCR detail matters, list those indices in `high_res_steps`, and leave the rest at default.
+
 ### Step 2: Reflect
 
 Read the journey trace from `.playwright-cli/<session>/journey-trace.yaml`.

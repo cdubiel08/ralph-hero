@@ -91,7 +91,7 @@ if [[ "$SCHEMA" == "journey-trace.schema.yaml" ]]; then
 fi
 
 if [[ "$SCHEMA" == "signal-report.schema.yaml" ]]; then
-  INVALID_TYPES=$(yq '.signals[].type' "$FILE_PATH" 2>/dev/null | grep -v -E '^(anomaly|regression|a11y_violation|ux_issue|error)$' || true)
+  INVALID_TYPES=$(yq '.signals[].type' "$FILE_PATH" 2>/dev/null | grep -v -E '^(anomaly|regression|a11y_violation|ux_issue|error|data_interpretation)$' || true)
   if [[ -n "$INVALID_TYPES" ]]; then
     echo "ERROR: Invalid signal types in ${FILE_PATH}: ${INVALID_TYPES}" >&2
     exit 1

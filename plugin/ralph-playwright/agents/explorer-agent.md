@@ -18,6 +18,7 @@ You are a web application explorer. Your job: navigate a running app toward a go
 - `goal`: Natural language exploration objective
 - `session`: Session name (e.g., `2026-03-21-explore-checkout-flow`)
 - `persona`: Optional user role context
+- `high_res_steps`: Optional. List of step indices (e.g. `[2, 5]`) or a predicate string (e.g. `"all steps on pages matching /checkout"`) that should capture at high resolution. Default: empty (all steps use default resolution). See [browser/SKILL.md § High-resolution captures](../skills/browser/SKILL.md#high-resolution-captures) for what this costs and when to use it.
 
 ## Setup
 
@@ -48,8 +49,14 @@ playwright-cli -s=<session> snapshot --filename=".playwright-cli/<session>/<inde
 
 2. **Screenshot** the current state:
 ```bash
+# Default resolution (viewport native):
 playwright-cli -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+
+# High-resolution variant — use ONLY when this index is in `high_res_steps`:
+playwright-cli --high-res -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
 ```
+
+Do NOT default to `--high-res` on every step. The caller opts in via `high_res_steps`; if this step's index (or predicate match) is in that list, use the high-res variant. Otherwise use the default. Blanket high-res multiplies image-input token cost roughly 3.25x per step.
 
 3. **Read console state**:
 ```bash
@@ -82,7 +89,15 @@ For each action, record a step:
   console: []
   duration_ms: <ms>
   error: null
+  # Optional: populate `capture` ONLY when this step used --high-res (or
+  # any non-default resolution). Omit entirely for default-viewport steps.
+  # capture:
+  #   resolution: "2560x1440"      # actual PNG dimensions (WxH)
+  #   device_scale_factor: 2       # DPR used
+  #   mode: high-res               # one of: default | high-res
 ```
+
+When a step's index is in `high_res_steps` (or matches the predicate), populate the `capture` sub-object with the actual PNG dimensions, the device_scale_factor, and `mode: high-res`. Do NOT add `capture` to steps that used the default resolution — its absence is the default.
 
 ## Output
 

@@ -43,6 +43,8 @@ Spawn `explorer-agent` with:
 - `goal`: "Systematically explore this site to evaluate its UX design. Visit at least 5-8 distinct pages or states (home, key feature pages, about/pricing if available, any logged-in states, error states). On each page: (1) scroll fully top-to-bottom to trigger scroll-based animations and lazy content, (2) hover over buttons, cards, and nav items to observe hover states and micro-interactions, (3) interact with any forms, search bars, or input fields, (4) click through the navigation to test wayfinding, (5) note any modals, drawers, or progressive disclosure patterns. Capture a screenshot and accessibility snapshot after each meaningful interaction, not just each page."
 - `session`: The generated session name
 
+> **Resolution decision.** The ux-audit skill explicitly stays at **default resolution** for all viewport passes. It already invests in breadth — four viewports (375/768/1280/1920) with 15-25 screenshots total — and adding high-res across those passes would balloon image-input token cost without changing the scoring rubric (which evaluates layout, color, and trend adherence — not pixel-level detail). Callers who need typography or chart fidelity on a specific page should run a follow-up `/ralph-playwright:capture <url>` with `high_res: true` on that URL. High-res is depth; ux-audit is breadth; they compose but don't overlap. See [browser/SKILL.md § High-resolution captures](../browser/SKILL.md#high-resolution-captures).
+
 #### 2b: Responsive exploration (mobile + tablet)
 
 After the primary exploration completes, run two additional focused passes to evaluate responsive behavior. These are essential for scoring Layout Innovation and Accessibility accurately.

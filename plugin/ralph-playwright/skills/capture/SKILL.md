@@ -15,6 +15,7 @@ From arguments or ask:
 - `url`: The URL to screenshot (required)
 - `note`: Path to an existing or new research note to attach the screenshot to (optional)
 - `name`: Meaningful name for the screenshot (optional, derived from URL if omitted)
+- `high_res`: Boolean, default `false`. When `true`, capture at higher pixel density (`--device-scale-factor 2`, clamped to 2576px longest-edge / 3.75MP area). Use for OCR-style captures of dense tables, receipts, charts, or small-type forms. Pairs best with Opus 4.7 reflect; wasted on Sonnet-at-1568px. Roughly 3.25x the image-token cost. See [browser/SKILL.md § High-resolution captures](../browser/SKILL.md#high-resolution-captures) for details.
 
 ## Process
 
@@ -27,7 +28,13 @@ mkdir -p ".playwright-cli/<session>"
 playwright-cli -s=<session> open
 playwright-cli -s=<session> goto "<url>"
 playwright-cli -s=<session> snapshot --filename=".playwright-cli/<session>/00_page.md"
+
+# When high_res=false (default):
 playwright-cli -s=<session> screenshot --filename=".playwright-cli/<session>/00_page.png"
+
+# When high_res=true:
+playwright-cli --high-res -s=<session> screenshot --filename=".playwright-cli/<session>/00_page.png"
+
 playwright-cli -s=<session> close
 ```
 
@@ -53,6 +60,11 @@ steps:
     console: []
     duration_ms: <ms>
     error: null
+    # Include `capture` ONLY when high_res=true:
+    # capture:
+    #   resolution: "2560x1440"      # actual PNG dimensions
+    #   device_scale_factor: 2
+    #   mode: high-res
 summary:
   total_steps: 1
   passed: 1
@@ -121,8 +133,10 @@ assets:
 
 ### Summary
 
-Report the screenshot location and whether it was promoted:
+Report the screenshot location, resolution mode, and whether it was promoted:
 - Screenshot saved: `.playwright-cli/<session>/00_page.png`
 - Annotated (if bboxes were present): `.playwright-cli/<session>/00_page.annotated.png`
+- Mode: `default` or `high-res` (echo the `high_res` input)
+- Resolution: `<WxH>` (actual PNG dimensions — important so downstream reflect knows what detail is readable)
 - Promoted to: `thoughts/local/assets/<note-slug>/<name>.png` (and `<name>.annotated.png` if applicable)
 - Note: `<note-path>` (if attached to a note)

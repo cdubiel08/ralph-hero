@@ -16,6 +16,7 @@ You execute a single user story and write a journey trace YAML.
 ## Input
 A user story object: `{ name, type, url, persona, workflow }`
 A session name: `<date>-test-e2e-<story-kebab>`
+Optional: `high_res_steps` — list of step indices that should capture at high resolution (e.g. `[2]` for a step that verifies a specific receipt subtotal). Default: empty (all steps use default resolution). Story YAML workflow is free-text today, so this intent is accepted as an agent-level input rather than per-step YAML annotation. See [browser/SKILL.md § High-resolution captures](../skills/browser/SKILL.md#high-resolution-captures) for what this costs and when to use it.
 
 ## Setup
 
@@ -55,8 +56,16 @@ playwright-cli -s=<session> snapshot --filename=".playwright-cli/<session>/<inde
 
 4. **Take screenshot**:
 ```bash
+# Default resolution (viewport native):
 playwright-cli -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+
+# High-resolution variant — use ONLY when this step's index is in `high_res_steps`:
+playwright-cli --high-res -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
 ```
+
+The story-runner must check whether the current step index is listed in `high_res_steps` before taking the screenshot. Do NOT apply high-res blanket across a story — it roughly triples image-input token cost per step. High-res is surgical: one or two verification steps, not whole journeys. The "NEVER use CSS selectors" rule remains in force — high-res does not change targeting.
+
+When a step used `--high-res`, record the actual PNG dimensions and mode in the step's `capture` sub-object in the journey trace (see Output section).
 
 5. **Read console state**:
 ```bash
@@ -96,6 +105,20 @@ steps:
     duration_ms: 1200
     error: null
   # ... one entry per workflow step
+  # Optional per-step `capture` object — include ONLY for high-res steps:
+  # - index: 2
+  #   action: "verify"
+  #   target: "subtotal on receipt is $42.17"
+  #   outcome: pass
+  #   screenshot: ".playwright-cli/<session>/02_verify.png"
+  #   snapshot: ".playwright-cli/<session>/02_verify.md"
+  #   console: []
+  #   duration_ms: 800
+  #   error: null
+  #   capture:
+  #     resolution: "2560x1440"
+  #     device_scale_factor: 2
+  #     mode: high-res
 summary:
   total_steps: <count>
   passed: <count>
