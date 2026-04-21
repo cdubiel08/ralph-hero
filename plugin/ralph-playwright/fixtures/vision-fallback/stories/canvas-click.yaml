@@ -1,0 +1,12 @@
+# Integration fixture story: click the blue Submit button on a canvas-rendered form.
+# Expected path: vision-fallback (trigger_reason: canvas_region).
+stories:
+  - name: canvas-click-submit
+    type: happy
+    url: http://localhost:8765/canvas-demo.html
+    persona: anonymous
+    tags: [vision-fallback, canvas]
+    workflow: |
+      Navigate to the canvas demo page
+      Click the blue Submit button
+      Verify window.__canvasClicks contains an entry with nearest == "submit"

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vision-Fallback Fixture: Map Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background: #f7f8fa; }
+    h1 { margin-top: 0; }
+    #map-canvas { border: 1px solid #999; display: block; background: #e8f0ff; }
+    #legend { margin-top: 12px; font-family: monospace; font-size: 12px; }
+    #legend .pin { display: inline-block; width: 12px; height: 12px; border-radius: 6px; margin-right: 6px; vertical-align: middle; }
+    #debug { margin-top: 12px; font-family: monospace; font-size: 12px; color: #333; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Map Demo (vision-fallback fixture)</h1>
+  <p>Three pin markers (SF, NYC, LA) are rendered inside a single &lt;canvas&gt; element. The a11y tree sees one canvas ref; the pins are invisible to accessibility. Vision fallback must fire with trigger_reason=map_region.</p>
+  <canvas id="map-canvas" width="900" height="500"></canvas>
+  <div id="legend">
+    <div><span class="pin" style="background:#cc3333;"></span>Red pin = SF (leftmost)</div>
+    <div><span class="pin" style="background:#33aa33;"></span>Green pin = LA (lower-left)</div>
+    <div><span class="pin" style="background:#3366cc;"></span>Blue pin = NYC (rightmost)</div>
+  </div>
+  <div id="debug">click log (updated live): (none yet)</div>
+
+  <script>
+    (function () {
+      const canvas = document.getElementById('map-canvas');
+      const ctx = canvas.getContext('2d');
+      const debug = document.getElementById('debug');
+
+      const pins = [
+        { id: 'SF', x: 180, y: 220, color: '#cc3333' },
+        { id: 'LA', x: 200, y: 360, color: '#33aa33' },
+        { id: 'NYC', x: 740, y: 190, color: '#3366cc' },
+      ];
+
+      function drawGrid() {
+        ctx.fillStyle = '#e8f0ff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#cdd5e5';
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= canvas.width; x += 60) {
+          ctx.beginPath();
+          ctx.moveTo(x + 0.5, 0);
+          ctx.lineTo(x + 0.5, canvas.height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= canvas.height; y += 60) {
+          ctx.beginPath();
+          ctx.moveTo(0, y + 0.5);
+          ctx.lineTo(canvas.width, y + 0.5);
+          ctx.stroke();
+        }
+        // Coastline hint (pure ornamental).
+        ctx.strokeStyle = '#8fa4d2';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(60, 100);
+        ctx.lineTo(140, 180);
+        ctx.lineTo(180, 320);
+        ctx.lineTo(240, 420);
+        ctx.stroke();
+      }
+
+      function drawPin(p) {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#222';
+        ctx.stroke();
+        ctx.fillStyle = '#222';
+        ctx.font = 'bold 14px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(p.id, p.x, p.y + 16);
+      }
+
+      function render() {
+        drawGrid();
+        pins.forEach(drawPin);
+      }
+
+      function nearestPin(x, y) {
+        let best = 'none';
+        let bestDist = 30; // tolerance
+        for (const p of pins) {
+          const d = Math.sqrt((x - p.x) ** 2 + (y - p.y) ** 2);
+          if (d < bestDist) {
+            bestDist = d;
+            best = p.id;
+          }
+        }
+        return best;
+      }
+
+      window.__mapClicks = [];
+      canvas.addEventListener('click', function (e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.round(e.clientX - rect.left);
+        const y = Math.round(e.clientY - rect.top);
+        const entry = { x, y, nearest: nearestPin(x, y) };
+        window.__mapClicks.push(entry);
+        debug.textContent = 'click log: ' + JSON.stringify(window.__mapClicks, null, 2);
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>
