@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>alt-relevance fixture — ralph-playwright</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      max-width: 720px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #222;
+      background: #fff;
+    }
+    h1 {
+      font-size: 1.5rem;
+      border-bottom: 2px solid #ddd;
+      padding-bottom: 0.5rem;
+    }
+    section {
+      margin: 2rem 0;
+      padding: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    section h2 {
+      font-size: 1.1rem;
+      margin-top: 0;
+    }
+    section p.caption {
+      color: #555;
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+    section img,
+    section figure img,
+    section [role="img"] {
+      display: block;
+      margin: 0.5rem 0;
+    }
+    figure {
+      margin: 0.5rem 0;
+    }
+    figcaption {
+      font-size: 0.9rem;
+      color: #444;
+      margin-top: 0.25rem;
+    }
+    .divider {
+      width: 300px;
+      height: 4px;
+      background: #888;
+      margin: 1rem 0;
+    }
+    .triangle-icon {
+      width: 120px;
+      height: 104px;
+      background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 104'><polygon points='60,8 116,96 4,96' fill='%23ff8800' stroke='%23cc6600' stroke-width='3'/><rect x='55' y='40' width='10' height='30' fill='%23222'/><circle cx='60' cy='82' r='5' fill='%23222'/></svg>") no-repeat center / contain;
+    }
+  </style>
+</head>
+<body>
+  <h1>alt-relevance fixture</h1>
+
+  <p>
+    Static fixture exercising the alt-text relevance sub-procedure in
+    <a href="../../skills/a11y-scan/SKILL.md"><code>skills/a11y-scan/SKILL.md</code></a>.
+    See <a href="README.md">README.md</a> for the expected-signal oracle.
+  </p>
+
+  <section data-alt-relevance-case="i">
+    <h2>Case i — good alt (ACCURATE)</h2>
+    <p class="caption">Image depicts a golden retriever sitting on a porch. Alt text matches. Expected: no signal.</p>
+    <img
+      src="img/dog.svg"
+      alt="Golden retriever sitting on a porch"
+      width="200"
+      height="200">
+  </section>
+
+  <section data-alt-relevance-case="ii">
+    <h2>Case ii — bad alt (INACCURATE)</h2>
+    <p class="caption">Same dog image, wildly unrelated alt text. Expected: one a11y_violation tagged [alt-relevance].</p>
+    <img
+      src="img/dog.svg"
+      alt="Red Submit button"
+      width="200"
+      height="200">
+  </section>
+
+  <section data-alt-relevance-case="iii">
+    <h2>Case iii — misleading alt (INACCURATE)</h2>
+    <p class="caption">A sales bar chart with "Weather forecast" alt text. Information-critical image (chart). Expected: one a11y_violation tagged [alt-relevance, information-critical].</p>
+    <img
+      src="img/chart.svg"
+      alt="Weather forecast"
+      width="300"
+      height="200">
+  </section>
+
+  <section data-alt-relevance-case="iv">
+    <h2>Case iv — decorative (alt="" — SKIP)</h2>
+    <p class="caption">Thin decorative horizontal rule. Author marked decorative with empty alt. Expected: no signal.</p>
+    <img
+      src="img/divider.svg"
+      alt=""
+      width="300"
+      height="4">
+  </section>
+
+  <section data-alt-relevance-case="v">
+    <h2>Case v — figure + figcaption (ACCURATE)</h2>
+    <p class="caption">Cat on a windowsill; accessible name comes from figcaption. Alt text matches. Expected: no signal.</p>
+    <figure>
+      <img
+        src="img/cat.svg"
+        width="200"
+        height="200"
+        alt="">
+      <figcaption>Tabby cat napping on a windowsill</figcaption>
+    </figure>
+  </section>
+
+  <section data-alt-relevance-case="vi">
+    <h2>Case vi — aria-label on role="img" (ACCURATE)</h2>
+    <p class="caption">CSS-rendered orange warning triangle. Accessible name via aria-label on role="img". Expected: no signal.</p>
+    <div
+      class="triangle-icon"
+      role="img"
+      aria-label="Orange triangle warning icon"></div>
+  </section>
+
+</body>
+</html>
