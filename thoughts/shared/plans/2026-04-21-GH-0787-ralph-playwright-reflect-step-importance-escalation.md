@@ -376,9 +376,9 @@ Add a new `## Step-Importance Escalation` section to `plugin/ralph-playwright/sk
 
 #### Automated Verification
 
-- [ ] Frontmatter of `skills/reflect/SKILL.md` still parses as valid YAML (no duplicate or malformed keys introduced during the edits). A quick check: `yq '.' <(sed -n '1,/^---$/p' plugin/ralph-playwright/skills/reflect/SKILL.md | sed '1d;$d')` or equivalent.
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing.
+- [x] Frontmatter of `skills/reflect/SKILL.md` still parses as valid YAML (no duplicate or malformed keys introduced during the edits). A quick check: `yq '.' <(sed -n '1,/^---$/p' plugin/ralph-playwright/skills/reflect/SKILL.md | sed '1d;$d')` or equivalent.
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing.
 
 #### Manual Verification
 

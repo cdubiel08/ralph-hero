@@ -22,6 +22,8 @@ Read the journey trace YAML. Verify it conforms to the journey-trace schema (has
 
 ### Step 2: Examine each step
 
+Before entering the seven-category audit below, iterate steps in **ascending `index` order** and decide per-step which model should run. Apply the ladder in [§ Step-Importance Escalation](#step-importance-escalation) below: default to Sonnet 4.6 on happy paths; escalate to Opus 4.7 when step N has `outcome == fail` OR step N-1 raised any signal. Record each step's chosen model and reason in a running tally — Step 4 will emit this as `reflect_meta.by_step`. Do NOT re-state escalation logic here; the canonical rules live in the dedicated section below.
+
 For each step in the trace:
 
 1. **Read the screenshot** (the PNG file at the `screenshot` path) and perform a **structured visual audit** across the seven categories below. For every finding, report **concrete, observable specifics** (element name, visible text, location on the page) — not vague phrases like "anomaly observed". Use the signal-type hints to map findings into the existing taxonomy in Step 3 (no new types).
@@ -125,7 +127,19 @@ summary:
   total_signals: <N>
   by_severity: { critical: N, high: N, medium: N, low: N }
   recommendation: "<actionable recommendation>"
+reflect_meta:
+  default_model: claude-sonnet-4-6
+  escalated_model: claude-opus-4-7
+  by_step:
+    "0":
+      model: claude-sonnet-4-6
+      reason: default
+    "1":
+      model: claude-opus-4-7
+      reason: fail_escalation
 ```
+
+Populate `reflect_meta` when the step-importance escalation ladder was applied (i.e., whenever reflect classified more than one step). Omit it if reflect was invoked on a single-step trace where no ladder decision was made — the hook treats absence as pass (backward compatibility for pre-GH-787 signal-reports). See [§ Step-Importance Escalation](#step-importance-escalation) for the ladder semantics and enum values.
 
 **Concrete example** — a contrast violation on a primary CTA spotted at pixel region `(240, 480)` with size `180x44`:
 
@@ -207,3 +221,76 @@ See [`thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md`](
 ### See also
 
 For the plugin-level narrative on the execute/reflect model split and the full pipeline orientation, see [`plugin/ralph-playwright/README.md`](../../README.md).
+
+For per-step escalation rules (Sonnet happy-path -> Opus on fail or prior-signal), see the [§ Step-Importance Escalation](#step-importance-escalation) section below.
+
+## Step-Importance Escalation
+
+### Ladder
+
+Reflect picks a per-step model from a two-tier ladder. The default tier is **Claude Sonnet 4.6** — sufficient for happy-path steps where the work is mechanical presence checks and non-ambiguous layout passes. The escalated tier is **Claude Opus 4.7** — invoked when a step deserves closer visual reasoning.
+
+### Triggers
+
+Opus 4.7 is invoked for step N when **either** of the following fires (triggers OR together; either-fire and both-fire are equivalent):
+
+1. **Fail escalation** — the CURRENT step (step N) has `outcome == fail` in the journey trace.
+2. **Prior-signal escalation** — one or more signals were emitted for the PRIOR step (step N-1), regardless of severity or type.
+
+Step 0 can never hit the prior-signal trigger (no prior step exists), so step 0 runs on Sonnet unless step 0 itself has `outcome == fail`.
+
+### Iteration order
+
+Steps MUST be iterated in ascending `index` order. The prior-signal trigger requires knowing whether step N-1 emitted a signal, which means step N-1 must be classified before step N. Out-of-order iteration is not permitted.
+
+### Env override dominance
+
+If `RALPH_PLAYWRIGHT_REFLECT_MODEL` is set in the session environment, it pins the model for ALL steps regardless of trigger state. In that case, record `reason: env_override` in every `reflect_meta.by_step[*]` entry and use the env-pinned model as the recorded `model`. The env var overrides both the frontmatter default and the escalation ladder. This preserves the #785 contract: the env var is the canonical escape hatch.
+
+### Direct invocation vs embedded reflect
+
+When reflect is invoked directly via `Skill("ralph-playwright:reflect")` or `/ralph-playwright:reflect <trace-path>`, the frontmatter `model: claude-opus-4-7` (from #785) is the session default. The escalation ladder still applies per-step *within* the reflect invocation: Opus stays pinned at the session level, but the `reason` field still records whether a given step would have escalated — this enables downstream cost audits and routing tuning without requiring runtime model switching mid-session.
+
+When reflect is embedded as an in-line step inside `explore`, `test-e2e`, `a11y-scan`, `capture`, or `ux-audit`, the escalation ladder governs per-step model selection *within* that embedded context. See `## Model Routing` above (particularly the **Scope caveat** subsection) for the canonical split between direct and embedded invocation.
+
+### Recording obligation
+
+After classifying all steps, populate `reflect_meta` at the top level of the signal-report with:
+
+- `default_model` — the model used for happy-path steps (typically `claude-sonnet-4-6`).
+- `escalated_model` — the model used when an escalation trigger fired (typically `claude-opus-4-7`).
+- `by_step` — a map from step index (stringified integer) to `{model, reason}` where `reason` is drawn from the enum `[default, fail_escalation, prior_signal_escalation, env_override]`.
+
+Omit `reflect_meta` only when the reflect invocation was on a single-step trace where no ladder decision was made (the hook treats absence as pass). When in doubt, populate it — the hook validates shape, not presence.
+
+Reference the schema at [`plugin/ralph-playwright/schemas/signal-report.schema.yaml`](../../schemas/signal-report.schema.yaml) for exact field semantics.
+
+### Example
+
+```yaml
+reflect_meta:
+  default_model: claude-sonnet-4-6
+  escalated_model: claude-opus-4-7
+  by_step:
+    "0":
+      model: claude-sonnet-4-6
+      reason: default               # happy path, no trigger fired
+    "1":
+      model: claude-opus-4-7
+      reason: fail_escalation       # step 1 had outcome==fail
+    "2":
+      model: claude-opus-4-7
+      reason: prior_signal_escalation  # step 1 raised a signal
+    "3":
+      model: claude-sonnet-4-6
+      reason: default               # step 2 emitted no signals, happy path resumed
+```
+
+### Rationale
+
+See [`thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md`](../../../../thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md) §Part 3 Item 3 ("Route by step importance, not globally") for the motivating analysis — every step on Opus wastes tokens on happy-path steps where Sonnet is sufficient, and every step on Sonnet underpowers the steps that need vision-reasoning depth.
+
+### See also
+
+- `## Model Routing` (above) for frontmatter and env-override docs.
+- [`plugin/ralph-playwright/README.md`](../../README.md) for the plugin-level narrative.
