@@ -207,11 +207,6 @@ describe("FtsSearch", () => {
 
   describe("memory_tier filter", () => {
     it("filters by memory_tier when schema has the column", () => {
-      // Phase 1 (GH-762) owns the production migration; add the column here
-      // so we can exercise the Phase 8 filter independently.
-      db.db.exec(
-        "ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))",
-      );
       db.db
         .prepare("UPDATE documents SET memory_tier = ? WHERE id = ?")
         .run("reflection", "auth-doc");
@@ -235,9 +230,6 @@ describe("FtsSearch", () => {
     });
 
     it("returns all tiers when memoryTier='any'", () => {
-      db.db.exec(
-        "ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))",
-      );
       db.db
         .prepare("UPDATE documents SET memory_tier = ? WHERE id = ?")
         .run("reflection", "auth-doc");
