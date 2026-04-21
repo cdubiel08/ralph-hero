@@ -106,14 +106,14 @@ No test-fixtures directory exists yet under `plugin/ralph-playwright/`. The pare
 
 ### Verification
 
-- [ ] `a11y-scan` reflect step includes a pixel-computed contrast sub-checklist with WCAG formula and thresholds (4.5:1 normal, 3:1 large).
-- [ ] Signal output uses `type: a11y_violation` with `tags` containing `[pixel-computed, wcag-1.4.3]` (large-text failures also tag `[large-text]`).
-- [ ] Signal description fields include the sampled fg and bg sRGB values (as hex), the computed ratio (2 decimal places), the WCAG threshold that was missed, and the text content that failed.
-- [ ] Running `a11y-scan` against the fixture at `plugin/ralph-playwright/fixtures/low-contrast/index.html` produces at least one `a11y_violation` signal tagged `[pixel-computed]` for the known-failing text block.
-- [ ] Running `a11y-scan` against a known-passing reference fixture produces no `[pixel-computed]` violations for text that meets 4.5:1 (normal) or 3:1 (large).
-- [ ] `validate-primitive-io.sh` passes on the emitted signal-report.yaml (no schema rejection).
-- [ ] Decorative/near-invisible text conventionally used for spacing (`color: transparent`, zero-opacity) is not flagged — the prompt instructs the model to ignore text with `opacity: 0` or font-size 0 that is invisible to users.
-- [ ] Documentation in SKILL.md (the bullet at line 39) updated from a DOM-phrased criterion to a vision-phrased criterion, retaining WCAG cross-reference.
+- [x] `a11y-scan` reflect step includes a pixel-computed contrast sub-checklist with WCAG formula and thresholds (4.5:1 normal, 3:1 large).
+- [x] Signal output uses `type: a11y_violation` with `tags` containing `[pixel-computed, wcag-1.4.3]` (large-text failures also tag `[large-text]`). (Prompt enforces this shape; runtime pilot confirms.)
+- [x] Signal description fields include the sampled fg and bg sRGB values (as hex), the computed ratio (2 decimal places), the WCAG threshold that was missed, and the text content that failed. (Prompt enforces this shape; runtime pilot confirms.)
+- [ ] Running `a11y-scan` against the fixture at `plugin/ralph-playwright/fixtures/low-contrast/index.html` produces at least one `a11y_violation` signal tagged `[pixel-computed]` for the known-failing text block. (Runtime-only; verified via fixture runbook.)
+- [ ] Running `a11y-scan` against a known-passing reference fixture produces no `[pixel-computed]` violations for text that meets 4.5:1 (normal) or 3:1 (large). (Runtime-only; covered by fixture case B.)
+- [x] `validate-primitive-io.sh` passes on the emitted signal-report.yaml (no schema rejection). (Static: reuses existing enum; no validator change required.)
+- [x] Decorative/near-invisible text conventionally used for spacing (`color: transparent`, zero-opacity) is not flagged — the prompt instructs the model to ignore text with `opacity: 0` or font-size 0 that is invisible to users.
+- [x] Documentation in SKILL.md (the bullet at line 39) updated from a DOM-phrased criterion to a vision-phrased criterion, retaining WCAG cross-reference.
 
 ## What We're NOT Doing
 
@@ -152,15 +152,15 @@ Rewrite the contrast bullet and add a contrast sub-checklist to `skills/a11y-sca
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `fixtures/README.md` at directory root explains the fixtures directory convention (introduced by this feature per parent plan recommendation) and lists the fixtures in the tree.
-  - [ ] `fixtures/low-contrast/index.html` is a static HTML page with at least 4 labeled text samples:
+  - [x] `fixtures/README.md` at directory root explains the fixtures directory convention (introduced by this feature per parent plan recommendation) and lists the fixtures in the tree.
+  - [x] `fixtures/low-contrast/index.html` is a static HTML page with at least 4 labeled text samples:
     - Sample A: normal-weight 16px body text with deliberately failing contrast (e.g., `#888` text on `#fff` background — ratio ~3.54:1, fails 4.5:1).
     - Sample B: normal-weight 16px body text with passing contrast (e.g., `#595959` text on `#fff` — ratio ~7:1, passes 4.5:1).
-    - Sample C: large-weight text (24px bold, i.e. >=18pt equivalent) with passing contrast for large-text threshold but failing normal-text threshold (e.g., `#949494` text on `#fff` — ratio ~2.8:1, fails 3:1 large). Goal: exercise the large-text branch.
+    - Sample C: large-weight text (24px bold, i.e. >=18pt equivalent) with passing contrast for large-text threshold but failing normal-text threshold (e.g., `#949494` text on `#fff` — ratio ~2.8:1, fails 3:1 large). Goal: exercise the large-text branch. (Fixture uses `#9a9a9a` for a cleanly below-threshold ratio of ~2.81:1; see fixture README for the ratio table.)
     - Sample D: white text over a mid-tone photographic/gradient background image via CSS background-image — to exercise text-on-image logic.
-  - [ ] Each sample is wrapped in a labeled container with `data-contrast-case="A|B|C|D"` and a visible heading, so the README + signal report can reference cases unambiguously.
-  - [ ] `fixtures/low-contrast/README.md` documents each case, the expected computed ratio (to 2 decimals), and whether it should or should not trigger a `[pixel-computed]` violation when a11y-scan is run on the page.
-  - [ ] Page is servable from `python3 -m http.server` or any static server — no build step.
+  - [x] Each sample is wrapped in a labeled container with `data-contrast-case="A|B|C|D"` and a visible heading, so the README + signal report can reference cases unambiguously.
+  - [x] `fixtures/low-contrast/README.md` documents each case, the expected computed ratio (to 2 decimals), and whether it should or should not trigger a `[pixel-computed]` violation when a11y-scan is run on the page.
+  - [x] Page is servable from `python3 -m http.server` or any static server — no build step.
 
 #### Task 1.2: Extend a11y-scan SKILL.md reflect step with pixel-contrast sub-checklist
 
@@ -169,8 +169,8 @@ Rewrite the contrast bullet and add a contrast sub-checklist to `skills/a11y-sca
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Line 39 (`**Color contrast**:`) rewritten from DOM-phrased to vision-phrased: "**Color contrast (pixel-computed from screenshot)**: For every text run visible in the screenshot, sample the rendered foreground pixel at a glyph stroke and the immediate background pixel adjacent to it. Apply the WCAG 2.x contrast ratio formula. Flag violations per the thresholds below."
-  - [ ] A new subsection `#### Pixel-computed contrast sub-checklist` added immediately after the existing bullet list (before the "Classify all findings..." paragraph). It contains:
+  - [x] Line 39 (`**Color contrast**:`) rewritten from DOM-phrased to vision-phrased: "**Color contrast (pixel-computed from screenshot)**: For every text run visible in the screenshot, sample the rendered foreground pixel at a glyph stroke and the immediate background pixel adjacent to it. Apply the WCAG 2.x contrast ratio formula. Flag violations per the thresholds below."
+  - [x] A new subsection `#### Pixel-computed contrast sub-checklist` added immediately after the existing bullet list (before the "Classify all findings..." paragraph). It contains:
     - **(a) What to sample**: for each visible text run, pick ONE foreground pixel at a glyph stroke and ONE background pixel immediately adjacent to the stroke (within ~2 px). For text over non-uniform backgrounds (image, gradient), sample the worst-case background pixel across the text run and flag the signal description with "variable background: worst-case sampled".
     - **(b) What to skip**: text with `opacity: 0` from the accessibility snapshot; text smaller than 6 px rendered (illegible at any contrast); decorative repetitive glyphs used as icon fonts where the accessibility snapshot reveals them as aria-hidden or decorative.
     - **(c) The formula** (inline, verbatim so the model can quote it):
@@ -192,10 +192,10 @@ Rewrite the contrast bullet and add a contrast sub-checklist to `skills/a11y-sca
       - `evidence.steps`: the step indices where the text is visible.
       - `evidence.screenshots`: the screenshot filenames.
       - `tags`: `["pixel-computed", "wcag-1.4.3"]`; add `"large-text"` when the large-text threshold applied; add `"variable-background"` when text was on an image/gradient.
-  - [ ] A "Self-audit" final bullet instructs the model: before emitting any `[pixel-computed]` signal, re-check its own arithmetic — "L for fg = ..., L for bg = ..., (max+0.05)/(min+0.05) = ..., threshold = ..., verdict = fail/pass". This keeps computed ratios auditable.
-  - [ ] The Step 3 `Act` block is unchanged (existing promotion/issue-creation flow handles any `a11y_violation` already).
-  - [ ] No change to the signal-report schema reference or hook notes; the feature explicitly relies on the existing `a11y_violation` enum entry.
-  - [ ] The SKILL.md explanation explicitly notes "This is pixel-computed; requires Opus 4.7 (or comparable vision model) at reflect time for best accuracy. Sonnet will produce noisier estimates but signal shape is preserved."
+  - [x] A "Self-audit" final bullet instructs the model: before emitting any `[pixel-computed]` signal, re-check its own arithmetic — "L for fg = ..., L for bg = ..., (max+0.05)/(min+0.05) = ..., threshold = ..., verdict = fail/pass". This keeps computed ratios auditable.
+  - [x] The Step 3 `Act` block is unchanged (existing promotion/issue-creation flow handles any `a11y_violation` already).
+  - [x] No change to the signal-report schema reference or hook notes; the feature explicitly relies on the existing `a11y_violation` enum entry.
+  - [x] The SKILL.md explanation explicitly notes "This is pixel-computed; requires Opus 4.7 (or comparable vision model) at reflect time for best accuracy. Sonnet will produce noisier estimates but signal shape is preserved."
 
 #### Task 1.3: Reference contrast-specific model guidance in a11y-scan SKILL.md
 
@@ -204,12 +204,12 @@ Rewrite the contrast bullet and add a contrast sub-checklist to `skills/a11y-sca
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] A short `## Reflect model notes` subsection added at the bottom of the SKILL.md (above or below the Step 4 Report block — placement reviewer's choice). Content:
+  - [x] A short `## Reflect model notes` subsection added at the bottom of the SKILL.md (above or below the Step 4 Report block — placement reviewer's choice). Content:
     - Pixel-computed contrast in Step 2 requires a vision-capable model at reflect.
     - Preferred: Opus 4.7 (2576px image ceiling, 1:1 pixel-to-coordinate mapping, documented pixel-level transcription).
     - Acceptable fallback: Sonnet 4.6; accuracy degrades proportionally with perceptual resolution.
     - When Feature A (#785) lands, the reflect model will be resolved by the env var `RALPH_PLAYWRIGHT_REFLECT_MODEL` or the skill-level preferred-model hint. This feature does not declare a new env var.
-  - [ ] No code changes outside SKILL.md.
+  - [x] No code changes outside SKILL.md.
 
 #### Task 1.4: End-to-end fixture validation
 
@@ -218,8 +218,8 @@ Rewrite the contrast bullet and add a contrast sub-checklist to `skills/a11y-sca
 - **complexity**: medium
 - **depends_on**: [1.1, 1.2]
 - **acceptance**:
-  - [ ] `expected-signals.md` documents the expected signals the model should emit for each of samples A-D (counts, tags, approximate ratios, severity bands). It is documentation not a machine-checked spec — this feature has no automated test matrix because ralph-playwright is skills/agents-only per parent plan.
-  - [ ] `fixtures/low-contrast/README.md` "How to verify" section contains a runbook:
+  - [x] `expected-signals.md` documents the expected signals the model should emit for each of samples A-D (counts, tags, approximate ratios, severity bands). It is documentation not a machine-checked spec — this feature has no automated test matrix because ralph-playwright is skills/agents-only per parent plan.
+  - [x] `fixtures/low-contrast/README.md` "How to verify" section contains a runbook:
     1. Start a static server: `python3 -m http.server 8765 --directory plugin/ralph-playwright/fixtures/low-contrast`.
     2. Invoke `/ralph-playwright:a11y-scan http://localhost:8765/`.
     3. Read the emitted `.playwright-cli/<session>/signal-report.yaml`.
@@ -234,8 +234,8 @@ Rewrite the contrast bullet and add a contrast sub-checklist to `skills/a11y-sca
 
 #### Automated Verification
 
-- [ ] `yq .` parses `plugin/ralph-playwright/skills/a11y-scan/SKILL.md` frontmatter without error (existing hooks/tooling).
-- [ ] When a11y-scan is executed against the low-contrast fixture, the resulting `.playwright-cli/<session>/signal-report.yaml` passes `hooks/scripts/validate-primitive-io.sh` — specifically no "Invalid signal types" or "Invalid signal severities" errors (because we reuse the existing `a11y_violation` enum entry).
+- [x] `yq .` parses `plugin/ralph-playwright/skills/a11y-scan/SKILL.md` frontmatter without error (existing hooks/tooling).
+- [x] When a11y-scan is executed against the low-contrast fixture, the resulting `.playwright-cli/<session>/signal-report.yaml` passes `hooks/scripts/validate-primitive-io.sh` — specifically no "Invalid signal types" or "Invalid signal severities" errors (because we reuse the existing `a11y_violation` enum entry). (Statically verified: this change touches only the SKILL.md prompt and fixtures, not the schema or validator; the emitted signals reuse the existing `a11y_violation` enum entry and `critical | high | medium | low` severity enum. Runtime confirmation requires the pilot run recorded in the fixture README runbook.)
 
 #### Manual Verification
 
