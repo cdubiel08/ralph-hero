@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <title>Tabby cat napping on a windowsill</title>
+  <desc>A simplified illustration of a tabby cat curled up on a sunny windowsill with a window view behind it.</desc>
+
+  <!-- Window sky / outside -->
+  <rect x="0" y="0" width="200" height="140" fill="#b9d9ea"/>
+
+  <!-- Distant hill outside window -->
+  <ellipse cx="60" cy="150" rx="80" ry="30" fill="#7fa55c"/>
+  <ellipse cx="150" cy="155" rx="70" ry="25" fill="#6c9150"/>
+
+  <!-- Sun -->
+  <circle cx="160" cy="40" r="18" fill="#f7d86a"/>
+
+  <!-- Window frame (vertical mullion) -->
+  <rect x="95" y="0" width="6" height="140" fill="#5a4632"/>
+  <!-- Window frame (horizontal mullion at top of windowsill) -->
+  <rect x="0" y="136" width="200" height="4" fill="#5a4632"/>
+
+  <!-- Windowsill (wooden) -->
+  <rect x="0" y="140" width="200" height="60" fill="#a67b4c"/>
+  <line x1="0" y1="155" x2="200" y2="155" stroke="#7c5a34" stroke-width="1"/>
+
+  <!-- Cat body (curled up) -->
+  <ellipse cx="100" cy="160" rx="55" ry="20" fill="#c49a6c"/>
+
+  <!-- Cat stripes on body -->
+  <path d="M 60 156 Q 70 150 80 156" stroke="#6b4a2b" stroke-width="2" fill="none"/>
+  <path d="M 85 152 Q 95 146 105 152" stroke="#6b4a2b" stroke-width="2" fill="none"/>
+  <path d="M 110 152 Q 120 146 130 152" stroke="#6b4a2b" stroke-width="2" fill="none"/>
+  <path d="M 135 156 Q 145 150 155 156" stroke="#6b4a2b" stroke-width="2" fill="none"/>
+
+  <!-- Cat head (on right side of body, tucked) -->
+  <circle cx="150" cy="152" r="16" fill="#d4a87a"/>
+
+  <!-- Cat ears -->
+  <polygon points="140,142 144,128 150,142" fill="#c49a6c"/>
+  <polygon points="152,142 158,128 162,142" fill="#c49a6c"/>
+
+  <!-- Cat forehead stripes -->
+  <line x1="146" y1="144" x2="148" y2="140" stroke="#6b4a2b" stroke-width="1.5"/>
+  <line x1="150" y1="143" x2="152" y2="139" stroke="#6b4a2b" stroke-width="1.5"/>
+  <line x1="154" y1="144" x2="156" y2="140" stroke="#6b4a2b" stroke-width="1.5"/>
+
+  <!-- Cat eye (closed, napping) -->
+  <path d="M 144 152 Q 147 154 150 152" stroke="#2a1a0a" stroke-width="1.5" fill="none"/>
+
+  <!-- Cat nose & mouth -->
+  <ellipse cx="155" cy="156" rx="2" ry="1.5" fill="#8a5a4a"/>
+
+  <!-- Cat tail curled around body -->
+  <path d="M 55 162 Q 40 170 50 180 Q 65 180 70 170" stroke="#c49a6c" stroke-width="10" fill="none" stroke-linecap="round"/>
+</svg>

@@ -20,7 +20,7 @@ properties:
       properties:
         type:
           type: string
-          enum: [anomaly, regression, a11y_violation, ux_issue, error]
+          enum: [anomaly, regression, a11y_violation, ux_issue, error, data_interpretation]
         severity:
           type: string
           enum: [critical, high, medium, low]
@@ -44,6 +44,35 @@ properties:
               items:
                 type: string
               description: "Screenshot filenames as evidence"
+            bboxes:
+              type: array
+              description: "Bounding boxes highlighting regions of interest in evidence screenshots"
+              items:
+                type: object
+                required: [screenshot, x, y, w, h]
+                properties:
+                  screenshot:
+                    type: string
+                    description: "Screenshot filename (must also appear in evidence.screenshots)"
+                  x:
+                    type: integer
+                    minimum: 0
+                    description: "Top-left X pixel coordinate"
+                  y:
+                    type: integer
+                    minimum: 0
+                    description: "Top-left Y pixel coordinate"
+                  w:
+                    type: integer
+                    minimum: 1
+                    description: "Width in pixels"
+                  h:
+                    type: integer
+                    minimum: 1
+                    description: "Height in pixels"
+                  note:
+                    type: string
+                    description: "Short label for what the box highlights"
         tags:
           type: array
           items:

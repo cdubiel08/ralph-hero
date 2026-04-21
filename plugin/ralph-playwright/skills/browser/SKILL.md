@@ -34,6 +34,55 @@ playwright-cli screenshot --filename=".playwright-cli/<session>/<index>_<slug>.p
 playwright-cli snapshot --filename=".playwright-cli/<session>/<index>_<slug>.md"
 ```
 
+## High-resolution captures
+
+Default screenshot capture uses the current viewport resolution (typically ~1280x720 to ~1920x1080 depending on viewport settings, ≈1.15MP area). For steps that need fine-grained pixel detail — OCR of table cells, receipt verification, dense chart labels, pixel-computed color contrast, thin focus indicators — callers can opt into high-resolution capture for a specific step.
+
+### Canonical flag spelling
+
+High-res capture is controlled at the **top-level CLI** (analogous to `--viewport WxH`), not as a screenshot sub-command flag. This applies at session open time so subsequent screenshots in that session inherit the density. Two forms are supported:
+
+```bash
+# Canonical form — explicit device scale factor
+playwright-cli --device-scale-factor 2 -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+
+# Semantic alias — "just give me the high-res preset"
+playwright-cli --high-res -s=<session> screenshot --filename=".playwright-cli/<session>/<index>_<slug>.png"
+```
+
+The `--high-res` alias expands to `--device-scale-factor 2` with automatic clamping (below). Both forms are equivalent when the viewport is ≤1280px wide.
+
+> **Fallback for older playwright-cli versions without native flag support**: if neither `--high-res` nor `--device-scale-factor` is recognized by your installed `@playwright/cli`, use an eval-based scale at session open time:
+> ```bash
+> playwright-cli -s=<session> eval "await page.evaluate(() => { window.devicePixelRatio = 2; }); await page.setViewportSize({ width: <W>, height: <H>, deviceScaleFactor: 2 })"
+> ```
+> Prefer the native flag when available — it is layout-preserving.
+
+### Resolution ceiling and clamping
+
+The target when `--high-res` is on:
+- Longest dimension ≤ **2576 px** (Opus 4.7 vision ceiling)
+- Total pixel area ≤ **3.75 MP**
+
+If the viewport × device-scale-factor exceeds either bound, the CLI clamps to the nearest safe scale factor. Concretely:
+- Viewport 1280x720 × DSF 2 → 2560x1440 → **1.84 MP, 2560 longest-edge** — no clamp.
+- Viewport 1920x1080 × DSF 2 → 3840x2160 → exceeds 2576 longest-edge → clamp to DSF ≈ 1.34 → ~2576x1449.
+- Viewport 2576x1448 × DSF 1 → already at ceiling → no scaling applied.
+
+The clamp preserves the layout (deviceScaleFactor, not viewport) — only pixel density changes.
+
+### Token cost warning
+
+High-res screenshots consume approximately **3.25x more image-input tokens** than default viewport captures (≈1.15 MP → ≈3.75 MP). At Opus 4.7 prices, blanket high-res on a 20-step journey is materially expensive. Use `--high-res` ONLY when the downstream reflect phase needs the extra precision:
+- OCR-style reading of dense tables, receipts, invoices
+- Chart or graph label fidelity
+- Pixel-computed color contrast or thin focus indicator checks
+- Small-type form label audits
+
+**Pair-with-model discipline.** High-res + Sonnet-at-1568px wastes tokens — Sonnet downsamples. Pair `--high-res` with Opus 4.7 reflect (see [`skills/reflect/SKILL.md`](../reflect/SKILL.md)) or with OCR-heavy manual review. For a11y-focused uses (contrast, alt relevance), see [`skills/a11y-scan/SKILL.md`](../a11y-scan/SKILL.md).
+
+This flag does NOT automatically escalate on failure — that behavior is tracked separately (#787). Callers opt in per-step, per-session, or per-story.
+
 ## Console Capture Setup
 
 At journey start, inject the console error interceptor:

@@ -1,6 +1,10 @@
 # ralph-playwright journey trace schema
 # Output of the execute primitive, input to the reflect primitive
 # Same format regardless of structured or freeform execution
+#
+# Optional per-step `capture` object records the resolution and mode used
+# when a step opted into --high-res (GH-794). Absence means default viewport
+# capture; existing journey-traces without `capture` remain valid.
 
 type: object
 required: [id, timestamp, input, session, runtime, steps, summary]
@@ -103,6 +107,23 @@ properties:
               type: string
               enum: [pass, fail, out_of_bounds]
               description: "Dispatch-level outcome: pass = eval click succeeded; fail = locator returned None or eval errored; out_of_bounds = pre-dispatch bounds check rejected coords."
+        capture:
+          type: object
+          description: "Optional capture metadata. Present when step opted into --high-res or otherwise used a non-default resolution. Absence means default viewport capture. Added in GH-794."
+          required: [resolution, device_scale_factor, mode]
+          properties:
+            resolution:
+              type: string
+              pattern: "^\\d+x\\d+$"
+              description: "Actual pixel dimensions of the PNG, WxH (e.g., '2560x1440')"
+            device_scale_factor:
+              type: number
+              minimum: 1
+              description: "deviceScaleFactor (DPR) used at capture time. 1 = default, 2 = high-res preset."
+            mode:
+              type: string
+              enum: [default, high-res]
+              description: "Caller-declared intent. 'high-res' means the caller explicitly opted in via --high-res or equivalent; 'default' means a non-default resolution was used but via a different mechanism (e.g., ux-audit multi-viewport)."
   summary:
     type: object
     required: [total_steps, passed, failed, duration_ms]

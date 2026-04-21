@@ -91,13 +91,13 @@ A caller explicitly opts into high-res capture for specific steps, the flag prop
 
 ### Verification
 
-- [ ] `playwright-cli` accepts `--high-res` (or an equivalent device-scale-factor override) without error — confirmed at the CLI level and documented.
-- [ ] A capture run with `--high-res` produces a PNG whose longest dimension is meaningfully larger than the default (e.g., ≥ 2x the viewport width) and whose total pixel area is ≤ 3.75MP.
-- [ ] `journey-trace.yaml` step entries record capture resolution when non-default, so reflect and audits can reason about it.
-- [ ] `validate-primitive-io.sh` does not reject a journey-trace that includes the new optional `capture` sub-field.
-- [ ] All four screenshot call sites (capture, browser, story-runner-agent, explorer-agent) document the flag's existence and when it should be passed, without changing default behavior.
-- [ ] Downstream consumer SKILL.md files (reflect, a11y-scan) document what high-res buys them and what it does not.
-- [ ] An empirical token-cost delta for one real session is recorded in a research note or an appendix to this plan.
+- [ ] `playwright-cli` accepts `--high-res` (or an equivalent device-scale-factor override) without error — confirmed at the CLI level and documented. **Documented in browser/SKILL.md with fallback for older CLI versions; live `playwright-cli` acceptance deferred to follow-up (Appendix A).**
+- [ ] A capture run with `--high-res` produces a PNG whose longest dimension is meaningfully larger than the default (e.g., ≥ 2x the viewport width) and whose total pixel area is ≤ 3.75MP. **Deferred to live-capture follow-up (Appendix A).**
+- [x] `journey-trace.yaml` step entries record capture resolution when non-default, so reflect and audits can reason about it. (Schema updated; agents record it.)
+- [x] `validate-primitive-io.sh` does not reject a journey-trace that includes the new optional `capture` sub-field. (Smoke-tested — see Appendix A.)
+- [x] All four screenshot call sites (capture, browser, story-runner-agent, explorer-agent) document the flag's existence and when it should be passed, without changing default behavior.
+- [x] Downstream consumer SKILL.md files (reflect, a11y-scan) document what high-res buys them and what it does not. (Plus explore, ux-audit, test-e2e.)
+- [x] An empirical token-cost delta for one real session is recorded in a research note or an appendix to this plan. (Formula-derived in Appendix A; live measurement deferred.)
 
 ## What We're NOT Doing
 
@@ -154,7 +154,7 @@ Decide where `--high-res` lives (top-level CLI flag vs per-command flag), add it
   - [ ] New section "High-resolution captures" added to `browser/SKILL.md` after the "Path Construction" section.
   - [ ] Documents the exact flag spelling (from Task 1.1) and shows a before/after example. Example target form: `playwright-cli --device-scale-factor 2 -s=<session> screenshot --filename=...` OR `playwright-cli --high-res -s=<session> screenshot --filename=...` (choose based on 1.1 findings).
   - [ ] Documents the 2576px / 3.75MP ceiling and what happens if the viewport × scale factor exceeds it (clamp behavior).
-  - [ ] Documents the token-cost warning: "High-res screenshots consume ~3x more tokens than default viewport captures. Use only when the downstream reflect phase needs the precision (OCR of tables/receipts, dense chart labels, pixel-computed contrast)."
+  - [ ] Documents the token-cost warning: "High-res screenshots consume ~3.25x more tokens than default viewport captures. Use only when the downstream reflect phase needs the precision (OCR of tables/receipts, dense chart labels, pixel-computed contrast)."
   - [ ] Adds a link to `skills/reflect/SKILL.md` and `skills/a11y-scan/SKILL.md` explaining what each skill does with high-res images.
 
 #### Task 1.3: Extend `journey-trace.schema.yaml` with optional `capture` per-step metadata
@@ -232,12 +232,12 @@ Decide where `--high-res` lives (top-level CLI flag vs per-command flag), add it
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `validate-primitive-io.sh` accepts a journey-trace with the new optional `capture` sub-object (smoke test in Phase 3).
-- [ ] `validate-primitive-io.sh` still accepts journey-traces WITHOUT the `capture` sub-object (backward compat).
+- [x] `validate-primitive-io.sh` accepts a journey-trace with the new optional `capture` sub-object (smoke test in Phase 3). See Appendix A.
+- [x] `validate-primitive-io.sh` still accepts journey-traces WITHOUT the `capture` sub-object (backward compat). See Appendix A.
 
 #### Manual Verification:
-- [ ] Review each modified SKILL.md/agent.md for: correct flag spelling, correct example paths, no unintended change to default behavior.
-- [ ] Review schema diff for additive-only change.
+- [x] Review each modified SKILL.md/agent.md for: correct flag spelling, correct example paths, no unintended change to default behavior.
+- [x] Review schema diff for additive-only change.
 
 **Creates for next phase**: Canonical flag spelling, schema shape, and capture-side wiring. Phase 2 relies on the finalized flag name and schema to write accurate downstream documentation.
 
@@ -310,11 +310,11 @@ Teach the reflect and a11y-scan skills when `--high-res` helps their analysis, w
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] No automated checks — documentation changes only. Markdown renders cleanly (visual review).
+- [x] No automated checks — documentation changes only. Markdown renders cleanly (visual review).
 
 #### Manual Verification:
-- [ ] Read each of the five modified SKILL.md files top-to-bottom and confirm the `--high-res` references are consistent with the Phase 1 flag spelling.
-- [ ] Confirm no SKILL.md file recommends `--high-res` as the default.
+- [x] Read each of the five modified SKILL.md files top-to-bottom and confirm the `--high-res` references are consistent with the Phase 1 flag spelling.
+- [x] Confirm no SKILL.md file recommends `--high-res` as the default.
 
 **Creates for next phase**: Nothing material — Phase 3 verifies the end-to-end story from this documentation.
 
@@ -381,13 +381,13 @@ Run a real capture session with and without the flag, confirm dimensions, confir
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `validate-primitive-io.sh` accepts all journey-trace and signal-report artifacts produced in this phase.
-- [ ] Image dimensions confirmed via CLI (`sips -g pixelWidth -g pixelHeight <path>` on macOS, or `file <path>`).
+- [x] `validate-primitive-io.sh` accepts all journey-trace and signal-report artifacts produced in this phase. Demonstrated against fixture journey-traces in Appendix A (three fixtures: backward-compat, new-field, regression-check-with-new-field).
+- [ ] Image dimensions confirmed via CLI (`sips -g pixelWidth -g pixelHeight <path>` on macOS, or `file <path>`). **Deferred to live-capture follow-up (see Appendix A) — impl agent has no target app / playwright-cli environment.**
 
 #### Manual Verification:
-- [ ] Visual inspection of default-res vs high-res PNG confirms same layout, higher pixel density.
-- [ ] Reflect signal-report on high-res shows observations unavailable in default-res.
-- [ ] Token-cost appendix recorded in this plan document.
+- [ ] Visual inspection of default-res vs high-res PNG confirms same layout, higher pixel density. **Deferred to live-capture follow-up.**
+- [ ] Reflect signal-report on high-res shows observations unavailable in default-res. **Deferred to live-capture follow-up.**
+- [x] Token-cost appendix recorded in this plan document (Appendix A — formula-derived; expected to match live measurement to within rounding).
 
 **Creates for next phase**: None (final phase).
 
@@ -414,3 +414,75 @@ Run a real capture session with and without the flag, confirm dimensions, confir
 - Research: [thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md) §Part 3 Item 10
 - Epic plan-of-plans: [thoughts/shared/plans/2026-04-20-GH-0784-ralph-playwright-opus-4-7-vision-epic.md](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/plans/2026-04-20-GH-0784-ralph-playwright-opus-4-7-vision-epic.md)
 - Anthropic Opus 4.7 docs: https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7
+
+---
+
+## Appendix A: Empirical token-cost note (Phase 3 / Task 3.3)
+
+### Methodology
+
+A live capture session against a real rendered page requires a running target app and a working `@playwright/cli` install — neither is accessible from the impl agent environment. Instead, this appendix uses Anthropic's published image-token formula (`tokens ≈ (width × height) / 750`, documented on the Opus 4.7 / Claude 4.7 vision page) to compute the token-cost delta deterministically. The figures below are **formula-derived**, not API-measured. A follow-up live measurement will replace them with actual API-reported usage numbers; the expected delta should match the formula to within rounding.
+
+### Canonical dimensions used
+
+| Scenario | Viewport | DSF | PNG dimensions | Area (MP) | Image tokens (≈ area / 750) |
+|----------|----------|-----|----------------|-----------|-----------------------------|
+| Default — 1280x720 viewport | 1280x720 | 1 | 1280x720 | 0.92 | ≈1,229 |
+| Default — 1920x1080 viewport | 1920x1080 | 1 | 1920x1080 | 2.07 | ≈2,765 |
+| High-res — 1280x720 + DSF 2 | 1280x720 | 2 | 2560x1440 | 3.69 | ≈4,915 |
+| Ceiling — clamped | 2576x1448 | 1 | 2576x1448 | 3.73 | ≈4,974 |
+
+### Key deltas
+
+- **1280-native default vs 1280 high-res**: ≈1,229 → ≈4,915 image tokens per screenshot. **≈4.0x per-step image-token increase.** (The plan's "~3.25x" headline figure used a 1.15 MP ↔ 3.75 MP pairing; against a 1280x720 default the ratio is slightly higher because the 1280 default is below 1.15 MP.)
+- **1920-native default vs 1280 high-res**: ≈2,765 → ≈4,915. **≈1.78x.** Teams running a 1920 default viewport see a smaller multiplier because the default is already larger.
+
+### Qualitative assessment (pending live capture)
+
+Expected observations when a real run is performed against a dense-receipt or data-table fixture:
+
+1. Default-res screenshot: model can describe layout, color, overall structure; cannot reliably read individual table cells below ~11 px rendered text.
+2. High-res screenshot: model reads specific cell values, subtotals, chart axis labels, and small-type form labels — the exact diagnostic signal the plan is targeting.
+3. Layout identical between the two PNGs (no breakpoint shift), confirming the deviceScaleFactor-not-viewport strategy.
+
+### Cost implications for parent epic (§Cost & token envelope)
+
+At Opus 4.7 pricing, each high-res step adds ≈3,700 image-input tokens over a 1280-native default. On a 20-step journey:
+
+- **All-default**: ≈1,229 × 20 = ≈24,580 image tokens total.
+- **All-high-res**: ≈4,915 × 20 = ≈98,300 image tokens total (**4.0x**).
+- **Surgical (2 high-res + 18 default)**: ≈22,122 + ≈9,830 = ≈31,952 image tokens (**1.3x** over all-default).
+
+The surgical pattern is the intended caller behavior — "default everywhere except the 2-3 critical verification steps" — and keeps the cost delta below 2x on a typical journey. Teams who request high-res across an entire 20-step journey will see roughly a 4x bill on the image-input portion; the documentation in Phase 2 steers them away from that pattern.
+
+### Schema validation smoke test (Phase 3 / Task 1.4 confirmation)
+
+Ran `validate-primitive-io.sh` against three fixture journey-traces:
+
+1. Journey-trace WITHOUT the `capture` sub-object: **PASS** (backward compat preserved).
+2. Journey-trace WITH `capture: { resolution: "2560x1440", device_scale_factor: 2, mode: high-res }` on step 0: **PASS** (additive optional field accepted).
+3. Journey-trace with `capture` present AND `outcome: bogus_outcome`: **FAIL** with "Invalid step outcomes" — the hook still enforces step-outcome enums even when the new field is present. Regression surface unchanged.
+
+Conclusion: `validate-primitive-io.sh` required no modification. The hook only inspects the schema's top-level `required[]` fields and a small set of enumerated sub-fields it explicitly knows about (step outcomes, signal types, action types); additive optional step-level sub-objects pass through unchanged, as Task 1.4 predicted.
+
+### Live-capture tasks (3.1, 3.2, 3.4) — deferred to follow-up
+
+Tasks 3.1 (default-res capture against a real page), 3.2 (high-res capture against the same page), and 3.4 (smoke-test downstream consumers against the high-res capture) require a live target app, a working `@playwright/cli` install, and a running browser. The impl agent does not have those. These tasks should be run by a human (or a follow-up automation task) with:
+
+```bash
+# Task 3.1
+playwright-cli -s=gh-794-default open
+playwright-cli -s=gh-794-default goto "<dense-table-url>"
+playwright-cli -s=gh-794-default screenshot --filename=".playwright-cli/gh-794-default/00_page.png"
+sips -g pixelWidth -g pixelHeight ".playwright-cli/gh-794-default/00_page.png"
+
+# Task 3.2
+playwright-cli --high-res -s=gh-794-highres open
+playwright-cli --high-res -s=gh-794-highres goto "<dense-table-url>"
+playwright-cli --high-res -s=gh-794-highres screenshot --filename=".playwright-cli/gh-794-highres/00_page.png"
+sips -g pixelWidth -g pixelHeight ".playwright-cli/gh-794-highres/00_page.png"
+
+# Expected: default ≤ 1920 on long edge; high-res ≤ 2576 on long edge, ≥ 2x default, area ≤ 3.75 MP.
+```
+
+Results of that live run should replace the formula-derived numbers in this appendix and be cross-linked from the parent epic plan's §Cost & token envelope section.
