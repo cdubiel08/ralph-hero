@@ -126,15 +126,15 @@ A reflect run on a journey trace produces a signal report whose signals can carr
 
 ### Verification (feature-level, rolls up atomics)
 
-- [ ] Signal reports with `bboxes` validate against schema and hook
-- [ ] Signal reports without `bboxes` still validate (backward compatible)
-- [ ] Validator rejects malformed bboxes (negative coords, zero dims, screenshot not in `evidence.screenshots`) with a readable error
-- [ ] Reflect SKILL.md teaches model to emit `bboxes` on region-specific signals and to omit on whole-page signals
-- [ ] Renderer emits deterministic `<stem>.annotated.png` with red rectangles + labels when `note` is present
-- [ ] Renderer exits 0 with no output when bboxes array is empty
-- [ ] Act phase (capture, explore, test-e2e paths) promotes both original and `.annotated.png` when bboxes exist
-- [ ] Action log records one `screenshot_promoted` per file (original + annotated)
-- [ ] End-to-end: one real journey produces at least one signal with `bboxes`, validator passes, renderer emits, act promotes both, note references both
+- [x] Signal reports with `bboxes` validate against schema and hook
+- [x] Signal reports without `bboxes` still validate (backward compatible)
+- [x] Validator rejects malformed bboxes (negative coords, zero dims, screenshot not in `evidence.screenshots`) with a readable error
+- [x] Reflect SKILL.md teaches model to emit `bboxes` on region-specific signals and to omit on whole-page signals
+- [x] Renderer emits deterministic `<stem>.annotated.png` with red rectangles + labels when `note` is present
+- [x] Renderer exits 0 with no output when bboxes array is empty
+- [x] Act phase (capture, explore, test-e2e paths) promotes both original and `.annotated.png` when bboxes exist
+- [x] Action log records one `screenshot_promoted` per file (original + annotated)
+- [x] End-to-end: one real journey produces at least one signal with `bboxes`, validator passes, renderer emits, act promotes both, note references both
 
 ## What We're NOT Doing
 
@@ -230,10 +230,10 @@ See [GH-803](https://github.com/cdubiel08/ralph-hero/issues/803) for the full at
 
 ### Phase Success Criteria
 
-- [ ] Decision doc committed under `thoughts/shared/research/` with filename `YYYY-MM-DD-bbox-renderer-decision.md`
-- [ ] Chosen approach posted as a comment on #790
-- [ ] Renderer interface signature + input/output contract documented
-- [ ] Downstream renderer issue (#811) updated with chosen approach (comment + label)
+- [x] Decision doc committed under `thoughts/shared/research/` with filename `YYYY-MM-DD-bbox-renderer-decision.md`
+- [x] Chosen approach posted as a comment on #790
+- [x] Renderer interface signature + input/output contract documented
+- [x] Downstream renderer issue (#811) updated with chosen approach (comment + label)
 
 **Creates for next phase**: A locked rendering approach (a/b/c) so #811 has a concrete implementation target. No other phase depends on this one.
 
@@ -253,10 +253,10 @@ See [GH-805](https://github.com/cdubiel08/ralph-hero/issues/805) for the exact Y
 
 ### Phase Success Criteria
 
-- [ ] `bboxes` array present under `evidence.properties` matching the shape in #805's body
-- [ ] Field is optional (not added to `evidence.required`)
-- [ ] Existing example signal reports (if any) still validate
-- [ ] Schema diff limited to the `evidence` block
+- [x] `bboxes` array present under `evidence.properties` matching the shape in #805's body
+- [x] Field is optional (not added to `evidence.required`)
+- [x] Existing example signal reports (if any) still validate
+- [x] Schema diff limited to the `evidence` block
 
 **Creates for next phase**: The schema shape that #808 validates and #814 documents in the reflect prompt example.
 
@@ -276,11 +276,11 @@ See [GH-808](https://github.com/cdubiel08/ralph-hero/issues/808). Follows the sa
 
 ### Phase Success Criteria
 
-- [ ] Validator exits 0 for reports with valid `bboxes`
-- [ ] Validator exits 0 for reports with no `bboxes` (backward compat)
-- [ ] Validator exits 1 with a useful message on malformed coords
-- [ ] Validator exits 1 on `bbox.screenshot` not appearing in `evidence.screenshots`
-- [ ] Happy-path + two failure-mode test cases documented in PR description
+- [x] Validator exits 0 for reports with valid `bboxes`
+- [x] Validator exits 0 for reports with no `bboxes` (backward compat)
+- [x] Validator exits 1 with a useful message on malformed coords
+- [x] Validator exits 1 on `bbox.screenshot` not appearing in `evidence.screenshots`
+- [x] Happy-path + two failure-mode test cases documented in PR description
 
 **Note on PR coupling**: Per parent-plan coupling rule, #805 and #808 typically land in the SAME PR. A validator that rejects `bboxes` while the schema allows it is inconsistent; a validator that accepts `bboxes` while the schema disallows is also inconsistent. Atomic authors may merge the two PRs if that helps.
 
@@ -302,11 +302,11 @@ See [GH-811](https://github.com/cdubiel08/ralph-hero/issues/811). Implementation
 
 ### Phase Success Criteria
 
-- [ ] `foo.png` + valid bboxes emits `foo.annotated.png` alongside original
-- [ ] Empty bboxes array → no annotated output, exit 0
-- [ ] Output deterministic across runs (byte-identical on identical input)
-- [ ] Documented invocation (CLI or Node helper)
-- [ ] Unit tests cover: one bbox, multiple bboxes, bbox at image edge, missing `note`
+- [x] `foo.png` + valid bboxes emits `foo.annotated.png` alongside original
+- [x] Empty bboxes array → no annotated output, exit 0
+- [x] Output deterministic across runs (byte-identical on identical input)
+- [x] Documented invocation (CLI or Node helper)
+- [x] Unit tests cover: one bbox, multiple bboxes, bbox at image edge, missing `note`
 
 **Creates for next phase**: A callable renderer entry point that #817 invokes during act-phase promotion.
 
@@ -326,10 +326,10 @@ See [GH-814](https://github.com/cdubiel08/ralph-hero/issues/814). Concrete YAML 
 
 ### Phase Success Criteria
 
-- [ ] Reflect SKILL.md documents the `bboxes` field with a concrete YAML example matching the schema in #805
-- [ ] Rule for when to populate vs. omit is explicit (populate for region-specific signals; omit for whole-page signals)
-- [ ] Pixel coords explicitly described as 1:1 with the screenshot image (no scaling)
-- [ ] No behavioral changes outside the documented skill update
+- [x] Reflect SKILL.md documents the `bboxes` field with a concrete YAML example matching the schema in #805
+- [x] Rule for when to populate vs. omit is explicit (populate for region-specific signals; omit for whole-page signals)
+- [x] Pixel coords explicitly described as 1:1 with the screenshot image (no scaling)
+- [x] No behavioral changes outside the documented skill update
 
 **Independence from #811**: The prompt change can land before the renderer. Until #811 ships, the model may emit `bboxes` but nothing is drawn — the act phase will simply skip rendering (no crash). This graceful degradation is intentional.
 
@@ -351,11 +351,11 @@ See [GH-817](https://github.com/cdubiel08/ralph-hero/issues/817). Touches `captu
 
 ### Phase Success Criteria
 
-- [ ] Signals with bboxes produce an annotated sibling in the session directory
-- [ ] Both original and annotated files copy into the note's asset directory
-- [ ] Action log contains one `screenshot_promoted` entry per file
-- [ ] Signals without bboxes do not invoke the renderer (no regression on existing flow)
-- [ ] End-to-end walkthrough in PR description or scripted fixture run
+- [x] Signals with bboxes produce an annotated sibling in the session directory
+- [x] Both original and annotated files copy into the note's asset directory
+- [x] Action log contains one `screenshot_promoted` entry per file
+- [x] Signals without bboxes do not invoke the renderer (no regression on existing flow)
+- [x] End-to-end walkthrough in PR description or scripted fixture run
 
 **Implicit dependency on #805 and #814**: This phase assumes the signal report it reads can carry `bboxes` (schema: #805) and that reflect populated them (prompt: #814). If #817 lands before either, it is harmless (no signals have bboxes → the new code path is never taken). But the FEATURE-level end-to-end verification requires all five other atomics to have landed first.
 

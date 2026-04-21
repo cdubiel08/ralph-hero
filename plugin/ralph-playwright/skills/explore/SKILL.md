@@ -53,12 +53,32 @@ Write the signal report to `.playwright-cli/<session>/signal-report.yaml` follow
 
 Read the signal report. For each signal:
 
-1. **Promote evidence screenshots** from tier 1 to tier 2:
+1. **Render annotated siblings for evidence screenshots that carry bboxes.** For each unique screenshot filename referenced by a signal's `evidence.bboxes[]`, invoke the zero-dep renderer to emit `<stem>.annotated.png` next to the original in the session directory:
+   ```bash
+   # For each unique screenshot filename referenced by bboxes:
+   yq '[.signals[].evidence.bboxes[]? | select(.screenshot == "<screenshot>")]' \
+     ".playwright-cli/<session>/signal-report.yaml" -o=json > "/tmp/<session>-<screenshot>.bboxes.json"
+
+   if [[ "$(jq 'length' "/tmp/<session>-<screenshot>.bboxes.json")" -gt 0 ]]; then
+     node "${CLAUDE_PLUGIN_ROOT}/scripts/annotate.mjs" \
+       --input ".playwright-cli/<session>/<screenshot>" \
+       --bboxes "/tmp/<session>-<screenshot>.bboxes.json"
+     # Produces .playwright-cli/<session>/<stem>.annotated.png
+   fi
+   ```
+   Signals WITHOUT `bboxes` produce no annotated sibling (no regression on the existing flow).
+
+2. **Promote evidence screenshots** from tier 1 to tier 2:
    - Source: `.playwright-cli/<session>/<screenshot>`
    - Destination: `thoughts/local/assets/<session>/<meaningful-name>.png`
    - Create the destination directory: `mkdir -p thoughts/local/assets/<session>/`
+   - **If an annotated sibling was produced**, copy it too with matching stem:
+     ```bash
+     cp ".playwright-cli/<session>/<stem>.annotated.png" \
+        "thoughts/local/assets/<session>/<meaningful-name>.annotated.png"
+     ```
 
-2. **Write a research note** to `thoughts/shared/research/<date>-<slug>-exploration.md`:
+3. **Write a research note** to `thoughts/shared/research/<date>-<slug>-exploration.md`:
    ```yaml
    ---
    date: <today>
@@ -66,17 +86,19 @@ Read the signal report. For each signal:
    tags: [ralph-playwright, exploration, <app-specific-tags>]
    assets:
      - thoughts/local/assets/<session>/<promoted-screenshot-1>.png
+     # Include annotated siblings alongside originals when present:
+     - thoughts/local/assets/<session>/<promoted-screenshot-1>.annotated.png
      - thoughts/local/assets/<session>/<promoted-screenshot-2>.png
    ---
    ```
-   Include signal summary, findings, and inline screenshot references.
+   Include signal summary, findings, and inline screenshot references — reference the `.annotated.png` variant when the signal has bboxes so the reader sees the highlighted region.
 
-3. **Optionally generate user stories** from discovered flows:
+4. **Optionally generate user stories** from discovered flows:
    - Convert happy-path flows to user story YAML
    - Apply sad-path heuristics from `schemas/user-story.schema.yaml`
    - Save to `playwright-stories/<slug>-discovered.yaml`
 
-4. Write the action log to `.playwright-cli/<session>/action-log.yaml` following the action-log schema.
+5. Write the action log to `.playwright-cli/<session>/action-log.yaml` following the action-log schema. Emit ONE `screenshot_promoted` entry per file — so a signal whose screenshot has bboxes produces two entries (original + annotated), each with its own `from` / `to` paths.
 
 ### Step 4: Summary
 

@@ -89,30 +89,54 @@ If a `note` path was provided (or the user wants to save the screenshot):
 mkdir -p "thoughts/local/assets/<note-slug>/"
 ```
 
-2. Copy and rename the screenshot:
+2. **If the signal report contains bboxes for this screenshot**, render an annotated sibling in the session directory BEFORE copying:
 ```bash
-cp ".playwright-cli/<session>/00_page.png" "thoughts/local/assets/<note-slug>/<name>.png"
+# Extract bboxes targeting this screenshot from the signal report
+yq '[.signals[].evidence.bboxes[]? | select(.screenshot == "00_page.png")]' \
+  ".playwright-cli/<session>/signal-report.yaml" -o=json > "/tmp/<session>-00_page.bboxes.json"
+
+# Only invoke the renderer if the extracted list is non-empty
+if [[ "$(jq 'length' "/tmp/<session>-00_page.bboxes.json")" -gt 0 ]]; then
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/annotate.mjs" \
+    --input ".playwright-cli/<session>/00_page.png" \
+    --bboxes "/tmp/<session>-00_page.bboxes.json"
+  # Produces .playwright-cli/<session>/00_page.annotated.png
+fi
 ```
 
-3. If the note doesn't exist, create it with frontmatter:
+3. Copy and rename the screenshot(s):
+```bash
+cp ".playwright-cli/<session>/00_page.png" "thoughts/local/assets/<note-slug>/<name>.png"
+
+# If an annotated sibling was produced, copy it too with matching stem:
+if [[ -f ".playwright-cli/<session>/00_page.annotated.png" ]]; then
+  cp ".playwright-cli/<session>/00_page.annotated.png" \
+     "thoughts/local/assets/<note-slug>/<name>.annotated.png"
+fi
+```
+
+4. If the note doesn't exist, create it with frontmatter:
 ```yaml
 ---
 date: <today>
 type: research
 assets:
   - thoughts/local/assets/<note-slug>/<name>.png
+  # If annotated sibling was produced, include it too:
+  - thoughts/local/assets/<note-slug>/<name>.annotated.png
 ---
 ```
 
-4. If the note exists, append the asset path to its `assets` frontmatter and add an inline reference.
+5. If the note exists, append the asset path(s) to its `assets` frontmatter and add an inline reference. Include the annotated sibling alongside the original.
 
-5. Write action log to `.playwright-cli/<session>/action-log.yaml`.
+6. Write action log to `.playwright-cli/<session>/action-log.yaml`. Emit ONE `screenshot_promoted` entry per file — both original and annotated, each with its own `from` / `to` paths.
 
 ### Summary
 
 Report the screenshot location, resolution mode, and whether it was promoted:
 - Screenshot saved: `.playwright-cli/<session>/00_page.png`
+- Annotated (if bboxes were present): `.playwright-cli/<session>/00_page.annotated.png`
 - Mode: `default` or `high-res` (echo the `high_res` input)
 - Resolution: `<WxH>` (actual PNG dimensions — important so downstream reflect knows what detail is readable)
-- Promoted to: `thoughts/local/assets/<note-slug>/<name>.png` (if promoted)
+- Promoted to: `thoughts/local/assets/<note-slug>/<name>.png` (and `<name>.annotated.png` if applicable)
 - Note: `<note-path>` (if attached to a note)
