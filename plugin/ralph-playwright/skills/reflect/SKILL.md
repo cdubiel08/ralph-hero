@@ -1,6 +1,7 @@
 ---
 name: ralph-playwright:reflect
 description: Analyze a journey trace and its screenshots to produce a signal report. Use when you have a journey trace from a previous execute run and want to analyze it separately. Reads screenshots and accessibility snapshots to identify anomalies, regressions, a11y violations, and UX issues.
+model: claude-opus-4-7
 allowed-tools:
   - Read
   - Write
@@ -87,3 +88,31 @@ Recommendation: <recommendation>
 Next: Use /ralph-playwright:capture to promote screenshots, or pipe this
 report to the act primitive for automated issue creation.
 ```
+
+## Model Routing
+
+Reflect runs on **Claude Opus 4.7** by default via the `model: claude-opus-4-7` frontmatter hint above. Reflect is a vision-heavy workload — screenshot analysis, layout inspection, and visual anomaly detection benefit materially from Opus-tier vision. The execute phase stays on Sonnet: both `agents/explorer-agent.md` and `agents/story-runner-agent.md` declare `model: sonnet` because navigation and click/fill actions are mechanical and Sonnet is competent and cheap for that workload.
+
+### Overriding the model
+
+Set `RALPH_PLAYWRIGHT_REFLECT_MODEL` in the session environment to pin a different model. This is the canonical escape hatch — use it to roll back to Sonnet for cost control, or to pin a newer model when one ships.
+
+```bash
+# Roll back reflect to Sonnet (cheaper; loses Opus-tier vision)
+export RALPH_PLAYWRIGHT_REFLECT_MODEL=claude-sonnet-4-6
+
+# Pin a future Opus release
+export RALPH_PLAYWRIGHT_REFLECT_MODEL=claude-opus-4-8
+```
+
+### Scope caveat
+
+The frontmatter hint fires on **direct** `Skill("ralph-playwright:reflect")` invocations (including `/ralph-playwright:reflect <trace-path>`). When reflect is embedded as an in-line step inside a parent skill (`explore`, `test-e2e`, `a11y-scan`, `capture`, `ux-audit`), it inherits the caller's model context — the standalone SKILL.md is not re-loaded. For those contexts, `RALPH_PLAYWRIGHT_REFLECT_MODEL` is the user-facing override; per-skill propagation of the hint is a future concern.
+
+### Rationale
+
+See [`thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md`](../../../../thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md) §Part 3 Item 1 for the empirical motivation — Opus 4.7's vision improvements on screenshot-heavy analysis workloads justify the per-phase split.
+
+### See also
+
+For the plugin-level narrative on the execute/reflect model split and the full pipeline orientation, see [`plugin/ralph-playwright/README.md`](../../README.md).
