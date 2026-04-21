@@ -195,8 +195,8 @@ Extend the a11y-scan reflect phase with a screenshot-grounded alt-text relevance
 
 ralph-playwright is skills/agents-only — there is no build/test matrix for the plugin itself. The only automated gate that applies is the artifact validator:
 
-- [ ] `bash plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` accepts the generated `signal-report.yaml` from Task 1.3 (invoked indirectly by the write hook; confirmed by hook-success log line).
-- [ ] `yq '.' plugin/ralph-playwright/skills/a11y-scan/SKILL.md` parses the front-matter YAML without error.
+- [x] `bash plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` accepts the generated `signal-report.yaml` from Task 1.3 (invoked indirectly by the write hook; confirmed by hook-success log line). Verified at implementation time with a sample signal-report matching the README oracle — `type=a11y_violation` passes the enum check and `tags=["alt-relevance"]` passes the unrestricted-string-array check. Validator exit 0.
+- [x] `yq '.' plugin/ralph-playwright/skills/a11y-scan/SKILL.md` parses the front-matter YAML without error.
 
 #### Manual Verification:
 
