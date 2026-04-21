@@ -23,6 +23,32 @@ The skill accepts an optional mode flag that controls how `explorer-agent` picks
 
 The vision-first mode is opt-in and strictly additive; the default path is behaviorally unchanged. See epic context: [#795](https://github.com/cdubiel08/ralph-hero/issues/795).
 
+## When to use `--vision-first`
+
+Vision-first exploration trades token budget and per-step latency for the ability to reason about a page that the accessibility tree describes poorly. Reach for it when any of these apply:
+
+- **Poor a11y hygiene** — The target app has missing labels, generic `<div>` buttons, `aria-hidden` on critical interactive elements, unlabeled inputs, or broken landmark hierarchy. Ref-mode will either wander (picking decoy refs) or stall (the snapshot surfaces no interactive element for the target region). Vision-first can recognise the primary CTA from its color, shape, and position regardless of what the a11y tree says.
+- **Canvas-heavy apps** — Maps, whiteboards, custom chart libraries, data-visualisation dashboards. The snapshot for these surfaces is typically a single `<canvas>` ref with no interactable children. Vision-first can identify points/regions inside the canvas ("zoom control, top-right"; "legend entry for series B"; "cluster marker near coordinate (x, y)") in a way ref-mode cannot.
+- **Custom widgets** — Drag-and-drop kanbans, color pickers, complex DnD constructs, custom date pickers with non-standard markup. Ref-mode expects standard ARIA patterns (`role="listbox"`, `role="gridcell"`); when a widget rolls its own, vision-first reasons about the widget by looking at it.
+
+### Known costs / tradeoffs
+
+- **Higher token spend per step** — Vision-first reads the full screenshot at each decision point. Screenshot tokens dominate the step prompt, compared to the compact accessibility snapshot in ref-mode.
+- **Slower per-step latency** — Vision reasoning is meaningfully slower than snapshot-text reasoning, especially at high resolution.
+- **Less-precise click targeting** — Ref-mode dispatches `playwright-cli click <ref>` with an unambiguous element handle. Vision-first resolves to coordinates (via [#792](https://github.com/cdubiel08/ralph-hero/issues/792)'s coordinate-click primitive when available) or the nearest-ref approximation. Expect occasional off-target clicks on dense UIs.
+- **Goal drift risk** — The vision rubric can fixate on the most salient primary CTA even when the goal requires a secondary or tertiary action. If your goal is subtle (e.g., "find the hidden admin escape hatch"), ref-mode may behave better.
+
+### Sibling features
+
+- Combine with [#792 — vision-fallback element targeting](https://github.com/cdubiel08/ralph-hero/issues/792) if your target app has no accessibility refs at all. #792's coordinate-click primitive is what the vision-first loop's fallback path resolves to; without it, the loop records the visual target and skips the action (graceful degradation — see the Vision-First Loop section in `explorer-agent.md`).
+- Combine with [#794 — `--high-res` screenshot flag](https://github.com/cdubiel08/ralph-hero/issues/794) for OCR-dense pages (tables, receipts, dense charts). Operators pass `--vision-first --high-res` together — neither flag auto-enables the other.
+
+### Demo findings
+
+See [the poor-a11y demo research doc](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-20-vision-first-exploration-demo.md) for side-by-side metrics on a synthetic poor-a11y fixture ([plugin/ralph-playwright/examples/poor-a11y-demo/](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-playwright/examples/poor-a11y-demo/)). The demo's keep / drop / iterate recommendation is the best single source on whether vision-first is worth the cost on *your* site; if it recommended `drop` for the fixture, treat vision-first as experimental; if it recommended `keep`, vision-first is production-ready for similar site classes. If it recommended `iterate`, check linked follow-up issues before leaning on the mode heavily.
+
+The research doc ships with its results section marked pending a live operator run (fixture and comparison tooling are in place; the actual runs require `playwright-cli` and a live browser and are expected as a follow-up commit). Re-read the doc after that commit lands.
+
 ## Process
 
 ### Step 1: Execute (freeform)
