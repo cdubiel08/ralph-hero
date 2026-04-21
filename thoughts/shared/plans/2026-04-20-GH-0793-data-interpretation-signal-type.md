@@ -189,12 +189,12 @@ Extend the signal-type enum in the schema, update the hook validator regex, docu
 
 #### Automated Verification
 
-- [ ] `yq '.properties.signals.items.properties.type.enum' plugin/ralph-playwright/schemas/signal-report.schema.yaml` outputs 6 values in the expected order.
-- [ ] `bash -n plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` — no syntax errors.
-- [ ] `echo 'data_interpretation' | grep -v -E '^(anomaly|regression|a11y_violation|ux_issue|error|data_interpretation)$'` — empty output (accepted).
-- [ ] `echo 'data_interp' | grep -v -E '^(anomaly|regression|a11y_violation|ux_issue|error|data_interpretation)$'` — prints `data_interp` (rejected).
-- [ ] Positive fixture passes the hook script (exit 0) when stdin carries its absolute path.
-- [ ] Negative fixture fails the hook script (exit 1) with `Invalid signal types` in stderr.
+- [x] `yq '.properties.signals.items.properties.type.enum' plugin/ralph-playwright/schemas/signal-report.schema.yaml` outputs 6 values in the expected order.
+- [x] `bash -n plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` — no syntax errors.
+- [x] `echo 'data_interpretation' | grep -v -E '^(anomaly|regression|a11y_violation|ux_issue|error|data_interpretation)$'` — empty output (accepted).
+- [x] `echo 'data_interp' | grep -v -E '^(anomaly|regression|a11y_violation|ux_issue|error|data_interpretation)$'` — prints `data_interp` (rejected).
+- [x] Positive fixture passes the hook script (exit 0) when stdin carries its absolute path.
+- [x] Negative fixture fails the hook script (exit 1) with `Invalid signal types` in stderr.
 
 #### Manual Verification
 

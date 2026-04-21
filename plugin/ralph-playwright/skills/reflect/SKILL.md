@@ -39,6 +39,7 @@ For each finding, classify as:
 | `a11y_violation` | WCAG non-compliance: missing labels, broken tab order, contrast |
 | `ux_issue` | Confusing navigation, dead ends, unclear feedback |
 | `error` | Console errors, failed steps, broken interactions |
+| `data_interpretation` | Dashboard or chart misinterpretation: axis label missing, legend does not match data, unreadable density, unlabeled units, incorrect numeric callouts, misleading visualizations. Distinct from `anomaly` (which covers layout/visual glitches) and `ux_issue` (which covers nav/feedback confusion) — use this when the chart *renders* fine but *communicates* wrong. |
 
 Assign severity:
 - `critical`: Blocks core functionality or causes data loss
