@@ -1,0 +1,19 @@
+trace_id: "99999999-8888-4777-8666-555555555555"
+timestamp: "2026-04-20T12:05:00Z"
+signals:
+  - type: data_interp
+    severity: high
+    title: "Deliberately bogus signal type for negative testing"
+    description: "This fixture exists to prove the hook rejects typos. The type 'data_interp' is not a valid enum value — the validator must exit 1 with 'Invalid signal types'."
+    evidence:
+      steps: [3]
+      screenshots: ["03_dashboard.png"]
+    tags: ["negative-test"]
+summary:
+  total_signals: 1
+  by_severity:
+    critical: 0
+    high: 1
+    medium: 0
+    low: 0
+  recommendation: "This fixture must fail hook validation. If it passes, the regex has drifted from the schema enum."
