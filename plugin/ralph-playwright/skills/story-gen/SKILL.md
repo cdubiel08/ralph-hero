@@ -27,6 +27,35 @@ If a running app URL is available and the user wants stories generated from obse
 
 This produces more accurate stories because the agent observes actual UI elements, form fields, and navigation paths rather than inferring them from a description.
 
+**Auto-feed screenshots into vision sad-paths (when `--vision-sad-paths` is also active):**
+
+When both URL mode (Step 0) and `--vision-sad-paths` (Step 2) are active, the screenshots referenced by `steps[].screenshot` in `.playwright-cli/<session>/journey-trace.yaml` auto-feed the vision step — the user does not need to supply screenshots manually. See Step 2 → "Vision-grounded sad paths" for the full invocation semantics.
+
+**Filter heuristic (deterministic, applied before vision calls to bound cost):**
+
+Apply these rules in order. Each rule is independent; a step matching any rule is included.
+
+1. **Include** any step where `outcome == "fail"` — failures are always interesting for sad-path analysis.
+2. **Include** any step where `action == "navigate"` AND the resolved URL is a first-visit (captures initial-state screenshots of each distinct page).
+3. **Include** any step where `action` is `fill` or `click` AND the `target` string contains any of these keywords (case-insensitive): `form`, `submit`, `login`, `sign`, `search`, `filter`, `cart`, `checkout`, `list`, `table`, `empty`, `error`.
+4. **Exclude** steps where `action == "verify"` (verification steps rarely add new visual state).
+5. **Exclude** steps whose screenshot path does not resolve to a readable PNG on disk (broken references).
+
+**Cap**: the filtered set is capped at **8 screenshots maximum**. If more than 8 match, prioritize in this order: (a) all fail-outcome steps, (b) all first-visit navigates, (c) distribute remaining budget across keyword matches (earliest steps first).
+
+**Overrides:**
+- `--all-screenshots` (or natural-language equivalent): disables the filter AND the 8-cap; feeds every screenshot in the trace to vision.
+- `--screenshots <path1>,<path2>,...`: bypasses the filter entirely and uses the user's explicit list. The manual-path code path from Step 2 remains unchanged.
+
+**Filter worked example** — a 15-step journey trace with: step 0 navigate `/login`, step 3 navigate `/dashboard`, step 5 click `search-filter-button`, step 7 fail submit, step 12 fill `checkout-email`. The filter yields 5 screenshots (fail at 7, first-visit navigates at 0 and 3, keyword matches at 5 and 12). The vision step runs 5 times.
+
+**Graceful-fallback paths:**
+- **Zero usable screenshots** (filter yields none AND no manual paths supplied): log a one-line note ("Skipped vision sad-path inference — no suitable screenshots found") and continue with heuristics-only sad-path generation. The `story-gen` run succeeds.
+- **Broken screenshot reference** (path does not resolve on disk): log a one-line warning ("screenshot not found: <path>, skipping") and continue with the remaining screenshots. If ALL references are broken, fall back to the zero-screenshot case.
+- **Manual-path preservation**: when the user supplies explicit screenshots via `--screenshots`, the filter heuristic is NOT applied; the user's list is used verbatim.
+
+This Step 0 extension is strictly **additive**. The manual-screenshot-path code path documented in Step 2 continues to work unchanged; URL mode simply adds an auto-discovery convenience on top.
+
 ### Step 1: Gather input
 Ask for (or use provided arguments):
 - Feature or page description (minimum 1-2 sentences)
