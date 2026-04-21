@@ -24,7 +24,41 @@ Read the journey trace YAML. Verify it conforms to the journey-trace schema (has
 
 For each step in the trace:
 
-1. **Read the screenshot** (the PNG file at the `screenshot` path) — look for visual anomalies, layout issues, error states
+1. **Read the screenshot** (the PNG file at the `screenshot` path) and perform a **structured visual audit** across the seven categories below. For every finding, report **concrete, observable specifics** (element name, visible text, location on the page) — not vague phrases like "anomaly observed". Use the signal-type hints to map findings into the existing taxonomy in Step 3 (no new types).
+
+   > **Color/contrast note:** Record qualitative observations only (e.g., "body text looks low-contrast against the banner background"). Do NOT compute pixel-level contrast ratios — pixel-computed contrast is handled by the `a11y-scan` skill's contrast check, not here.
+
+   - **Layout integrity** — overlapping elements, clipped content, horizontal overflow, broken z-index stacking (modal behind page, tooltip cut off by container).
+     - Example: *"Price label overlaps the 'Add to cart' button at the right edge of the product card"*
+     - Example: *"Sticky footer covers the bottom row of the product grid"*
+     - Typical signal types: `anomaly`, `ux_issue`
+   - **Typography** — truncation without ellipsis, mixed font faces in a single region, unintended size jumps, broken line-height or kerning.
+     - Example: *"Submit button label truncated to 'Sub...' with no ellipsis glyph"*
+     - Example: *"Headline renders in system serif while surrounding body uses sans-serif"*
+     - Typical signal types: `anomaly`, `ux_issue`
+   - **Imagery** — broken image placeholders (alt-text box, camera icon), missing thumbnails, aspect-ratio squish (portrait photo stretched to landscape), visible pixelation, wrong image for the content.
+     - Example: *"Hero image slot shows the browser's broken-image glyph"*
+     - Example: *"Product thumbnail is vertically squashed to ~40% of its natural aspect ratio"*
+     - Typical signal types: `anomaly`, `error`
+   - **State visibility** — loading spinners lingering while data is clearly present, empty states with no explanatory message, missing feedback after a user action (form submitted with no confirmation), error states styled identically to success, disabled controls that look enabled.
+     - Example: *"Spinner still visible over the results grid after 8 rendered rows appear"*
+     - Example: *"Error banner uses the same green color token as success toasts"*
+     - Typical signal types: `ux_issue`, `error`
+   - **Visual hierarchy** — primary CTA is not visually dominant (outlined while a secondary action is filled), destructive actions styled as primary (red "Delete" presented as the default blue button), multiple competing primary buttons, key status information buried below decorative content.
+     - Example: *"'Cancel subscription' button is the largest filled button on the page"*
+     - Example: *"Two 'Continue' buttons of equal weight appear side by side"*
+     - Typical signal type: `ux_issue`
+   - **Chart & data UIs** — axis labels missing or illegible, legend-to-data mismatch (three series in legend, two in chart), unreadable density (bars overlap, points cluster into a blob), unlabeled units (numbers without `%`, `$`, `ms`, etc.), truncated numeric labels.
+     - Example: *"Y-axis shows values 0–100 with no unit label; table below uses percentages"*
+     - Example: *"Legend lists four regions but the stacked bar chart renders only three colors"*
+     - Typical signal types: `ux_issue` (missing labels, illegible density) or `anomaly` (legend/data mismatch). Until issue #793 lands a `data_interpretation` type, map chart findings into these existing types.
+   - **Viewport / responsive** — unintended horizontal scroll, content clipped at the fold (primary CTA not visible without scrolling on a standard desktop screenshot), navigation collapsed incorrectly, elements escaping their container.
+     - Example: *"Horizontal scrollbar appears on desktop screenshot because the data table extends past the viewport"*
+     - Example: *"Primary 'Checkout' button is below the fold on the 1280×800 default viewport"*
+     - Typical signal types: `anomaly`, `ux_issue`
+
+   **Severity rubric (applies to all visual findings):** `critical` = blocks core functionality (e.g., primary CTA unclickable or off-screen); `high` = major usability or a11y barrier (e.g., critical text truncated, destructive action styled as primary); `medium` = noticeable issue with a workaround (e.g., misaligned labels, minor spacing inconsistency); `low` = cosmetic or best-practice nit.
+
 2. **Read the accessibility snapshot** (the `.md` file at the `snapshot` path) — check element structure, labels, roles, ARIA attributes
 3. **Check console entries** — any errors or warnings indicate issues
 4. **Check the outcome** — failed steps need investigation
