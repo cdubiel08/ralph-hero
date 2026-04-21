@@ -14,17 +14,31 @@ allowed-tools:
 - `playwright-cli` installed globally (see `/ralph-playwright:setup`)
 - Target app running (e.g., `npm run dev` → `http://localhost:3000`)
 
+## Modes
+
+The skill accepts an optional mode flag that controls how `explorer-agent` picks next actions:
+
+- **Default (ref mode)** — Without the flag, explore uses accessibility-snapshot-ref navigation (ref mode). The agent selects next actions from the element refs surfaced by the accessibility tree.
+- **`--vision-first`** — When this flag is present, the agent reasons primarily about the current screenshot to pick the next target (naming it in human-readable form, e.g. "blue primary CTA, top-right"). The accessibility snapshot is still captured for the record but is not consulted for the decision.
+
+The vision-first mode is opt-in and strictly additive; the default path is behaviorally unchanged. See epic context: [#795](https://github.com/cdubiel08/ralph-hero/issues/795).
+
 ## Process
 
 ### Step 1: Execute (freeform)
 
 Generate a session name: `<date>-explore-<slug>` (e.g., `2026-03-21-explore-checkout-flow`)
 
+**Parse mode from arguments**: If the invocation arguments contain `--vision-first`, set `mode: vision-first`; otherwise set `mode: ref` (the agent default — passing the key explicitly keeps the spawn payload self-describing).
+
 Spawn `explorer-agent` with:
 - `url`: The target URL (from arguments or ask)
 - `goal`: Exploration objective (from arguments or ask, e.g., "discover all user flows on the checkout page")
 - `session`: The generated session name
 - `persona`: User role if relevant (optional)
+- `mode`: `ref` (default) or `vision-first` when the `--vision-first` flag was passed
+
+Backward compat: invocations without the flag produce the same spawn payload shape as before plus a `mode: ref` key. The agent treats an omitted `mode` and `mode: ref` identically.
 
 The agent navigates the app via `playwright-cli`, captures screenshots and accessibility snapshots at each step, and writes a journey trace to `.playwright-cli/<session>/journey-trace.yaml`.
 

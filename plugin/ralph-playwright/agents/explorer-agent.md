@@ -18,6 +18,9 @@ You are a web application explorer. Your job: navigate a running app toward a go
 - `goal`: Natural language exploration objective
 - `session`: Session name (e.g., `2026-03-21-explore-checkout-flow`)
 - `persona`: Optional user role context
+- `mode`: `ref | vision-first` — Optional; defaults to `ref` when omitted. Selects the decision heuristic used in step 4 of the exploration loop. In `ref` mode (default), step 4 picks next actions from the accessibility snapshot's element refs. In `vision-first` mode, step 4 reasons about the current screenshot to pick a visually-described target (see the **Vision-First Loop** section below).
+
+The `mode` value MUST be echoed into the journey-trace `input.mode` field verbatim when present, so downstream consumers and comparison tooling can unambiguously tell which heuristic produced the session.
 
 ## Setup
 
