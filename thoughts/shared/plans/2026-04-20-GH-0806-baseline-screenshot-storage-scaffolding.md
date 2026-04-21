@@ -86,13 +86,13 @@ After this atomic merges:
 
 ### Verification
 
-- [ ] `.gitignore` contains `thoughts/local/baselines/`
-- [ ] `plugin/ralph-playwright/scripts/baseline-store.mjs` exports `writeBaseline` and `readBaseline`
-- [ ] `plugin/ralph-playwright/scripts/baseline-store.test.mjs` runs green under `node --test`
-- [ ] Round-trip test passes: write PNG, read PNG, assert byte-identical
-- [ ] Missing-baseline test asserts thrown error message mentions the session slug and step id
-- [ ] Slug-resolution test covers both the date-prefix-stripping case and the bare-slug case
-- [ ] No changes to reflect/SKILL.md, no changes to schemas, no changes to the hook validator, no CLI flags
+- [x] `.gitignore` contains `thoughts/local/baselines/`
+- [x] `plugin/ralph-playwright/scripts/baseline-store.mjs` exports `writeBaseline` and `readBaseline`
+- [x] `plugin/ralph-playwright/scripts/baseline-store.test.mjs` runs green under `node --test`
+- [x] Round-trip test passes: write PNG, read PNG, assert byte-identical
+- [x] Missing-baseline test asserts thrown error message mentions the session slug and step id
+- [x] Slug-resolution test covers both the date-prefix-stripping case and the bare-slug case
+- [x] No changes to reflect/SKILL.md, no changes to schemas, no changes to the hook validator, no CLI flags
 
 ## What We're NOT Doing
 
@@ -130,9 +130,9 @@ Add the `.gitignore` line, write `baseline-store.mjs` with the two exported help
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `.gitignore` contains a new line `thoughts/local/baselines/` placed near the existing `.playwright-cli/` entry (line 22)
-  - [ ] The entry is preceded by a short comment explaining the purpose (e.g., `# Baseline screenshots for semantic diff (local-only, per-developer state)`)
-  - [ ] `git status` run in a repo with a `thoughts/local/baselines/example-slug/00.png` shows no untracked PNG under that path
+  - [x] `.gitignore` contains a new line `thoughts/local/baselines/` placed near the existing `.playwright-cli/` entry (line 22)
+  - [x] The entry is preceded by a short comment explaining the purpose (e.g., `# Baseline screenshots for semantic diff (local-only, per-developer state)`)
+  - [x] `git status` run in a repo with a `thoughts/local/baselines/example-slug/00.png` shows no untracked PNG under that path
 
 #### Task 1.2: Author `baseline-store.mjs` helper
 
@@ -142,21 +142,23 @@ Add the `.gitignore` line, write `baseline-store.mjs` with the two exported help
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] File is ESM (`.mjs`), uses only `node:fs/promises` and `node:path` — no external deps
-  - [ ] Exports `resolveSessionSlug(sessionOrPath)` returning the canonical slug per the resolution rule (strip `YYYY-MM-DD-` prefix if present; else use basename)
-  - [ ] Exports `resolveStepId(stepIdOrIndex)` returning the two-digit string form (e.g., `0 -> "00"`, `12 -> "12"`)
-  - [ ] Exports `getBaselineDir(sessionSlug)` returning the absolute path to `thoughts/local/baselines/<sessionSlug>/` (resolved relative to the repo root or a provided base path)
-  - [ ] Exports `writeBaseline(sessionSlug, stepId, sourcePath)`:
+  - [x] File is ESM (`.mjs`), uses only `node:fs/promises` and `node:path` — no external deps
+  - [x] Exports `resolveSessionSlug(sessionOrPath)` returning the canonical slug per the resolution rule (strip `YYYY-MM-DD-` prefix if present; else use basename)
+  - [x] Exports `resolveStepId(stepIdOrIndex)` returning the two-digit string form (e.g., `0 -> "00"`, `12 -> "12"`)
+  - [x] Exports `getBaselineDir(sessionSlug)` returning the absolute path to `thoughts/local/baselines/<sessionSlug>/` (resolved relative to the repo root or a provided base path)
+  - [x] Exports `writeBaseline({sessionSlug, stepId, buffer})` and `writeBaseline({sessionSlug, stepId, sourcePath})`:
+    - DRIFT: Signature moved to an object-arg form (vs. positional `(sessionSlug, stepId, sourcePath)` in original plan) to align with the orchestrator prompt's locked signature `writeBaseline({sessionSlug, stepId, buffer}) → path`. The object form accepts EITHER `buffer` (raw PNG bytes, used by #816 reflect-wiring) OR `sourcePath` (absolute PNG path, used by manual invocations / preserves original plan behavior). Exactly one must be provided.
     - Creates the baseline dir if missing (`fs.mkdir` with `recursive: true`)
-    - Copies `sourcePath` into `getBaselineDir(sessionSlug)/<stepId>.png` using `fs.copyFile`
+    - Writes bytes or copies from `sourcePath` into `getBaselineDir(sessionSlug)/<stepId>.png`
     - Returns the destination absolute path
-    - Throws a clear error if `sourcePath` does not exist or is not a `.png`
-  - [ ] Exports `readBaseline(sessionSlug, stepId)`:
+    - Throws a clear error if `sourcePath` is relative or is not a `.png`, or if `buffer` is not a Buffer
+  - [x] Exports `readBaseline({sessionSlug, stepId})`:
+    - DRIFT: Signature is object-arg and returns a `Buffer` (vs. positional args returning a path in original plan) to align with the orchestrator prompt's locked signature `readBaseline({sessionSlug, stepId}) → Buffer`. Callers who need just the path can use the pure `getBaselinePath(sessionSlug, stepId)` export (does not touch disk; does not throw on absence).
     - Computes `getBaselineDir(sessionSlug)/<stepId>.png`
-    - If the file exists, returns its absolute path (callers decide whether to `fs.readFile` or pass path to model)
+    - If the file exists, returns its contents as a Buffer
     - If the file does NOT exist, throws `BaselineNotFoundError` (an `Error` subclass with a `.code = 'BASELINE_NOT_FOUND'` property) whose message includes the session slug, step id, and expected path
-  - [ ] All exports documented with short JSDoc blocks citing the parent atomic and the path-convention contract
-  - [ ] No I/O outside the expected paths — no environment-variable reads, no config files
+  - [x] All exports documented with short JSDoc blocks citing the parent atomic and the path-convention contract
+  - [x] No I/O outside the expected paths — no environment-variable reads, no config files
 
 #### Task 1.3: Test suite `baseline-store.test.mjs`
 
@@ -166,24 +168,24 @@ Add the `.gitignore` line, write `baseline-store.mjs` with the two exported help
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Uses `node:test` (`test`, `describe`) + `node:assert/strict` — same pattern as `annotate.test.mjs`
-  - [ ] Test `resolveSessionSlug('2026-04-20-explore-checkout')` returns `explore-checkout`
-  - [ ] Test `resolveSessionSlug('explore-checkout')` returns `explore-checkout`
-  - [ ] Test `resolveSessionSlug('/foo/bar/2026-04-20-explore-checkout')` returns `explore-checkout`
-  - [ ] Test `resolveStepId(0)` returns `"00"`, `resolveStepId(12)` returns `"12"`, `resolveStepId("05")` returns `"05"` (already-formatted strings pass through)
-  - [ ] Test `writeBaseline` + `readBaseline` round-trip: write a small fixture PNG (synthetically produced via the canonical 1x1 PNG byte sequence used in `annotate.test.mjs` if applicable, or a fixture file committed under `plugin/ralph-playwright/scripts/__fixtures__/`), read it back, assert bytes match
-  - [ ] Test `readBaseline` on an absent file throws `BaselineNotFoundError` with `err.code === 'BASELINE_NOT_FOUND'`; message mentions the session slug AND the step id
-  - [ ] Tests use `os.tmpdir()` or `fs.mkdtemp` for temp roots so they do not pollute `thoughts/local/baselines/`
-  - [ ] Test cleanup (afterEach or equivalent) removes tmp dirs
-  - [ ] `node --test plugin/ralph-playwright/scripts/baseline-store.test.mjs` exits 0
+  - [x] Uses `node:test` (`test`, `describe`) + `node:assert/strict` — same pattern as `annotate.test.mjs`
+  - [x] Test `resolveSessionSlug('2026-04-20-explore-checkout')` returns `explore-checkout`
+  - [x] Test `resolveSessionSlug('explore-checkout')` returns `explore-checkout`
+  - [x] Test `resolveSessionSlug('/foo/bar/2026-04-20-explore-checkout')` returns `explore-checkout`
+  - [x] Test `resolveStepId(0)` returns `"00"`, `resolveStepId(12)` returns `"12"`, `resolveStepId("05")` returns `"05"` (already-formatted strings pass through)
+  - [x] Test `writeBaseline` + `readBaseline` round-trip: write a small fixture PNG (synthetically produced via the canonical 1x1 PNG byte sequence used in `annotate.test.mjs` if applicable, or a fixture file committed under `plugin/ralph-playwright/scripts/__fixtures__/`), read it back, assert bytes match
+  - [x] Test `readBaseline` on an absent file throws `BaselineNotFoundError` with `err.code === 'BASELINE_NOT_FOUND'`; message mentions the session slug AND the step id
+  - [x] Tests use `os.tmpdir()` or `fs.mkdtemp` for temp roots so they do not pollute `thoughts/local/baselines/`
+  - [x] Test cleanup (afterEach or equivalent) removes tmp dirs
+  - [x] `node --test plugin/ralph-playwright/scripts/baseline-store.test.mjs` exits 0
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `node --test plugin/ralph-playwright/scripts/baseline-store.test.mjs` — exits 0, all tests green
-- [ ] `git check-ignore thoughts/local/baselines/example/00.png` — exits 0 (path is ignored)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check; MCP server unchanged but CI runs it)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (MCP suite continues green)
+- [x] `node --test plugin/ralph-playwright/scripts/baseline-store.test.mjs` — exits 0, all tests green (39/39 pass across 8 suites)
+- [x] `git check-ignore thoughts/local/baselines/example/00.png` — exits 0 (path is ignored)
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check; MCP server unchanged but CI runs it)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (MCP suite continues green: 1019/1019 pass)
 
 #### Manual Verification:
 - [ ] Reviewer confirms `baseline-store.mjs` depends only on `node:fs/promises` and `node:path` (no external imports)
