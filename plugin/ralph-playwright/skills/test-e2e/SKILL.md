@@ -35,10 +35,15 @@ Optional filters (from arguments):
 For each story file, spawn a `story-runner-agent` with:
 - The story object (name, type, url, persona, workflow)
 - Session name: `<date>-test-e2e-<story-kebab>`
+- Optional: `high_res_steps` — list of step indices that require high-resolution capture
 
 Spawn agents in parallel — each gets its own named playwright-cli session (fully isolated).
 
 Each agent writes a journey trace to `.playwright-cli/<session>/journey-trace.yaml`.
+
+**Optional: high-resolution on critical assertion steps.** Story YAML files MAY declare `high_res_steps` when specific verification steps require reading fine detail from the rendered page — e.g., "verify the subtotal on the receipt is $42.17", "verify the chart legend shows April-2026", "verify the invoice line-items match the order". Default is OFF — omit `high_res_steps` entirely for stories that just need default-resolution captures. The story-runner-agent accepts this as an agent-level input (story workflow is free-text today, so it cannot be declared per-step inside the YAML). See [browser/SKILL.md § High-resolution captures](../browser/SKILL.md#high-resolution-captures) for cost and pairing guidance.
+
+This feature does NOT auto-recapture failed steps at high-res. If a verification step fails at default resolution and you want to investigate with high-res, re-run the story manually with `high_res_steps` set, or use `/ralph-playwright:capture` on the failing URL. Automatic failure-driven escalation is tracked separately (#787).
 
 ### Step 3: Reflect (aggregate)
 
@@ -64,9 +69,22 @@ Based on the signal report:
    - Body includes step details, expected vs actual, console errors
    - Tags from the story's tags
 
-2. **Promote failure screenshots** to `thoughts/local/assets/<date>-test-e2e/`
+2. **Render annotated siblings for failure screenshots that carry bboxes.** If the signal's `evidence.bboxes[]` is populated, invoke the zero-dep renderer to emit `<stem>.annotated.png` next to the original:
+   ```bash
+   yq '[.signals[].evidence.bboxes[]? | select(.screenshot == "<screenshot>")]' \
+     ".playwright-cli/<date>-test-e2e/signal-report.yaml" -o=json > "/tmp/<screenshot>.bboxes.json"
 
-3. Write the action log to `.playwright-cli/<date>-test-e2e/action-log.yaml`
+   if [[ "$(jq 'length' "/tmp/<screenshot>.bboxes.json")" -gt 0 ]]; then
+     node "${CLAUDE_PLUGIN_ROOT}/scripts/annotate.mjs" \
+       --input ".playwright-cli/<session>/<screenshot>" \
+       --bboxes "/tmp/<screenshot>.bboxes.json"
+   fi
+   ```
+   Signals without `bboxes` produce no annotated sibling (no regression on the existing flow).
+
+3. **Promote failure screenshots** to `thoughts/local/assets/<date>-test-e2e/`. If an annotated sibling was produced in step 2, copy it alongside the original with matching stem.
+
+4. Write the action log to `.playwright-cli/<date>-test-e2e/action-log.yaml`. Emit ONE `screenshot_promoted` entry per file — so a failure screenshot with bboxes produces two entries (original + annotated).
 
 ### Step 5: Report
 

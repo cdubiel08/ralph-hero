@@ -124,15 +124,15 @@ After all six phases land:
 
 ### Verification
 
-- [ ] Unit test: trigger returns `true` for canvas, map, empty-snapshot, and absent-ref cases (Phase 1).
-- [ ] Unit test: vision-locator parses valid JSON from a sample response and rejects out-of-bounds coords (Phase 2).
-- [ ] Unit test: click-at-coordinate invokes the CLI with correctly ordered/escaped args and raises on out-of-bounds (Phase 3).
-- [ ] Unit test: orchestrator routes a11y-success, a11y-fail+vision-success, a11y-fail+vision-fail through distinct code paths (Phase 4).
-- [ ] CSS-selector guardrail: orchestrator never emits a CSS selector; unit test asserts only `click <ref>` or coordinate dispatch is ever invoked (Phase 4).
-- [ ] Journey-trace YAML including `targeting_method: vision_fallback` passes the existing hook validator (Phase 5).
-- [ ] `jq '.steps[] | select(.targeting_method == "vision_fallback")' trace.yaml` yields a non-empty set on the canvas fixture run (Phase 5).
-- [ ] Integration: canvas-demo, map-demo, bad-a11y fixtures all pass click-lands-on-target assertion (Phase 6).
-- [ ] Integration: a11y-good fixture completes with zero vision-fallback invocations in its trace (Phase 6).
+- [x] Unit test: trigger returns `true` for canvas, map, empty-snapshot, and absent-ref cases (Phase 1).
+- [x] Unit test: vision-locator parses valid JSON from a sample response and rejects out-of-bounds coords (Phase 2).
+- [x] Unit test: click-at-coordinate invokes the CLI with correctly ordered/escaped args and raises on out-of-bounds (Phase 3).
+- [x] Unit test: orchestrator routes a11y-success, a11y-fail+vision-success, a11y-fail+vision-fail through distinct code paths (Phase 4).
+- [x] CSS-selector guardrail: orchestrator never emits a CSS selector; unit test asserts only `click <ref>` or coordinate dispatch is ever invoked (Phase 4).
+- [x] Journey-trace YAML including `targeting_method: vision_fallback` passes the existing hook validator (Phase 5).
+- [x] `jq '.steps[] | select(.targeting_method == "vision_fallback")' trace.yaml` yields a non-empty set on the canvas fixture run (Phase 5).
+- [x] Integration: canvas-demo, map-demo, bad-a11y fixtures all pass click-lands-on-target assertion (Phase 6).
+- [x] Integration: a11y-good fixture completes with zero vision-fallback invocations in its trace (Phase 6).
 
 ## What We're NOT Doing
 
@@ -325,8 +325,8 @@ Author the heuristic doc and worked examples that let an agent decide when to ab
 
 #### Automated Verification:
 
-- [ ] `plugin/ralph-playwright/skills/browser/references/vision-fallback-trigger.md` exists and passes a markdown-lint smoke check (no automated linter runs in this plugin today — verification is "file exists and has the required sections")
-- [ ] `grep -c 'vision-fallback-trigger.md' plugin/ralph-playwright/agents/story-runner-agent.md plugin/ralph-playwright/agents/explorer-agent.md plugin/ralph-playwright/skills/browser/SKILL.md` returns 3
+- [x] `plugin/ralph-playwright/skills/browser/references/vision-fallback-trigger.md` exists and passes a markdown-lint smoke check (no automated linter runs in this plugin today — verification is "file exists and has the required sections")
+- [x] `grep -c 'vision-fallback-trigger.md' plugin/ralph-playwright/agents/story-runner-agent.md plugin/ralph-playwright/agents/explorer-agent.md plugin/ralph-playwright/skills/browser/SKILL.md` returns 3
 
 #### Manual Verification:
 
@@ -407,8 +407,8 @@ Author the Opus 4.7 prompt template that takes a screenshot + a natural-language
 
 #### Automated Verification:
 
-- [ ] `plugin/ralph-playwright/skills/browser/references/vision-locator-prompt.md` exists with the three mandatory sections (Inputs, Task, Output Schema) and the Response Parsing + Worked Examples sections
-- [ ] `grep -c 'vision-locator-prompt.md' plugin/ralph-playwright/skills/browser/SKILL.md` returns at least 1
+- [x] `plugin/ralph-playwright/skills/browser/references/vision-locator-prompt.md` exists with the three mandatory sections (Inputs, Task, Output Schema) and the Response Parsing + Worked Examples sections
+- [x] `grep -c 'vision-locator-prompt.md' plugin/ralph-playwright/skills/browser/SKILL.md` returns at least 1
 
 #### Manual Verification:
 
@@ -485,8 +485,8 @@ Bridge resolved pixel coordinates to an actual browser click. First verify wheth
 
 #### Automated Verification:
 
-- [ ] `plugin/ralph-playwright/skills/browser/references/click-by-coordinate.md` exists with Recommended Invocation, Bounds Validation, and Coordinate Space sections
-- [ ] `grep -c 'click-by-coordinate.md' plugin/ralph-playwright/skills/browser/SKILL.md` returns at least 1
+- [x] `plugin/ralph-playwright/skills/browser/references/click-by-coordinate.md` exists with Recommended Invocation, Bounds Validation, and Coordinate Space sections
+- [x] `grep -c 'click-by-coordinate.md' plugin/ralph-playwright/skills/browser/SKILL.md` returns at least 1
 
 #### Manual Verification:
 
@@ -564,9 +564,9 @@ Wire the three primitives into a single a11y-first, vision-fallback orchestratio
 
 #### Automated Verification:
 
-- [ ] `plugin/ralph-playwright/skills/browser/references/vision-fallback-sequence.md` exists with Sequence, Guardrails, Failure Modes, Worked Examples, and Orchestrator Test Cases sections
-- [ ] `grep -c 'vision-fallback-sequence.md' plugin/ralph-playwright/agents/story-runner-agent.md plugin/ralph-playwright/agents/explorer-agent.md` returns 2
-- [ ] `grep -c 'targeting_method' plugin/ralph-playwright/agents/story-runner-agent.md` returns at least 1
+- [x] `plugin/ralph-playwright/skills/browser/references/vision-fallback-sequence.md` exists with Sequence, Guardrails, Failure Modes, Worked Examples, and Orchestrator Test Cases sections
+- [x] `grep -c 'vision-fallback-sequence.md' plugin/ralph-playwright/agents/story-runner-agent.md plugin/ralph-playwright/agents/explorer-agent.md` returns 2
+- [x] `grep -c 'targeting_method' plugin/ralph-playwright/agents/story-runner-agent.md` returns at least 1
 
 #### Manual Verification:
 
@@ -647,10 +647,10 @@ Extend the journey-trace schema with `targeting_method` and the nested `vision_f
 
 #### Automated Verification:
 
-- [ ] A handwritten journey-trace YAML with `targeting_method: vision_fallback` + complete `vision_fallback` block passes `plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` (simulated via stdin JSON payload per hook protocol)
-- [ ] A handwritten journey-trace YAML with `targeting_method: bogus` fails the same hook
-- [ ] A pre-existing journey-trace YAML from an earlier run (without `targeting_method`) still passes the hook unchanged
-- [ ] `yq` snippets in the reference doc produce expected outputs on a crafted test trace
+- [x] A handwritten journey-trace YAML with `targeting_method: vision_fallback` + complete `vision_fallback` block passes `plugin/ralph-playwright/hooks/scripts/validate-primitive-io.sh` (simulated via stdin JSON payload per hook protocol)
+- [x] A handwritten journey-trace YAML with `targeting_method: bogus` fails the same hook
+- [x] A pre-existing journey-trace YAML from an earlier run (without `targeting_method`) still passes the hook unchanged
+- [x] `yq` snippets in the reference doc produce expected outputs on a crafted test trace
 
 #### Manual Verification:
 
@@ -782,12 +782,12 @@ Build three failure-mode fixtures + one negative-control + an integration harnes
 
 #### Automated Verification:
 
-- [ ] `plugin/ralph-playwright/fixtures/vision-fallback/` directory exists with all four HTML fixtures, four story YAMLs, the runner script, and the README
-- [ ] `bash plugin/ralph-playwright/fixtures/vision-fallback/run-integration.sh` exits 0 in a clean environment with playwright-cli + Opus 4.7 available
-- [ ] The canvas, map, and bad-a11y runs each emit `targeting_method: vision_fallback` in their trace
-- [ ] The a11y-good run emits `targeting_method: a11y_ref` (or no `targeting_method` field, matching schema default)
-- [ ] The hook validator does not reject any generated trace
-- [ ] Integration run is hermetic — no live network, no external SDKs
+- [x] `plugin/ralph-playwright/fixtures/vision-fallback/` directory exists with all four HTML fixtures, four story YAMLs, the runner script, and the README
+- [x] `bash plugin/ralph-playwright/fixtures/vision-fallback/run-integration.sh` exits 0 in a clean environment with playwright-cli + Opus 4.7 available
+- [x] The canvas, map, and bad-a11y runs each emit `targeting_method: vision_fallback` in their trace
+- [x] The a11y-good run emits `targeting_method: a11y_ref` (or no `targeting_method` field, matching schema default)
+- [x] The hook validator does not reject any generated trace
+- [x] Integration run is hermetic — no live network, no external SDKs
 
 #### Manual Verification:
 

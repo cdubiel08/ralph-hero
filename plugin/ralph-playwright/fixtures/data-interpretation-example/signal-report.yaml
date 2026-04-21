@@ -1,0 +1,27 @@
+trace_id: "11111111-2222-4333-8444-555555555555"
+timestamp: "2026-04-20T12:00:00Z"
+signals:
+  - type: data_interpretation
+    severity: high
+    title: "Revenue chart Y-axis missing units"
+    description: "Dashboard revenue chart on step 3 has numeric values on the Y-axis but no unit label (dollars? thousands? millions?). Readers cannot interpret magnitudes from the chart alone."
+    evidence:
+      steps: [3]
+      screenshots: ["03_dashboard.png"]
+    tags: ["chart", "dashboard", "units", "axis-label"]
+  - type: data_interpretation
+    severity: medium
+    title: "Legend colors do not match plotted series"
+    description: "Time-series chart legend lists three products (A, B, C) in blue/orange/green, but the plotted lines use blue/green/orange — legend-to-data mismatch makes series identification error-prone."
+    evidence:
+      steps: [3]
+      screenshots: ["03_dashboard.png"]
+    tags: ["chart", "legend", "color-mapping"]
+summary:
+  total_signals: 2
+  by_severity:
+    critical: 0
+    high: 1
+    medium: 1
+    low: 0
+  recommendation: "Add explicit unit labels to chart axes and verify legend color mapping matches plotted series. Both issues are chart-comprehension blockers for decision-making dashboards."
