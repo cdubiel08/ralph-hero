@@ -1,6 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, basename } from "node:path";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
@@ -10,7 +11,7 @@ import { findMarkdownFiles } from "./file-scanner.js";
 import { generateIndexes } from "./generate-indexes.js";
 import { loadConfig, type KnowledgeConfig } from "./config.js";
 import { loadIgnoreForRoot } from "./ignore.js";
-
+import { createLlmClient, type LlmClient } from "./llm-client.js";
 export async function reindex(
   dirs: string[],
   dbPath: string,
@@ -24,6 +25,28 @@ export async function reindex(
   fts.ensureTable();
   const vec = new VectorSearch(db);
   vec.createIndex();
+
+  // Phase 6 (GH-767): Contextual Retrieval wiring.
+  // `RALPH_CONTEXTUAL_RETRIEVAL` gates the whole feature. Default on; treat
+  // literal "0" / "false" as disabled. When enabled we probe the endpoint once
+  // and fail open on unreachable — all downstream chunks then embed without a
+  // context prefix and we log a single warning so the operator knows why.
+  const flagRaw = process.env.RALPH_CONTEXTUAL_RETRIEVAL;
+  const contextualEnabled = flagRaw !== "0" && flagRaw !== "false";
+  let llm: LlmClient | undefined;
+  if (contextualEnabled) {
+    const llmUrl = process.env.RALPH_LLM_URL ?? "http://localhost:8000";
+    const candidate = createLlmClient();
+    const llmReady = await candidate.available();
+    if (llmReady) {
+      llm = candidate;
+    } else {
+      console.warn(
+        `LLM endpoint unreachable at ${llmUrl}, contextual retrieval disabled for this run`
+      );
+      llm = undefined;
+    }
+  }
 
   // Schema version check — force full re-embed when embedding algorithm changes
   const SCHEMA_VERSION = "3";
@@ -74,6 +97,7 @@ export async function reindex(
   const parsedDocs: ParsedDocument[] = [];
   let indexed = 0;
   let skipped = 0;
+  let totalChunks = 0;
   for (const filePath of filesOnDisk) {
     const absPath = resolve(filePath);
     const mtime = Math.trunc(statSync(absPath).mtimeMs);
@@ -143,6 +167,35 @@ export async function reindex(
       db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
     }
 
+    // Content-hash cache for Contextual Retrieval prefixes. The outer mtime
+    // skip at line ~75 already short-circuits the overwhelming majority of
+    // unchanged docs (no embedder or LLM calls). This inner hash check is
+    // specifically for the rare case where mtime differs but content is
+    // byte-identical (e.g., git checkout touching the file). When hash matches
+    // AND we have a live LLM AND chunks already exist, we reuse the prior
+    // context_prefix map and skip the per-chunk LLM round-trips.
+    //
+    // Simpler alternative considered: rely entirely on mtime. Rejected because
+    // the feature spec (Task 6.4 acceptance) explicitly requires re-running
+    // reindex without content changes to reuse existing context_prefix.
+    const contentHash = createHash("sha256").update(parsed.content).digest("hex").slice(0, 16);
+    const hashKey = `content_hash:${parsed.id}`;
+    const priorHash = db.getMeta(hashKey);
+
+    let cachedPrefixes: Map<number, string> | undefined;
+    if (llm && priorHash === contentHash) {
+      const priorChunks = db.db
+        .prepare(
+          "SELECT chunk_index, context_prefix FROM chunks WHERE document_id = ? ORDER BY chunk_index"
+        )
+        .all(parsed.id) as Array<{ chunk_index: number; context_prefix: string }>;
+      if (priorChunks.length > 0) {
+        cachedPrefixes = new Map(
+          priorChunks.map(r => [r.chunk_index, r.context_prefix ?? ""] as [number, string])
+        );
+      }
+    }
+
     // Chunk-aware embedding: emit one embedding per chunk, persist to both
     // the `chunks` table and the `documents_vec` virtual table with chunk ids
     // of the form `${doc.id}#c${index}`.
@@ -156,9 +209,12 @@ export async function reindex(
     vec.deleteEmbedding(parsed.id);
 
     try {
-      const chunks = await embedDocument(parsed.title, parsed.tags, parsed.content);
+      const chunks = await embedDocument(parsed.title, parsed.tags, parsed.content, {
+        llm,
+        cachedPrefixes,
+      });
       const insertChunk = db.db.prepare(
-        "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end, context_prefix) VALUES (?, ?, ?, ?, ?, ?, ?)"
       );
       for (const chunk of chunks) {
         const chunkId = `${parsed.id}#c${chunk.index}`;
@@ -169,9 +225,16 @@ export async function reindex(
           chunk.content,
           chunk.charStart,
           chunk.charEnd,
+          chunk.contextPrefix ?? "",
         );
         vec.upsertEmbedding(chunkId, chunk.embedding);
+        totalChunks++;
+        if (totalChunks % 50 === 0) {
+          console.log(`  ${totalChunks} chunks embedded`);
+        }
       }
+      // Record the content hash for the next reindex cache check.
+      db.setMeta(hashKey, contentHash);
     } catch (e) {
       console.warn(`Failed to embed ${id}: ${(e as Error).message}`);
     }

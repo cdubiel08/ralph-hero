@@ -15,6 +15,14 @@ vi.mock("@huggingface/transformers", () => {
 });
 
 import { prepareTextForEmbedding, embedDocument } from "../embedder.js";
+import type { LlmClient } from "../llm-client.js";
+
+function makeMockLlm(contextualize: LlmClient["contextualize"]): LlmClient {
+  return {
+    available: vi.fn(async () => true),
+    contextualize: vi.fn(contextualize),
+  };
+}
 
 describe("prepareTextForEmbedding", () => {
   it("includes title, tags, and first paragraph", () => {
@@ -195,5 +203,122 @@ describe("embedDocument", () => {
     });
     // With chunkSize=100 over 500 chars, we expect multiple chunks.
     expect(result.length).toBeGreaterThan(1);
+  });
+
+  // Phase 6 (GH-767): Contextual Retrieval integration.
+  describe("contextual retrieval", () => {
+    it("calls llm.contextualize once per chunk when llm is provided", async () => {
+      const content = "A".repeat(500);
+      const mockLlm = makeMockLlm(async () => "CTX");
+      const result = await embedDocument("T", [], content, {
+        llm: mockLlm,
+        chunkSize: 100,
+        chunkOverlap: 10,
+      });
+      expect(result.length).toBeGreaterThan(1);
+      expect(mockLlm.contextualize).toHaveBeenCalledTimes(result.length);
+    });
+
+    it("stores non-empty contextPrefix on every returned chunk", async () => {
+      const mockLlm = makeMockLlm(async () => "THIS IS CONTEXT");
+      const result = await embedDocument("Title", ["tag"], "body text", { llm: mockLlm });
+      expect(result).toHaveLength(1);
+      expect(result[0]!.contextPrefix).toBe("THIS IS CONTEXT");
+      // Embed text prepends contextPrefix ahead of title/tags/content.
+      expect(embedCalls[0]).toBe("THIS IS CONTEXT\nTitle\ntag\nbody text");
+    });
+
+    it("passes the full document (not the chunk) as the first contextualize arg", async () => {
+      const longContent = "A".repeat(500);
+      const mockLlm = makeMockLlm(async () => "CTX");
+      await embedDocument("T", [], longContent, {
+        llm: mockLlm,
+        chunkSize: 100,
+        chunkOverlap: 10,
+      });
+      const calls = (mockLlm.contextualize as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.length).toBeGreaterThan(1);
+      for (const [fullDoc] of calls) {
+        expect(fullDoc).toBe(longContent);
+      }
+    });
+
+    it("fail-open (empty string) yields contextPrefix: '' and omits leading blank line", async () => {
+      const mockLlm = makeMockLlm(async () => "");
+      const result = await embedDocument("Title", ["tag"], "body text", { llm: mockLlm });
+      expect(result[0]!.contextPrefix).toBe("");
+      // No leading blank line from an empty contextPrefix — falls back to the
+      // no-context embed shape.
+      expect(embedCalls[0]).toBe("Title\ntag\nbody text");
+      expect(embedCalls[0]!.startsWith("\n")).toBe(false);
+    });
+
+    it("uses cachedPrefixes entry for a chunk and skips llm.contextualize for that index", async () => {
+      const content = "A".repeat(500);
+      const mockLlm = makeMockLlm(async () => "LIVE CTX");
+      // First run to discover the chunk layout.
+      const baseline = await embedDocument("T", [], content, {
+        llm: mockLlm,
+        chunkSize: 100,
+        chunkOverlap: 10,
+      });
+      const chunkCount = baseline.length;
+      expect(chunkCount).toBeGreaterThan(1);
+
+      (mockLlm.contextualize as ReturnType<typeof vi.fn>).mockClear();
+      embedCalls.length = 0;
+
+      // Cache all but the last chunk index.
+      const cached = new Map<number, string>();
+      for (let i = 0; i < chunkCount - 1; i++) {
+        cached.set(i, `CACHED-${i}`);
+      }
+
+      const result = await embedDocument("T", [], content, {
+        llm: mockLlm,
+        cachedPrefixes: cached,
+        chunkSize: 100,
+        chunkOverlap: 10,
+      });
+
+      expect(result).toHaveLength(chunkCount);
+      // Only the last (uncached) chunk triggered a live LLM call.
+      expect(mockLlm.contextualize).toHaveBeenCalledTimes(1);
+      // Cached chunks preserve the cached prefix verbatim.
+      for (let i = 0; i < chunkCount - 1; i++) {
+        expect(result[i]!.contextPrefix).toBe(`CACHED-${i}`);
+      }
+      expect(result[chunkCount - 1]!.contextPrefix).toBe("LIVE CTX");
+    });
+
+    it("with no llm, contextPrefix is '' on every chunk and no LLM calls occur", async () => {
+      const content = "A".repeat(500);
+      const mockLlm = makeMockLlm(async () => "SHOULD NOT CALL");
+      // Note: do NOT pass `llm` into opts — this is the flag-off path.
+      const result = await embedDocument("T", [], content, {
+        chunkSize: 100,
+        chunkOverlap: 10,
+      });
+      expect(result.length).toBeGreaterThan(1);
+      expect(mockLlm.contextualize).not.toHaveBeenCalled();
+      for (const chunk of result) {
+        expect(chunk.contextPrefix).toBe("");
+      }
+      // Embed text uses the no-context shape.
+      expect(embedCalls[0]!.startsWith("T\n")).toBe(true);
+    });
+
+    it("cachedPrefixes without llm has no effect (no LLM, caching is moot)", async () => {
+      const content = "short content";
+      const mockLlm = makeMockLlm(async () => "LIVE");
+      const cached = new Map<number, string>([[0, "CACHED"]]);
+      const result = await embedDocument("T", [], content, {
+        cachedPrefixes: cached,
+      });
+      // Without llm, no contextualize calls happen and no cached prefix is applied
+      // (since caching is only a fast-path on the LLM branch).
+      expect(mockLlm.contextualize).not.toHaveBeenCalled();
+      expect(result[0]!.contextPrefix).toBe("");
+    });
   });
 });

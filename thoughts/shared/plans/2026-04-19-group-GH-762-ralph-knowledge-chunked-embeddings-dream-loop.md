@@ -595,8 +595,8 @@ Integrate LLM client into chunk embedding flow. Per chunk: generate context via 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test` — embedder + reindex + full suite pass
+- [x] `npm run build` passes
+- [x] `npm test` — embedder + reindex + full suite pass
 
 #### Manual Verification:
 - [ ] With gemma-lab running, reindex of a 10-doc fixture produces non-empty `context_prefix` on every chunk (verify via `sqlite3 ... "SELECT context_prefix FROM chunks LIMIT 5"`)
