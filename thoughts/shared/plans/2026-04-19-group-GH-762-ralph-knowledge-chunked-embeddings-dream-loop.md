@@ -286,10 +286,10 @@ Add `embedDocument()` that emits one embedding per chunk; remove the 500-char sl
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `MAX_CHARS = 500` constant at [embedder.ts:7](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/embedder.ts#L7) removed
-  - [ ] `.slice(0, MAX_CHARS)` at [embedder.ts:24](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/embedder.ts#L24) removed; `embed()` passes text directly (transformer's own 512-token window handles overflow)
-  - [ ] New exported interface `DocumentChunk extends Chunk { embedding: Float32Array; contextPrefix?: string }` — imports `Chunk` from `./chunker.js`
-  - [ ] Existing `prepareTextForEmbedding()` at [embedder.ts:32-43](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/embedder.ts#L32-L43) kept for back-compat (unused in new path, still exported)
+  - [x] `MAX_CHARS = 500` constant at [embedder.ts:7](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/embedder.ts#L7) removed
+  - [x] `.slice(0, MAX_CHARS)` at [embedder.ts:24](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/embedder.ts#L24) removed; `embed()` passes text directly (transformer's own 512-token window handles overflow)
+  - [x] New exported interface `DocumentChunk extends Chunk { embedding: Float32Array; contextPrefix?: string }` — imports `Chunk` from `./chunker.js`
+  - [x] Existing `prepareTextForEmbedding()` at [embedder.ts:32-43](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/embedder.ts#L32-L43) kept for back-compat (unused in new path, still exported)
 
 #### Task 3.2: Implement embedDocument()
 - **files**: `plugin/ralph-knowledge/src/embedder.ts` (modify)
@@ -297,11 +297,11 @@ Add `embedDocument()` that emits one embedding per chunk; remove the 500-char sl
 - **complexity**: medium
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] Signature: `export async function embedDocument(title: string, tags: string[], content: string, opts?: ChunkerOptions): Promise<DocumentChunk[]>`
-  - [ ] Calls `chunkText(content, opts)` to get chunks
-  - [ ] For each chunk, embeds `${title}\n${tagLine}\n${chunk.content}` where `tagLine = tags.join(", ")` (matches existing `prepareTextForEmbedding` shape)
-  - [ ] Returns array of `DocumentChunk` with `{ index, content, charStart, charEnd, embedding }`
-  - [ ] Short document (< chunkSize) yields exactly one chunk
+  - [x] Signature: `export async function embedDocument(title: string, tags: string[], content: string, opts?: ChunkerOptions): Promise<DocumentChunk[]>`
+  - [x] Calls `chunkText(content, opts)` to get chunks
+  - [x] For each chunk, embeds `${title}\n${tagLine}\n${chunk.content}` where `tagLine = tags.join(", ")` (matches existing `prepareTextForEmbedding` shape)
+  - [x] Returns array of `DocumentChunk` with `{ index, content, charStart, charEnd, embedding }`
+  - [x] Short document (< chunkSize) yields exactly one chunk
 
 #### Task 3.3: Test embedder chunk generation
 - **files**: `plugin/ralph-knowledge/src/__tests__/embedder.test.ts` (modify)
@@ -309,10 +309,10 @@ Add `embedDocument()` that emits one embedding per chunk; remove the 500-char sl
 - **complexity**: medium
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] Existing tests for `embed()` still pass with slice removed
-  - [ ] New test: `embedDocument("Title", ["tag"], "short content")` returns array of length 1 with non-null embedding
-  - [ ] New test: `embedDocument("Title", [], longContent)` where longContent is 8K chars returns array with length >= 4
-  - [ ] New test: embedding is a `Float32Array` of length 384 (assert `emb.length === 384`)
+  - [x] Existing tests for `embed()` still pass with slice removed
+  - [x] New test: `embedDocument("Title", ["tag"], "short content")` returns array of length 1 with non-null embedding
+  - [x] New test: `embedDocument("Title", [], longContent)` where longContent is 8K chars returns array with length >= 4
+  - [x] New test: embedding is a `Float32Array` of length 384 (assert `emb.length === 384`)
 
 #### Task 3.4: Wire embedDocument into reindex with chunks persistence
 - **files**: `plugin/ralph-knowledge/src/reindex.ts` (modify)
@@ -320,15 +320,15 @@ Add `embedDocument()` that emits one embedding per chunk; remove the 500-char sl
 - **complexity**: high
 - **depends_on**: [3.1, 3.2]
 - **acceptance**:
-  - [ ] Import updated: `import { embedDocument } from "./embedder.js"` added; `import { prepareTextForEmbedding }` removed (no longer used)
-  - [ ] At the current embed block [reindex.ts:133-139](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L133-L139), replace the single `embed(text)` + `vec.upsertEmbedding(parsed.id, embedding)` with:
+  - [x] Import updated: `import { embedDocument } from "./embedder.js"` added; `import { prepareTextForEmbedding }` removed (no longer used)
+  - [x] At the current embed block [reindex.ts:133-139](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L133-L139), replace the single `embed(text)` + `vec.upsertEmbedding(parsed.id, embedding)` with:
     - `db.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(parsed.id)`
     - `db.db.prepare('DELETE FROM documents_vec WHERE id GLOB ?').run(parsed.id + '#c%')`
     - loop over `await embedDocument(parsed.title, parsed.tags, parsed.content)`:
       - Insert chunk row: `INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?,?,?,?,?,?)` with id = `${parsed.id}#c${chunk.index}`
       - Insert vec row via `vec.upsertEmbedding(chunkId, chunk.embedding)`
-  - [ ] Stale deletion at [reindex.ts:44-55](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L44-L55) requires update: replace `vec.deleteEmbedding(id)` call with a GLOB-based cascade deletion — add a method `deleteChunkVecsByDoc(docId)` to `VectorSearch` that runs `DELETE FROM documents_vec WHERE id GLOB ?` with pattern `${docId}#c%`; chunks themselves cascade via `ON DELETE CASCADE` on `chunks.document_id` when `deleteDocument(id)` runs
-  - [ ] Progress log unchanged (existing `if (indexed % 50 === 0)` block)
+  - [x] Stale deletion at [reindex.ts:44-55](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L44-L55) requires update: replace `vec.deleteEmbedding(id)` call with a GLOB-based cascade deletion — add a method `deleteChunkVecsByDoc(docId)` to `VectorSearch` that runs `DELETE FROM documents_vec WHERE id GLOB ?` with pattern `${docId}#c%`; chunks themselves cascade via `ON DELETE CASCADE` on `chunks.document_id` when `deleteDocument(id)` runs
+  - [x] Progress log unchanged (existing `if (indexed % 50 === 0)` block)
 
 #### Task 3.5: Add deleteChunkVecsByDoc to VectorSearch
 - **files**: `plugin/ralph-knowledge/src/vector-search.ts` (modify)
@@ -336,10 +336,10 @@ Add `embedDocument()` that emits one embedding per chunk; remove the 500-char sl
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New method `deleteChunkVecsByDoc(docId: string): void` added to `VectorSearch` class
-  - [ ] Method runs `DELETE FROM documents_vec WHERE id GLOB ?` with parameter `${docId}#c%`
-  - [ ] Method calls `this.ensureVecLoaded()` first (matches pattern of sibling methods)
-  - [ ] Existing `deleteEmbedding(id)` method retained for back-compat (used by tests)
+  - [x] New method `deleteChunkVecsByDoc(docId: string): void` added to `VectorSearch` class
+  - [x] Method runs `DELETE FROM documents_vec WHERE id GLOB ?` with parameter `${docId}#c%`
+  - [x] Method calls `this.ensureVecLoaded()` first (matches pattern of sibling methods)
+  - [x] Existing `deleteEmbedding(id)` method retained for back-compat (used by tests)
 
 #### Task 3.6: Update reindex test for chunk persistence
 - **files**: `plugin/ralph-knowledge/src/__tests__/reindex.test.ts` (modify)
@@ -347,17 +347,17 @@ Add `embedDocument()` that emits one embedding per chunk; remove the 500-char sl
 - **complexity**: medium
 - **depends_on**: [3.4, 3.5]
 - **acceptance**:
-  - [ ] Test: after reindex of a fixture with one 8K-char markdown file, `SELECT COUNT(*) FROM chunks WHERE document_id=?` returns >= 4
-  - [ ] Test: after reindex, `SELECT COUNT(*) FROM documents_vec` equals total chunk count across all docs
-  - [ ] Test: all chunk ids follow pattern `^{docId}#c\d+$`
-  - [ ] Test: stale deletion — delete source markdown file, re-run reindex, verify chunks for that doc removed via cascade
+  - [x] Test: after reindex of a fixture with one 8K-char markdown file, `SELECT COUNT(*) FROM chunks WHERE document_id=?` returns >= 4
+  - [x] Test: after reindex, `SELECT COUNT(*) FROM documents_vec` equals total chunk count across all docs
+  - [x] Test: all chunk ids follow pattern `^{docId}#c\d+$`
+  - [x] Test: stale deletion — delete source markdown file, re-run reindex, verify chunks for that doc removed via cascade
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` passes
-- [ ] `npm test` — embedder.test.ts + reindex.test.ts + all existing tests pass
-- [ ] Reindex against an 8K-char fixture doc produces >=4 chunks per doc
+- [x] `npm run build` passes
+- [x] `npm test` — embedder.test.ts + reindex.test.ts + all existing tests pass
+- [x] Reindex against an 8K-char fixture doc produces >=4 chunks per doc
 
 #### Manual Verification:
 - [ ] Run `npm run reindex -- /Users/dubiel/projects/thoughts`; `sqlite3 ~/.ralph-hero/knowledge.db "SELECT COUNT(*) FROM chunks"` is >= 3x `SELECT COUNT(*) FROM documents`

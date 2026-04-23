@@ -54,6 +54,22 @@ export class VectorSearch {
       .run(id);
   }
 
+  /**
+   * Delete all chunk-level vec rows for a document. Chunk ids follow the
+   * pattern `${docId}#c${index}` so we match via a SQLite GLOB.
+   *
+   * This is used by reindex to drop stale chunks when a source markdown file
+   * has been deleted or modified. Complements `ON DELETE CASCADE` on the
+   * `chunks` table (which deletes chunk rows but not their vec counterparts,
+   * because the vec0 virtual table does not participate in FK cascades).
+   */
+  deleteChunkVecsByDoc(docId: string): void {
+    this.ensureVecLoaded();
+    this.knowledgeDb.db
+      .prepare("DELETE FROM documents_vec WHERE id GLOB ?")
+      .run(`${docId}#c*`);
+  }
+
   search(queryEmbedding: Float32Array, limit: number = 10): VectorResult[] {
     this.ensureVecLoaded();
     const buf = float32ToBuffer(queryEmbedding);

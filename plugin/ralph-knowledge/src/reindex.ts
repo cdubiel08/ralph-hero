@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
-import { embed, prepareTextForEmbedding } from "./embedder.js";
+import { embedDocument } from "./embedder.js";
 import { parseDocument, type ParsedDocument } from "./parser.js";
 import { findMarkdownFiles } from "./file-scanner.js";
 import { generateIndexes } from "./generate-indexes.js";
@@ -48,7 +48,10 @@ export async function reindex(
 
   const filesOnDiskSet = new Set(filesOnDisk.map(f => resolve(f)));
 
-  // Phase 1: Delete stale entries for files no longer on disk
+  // Phase 1: Delete stale entries for files no longer on disk.
+  // Chunk rows cascade from documents via ON DELETE CASCADE on chunks.document_id,
+  // but the vec0 virtual table does not participate in FK cascades — we must
+  // explicitly delete chunk-level vec rows via GLOB pattern.
   const syncedPaths = db.getAllSyncPaths();
   let deleted = 0;
   for (const syncedPath of syncedPaths) {
@@ -56,6 +59,8 @@ export async function reindex(
       const id = basename(syncedPath, ".md");
       fts.deleteFtsEntry(id);
       db.deleteDocument(id);
+      vec.deleteChunkVecsByDoc(id);
+      // Also delete any legacy doc-level vec row (pre-chunks schema).
       vec.deleteEmbedding(id);
       db.deleteSyncRecord(syncedPath);
       deleted++;
@@ -138,10 +143,35 @@ export async function reindex(
       db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
     }
 
-    const text = prepareTextForEmbedding(parsed.title, parsed.tags, parsed.content);
+    // Chunk-aware embedding: emit one embedding per chunk, persist to both
+    // the `chunks` table and the `documents_vec` virtual table with chunk ids
+    // of the form `${doc.id}#c${index}`.
+    //
+    // We first clear any stale chunk rows for this doc_id (the document
+    // body may have shrunk across re-indexes) and stale chunk vec rows (which
+    // don't cascade from the `chunks` table because vec0 is a virtual table).
+    db.db.prepare("DELETE FROM chunks WHERE document_id = ?").run(parsed.id);
+    vec.deleteChunkVecsByDoc(parsed.id);
+    // Drop any pre-chunks schema vec row that used the bare doc id.
+    vec.deleteEmbedding(parsed.id);
+
     try {
-      const embedding = await embed(text);
-      vec.upsertEmbedding(parsed.id, embedding);
+      const chunks = await embedDocument(parsed.title, parsed.tags, parsed.content);
+      const insertChunk = db.db.prepare(
+        "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end) VALUES (?, ?, ?, ?, ?, ?)"
+      );
+      for (const chunk of chunks) {
+        const chunkId = `${parsed.id}#c${chunk.index}`;
+        insertChunk.run(
+          chunkId,
+          parsed.id,
+          chunk.index,
+          chunk.content,
+          chunk.charStart,
+          chunk.charEnd,
+        );
+        vec.upsertEmbedding(chunkId, chunk.embedding);
+      }
     } catch (e) {
       console.warn(`Failed to embed ${id}: ${(e as Error).message}`);
     }
