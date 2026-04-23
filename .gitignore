@@ -20,3 +20,6 @@ thoughts/_issues/
 
 # Playwright CLI session data (ephemeral screenshots/snapshots)
 .playwright-cli/
+
+# Baseline screenshots for semantic diff (local-only, per-developer state)
+thoughts/local/baselines/
