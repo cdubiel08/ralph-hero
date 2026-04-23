@@ -32,7 +32,7 @@ Fetch all three sources simultaneously (make all tool calls in one turn):
    Read `MEMORY.md` from the project memory directory. Then read any referenced files with `type: project` or `type: feedback` in their frontmatter. These tell you what the user was working on, recent decisions, and preferences. If `MEMORY.md` doesn't exist or is empty, skip silently — do not mention that memory is unavailable.
 
 2. **Pipeline dashboard** (MCP tool):
-   Fetch the pipeline dashboard with `format: "json"`, `includeHealth: true`, `includeMetrics: true`.
+   Fetch the pipeline dashboard with `format: "json"`, `includeHealth: true`, `includeMetrics: false`, `issuesPerPhase: 3`. This is enough to surface 3 directions; do not fetch more.
 
 3. **Open PRs** (Bash):
    ```bash
@@ -54,6 +54,11 @@ Open with a conversational greeting that weaves memory context with current boar
 - One sentence on current state: *"Right now there are 3 things in progress and 1 PR open for review."*
 
 **When memory is empty**: Skip the "last time" and "what changed" sentences. Open with board state directly: *"Here's where things stand — 3 items in progress, 1 PR waiting review."* Do not mention that memory is unavailable.
+
+**Output budget (hard limit)**:
+- The briefing (greeting + directions + picker) must be under ~40 lines of user-visible text total. If you are about to write more, you are doing the wrong thing — compress.
+- Never paste raw tool output into your response. The `pipeline_dashboard` JSON, `gh pr list` JSON, and memory file contents stay in your context — they are input, not output. Synthesize; do not quote.
+- No markdown tables, no bullet lists of issues, no JSON blocks, no code fences around tool data. If you feel the urge to render a dashboard, stop — that is the exact failure mode this skill exists to prevent.
 
 **Tone rules**:
 - No severity tags (CRITICAL, STUCK, WARNING, etc. in brackets). If something is genuinely stuck, say it plainly: *"Issue #42 has been sitting in Research for 5 days — might be blocked on something."*
@@ -125,7 +130,9 @@ Replace `NNN` with the actual issue or PR number. Each Agent() call spawns an is
 
 For **"Work through these in order"**: dispatch Agent() calls sequentially in the order directions were presented. Before each subsequent dispatch, note: "Earlier actions may have changed board state."
 
-After routing completes, output:
+**Do not relay the dispatched agent's return value.** The Agent tool's return is input to you, not output to the user — the agent already did its work in its own context. After each dispatch, write a single sentence summarizing what was dispatched (e.g., *"Dispatched triage-agent for #55."*). Never paste the agent's report, diff, or structured output into your reply.
+
+After all routing completes, output a final line and stop:
 
 ```
 Session complete.
@@ -139,3 +146,5 @@ Session complete.
 - Do not flag WIP limits or hygiene issues unless they're causing a concrete problem
 - If no memories exist, skip the "last time" context gracefully — do not mention memory is unavailable
 - If no directions are worth surfacing, skip the picker entirely
+- Hard output budget: briefing ≤ ~40 lines total; post-dispatch summary ≤3 lines. Never echo `pipeline_dashboard` JSON, `gh pr list` output, memory file contents, or dispatched-agent return strings verbatim — these are inputs to your synthesis, not content for the user.
+- When dispatching via `Agent()`, summarize in ≤1 sentence. Do not relay the agent's report; the agent ran in its own context and hello's job is only to route.
