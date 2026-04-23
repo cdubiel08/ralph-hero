@@ -63,4 +63,30 @@ describe("VectorSearch", () => {
     const results = vecSearch.search(mockEmbedding(1), 1);
     expect(results).toHaveLength(1);
   });
+
+  it("returns content = null when vec id has no matching chunks row (back-compat)", () => {
+    // doc-1 has no chunks row; vec id is doc-level. LEFT JOIN should yield null.
+    const results = vecSearch.search(mockEmbedding(1), 5);
+    const hit = results.find((r) => r.id === "doc-1");
+    expect(hit).toBeDefined();
+    expect(hit!.content).toBeNull();
+  });
+
+  it("returns content populated when vec id matches a chunks row", () => {
+    // Insert a chunk-level vec row + matching chunks row for doc-1
+    db.db
+      .prepare(
+        `INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run("doc-1#c0", "doc-1", 0, "This is the first chunk content.", 0, 32);
+    vecSearch.upsertEmbedding("doc-1#c0", mockEmbedding(1));
+    // Remove the doc-level vec row so chunk-level wins
+    vecSearch.deleteEmbedding("doc-1");
+
+    const results = vecSearch.search(mockEmbedding(1), 5);
+    const hit = results.find((r) => r.id === "doc-1#c0");
+    expect(hit).toBeDefined();
+    expect(hit!.content).toBe("This is the first chunk content.");
+  });
 });

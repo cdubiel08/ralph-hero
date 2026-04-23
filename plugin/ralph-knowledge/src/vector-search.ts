@@ -4,6 +4,12 @@ import type { KnowledgeDB } from "./db.js";
 export interface VectorResult {
   id: string;
   distance: number;
+  /**
+   * Chunk content populated via LEFT JOIN to `chunks` table when the vec id
+   * matches a chunk row. When the vec id is doc-level (back-compat / legacy
+   * fixtures) or no matching chunks row exists, this is `null`.
+   */
+  content?: string | null;
 }
 
 function float32ToBuffer(arr: Float32Array): Buffer {
@@ -73,11 +79,15 @@ export class VectorSearch {
   search(queryEmbedding: Float32Array, limit: number = 10): VectorResult[] {
     this.ensureVecLoaded();
     const buf = float32ToBuffer(queryEmbedding);
+    // LEFT JOIN to `chunks` so chunk-level vec rows surface their content.
+    // Doc-level vec ids (no matching chunks row) return content = NULL, which
+    // preserves back-compat for pre-chunks callers and legacy test fixtures.
     return this.knowledgeDb.db
       .prepare(
         `
-      SELECT id, distance
+      SELECT documents_vec.id, distance, chunks.content
       FROM documents_vec
+      LEFT JOIN chunks ON chunks.id = documents_vec.id
       WHERE embedding MATCH ? AND k = ?
       ORDER BY distance
     `
