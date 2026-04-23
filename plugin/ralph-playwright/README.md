@@ -61,6 +61,10 @@ The `model:` frontmatter hint fires on **direct** `Skill("ralph-playwright:refle
 
 See [`thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md`](../../thoughts/shared/research/2026-04-16-opus-4-7-ralph-playwright-vision.md) §Part 3 Item 1 for the empirical motivation, and the parent epic [`thoughts/shared/plans/2026-04-20-GH-0784-ralph-playwright-opus-4-7-vision-epic.md`](../../thoughts/shared/plans/2026-04-20-GH-0784-ralph-playwright-opus-4-7-vision-epic.md) for the broader Opus 4.7 rollout plan across ralph-playwright.
 
+### Per-step escalation within reflect
+
+Reflect additionally routes **per-step** within a single invocation: Sonnet 4.6 for happy-path steps, Opus 4.7 when a step has `outcome == fail` OR the prior step raised a signal. This keeps cost bounded on long traces where most steps are mechanical. The ladder is declared in [`skills/reflect/SKILL.md § Step-Importance Escalation`](skills/reflect/SKILL.md#step-importance-escalation), and the per-step choice is recorded in the signal-report's optional `reflect_meta` block (see [GH-787](https://github.com/cdubiel08/ralph-hero/issues/787)).
+
 ## Skills
 
 | Skill | One-liner |

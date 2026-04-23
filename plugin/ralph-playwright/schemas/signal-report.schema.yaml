@@ -103,3 +103,35 @@ properties:
       recommendation:
         type: string
         description: "Actionable recommendation based on signals"
+  # --- Reflect-phase model attribution (GH-787, additive, backward-compatible) ---
+  # Per-step record of which model ran each reflect step and why. Populated by
+  # the reflecting model when the step-importance escalation ladder was applied
+  # (see skills/reflect/SKILL.md § Step-Importance Escalation). Absence is valid
+  # — pre-existing signal-reports (pre-GH-787) pass unchanged.
+  # Issue: https://github.com/cdubiel08/ralph-hero/issues/787
+  # Shape mirrors the GH-794 `capture` sub-object idiom (optional outer object
+  # with required fields inside each entry).
+  reflect_meta:
+    type: object
+    description: "Per-step model attribution recorded by the reflect phase when the step-importance escalation ladder was applied. Optional; absence means the recording was not emitted (e.g., env-override set on a pre-GH-787 writer, or a single-step trace where no ladder decision was made)."
+    properties:
+      default_model:
+        type: string
+        description: "Model used for happy-path steps (typically claude-sonnet-4-6)."
+      escalated_model:
+        type: string
+        description: "Model used when an escalation trigger fired (typically claude-opus-4-7)."
+      by_step:
+        type: object
+        description: "Map from step index (stringified integer) to the model+reason that ran that step. Keys SHOULD be present for every step in the source journey-trace."
+        additionalProperties:
+          type: object
+          required: [model, reason]
+          properties:
+            model:
+              type: string
+              description: "Full model ID that ran this step (e.g., claude-sonnet-4-6, claude-opus-4-7)."
+            reason:
+              type: string
+              enum: [default, fail_escalation, prior_signal_escalation, env_override]
+              description: "Why this model was chosen. default = baseline (no trigger fired); fail_escalation = step outcome==fail; prior_signal_escalation = step N-1 raised a signal; env_override = RALPH_PLAYWRIGHT_REFLECT_MODEL set."
