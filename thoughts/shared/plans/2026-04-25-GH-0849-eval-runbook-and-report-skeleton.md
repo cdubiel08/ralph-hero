@@ -96,12 +96,12 @@ After this phase ships:
 
 ### Verification
 
-- [ ] `test -f thoughts/shared/runbooks/eval-scenario-execution.md` exits 0
-- [ ] `test -f thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` exits 0
-- [ ] `grep -c "^## " thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` >= 18 (17 skills + quality-findings)
-- [ ] All 17 skill names appear as exact H2 headings in the report file (one per skill listed in the parent plan)
-- [ ] Both files contain valid YAML frontmatter (Read tool succeeds)
-- [ ] Runbook contains explicit JSON-vs-markdown decision section
+- [x] `test -f thoughts/shared/runbooks/eval-scenario-execution.md` exits 0
+- [x] `test -f thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` exits 0
+- [x] `grep -c "^## " thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` >= 18 (17 skills + quality-findings)
+- [x] All 17 skill names appear as exact H2 headings in the report file (one per skill listed in the parent plan)
+- [x] Both files contain valid YAML frontmatter (Read tool succeeds)
+- [x] Runbook contains explicit JSON-vs-markdown decision section
 
 ## What We're NOT Doing
 
@@ -254,13 +254,13 @@ Create the runbook (`thoughts/shared/runbooks/eval-scenario-execution.md`) descr
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -f thoughts/shared/runbooks/eval-scenario-execution.md` — exit 0
-- [ ] `test -f thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` — exit 0
-- [ ] `grep -c "^## " thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` returns at least 19 (How to Append Findings + Summary Table + 17 skill sections + Quality Findings)
-- [ ] `grep -c "^## " thoughts/shared/runbooks/eval-scenario-execution.md` returns at least 7 (sections 1-7)
-- [ ] All 17 skill names appear as exact H2 headings in the report: `for skill in ralph-triage ralph-split ralph-review ralph-val ralph-pr ralph-merge status report ralph-hygiene draft form iterate setup setup-repos idea-hunt record-demo design-system-audit; do grep -q "^## ${skill}$" thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md || echo "MISSING: ${skill}"; done` produces no output
-- [ ] Both files round-trip through the `Read` tool with no YAML parse error (frontmatter valid)
-- [ ] Runbook Section 6 (`## 6. JSON vs Markdown Eval Format Decision`) exists and contains the literal phrase "Keep both formats separate"
+- [x] `test -f thoughts/shared/runbooks/eval-scenario-execution.md` — exit 0
+- [x] `test -f thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` — exit 0
+- [x] `grep -c "^## " thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` returns at least 19 (How to Append Findings + Summary Table + 17 skill sections + Quality Findings)
+- [x] `grep -c "^## " thoughts/shared/runbooks/eval-scenario-execution.md` returns at least 7 (sections 1-7)
+- [x] All 17 skill names appear as exact H2 headings in the report: `for skill in ralph-triage ralph-split ralph-review ralph-val ralph-pr ralph-merge status report ralph-hygiene draft form iterate setup setup-repos idea-hunt record-demo design-system-audit; do grep -q "^## ${skill}$" thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md || echo "MISSING: ${skill}"; done` produces no output
+- [x] Both files round-trip through the `Read` tool with no YAML parse error (frontmatter valid)
+- [x] Runbook Section 6 (`## 6. JSON vs Markdown Eval Format Decision`) exists and contains the literal phrase "Keep both formats separate"
 
 #### Manual Verification:
 - [ ] A reviewer reading the runbook in isolation (no prior context) can execute one of the existing eval scenarios end-to-end without ambiguity.
