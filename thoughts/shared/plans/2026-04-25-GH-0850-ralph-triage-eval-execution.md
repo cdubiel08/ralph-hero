@@ -55,7 +55,7 @@ The constraints below are the non-negotiable contract for any agent executing th
 - Section 7 step 8 locks the eval-quality complaint pattern: append to the report's bottom section, do not modify the source eval file
 
 **Report skeleton** (`thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md`):
-- 17 per-skill sections pre-stubbed at `Status: pending` with three-row Grade Summary tables (A/B/C) and `### Evidence` + `### FAIL Bugs Filed` subsections
+- 17 per-skill sections pre-stubbed with metadata block lines `- **Status**: pending` and `- **Date executed**: —` (note the leading dash + bold markup — this exact format must be preserved when updating values), three-row Grade Summary tables (A/B/C), and `### Evidence` + `### FAIL Bugs Filed` subsections
 - Top-of-file `## Summary Table` lists all 17 skills with `pending` status
 - ralph-triage section at lines 244-262 is the target stub for this issue's writes
 - Bottom `## Eval-Scenario Quality Findings` section exists with placeholder bullet for eval-quality complaints
@@ -187,9 +187,10 @@ Dispatch the `triage-agent` against three test Backlog issues (one per scenario)
 - **complexity**: medium
 - **depends_on**: [1.4]
 - **acceptance**:
-  - [ ] In the report file, the `## ralph-triage` section's metadata block updated:
-    - `Status: pending` → `Status: <passed|failed (N bugs filed)|partial|blocked>` per Task 1.3 mapping
-    - `Date executed: —` → `Date executed: 2026-04-25` (or actual run date)
+  - [ ] In the report file, the `## ralph-triage` section's metadata block updated, **preserving the leading `- ` dash and `**Bold**` markup of each line verbatim**:
+    - `- **Status**: pending` → `- **Status**: <passed|failed (N bugs filed)|partial|blocked>` per Task 1.3 mapping
+    - `- **Date executed**: —` → `- **Date executed**: 2026-04-25` (or actual run date)
+    - The leading `- **` and trailing `**:` characters are part of the markdown formatting and MUST NOT be stripped — only the value after the `: ` changes
   - [ ] Grade Summary table populated with one row per scenario:
     - `| A | <PASS|FAIL|partial|blocked> | <one-line note from Task 1.3> |`
     - `| B | <PASS|FAIL|partial|blocked> | <one-line note from Task 1.3> |`
@@ -198,7 +199,7 @@ Dispatch the `triage-agent` against three test Backlog issues (one per scenario)
   - [ ] `### FAIL Bugs Filed` subsection populated with bullet list of bug URLs from Task 1.4, or `_None — all scenarios passed_` if zero failures; placeholder `_None yet. List sub-issues..._` removed
   - [ ] Top-of-file `## Summary Table` row for ralph-triage updated from `| ralph-triage | #850 | pending | — | — | — | — | — | — |` to `| ralph-triage | #850 | <status> | 3 | <pass-count> | <fail-count> | <partial-count> | <blocked-count> | <fail-bug-count> |`
   - [ ] For each eval-quality complaint surfaced in Task 1.3: a bullet appended under the report's `## Eval-Scenario Quality Findings` section in the format `- ralph-triage / Scenario <X>: <complaint>` — placeholder bullet `_None yet. Per-skill execution agents append findings here..._` only removed if at least one new bullet replaces it (otherwise leave the placeholder so subsequent skill executions see the same instruction)
-  - [ ] No other per-skill section in the report touched (verifiable via `git diff thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` showing changes only inside lines 35 [summary row], 244-262 [ralph-triage section], and 386-388 [quality-findings bullets])
+  - [ ] No other per-skill section in the report touched (verifiable via `git diff thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` showing changes only inside the ralph-triage summary-table row, the `## ralph-triage` per-skill section, and (optionally) appended bullets in the `## Eval-Scenario Quality Findings` section — refer by section name only, not line numbers, since sibling skill executions (#851-#866) may shift line offsets if they merge first)
   - [ ] Source `plugin/ralph-hero/skills/ralph-triage/eval-scenarios.md` unchanged (verifiable via `git diff` showing no changes to that file)
   - [ ] All three test issues from Task 1.1 closed/canceled with workflowState set to `Canceled` (and issueState set to `CLOSED_NOT_PLANNED`) so they are removed from the live Backlog; cleanup confirmed by checking each test issue's final state
 
@@ -208,9 +209,8 @@ Dispatch the `triage-agent` against three test Backlog issues (one per scenario)
 
 - [ ] `git diff plugin/ralph-hero/skills/ralph-triage/eval-scenarios.md` produces no output (source unmodified per Shared Constraint #1)
 - [ ] `git diff thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` shows changes only within the ralph-triage summary-table row, the `## ralph-triage` section, and (optionally) appended bullets in `## Eval-Scenario Quality Findings`
-- [ ] `grep -c "Status: pending" thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` returns 16 (one less than the original 17 — only ralph-triage transitioned out of pending)
-- [ ] `grep "ralph-triage" thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md | head -3` shows the per-skill section's `Status:` line has a non-`pending` value
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors (sanity check; this issue does not change source code, but the build must still pass since the report file lives in the repo)
+- [ ] `grep -c '^- \*\*Status\*\*: pending' thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` returns 16 (one less than the original 17 — only ralph-triage transitioned out of pending). Note the literal asterisks in the pattern: the skeleton's actual line format is `- **Status**: pending` (leading dash + bold markup), NOT bare `Status: pending`.
+- [ ] `sed -n '/^## ralph-triage$/,/^## /p' thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md | grep '^- \*\*Status\*\*:'` does NOT match `pending` — confirms the ralph-triage section's status line transitioned to one of `passed|failed|partial|blocked`. The `sed` range scopes the grep to just the ralph-triage section so adjacent skills' pending lines do not leak into the result.
 
 #### Manual Verification:
 
