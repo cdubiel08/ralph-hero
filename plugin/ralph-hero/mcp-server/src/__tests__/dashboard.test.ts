@@ -1406,6 +1406,34 @@ describe("toDashboardItems", () => {
     expect(items[0].iterationId).toBeUndefined();
     expect(items[0].iterationTitle).toBeUndefined();
   });
+
+  it("maps trackedIssues nodes to blockedBy with state-to-workflowState conversion", () => {
+    const raw = [
+      makeRawItem({
+        content: {
+          ...makeRawItem().content,
+          trackedIssues: {
+            nodes: [
+              { number: 42, state: "OPEN" },
+              { number: 99, state: "CLOSED" },
+            ],
+          },
+        },
+      }),
+    ];
+    const items = toDashboardItems(raw);
+    expect(items).toHaveLength(1);
+    expect(items[0].blockedBy).toHaveLength(2);
+    expect(items[0].blockedBy[0]).toEqual({ number: 42, workflowState: null });
+    expect(items[0].blockedBy[1]).toEqual({ number: 99, workflowState: "Done" });
+  });
+
+  it("returns empty blockedBy when trackedIssues is omitted (backward compat)", () => {
+    const raw = [makeRawItem()];
+    const items = toDashboardItems(raw);
+    expect(items).toHaveLength(1);
+    expect(items[0].blockedBy).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
