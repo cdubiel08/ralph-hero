@@ -1,5 +1,5 @@
 ---
-description: Iterate on an existing implementation plan - reads the linked plan, understands your feedback, confirms approach, and makes surgical updates. Use when you want to refine, extend, or correct an approved plan.
+description: Iterate on an existing implementation plan in any state (Plan in Progress, Plan in Review, or Ready for Plan) - reads the linked plan, understands your feedback, confirms approach, and makes surgical updates. Use when you want to refine, extend, or correct an existing implementation plan. For refining draft ideas or research findings (pre-plan), use /ralph-hero:form instead.
 argument-hint: "[NNN or plan-path] [optional: feedback]"
 model: opus
 allowed-tools:
