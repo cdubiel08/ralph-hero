@@ -9,8 +9,6 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=report"
 allowed-tools:
-  - Read
-  - Bash
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_status_update
 ---
@@ -42,7 +40,7 @@ Fetch the pipeline dashboard with:
 
 ### Step 3: Handle Metrics Fallback
 
-If the response does **not** contain a `metrics` field (the metrics library from GH-139 is not yet deployed):
+If the response does **not** contain a `metrics` field (e.g., `includeMetrics` was false, or the dashboard returned without a metrics block for any reason):
 
 1. Set `velocity` to the count of issues in the "Done" phase
 2. Determine status from `health.ok`:
