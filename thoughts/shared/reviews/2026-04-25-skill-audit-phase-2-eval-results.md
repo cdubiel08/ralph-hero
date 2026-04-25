@@ -32,7 +32,7 @@ Per-skill execution agents must follow the runbook at [`thoughts/shared/runbooks
 | ralph-pr | #854 | pending | — | — | — | — | — | — |
 | ralph-review | #852 | pending | — | — | — | — | — | — |
 | ralph-split | #851 | pending | — | — | — | — | — | — |
-| ralph-triage | #850 | pending | — | — | — | — | — | — |
+| ralph-triage | #850 | blocked | 3 | 0 | 0 | 0 | 3 | 0 |
 | ralph-val | #853 | pending | — | — | — | — | — | — |
 | record-demo | #865 | pending | — | — | — | — | — | — |
 | report | #857 | pending | — | — | — | — | — | — |
@@ -243,23 +243,97 @@ _None yet. List sub-issues of the parent skill issue once filed per runbook Sect
 
 ## ralph-triage
 
-- **Status**: pending
+- **Status**: blocked
 - **Execution issue**: #850
 - **Eval source**: `plugin/ralph-hero/skills/ralph-triage/eval-scenarios.md`
-- **Date executed**: —
+- **Date executed**: 2026-04-25
 
 ### Grade Summary
 | Scenario | Result | Notes |
 |----------|--------|-------|
-| A | pending | — |
-| B | pending | — |
-| C | pending | — |
+| A | blocked | Blocker: triage-agent dispatch failed — Anthropic credit balance depleted, no sub-Claude invocations possible. |
+| B | blocked | Blocker: triage-agent dispatch failed — Anthropic credit balance depleted, no sub-Claude invocations possible. |
+| C | blocked | Blocker: triage-agent dispatch failed — Anthropic credit balance depleted, no sub-Claude invocations possible. |
 
 ### Evidence
-_Pending execution. Append output snippets, log lines, or screenshots per `thoughts/shared/runbooks/eval-scenario-execution.md` Section 3._
+
+Test issues: A=#874, B=#875, C=#876
+
+#### Environmental Blocker (applies to A, B, C)
+
+Per Shared Constraint #3 of the implementation plan and runbook Section 2b, all three scenarios MUST be exercised via `Agent(subagent_type="ralph-hero:triage-agent", prompt="<scenario Input verbatim>")`. The execution environment did not have an `Agent`/`Task` dispatch tool surfaced to this impl-agent, so dispatch was attempted via `claude -p "Triage issue #874" --agent ralph-hero:triage-agent --dangerously-skip-permissions` (a sub-Claude that would itself dispatch the triage-agent). All such sub-Claude invocations failed immediately with the following output:
+
+```
+$ claude -p "Triage issue #874" --agent ralph-hero:triage-agent --dangerously-skip-permissions
+Credit balance is too low
+```
+
+Verified blocker scope by attempting a minimal control invocation:
+
+```
+$ echo "test" | claude -p "Say hi"
+Credit balance is too low
+```
+
+Both stdout traces are environmental — no API calls reached the model layer, no tool-call traces exist, and no postcondition hook output was produced. Per runbook Section 4: "blocked — the scenario could not be run at all. Causes include: ... agent contract changed between scenario authorship and execution, MCP server unavailable, etc. Record the blocker reason verbatim in the evidence section; do NOT FAIL the skill for environmental problems." Per Shared Constraint #3: "Do NOT bypass the agent contract by invoking the skill directly — the agent's tool allowlist and isolation are part of what is being graded." Direct skill invocation was therefore not attempted as a fallback.
+
+#### Scenario A — Post-run state verification
+
+Verifies: (would have verified) `workflowState` becomes "Done"; comment present mentioning specific file path or PR number; `ralph-triage` label present; postcondition hook does NOT block; no sub-issues created; no estimate change.
+
+`get_issue` on #874 after the failed dispatch shows the issue unchanged from its pre-dispatch state — confirming no triage occurred:
+
+```json
+{
+  "number": 874,
+  "workflowState": "Backlog",
+  "labels": [],
+  "comments": [],
+  "subIssues": [],
+  "estimate": null
+}
+```
+
+#### Scenario B — Post-run state verification
+
+Verifies: (would have verified) `workflowState` becomes "Research Needed"; comment names specific investigation topic; `ralph-triage` label present; postcondition hook does NOT block; issue stays open; no sub-issues created.
+
+`get_issue` on #875 after the failed dispatch shows the issue unchanged:
+
+```json
+{
+  "number": 875,
+  "workflowState": "Backlog",
+  "labels": [],
+  "comments": [],
+  "subIssues": [],
+  "estimate": null
+}
+```
+
+#### Scenario C — Post-run state verification
+
+Verifies: (would have verified) ≥2 sub-issues created and linked; each sub-issue estimate XS or S; each sub-issue workflowState=Backlog; parent workflowState remains Backlog; parent has summary comment; `ralph-triage` label on parent; postcondition hook does NOT block.
+
+`get_issue` on #876 after the failed dispatch shows the parent unchanged (input estimate=M preserved); `list_sub_issues` on #876 confirms zero children:
+
+```json
+{
+  "number": 876,
+  "workflowState": "Backlog",
+  "estimate": "M",
+  "labels": [],
+  "comments": [],
+  "subIssues": []
+}
+```
+
+#### Cleanup status
+
+All three test issues (#874, #875, #876) closed and set to workflowState=Canceled / issueState=CLOSED_NOT_PLANNED after evidence capture so they do not pollute the live Backlog. See `### Test Issue Cleanup` in the audit run logs (this report's commit history) for verification calls.
 
 ### FAIL Bugs Filed
-_None yet. List sub-issues of the parent skill issue once filed per runbook Section 5._
+_None — all three scenarios graded `blocked` (environmental, not a skill regression). Per runbook Section 5, FAIL bugs are filed only for grade FAIL; blocked scenarios are documented in the evidence section above. Re-run this audit when sub-Claude dispatch is available again._
 
 ## ralph-val
 
