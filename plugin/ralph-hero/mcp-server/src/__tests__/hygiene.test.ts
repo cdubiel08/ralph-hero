@@ -35,6 +35,7 @@ function makeItem(overrides: Partial<DashboardItem> = {}): DashboardItem {
     priority: null,
     estimate: null,
     assignees: [],
+    subIssueCount: 0,
     blockedBy: [],
     ...overrides,
   };
@@ -102,6 +103,30 @@ describe("findArchiveCandidates", () => {
     ];
     // closedAt is 3 days, archiveDays is 14 — should NOT be candidate
     expect(findArchiveCandidates(items, NOW, 14)).toHaveLength(0);
+  });
+
+  it("excludes Done parents with open children", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        subIssueCount: 1,
+      }),
+    ];
+    expect(findArchiveCandidates(items, NOW, 14)).toHaveLength(0);
+  });
+
+  it("includes Done parents with no children when age criteria met", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        subIssueCount: 0,
+      }),
+    ];
+    expect(findArchiveCandidates(items, NOW, 14)).toHaveLength(1);
   });
 });
 

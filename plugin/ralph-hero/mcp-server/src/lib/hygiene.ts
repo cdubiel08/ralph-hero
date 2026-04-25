@@ -98,6 +98,7 @@ export function findArchiveCandidates(
 ): HygieneItem[] {
   return items
     .filter((item) => {
+      if (item.subIssueCount > 0) return false;
       const ws = item.workflowState;
       if (!ws || !TERMINAL_STATES.includes(ws)) return false;
       const ts = item.closedAt ?? item.updatedAt;
