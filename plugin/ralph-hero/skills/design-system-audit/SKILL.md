@@ -1,6 +1,13 @@
 ---
 name: design-system-audit
 description: Assess and score a design system's maturity for AI-driven frontend development using a 5-ring, 6-tier maturity model. Produces a scored report with a prioritized action plan tailored to the user's framework, team size, and goals. Use this skill whenever someone asks about design system readiness, AI readiness for frontend, design-to-code maturity, Figma-to-code pipeline health, component library quality, or wants to know "how ready is my design system for AI." Also trigger when users mention design tokens, Code Connect, Figma MCP, component registries, want to accelerate frontend development with Claude Code, or are migrating between frameworks (e.g., React to Angular) and want to set up their design system right. Trigger proactively if a user describes building a design system, setting up tokens, or connecting Figma to code — even if they don't say "audit." Covers React, Angular, Vue, Svelte, and framework-agnostic setups.
+allowed-tools:
+  - Read
+  - Glob
+  - Bash
+  - AskUserQuestion
+  - Write
+  - Agent
 ---
 
 # Design System Audit
@@ -40,6 +47,10 @@ The full checklist with detailed tier definitions for all ~60 checkpoints is in 
 ```
 Glob pattern: **/design-system-audit/references/maturity-checklist.md
 ```
+
+> **Error handling**: If Glob returns no results for `maturity-checklist.md`, surface a clear error and stop:
+>
+> > Design system audit reference files not found at `plugin/ralph-hero/skills/design-system-audit/references/`. The skill cannot score without the maturity checklist. Verify the plugin is installed correctly (the `references/` directory ships alongside this `SKILL.md`). Apply the same check before reading `angular-playbook.md` or `figma-hygiene.md` in Step 4.
 
 ## Workflow
 

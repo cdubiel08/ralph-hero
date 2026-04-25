@@ -684,10 +684,10 @@ Specialty skills (Tier 3): add `description` fields to idea-hunt and record-demo
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c "^description:" plugin/ralph-hero/skills/idea-hunt/SKILL.md` >= 1
-- [ ] `grep -c "^description:" plugin/ralph-hero/skills/record-demo/SKILL.md` >= 1
-- [ ] `grep -c "^allowed-tools:" plugin/ralph-hero/skills/design-system-audit/SKILL.md` >= 1
-- [ ] All three eval-scenarios.md files exist
+- [x] `grep -c "^description:" plugin/ralph-hero/skills/idea-hunt/SKILL.md` >= 1
+- [x] `grep -c "^description:" plugin/ralph-hero/skills/record-demo/SKILL.md` >= 1
+- [x] `grep -c "^allowed-tools:" plugin/ralph-hero/skills/design-system-audit/SKILL.md` >= 1
+- [x] All three eval-scenarios.md files exist
 
 #### Manual Verification:
 - [ ] idea-hunt and record-demo are now natural-language triggerable
