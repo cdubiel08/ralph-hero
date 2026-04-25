@@ -43,7 +43,6 @@ allowed-tools:
   - Glob
   - Grep
   - Bash
-  - Task
   - Agent
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
@@ -143,6 +142,32 @@ Then STOP.
 
 **Read plan document** into context (needed for inline review).
 
+**Display plan summary** before presenting the picker. Print a terminal-readable block extracted from the plan document so a reviewer who has not opened the file still has enough context to vote:
+
+```
+====================================================
+Plan Review: GH-NNN - [Plan Title from frontmatter or H1]
+====================================================
+Phases:        [count of "## Phase" headings]
+Estimate:      [from frontmatter or "unset"]
+Plan path:     [local plan path]
+
+Top-level Success Criteria:
+  - [first 3-5 bullets from the plan's "Success Criteria" / "Verification" section, or first phase's automated verification if no top-level section]
+
+What we're NOT doing:
+  - [first 3 bullets from the "What we're NOT doing" / "Out of scope" section, or "(not specified)" if absent]
+====================================================
+```
+
+Extraction rules:
+- Title: prefer H1 ("# Plan: …") or plan frontmatter `title:`. Fall back to issue title.
+- Phase count: `grep -c "^## Phase" <plan-path>` — show "(no explicit phases)" if 0.
+- Success criteria: first list under a `## Success Criteria`, `## Desired End State`, or `### Verification` heading. Truncate to 5 bullets; show "(see plan)" suffix when truncated.
+- Out of scope: first list under a `## What we're NOT doing` or `## Out of Scope` heading.
+
+This summary is informational only — it does not gate the picker. The reviewer can still pick "Open in editor" to read the full plan.
+
 **Present overall assessment question**:
 
 ```
@@ -214,11 +239,40 @@ AskUserQuestion(
   }]
 )
 ```
--> Proceed to Step 5 (rejection flow with issues)
+
+After the multi-select returns, capture **free-text specifics** so the rejection comment carries actionable feedback (not just category labels):
+
+```
+AskUserQuestion(
+  questions=[{
+    "question": "Provide specific feedback the planner needs to act on (free text). Press Enter to skip.",
+    "header": "Details",
+    "options": [
+      {"label": "Type details", "description": "Open multi-line input for specific issue descriptions, file references, or alternative approaches"},
+      {"label": "Skip", "description": "Use only the categories selected above"}
+    ],
+    "multiSelect": false
+  }]
+)
+```
+
+If "Type details" is chosen, prompt the reviewer for free-text and append it under a "**Reviewer notes**" subheading inside the issues list passed to Step 5. The free-text body becomes the primary feedback in the GitHub comment; the category labels are a secondary tag list.
+
+-> Proceed to Step 5 (rejection flow with issues + free-text notes)
 
 ### Step 4B: AUTO Mode - Delegated Critique
 
 **Spawn critique in separate context window**:
+
+The critique prompt below inlines the canonical plan-quality criteria from
+`plugin/ralph-hero/skills/shared/quality-standards.md` so the `general-purpose`
+subagent does not need to re-derive them. When `quality-standards.md` changes,
+update this prompt in the same PR.
+
+> **Follow-up**: Consider creating a `ralph-hero:review-critique-agent` to
+> replace `general-purpose` with a purpose-built critique agent that preloads
+> ralph-review + quality-standards. See future ticket. The inline-criteria
+> approach below is the interim fix.
 
 ```
 Agent(subagent_type="general-purpose",
@@ -226,11 +280,29 @@ Agent(subagent_type="general-purpose",
 
 INSTRUCTIONS:
 1. Read the plan document attached to issue #NNN
-2. Analyze the plan for:
-   - Completeness: Are all phases defined with clear changes?
-   - Feasibility: Do referenced files exist? Are patterns valid?
-   - Clarity: Are success criteria specific and testable?
-   - Scope: Is 'What we're NOT doing' well-defined?
+
+2. Analyze the plan against the FIVE plan-quality dimensions
+   (canonical source: plugin/ralph-hero/skills/shared/quality-standards.md):
+
+   1. Completeness — All phases defined with specific file changes and clear descriptions.
+   2. Feasibility — Referenced files exist; patterns are valid and follow existing codebase conventions.
+   3. Clarity — Success criteria are specific and testable (\`- [ ] Automated:\` / \`- [ ] Manual:\` format).
+   4. Scope — 'What we're NOT doing' section is explicit and well-bounded.
+   5. Dispatchability — Every task is self-contained enough to dispatch to a subagent
+      with zero additional context. No task should require reading the full plan
+      to understand. Verify each task includes:
+
+      | Field         | Required | Values                                  |
+      |---------------|----------|-----------------------------------------|
+      | files         | yes      | paths with (create/modify/read)         |
+      | tdd           | yes      | true / false                            |
+      | complexity    | yes      | low / medium / high                     |
+      | depends_on    | yes      | null or [task IDs]                      |
+      | acceptance    | yes      | checkbox list of verifiable criteria    |
+
+   For multi-issue group plans, also verify:
+     - Phase dependencies are explicit (each phase states what it creates for the next)
+     - Integration testing section covers cross-phase interactions
 
 3. Use codebase-analyzer to verify technical claims:
    Agent(subagent_type='ralph-hero:codebase-analyzer', prompt='Verify files mentioned in plan exist: [list files]')
@@ -242,24 +314,33 @@ INSTRUCTIONS:
    github_issue: NNN
    github_url: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/issues/NNN
    plan_document: [plan path]
-   status: approved OR needs-iteration
+   status: approved OR needs-iteration OR escalate
    type: review
    tags: [plan-review, relevant, component, tags]
    ---
 
+   Body must include one section per dimension (Completeness, Feasibility,
+   Clarity, Scope, Dispatchability) with PASS / FAIL / N/A and a one-line note.
+
 5. Commit and push:
    git add thoughts/shared/reviews/*.md
-   git commit -m 'docs(review): GH-NNN plan critique
-
+   git commit -m 'docs(review): GH-NNN plan critique'
    git push origin main
 
 6. Return ONLY this JSON (no other output):
 {
   \"issue\": NNN,
-  \"result\": \"APPROVED\" or \"NEEDS_ITERATION\",
+  \"result\": \"APPROVED\" or \"NEEDS_ITERATION\" or \"ESCALATE\",
   \"critique_path\": \"thoughts/shared/reviews/YYYY-MM-DD-GH-NNN-critique.md\",
-  \"issues\": []  // list of issues if NEEDS_ITERATION, empty if APPROVED
-}",
+  \"issues\": [],     // list of issues if NEEDS_ITERATION; empty otherwise
+  \"escalation_reason\": \"\"  // required when result == ESCALATE; describes why human input is needed
+}
+
+When to choose ESCALATE (not NEEDS_ITERATION):
+- The plan has internal contradictions that you cannot resolve by listing issues
+- Required research artifacts are missing or unreadable
+- Scope is so ambiguous that the planner cannot reasonably iterate
+- Any condition matching the 'Escalation Protocol' table in ralph-review SKILL.md",
      description="Critique #NNN plan")
 ```
 
@@ -273,6 +354,10 @@ result = TaskOutput(task_id=[critique-task-id], block=true, timeout=300000)
 **Parse JSON result** and route:
 - If `result.result == "APPROVED"` -> Step 5 (approve flow)
 - If `result.result == "NEEDS_ITERATION"` -> Step 5 (rejection flow with `result.issues`)
+- If `result.result == "ESCALATE"` -> escalate per the Escalation Protocol below
+  using the `escalation_reason` field as the message body. Move the issue to
+  "Human Needed" via `save_issue` (workflowState "__ESCALATE__", command "ralph_review")
+  and post a comment that includes the critique path and the escalation reason.
 
 ### Step 5: Execute Transition
 

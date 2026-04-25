@@ -390,11 +390,11 @@ Pipeline tail trio cleanup: remove stale `advance_issue` and `advance_parent` re
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` — exit 0
-- [ ] `grep -c "advance_issue" plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns 0
-- [ ] `grep -c "advance_parent" plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` returns 0
-- [ ] `grep -c "CODE_REVIEW_FEEDBACK" plugin/ralph-hero/skills/ralph-merge/SKILL.md` >= 2 (header block + body reference)
-- [ ] All three eval-scenarios.md files exist
+- [x] `bash -n plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` — exit 0
+- [x] `grep -c "advance_issue" plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns 0
+- [x] `grep -c "advance_parent" plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` returns 0
+- [x] `grep -c "CODE_REVIEW_FEEDBACK" plugin/ralph-hero/skills/ralph-merge/SKILL.md` >= 2 (header block + body reference)
+- [x] All three eval-scenarios.md files exist
 
 #### Manual Verification:
 - [ ] PR body template produces a useful description for both human reviewers and code-review skills
@@ -617,10 +617,10 @@ Onboarding skills cleanup: fix Canceled state row missing from setup's workflow 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c "Canceled" plugin/ralph-hero/skills/setup/SKILL.md` >= 1 (in workflow states table)
-- [ ] `grep -c "cdubiel08\|RALPH_PROJECT_NUMBER.*= 3" plugin/ralph-hero/skills/setup/SKILL.md` returns 0
-- [ ] `grep -c "YOUR_PROJECT_OWNER\|YOUR_PROJECT_NUMBER" plugin/ralph-hero/skills/setup/SKILL.md` >= 2
-- [ ] Both eval-scenarios.md files exist
+- [x] `grep -c "Canceled" plugin/ralph-hero/skills/setup/SKILL.md` >= 1 (in workflow states table)
+- [x] `grep -c "cdubiel08\|RALPH_PROJECT_NUMBER.*= 3" plugin/ralph-hero/skills/setup/SKILL.md` returns 0
+- [x] `grep -c "YOUR_PROJECT_OWNER\|YOUR_PROJECT_NUMBER" plugin/ralph-hero/skills/setup/SKILL.md` >= 2
+- [x] Both eval-scenarios.md files exist
 
 #### Manual Verification:
 - [ ] First-time user can follow setup without hitting hardcoded-default confusion
@@ -684,10 +684,10 @@ Specialty skills (Tier 3): add `description` fields to idea-hunt and record-demo
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c "^description:" plugin/ralph-hero/skills/idea-hunt/SKILL.md` >= 1
-- [ ] `grep -c "^description:" plugin/ralph-hero/skills/record-demo/SKILL.md` >= 1
-- [ ] `grep -c "^allowed-tools:" plugin/ralph-hero/skills/design-system-audit/SKILL.md` >= 1
-- [ ] All three eval-scenarios.md files exist
+- [x] `grep -c "^description:" plugin/ralph-hero/skills/idea-hunt/SKILL.md` >= 1
+- [x] `grep -c "^description:" plugin/ralph-hero/skills/record-demo/SKILL.md` >= 1
+- [x] `grep -c "^allowed-tools:" plugin/ralph-hero/skills/design-system-audit/SKILL.md` >= 1
+- [x] All three eval-scenarios.md files exist
 
 #### Manual Verification:
 - [ ] idea-hunt and record-demo are now natural-language triggerable

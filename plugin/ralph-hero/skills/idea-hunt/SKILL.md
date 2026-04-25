@@ -1,6 +1,6 @@
 ---
-description: Spawn a team of GitHub listers and analyzers to hunt for interesting ideas, trends, and inspiration across GitHub. Use when you want to explore what's new, find inspiration, or scout emerging patterns.
-user-invocable: false
+description: Coordinate a multi-agent GitHub-wide trend hunt — break a topic into search angles, dispatch lister + analyzer worker agents, and synthesize a structured ideas report. For coordinator dispatch via TeamCreate.
+user-invocable: true
 argument-hint: "[topic or area to explore, e.g. 'AI agents', 'developer tools', 'rust CLI tools']"
 model: sonnet
 allowed-tools:
@@ -21,6 +21,8 @@ allowed-tools:
 # Idea Hunt
 
 You coordinate a team of GitHub listers and analyzers to find interesting ideas and inspiration.
+
+> **Note**: Output quality criteria for github-lister are qualitative; see `eval-scenarios.md` for the grading rubric (e.g., minimum project counts, star thresholds, dedup expectations).
 
 ## Startup
 

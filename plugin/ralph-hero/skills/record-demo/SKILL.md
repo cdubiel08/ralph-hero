@@ -1,6 +1,6 @@
 ---
-description: Record a product demo with narration and attach to a GitHub issue. Use when you want to create an annotated showcase of a feature or workflow.
-user-invocable: false
+description: Capture an OBS-based screen demo for a GitHub issue — orchestrates obs-cli to record, optionally trim/thumbnail, then upload and post a `## Demo Recording` comment. Requires OBS Studio + obs-cli installed and OBS WebSocket server running.
+user-invocable: true
 context: inline
 model: sonnet
 allowed-tools:
@@ -21,10 +21,12 @@ Interactive skill for recording product demos with screen capture and narration.
 ## Prerequisites
 
 Before using this skill, ensure:
-1. OBS Studio is installed and running
-2. `obs-cli` is installed (`go install github.com/muesli/obs-cli@latest`)
-3. OBS WebSocket server is enabled (Settings > WebSocket Server)
-4. Your desired scene is configured in OBS (terminal + browser layout recommended)
+1. **OBS Studio** is installed and running ([download](https://obsproject.com/))
+2. **`obs-cli`** is installed (`go install github.com/muesli/obs-cli@latest`) — see [obs-cli install instructions](https://github.com/muesli/obs-cli)
+3. **OBS WebSocket server** is enabled (Settings > WebSocket Server)
+4. **Scene** is configured in OBS (terminal + browser layout recommended)
+
+> **Limitation**: If OBS is not available, this skill cannot proceed — no fallback capture path is implemented (no QuickTime, native macOS recorder, or other alternative). Either install/start OBS, or use a different capture workflow and paste the recording into the issue manually.
 
 ## Workflow
 

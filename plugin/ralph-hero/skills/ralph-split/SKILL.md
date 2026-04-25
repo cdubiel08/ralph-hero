@@ -23,6 +23,10 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
   PostToolUse:
+    - matcher: "ralph_hero__get_issue"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
     - matcher: "ralph_hero__add_sub_issue"
       hooks:
         - type: command
@@ -65,16 +69,16 @@ You are an issue decomposition specialist. You take ONE large issue (M/L/XL), re
 ### Step 1: Select Issue for Splitting
 
 **If issue number provided**: Fetch it directly
-**If no issue number**: Find oldest M+ issue in Research Needed or Backlog
+**If no issue number**: Find oldest M+ issue in Research Needed or Backlog. "Oldest" means earliest `createdAt` — pass `orderBy: "CREATED_AT"` (ascending) when listing issues.
 
 Use a subagent to find candidates:
 ```
-Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first.")
+Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first by createdAt.")
 ```
 
 > **Team Isolation**: Do NOT pass `team_name` to these sub-agent `Agent()` calls. Sub-agents must run outside any team context.
 
-Or query directly: list issues with workflowState "Backlog" and estimate "M" (limit 50), then with estimate "L", then "XL". Also repeat each query for workflowState "Research Needed". Pick the oldest issue found across all queries.
+Or query directly: list issues with workflowState "Backlog" and estimate "M" (limit 50, `orderBy: "CREATED_AT"` ascending), then with estimate "L", then "XL". Also repeat each query for workflowState "Research Needed". Pick the oldest issue found across all queries by `createdAt`.
 
 If no eligible issues found, respond:
 ```
@@ -139,6 +143,12 @@ Design sub-issues that are:
 | API endpoint | Repository, Service, Router as separate issues |
 | Multi-state feature | One issue per state |
 | Frontend feature | Component, State, Integration as separate issues |
+| Skill audit (multi-skill) | One issue per skill or skill family — each child owns its own SKILL.md / agent / hook updates and `eval-scenarios.md` |
+| Fragment extraction | One issue per fragment to extract — each child names the fragment, the canonical home, and the consumer skills to update |
+| Documentation update | One issue per document or section being rewritten — group by audience or surface, not by file size |
+| Cross-cutting refactor | One issue per pattern instance or call site cluster — group by behavior preserved, not by file count |
+
+For non-code work (skill audits, fragment extractions, doc updates, refactors), the natural decomposition almost always follows the **artifact** boundary already named in the issue body. Read the issue body first and look for an enumerated list (skills, fragments, docs, patterns) before applying the table.
 
 **If existing children were found in Step 3**, compare proposed sub-issues against them:
 
@@ -233,7 +243,23 @@ Set up blocking relationships between sub-issues. For each dependency pair, add 
 
    **Do NOT** set workflow state to Done or Canceled. The parent remains active as an epic/umbrella.
 
-### Step 9: Move Sub-Issues to Appropriate State
+### Step 9: Research Notes to Affected Children
+
+Any context discovered during Steps 2-5 that is **specific to one child** must be embedded in that child's body — not left only in the parent split-summary comment.
+
+**Anti-pattern (avoid)**: A research note in the parent comment like "Note: shared/fragments/link-formatting.md may already exist; verify before extracting" is invisible to the implementer working on the child unless they read every parent comment. The child agent will re-discover (or miss) the constraint.
+
+**Correct pattern**: For each child, before moving on to Step 10, scan your scratchpad / Step 4 research output for any note that:
+
+- Names a file, function, or fragment that this specific child will touch
+- Calls out a partial existing implementation, edge case, or sibling overlap
+- Records a decision deferred to implementation (e.g., "extend existing helper vs create new")
+
+If such a note exists, append it to the child's body under a `## Research Notes` section using `save_issue` (body update). Keep parent-wide notes in the parent comment; only push child-specific notes into the child body.
+
+**Verification**: After updating each affected child, the child's body should be readable in isolation — an implementer should not need to read the parent comment to understand the scope.
+
+### Step 10: Move Sub-Issues to Appropriate State
 
 Based on research done during splitting:
 
@@ -241,11 +267,11 @@ Based on research done during splitting:
 - **If scope needs more research** -> Keep in "Research Needed"
 - **If blocked by external issue** -> Keep in "Backlog" with blocker set
 
-### Step 10: Team Result Reporting
+### Step 11: Team Result Reporting
 
 When running as a team worker, mark your assigned task complete via TaskUpdate. Include key results in metadata (sub-ticket IDs, estimates) and a human-readable summary in the description. Then check TaskList for more work matching your role.
 
-### Step 11: Report
+### Step 12: Report
 
 ```
 Split complete for #NNN: [Original Title]
@@ -273,10 +299,11 @@ Use `command="ralph_split"` in state transitions.
 
 | Situation | Action |
 |-----------|--------|
-| Can't identify natural split boundaries | Escalate: "Unable to decompose GH-NNN. Scope is atomic or unclear." |
-| Split would create too many issues (>5) | Escalate: "GH-NNN decomposes into [N] issues. Confirm this is acceptable." |
+| Can't identify natural decomposition boundaries | Escalate: "Unable to decompose GH-NNN. Scope is atomic or unclear — no natural artifact, layer, or phase boundary found." |
 | Circular dependencies in proposed split | Escalate: "Proposed split has circular dependency. Need guidance." |
 | Issue is actually XS/Small after research | Update estimate instead of splitting (no escalation needed) |
+
+> Note: there is **no fixed cap** on sub-issue count. A skill audit epic may legitimately fan out to 10+ children (one per skill), and a fragment-extraction epic may fan out to 4-8. Escalate only when you cannot identify *natural* boundaries — not when the count happens to be large.
 
 ## Constraints
 
@@ -284,7 +311,8 @@ Use `command="ralph_split"` in state transitions.
 - M/L/XL issues only (estimate must be M, L, or XL)
 - Create only XS/Small sub-issues (estimate XS or S)
 - No implementation, only issue creation
-- Complete within 10 minutes
+- Complete within 20 minutes (M/L/XL splits with sub-agent research routinely take 15-20 minutes; rushing produces under-researched children)
+- Step 4 (codebase research via sub-agents) is **optional** if the issue body already enumerates the artifacts to split (e.g., a list of skills, fragments, or files). Skip Step 4 in that case and decompose directly from the body.
 
 ## Quality Guidelines
 
@@ -297,9 +325,9 @@ Good splits have:
 
 Avoid:
 - Artificial splits (splitting for the sake of splitting)
-- Too granular (don't create 10 XS issues)
+- Forced granularity (don't decompose past the natural artifact boundary; 10 children is fine if 10 artifacts genuinely exist)
 - Missing dependencies (sub-issues that should block each other but don't)
-- Lost context (sub-issues that don't reference original scope)
+- Lost context (sub-issues that don't reference original scope; child-specific research notes belong inside the child body, not the parent comment)
 
 ## Link Formatting
 
@@ -313,5 +341,7 @@ Avoid:
 
 **Cross-repo:** Resolve owner/repo from the registry entry for each file:
 - `[repo-name:path/file.py](https://github.com/{owner}/{repo}/blob/main/path/file.py)`
+
+> **Follow-up**: Link Formatting, branch verification, and team-result reporting blocks are duplicated across multiple skills. Extraction to shared fragments is tracked under #840-843; do not extract here.
 
 When operating on a cross-repo issue, look up each file's repo in the registry to get the correct `owner` and repo name for link URLs. Do NOT hardcode `$RALPH_GH_OWNER/$RALPH_GH_REPO` for files in other repos.

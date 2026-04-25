@@ -1,5 +1,5 @@
 ---
-description: Crystallize draft ideas or research findings into structured GitHub issues, implementation plans, or research topics. Reads idea files or research documents, researches codebase context, finds duplicates, and creates well-scoped tickets.
+description: Crystallize draft ideas, research findings, OR inline descriptions into structured GitHub issues, implementation plans, or research topics. Reads idea files, research documents, or accepts inline text; researches codebase context, finds duplicates, and creates well-scoped tickets.
 argument-hint: "<idea-path-or-research-doc-or-description>"
 model: opus
 allowed-tools:
@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Bash
   - Agent
+  - AskUserQuestion
   - WebSearch
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
@@ -152,17 +153,19 @@ Here's how this idea fits into the bigger picture:
 
 ### Step 4: Choose Output Format
 
-```
-How would you like to shape this idea?
+Use `AskUserQuestion` to present a structured picker with these labeled options. This is the most consequential decision in the workflow — a structured picker prevents wrong-option selection and keeps the user's choice machine-readable for downstream branching.
 
-1. **GitHub issue** - Create a well-scoped issue ready for the backlog
-2. **Implementation plan** - Create a plan document (via /ralph-hero:plan)
-3. **Research topic** - Create a research document to explore the idea deeper (via /ralph-hero:research)
-4. **Ticket tree** - Break into multiple related issues (parent + children)
-5. **Keep as refined idea** - Update the draft with context but don't create issues yet
-```
+Pose the question "How would you like to shape this idea?" with the following options:
 
-Wait for user choice.
+| Label | Option | Behavior |
+|-------|--------|----------|
+| 1 | **GitHub issue** | Create a well-scoped issue ready for the backlog (Step 5a) |
+| 2 | **Implementation plan** | Hand off to `/ralph-hero:plan` with gathered context (Step 5c) |
+| 3 | **Research topic** | Hand off to `/ralph-hero:research` with the question (Step 5c) |
+| 4 | **Ticket tree** | Break into parent + children sub-issues (Step 5b) |
+| 5 | **Keep as refined idea** | Update the draft with context but don't create issues yet (Step 5d) |
+
+Wait for the user's structured response, then branch to the matching Step 5 sub-step.
 
 ### Step 5a: Create GitHub Issue
 

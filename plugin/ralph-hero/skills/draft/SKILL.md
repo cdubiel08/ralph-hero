@@ -2,6 +2,9 @@
 description: Quickly capture an idea or thought for later refinement. Runs inline, asks 2-3 clarifying questions, saves to thoughts/shared/ideas/. Suggest /ralph-hero:form as next step.
 argument-hint: "[optional: topic or idea to capture]"
 model: sonnet
+allowed-tools:
+  - Write
+  - Agent
 ---
 
 # Draft Idea
