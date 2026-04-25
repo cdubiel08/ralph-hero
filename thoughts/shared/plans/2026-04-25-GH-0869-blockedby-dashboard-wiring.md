@@ -53,12 +53,12 @@ The health check filter at [`dashboard.ts:397-399`](https://github.com/cdubiel08
 ## Desired End State
 
 ### Verification
-- [ ] `DashboardItem.blockedBy` returns the actual blocking issue numbers (sourced from `trackedIssues`) for issues that have blockers, not always `[]`.
-- [ ] The "blocked" health warning fires when an issue has at least one open blocker.
-- [ ] At least one new unit test in `dashboard.test.ts` asserts the `toDashboardItems()` mapping from `trackedIssues.nodes` to `blockedBy`.
-- [ ] All existing tests still pass (no regressions in 1280+ existing assertions).
-- [ ] `tsc` build succeeds with no new errors.
-- [ ] No additional GraphQL round-trips per dashboard load.
+- [x] `DashboardItem.blockedBy` returns the actual blocking issue numbers (sourced from `trackedIssues`) for issues that have blockers, not always `[]`.
+- [x] The "blocked" health warning fires when an issue has at least one open blocker.
+- [x] At least one new unit test in `dashboard.test.ts` asserts the `toDashboardItems()` mapping from `trackedIssues.nodes` to `blockedBy`.
+- [x] All existing tests still pass (no regressions in 1280+ existing assertions).
+- [x] `tsc` build succeeds with no new errors.
+- [x] No additional GraphQL round-trips per dashboard load.
 
 ## What We're NOT Doing
 
@@ -99,10 +99,10 @@ Replace the hardcoded `blockedBy: []` in `toDashboardItems()` with real data sou
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] In the `... on Issue` fragment of `DASHBOARD_ITEMS_QUERY` (currently lines 225-235 of `dashboard-tools.ts`), add the field selection `trackedIssues(first: 10) { nodes { number state } }` after the existing `subIssues { totalCount }` line.
-  - [ ] The added field uses `first: 10` (not 20 — dashboard purpose differs from `get_issue`).
-  - [ ] No other lines in the GraphQL query string are changed.
-  - [ ] `tsc` build succeeds (the GraphQL string is type-checked only via `RawDashboardItem`).
+  - [x] In the `... on Issue` fragment of `DASHBOARD_ITEMS_QUERY` (currently lines 225-235 of `dashboard-tools.ts`), add the field selection `trackedIssues(first: 10) { nodes { number state } }` after the existing `subIssues { totalCount }` line.
+  - [x] The added field uses `first: 10` (not 20 — dashboard purpose differs from `get_issue`).
+  - [x] No other lines in the GraphQL query string are changed.
+  - [x] `tsc` build succeeds (the GraphQL string is type-checked only via `RawDashboardItem`).
 
 #### Task 1.2: Extend RawDashboardItem.content type with trackedIssues field
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` (modify)
@@ -110,10 +110,10 @@ Replace the hardcoded `blockedBy: []` in `toDashboardItems()` with real data sou
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] In the `RawDashboardItem` interface (line 122-148), inside `content`, add a new optional field: `trackedIssues?: { nodes: Array<{ number: number; state: string }> };`.
-  - [ ] Place the new field directly above or below the existing `trackedInIssues` field (line 133) for visual proximity. Either ordering is acceptable.
-  - [ ] Do NOT remove the existing `trackedInIssues` field — it is unused but in scope-out for this change.
-  - [ ] `tsc` build succeeds with no new errors.
+  - [x] In the `RawDashboardItem` interface (line 122-148), inside `content`, add a new optional field: `trackedIssues?: { nodes: Array<{ number: number; state: string }> };`.
+  - [x] Place the new field directly above or below the existing `trackedInIssues` field (line 133) for visual proximity. Either ordering is acceptable.
+  - [x] Do NOT remove the existing `trackedInIssues` field — it is unused but in scope-out for this change.
+  - [x] `tsc` build succeeds with no new errors.
 
 #### Task 1.3: Replace hardcoded blockedBy with trackedIssues mapping
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` (modify)
@@ -121,18 +121,18 @@ Replace the hardcoded `blockedBy: []` in `toDashboardItems()` with real data sou
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] In `toDashboardItems()` at line 195, replace the line `blockedBy: [], // blockedBy requires separate queries; omit for now` with a mapping that converts `r.content.trackedIssues?.nodes` to the `blockedBy` shape.
-  - [ ] The mapping logic is exactly:
+  - [x] In `toDashboardItems()` at line 195, replace the line `blockedBy: [], // blockedBy requires separate queries; omit for now` with a mapping that converts `r.content.trackedIssues?.nodes` to the `blockedBy` shape.
+  - [x] The mapping logic is exactly:
     ```typescript
     blockedBy: r.content.trackedIssues?.nodes?.map((n) => ({
       number: n.number,
       workflowState: n.state === "CLOSED" ? "Done" : null,
     })) ?? [],
     ```
-  - [ ] When `trackedIssues` is undefined/missing on the raw item, the resulting `blockedBy` is `[]` (preserves backward compatibility for existing tests that don't supply the field).
-  - [ ] When `trackedIssues.nodes` is empty, `blockedBy` is `[]`.
-  - [ ] `tsc` build succeeds.
-  - [ ] Existing dashboard tests still pass (the `makeRawItem` helper does not supply `trackedIssues`, so all current tests continue to receive `blockedBy: []`).
+  - [x] When `trackedIssues` is undefined/missing on the raw item, the resulting `blockedBy` is `[]` (preserves backward compatibility for existing tests that don't supply the field).
+  - [x] When `trackedIssues.nodes` is empty, `blockedBy` is `[]`.
+  - [x] `tsc` build succeeds.
+  - [x] Existing dashboard tests still pass (the `makeRawItem` helper does not supply `trackedIssues`, so all current tests continue to receive `blockedBy: []`).
 
 #### Task 1.4: Add unit test asserting trackedIssues → blockedBy mapping
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/dashboard.test.ts` (modify)
@@ -140,21 +140,21 @@ Replace the hardcoded `blockedBy: []` in `toDashboardItems()` with real data sou
 - **complexity**: medium
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] In the existing `describe("toDashboardItems", () => { ... })` block (around line 1315), add at least one new `it()` test case named to clearly describe the mapping (e.g., `"maps trackedIssues nodes to blockedBy with state-to-workflowState conversion"`).
-  - [ ] The test constructs a `RawDashboardItem` via `makeRawItem({ content: { ...makeRawItem().content, trackedIssues: { nodes: [{ number: 42, state: "OPEN" }, { number: 99, state: "CLOSED" }] } } })`.
-  - [ ] After calling `toDashboardItems(raw)`, assert:
-    - [ ] `items[0].blockedBy` has length 2.
-    - [ ] `items[0].blockedBy[0]` equals `{ number: 42, workflowState: null }`.
-    - [ ] `items[0].blockedBy[1]` equals `{ number: 99, workflowState: "Done" }`.
-  - [ ] Add a second `it()` test asserting that when `trackedIssues` is omitted from the raw item, `blockedBy` is `[]` (backward compatibility).
-  - [ ] Run `npx vitest run src/__tests__/dashboard.test.ts` — all tests in the file pass, including the new ones.
+  - [x] In the existing `describe("toDashboardItems", () => { ... })` block (around line 1315), add at least one new `it()` test case named to clearly describe the mapping (e.g., `"maps trackedIssues nodes to blockedBy with state-to-workflowState conversion"`).
+  - [x] The test constructs a `RawDashboardItem` via `makeRawItem({ content: { ...makeRawItem().content, trackedIssues: { nodes: [{ number: 42, state: "OPEN" }, { number: 99, state: "CLOSED" }] } } })`.
+  - [x] After calling `toDashboardItems(raw)`, assert:
+    - [x] `items[0].blockedBy` has length 2.
+    - [x] `items[0].blockedBy[0]` equals `{ number: 42, workflowState: null }`.
+    - [x] `items[0].blockedBy[1]` equals `{ number: 99, workflowState: "Done" }`.
+  - [x] Add a second `it()` test asserting that when `trackedIssues` is omitted from the raw item, `blockedBy` is `[]` (backward compatibility).
+  - [x] Run `npx vitest run src/__tests__/dashboard.test.ts` — all tests in the file pass, including the new ones.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no TypeScript errors.
-- [ ] `npm test` (from `plugin/ralph-hero/mcp-server/`) — entire vitest suite passes including the new test cases in `dashboard.test.ts`.
-- [ ] `npx vitest run src/__tests__/dashboard.test.ts` passes specifically.
+- [x] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no TypeScript errors.
+- [x] `npm test` (from `plugin/ralph-hero/mcp-server/`) — entire vitest suite passes including the new test cases in `dashboard.test.ts`.
+- [x] `npx vitest run src/__tests__/dashboard.test.ts` passes specifically.
 
 #### Manual Verification:
 - [ ] Diff review confirms `dashboard-tools.ts` has exactly three touch points (query string, type, mapping line) and no incidental changes.
