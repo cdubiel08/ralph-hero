@@ -23,6 +23,18 @@ allowed-tools:
 
 Interactive skill that bootstraps `.ralph-repos.yml` — the multi-repo portfolio registry — by inspecting repositories linked to your GitHub Project V2 and prompting for domain/tech information.
 
+## Recovery (If Interrupted)
+
+This skill is safe to re-run at any point: no side effects occur until **Step 7** (file write). If a previous run was interrupted before Step 7, simply re-run the skill — no cleanup needed.
+
+If a previous run completed Step 7 and you re-run with the **"Merge new repos into it"** option, see Step 7 for how merge semantics preserve existing entries (and which fields are overwritten). To recover from an unintentional overwrite, restore the file from git:
+
+```bash
+git restore .ralph-repos.yml
+```
+
+(Or whatever path you wrote to.) If the file was never committed, recovery requires re-entering custom entries by hand.
+
 ## Overview
 
 `.ralph-repos.yml` tells Ralph how to:
@@ -322,9 +334,40 @@ patterns:
 
 Omit optional fields (defaults, paths, patterns) if they were not configured. Omit `dependency-flow` if no edges were defined.
 
-Write the file to the target path.
+**Merge semantics (when "Merge new repos into it" was chosen in Step 1):**
 
-Display a confirmation:
+If the user chose merge mode, do NOT write the freshly-assembled YAML directly. Instead:
+
+1. Read the existing file from disk and parse it as YAML (the `Read` tool returns text; parse with the Bash `yq` tool if available, or assemble a structured copy by hand from the displayed contents).
+2. For each `repos.<key>` in the freshly-discovered set:
+   - If the key does NOT exist in the existing file → **append** the new entry as-is.
+   - If the key DOES exist → **preserve** the existing entry. Only overwrite a field on the existing entry if the user explicitly edited that field in this session (Step 4 inferences confirmed via "Edit a repo", or Step 5 defaults entered as non-empty values). Display a per-key diff before writing so the user can confirm.
+3. For `patterns.<name>`:
+   - If the pattern name does NOT exist → append.
+   - If the pattern name DOES exist → ask the user via AskUserQuestion: "Pattern `<name>` already exists. Overwrite or keep existing?" Default to keep.
+4. The top-level `version` and any unrecognized top-level keys in the existing file are preserved verbatim.
+
+If parsing the existing file fails (malformed YAML), STOP and report:
+
+> "Existing `.ralph-repos.yml` could not be parsed. Manual fix needed before merging — please correct the file or choose Overwrite if you want to start fresh. (Original file is preserved at the original path.)"
+
+Write the merged content to a temp file first, then rename atomically over the target path. Display a per-repo summary of what changed:
+
+```
+Merged .ralph-repos.yml
+========================
+
+  Existing (preserved):  api, frontend
+  Newly added:           infra, docs
+  Overwritten on edit:   (none) | (api: defaults.estimate)
+
+  Written to: {path}
+  Original backed up to: {path}.bak (only if changes were made)
+```
+
+**Overwrite mode** (the default when the file did not exist or the user chose "Overwrite it"): write the freshly-assembled YAML directly to the target path. No backup is created — the user explicitly opted to discard the previous content.
+
+Display the standard confirmation:
 ```
 Generated .ralph-repos.yml
 ===========================
@@ -335,21 +378,35 @@ Generated .ralph-repos.yml
   Written to: {path}
 ```
 
-### Step 8: Verify with MCP Tools
+### Step 8: Note on Registry Load (Verification Requires Restart)
 
-Run a quick validation:
+The `.ralph-repos.yml` registry is loaded once at MCP server startup — it is NOT re-read on every tool call. As a result, **calling `decompose_feature` immediately after writing the file in Step 7 will report the previous registry state, not the new one**.
 
-1. Attempt to use the decompose_feature tool without a pattern to list available patterns. This exercises the registry loading path.
+For a pre-restart sanity check (informational only), call `decompose_feature` without a `pattern` parameter. The output is the registry as the running MCP server saw it at startup:
 
-If it returns the configured patterns, display:
+- If this is a first-time install (no prior registry), the call should report "no patterns".
+- If you are merging into an existing registry, the call shows the pre-merge contents — useful as a visual diff against what you just wrote, but not a true verification.
+
+To activate the new file:
+
 ```
-Registry verified: decompose_feature lists {N} patterns.
+1. Quit Claude Code (or restart the MCP server connection).
+2. Reopen — the registry will be loaded from disk on startup.
+3. Re-run decompose_feature (without a pattern) to confirm the new patterns are listed.
 ```
 
-If it returns an error or no patterns, display:
+Display the appropriate message based on what the call returned:
+
+If the call returned the **previous** patterns (or none), display:
 ```
-Note: The MCP server loads .ralph-repos.yml at startup. Restart Claude Code
-to pick up the new file, then call decompose_feature to verify.
+Note: The MCP server loaded .ralph-repos.yml at startup. The output above shows
+the PRE-WRITE state. To activate the file you just wrote, restart Claude Code
+and re-run decompose_feature.
+```
+
+If for any reason the call returned the new patterns (e.g., a future hot-reload feature), display:
+```
+Registry loaded: decompose_feature lists {N} patterns matching the file you just wrote.
 ```
 
 ### Step 9: Final Summary

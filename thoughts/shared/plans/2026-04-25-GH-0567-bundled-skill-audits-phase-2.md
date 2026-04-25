@@ -617,10 +617,10 @@ Onboarding skills cleanup: fix Canceled state row missing from setup's workflow 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -c "Canceled" plugin/ralph-hero/skills/setup/SKILL.md` >= 1 (in workflow states table)
-- [ ] `grep -c "cdubiel08\|RALPH_PROJECT_NUMBER.*= 3" plugin/ralph-hero/skills/setup/SKILL.md` returns 0
-- [ ] `grep -c "YOUR_PROJECT_OWNER\|YOUR_PROJECT_NUMBER" plugin/ralph-hero/skills/setup/SKILL.md` >= 2
-- [ ] Both eval-scenarios.md files exist
+- [x] `grep -c "Canceled" plugin/ralph-hero/skills/setup/SKILL.md` >= 1 (in workflow states table)
+- [x] `grep -c "cdubiel08\|RALPH_PROJECT_NUMBER.*= 3" plugin/ralph-hero/skills/setup/SKILL.md` returns 0
+- [x] `grep -c "YOUR_PROJECT_OWNER\|YOUR_PROJECT_NUMBER" plugin/ralph-hero/skills/setup/SKILL.md` >= 2
+- [x] Both eval-scenarios.md files exist
 
 #### Manual Verification:
 - [ ] First-time user can follow setup without hitting hardcoded-default confusion

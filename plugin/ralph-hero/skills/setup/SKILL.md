@@ -19,6 +19,20 @@ allowed-tools:
 
 One-time interactive setup skill for configuring a GitHub repository with the Ralph workflow. Creates a GitHub Project V2 with all required custom fields, views, and configuration.
 
+## Recovery (If Setup Was Interrupted)
+
+If a previous setup run was interrupted after project creation but before the local config file was written, you may have a "dangling" GitHub Project that this skill doesn't know about. Re-running setup without guidance will create a duplicate project.
+
+**To resume from a known project number:**
+
+```
+/ralph-hero:setup [existing-project-number]
+```
+
+This skips project creation and verifies the existing project (its required custom fields), then continues with config-file write and the remaining steps. See Step 3 below for the resume code path.
+
+If you do not know the project number, find it in the GitHub UI under your account/org Projects, then re-run with the number above.
+
 ## Quick Start (Minimum Viable Config)
 
 Ralph needs **one token** and **three settings**. That's it.
@@ -211,13 +225,26 @@ Then restart Claude Code and run /ralph-hero:setup again.
 
 ### Step 3: Create or Verify Project
 
-**If `RALPH_GH_PROJECT_NUMBER` is set and project was accessible in Step 1:**
+**Resume path — if a project number was passed as argument (`/ralph-hero:setup [project-number]`):**
+
+This is the recovery path for interrupted setups. The skill should NOT create a new project; instead it verifies the supplied number and skips ahead.
+
+1. Use the supplied project number as `RALPH_GH_PROJECT_NUMBER` for the rest of this session.
+2. Fetch the project via `get_project` to confirm it exists and is accessible with the current token.
+3. Verify it has the required custom fields (Workflow State, Priority, Estimate). If a field is missing, report what's missing and offer to create them via `setup_project` in "extend existing" mode (do not blow away existing fields).
+4. If verification succeeds, skip to Step 4.
+5. If the supplied number is invalid or the project is inaccessible, STOP with a clear error: "Project [number] is not accessible with the current token. Verify the number, your token's `project` scope, and the project owner. To create a new project instead, re-run `/ralph-hero:setup` without an argument."
+
+**If no argument was passed and `RALPH_GH_PROJECT_NUMBER` is set and project was accessible in Step 1:**
 1. Fetch the project to verify it exists.
 2. Verify it has the required custom fields (Workflow State, Priority, Estimate)
 3. If fields are missing, report what's missing and offer to create them
 4. Skip to Step 4
 
-**If `RALPH_GH_PROJECT_NUMBER` is NOT set (or project wasn't accessible):**
+**If no argument was passed and `RALPH_GH_PROJECT_NUMBER` is NOT set (or project wasn't accessible):**
+
+> **Idempotency note**: There is no automatic guard against creating a duplicate project. If you previously ran `/ralph-hero:setup` and it created a project but failed before writing the config file, re-running this branch will create a SECOND project. To avoid this, find the existing project's number in the GitHub UI and use the resume path above instead.
+
 1. Run setup_project with `owner` set to the **project owner** determined in Step 2 (NOT the repo owner, unless they're the same)
 2. This creates:
    - **Workflow State** single-select field with 11 options:
@@ -399,7 +426,7 @@ For dual-token setups (separate org repo + personal project tokens), add to the 
 **Important**: Do NOT put tokens in `.mcp.json` — tokens go in your scope-appropriate settings file.
 ```
 
-Also include the Workflow States table in both cases:
+Also include the Workflow States table in both cases. The `setup_project` MCP tool creates **11 states** — make sure the documented table matches:
 
 ```markdown
 ## Workflow States
@@ -416,7 +443,31 @@ Also include the Workflow States table in both cases:
 | In Review | PR created, awaiting review |
 | Done | Completed |
 | Human Needed | Requires human intervention |
+| Canceled | Closed without completion (not planned) |
 ```
+
+### Step 5b: Add Local Config to `.gitignore`
+
+After writing `.claude/ralph-hero.local.md`, ensure the path is in the project's `.gitignore` so the config (which may include token-adjacent metadata) is not accidentally committed.
+
+```bash
+GITIGNORE_PATH=".gitignore"
+LOCAL_CONFIG_PATH=".claude/ralph-hero.local.md"
+
+if [[ -f "$GITIGNORE_PATH" ]]; then
+  if ! grep -qxF "$LOCAL_CONFIG_PATH" "$GITIGNORE_PATH"; then
+    printf '\n# Ralph local config (do not commit)\n%s\n' "$LOCAL_CONFIG_PATH" >> "$GITIGNORE_PATH"
+    echo "Appended $LOCAL_CONFIG_PATH to .gitignore"
+  else
+    echo ".gitignore already contains $LOCAL_CONFIG_PATH — no change"
+  fi
+else
+  printf '# Ralph local config (do not commit)\n%s\n' "$LOCAL_CONFIG_PATH" > "$GITIGNORE_PATH"
+  echo "Created .gitignore with $LOCAL_CONFIG_PATH"
+fi
+```
+
+If the working directory is not a git repository, skip this step (no `.gitignore` needed). Note: this only protects the config file path — the contents are still your responsibility to keep clean of secrets.
 
 ### Step 6: Verify Setup
 
@@ -488,12 +539,14 @@ Only set them if your values differ from the defaults.
 
 Go to: https://github.com/[owner]/[repo]/settings/variables/actions
 
-| Variable              | Default      | Set if...                          |
-|-----------------------|--------------|------------------------------------|
-| RALPH_PROJECT_OWNER   | cdubiel08    | Your project owner differs         |
-| RALPH_PROJECT_NUMBER  | 3            | Your project number differs        |
-| ROUTING_DEFAULT_PROJECT | (none)     | You want a fallback project        |
-| SYNC_PROJECT_FILTER   | (none)       | You use cross-project sync         |
+| Variable              | Default                  | Set if...                          |
+|-----------------------|--------------------------|------------------------------------|
+| RALPH_PROJECT_OWNER   | [YOUR_PROJECT_OWNER]     | Your project owner differs from the workflow defaults |
+| RALPH_PROJECT_NUMBER  | [YOUR_PROJECT_NUMBER]    | Your project number differs from the workflow defaults |
+| ROUTING_DEFAULT_PROJECT | (none)                 | You want a fallback project        |
+| SYNC_PROJECT_FILTER   | (none)                   | You use cross-project sync         |
+
+> The `[YOUR_PROJECT_OWNER]` / `[YOUR_PROJECT_NUMBER]` placeholders above are populated from the values you confirmed earlier in this skill. Substitute them with the project owner and number for your install (e.g., your GitHub username and the project number recorded in Step 3). The sync workflow YAML files use `${{ vars.RALPH_PROJECT_OWNER }}` / `${{ vars.RALPH_PROJECT_NUMBER }}` and fall back to the workflow's hardcoded defaults if the variables are unset, so override only what differs.
 ```
 
 Then ask using AskUserQuestion:
