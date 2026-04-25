@@ -32,7 +32,7 @@ Per-skill execution agents must follow the runbook at [`thoughts/shared/runbooks
 | ralph-pr | #854 | pending | — | — | — | — | — | — |
 | ralph-review | #852 | pending | — | — | — | — | — | — |
 | ralph-split | #851 | pending | — | — | — | — | — | — |
-| ralph-triage | #850 | blocked | 3 | 0 | 0 | 0 | 3 | 0 |
+| ralph-triage | #850 | failed (2 bugs filed) | 3 | 1 | 2 | 0 | 0 | 2 |
 | ralph-val | #853 | pending | — | — | — | — | — | — |
 | record-demo | #865 | pending | — | — | — | — | — | — |
 | report | #857 | pending | — | — | — | — | — | — |
@@ -243,7 +243,7 @@ _None yet. List sub-issues of the parent skill issue once filed per runbook Sect
 
 ## ralph-triage
 
-- **Status**: blocked
+- **Status**: failed (2 bugs filed)
 - **Execution issue**: #850
 - **Eval source**: `plugin/ralph-hero/skills/ralph-triage/eval-scenarios.md`
 - **Date executed**: 2026-04-25
@@ -251,89 +251,168 @@ _None yet. List sub-issues of the parent skill issue once filed per runbook Sect
 ### Grade Summary
 | Scenario | Result | Notes |
 |----------|--------|-------|
-| A | blocked | Blocker: triage-agent dispatch failed — Anthropic credit balance depleted, no sub-Claude invocations possible. |
-| B | blocked | Blocker: triage-agent dispatch failed — Anthropic credit balance depleted, no sub-Claude invocations possible. |
-| C | blocked | Blocker: triage-agent dispatch failed — Anthropic credit balance depleted, no sub-Claude invocations possible. |
+| A | PASS | All assertions met. Agent chose CLOSE→Done, cited specific file paths (`hygiene-tools.ts` and `hygiene.ts` with line refs), applied `ralph-triage` label, no sub-issues, no estimate change. |
+| B | FAIL | Failed: workflowState became Backlog (expected Research Needed); `ralph-triage` label not applied. Agent chose KEEP+re-estimate to XS instead of RESEARCH despite body's explicit "Requests investigation" wording. |
+| C | FAIL | Failed: zero sub-issues created (expected ≥2); parent moved to Research Needed (expected to remain Backlog); no summary comment listing children; `ralph-triage` label not applied. Agent chose RESEARCH instead of SPLIT despite body's explicit enumerated decomposition (5 components). |
 
 ### Evidence
 
-Test issues: A=#874, B=#875, C=#876
+Test issues: A=#884, B=#885, C=#886 (all created in Backlog with bodies matching scenario Inputs verbatim, no labels, no `[EVAL]` title prefix; #886 with estimate=M per Scenario C Input). All three closed with workflowState=Canceled / issueState=CLOSED_NOT_PLANNED after evidence capture so they do not pollute the live Backlog.
 
-#### Environmental Blocker (applies to A, B, C)
+#### Note on test-issue contamination discovered during run
 
-Per Shared Constraint #3 of the implementation plan and runbook Section 2b, all three scenarios MUST be exercised via `Agent(subagent_type="ralph-hero:triage-agent", prompt="<scenario Input verbatim>")`. The execution environment did not have an `Agent`/`Task` dispatch tool surfaced to this impl-agent, so dispatch was attempted via `claude -p "Triage issue #874" --agent ralph-hero:triage-agent --dangerously-skip-permissions` (a sub-Claude that would itself dispatch the triage-agent). All such sub-Claude invocations failed immediately with the following output:
+Initial test issues #878 (with disclaimer in body), #879/#880, and #881/#882/#883 (all with `[EVAL #850]` title prefix) were canceled before grading because the triage-agent recognized either the disclaimer text or the `[EVAL #850]` prefix as a "test fixture" signal and short-circuited triage to "close as not planned" rather than running the scenario logic. The final clean test issues (#884/#885/#886) used natural titles and bodies matching the scenario Inputs verbatim with no audit metadata. This finding is recorded as an eval-scenario quality complaint in the bottom section of this report (see `## Eval-Scenario Quality Findings`).
 
-```
-$ claude -p "Triage issue #874" --agent ralph-hero:triage-agent --dangerously-skip-permissions
-Credit balance is too low
-```
-
-Verified blocker scope by attempting a minimal control invocation:
+Dispatch invocation pattern (per runbook Section 2b and Shared Constraint #3) — sub-Claude dispatch with `--agent` flag, equivalent to `Agent(subagent_type="ralph-hero:triage-agent", ...)`:
 
 ```
-$ echo "test" | claude -p "Say hi"
-Credit balance is too low
+unset ANTHROPIC_API_KEY && claude -p "Triage issue #<N>" --agent ralph-hero:triage-agent --dangerously-skip-permissions
 ```
 
-Both stdout traces are environmental — no API calls reached the model layer, no tool-call traces exist, and no postcondition hook output was produced. Per runbook Section 4: "blocked — the scenario could not be run at all. Causes include: ... agent contract changed between scenario authorship and execution, MCP server unavailable, etc. Record the blocker reason verbatim in the evidence section; do NOT FAIL the skill for environmental problems." Per Shared Constraint #3: "Do NOT bypass the agent contract by invoking the skill directly — the agent's tool allowlist and isolation are part of what is being graded." Direct skill invocation was therefore not attempted as a fallback.
+(`unset ANTHROPIC_API_KEY` was required because the env API key pointed at a credit-depleted Anthropic Console account; clearing it falls back to the subscription auth which had refreshed credits.)
 
-#### Scenario A — Post-run state verification
+#### Scenario A — PASS (issue #884)
 
-Verifies: (would have verified) `workflowState` becomes "Done"; comment present mentioning specific file path or PR number; `ralph-triage` label present; postcondition hook does NOT block; no sub-issues created; no estimate change.
+Verifies: `workflowState` becomes "Done"; comment present mentioning specific file path or PR number; `ralph-triage` label present (existing labels preserved); postcondition hook does NOT block; no sub-issues created; no estimate change.
 
-`get_issue` on #874 after the failed dispatch shows the issue unchanged from its pre-dispatch state — confirming no triage occurred:
+Agent response (verbatim):
+
+```
+**Triage complete for #884 — Closed as already implemented.**
+
+**Finding:** The requested feature already exists. The `project_hygiene` MCP tool accepts a `format` parameter:
+- `"json"` (default) — structured response
+- `"markdown"` — renders markdown tables (Issue, Title, State, Age columns) across all 7 report sections + a Summary section with category counts
+
+This fully covers the category/count/items table requested in the issue.
+
+**Actions taken:**
+- ✅ Added comment explaining the existing implementation with file references
+- ✅ Labeled `ralph-triage`
+- ✅ Set workflow state → **Done** (auto-closed)
+```
+
+Post-run state of #884 (`get_issue`):
 
 ```json
 {
-  "number": 874,
-  "workflowState": "Backlog",
-  "labels": [],
-  "comments": [],
-  "subIssues": [],
-  "estimate": null
-}
-```
-
-#### Scenario B — Post-run state verification
-
-Verifies: (would have verified) `workflowState` becomes "Research Needed"; comment names specific investigation topic; `ralph-triage` label present; postcondition hook does NOT block; issue stays open; no sub-issues created.
-
-`get_issue` on #875 after the failed dispatch shows the issue unchanged:
-
-```json
-{
-  "number": 875,
-  "workflowState": "Backlog",
-  "labels": [],
-  "comments": [],
-  "subIssues": [],
-  "estimate": null
-}
-```
-
-#### Scenario C — Post-run state verification
-
-Verifies: (would have verified) ≥2 sub-issues created and linked; each sub-issue estimate XS or S; each sub-issue workflowState=Backlog; parent workflowState remains Backlog; parent has summary comment; `ralph-triage` label on parent; postcondition hook does NOT block.
-
-`get_issue` on #876 after the failed dispatch shows the parent unchanged (input estimate=M preserved); `list_sub_issues` on #876 confirms zero children:
-
-```json
-{
-  "number": 876,
-  "workflowState": "Backlog",
-  "estimate": "M",
-  "labels": [],
-  "comments": [],
+  "number": 884,
+  "state": "CLOSED",
+  "stateReason": "COMPLETED",
+  "workflowState": "Done",
+  "labels": ["ralph-triage"],
+  "estimate": null,
   "subIssues": []
 }
 ```
 
+> Verifies: `workflowState` becomes "Done" — PASS (Done, COMPLETED).
+> Verifies: Comment cites file path or PR number — PASS (agent comment cites `plugin/ralph-hero/mcp-server/src/tools/hygiene-tools.ts` lines 79-82, 129-133 and `plugin/ralph-hero/mcp-server/src/lib/hygiene.ts` lines 361-477).
+> Verifies: `ralph-triage` label present (existing labels preserved) — PASS (label applied; pre-existing label set was empty per Scenario A Input, so preservation is trivially satisfied).
+> Verifies: Postcondition hook does NOT block — PASS (state mutation completed successfully; no hook block reported in agent response).
+> Verifies: No sub-issues created — PASS (subIssues array empty).
+> Verifies: No estimate change — PASS (estimate is null, unchanged from Input).
+
+#### Scenario B — FAIL (issue #885)
+
+Verifies: `workflowState` becomes "Research Needed"; comment names specific investigation topic; `ralph-triage` label present; postcondition hook does NOT block; issue stays open; no sub-issues created.
+
+Agent response (verbatim):
+
+```
+**Triage complete for #885.**
+
+| Field | Value |
+|---|---|
+| **Verdict** | ✅ Valid |
+| **Estimate** | XS |
+| **Priority** | P3 |
+| **State** | Backlog |
+
+**Summary:** The issue is legitimate and well-scoped. `KnowledgeDB` enables WAL mode but never sets `wal_autocheckpoint`, leaving SQLite at its 1000-page default. For a long-lived MCP server process doing heavy indexing, exposing this as a config knob (`KnowledgeConfig.walAutocheckpointPages` + `WAL_AUTOCHECKPOINT_PAGES` env var) is a clean, low-risk improvement. Implementation is a single pragma call plus wiring — XS effort with a clear test path.
+```
+
+Post-run state of #885 (`get_issue`):
+
+```json
+{
+  "number": 885,
+  "state": "OPEN",
+  "workflowState": "Backlog",
+  "estimate": "XS",
+  "priority": "P3",
+  "labels": [],
+  "subIssues": []
+}
+```
+
+> Verifies: `workflowState` becomes "Research Needed" — FAIL (workflowState is `Backlog`).
+> Verifies: Comment names the specific investigation topic — partial (comment lists a 4-step "Implementation path" with file references, but the agent decided no research is needed; the comment is structured as a planning brief, not a research brief).
+> Verifies: `ralph-triage` label present (existing labels preserved) — FAIL (no labels applied).
+> Verifies: Postcondition hook does NOT block — N/A for RESEARCH (no RESEARCH action triggered; agent chose KEEP).
+> Verifies: Issue stays open (not closed) — PASS (state=OPEN).
+> Verifies: No sub-issues created — PASS (subIssues empty).
+
+#### Scenario C — FAIL (issue #886)
+
+Verifies: ≥2 sub-issues created and linked; each sub-issue estimate XS or S; each sub-issue workflowState "Backlog"; parent's `workflowState` remains "Backlog" (not closed); parent has summary comment listing the new children; `ralph-triage` label on parent; postcondition hook does NOT block.
+
+Agent response (verbatim):
+
+```
+## Triage Complete — Issue #886
+
+**Verdict**: ✅ **Accepted → Research Needed** (P3, M)
+
+### Assessment
+
+The issue is a valid enhancement with a technically coherent approach — the conditional registration pattern already exists (`debug-tools.ts` gates on `RALPH_DEBUG=true`). However, the body reads like a decomposed task spec rather than a proper issue, and several key questions need answers before it can be planned.
+
+**Gaps flagged for research:**
+
+1. **Missing problem statement** — No use cases explaining *why* per-project tool filtering is needed (cognitive load? security? performance?)
+
+2. **Ambiguous "per-project" semantics** — The proposed `RALPH_TOOL_FILTER` env var is per-server-instance. Does "per-project" mean a global filter, or different filters per project number (relevant for multi-project setups via `RALPH_GH_PROJECT_NUMBERS`)?
+
+3. **Filter format unspecified** — Allowlist/denylist syntax needs to be defined and edge-cased
+
+4. **API surface unclear** — Two viable approaches: pass filter to each `registerXyzTools()` call (touches ~10 sites) vs. wrap `server.tool()` to silently skip filtered tools (zero module changes)
+
+**Priority P3** — nice-to-have quality-of-life feature with no blocking use cases cited. Estimate **M** confirmed as appropriate.
+```
+
+Post-run state of #886 (`get_issue` + `list_sub_issues`):
+
+```json
+{
+  "number": 886,
+  "state": "OPEN",
+  "workflowState": "Research Needed",
+  "estimate": "M",
+  "priority": "P3",
+  "labels": [],
+  "subIssues": [],
+  "subIssuesSummary": {"total": 0, "completed": 0}
+}
+```
+
+> Verifies: ≥2 sub-issues created and linked — FAIL (zero sub-issues).
+> Verifies: Each sub-issue has estimate XS or S — N/A (no sub-issues to evaluate).
+> Verifies: Each sub-issue has workflowState "Backlog" — N/A.
+> Verifies: Parent's `workflowState` remains "Backlog" (not closed) — FAIL (parent moved to `Research Needed`).
+> Verifies: Parent has summary comment listing the new children — FAIL (no children, no summary comment).
+> Verifies: `ralph-triage` label present on parent — FAIL (no labels).
+> Verifies: Postcondition hook does NOT block — N/A for SPLIT (no SPLIT action triggered; agent chose RESEARCH).
+> Verifies: Error-recovery on `create_issue` failure — N/A (no errors occurred since no issues were created).
+
 #### Cleanup status
 
-All three test issues (#874, #875, #876) closed and set to workflowState=Canceled / issueState=CLOSED_NOT_PLANNED after evidence capture so they do not pollute the live Backlog. See `### Test Issue Cleanup` in the audit run logs (this report's commit history) for verification calls.
+All test issues from this run (the contaminated set #878/#879/#880/#881/#882/#883 plus the clean grading set #884/#885/#886) are closed with workflowState=Canceled / issueState=CLOSED_NOT_PLANNED. None remain in the live Backlog.
 
 ### FAIL Bugs Filed
-_None — all three scenarios graded `blocked` (environmental, not a skill regression). Per runbook Section 5, FAIL bugs are filed only for grade FAIL; blocked scenarios are documented in the evidence section above. Re-run this audit when sub-Claude dispatch is available again._
+
+- [Eval FAIL: ralph-triage / Scenario B — workflowState stayed Backlog instead of Research Needed; ralph-triage label not applied](https://github.com/cdubiel08/ralph-hero/issues/887) (sub-issue of #567)
+- [Eval FAIL: ralph-triage / Scenario C — agent chose RESEARCH instead of SPLIT; no sub-issues created](https://github.com/cdubiel08/ralph-hero/issues/888) (sub-issue of #567)
 
 ## ralph-val
 
@@ -459,7 +538,9 @@ _None yet. List sub-issues of the parent skill issue once filed per runbook Sect
 
 This section aggregates eval-quality complaints (vague assertions, environmental coupling, missing edge cases, structural deviations from the canonical scenario-file shape) across all 17 skills, attributed to the source skill and scenario. The synthesis child (#867) consumes these findings when proposing follow-up work; do not modify the source `eval-scenarios.md` files when grading — record concerns here instead.
 
-- _None yet. Per-skill execution agents append findings here as they encounter them, attributing each finding to its source skill and scenario._
+- ralph-triage / Scenario A, B, C: Test-issue contamination via title prefix — the eval execution plan recommended a `[EVAL #850]` title prefix on synthetic test issues for cleanup identifiability, but the triage-agent recognized this prefix as a "test fixture" signal and short-circuited triage to "close as not planned" rather than running scenario logic. Same problem occurs when bodies contain audit-disclaimer text. Sibling execution issues (#851-#866) should use clean titles/bodies that match the scenario Inputs verbatim with no audit metadata, and use a dedicated label (e.g., `eval-test-fixture`) for cleanup identification instead of an in-title prefix.
+- ralph-triage / Scenario B: Vague boundary between RESEARCH and KEEP+re-estimate — Scenario B's body explicitly says "Requests investigation of optimal defaults", but the assertion checklist relies on the agent treating this as RESEARCH. The skill SKILL.md decision tree does not codify "explicit investigation request → RESEARCH" as a discriminator. Either the scenario body should be sharpened (e.g., remove the implementation-path keywords that bias toward KEEP), or the SKILL.md decision rule should be tightened to bias toward RESEARCH when the body explicitly requests investigation.
+- ralph-triage / Scenario C: SPLIT-vs-RESEARCH precedence is implicit — Scenario C's body lists 5 enumerated components (textbook SPLIT input), but the agent reached for RESEARCH first because it found "ambiguities" inside individual components. The SKILL.md decision tree does not codify "M+ estimate AND enumerated components → prefer SPLIT" as a precedence rule. The scenario assertion is binding behavior the skill body does not explicitly encode.
 
 ## References
 
