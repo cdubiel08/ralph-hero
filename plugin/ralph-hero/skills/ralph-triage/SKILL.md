@@ -1,5 +1,5 @@
 ---
-description: Triage GitHub issues from backlog - assess validity, close duplicates, split large tickets, route to research. Use when you want to triage issues, groom the backlog, assess tickets, or clean up issues.
+description: Autonomous backlog groomer — picks oldest untriaged Backlog issue, assesses validity, closes duplicates, splits large tickets, or routes to research. For orchestrator dispatch only.
 user-invocable: false
 argument-hint: [optional-issue-number]
 context: fork
@@ -82,9 +82,9 @@ Then STOP. Do not proceed.
 
 **Query 1**: List Backlog issues that already have the "ralph-triage" label (profile: "analyst-triage", label: "ralph-triage", limit: 250). Store the returned issue numbers as `triaged_numbers`.
 
-**Query 2**: List all Backlog issues ordered by creation date (profile: "analyst-triage", orderBy: "createdAt", limit: 250).
+**Query 2**: List all Backlog issues ordered by creation date, ascending (oldest first), using `orderBy: "CREATED_AT"` explicitly (profile: "analyst-triage", orderBy: "CREATED_AT", limit: 250). The ascending direction is required so the **first** result is the oldest issue — without it, the tool may return newest-first and pick the wrong issue.
 
-**Select**: Pick the **first issue from Query 2 whose number is NOT in `triaged_numbers`**.
+**Select**: Pick the **first issue from Query 2 whose number is NOT in `triaged_numbers`** (this is the oldest untriaged Backlog issue).
 
 If no untriaged issue found (all numbers are in `triaged_numbers`, or Backlog is empty), respond:
 ```
@@ -142,9 +142,14 @@ Choose ONE action:
 
 ### Step 5: Take Action
 
-**If CLOSE:** Update the issue workflow state to "Done" (command: "ralph_triage"). Add a comment explaining why it was closed.
+**General error handling pattern (applies to all action branches below):**
+If `save_issue`, `create_issue`, `add_sub_issue`, or `add_dependency` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters. If the error indicates a permanent problem (invalid permissions, missing field, etc.), escalate per the Escalation Protocol below.
 
-**Error handling**: If `save_issue` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters.
+**If CLOSE:** Choose the destination state based on closure reason:
+- **Done** — for issues that are already implemented, already fixed, or duplicates of completed work. Use `issueState: "CLOSED"` (reason: completed).
+- **Canceled** — for issues that are no longer relevant (tech changed, product direction shifted, no longer applicable). Use `issueState: "CLOSED_NOT_PLANNED"` (reason: not planned).
+
+Update the issue workflow state accordingly (command: "ralph_triage"). Add a comment explaining why it was closed and which destination state was chosen.
 
 **If SPLIT:**
 
@@ -164,11 +169,19 @@ Add a comment to the original listing sub-issues (reused and/or created).
 
 **Do NOT close the original issue.** The parent stays in its current state (Backlog). It reaches Done only when all children are Done.
 
-**If RE-ESTIMATE:** Update the issue with the new estimate (XS/S/M/L/XL). Add a comment explaining the estimate reasoning.
+**If RE-ESTIMATE:** Update the issue with the new estimate (XS/S/M/L/XL). Add a comment explaining the estimate reasoning. Workflow state remains Backlog.
 
-**If RESEARCH:** Update the issue workflow state to "Research Needed" (command: "ralph_triage"). Add a comment: "Moved to Research Needed for investigation."
+**If RESEARCH:** Update the issue workflow state to "Research Needed" (command: "ralph_triage"). Add a comment: "Moved to Research Needed for investigation." The comment should also briefly note what specifically needs to be researched (e.g., "Investigate whether feature X already exists in module Y" or "Clarify scope of integration with system Z") so the downstream `/ralph-research` agent has actionable context.
 
 **If KEEP:** Add a comment with any clarifications or context discovered. Leave workflow state as Backlog.
+
+**Before completing (REQUIRED for all action branches):** Set the `RALPH_TRIAGE_ACTION` environment variable so the postcondition hook (`triage-postcondition.sh`) can verify the action was taken. Use Bash to export the value:
+
+```bash
+export RALPH_TRIAGE_ACTION=RESEARCH   # or SPLIT, CLOSE, KEEP, HUMAN, CANCEL, RE-ESTIMATE
+```
+
+Valid values: `RESEARCH`, `SPLIT`, `CLOSE`, `KEEP`, `HUMAN` (when escalating), `CANCEL`, `RE-ESTIMATE`. The postcondition hook will block completion if `RALPH_TRIAGE_ACTION` is unset or holds an unrecognized value.
 
 ### Step 6: Mark Issue as Triaged
 
@@ -177,6 +190,8 @@ After completing any action (CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP), update the 
 **Important**: Preserve existing labels when adding `ralph-triage`. Read the issue's current labels first, then include them all plus `ralph-triage` in the update.
 
 ### Step 7: Find and Link Related Issues
+
+> **Best-effort within time budget**: Step 7 is optional when the overall 10-minute time budget is tight. The primary triage action (Step 5) and label application (Step 6) take priority. If the candidate query in step 1 below returns more than ~30 issues to evaluate, consider deferring grouping work and noting in the report that grouping was skipped due to scope size.
 
 After triage action is complete, scan for related issues in Backlog or Research Needed:
 
@@ -307,6 +322,8 @@ Profiles set default filters. Explicit params (e.g., `label`) override or compos
 - Complete within 10 minutes
 
 ## Link Formatting
+
+> **Follow-up note**: Branch verify (Step 1), Link Formatting (this section), and Team Result Reporting (Step 8) are duplicated across many skills and are fragment-extraction candidates — see #840-843. Do not extract here; this skill keeps them inline until those tickets land.
 
 **Single-repo (default):**
 
