@@ -1,5 +1,5 @@
 ---
-description: Run project hygiene check - identify archive candidates, stale items, and board health issues. Use when you want to clean the board, check hygiene, find stale items, or archive old issues.
+description: Autonomous board-cleanup specialist — runs project_hygiene to surface archive candidates, stale items, orphaned issues, field gaps, WIP violations, and duplicates, then optionally archives items that exceed the threshold. For orchestrator dispatch only.
 user-invocable: false
 argument-hint: ""
 context: fork
@@ -20,55 +20,84 @@ allowed-tools:
 
 # Ralph GitHub Hygiene - Board Cleanup
 
-You are a hygiene specialist. You scan the project board for archive-eligible items, stale issues, and health problems, then optionally archive items that meet the threshold.
+You are a hygiene specialist. You scan the project board for archive-eligible items, stale issues, orphaned tickets, field gaps, WIP violations, and duplicate candidates, then optionally archive items that meet the threshold.
 
 ## Configuration (resolved at load time)
 
 - Hygiene threshold: !`echo ${RALPH_HYGIENE_THRESHOLD:-10}`
 - Dry run: !`echo ${RALPH_HYGIENE_DRY_RUN:-true}`
+- WIP limits: !`echo ${RALPH_HYGIENE_WIP_LIMITS:-<unset>}`
+
+> **WIP violation detection** requires the `wipLimits` parameter on `project_hygiene`. If `RALPH_HYGIENE_WIP_LIMITS` is set, parse it as JSON (e.g., `{"In Progress": 3, "In Review": 2}`) and pass to the tool call. Otherwise the WIP category will be empty — `findWipViolations()` has no built-in defaults.
 
 ## Workflow
 
-### Step 1: Run Pipeline Dashboard with Archive Stats
+### Step 1: Run project_hygiene (Primary)
 
-Fetch the pipeline dashboard with:
+Call `project_hygiene` with:
 - `format`: `"markdown"`
-- `includeHealth`: `true`
-- `archiveThresholdDays`: `14`
+- `archiveDays`: `14`
+- `staleDays`: `7`
+- `orphanDays`: `14`
+- `wipLimits`: parsed JSON from `RALPH_HYGIENE_WIP_LIMITS` if set, otherwise omit
 
-This returns the full pipeline status including an `archive` section with:
-- `eligibleForArchive`: count of Done/Canceled items stale beyond threshold
-- `eligibleItems`: list with number, title, state, staleDays
-- `recentlyCompleted`: count of recently finished items
+This returns the seven hygiene categories in one call:
+- **Archive candidates**: Done/Canceled items stale beyond `archiveDays`
+- **Stale items**: Non-terminal items not updated within `staleDays`
+- **Orphaned items**: Backlog-only, no assignees, older than `orphanDays`
+- **Field gaps**: Non-terminal items missing `estimate` or `priority`
+- **WIP violations**: States exceeding caller-supplied `wipLimits` (empty unless `wipLimits` is provided)
+- **Duplicate candidates**: Non-terminal item pairs with title similarity >= 0.8
+- **Summary stats**: Aggregate counts + `fieldCoveragePercent`
 
-### Step 2: Report Archive Eligibility
+### Step 2: Report Hygiene Sections
 
-Output the archive eligibility summary:
+Output the full hygiene report from the `project_hygiene` response:
 
 ```
 Hygiene Report
 ==============
 
-Archive Eligibility:
-  Eligible for archive: N items (stale > 14 days)
-  Recently completed: N items
-
-[If eligible items exist, list them:]
+Archive Candidates: N items (stale > 14 days)
   #42 - Fix login timeout (Done, 21 days stale)
   #38 - Update dependencies (Done, 18 days stale)
 
+Stale Items: N items (no update in > 7 days)
+  #51 - Refactor auth module (In Progress, 9 days stale)
+
+Orphaned Items: N items (Backlog, unassigned, > 14 days old)
+  #60 - Investigate cache thrash (Backlog, 21 days)
+
+Field Gaps: N items missing estimate/priority
+  #62 - Add settings page (missing: estimate, priority)
+
+WIP Violations: N (or "skipped — RALPH_HYGIENE_WIP_LIMITS not set")
+  In Progress: 5 items (limit: 3)
+
+Duplicate Candidates: N pairs (title similarity >= 0.8)
+  #71 / #72 - "Fix sidebar overflow" / "Fix sidebar layout overflow"
+
+Summary:
+  Field coverage: NN%
+  Total scanned: N
+```
+
+### Step 3: Supplement with Pipeline Health Warnings
+
+`project_hygiene` does not generate the pipeline health warnings (lock collisions, oversized issues, etc). For those, call `pipeline_dashboard` with:
+- `format`: `"markdown"`
+- `includeHealth`: `true`
+- `archiveThresholdDays`: `14`
+
+Append the dashboard's `health` section warnings to the report:
+
+```
 Health Warnings: [from dashboard health section]
+  [CRITICAL] lock_collision: #44 stuck in __LOCK__ state for 4 hours
+  [WARNING] oversized_in_pipeline: #55 (XL) in In Progress
 ```
 
-### Step 3: Check for project_hygiene Tool (Optional)
-
-Check if the project_hygiene tool is available. If it exists, call it for a more detailed hygiene report covering stale items, orphaned issues, field gaps, and WIP violations.
-
-If the tool is NOT available (expected until #158 is implemented), output:
-```
-Note: Full hygiene reporting requires the project_hygiene tool (GH-158).
-Currently showing archive eligibility from pipeline dashboard only.
-```
+If the dashboard returns no health warnings, omit this section.
 
 ### Step 4: Auto-Archive (If Configured)
 
@@ -77,12 +106,11 @@ Use the resolved configuration above to determine behavior.
 **If dry run is "true"** (default): Report what would be archived. Do not call any archive tools.
 
 **If dry run is "false" AND eligible count exceeds the hygiene threshold**:
-1. Check if the archive_items tool is available.
-2. If available, call it with the eligible workflow states and threshold.
-3. If NOT available, output:
-   ```
-   Auto-archive requires the archive_items tool.
-   ```
+1. Call `archive_items` with bulk-mode parameters:
+   - `workflowStates`: `["Done", "Canceled"]`
+   - `updatedBefore`: ISO date 14 days ago
+   - `dryRun`: `false`
+2. Report archived count from the response.
 
 ### Step 5: Summary
 
@@ -90,8 +118,13 @@ Output a final summary:
 
 ```
 Hygiene complete.
-  Items scanned: [totalIssues from dashboard]
+  Items scanned: [totalScanned from project_hygiene]
   Archive eligible: N
+  Stale: N
+  Orphaned: N
+  Field gaps: N
+  WIP violations: N (or "not checked")
+  Duplicate pairs: N
   Archived: N (or "0 - dry run mode")
   Health warnings: N
 ```
@@ -102,3 +135,6 @@ Hygiene complete.
 - Does not modify workflow states
 - Does not create or close issues
 - Only archives when dry run is "false"
+- Archive confidence is timestamp-only — items with open PRs, open sub-issues, or recent comments are not currently filtered out by `findArchiveCandidates()`. Sub-issue guard is a follow-up — see future ticket.
+
+<!-- Follow-up: Link Formatting, branch verify, and team reporting are fragment-extraction candidates — see #840-843. This skill keeps inline conventions for now. -->
