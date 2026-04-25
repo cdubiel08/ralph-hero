@@ -137,9 +137,9 @@ Add a `subIssueCount > 0` guard to `findArchiveCandidates()` so parent issues wi
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all tests pass, including the two new ones
-- [ ] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/hygiene.test.ts` — focused suite passes
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all tests pass, including the two new ones
+- [x] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/hygiene.test.ts` — focused suite passes
 
 #### Manual Verification:
 - [ ] Diff review confirms only the four targeted files changed (`hygiene.ts`, `hygiene.test.ts`, `SKILL.md`, plus auto-format if any) and the change in `hygiene.ts` is exactly the one-line guard

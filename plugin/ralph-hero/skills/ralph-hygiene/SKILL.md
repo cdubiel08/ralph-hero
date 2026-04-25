@@ -135,6 +135,6 @@ Hygiene complete.
 - Does not modify workflow states
 - Does not create or close issues
 - Only archives when dry run is "false"
-- Archive confidence is timestamp-only — items with open PRs, open sub-issues, or recent comments are not currently filtered out by `findArchiveCandidates()`. Sub-issue guard is a follow-up — see future ticket.
+- Archive confidence is timestamp-only — items with open PRs or recent comments are not currently filtered out by `findArchiveCandidates()`.
 
 <!-- Follow-up: Link Formatting, branch verify, and team reporting are fragment-extraction candidates — see #840-843. This skill keeps inline conventions for now. -->
