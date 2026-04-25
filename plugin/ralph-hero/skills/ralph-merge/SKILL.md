@@ -1,5 +1,5 @@
 ---
-description: Merge an approved pull request — checks PR readiness, merges, cleans up worktree, moves issues to Done. Use when you want to merge a PR for a completed issue.
+description: Merge a pull request after code review — handles review gate, merges, cleans up worktree, moves issues to Done. Use when you want to merge a PR for a completed issue.
 user-invocable: false
 argument-hint: <issue-number> [--pr-url url]
 context: fork
@@ -10,7 +10,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=merge RALPH_VALID_OUTPUT_STATES='Done,Human Needed'"
   PreToolUse:
-    - matcher: "ralph_hero__save_issue|ralph_hero__advance_issue"
+    - matcher: "ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/merge-state-gate.sh"
@@ -23,7 +23,6 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_dependencies
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__advance_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
@@ -80,6 +79,18 @@ gh pr list --head feature/GH-NNN --json number,url,state --jq '.[0]'
 If no PR found, report and stop.
 
 ## Step 4: Code Review Gate
+
+> **Output contract for callers (orchestrators: ralph-finish, ralph-hero):**
+>
+> This step can produce three distinct stop statuses that callers MUST handle:
+>
+> | Status | Meaning | Caller action |
+> |--------|---------|---------------|
+> | `MERGE BLOCKED` | A human reviewer requested changes (manual `CHANGES_REQUESTED` review on GitHub). Hard block. | Stop. Surface to human; do NOT auto-fix. |
+> | `CODE_REVIEW_FEEDBACK` | Auto-mode code review (via `code-review:code-review` skill) requested changes. Soft block — fix cycle is appropriate. | Dispatch impl-agent to address review findings, then re-invoke ralph-merge. |
+> | `MERGE NOT READY` | PR is open but not mergeable (conflicts, draft, missing review). Transient. | Retry later or escalate. |
+>
+> The distinction between `MERGE BLOCKED` and `CODE_REVIEW_FEEDBACK` matters: a caller that only handles `MERGE BLOCKED` will treat `CODE_REVIEW_FEEDBACK` as an unrecognized status and lose the auto-fix opportunity. Orchestrators MUST switch on all three statuses.
 
 Check whether the PR has received a code review:
 
@@ -176,11 +187,19 @@ And stop.
    - If user selects **"Merge without review"**: proceed to Step 5.
    - If user selects **"Stop"** or **"Other"**: stop.
 
-## Step 5: Check PR Readiness
+## Step 5: Check PR Readiness (with Rejection Detection)
 
 ```bash
-gh pr view NNN --json mergeable,reviewDecision,state
+gh pr view NNN --json mergeable,reviewDecision,state,mergedAt
 ```
+
+This single call covers both readiness and the "PR was rejected/closed without merge" detection that previously lived in Step 9b — handle both branches here:
+
+**Branch A — Rejection detected (PR closed without merge):**
+
+If `state` is `CLOSED` and `mergedAt` is null, the PR was rejected. Skip the merge entirely and run the rejection notification flow from Step 9b (post a notification on the parent issue, leave downstream blocked issues in their blocked state, do NOT advance anything).
+
+**Branch B — Readiness check (PR still open):**
 
 Check:
 - `state` is `OPEN`
@@ -244,15 +263,17 @@ After merging a PR, check if cross-repo dependents are now unblocked:
 
 3. **This is informational only.** The downstream issue becomes actionable through the normal pipeline (picked up by `/ralph-hero` or the next loop iteration). No automated cascade triggering.
 
-## Step 9b: Upstream PR Rejection
+## Step 9b: Upstream PR Rejection (handler)
 
-**Detection trigger:** Ralph-merge is invoked to merge a specific PR. If it discovers the PR has already been closed without merge (via `gh pr view --json state,mergedAt`), this is a rejection.
+**Detection** is performed in Step 5 Branch A (`state == CLOSED && mergedAt == null`) — that single `gh pr view` call covers both readiness and rejection. When Step 5 routes here, run the notification flow:
 
-**When a rejection is detected:**
+**Rejection-handling steps:**
 1. Query the parent issue to find downstream sibling issues blocked by the rejected issue
 2. Downstream blocked issues remain in their blocked state — do NOT advance them
 3. Post a notification via `create_comment` on the parent issue: "PR #{number} for GH-{issue} ({repo}) was closed without merge. GH-{downstream} ({repo}) remains blocked pending resolution."
 4. The human decides next steps (re-open, re-plan, etc.)
+
+Then stop — do not run Steps 6-9 (no merge, no Done transition).
 
 ## Step 10: Report Result
 

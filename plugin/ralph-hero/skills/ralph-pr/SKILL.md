@@ -10,7 +10,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=pr RALPH_VALID_OUTPUT_STATES='In Review,Human Needed'"
   PreToolUse:
-    - matcher: "ralph_hero__save_issue|ralph_hero__advance_issue"
+    - matcher: "ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pr-state-gate.sh"
@@ -20,7 +20,6 @@ allowed-tools:
   - Bash
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__advance_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
@@ -121,25 +120,56 @@ If push fails, report the error and stop.
 
 ## Step 5: Create Pull Request
 
+Build the PR body using the enriched template below. The template reads the plan document (located via Artifact Comment Protocol — see Step 2 issue comments for `## Implementation Plan` link) so reviewers (human and the `code-review` skill) have full context.
+
 ```bash
 gh pr create \
   --title "GH-NNN: [issue title]" \
-  --body "## Summary
+  --body "$(cat <<'PREOF'
+## Summary
 
-[Brief description from issue]
+[1-3 sentences describing what this PR does, sourced from the issue body or plan Overview.]
 
-Closes #NNN" \
+## Plan
+
+[Link to the implementation plan, e.g.: https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/plans/YYYY-MM-DD-GH-NNN-*.md]
+
+Phases shipped: N of M (group issues only — omit for standalone)
+
+## Test plan
+
+- [ ] Automated verification per plan Success Criteria
+- [ ] Manual verification per plan Success Criteria
+- [ ] Cross-phase integration check (multi-phase plans only)
+
+[Replace bullets with the actual checklist items from the plan's Success Criteria sections.]
+
+Closes #NNN
+[For group issues, add one Closes line per sub-issue:]
+[Closes #NNN_child1]
+[Closes #NNN_child2]
+PREOF
+)" \
   --head feature/GH-NNN \
   --base main
 ```
 
-For group issues, include `Closes #NNN` for each sub-issue in the body.
+For group issues, include `Closes #NNN` for each sub-issue in the body. Determine sub-issues via `list_sub_issues` (see Step 6).
 
-Capture the PR URL from the output.
+Capture the PR URL from the output. If `gh pr create` returns malformed output (no URL on stdout), report the failure and stop — do not silently continue.
+
+> **Follow-up**: The Link Formatting in PR Bodies subsection in Step 3a duplicates the Link Formatting table in ralph-merge and ralph-impl. Extraction to a shared fragment is tracked in #840 — do not extract here.
 
 ## Step 6: Move Issues to In Review
 
-Advance all children of the issue to "In Review". For a standalone issue: update the workflow state to "In Review" (command: "ralph_pr").
+Determine whether the issue is **standalone** or **group** before advancing:
+
+```
+list_sub_issues(number=NNN)
+```
+
+- **Standalone** (no children): update the issue's own workflow state to "In Review" via `save_issue` with `command: "ralph_pr"`.
+- **Group** (has children): advance every child returned by `list_sub_issues` to "In Review" via `save_issue`. Do NOT also advance the parent here — parent advancement is handled server-side by the `advance-parent` workflow when children reach the gate state.
 
 ## Step 7: Post Comment
 

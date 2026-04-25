@@ -18,7 +18,6 @@ allowed-tools:
   - Glob
   - Grep
   - Bash
-  - Task
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
@@ -83,6 +82,16 @@ Reason: No worktree found at worktrees/GH-NNN — cannot validate without implem
 ```
 And stop.
 
+**Worktree freshness check**: Once the worktree is located, refresh it before running validation so checks don't pass against a stale base:
+
+```bash
+cd worktrees/GH-NNN
+git fetch origin main
+git pull --ff-only
+```
+
+If `git pull --ff-only` fails (non-fast-forward), record the staleness as a substantive failure note but continue validation. Do NOT auto-merge or rebase — surface it in the verdict so the caller can route to impl/human resolution. Skip the pull if the worktree branch is detached or if there is no upstream tracking branch.
+
 ## Step 5: Extract Verification Criteria
 
 Parse the plan for:
@@ -96,6 +105,12 @@ Look for patterns like:
 - `- [ ] grep "pattern" file` — content check
 - `- [ ] npm test` — command to run
 - `- [ ] npm run build` — command to run
+
+**Missing `Automated Verification` handler**: If a phase has no `Automated Verification` section (or it is empty), record this as **PASS-with-warning** — do NOT silently skip. Note the phase number and the missing section in the verdict output so the reviewer knows the phase was not auto-checked. Example warning line:
+
+```
+- [!] Phase 3: no Automated Verification section — recorded as PASS-with-warning, manual review required
+```
 
 ## Step 6: Run Automated Checks
 

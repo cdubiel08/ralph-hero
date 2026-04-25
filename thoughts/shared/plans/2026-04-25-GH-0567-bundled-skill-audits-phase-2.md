@@ -390,11 +390,11 @@ Pipeline tail trio cleanup: remove stale `advance_issue` and `advance_parent` re
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` — exit 0
-- [ ] `grep -c "advance_issue" plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns 0
-- [ ] `grep -c "advance_parent" plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` returns 0
-- [ ] `grep -c "CODE_REVIEW_FEEDBACK" plugin/ralph-hero/skills/ralph-merge/SKILL.md` >= 2 (header block + body reference)
-- [ ] All three eval-scenarios.md files exist
+- [x] `bash -n plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` — exit 0
+- [x] `grep -c "advance_issue" plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns 0
+- [x] `grep -c "advance_parent" plugin/ralph-hero/hooks/scripts/merge-state-gate.sh` returns 0
+- [x] `grep -c "CODE_REVIEW_FEEDBACK" plugin/ralph-hero/skills/ralph-merge/SKILL.md` >= 2 (header block + body reference)
+- [x] All three eval-scenarios.md files exist
 
 #### Manual Verification:
 - [ ] PR body template produces a useful description for both human reviewers and code-review skills
