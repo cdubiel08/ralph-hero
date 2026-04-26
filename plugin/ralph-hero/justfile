@@ -289,6 +289,103 @@ doctor:
         fi
     done
     echo ""
+    echo "--- Token Resolution ---"
+    # Step 1: gh detection. Probe gh CLI keychain only when gh is on PATH;
+    # all gh-related variables stay empty otherwise so subsequent steps
+    # gracefully skip the keychain branches.
+    gh_token=""
+    gh_status_output=""
+    gh_user=""
+    gh_scopes=""
+    if command -v gh &>/dev/null; then
+        gh_token=$(gh auth token 2>/dev/null || true)
+        gh_status_output=$(gh auth status 2>&1 || true)
+        # `account <login>` is gh >= 2.40 output; `Logged in to github.com as <login>`
+        # covers older versions. Try the modern form first.
+        gh_user=$(echo "$gh_status_output" | grep -oE 'account [^ ]+' | head -1 | awk '{print $2}')
+        if [ -z "$gh_user" ]; then
+            gh_user=$(echo "$gh_status_output" | grep -oE 'Logged in to [^ ]+ as [^ ]+' | head -1 | awk '{print $NF}')
+        fi
+        gh_scopes=$(echo "$gh_status_output" | grep -oE "Token scopes: '[^']+'" | head -1 | sed -E "s/Token scopes: '([^']+)'/\1/")
+    fi
+    # Step 2: winning source detection. Mirrors the MCP server resolution chain
+    # in plugin/ralph-hero/mcp-server/src/index.ts (3-stage: explicit env →
+    # legacy single-token env → gh keychain). Reuses $resolved_token /
+    # $source_label populated by the env-vars loop above.
+    repo_source=""
+    if [ -n "${RALPH_GH_REPO_TOKEN:-}" ]; then
+        repo_source="RALPH_GH_REPO_TOKEN (explicit)"
+    elif [ -n "$resolved_token" ]; then
+        repo_source="RALPH_HERO_GITHUB_TOKEN${source_label:-}"
+    elif [ -n "$gh_token" ]; then
+        repo_source="gh auth (user: ${gh_user:-unknown})"
+    fi
+    project_source=""
+    if [ -n "${RALPH_GH_PROJECT_TOKEN:-}" ]; then
+        project_source="RALPH_GH_PROJECT_TOKEN (explicit)"
+    elif [ -n "$repo_source" ]; then
+        project_source="$repo_source (fallback)"
+    fi
+    if [ -n "$repo_source" ]; then
+        echo "  OK: repo ops    → $repo_source"
+        echo "  OK: project ops → $project_source"
+    else
+        echo "FAIL: no token resolvable"
+        echo "      Fix: gh auth login -s repo,project,read:org"
+        echo "      Or:  set RALPH_HERO_GITHUB_TOKEN in ~/.claude/settings.json"
+        errors=$((errors + 1))
+    fi
+    # Step 3: gh scopes report. Emit warnings for missing required scopes even
+    # when the user is on an env-var path, since they may still be relying on
+    # gh elsewhere (ralph-pr, ralph-merge, demo-seed.sh).
+    if [ -n "$gh_scopes" ]; then
+        echo "  gh scopes: $gh_scopes"
+        for required in repo project; do
+            # Match whole-word scope (avoid `repo` matching `repo:status`,
+            # which would be a false positive for a missing-scope warning).
+            if ! echo ", $gh_scopes," | grep -q ", $required,"; then
+                echo "  WARN: gh keychain missing scope '$required' — run: gh auth refresh -s repo,project,read:org"
+                warnings=$((warnings + 1))
+            fi
+        done
+    fi
+    # Step 4: token probe. Use whichever token won the resolution chain.
+    # NB: `GH_TOKEN=...` is a subshell-only inline assignment — it does NOT set
+    # process.env.GH_TOKEN, so the MCP-server contract (forbids GH_TOKEN as an
+    # MCP env var) remains intact.
+    probe_token="${resolved_token:-$gh_token}"
+    if [ -n "$probe_token" ]; then
+        probe_login=$(GH_TOKEN="$probe_token" gh api graphql -f query='query{viewer{login}}' --jq .data.viewer.login 2>/dev/null || true)
+        if [ -n "$probe_login" ]; then
+            echo "  OK: token probe — authenticated as $probe_login"
+        else
+            echo "FAIL: token probe failed (token may be expired or lack required scopes)"
+            case "$repo_source" in
+                *"gh auth"*)
+                    echo "      Fix: gh auth refresh -s repo,project,read:org"
+                    ;;
+                *)
+                    echo "      Fix: regenerate PAT at https://github.com/settings/tokens, update Claude Code settings"
+                    ;;
+            esac
+            errors=$((errors + 1))
+        fi
+    fi
+    # Step 5: rotation hint. Source-aware so users see only the path that
+    # applies to their current configuration.
+    if [ -n "$repo_source" ]; then
+        echo ""
+        case "$repo_source" in
+            *"gh auth"*)
+                echo "  Rotate: gh auth refresh -s repo,project,read:org"
+                ;;
+            *"RALPH_GH_REPO_TOKEN"*|*"RALPH_HERO_GITHUB_TOKEN"*)
+                echo "  Rotate: regenerate PAT at https://github.com/settings/tokens, update Claude Code settings"
+                echo "          Or migrate to gh auth: gh auth login -s repo,project,read:org && remove the env var"
+                ;;
+        esac
+    fi
+    echo ""
     echo "--- Dependencies ---"
     for cmd in just npx node; do
         if command -v "$cmd" &>/dev/null; then

@@ -57,6 +57,16 @@ Add your GitHub token and project settings to `.claude/settings.local.json` (git
 
 This creates a GitHub Projects V2 board with the required custom fields: **Workflow State**, **Priority**, and **Estimate**.
 
+## Token Expired?
+
+```bash
+gh auth refresh -s repo,project,read:org
+```
+
+Then restart Claude Code. Run `just doctor` if anything still looks off.
+
+If you're using explicit `RALPH_GH_REPO_TOKEN` / `RALPH_GH_PROJECT_TOKEN` / `RALPH_HERO_GITHUB_TOKEN`: regenerate the PAT at https://github.com/settings/tokens, update `~/.claude/settings.json` (or `.claude/settings.local.json`), restart Claude Code.
+
 ## Skills
 
 ### Autonomous Workflow

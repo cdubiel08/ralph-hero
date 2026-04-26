@@ -35,44 +35,47 @@ If you do not know the project number, find it in the GitHub UI under your accou
 
 ## Quick Start (Minimum Viable Config)
 
-Ralph needs **one token** and **three settings**. That's it.
+Ralph needs **one authenticated GitHub identity** and **three settings**.
 
-### 1. Create a GitHub Token
+### 1. Authenticate with `gh` (recommended)
 
-Go to https://github.com/settings/tokens → **Generate new token (classic)**
-- Scopes needed: `repo`, `project`, `read:org` (if using org repos)
+```bash
+gh auth login -s repo,project,read:org
+```
+
+This stores a token in your system keychain. ralph-hero reads it automatically — no settings.json edits needed for the token.
+
+To rotate later: `gh auth refresh -s repo,project,read:org`. To check status: `just doctor` (or `gh auth status`).
 
 ### 1b. Detect Install Scope
 
-Before writing configuration, determine where to write it:
+Before writing the *non-token* configuration, determine where to write it:
 
 1. Read `~/.claude/plugins/installed_plugins.json`
 2. Find the `ralph-hero@ralph-hero` entry
 3. Check the `"scope"` field of the latest entry
 
 **If scope is `"user"`:**
-- Write all env vars (including token) to `~/.claude/settings.json` under `"env"`
+- Write env vars to `~/.claude/settings.json` under `"env"`
 - Tell the user: "Ralph is installed at user scope — config will be written to ~/.claude/settings.json so the CLI works from any directory."
 
 **If scope is `"project"`:**
-- Write all env vars to `<project>/.claude/settings.local.json` under `"env"`
+- Write env vars to `<project>/.claude/settings.local.json` under `"env"`
 - Tell the user: "Ralph is installed at project scope — config will be written to .claude/settings.local.json. The CLI will only work from this project directory."
 
 **If scope cannot be determined:**
-- Fall back to current behavior (`settings.local.json`)
+- Fall back to `settings.local.json`
 - Warn: "Could not detect install scope. Writing to .claude/settings.local.json (project-scoped)."
 
-### 2. Add to Claude Code Settings
+### 2. Add the Three Settings to Claude Code
 
-The target config file depends on your install scope (detected in Step 1b above).
+The target config file depends on your install scope (detected in Step 1b above). The token is **not** in this list — it comes from `gh auth` (Step 1).
 
-**User-scoped install** — all env vars (including token) go in `~/.claude/settings.json`:
+**User-scoped install** — `~/.claude/settings.json`:
 
 ```json
-// ~/.claude/settings.json
 {
   "env": {
-    "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here",
     "RALPH_GH_OWNER": "your-github-username-or-org",
     "RALPH_GH_REPO": "your-repo-name",
     "RALPH_GH_PROJECT_NUMBER": "1"
@@ -80,12 +83,11 @@ The target config file depends on your install scope (detected in Step 1b above)
 }
 ```
 
-**Project-scoped install** — everything goes in `<project>/.claude/settings.local.json` (gitignored):
+**Project-scoped install** — `<project>/.claude/settings.local.json` (gitignored):
 
 ```json
 {
   "env": {
-    "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here",
     "RALPH_GH_OWNER": "your-github-username-or-org",
     "RALPH_GH_REPO": "your-repo-name",
     "RALPH_GH_PROJECT_NUMBER": "1"
@@ -97,17 +99,35 @@ If you don't have a project number yet, omit it — this skill will create one f
 
 ### 3. Restart Claude Code
 
-The MCP server reads environment variables at startup. After changing settings, restart Claude Code, then run `/ralph-hero:setup` again.
+The MCP server reads environment + `gh` keychain at startup. After changing settings (or running `gh auth login`), restart Claude Code, then run `/ralph-hero:setup` again.
 
 ### Where NOT to put tokens
 
-- **Don't put tokens in `.mcp.json`** — env vars belong in Claude Code settings files, not in the plugin config
-- **Don't put tokens in `.bashrc` after the interactive guard** — non-interactive processes (like MCP servers) won't see them
-- **Don't commit tokens to git** — use `settings.local.json` (project-scoped, gitignored) or `~/.claude/settings.json` (user-scoped)
+- **Don't put tokens in `.mcp.json`** — env vars belong in Claude Code settings files, not in the plugin config.
+- **Don't put tokens in `.bashrc` after the interactive guard** — non-interactive processes (like MCP servers) won't see them.
+- **Don't commit tokens to git** — `settings.local.json` is gitignored.
 
-### Advanced: Split-Owner / Dual-Token
+## Advanced: Split-Token Configurations
 
-If your repo is in an org but the project is under your personal account, see Step 2b below for dual-token configuration. For user-scoped installs, all vars (including tokens) go in `~/.claude/settings.json`.
+If you can't use a single `gh` identity (e.g. fine-grained PAT for an org repo + classic PAT for a personal project), set explicit env vars instead:
+
+```json
+{
+  "env": {
+    "RALPH_GH_REPO_TOKEN": "ghp_repo_only",
+    "RALPH_GH_PROJECT_TOKEN": "ghp_project_only",
+    "RALPH_GH_OWNER": "your-org",
+    "RALPH_GH_REPO": "your-repo",
+    "RALPH_GH_PROJECT_NUMBER": "1"
+  }
+}
+```
+
+Explicit env vars **always take precedence** over `gh auth`. To rotate, regenerate the PAT at https://github.com/settings/tokens and update `settings.local.json` (or `~/.claude/settings.json` for user-scoped installs) — `gh auth` does not manage these.
+
+You can also use `RALPH_HERO_GITHUB_TOKEN` as a single-PAT override (legacy form, still supported). The resolution chain is: `RALPH_GH_REPO_TOKEN` → `RALPH_HERO_GITHUB_TOKEN` → `gh auth token`.
+
+For split-owner setups (repo under an org, project under your personal account), see Step 2b below.
 
 ## Workflow
 

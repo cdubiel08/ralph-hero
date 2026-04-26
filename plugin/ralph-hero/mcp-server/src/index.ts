@@ -7,6 +7,7 @@
  * plugin's bundled MCP server.
  */
 
+import { execSync } from "node:child_process";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -37,31 +38,104 @@ function resolveEnv(name: string): string | undefined {
   return val;
 }
 
+/**
+ * Module-level cache for the resolved `gh auth token` value.
+ *
+ * - `null`        — not yet resolved (initial state).
+ * - `undefined`   — resolved-to-failure (gh missing / unauthenticated / timed out).
+ * - `string`      — resolved-to-success (the trimmed token).
+ *
+ * The `null` sentinel is intentional: `undefined` is itself a valid resolved
+ * value, so we need a separate "not-yet-resolved" marker.
+ *
+ * Exported for tests via `resetGhAuthTokenCache()` below.
+ */
+let cachedGhAuthToken: string | undefined | null = null;
+
+/**
+ * Test-only helper to reset the module-level cache between cases.
+ * Production code never calls this — the cache is intentionally process-scoped.
+ */
+export function resetGhAuthTokenCache(): void {
+  cachedGhAuthToken = null;
+}
+
+/**
+ * Resolve a GitHub token by invoking `gh auth token` as a subprocess.
+ *
+ * **Contract**: The result of this function flows ONLY into the internal
+ * `repoToken` variable. It is NEVER re-exported via `process.env.GH_TOKEN`
+ * or `process.env.GITHUB_TOKEN`. This preserves the anti-collision invariant
+ * documented in the contract test at
+ * `src/__tests__/init-config.test.ts` (the `forbiddenVars` list).
+ *
+ * The subprocess runs at most once per process (cached). On any failure
+ * (gh not installed, not authenticated, network timeout, etc.) the result
+ * is cached as `undefined` so subsequent callers don't re-incur the cost.
+ *
+ * - `timeout: 3000` — fail fast if gh is hung.
+ * - `stdio: ["ignore", "pipe", "ignore"]` — suppress stderr noise on the
+ *   common "not authenticated" error path.
+ *
+ * @returns The trimmed token string on success, otherwise `undefined`.
+ */
+export function resolveGhAuthToken(): string | undefined {
+  if (cachedGhAuthToken !== null) {
+    return cachedGhAuthToken;
+  }
+  try {
+    const output = execSync("gh auth token", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+    });
+    // execSync with encoding: "utf8" returns a string; coerce defensively in
+    // case a mock returns a Buffer.
+    const trimmed = (output as unknown as { toString(): string }).toString().trim();
+    cachedGhAuthToken = trimmed.length > 0 ? trimmed : undefined;
+  } catch {
+    cachedGhAuthToken = undefined;
+  }
+  return cachedGhAuthToken ?? undefined;
+}
+
 function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
   // Repo token: for repository operations (issues, PRs, comments)
+  // Resolution chain (highest priority first):
+  //   1. RALPH_GH_REPO_TOKEN     — explicit split-token repo override
+  //   2. RALPH_HERO_GITHUB_TOKEN — legacy single-token form
+  //   3. gh auth token          — gh CLI keychain (subprocess, cached)
   const repoToken =
-    resolveEnv("RALPH_GH_REPO_TOKEN") || resolveEnv("RALPH_HERO_GITHUB_TOKEN");
+    resolveEnv("RALPH_GH_REPO_TOKEN") ||
+    resolveEnv("RALPH_HERO_GITHUB_TOKEN") ||
+    resolveGhAuthToken();
 
   // Project token: for Projects V2 operations (fields, workflow state)
-  // Falls back to repo token if not set
+  // Falls back to repo token if not set (transitively gains the gh source).
   const projectToken = resolveEnv("RALPH_GH_PROJECT_TOKEN") || repoToken;
 
   if (!repoToken) {
     console.error(
       "[ralph-hero] Error: No GitHub token found.\n" +
         "\n" +
-        "Quick fix — add to .claude/settings.local.json:\n" +
+        "Quickest fix — authenticate gh (recommended):\n" +
         "\n" +
+        "  gh auth login -s repo,project,read:org\n" +
+        "\n" +
+        "Then restart Claude Code. The MCP server will pick up the token\n" +
+        "from the gh CLI keychain automatically.\n" +
+        "\n" +
+        "Alternative — paste a PAT into Claude Code settings:\n" +
+        "\n" +
+        "  Add to .claude/settings.local.json:\n" +
         '  {\n' +
         '    "env": {\n' +
         '      "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here"\n' +
         "    }\n" +
         "  }\n" +
         "\n" +
-        "Then restart Claude Code.\n" +
-        "\n" +
-        "Generate a token at: https://github.com/settings/tokens\n" +
-        "Required scopes: repo, project\n" +
+        "  Generate a token at: https://github.com/settings/tokens\n" +
+        "  Required scopes: repo, project\n" +
         "\n" +
         "For advanced setups (dual tokens, org projects), run /ralph-hero:setup.",
     );
@@ -102,7 +176,9 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
 
   const repoTokenSource = resolveEnv("RALPH_GH_REPO_TOKEN")
     ? "RALPH_GH_REPO_TOKEN"
-    : "RALPH_HERO_GITHUB_TOKEN";
+    : resolveEnv("RALPH_HERO_GITHUB_TOKEN")
+      ? "RALPH_HERO_GITHUB_TOKEN"
+      : "gh auth (keychain)";
   console.error(`[ralph-hero] Repo token: ${repoTokenSource}`);
 
   if (projectToken !== repoToken) {
@@ -265,7 +341,9 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
       // Token source detection — re-derive which env vars resolved
       const repoTokenSource = resolveEnv("RALPH_GH_REPO_TOKEN")
         ? "RALPH_GH_REPO_TOKEN"
-        : "RALPH_HERO_GITHUB_TOKEN";
+        : resolveEnv("RALPH_HERO_GITHUB_TOKEN")
+          ? "RALPH_HERO_GITHUB_TOKEN"
+          : "gh auth (keychain)";
 
       const projectTokenSource = resolveEnv("RALPH_GH_PROJECT_TOKEN")
         ? "RALPH_GH_PROJECT_TOKEN"
@@ -409,11 +487,29 @@ async function main(): Promise<void> {
   console.error("[ralph-hero] MCP server connected and ready.");
 }
 
-// Run
-main().catch((error) => {
-  console.error("[ralph-hero] Fatal error:", error);
-  process.exit(1);
-});
+// Run only when invoked as the entry point (not when imported by tests).
+// `process.argv[1]` is the script path Node was started with; if it ends with
+// this module's compiled filename, we're the entry point. The fallback covers
+// edge cases (e.g. argv[1] missing) by also accepting an environment opt-in.
+const isEntryPoint = (() => {
+  try {
+    const argv1 = process.argv[1] ?? "";
+    return (
+      argv1.endsWith("/dist/index.js") ||
+      argv1.endsWith("\\dist\\index.js") ||
+      process.env.RALPH_HERO_RUN_MAIN === "true"
+    );
+  } catch {
+    return false;
+  }
+})();
+
+if (isEntryPoint) {
+  main().catch((error) => {
+    console.error("[ralph-hero] Fatal error:", error);
+    process.exit(1);
+  });
+}
 
 // Export for use by tool modules in later phases
 export { type GitHubClient };
