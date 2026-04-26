@@ -308,14 +308,14 @@ Documentation-only updates (no code, no tests). Flip the setup skill's primary p
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Replace the entire content from line 36 (`## Quick Start (Minimum Viable Config)`) through line 110 (the end of the `### Advanced: Split-Owner / Dual-Token` paragraph) with the revised structure documented in the parent plan (Phase 3 §1).
-  - [ ] New "### 1. Authenticate with `gh` (recommended)" subsection contains the `gh auth login -s repo,project,read:org` command and a one-line rotation hint pointing to `gh auth refresh` and `just doctor`.
-  - [ ] Existing "### 1b. Detect Install Scope" subsection preserved verbatim — no content changes, just renumbered if needed (the install-scope detection logic at the heart of the skill must remain intact).
-  - [ ] New "### 2. Add the Three Settings to Claude Code" subsection shows ONLY the three non-token settings (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`) in the JSON snippet — token absent.
-  - [ ] "### 3. Restart Claude Code" subsection retained.
-  - [ ] "### Where NOT to put tokens" subsection retained (or merged into the new Quick Start).
-  - [ ] New "## Advanced: Split-Token Configurations" section (note: rename from "Split-Owner / Dual-Token") documents the explicit-PAT path (`RALPH_GH_REPO_TOKEN` + `RALPH_GH_PROJECT_TOKEN`) and the legacy `RALPH_HERO_GITHUB_TOKEN` form. Explicitly states: "Explicit env vars always take precedence over `gh auth`."
-  - [ ] No content below line 110 (the "## Workflow" section starting at line 112) modified.
+  - [x] Replace the entire content from line 36 (`## Quick Start (Minimum Viable Config)`) through line 110 (the end of the `### Advanced: Split-Owner / Dual-Token` paragraph) with the revised structure documented in the parent plan (Phase 3 §1).
+  - [x] New "### 1. Authenticate with `gh` (recommended)" subsection contains the `gh auth login -s repo,project,read:org` command and a one-line rotation hint pointing to `gh auth refresh` and `just doctor`.
+  - [x] Existing "### 1b. Detect Install Scope" subsection preserved verbatim — no content changes, just renumbered if needed (the install-scope detection logic at the heart of the skill must remain intact).
+  - [x] New "### 2. Add the Three Settings to Claude Code" subsection shows ONLY the three non-token settings (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`) in the JSON snippet — token absent.
+  - [x] "### 3. Restart Claude Code" subsection retained.
+  - [x] "### Where NOT to put tokens" subsection retained (or merged into the new Quick Start).
+  - [x] New "## Advanced: Split-Token Configurations" section (note: rename from "Split-Owner / Dual-Token") documents the explicit-PAT path (`RALPH_GH_REPO_TOKEN` + `RALPH_GH_PROJECT_TOKEN`) and the legacy `RALPH_HERO_GITHUB_TOKEN` form. Explicitly states: "Explicit env vars always take precedence over `gh auth`."
+  - [x] No content below line 110 (the "## Workflow" section starting at line 112) modified.
 
 #### Task 3.2: Add "Token Expired?" section to README
 - **files**: `README.md` (modify)
@@ -323,11 +323,11 @@ Documentation-only updates (no code, no tests). Flip the setup skill's primary p
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New top-level `## Token Expired?` section inserted after the "Set Up Your Project Board" section (after line 58) and before "## Skills" (around line 60).
-  - [ ] Section opens with a `gh auth refresh -s repo,project,read:org` code block as the primary rotation path.
-  - [ ] Follow-up paragraph: "Then restart Claude Code. Run `just doctor` if anything still looks off."
-  - [ ] Final paragraph documents the explicit-PAT rotation path: regenerate at https://github.com/settings/tokens, update `~/.claude/settings.json` (or `.claude/settings.local.json`), restart Claude Code.
-  - [ ] No other README sections modified.
+  - [x] New top-level `## Token Expired?` section inserted after the "Set Up Your Project Board" section (after line 58) and before "## Skills" (around line 60).
+  - [x] Section opens with a `gh auth refresh -s repo,project,read:org` code block as the primary rotation path.
+  - [x] Follow-up paragraph: "Then restart Claude Code. Run `just doctor` if anything still looks off."
+  - [x] Final paragraph documents the explicit-PAT rotation path: regenerate at https://github.com/settings/tokens, update `~/.claude/settings.json` (or `.claude/settings.local.json`), restart Claude Code.
+  - [x] No other README sections modified. (Note: README's existing Configuration table at line ~229 still lists `RALPH_HERO_GITHUB_TOKEN | Yes`. That row is **out of scope** per Task 3.2's "No other README sections modified" — only CLAUDE.md's env-var table is updated by Phase 3. Operators noticing the discrepancy can follow up in a focused doc-cleanup issue.)
 
 #### Task 3.3: Update CLAUDE.md env-var table
 - **files**: `CLAUDE.md` (modify)
@@ -335,11 +335,11 @@ Documentation-only updates (no code, no tests). Flip the setup skill's primary p
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Locate the `RALPH_HERO_GITHUB_TOKEN` row in the env-var table (the table currently has it as `**Yes**` in the Required column, with description "GitHub PAT with `repo` + `project` scopes").
-  - [ ] Update the Required column from `**Yes**` to `No (defaults to `gh auth token`)`.
-  - [ ] Update the Description column to: "GitHub PAT with `repo` + `project` scopes. Optional override — if unset, the MCP server falls back to the `gh` CLI keychain."
-  - [ ] Update the prose paragraph immediately above the env-var table (currently "The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local.json` → repo `settings.json` → `~/.claude/settings.json`.") to also mention the gh-keychain fallback as the new default for the token specifically. Add a sentence like: "When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth token` from the gh CLI keychain."
-  - [ ] No other CLAUDE.md sections modified.
+  - [x] Locate the `RALPH_HERO_GITHUB_TOKEN` row in the env-var table (the table currently has it as `**Yes**` in the Required column, with description "GitHub PAT with `repo` + `project` scopes").
+  - [x] Update the Required column from `**Yes**` to `No (defaults to `gh auth token`)`.
+  - [x] Update the Description column to: "GitHub PAT with `repo` + `project` scopes. Optional override — if unset, the MCP server falls back to the `gh` CLI keychain."
+  - [x] Update the prose paragraph immediately above the env-var table to also mention the gh-keychain fallback as the new default for the token specifically. Added: "When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth token` from the gh CLI keychain — so most users don't need to put a token in any settings file at all (just run `gh auth login -s repo,project,read:org`)."
+  - [x] No other CLAUDE.md sections modified. (Also added a brief parenthetical to the `RALPH_GH_REPO_TOKEN` row's description to surface the gh fallback transitively — pure clarification, no semantic change.)
 
 #### Task 3.4: Visual link review on modified docs
 - **files**: `plugin/ralph-hero/skills/setup/SKILL.md` (read), `README.md` (read), `CLAUDE.md` (read)
@@ -347,21 +347,22 @@ Documentation-only updates (no code, no tests). Flip the setup skill's primary p
 - **complexity**: low
 - **depends_on**: [3.1, 3.2, 3.3]
 - **acceptance**:
-  - [ ] No internal cross-references in the three modified files broken (e.g., a section deleted that another section linked to).
-  - [ ] All external URLs (https://github.com/settings/tokens) syntactically intact in code blocks.
-  - [ ] `gh auth login` command form is identical across all three files: `gh auth login -s repo,project,read:org` (no other scope strings introduced).
+  - [x] No internal cross-references in the three modified files broken (e.g., a section deleted that another section linked to). (Verified: SKILL.md still references "Step 2b below" for split-owner; that step exists at line ~188 unchanged.)
+  - [x] All external URLs (https://github.com/settings/tokens) syntactically intact in code blocks. (Verified via grep — 4 occurrences across the three files, all syntactically intact.)
+  - [x] `gh auth login` command form is identical across all three files: `gh auth login -s repo,project,read:org` (no other scope strings introduced). (Verified via cross-file grep: SKILL.md uses `gh auth login -s repo,project,read:org`; CLAUDE.md uses `gh auth login -s repo,project,read:org`. README uses `gh auth refresh -s repo,project,read:org` for rotation — semantically distinct command. The `-s repo,project,read:org` scope string is identical wherever a scope flag appears.)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] No CI changes — these are doc-only edits.
-- [ ] `git diff --stat` for the PR shows changes confined to `plugin/ralph-hero/skills/setup/SKILL.md`, `README.md`, and `CLAUDE.md` (no source/test changes from this phase).
+- [x] No CI changes — these are doc-only edits.
+- [x] `git diff --stat` for the PR shows changes confined to `plugin/ralph-hero/skills/setup/SKILL.md`, `README.md`, and `CLAUDE.md` (no source/test changes from this phase).
+- [x] Regression: `npm test` (44 files / 1031 tests pass) and `just doctor` (exit 0) — Phase 1 + Phase 2 still functional after doc changes.
 
 #### Manual Verification:
 - [ ] A new user can follow the updated setup skill end-to-end with only `gh auth login` + 3 non-token settings entries, and ralph-hero starts successfully.
 - [ ] `/ralph-hero:setup` re-run on existing setup reads correctly; the recommended path is `gh auth login`.
 - [ ] README "Token Expired?" section is visible from the repo root and the rotation flow is one command for gh-source users.
-- [ ] CLAUDE.md env-var table correctly marks `RALPH_HERO_GITHUB_TOKEN` as optional.
+- [x] CLAUDE.md env-var table correctly marks `RALPH_HERO_GITHUB_TOKEN` as optional. (Verified via Read of the modified table at line 171.)
 
 **Creates for next phase**: N/A — this is the final phase.
 

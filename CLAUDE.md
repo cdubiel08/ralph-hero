@@ -164,16 +164,16 @@ The config file location depends on plugin install scope (detected from `~/.clau
 - **Project-scoped install**: Set all env vars in `<project>/.claude/settings.local.json` (gitignored)
 - **User-scoped install**: Set all env vars in `~/.claude/settings.json` — this makes the CLI work from any directory
 
-The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local.json` → repo `settings.json` → `~/.claude/settings.json`.
+The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local.json` → repo `settings.json` → `~/.claude/settings.json`. When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth token` from the gh CLI keychain — so most users don't need to put a token in any settings file at all (just run `gh auth login -s repo,project,read:org`).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `RALPH_HERO_GITHUB_TOKEN` | **Yes** | GitHub PAT with `repo` + `project` scopes |
+| `RALPH_HERO_GITHUB_TOKEN` | No (defaults to `gh auth token`) | GitHub PAT with `repo` + `project` scopes. Optional override — if unset, the MCP server falls back to the `gh` CLI keychain. |
 | `RALPH_GH_OWNER` | Yes | GitHub owner (user or org) |
 | `RALPH_GH_PROJECT_NUMBER` | Yes | GitHub Projects V2 number |
 | `RALPH_GH_REPO` | No | Repository name (inferred from project if omitted) |
 | `RALPH_GH_PROJECT_NUMBERS` | No | Comma-separated project numbers for cross-project dashboard |
-| `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token) |
+| `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token, then to `gh auth token`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and register debug tools |
