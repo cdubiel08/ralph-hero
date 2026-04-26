@@ -8,6 +8,8 @@
  */
 
 import { execSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -488,19 +490,20 @@ async function main(): Promise<void> {
 }
 
 // Run only when invoked as the entry point (not when imported by tests).
-// `process.argv[1]` is the script path Node was started with; if it ends with
-// this module's compiled filename, we're the entry point. The fallback covers
-// edge cases (e.g. argv[1] missing) by also accepting an environment opt-in.
+// `process.argv[1]` is the script path Node was started with. When npm/npx
+// invokes a `bin` script it sets argv[1] to the bin-shim symlink (e.g.
+// `node_modules/.bin/ralph-hero-mcp-server`), not the resolved target — so
+// a string-suffix match on `/dist/index.js` would miss the bin-shim case
+// and silently skip main(). Compare realpath(argv[1]) to this module's
+// own URL instead; that's the canonical ESM "am I the entry point?" check.
 const isEntryPoint = (() => {
   try {
-    const argv1 = process.argv[1] ?? "";
-    return (
-      argv1.endsWith("/dist/index.js") ||
-      argv1.endsWith("\\dist\\index.js") ||
-      process.env.RALPH_HERO_RUN_MAIN === "true"
-    );
+    if (!process.argv[1]) return process.env.RALPH_HERO_RUN_MAIN === "true";
+    const argvReal = realpathSync(process.argv[1]);
+    const moduleReal = fileURLToPath(import.meta.url);
+    return argvReal === moduleReal || process.env.RALPH_HERO_RUN_MAIN === "true";
   } catch {
-    return false;
+    return process.env.RALPH_HERO_RUN_MAIN === "true";
   }
 })();
 
