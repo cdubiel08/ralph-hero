@@ -136,11 +136,11 @@ Add a `resolveGhAuthToken()` helper that calls `gh auth token` via `execSync` on
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New `import { execSync } from "node:child_process";` added at the top of the file (alongside other Node imports).
-  - [ ] Module-level cache: `let cachedGhAuthToken: string | undefined | null = null;` declared after `resolveEnv()` (around line 38).
-  - [ ] Exported function `resolveGhAuthToken(): string | undefined` declared (the `export` keyword is required so the test file can `import { resolveGhAuthToken }`).
-  - [ ] Function body: returns `cachedGhAuthToken` immediately if `!== null`; otherwise wraps `execSync("gh auth token", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 })` in `try`/`catch`. On success: trim output and assign to `cachedGhAuthToken` (empty string becomes `undefined`). On any throw: assign `undefined`.
-  - [ ] JSDoc comment explains the contract: result NEVER re-exported as env var, flows into internal token state only.
+  - [x] New `import { execSync } from "node:child_process";` added at the top of the file (alongside other Node imports).
+  - [x] Module-level cache: `let cachedGhAuthToken: string | undefined | null = null;` declared after `resolveEnv()` (around line 38).
+  - [x] Exported function `resolveGhAuthToken(): string | undefined` declared (the `export` keyword is required so the test file can `import { resolveGhAuthToken }`).
+  - [x] Function body: returns `cachedGhAuthToken` immediately if `!== null`; otherwise wraps `execSync("gh auth token", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 })` in `try`/`catch`. On success: trim output and assign to `cachedGhAuthToken` (empty string becomes `undefined`). On any throw: assign `undefined`.
+  - [x] JSDoc comment explains the contract: result NEVER re-exported as env var, flows into internal token state only.
 
 #### Task 1.2: Extend repo-token resolution chain
 - **files**: `plugin/ralph-hero/mcp-server/src/index.ts` (modify)
@@ -148,9 +148,9 @@ Add a `resolveGhAuthToken()` helper that calls `gh auth token` via `execSync` on
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Line 42-43 `repoToken` assignment becomes a 3-stage chain: `RALPH_GH_REPO_TOKEN` → `RALPH_HERO_GITHUB_TOKEN` → `resolveGhAuthToken()`.
-  - [ ] Line 47 `projectToken` assignment unchanged (still falls back to `repoToken`, which now transitively gains the gh source).
-  - [ ] No other token-related lines modified by this task.
+  - [x] Line 42-43 `repoToken` assignment becomes a 3-stage chain: `RALPH_GH_REPO_TOKEN` → `RALPH_HERO_GITHUB_TOKEN` → `resolveGhAuthToken()`.
+  - [x] Line 47 `projectToken` assignment unchanged (still falls back to `repoToken`, which now transitively gains the gh source).
+  - [x] No other token-related lines modified by this task.
 
 #### Task 1.3: Replace startup error block to lead with `gh auth login`
 - **files**: `plugin/ralph-hero/mcp-server/src/index.ts` (modify)
@@ -158,10 +158,10 @@ Add a `resolveGhAuthToken()` helper that calls `gh auth token` via `execSync` on
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Existing block at lines 49-69 (the `if (!repoToken)` console.error + process.exit) replaced with new copy that leads with `gh auth login -s repo,project,read:org` as "Quickest fix — authenticate gh (recommended)".
-  - [ ] PAT-paste path demoted to a section labeled "Alternative — paste a PAT into Claude Code settings" (with the JSON snippet preserved).
-  - [ ] Final line points to `/ralph-hero:setup` for advanced (split-token) configurations.
-  - [ ] `process.exit(1)` retained (no behavior change on missing token).
+  - [x] Existing block at lines 49-69 (the `if (!repoToken)` console.error + process.exit) replaced with new copy that leads with `gh auth login -s repo,project,read:org` as "Quickest fix — authenticate gh (recommended)".
+  - [x] PAT-paste path demoted to a section labeled "Alternative — paste a PAT into Claude Code settings" (with the JSON snippet preserved).
+  - [x] Final line points to `/ralph-hero:setup` for advanced (split-token) configurations.
+  - [x] `process.exit(1)` retained (no behavior change on missing token).
 
 #### Task 1.4: Update token-source logging to report `gh auth (keychain)`
 - **files**: `plugin/ralph-hero/mcp-server/src/index.ts` (modify)
@@ -169,9 +169,9 @@ Add a `resolveGhAuthToken()` helper that calls `gh auth token` via `execSync` on
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Line 103-105 logic for `repoTokenSource` becomes a three-way ternary chain: `RALPH_GH_REPO_TOKEN` (env present) → `RALPH_HERO_GITHUB_TOKEN` (env present) → `gh auth (keychain)` (else).
-  - [ ] The same three-way logic also updates the `repoTokenSource` derivation inside `health_check` at lines 266-268 (so `tokenSources.repoToken` in the health check output also reports `gh auth (keychain)` correctly).
-  - [ ] Line 108-112 (the `if (projectToken !== repoToken)` block reporting "Project token: RALPH_GH_PROJECT_TOKEN (separate)") unchanged.
+  - [x] Line 103-105 logic for `repoTokenSource` becomes a three-way ternary chain: `RALPH_GH_REPO_TOKEN` (env present) → `RALPH_HERO_GITHUB_TOKEN` (env present) → `gh auth (keychain)` (else).
+  - [x] The same three-way logic also updates the `repoTokenSource` derivation inside `health_check` at lines 266-268 (so `tokenSources.repoToken` in the health check output also reports `gh auth (keychain)` correctly).
+  - [x] Line 108-112 (the `if (projectToken !== repoToken)` block reporting "Project token: RALPH_GH_PROJECT_TOKEN (separate)") unchanged.
 
 #### Task 1.5: Extend `resolveTokens()` test simulator and add fallback test cases
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/init-config.test.ts` (modify)
@@ -179,14 +179,14 @@ Add a `resolveGhAuthToken()` helper that calls `gh auth token` via `execSync` on
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `resolveTokens()` helper at lines 35-42 takes an optional `opts?: { ghAuthToken?: string }` parameter; chain becomes `RALPH_GH_REPO_TOKEN || RALPH_HERO_GITHUB_TOKEN || opts?.ghAuthToken`.
-  - [ ] New `describe("gh auth fallback")` block added containing 5 cases:
+  - [x] `resolveTokens()` helper at lines 35-42 takes an optional `opts?: { ghAuthToken?: string }` parameter; chain becomes `RALPH_GH_REPO_TOKEN || RALPH_HERO_GITHUB_TOKEN || opts?.ghAuthToken`.
+  - [x] New `describe("gh auth fallback")` block added containing 5 cases:
     1. gh keychain is final fallback: no env vars set, `ghAuthToken: "ghp_kc"` → `repoToken === "ghp_kc"`, `projectToken === "ghp_kc"`.
     2. `RALPH_HERO_GITHUB_TOKEN` wins over gh: env set, `ghAuthToken: "ghp_kc"` → `repoToken === "ghp_env"`.
     3. `RALPH_GH_REPO_TOKEN` wins over gh: env set, `ghAuthToken: "ghp_kc"` → `repoToken === "ghp_repo"`.
     4. Project-only override works with gh repo: `RALPH_GH_PROJECT_TOKEN` set + `ghAuthToken: "ghp_kc"` → `repoToken === "ghp_kc"`, `projectToken === "ghp_proj"`.
     5. Undefined when neither env nor gh: nothing set → `repoToken === undefined`.
-  - [ ] All 5 cases pass via `npx vitest run src/__tests__/init-config.test.ts`.
+  - [x] All 5 cases pass via `npx vitest run src/__tests__/init-config.test.ts`.
 
 #### Task 1.6: Add subprocess behavior tests against actual `resolveGhAuthToken`
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/init-config.test.ts` (modify)
@@ -194,14 +194,14 @@ Add a `resolveGhAuthToken()` helper that calls `gh auth token` via `execSync` on
 - **complexity**: medium
 - **depends_on**: [1.1, 1.5]
 - **acceptance**:
-  - [ ] Test file imports `resolveGhAuthToken` from `../index.js` (relies on Task 1.1's `export`).
-  - [ ] Test file imports `* as childProcess from "node:child_process"` for `vi.spyOn`.
-  - [ ] New `describe("subprocess behavior")` block with 3 cases:
-    1. Returns trimmed token on success: `vi.spyOn(childProcess, "execSync").mockReturnValueOnce(Buffer.from("ghp_subproc\n"))` (or `"ghp_subproc\n"` as string per the encoding) → `resolveGhAuthToken() === "ghp_subproc"`.
-    2. Returns `undefined` on throw: `vi.spyOn(childProcess, "execSync").mockImplementationOnce(() => { throw new Error("not authenticated"); })` → `resolveGhAuthToken() === undefined`.
-    3. Caches result: after first call, second call does NOT invoke `execSync` (assert spy `.toHaveBeenCalledTimes(1)`).
-  - [ ] Each test resets the module-level cache between cases (use `vi.resetModules()` or expose a test-only reset; document the chosen approach in a comment).
-  - [ ] All 3 cases pass via `npx vitest run src/__tests__/init-config.test.ts -t "subprocess behavior"`.
+  - [x] Test file imports `resolveGhAuthToken` from `../index.js` (relies on Task 1.1's `export`).
+  - [x] Test file imports `* as childProcess from "node:child_process"` for `vi.spyOn`. (Implementation note: ESM module namespaces are non-configurable in vitest, so `vi.spyOn(childProcess, "execSync")` throws `TypeError: Cannot redefine property: execSync`. We instead use a top-of-file `vi.mock("node:child_process", ...)` factory that returns `{ ...actual, execSync: vi.fn(actual.execSync) }`, and assert via `vi.mocked(execSync)`. Functionally equivalent — same calls, same assertions.)
+  - [x] New `describe("subprocess behavior")` block with 3 cases:
+    1. Returns trimmed token on success: `vi.mocked(execSync).mockReturnValueOnce("ghp_subproc\n" as unknown as Buffer)` → `resolveGhAuthToken() === "ghp_subproc"`.
+    2. Returns `undefined` on throw: `vi.mocked(execSync).mockImplementationOnce(() => { throw new Error("not authenticated"); })` → `resolveGhAuthToken() === undefined`.
+    3. Caches result: after first call, second call does NOT invoke `execSync` (assert mock `.toHaveBeenCalledTimes(1)`).
+  - [x] Each test resets the module-level cache between cases (exposed test-only `resetGhAuthTokenCache()` helper from `index.ts`; called in `beforeEach`/`afterEach` alongside `mockReset()`).
+  - [x] All 3 cases pass via `npx vitest run src/__tests__/init-config.test.ts -t "subprocess behavior"`.
 
 #### Task 1.7: Verify contract test still rejects `GH_TOKEN`/`GITHUB_TOKEN`
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/init-config.test.ts` (read)
@@ -209,18 +209,18 @@ Add a `resolveGhAuthToken()` helper that calls `gh auth token` via `execSync` on
 - **complexity**: low
 - **depends_on**: [1.6]
 - **acceptance**:
-  - [ ] No edits to the `describe(".mcp.json contract")` block at lines 217-252.
-  - [ ] `npx vitest run -t "should only accept RALPH"` passes unchanged.
-  - [ ] `forbiddenVars` still includes `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN`.
+  - [x] No edits to the `describe(".mcp.json contract")` block at lines 217-252.
+  - [x] `npx vitest run -t "should only accept RALPH"` passes unchanged.
+  - [x] `forbiddenVars` still includes `GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_PERSONAL_ACCESS_TOKEN`.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors.
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all existing tests pass plus 8 new cases (5 fallback + 3 subprocess).
-- [ ] `npx vitest run src/__tests__/init-config.test.ts -t "gh auth fallback"` — 5 cases pass.
-- [ ] `npx vitest run src/__tests__/init-config.test.ts -t "subprocess behavior"` — 3 cases pass.
-- [ ] `npx vitest run -t "should only accept RALPH"` — contract test still passes.
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors.
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all existing tests pass plus 8 new cases (5 fallback + 3 subprocess). (44 files / 1031 tests pass.)
+- [x] `npx vitest run src/__tests__/init-config.test.ts -t "gh auth fallback"` — 5 cases pass.
+- [x] `npx vitest run src/__tests__/init-config.test.ts -t "subprocess behavior"` — 3 cases pass.
+- [x] `npx vitest run -t "should only accept RALPH"` — contract test still passes.
 
 #### Manual Verification:
 - [ ] With all `RALPH_*_TOKEN` env vars unset in `~/.claude/settings.json` and `gh auth status` showing valid scopes, restart Claude Code and invoke `ralph_hero__health_check`. Expect `auth: ok` and startup log line `[ralph-hero] Repo token: gh auth (keychain)`.

@@ -1,4 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// Mock node:child_process at module-graph level so vi.mocked(execSync) works in
+// the "subprocess behavior" describe block below. ESM module namespaces are
+// non-configurable in vitest, so vi.spyOn on an imported namespace fails — use
+// vi.mock at the top of the file with a hoisted factory instead.
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execSync: vi.fn(actual.execSync),
+  };
+});
+
+import { execSync } from "node:child_process";
+import { resolveGhAuthToken, resetGhAuthTokenCache } from "../index.js";
 
 /**
  * Tests for token resolution and config initialization logic.
@@ -31,10 +46,18 @@ describe("Token resolution logic", () => {
   /**
    * Simulates the token resolution logic from index.ts initGitHubClient.
    * This mirrors the actual code to test the env var priority.
+   *
+   * @param opts.ghAuthToken — simulated `gh auth token` output (final fallback).
+   *                          Mirrors the production `resolveGhAuthToken()` chain
+   *                          step without invoking a real subprocess. Tests that
+   *                          exercise the actual subprocess use the
+   *                          "subprocess behavior" describe block below.
    */
-  function resolveTokens() {
+  function resolveTokens(opts?: { ghAuthToken?: string }) {
     const repoToken =
-      process.env.RALPH_GH_REPO_TOKEN || process.env.RALPH_HERO_GITHUB_TOKEN;
+      process.env.RALPH_GH_REPO_TOKEN ||
+      process.env.RALPH_HERO_GITHUB_TOKEN ||
+      opts?.ghAuthToken;
 
     const projectToken = process.env.RALPH_GH_PROJECT_TOKEN || repoToken;
 
@@ -99,11 +122,14 @@ describe("Token resolution logic", () => {
   /**
    * Mirrors the token source detection logic from health_check in index.ts.
    * Reports which env var each token was resolved from (not the value).
+   * The third tier — `gh auth (keychain)` — fires when neither env var is set.
    */
   function resolveTokenSources() {
     const repoTokenSource = process.env.RALPH_GH_REPO_TOKEN
       ? "RALPH_GH_REPO_TOKEN"
-      : "RALPH_HERO_GITHUB_TOKEN";
+      : process.env.RALPH_HERO_GITHUB_TOKEN
+        ? "RALPH_HERO_GITHUB_TOKEN"
+        : "gh auth (keychain)";
 
     const projectTokenSource = process.env.RALPH_GH_PROJECT_TOKEN
       ? "RALPH_GH_PROJECT_TOKEN"
@@ -211,6 +237,95 @@ describe("Token resolution logic", () => {
       const { projectNumber } = resolveConfig();
       expect(projectNumber).toBeUndefined();
     });
+  });
+
+  describe("gh auth fallback", () => {
+    it("uses gh keychain as final fallback when no env vars set", () => {
+      const { repoToken, projectToken } = resolveTokens({
+        ghAuthToken: "ghp_kc",
+      });
+
+      expect(repoToken).toBe("ghp_kc");
+      expect(projectToken).toBe("ghp_kc");
+    });
+
+    it("RALPH_HERO_GITHUB_TOKEN wins over gh keychain", () => {
+      process.env.RALPH_HERO_GITHUB_TOKEN = "ghp_env";
+      const { repoToken } = resolveTokens({ ghAuthToken: "ghp_kc" });
+
+      expect(repoToken).toBe("ghp_env");
+    });
+
+    it("RALPH_GH_REPO_TOKEN wins over gh keychain", () => {
+      process.env.RALPH_GH_REPO_TOKEN = "ghp_repo";
+      const { repoToken } = resolveTokens({ ghAuthToken: "ghp_kc" });
+
+      expect(repoToken).toBe("ghp_repo");
+    });
+
+    it("project-only override works with gh keychain repo token", () => {
+      process.env.RALPH_GH_PROJECT_TOKEN = "ghp_proj";
+      const { repoToken, projectToken } = resolveTokens({
+        ghAuthToken: "ghp_kc",
+      });
+
+      expect(repoToken).toBe("ghp_kc");
+      expect(projectToken).toBe("ghp_proj");
+    });
+
+    it("returns undefined when neither env vars nor gh keychain available", () => {
+      const { repoToken } = resolveTokens();
+      expect(repoToken).toBeUndefined();
+    });
+  });
+});
+
+/**
+ * Tests for the actual `resolveGhAuthToken()` helper exported from index.ts.
+ * These mock `child_process.execSync` (via `vi.mock` at the top of this file)
+ * to verify subprocess invocation, caching, and failure handling without
+ * depending on a real `gh` install.
+ *
+ * Each test resets the module-level cache via `resetGhAuthTokenCache()`
+ * before exercising the helper — production code never resets the cache,
+ * but tests need a fresh slate per case.
+ */
+describe("subprocess behavior", () => {
+  const execSyncMock = vi.mocked(execSync);
+
+  beforeEach(() => {
+    resetGhAuthTokenCache();
+    execSyncMock.mockReset();
+  });
+
+  afterEach(() => {
+    resetGhAuthTokenCache();
+    execSyncMock.mockReset();
+  });
+
+  it("returns trimmed token on subprocess success", () => {
+    execSyncMock.mockReturnValueOnce("ghp_subproc\n" as unknown as Buffer);
+
+    expect(resolveGhAuthToken()).toBe("ghp_subproc");
+  });
+
+  it("returns undefined when subprocess throws (gh missing or unauthenticated)", () => {
+    execSyncMock.mockImplementationOnce(() => {
+      throw new Error("not authenticated");
+    });
+
+    expect(resolveGhAuthToken()).toBeUndefined();
+  });
+
+  it("caches the result — second call does not re-invoke execSync", () => {
+    execSyncMock.mockReturnValueOnce("ghp_cached\n" as unknown as Buffer);
+
+    const first = resolveGhAuthToken();
+    const second = resolveGhAuthToken();
+
+    expect(first).toBe("ghp_cached");
+    expect(second).toBe("ghp_cached");
+    expect(execSyncMock).toHaveBeenCalledTimes(1);
   });
 });
 
