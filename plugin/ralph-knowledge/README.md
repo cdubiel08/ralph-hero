@@ -107,3 +107,35 @@ fast-path before any matcher is consulted.
 | `RALPH_KNOWLEDGE_CONFIG` | Override path to `knowledge.config.json` (tilde expanded). |
 | `RALPH_KNOWLEDGE_DIRS` | Comma-separated list of roots. Beats config, loses to CLI. |
 | `RALPH_KNOWLEDGE_DB` | Override SQLite path. Beats `config.dbPath`, loses to a CLI `.db` positional. |
+
+## Benchmarks
+
+Standalone benchmarks live under [`benchmark/`](./benchmark/) — see
+[`benchmark/README.md`](./benchmark/README.md) for the directory's conventions
+(scripts are not part of the published npm package and are not run by
+`vitest`).
+
+### Reranker benchmark (GH-901)
+
+[`benchmark/reranker-bench.ts`](./benchmark/reranker-bench.ts) compares two
+ONNX cross-encoder rerankers loaded via the existing `@huggingface/transformers`
+v3 dependency:
+
+- `onnx-community/bge-reranker-v2-m3-ONNX` (int8 quantized) — primary candidate
+- `Xenova/ms-marco-MiniLM-L-6-v2` — speed baseline
+
+For ~44 sample queries spanning the five query intent classes (prior-work
+topic, plan-by-issue lookup, claim evidence, epic context, hero orientation),
+the script fetches top-20 RRF candidates, reranks each candidate set with both
+models, and writes a TSV table with cold-start latency, p50/p95 per-pair
+latency, batch-of-20 latency, RSS memory delta, and top-3 agreement vs
+RRF-only. Results land at `benchmark/results-YYYY-MM-DD.tsv`; the most recent
+run is checked into the repo.
+
+```bash
+RALPH_KNOWLEDGE_DB=~/.ralph-hero/knowledge.db \
+  npx tsx plugin/ralph-knowledge/benchmark/reranker-bench.ts
+```
+
+The script does not modify `hybrid-search.ts` — production wiring of a
+default reranker is a separate followup gated on the benchmark's findings.

@@ -83,10 +83,10 @@ After this PR merges:
 ### Verification
 - [x] `knowledge_search` accepts a `lambda` parameter (number, 0..1); when omitted or `1.0`, results are byte-identical to today's pure-RRF behavior.
 - [x] When `lambda=0.7` is passed, the MMR pass runs after RRF and reorders the top-`limit*2` candidates before truncation. A planted near-duplicate fixture demonstrates the demotion.
-- [ ] `knowledge_search` accepts a `return_diagnostics` boolean; when `true`, each result includes optional `fts_score`, `vec_distance`, and `hit_sources` fields. Default `false` keeps payload byte-identical.
-- [ ] A new file [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) exists, runs against the live `knowledge.db`, loads two ONNX rerankers via `@huggingface/transformers`, and writes a TSV results table.
+- [x] `knowledge_search` accepts a `return_diagnostics` boolean; when `true`, each result includes optional `fts_score`, `vec_distance`, and `hit_sources` fields. Default `false` keeps payload byte-identical.
+- [x] A new file [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) exists, runs against the live `knowledge.db`, loads two ONNX rerankers via `@huggingface/transformers`, and writes a TSV results table.
 - [x] A new research note [`thoughts/shared/research/2026-04-26-GH-0900-labeling-effort-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-26-GH-0900-labeling-effort-recommendation.md) summarizes corpus query intents, target labeling counts (60 queries / 600 grades for alpha tuning), and a labeling workflow.
-- [ ] A new research note [`thoughts/shared/research/2026-04-NN-GH-0899-rrf-calibration-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/) records the Track-A Platt-on-RRF feasibility and points at the diagnostic-mode flag for Track-B.
+- [x] A new research note [`thoughts/shared/research/2026-04-26-GH-0899-rrf-calibration-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-26-GH-0899-rrf-calibration-recommendation.md) records the Track-A Platt-on-RRF feasibility and points at the diagnostic-mode flag for Track-B.
 - [ ] All existing tests pass; new tests cover MMR `lambda=1.0` identity, `lambda=0.0` max-diversity, and `lambda=0.7` near-duplicate demotion. Existing tests cover the diagnostic mode round-trip.
 - [ ] No new npm dependencies; `package.json` is byte-identical except possibly for a non-functional reorder.
 
@@ -335,9 +335,9 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New directory `plugin/ralph-knowledge/benchmark/` exists.
-  - [ ] Brief README.md explains the directory's purpose: standalone benchmark scripts that import from `../src/` but are not part of the published npm package or test suite.
-  - [ ] README.md notes the script must be run with `npx tsx benchmark/reranker-bench.ts` (no new build target required) or `node --import tsx benchmark/reranker-bench.ts`.
+  - [x] New directory `plugin/ralph-knowledge/benchmark/` exists.
+  - [x] Brief README.md explains the directory's purpose: standalone benchmark scripts that import from `../src/` but are not part of the published npm package or test suite.
+  - [x] README.md notes the script must be run with `npx tsx benchmark/reranker-bench.ts` (no new build target required) or `node --import tsx benchmark/reranker-bench.ts`.
 
 #### Task 4.2: Write the benchmark script
 - **files**: [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) (create)
@@ -345,18 +345,18 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: high
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] Script is a standalone `.ts` file with a top-level `main()` function and a `if (import.meta.url === ...)` runner block.
-  - [ ] Resolves the knowledge DB path from `RALPH_KNOWLEDGE_DB` env var (same pattern as [`index.ts:372`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L372)) with sensible default.
-  - [ ] Builds a `KnowledgeDB`, `FtsSearch`, `VectorSearch`, `HybridSearch` (using `embed` from `embedder.ts`) — same wiring as `createServer()`.
-  - [ ] Draws 30-50 sample queries: hard-coded list covering all 5 intent classes from the Phase 3 research (12 prior-work topic queries, 8 plan-by-issue lookups, 8 claim evidence, 8 epic context, 8 hero orientation = 44 total).
-  - [ ] For each query, runs `hybrid.search(q, { limit: 20 })` and captures the top-20 results (this is the candidate set for reranking).
-  - [ ] Loads two rerankers via the existing `@huggingface/transformers` `pipeline('text-classification', ...)`: (a) `onnx-community/bge-reranker-v2-m3-ONNX` with int8 quantization, (b) `Xenova/ms-marco-MiniLM-L-6-v2`. Each model is loaded once outside the per-query loop. Cold-start (first inference) latency is captured separately.
-  - [ ] For each (query, reranker) pair: time the rerank pass over the 20 candidates (one batch call); store wall-clock ms; capture `process.memoryUsage().rss` delta before/after model load.
-  - [ ] Computes top-3 agreement as: `|set(rrf_top_3) ∩ set(reranker_top_3)| / 3`, averaged across queries.
-  - [ ] Writes a TSV file at `plugin/ralph-knowledge/benchmark/results-YYYY-MM-DD.tsv` with columns: `model`, `cold_start_ms`, `latency_p50_ms`, `latency_p95_ms`, `batch_top20_p50_ms`, `memory_rss_delta_mb`, `top3_agreement_avg`, `notes`.
-  - [ ] Console output prints a human-readable summary table at end of run.
-  - [ ] Script handles missing models gracefully: catches the transformers.js download error, prints a "model X failed to load: <reason>" line, continues with other models. Exits with non-zero code only if all models fail.
-  - [ ] Script does NOT modify `hybrid-search.ts` or any production source file. It is purely additive.
+  - [x] Script is a standalone `.ts` file with a top-level `main()` function and a `if (import.meta.url === ...)` runner block.
+  - [x] Resolves the knowledge DB path from `RALPH_KNOWLEDGE_DB` env var (same pattern as [`index.ts:372`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L372)) with sensible default.
+  - [x] Builds a `KnowledgeDB`, `FtsSearch`, `VectorSearch`, `HybridSearch` (using `embed` from `embedder.ts`) — same wiring as `createServer()`.
+  - [x] Draws 30-50 sample queries: hard-coded list covering all 5 intent classes from the Phase 3 research (12 prior-work topic queries, 8 plan-by-issue lookups, 8 claim evidence, 8 epic context, 8 hero orientation = 44 total).
+  - [x] For each query, runs `hybrid.search(q, { limit: 20 })` and captures the top-20 results (this is the candidate set for reranking).
+  - [x] Loads two rerankers via the existing `@huggingface/transformers` library: (a) `onnx-community/bge-reranker-v2-m3-ONNX` with int8 quantization (`dtype: "q8"`), (b) `Xenova/ms-marco-MiniLM-L-6-v2`. Each model is loaded once outside the per-query loop. Cold-start (first inference) latency is captured separately. *Implementation deviation*: uses the lower-level `AutoTokenizer` + `AutoModelForSequenceClassification` direct path instead of `pipeline('text-classification', ...)` — the high-level pipeline silently coerces `{text, text_pair}` objects to strings and returns a constant `score=1` for every cross-encoder pair, while the direct path returns the actual logits. Same npm dependency, no new package.
+  - [x] For each (query, reranker) pair: time the rerank pass over the 20 candidates (one batch call); store wall-clock ms; capture `process.memoryUsage().rss` delta before/after model load.
+  - [x] Computes top-3 agreement as: `|set(rrf_top_3) ∩ set(reranker_top_3)| / 3`, averaged across queries.
+  - [x] Writes a TSV file at `plugin/ralph-knowledge/benchmark/results-YYYY-MM-DD.tsv` with columns: `model`, `cold_start_ms`, `latency_p50_ms`, `latency_p95_ms`, `batch_top20_p50_ms`, `memory_rss_delta_mb`, `top3_agreement_avg`, `notes`.
+  - [x] Console output prints a human-readable summary table at end of run.
+  - [x] Script handles missing models gracefully: catches the transformers.js download error, prints a "model X failed to load: <reason>" line, continues with other models. Exits with non-zero code only if all models fail.
+  - [x] Script does NOT modify `hybrid-search.ts` or any production source file. It is purely additive.
 
 #### Task 4.3: Document the benchmark in the parent ralph-knowledge README
 - **files**: [`plugin/ralph-knowledge/README.md`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/README.md) (modify)
@@ -364,8 +364,8 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: low
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] New section in README under "Development" or "Benchmarks" (whichever heading exists or is closest): brief paragraph describing the reranker benchmark, the two models compared, and the command to run it (`npx tsx benchmark/reranker-bench.ts`).
-  - [ ] Links to `benchmark/README.md` and to the most recent results TSV (filename TBD by run date).
+  - [x] New section in README under "Development" or "Benchmarks" (whichever heading exists or is closest): brief paragraph describing the reranker benchmark, the two models compared, and the command to run it (`npx tsx benchmark/reranker-bench.ts`).
+  - [x] Links to `benchmark/README.md` and to the most recent results TSV (filename TBD by run date).
 
 #### Task 4.4: Run the benchmark and commit results
 - **files**: `plugin/ralph-knowledge/benchmark/results-YYYY-MM-DD.tsv` (create)
@@ -373,17 +373,17 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: medium
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] Run `npx tsx plugin/ralph-knowledge/benchmark/reranker-bench.ts` from the repo root with `RALPH_KNOWLEDGE_DB` pointing at the live `knowledge.db`.
-  - [ ] Resulting TSV has at least one row per loaded reranker (BGE-v2-m3-int8 and MiniLM-L6) — if a model fails to load on this hardware, that row records `notes: "model load failed"` and zeros for the other columns.
-  - [ ] Commit the TSV alongside the script.
-  - [ ] If both rerankers ship a measurable top-3 agreement signal (>0.4 avg), open a followup issue `ralph-knowledge: production-wire cross-encoder reranker (gated on benchmark results)` with the TSV findings linked.
+  - [x] Run `npx tsx plugin/ralph-knowledge/benchmark/reranker-bench.ts` from the repo root with `RALPH_KNOWLEDGE_DB` pointing at the live `knowledge.db`.
+  - [x] Resulting TSV has at least one row per loaded reranker (BGE-v2-m3-int8 and MiniLM-L6) — if a model fails to load on this hardware, that row records `notes: "model load failed"` and zeros for the other columns.
+  - [x] Commit the TSV alongside the script.
+  - [x] If both rerankers ship a measurable top-3 agreement signal (>0.4 avg), open a followup issue `ralph-knowledge: production-wire cross-encoder reranker (gated on benchmark results)` with the TSV findings linked. *(Both models exceeded the 0.4 threshold — BGE 0.402, MiniLM 0.424 — so a followup issue is filed below as part of the PR open.)*
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors (the benchmark script type-checks against the same tsconfig).
-- [ ] `cd plugin/ralph-knowledge && npm test` — all tests still pass; benchmark is not part of the test suite.
-- [ ] `ls plugin/ralph-knowledge/benchmark/results-*.tsv` shows at least one results file.
+- [x] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors (the benchmark script type-checks against the same tsconfig).
+- [x] `cd plugin/ralph-knowledge && npm test` — all tests still pass; benchmark is not part of the test suite.
+- [x] `ls plugin/ralph-knowledge/benchmark/results-*.tsv` shows at least one results file.
 
 #### Manual Verification:
 - [ ] Open the TSV in a spreadsheet — columns line up, latencies are within an order of magnitude of the Phase 4 research estimates (BGE p50 25-45ms/pair, MiniLM 12ms/pair).
