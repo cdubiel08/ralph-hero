@@ -201,4 +201,82 @@ describe("knowledge_memory_stats", () => {
     expect(out.chunks_per_doc_p90).toBe(0);
     expect(out.last_reflection_at).toBeNull();
   });
+
+  describe("stub filtering (GH-897)", () => {
+    it("excludes stubs from total_documents and by_tier on v3 schema", async () => {
+      const mod = await import("../index.js");
+      const { server, db } = mod.createServer(":memory:");
+      ensureV3Schema(db);
+
+      // Two real docs across two tiers.
+      seedDoc(db, "real-doc", "doc", "2026-04-10");
+      seedDoc(db, "real-reflection", "reflection", "2026-04-11");
+
+      // Three stubs (default memory_tier = 'doc' per migration).
+      db.upsertStubDocument("stub-1");
+      db.upsertStubDocument("stub-2");
+      db.upsertStubDocument("stub-3");
+
+      const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
+      expect(out.total_documents).toBe(2);
+      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 1 });
+      // new_since unaffected — stubs have date = NULL and never count regardless.
+      expect(out.new_since).toEqual({ doc: 1, raw: 0, reflection: 1 });
+    });
+
+    it("excludes stubs from total on a v2 schema (column absent)", async () => {
+      const mod = await import("../index.js");
+      const { server, db } = mod.createServer(":memory:");
+      // Do NOT call ensureV3Schema; v2 path uses the standalone total query and
+      // assigns it to byTier.doc.
+
+      db.upsertDocument({
+        id: "legacy-real",
+        path: "l.md",
+        title: "Legacy",
+        date: "2026-04-01",
+        type: null,
+        status: null,
+        githubIssue: null,
+        content: "",
+      });
+      db.upsertStubDocument("legacy-stub");
+
+      const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
+      expect(out.total_documents).toBe(1);
+      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0 });
+    });
+
+    it("typed-relationship stubs are filtered identically to untyped wikilink stubs", async () => {
+      const mod = await import("../index.js");
+      const { server, db } = mod.createServer(":memory:");
+      ensureV3Schema(db);
+
+      seedDoc(db, "real-source", "doc", "2026-04-10");
+      // Stub created via typed relationship target.
+      db.upsertStubDocument("typed-stub-target");
+      db.addRelationship("real-source", "typed-stub-target", "builds_on");
+
+      const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
+      expect(out.total_documents).toBe(1);
+      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0 });
+    });
+
+    it("last_reflection_at ignores stubs even if a stub somehow had a date and reflection tier", async () => {
+      const mod = await import("../index.js");
+      const { server, db } = mod.createServer(":memory:");
+      ensureV3Schema(db);
+
+      seedDoc(db, "real-reflection-old", "reflection", "2026-03-01");
+      // Force a stub into the reflection tier with a future date — defense-in-depth check.
+      db.upsertStubDocument("future-reflection-stub");
+      db.db
+        .prepare("UPDATE documents SET memory_tier = 'reflection', date = '2099-01-01' WHERE id = ?")
+        .run("future-reflection-stub");
+
+      const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
+      // Without the filter, the stub's "2099-01-01" would surface as last_reflection_at.
+      expect(out.last_reflection_at).toBe("2026-03-01");
+    });
+  });
 });

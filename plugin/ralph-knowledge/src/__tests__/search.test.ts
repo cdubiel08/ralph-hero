@@ -242,6 +242,69 @@ describe("FtsSearch", () => {
     });
   });
 
+  describe("stub filtering (GH-897)", () => {
+    it("excludes stub documents from FTS results even when their title matches", () => {
+      // Insert a real doc with a unique marker; stub created via upsertStubDocument.
+      const freshDb = new KnowledgeDB(":memory:");
+      freshDb.upsertDocument({
+        id: "real-doc-marker",
+        path: "thoughts/shared/research/marker.md",
+        title: "Marker Doc",
+        date: "2026-04-25",
+        type: "research",
+        status: "draft",
+        githubIssue: null,
+        content: "unique-marker payload contents",
+      });
+      // Stub whose title matches the marker — would surface without the filter.
+      freshDb.upsertStubDocument("unique-marker-stub-id");
+
+      const freshFts = new FtsSearch(freshDb);
+      // Rebuild AFTER both rows exist so the stub does land in documents_fts —
+      // simulates an install that bumped schema version with stubs already present.
+      freshFts.rebuildIndex();
+
+      const hits = freshFts.search("unique-marker");
+      const ids = hits.map((r) => r.id);
+      expect(ids).toContain("real-doc-marker");
+      expect(ids).not.toContain("unique-marker-stub-id");
+
+      // Even querying the stub id directly returns zero rows.
+      const stubByTitle = freshFts.search("unique-marker-stub-id");
+      const stubIds = stubByTitle.map((r) => r.id);
+      expect(stubIds).not.toContain("unique-marker-stub-id");
+
+      freshDb.close();
+    });
+
+    it("typed-relationship stubs (builds_on target) are filtered identically", () => {
+      const freshDb = new KnowledgeDB(":memory:");
+      freshDb.upsertDocument({
+        id: "real-source",
+        path: "thoughts/shared/plans/source.md",
+        title: "Source Plan",
+        date: "2026-04-25",
+        type: "plan",
+        status: "draft",
+        githubIssue: null,
+        content: "phantom-typed-marker payload",
+      });
+      // Stub created via typed relationship target (builds_on).
+      freshDb.upsertStubDocument("phantom-typed-marker");
+      freshDb.addRelationship("real-source", "phantom-typed-marker", "builds_on");
+
+      const freshFts = new FtsSearch(freshDb);
+      freshFts.rebuildIndex();
+
+      const hits = freshFts.search("phantom-typed-marker");
+      const ids = hits.map((r) => r.id);
+      expect(ids).toContain("real-source"); // matches in content
+      expect(ids).not.toContain("phantom-typed-marker"); // stub excluded
+
+      freshDb.close();
+    });
+  });
+
   describe("ensureTable", () => {
     it("creates FTS table if it does not exist", () => {
       // Create a fresh DB without FTS table

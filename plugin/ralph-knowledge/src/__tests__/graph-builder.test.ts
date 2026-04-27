@@ -171,4 +171,32 @@ describe("GraphBuilder", () => {
     expect(edgeToA).toBeDefined();
     expect(graph.source(edgeToA!)).toBe("doc-b");
   });
+
+  describe("stub filtering (GH-897)", () => {
+    it("drops stub-target edges (untyped + typed) and excludes stubs from nodes", () => {
+      const freshDb = new KnowledgeDB(":memory:");
+      freshDb.upsertDocument({
+        id: "real-x",
+        path: "real-x.md",
+        title: "Real X",
+        date: "2026-04-10",
+        type: "research",
+        status: "approved",
+        githubIssue: null,
+        content: "",
+      });
+      freshDb.upsertStubDocument("stub-y");
+      freshDb.addRelationship("real-x", "stub-y", "untyped");
+      freshDb.addRelationship("real-x", "stub-y", "builds_on");
+
+      const g = new GraphBuilder(freshDb).buildGraph();
+      expect(g.hasNode("stub-y")).toBe(false);
+      expect(g.hasNode("real-x")).toBe(true);
+      expect(g.outDegree("real-x")).toBe(0);
+      expect(g.order).toBe(1);
+      expect(g.size).toBe(0);
+
+      freshDb.close();
+    });
+  });
 });

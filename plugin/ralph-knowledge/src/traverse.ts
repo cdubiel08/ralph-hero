@@ -49,6 +49,7 @@ export class Traverser {
         d.date AS docDate
       FROM chain
       LEFT JOIN documents d ON d.id = chain.target_id
+      WHERE d.id IS NULL OR d.is_stub = 0 OR d.is_stub IS NULL
       ORDER BY chain.depth, chain.target_id
     `;
 
@@ -106,6 +107,7 @@ export class Traverser {
         d.date AS docDate
       FROM chain
       LEFT JOIN documents d ON d.id = chain.source_id
+      WHERE d.id IS NULL OR d.is_stub = 0 OR d.is_stub IS NULL
       ORDER BY chain.depth, chain.target_id
     `;
 

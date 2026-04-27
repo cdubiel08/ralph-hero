@@ -183,11 +183,137 @@ describe("Traverser — untyped edges", () => {
     expect(types).toContain("builds_on");
   });
 
-  it("stub documents appear as doc in traverse results with title matching stub ID", () => {
+  it("stub documents are filtered out of traverse results (regression for GH-897)", () => {
     const results = traverser.traverse("doc-source", { type: "untyped", depth: 1 });
     const toStub = results.find(r => r.targetId === "unresolved-target");
-    expect(toStub).toBeTruthy();
-    expect(toStub!.doc).not.toBeNull();
-    expect(toStub!.doc!.title).toBe("unresolved-target");
+    expect(toStub).toBeUndefined();
+    // Real-document edges still surface
+    const toReal = results.find(r => r.targetId === "doc-target");
+    expect(toReal).toBeTruthy();
+  });
+});
+
+describe("Traverser — stub filtering (GH-897)", () => {
+  let db: KnowledgeDB;
+  let traverser: Traverser;
+
+  beforeEach(() => {
+    db = new KnowledgeDB(":memory:");
+
+    db.upsertDocument({
+      id: "real-a",
+      path: "thoughts/shared/research/real-a.md",
+      title: "Real A",
+      date: "2026-04-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Real document A.",
+    });
+
+    db.upsertDocument({
+      id: "real-b",
+      path: "thoughts/shared/research/real-b.md",
+      title: "Real B",
+      date: "2026-04-02",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "Real document B.",
+    });
+
+    // Stubs created via both untyped wikilink and typed relationship paths.
+    db.upsertStubDocument("stub-untyped-target");
+    db.upsertStubDocument("stub-typed-target");
+
+    db.addRelationship("real-a", "stub-untyped-target", "untyped", "context");
+    db.addRelationship("real-a", "stub-typed-target", "builds_on");
+
+    // Stub appears as source_id of an edge to a real doc — exercises incoming filter.
+    db.addRelationship("stub-untyped-target", "real-b", "untyped");
+
+    traverser = new Traverser(db);
+  });
+
+  it("traverse() drops outgoing hops to stub targets (untyped + typed)", () => {
+    const results = traverser.traverse("real-a", { depth: 1 });
+    expect(results).toHaveLength(0);
+    // Sanity: neither stub id appears
+    const targetIds = results.map((r) => r.targetId);
+    expect(targetIds).not.toContain("stub-untyped-target");
+    expect(targetIds).not.toContain("stub-typed-target");
+  });
+
+  it("traverse() with type filter still drops stub targets", () => {
+    const buildsOn = traverser.traverse("real-a", { type: "builds_on", depth: 1 });
+    expect(buildsOn).toHaveLength(0);
+    const untyped = traverser.traverse("real-a", { type: "untyped", depth: 1 });
+    expect(untyped).toHaveLength(0);
+  });
+
+  it("traverseIncoming() returns no rows when only inbound edge is from a stub", () => {
+    const results = traverser.traverseIncoming("real-b", { depth: 1 });
+    expect(results).toHaveLength(0);
+  });
+
+  it("traverseIncoming() on a stub returns only real-source edges, never stub sources", () => {
+    // Asking "who points to this stub?" surfaces real callers (real-a here). The
+    // join in traverseIncoming is on chain.source_id, so the predicate filters by
+    // source-side stub-ness — real sources are preserved, stub sources dropped.
+    const results = traverser.traverseIncoming("stub-untyped-target", { depth: 1 });
+    expect(results).toHaveLength(1);
+    expect(results[0].sourceId).toBe("real-a");
+    // None of the rows have a stub document as source.
+    for (const r of results) {
+      // doc is hydrated from d.title; stubs would have title === sourceId.
+      if (r.doc) {
+        expect(r.doc.title).not.toBe(r.sourceId);
+      }
+    }
+  });
+
+  it("non-regression: real-only chain still works after the stub filter is applied", () => {
+    // Independent fresh DB to verify the canonical fixture still passes through the
+    // updated WHERE clause unchanged.
+    const fresh = new KnowledgeDB(":memory:");
+    fresh.upsertDocument({
+      id: "doc-a",
+      path: "doc-a.md",
+      title: "Foundation",
+      date: "2026-02-01",
+      type: "research",
+      status: "approved",
+      githubIssue: null,
+      content: "",
+    });
+    fresh.upsertDocument({
+      id: "doc-b",
+      path: "doc-b.md",
+      title: "Plan",
+      date: "2026-02-15",
+      type: "plan",
+      status: "draft",
+      githubIssue: null,
+      content: "",
+    });
+    fresh.upsertDocument({
+      id: "doc-c",
+      path: "doc-c.md",
+      title: "Revised Plan",
+      date: "2026-03-01",
+      type: "plan",
+      status: "draft",
+      githubIssue: null,
+      content: "",
+    });
+    fresh.addRelationship("doc-b", "doc-a", "builds_on");
+    fresh.addRelationship("doc-c", "doc-b", "builds_on");
+
+    const t = new Traverser(fresh);
+    const chain = t.traverse("doc-c", { type: "builds_on" });
+    expect(chain).toHaveLength(2);
+    expect(chain[0]).toMatchObject({ sourceId: "doc-c", targetId: "doc-b", depth: 1 });
+    expect(chain[1]).toMatchObject({ sourceId: "doc-b", targetId: "doc-a", depth: 2 });
+    fresh.close();
   });
 });
