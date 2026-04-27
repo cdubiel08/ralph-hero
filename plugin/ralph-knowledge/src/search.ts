@@ -16,6 +16,15 @@ export interface SearchOptions {
    * Values outside [0, 1] are silently clamped.
    */
   lambda?: number;
+  /**
+   * Diagnostic mode (Phase 2, GH-899). When `true`, each `SearchResult` is
+   * decorated with raw per-retriever scores so callers can inspect / calibrate
+   * the underlying signals that fed the RRF fusion. Default `false` keeps the
+   * payload byte-identical to today (Track-B observability hook).
+   *
+   * Populates `ftsScore`, `vecDistance`, and `hitSources` per result.
+   */
+  diagnosticMode?: boolean;
 }
 
 export interface SearchResult {
@@ -34,6 +43,27 @@ export interface SearchResult {
   charEnd?: number;
   contextPrefix?: string;
   bestChunkId?: string;
+  // Optional per-retriever diagnostic fields (Phase 2, GH-899). Populated
+  // only when `SearchOptions.diagnosticMode === true`. Default behavior leaves
+  // these undefined so `JSON.stringify` produces a byte-identical payload.
+  /**
+   * Raw FTS5 BM25 score for this doc's best FTS hit. SQLite's FTS5 returns the
+   * BM25 negative-rank value (smaller = better). Undefined when the doc had no
+   * FTS contribution (vec-only hit).
+   */
+  ftsScore?: number;
+  /**
+   * Raw cosine distance from sqlite-vec for this doc's best chunk hit. Range
+   * `[0, 2]` (0 = identical, 2 = anti-parallel). Undefined when the doc had no
+   * vector contribution (FTS-only hit).
+   */
+  vecDistance?: number;
+  /**
+   * Subset of `["fts", "vec"]` indicating which retriever(s) contributed the
+   * RRF score for this doc. Useful for calibration analysis (e.g., are
+   * vec-only hits less precise than fts+vec hits?).
+   */
+  hitSources?: Array<"fts" | "vec">;
 }
 
 export class FtsSearch {

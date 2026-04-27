@@ -660,3 +660,195 @@ describe("HybridSearch MMR diversity rerank (Phase 1, GH-902)", () => {
     expect(results.length).toBeLessThanOrEqual(2);
   });
 });
+
+describe("HybridSearch diagnosticMode (Phase 2, GH-899)", () => {
+  // Uses the top-level fixture (cache-doc, auth-doc) which is freshly
+  // initialised in the outer `beforeEach`. Both docs have FTS rows and vec
+  // entries, so they hit both retrievers in the standard flow.
+
+  it("diagnosticMode=true returns ftsScore, vecDistance, hitSources for fts+vec hits", async () => {
+    // Query that matches cache-doc in FTS — `escapeFts5Query` quotes each
+    // token and ANDs them, so a single-token query is the safest way to
+    // ensure FTS matches without surprises. cache-doc has "cache" in title
+    // and content; it is also in the vec index — so it hits BOTH retrievers.
+    const results = await hybrid.search("cache", { diagnosticMode: true });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+
+    for (const r of results) {
+      // Diagnostic fields should be populated for any doc returned.
+      expect(r.hitSources).toBeDefined();
+      expect(Array.isArray(r.hitSources)).toBe(true);
+      expect(r.hitSources!.length).toBeGreaterThan(0);
+    }
+
+    // cache-doc matches "cache" in FTS and is in the vec table — should have
+    // both ftsScore and vecDistance set.
+    const cacheHit = results.find((r) => r.id === "cache-doc");
+    expect(cacheHit).toBeDefined();
+    expect(cacheHit!.ftsScore).toBeDefined();
+    expect(typeof cacheHit!.ftsScore).toBe("number");
+    expect(cacheHit!.vecDistance).toBeDefined();
+    expect(typeof cacheHit!.vecDistance).toBe("number");
+    // hitSources contains both members regardless of order.
+    expect(cacheHit!.hitSources!.sort()).toEqual(["fts", "vec"]);
+  });
+
+  it("diagnosticMode=true with vec-only hit has no ftsScore", async () => {
+    // Add a doc that vec finds but FTS does not (no matching keyword in
+    // title/path/content). The mock embedder hashes the query string, so we
+    // arrange a query whose hashed seed lands close to the planted vec
+    // embedding by upserting a dedicated vec embedding with the same seed
+    // we'll use for the query.
+    const queryText = "xyzzyrandom";
+    const seed = (() => {
+      let h = 0;
+      for (let i = 0; i < queryText.length; i++) h = (h * 31 + queryText.charCodeAt(i)) | 0;
+      return Math.abs(h) % 1000;
+    })();
+
+    db.upsertDocument({
+      id: "vec-only-doc",
+      path: "vec-only.md",
+      title: "Different Words",
+      date: "2026-04-10",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Body without the query keyword either.",
+    });
+    // Important: do NOT rebuild FTS so the doc is missing from FTS too.
+    // Actually we must rebuild for the doc to be queryable AT ALL. But our
+    // query "xyzzyrandom" doesn't appear in title/content, so FTS won't match
+    // even after rebuild. Rebuild so other tests' state stays consistent.
+    fts.rebuildIndex();
+    // Plant an embedding with the same seed as the query so vec ranks it #1.
+    const v = new Float32Array(384);
+    for (let i = 0; i < 384; i++) v[i] = Math.sin(seed * (i + 1) * 0.1);
+    let n = 0;
+    for (let i = 0; i < v.length; i++) n += v[i] * v[i];
+    n = Math.sqrt(n);
+    if (n > 0) for (let i = 0; i < v.length; i++) v[i] /= n;
+    vec.upsertEmbedding("vec-only-doc", v);
+
+    const results = await hybrid.search(queryText, { diagnosticMode: true });
+    const vecOnly = results.find((r) => r.id === "vec-only-doc");
+    expect(vecOnly).toBeDefined();
+    // FTS contribution should be absent — query terms don't appear in title/content.
+    expect(vecOnly!.ftsScore).toBeUndefined();
+    // Vec contribution should be present.
+    expect(vecOnly!.vecDistance).toBeDefined();
+    expect(vecOnly!.hitSources).toEqual(["vec"]);
+  });
+
+  it("diagnosticMode=false yields identical shape to omitted", async () => {
+    const omitted = await hybrid.search("cache OR auth");
+    const explicit = await hybrid.search("cache OR auth", { diagnosticMode: false });
+
+    expect(explicit).toHaveLength(omitted.length);
+    // Deep-equal each element so we catch any spurious fields the impl might
+    // accidentally add when diagnosticMode is false.
+    for (let i = 0; i < omitted.length; i++) {
+      expect(explicit[i]).toEqual(omitted[i]);
+      // Sanity: the diagnostic fields must NOT appear on either path.
+      expect(explicit[i].ftsScore).toBeUndefined();
+      expect(explicit[i].vecDistance).toBeUndefined();
+      expect(explicit[i].hitSources).toBeUndefined();
+      expect(omitted[i].ftsScore).toBeUndefined();
+      expect(omitted[i].vecDistance).toBeUndefined();
+      expect(omitted[i].hitSources).toBeUndefined();
+    }
+  });
+
+  it("diagnosticMode + lambda=0.7 preserves diagnostic fields after MMR reorder (cross-phase coupling)", async () => {
+    // Build the MMR fixture inline so we can exercise both lambda and
+    // diagnosticMode in the same call. This is the cross-phase coupling test
+    // (Phase 1 + Phase 2 interaction): MMR's applyMMR() returns a reordered
+    // SearchResult[], and we assert that the diagnostic fields populated
+    // before MMR survive on each entry post-reorder.
+    const xdb = new KnowledgeDB(":memory:");
+
+    function unitAt(d: number): Float32Array {
+      const u = new Float32Array(384);
+      u[d] = 1.0;
+      return u;
+    }
+    function nearDup(v: Float32Array, dim: number, eps: number): Float32Array {
+      const out = new Float32Array(v);
+      out[dim] += eps;
+      let norm = 0;
+      for (let i = 0; i < out.length; i++) norm += out[i] * out[i];
+      norm = Math.sqrt(norm);
+      for (let i = 0; i < out.length; i++) out[i] /= norm;
+      return out;
+    }
+
+    xdb.upsertDocument({ id: "x-a", path: "a.md", title: "topic anchor primary", date: "2026-04-01", type: "research", status: "draft", githubIssue: null, content: "topic anchor primary" });
+    xdb.upsertDocument({ id: "x-b", path: "b.md", title: "topic clone", date: "2026-04-02", type: "plan", status: "draft", githubIssue: null, content: "topic clone of a sibling" });
+    xdb.upsertDocument({ id: "x-c", path: "c.md", title: "topic distinct", date: "2026-04-03", type: "research", status: "draft", githubIssue: null, content: "topic distinct from a content different domain" });
+    for (let i = 0; i < 10; i++) {
+      xdb.upsertDocument({ id: `x-floor-${i}`, path: `f${i}.md`, title: "floor", date: `2026-04-${10 + i}`, type: "plan", status: "draft", githubIssue: null, content: "topic floor unrelated filler doc number " + i });
+    }
+
+    const xfts = new FtsSearch(xdb);
+    xfts.rebuildIndex();
+    const xvec = new VectorSearch(xdb);
+    xvec.createIndex();
+    const aVec = unitAt(0);
+    xvec.upsertEmbedding("x-a", aVec);
+    xvec.upsertEmbedding("x-b", nearDup(aVec, 1, 0.01));
+    const cVec = new Float32Array(384);
+    cVec[0] = 0.3;
+    cVec[2] = 1.0;
+    let cn = 0;
+    for (let i = 0; i < cVec.length; i++) cn += cVec[i] * cVec[i];
+    cn = Math.sqrt(cn);
+    for (let i = 0; i < cVec.length; i++) cVec[i] /= cn;
+    xvec.upsertEmbedding("x-c", cVec);
+    for (let i = 0; i < 10; i++) {
+      const v = new Float32Array(384);
+      for (let d = 100; d < 200; d++) v[d] = Math.sin((900 + i) * (d + 1) * 0.1);
+      let n = 0;
+      for (let d = 0; d < v.length; d++) n += v[d] * v[d];
+      n = Math.sqrt(n);
+      for (let d = 0; d < v.length; d++) v[d] /= n;
+      xvec.upsertEmbedding(`x-floor-${i}`, v);
+    }
+
+    const xEmbedFn: EmbedFn = async () => unitAt(0);
+    const xhybrid = new HybridSearch(xdb, xfts, xvec, xEmbedFn);
+
+    // Run with BOTH lambda=0.7 (Phase 1) AND diagnosticMode=true (Phase 2).
+    const results = await xhybrid.search("topic", {
+      limit: 3,
+      lambda: 0.7,
+      diagnosticMode: true,
+    });
+
+    // Sanity: MMR actually reordered (slot 2 should not be the near-duplicate).
+    expect(results[0].id).toBe("x-a");
+    expect(results[1].id).not.toBe("x-b");
+
+    // Critical assertion: every returned hit retains its diagnostic fields
+    // after MMR's slice + reorder. applyMMR operates by reference on the same
+    // SearchResult objects, so populated fields must survive intact.
+    for (const r of results) {
+      expect(r.hitSources).toBeDefined();
+      expect(Array.isArray(r.hitSources)).toBe(true);
+      expect(r.hitSources!.length).toBeGreaterThan(0);
+      // x-a, x-b, x-c, and all floors hit FTS (all match "topic"), so ftsScore
+      // is set for every result that was returned.
+      expect(r.ftsScore).toBeDefined();
+      expect(typeof r.ftsScore).toBe("number");
+      // All three are also in the vec index (since the query embedding aligns
+      // with dim 0, and floors are in dims 100-200, the floor docs may or may
+      // not enter the top-`limit*2=6` vec results — assert vecDistance is
+      // present only when the doc made the vec cut. For x-a/x-b/x-c they
+      // definitely do.
+      if (r.id === "x-a" || r.id === "x-b" || r.id === "x-c") {
+        expect(r.vecDistance).toBeDefined();
+        expect(typeof r.vecDistance).toBe("number");
+        expect(r.hitSources!.sort()).toEqual(["fts", "vec"]);
+      }
+    }
+  });
+});

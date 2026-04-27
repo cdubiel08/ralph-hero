@@ -148,6 +148,22 @@ describe("knowledge-index server", () => {
     expect(() => schema!.parse({ query: "hello", lambda: -0.1 })).toThrow();
     expect(() => schema!.parse({ query: "hello", lambda: 1.5 })).toThrow();
   });
+
+  it("knowledge_search schema accepts return_diagnostics (Phase 2, GH-899)", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const registered = (server as unknown as Record<string, unknown>)
+      ._registeredTools as Record<string, { inputSchema?: { parse: (v: unknown) => unknown } }>;
+    const schema = registered.knowledge_search?.inputSchema;
+    expect(schema).toBeDefined();
+    // Valid forms.
+    expect(() => schema!.parse({ query: "hello", return_diagnostics: true })).not.toThrow();
+    expect(() => schema!.parse({ query: "hello", return_diagnostics: false })).not.toThrow();
+    // Omitted is OK (defaults to false).
+    expect(() => schema!.parse({ query: "hello" })).not.toThrow();
+    // Wrong type is rejected.
+    expect(() => schema!.parse({ query: "hello", return_diagnostics: "yes" })).toThrow();
+  });
 });
 
 describe("knowledge_search memory_tier + chunk_meta", () => {
@@ -402,6 +418,84 @@ describe("knowledge_search memory_tier + chunk_meta", () => {
     expect(baselineIds[1]).toBe("mmr-b");
     // MMR demotes mmr-b — slot 2 is no longer the near-duplicate.
     expect(mmrIds[1]).not.toBe("mmr-b");
+  });
+
+  it("knowledge_search return_diagnostics=true emits snake_case fts_score / vec_distance / hit_sources (Phase 2, GH-899)", async () => {
+    const mod = await import("../index.js");
+    const { server, db, fts, vec } = mod.createServer(":memory:", { embedFn: mockEmbedFn });
+    ensureV3Schema(db);
+
+    db.upsertDocument({
+      id: "diag-doc",
+      path: "diag-doc.md",
+      title: "Calibration Diagnostic Doc",
+      date: "2026-04-26",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Document about calibration diagnostic surfaces for retrieval observability.",
+    });
+    fts.rebuildIndex();
+
+    vec.createIndex();
+    vec.upsertEmbedding("diag-doc", await mockEmbedFn("calibration diagnostic"));
+
+    const result = await callTool(server, "knowledge_search", {
+      query: "calibration diagnostic",
+      limit: 5,
+      return_diagnostics: true,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>;
+    const hit = payload.find((r) => r.id === "diag-doc");
+    expect(hit).toBeDefined();
+    // Snake_case keys per MCP convention (matches chunk_index pattern).
+    expect(hit!.fts_score).toBeDefined();
+    expect(typeof hit!.fts_score).toBe("number");
+    expect(hit!.vec_distance).toBeDefined();
+    expect(typeof hit!.vec_distance).toBe("number");
+    expect(hit!.hit_sources).toBeDefined();
+    expect(Array.isArray(hit!.hit_sources)).toBe(true);
+    // Also assert the camelCase forms are NOT leaked through.
+    expect(hit!.ftsScore).toBeUndefined();
+    expect(hit!.vecDistance).toBeUndefined();
+    expect(hit!.hitSources).toBeUndefined();
+  });
+
+  it("knowledge_search omits diagnostic fields when return_diagnostics is false (default) (Phase 2, GH-899)", async () => {
+    const mod = await import("../index.js");
+    const { server, db, fts, vec } = mod.createServer(":memory:", { embedFn: mockEmbedFn });
+    ensureV3Schema(db);
+
+    db.upsertDocument({
+      id: "noflag-doc",
+      path: "noflag-doc.md",
+      title: "Default Flag Doc",
+      date: "2026-04-26",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Document used to verify no diagnostic leakage when flag omitted.",
+    });
+    fts.rebuildIndex();
+    vec.createIndex();
+    vec.upsertEmbedding("noflag-doc", await mockEmbedFn("default flag verification"));
+
+    const result = await callTool(server, "knowledge_search", {
+      query: "default flag verification",
+      limit: 5,
+      // return_diagnostics omitted — defaults to false.
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>;
+    const hit = payload.find((r) => r.id === "noflag-doc");
+    expect(hit).toBeDefined();
+    expect(hit!.fts_score).toBeUndefined();
+    expect(hit!.vec_distance).toBeUndefined();
+    expect(hit!.hit_sources).toBeUndefined();
+    expect(hit!.ftsScore).toBeUndefined();
+    expect(hit!.vecDistance).toBeUndefined();
+    expect(hit!.hitSources).toBeUndefined();
   });
 
   it("omits chunk_index when return_chunk_meta is false (default)", async () => {

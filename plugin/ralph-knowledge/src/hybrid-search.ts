@@ -88,6 +88,7 @@ export class HybridSearch {
       limit = 20,
       memoryTier,
       lambda,
+      diagnosticMode = false,
     } = options;
 
     // Run FTS and vector search (FTS already applies memoryTier filter in SQL
@@ -104,6 +105,25 @@ export class HybridSearch {
       limit * 2,
     );
 
+    // Phase 2 (GH-899) diagnostic-mode hook: capture raw per-retriever scores
+    // before they are reduced to ordinal ranks for RRF. These maps stay empty
+    // when `diagnosticMode === false`, so the fast path pays no extra cost.
+    const ftsScoreByDocId = diagnosticMode
+      ? new Map<string, number>()
+      : null;
+    const vecDistanceByDocId = diagnosticMode
+      ? new Map<string, number>()
+      : null;
+    if (diagnosticMode && ftsScoreByDocId) {
+      for (const ftsRow of ftsResults) {
+        // BM25 score is already a single value per doc — first hit wins (FTS
+        // returns at most one row per doc).
+        if (!ftsScoreByDocId.has(ftsRow.id)) {
+          ftsScoreByDocId.set(ftsRow.id, ftsRow.score);
+        }
+      }
+    }
+
     // Bucket vector results by doc_id, keeping the best-ranked chunk per doc.
     // vecResults is already sorted by distance ascending, so the first
     // occurrence of a given doc_id has the smallest rank (best match).
@@ -117,6 +137,12 @@ export class HybridSearch {
         bestChunkId: hit.id,
         bestContent: hit.content ?? "",
       });
+      // Phase 2 diagnostic capture: record this doc's best (smallest) cosine
+      // distance from the vec retriever. Using `bestRank` semantics — same
+      // best-row choice as the bucketing above.
+      if (diagnosticMode && vecDistanceByDocId) {
+        vecDistanceByDocId.set(docId, hit.distance);
+      }
     }
 
     // Build RRF score map (keyed by doc_id for both FTS and vector buckets)
@@ -228,6 +254,26 @@ export class HybridSearch {
       r.charStart = chunk.char_start;
       r.charEnd = chunk.char_end;
       r.contextPrefix = chunk.context_prefix;
+    }
+
+    // Phase 2 (GH-899) diagnostic-mode population: stamp each result with raw
+    // per-retriever scores BEFORE the optional MMR reorder, so MMR's reorder
+    // (which works on the same SearchResult references) preserves them.
+    if (diagnosticMode && ftsScoreByDocId && vecDistanceByDocId) {
+      for (const r of filtered) {
+        const fts = ftsScoreByDocId.get(r.id);
+        const vec = vecDistanceByDocId.get(r.id);
+        const sources: Array<"fts" | "vec"> = [];
+        if (fts !== undefined) {
+          r.ftsScore = fts;
+          sources.push("fts");
+        }
+        if (vec !== undefined) {
+          r.vecDistance = vec;
+          sources.push("vec");
+        }
+        r.hitSources = sources;
+      }
     }
 
     // MMR diversity rerank (Phase 1, GH-902). Opt-in via `lambda` < 1.0.
