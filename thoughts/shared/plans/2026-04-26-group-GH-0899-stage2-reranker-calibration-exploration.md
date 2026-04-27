@@ -85,7 +85,7 @@ After this PR merges:
 - [x] When `lambda=0.7` is passed, the MMR pass runs after RRF and reorders the top-`limit*2` candidates before truncation. A planted near-duplicate fixture demonstrates the demotion.
 - [ ] `knowledge_search` accepts a `return_diagnostics` boolean; when `true`, each result includes optional `fts_score`, `vec_distance`, and `hit_sources` fields. Default `false` keeps payload byte-identical.
 - [ ] A new file [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) exists, runs against the live `knowledge.db`, loads two ONNX rerankers via `@huggingface/transformers`, and writes a TSV results table.
-- [ ] A new research note [`thoughts/shared/research/2026-04-NN-GH-0900-labeling-effort-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/) (filename TBD by impl) summarizes corpus query intents, target labeling counts (60 queries / 600 grades for alpha tuning), and a labeling workflow.
+- [x] A new research note [`thoughts/shared/research/2026-04-26-GH-0900-labeling-effort-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-26-GH-0900-labeling-effort-recommendation.md) summarizes corpus query intents, target labeling counts (60 queries / 600 grades for alpha tuning), and a labeling workflow.
 - [ ] A new research note [`thoughts/shared/research/2026-04-NN-GH-0899-rrf-calibration-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/) records the Track-A Platt-on-RRF feasibility and points at the diagnostic-mode flag for Track-B.
 - [ ] All existing tests pass; new tests cover MMR `lambda=1.0` identity, `lambda=0.0` max-diversity, and `lambda=0.7` near-duplicate demotion. Existing tests cover the diagnostic mode round-trip.
 - [ ] No new npm dependencies; `package.json` is byte-identical except possibly for a non-functional reorder.
@@ -289,13 +289,13 @@ This phase is doc-only per the Phase 3 research (and per the issue's "scope-only
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File created at `thoughts/shared/research/` with frontmatter: `date`, `github_issue: 900`, `github_url`, `status: complete`, `type: research`, `tags: [learning-to-rank, labeling, ralph-knowledge, hybrid-search, calibration]`.
-  - [ ] `## Prior Work` section with `builds_on:: [[2026-04-26-GH-0900-minimum-viable-labeling-learned-fusion]]`.
-  - [ ] `## Recommendation` section: pursue convex-combination-with-tuned-alpha as MVP; defer LambdaMART; corpus is 1,453 docs (not the 75 estimated in the issue).
-  - [ ] `## Target labeling counts`: 60 queries × 10 results = 600 grades for alpha tuning; 500+ queries × 10 grades = 5,000+ grades for LambdaMART (deferred).
-  - [ ] `## Workflow`: 4-phase outline (query sampling 30 min, annotation 2-3 hrs, alpha tuning 1 hr, decide on LambdaMART) with the 5 query-intent classes from the research.
-  - [ ] `## Storage`: use existing `knowledge_record_outcome` MCP tool with `event_type: "search_feedback"` and payload `{ query, doc_id, grade, intent_type }`. No schema change required.
-  - [ ] `## Followup` paragraph naming the new GH issue created in Task 3.2.
+  - [x] File created at `thoughts/shared/research/` with frontmatter: `date`, `github_issue: 900`, `github_url`, `status: complete`, `type: research`, `tags: [learning-to-rank, labeling, ralph-knowledge, hybrid-search, calibration]`.
+  - [x] `## Prior Work` section with `builds_on:: [[2026-04-26-GH-0900-minimum-viable-labeling-learned-fusion]]`.
+  - [x] `## Recommendation` section: pursue convex-combination-with-tuned-alpha as MVP; defer LambdaMART; corpus is 1,453 docs (not the 75 estimated in the issue).
+  - [x] `## Target labeling counts`: 60 queries × 10 results = 600 grades for alpha tuning; 500+ queries × 10 grades = 5,000+ grades for LambdaMART (deferred).
+  - [x] `## Workflow`: 4-phase outline (query sampling 30 min, annotation 2-3 hrs, alpha tuning 1 hr, decide on LambdaMART) with the 5 query-intent classes from the research.
+  - [x] `## Storage`: use existing `knowledge_record_outcome` MCP tool with `event_type: "search_feedback"` and payload `{ query, doc_id, grade, intent_type }`. No schema change required.
+  - [x] `## Followup` paragraph naming the new GH issue created in Task 3.2.
 
 #### Task 3.2: File the labeling-task followup issue
 - **files**: (no files — GitHub-only)
@@ -303,19 +303,19 @@ This phase is doc-only per the Phase 3 research (and per the issue's "scope-only
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] New issue created in `cdubiel08/ralph-hero` with title `ralph-knowledge: collect 60-query labeled dev set for alpha tuning`.
-  - [ ] Body summarizes the MVP labeling workflow from the recommendation note, links the recommendation note URL, links the parent epic #898, and references its sibling Phase 3 of this plan.
-  - [ ] Issue is labeled `enhancement`, estimate `S`, priority `P3`, parent `#898`.
-  - [ ] The issue number is appended to Task 3.1's recommendation-note `## Followup` paragraph (use Edit tool after issue is created).
+  - [x] New issue created in `cdubiel08/ralph-hero` with title `ralph-knowledge: collect 60-query labeled dev set for alpha tuning`.
+  - [x] Body summarizes the MVP labeling workflow from the recommendation note, links the recommendation note URL, links the parent epic #898, and references its sibling Phase 3 of this plan.
+  - [x] Issue is labeled `enhancement`, estimate `S`, priority `P3`, parent `#898`.
+  - [x] The issue number is appended to Task 3.1's recommendation-note `## Followup` paragraph (use Edit tool after issue is created).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `git status` shows the new note in `thoughts/shared/research/`.
-- [ ] `gh issue view <new-number>` shows the followup issue exists with the right parent and labels.
+- [x] `git status` shows the new note in `thoughts/shared/research/`.
+- [x] `gh issue view <new-number>` shows the followup issue exists with the right parent and labels.
 
 #### Manual Verification:
-- [ ] The recommendation note's `## Workflow` section is internally consistent — counts match (60 queries × 10 grades = 600 pairs) and the 4 phases sum to ~3.5-4 hours total.
+- [x] The recommendation note's `## Workflow` section is internally consistent — counts match (60 queries × 10 grades = 600 pairs) and the 4 phases sum to ~3.5-4 hours total.
 
 **Creates for next phase**: Nothing. Phase 4 is independent.
 
