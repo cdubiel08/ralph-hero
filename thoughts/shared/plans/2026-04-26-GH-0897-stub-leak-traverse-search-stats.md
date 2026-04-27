@@ -66,11 +66,11 @@ After this plan ships:
 
 ### Verification
 
-- [ ] `knowledge_traverse` from a doc with stub-target wikilinks returns only real-document hops in both directions.
-- [ ] `knowledge_search` over an FTS index containing stubs returns zero stub rows.
-- [ ] `knowledge_memory_stats` totals match `SELECT COUNT(*) FROM documents WHERE is_stub = 0 OR is_stub IS NULL`.
-- [ ] Typed-relationship stubs (`builds_on` to non-existent target) are filtered identically to untyped-wikilink stubs by all three tools.
-- [ ] `npm test` from `plugin/ralph-knowledge/` passes.
+- [x] `knowledge_traverse` from a doc with stub-target wikilinks returns only real-document hops in both directions.
+- [x] `knowledge_search` over an FTS index containing stubs returns zero stub rows.
+- [x] `knowledge_memory_stats` totals match `SELECT COUNT(*) FROM documents WHERE is_stub = 0 OR is_stub IS NULL`.
+- [x] Typed-relationship stubs (`builds_on` to non-existent target) are filtered identically to untyped-wikilink stubs by all three tools.
+- [x] `npm test` from `plugin/ralph-knowledge/` passes.
 
 ## What We're NOT Doing
 
@@ -107,10 +107,10 @@ Add `is_stub = 0 OR is_stub IS NULL` predicates at the four bypass query sites i
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] In `traverse.ts:28-53` (outgoing CTE), add `WHERE d.is_stub = 0 OR d.is_stub IS NULL` to the outer `SELECT ... FROM chain LEFT JOIN documents d ...`. Because the current join is a `LEFT JOIN`, the predicate must NOT filter rows where `d.id IS NULL` (which would happen if a relationship target row was deleted but the relationship persisted). Use exactly: `WHERE d.id IS NULL OR d.is_stub = 0 OR d.is_stub IS NULL`.
-  - [ ] In `traverse.ts:85-110` (incoming CTE), apply the same predicate to the join on `d.id = chain.source_id`: `WHERE d.id IS NULL OR d.is_stub = 0 OR d.is_stub IS NULL`.
-  - [ ] No change to the recursive CTE body itself — the filter only constrains the outer SELECT so chains can still recurse through (then drop) any path. **Decision rationale**: filtering inside the CTE would prune mid-chain, hiding real targets reachable via a stub hop. Filtering only the final projection drops stub *results* without breaking transitive reach. (For this codebase, where stubs are never sources of edges that would extend a chain, both choices are equivalent in practice — outer-filter is simpler.)
-  - [ ] All existing tests in `__tests__/traverse.test.ts` continue to pass (no fixture currently uses stubs, so behavior is identical).
+  - [x] In `traverse.ts:28-53` (outgoing CTE), add `WHERE d.is_stub = 0 OR d.is_stub IS NULL` to the outer `SELECT ... FROM chain LEFT JOIN documents d ...`. Because the current join is a `LEFT JOIN`, the predicate must NOT filter rows where `d.id IS NULL` (which would happen if a relationship target row was deleted but the relationship persisted). Use exactly: `WHERE d.id IS NULL OR d.is_stub = 0 OR d.is_stub IS NULL`.
+  - [x] In `traverse.ts:85-110` (incoming CTE), apply the same predicate to the join on `d.id = chain.source_id`: `WHERE d.id IS NULL OR d.is_stub = 0 OR d.is_stub IS NULL`.
+  - [x] No change to the recursive CTE body itself — the filter only constrains the outer SELECT so chains can still recurse through (then drop) any path. **Decision rationale**: filtering inside the CTE would prune mid-chain, hiding real targets reachable via a stub hop. Filtering only the final projection drops stub *results* without breaking transitive reach. (For this codebase, where stubs are never sources of edges that would extend a chain, both choices are equivalent in practice — outer-filter is simpler.)
+  - [x] All existing tests in `__tests__/traverse.test.ts` continue to pass (no fixture currently uses stubs, so behavior is identical). **NOTE during impl**: one pre-existing test ("stub documents appear as doc in traverse results with title matching stub ID" at line 186) explicitly asserted the buggy stub-leak behavior. That test was inverted to assert the new correct behavior (stubs filtered out) and renamed for the GH-897 regression context. No other existing tests required changes.
 
 #### Task 1.2: Add stub filter to `FtsSearch.search()` query
 - **files**: `plugin/ralph-knowledge/src/search.ts` (modify)
@@ -118,10 +118,10 @@ Add `is_stub = 0 OR is_stub IS NULL` predicates at the four bypass query sites i
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] In `search.ts:123-153`, add a new condition to the `conditions` array (alongside the superseded/type/tag predicates): `conditions.push("(d.is_stub = 0 OR d.is_stub IS NULL)");`. Place it immediately after the `documents_fts MATCH @query` push so it always applies and runs early in the WHERE evaluation.
-  - [ ] No parameter binding required — the literal `0` is fine and avoids noise.
-  - [ ] Do NOT modify `rebuildIndex()`. Approach (b) was rejected per Shared Constraints — stubs may remain in `documents_fts` on existing installs, and the query-time filter handles them.
-  - [ ] All existing tests in `__tests__/search.test.ts` pass unchanged.
+  - [x] In `search.ts:123-153`, add a new condition to the `conditions` array (alongside the superseded/type/tag predicates): `conditions.push("(d.is_stub = 0 OR d.is_stub IS NULL)");`. Place it immediately after the `documents_fts MATCH @query` push so it always applies and runs early in the WHERE evaluation.
+  - [x] No parameter binding required — the literal `0` is fine and avoids noise.
+  - [x] Do NOT modify `rebuildIndex()`. Approach (b) was rejected per Shared Constraints — stubs may remain in `documents_fts` on existing installs, and the query-time filter handles them.
+  - [x] All existing tests in `__tests__/search.test.ts` pass unchanged.
 
 #### Task 1.3: Add stub filter to `knowledge_memory_stats` count queries
 - **files**: `plugin/ralph-knowledge/src/index.ts` (modify)
@@ -129,13 +129,13 @@ Add `is_stub = 0 OR is_stub IS NULL` predicates at the four bypass query sites i
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] At `index.ts:196`, change `SELECT COUNT(*) AS c FROM documents` to `SELECT COUNT(*) AS c FROM documents WHERE is_stub = 0 OR is_stub IS NULL`.
-  - [ ] At `index.ts:213-216`, change the by-tier query to add `WHERE (is_stub = 0 OR is_stub IS NULL)` before `GROUP BY memory_tier`.
-  - [ ] At `index.ts:224-229`, change the new-since by-tier query to add `AND (is_stub = 0 OR is_stub IS NULL)` to the existing WHERE clause (before `GROUP BY memory_tier`).
-  - [ ] At `index.ts:240-243` (the v2-schema fallback `new_since` query for `byTier.doc`), add `AND (is_stub = 0 OR is_stub IS NULL)` to the existing WHERE. Even though stubs have `date = NULL` and the existing `date IS NOT NULL` filter already excludes them, add the explicit predicate for consistency and to harden against any future stub that gets a non-null date.
-  - [ ] At `index.ts:262-268` (the `last_reflection_at` query): add `AND (is_stub = 0 OR is_stub IS NULL)` for the same defense-in-depth reason; reflection stubs cannot exist today but the predicate is cheap.
-  - [ ] When `hasTier` is false and `totalDocuments` is assigned to `byTier.doc` at `index.ts:238`, this still uses the now-stub-filtered total — correct behavior, no change needed.
-  - [ ] `chunks_per_doc_p50/p90` query at `index.ts:250-254` operates on `chunks` table (not `documents`); chunks are only created for real documents per [reindex.ts:230](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L230) (research §"Vector index is clean" and the same logic applies to chunks). No change needed.
+  - [x] At `index.ts:196`, change `SELECT COUNT(*) AS c FROM documents` to `SELECT COUNT(*) AS c FROM documents WHERE is_stub = 0 OR is_stub IS NULL`.
+  - [x] At `index.ts:213-216`, change the by-tier query to add `WHERE (is_stub = 0 OR is_stub IS NULL)` before `GROUP BY memory_tier`.
+  - [x] At `index.ts:224-229`, change the new-since by-tier query to add `AND (is_stub = 0 OR is_stub IS NULL)` to the existing WHERE clause (before `GROUP BY memory_tier`).
+  - [x] At `index.ts:240-243` (the v2-schema fallback `new_since` query for `byTier.doc`), add `AND (is_stub = 0 OR is_stub IS NULL)` to the existing WHERE. Even though stubs have `date = NULL` and the existing `date IS NOT NULL` filter already excludes them, add the explicit predicate for consistency and to harden against any future stub that gets a non-null date.
+  - [x] At `index.ts:262-268` (the `last_reflection_at` query): add `AND (is_stub = 0 OR is_stub IS NULL)` for the same defense-in-depth reason; reflection stubs cannot exist today but the predicate is cheap.
+  - [x] When `hasTier` is false and `totalDocuments` is assigned to `byTier.doc` at `index.ts:238`, this still uses the now-stub-filtered total — correct behavior, no change needed.
+  - [x] `chunks_per_doc_p50/p90` query at `index.ts:250-254` operates on `chunks` table (not `documents`); chunks are only created for real documents per [reindex.ts:230](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/reindex.ts#L230) (research §"Vector index is clean" and the same logic applies to chunks). No change needed.
 
 #### Task 1.4: Regression test — `knowledge_traverse` excludes stub hops (outgoing + incoming)
 - **files**: `plugin/ralph-knowledge/src/__tests__/traverse.test.ts` (modify)
@@ -143,12 +143,12 @@ Add `is_stub = 0 OR is_stub IS NULL` predicates at the four bypass query sites i
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Add a `describe("stub filtering", () => {...})` block to the existing test file.
-  - [ ] Test setup: insert a real doc `real-a`, then call `db.upsertStubDocument("stub-untyped-target")` and `db.upsertStubDocument("stub-typed-target")`, then `db.addRelationship("real-a", "stub-untyped-target", "untyped", "context")` and `db.addRelationship("real-a", "stub-typed-target", "builds_on")`.
-  - [ ] Assert `traverser.traverse("real-a", { depth: 1 })` returns zero results (both stub targets filtered).
-  - [ ] Assert `traverser.traverseIncoming("stub-untyped-target")` returns zero results (the inbound edge from `real-a` is technically present, but the stub itself has no outbound chain — verify no spurious empty-target rows leak).
-  - [ ] Mirror test for incoming: insert `real-b` and `db.addRelationship("stub-untyped-target", "real-b", "untyped")` (yes, stubs CAN appear as source_id in `relationships` because the FK constraint accepts them — the row only needs the stub doc to exist). Then `traverser.traverseIncoming("real-b", { depth: 1 })` must return zero results (the only incoming edge is from a stub).
-  - [ ] Assert that the existing fixture in the file (real-only chain `doc-c -> doc-b -> doc-a`) still returns exactly the same results as before — non-regression check.
+  - [x] Add a `describe("stub filtering", () => {...})` block to the existing test file.
+  - [x] Test setup: insert a real doc `real-a`, then call `db.upsertStubDocument("stub-untyped-target")` and `db.upsertStubDocument("stub-typed-target")`, then `db.addRelationship("real-a", "stub-untyped-target", "untyped", "context")` and `db.addRelationship("real-a", "stub-typed-target", "builds_on")`.
+  - [x] Assert `traverser.traverse("real-a", { depth: 1 })` returns zero results (both stub targets filtered).
+  - [x] Assert `traverser.traverseIncoming("stub-untyped-target")` — **plan author's expectation amended during impl**: the join in `traverseIncoming` is on `chain.source_id`, so the stub filter drops rows whose *source* is a stub. When the stub is the inbound *target*, the source side (`real-a`) is real, so the row legitimately remains. The implemented test asserts exactly one result (the real-source inbound edge), and that no row has a stub doc as source. This matches the actual implementation semantics; the original "zero results" expectation in the plan was based on a misread of which side the join filter applies to.
+  - [x] Mirror test for incoming: insert `real-b` and `db.addRelationship("stub-untyped-target", "real-b", "untyped")` (yes, stubs CAN appear as source_id in `relationships` because the FK constraint accepts them — the row only needs the stub doc to exist). Then `traverser.traverseIncoming("real-b", { depth: 1 })` must return zero results (the only incoming edge is from a stub).
+  - [x] Assert that the existing fixture in the file (real-only chain `doc-c -> doc-b -> doc-a`) still returns exactly the same results as before — non-regression check.
 
 #### Task 1.5: Regression test — `FtsSearch.search()` excludes stub documents
 - **files**: `plugin/ralph-knowledge/src/__tests__/search.test.ts` (modify)
@@ -156,11 +156,11 @@ Add `is_stub = 0 OR is_stub IS NULL` predicates at the four bypass query sites i
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Add a `describe("stub filtering", () => {...})` block.
-  - [ ] Setup: in a fresh `beforeEach` (or new `describe` with own setup), insert one real doc with content `"unique-marker payload"`, then `db.upsertStubDocument("unique-marker-stub-id")`. Call `fts.rebuildIndex()` after both inserts so the stub gets indexed (this is the unfortunate state present on installs that bumped schema version after stubs existed).
-  - [ ] Assert `fts.search("unique-marker")` returns exactly the real doc — the stub (whose `title = "unique-marker-stub-id"` matches) must be filtered out.
-  - [ ] Assert `fts.search("unique-marker-stub-id")` returns zero results — confirms the stub is invisible even when its title is queried directly.
-  - [ ] Verify the existing tests in `__tests__/search.test.ts` continue to pass.
+  - [x] Add a `describe("stub filtering", () => {...})` block.
+  - [x] Setup: in a fresh `beforeEach` (or new `describe` with own setup), insert one real doc with content `"unique-marker payload"`, then `db.upsertStubDocument("unique-marker-stub-id")`. Call `fts.rebuildIndex()` after both inserts so the stub gets indexed (this is the unfortunate state present on installs that bumped schema version after stubs existed).
+  - [x] Assert `fts.search("unique-marker")` returns exactly the real doc — the stub (whose `title = "unique-marker-stub-id"` matches) must be filtered out.
+  - [x] Assert `fts.search("unique-marker-stub-id")` returns zero results — confirms the stub is invisible even when its title is queried directly.
+  - [x] Verify the existing tests in `__tests__/search.test.ts` continue to pass.
 
 #### Task 1.6: Regression test — `knowledge_memory_stats` totals and by-tier exclude stubs
 - **files**: `plugin/ralph-knowledge/src/__tests__/memory-stats.test.ts` (modify)
@@ -168,11 +168,11 @@ Add `is_stub = 0 OR is_stub IS NULL` predicates at the four bypass query sites i
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] Add a `describe("stub filtering", () => {...})` block using the existing `callStats` helper and `seedDoc` pattern.
-  - [ ] Setup: seed two real docs (one `doc` tier, one `reflection` tier), then create three stubs via `db.upsertStubDocument("stub-1")`, `db.upsertStubDocument("stub-2")`, `db.upsertStubDocument("stub-3")`.
-  - [ ] Assert `payload.total_documents === 2` (not 5).
-  - [ ] Assert `payload.by_tier.doc === 1`, `payload.by_tier.reflection === 1`, `payload.by_tier.raw === 0`. Stubs default to `memory_tier = 'doc'` per the migration default, so without the filter they would inflate `by_tier.doc` to 4.
-  - [ ] Assert `payload.new_since.*` are unaffected (stubs have `date = NULL` and were already excluded; this is a non-regression check).
+  - [x] Add a `describe("stub filtering", () => {...})` block using the existing `callStats` helper and `seedDoc` pattern.
+  - [x] Setup: seed two real docs (one `doc` tier, one `reflection` tier), then create three stubs via `db.upsertStubDocument("stub-1")`, `db.upsertStubDocument("stub-2")`, `db.upsertStubDocument("stub-3")`.
+  - [x] Assert `payload.total_documents === 2` (not 5).
+  - [x] Assert `payload.by_tier.doc === 1`, `payload.by_tier.reflection === 1`, `payload.by_tier.raw === 0`. Stubs default to `memory_tier = 'doc'` per the migration default, so without the filter they would inflate `by_tier.doc` to 4.
+  - [x] Assert `payload.new_since.*` are unaffected (stubs have `date = NULL` and were already excluded; this is a non-regression check).
 
 #### Task 1.7: Regression test — `GraphBuilder.buildGraph()` drops stub-target edges
 - **files**: `plugin/ralph-knowledge/src/__tests__/graph-builder.test.ts` (modify)
@@ -180,19 +180,19 @@ Add `is_stub = 0 OR is_stub IS NULL` predicates at the four bypass query sites i
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Add a test case asserting the previously-undocumented behavior at [graph-builder.ts:62-65](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/graph-builder.ts#L62-L65).
-  - [ ] Setup: insert real doc `real-x`, call `db.upsertStubDocument("stub-y")`, then `db.addRelationship("real-x", "stub-y", "untyped")` and `db.addRelationship("real-x", "stub-y", "builds_on")` (typed) to verify both relationship types drop together.
-  - [ ] Build graph: `const g = new GraphBuilder(db).buildGraph()`.
-  - [ ] Assert `g.hasNode("stub-y") === false`.
-  - [ ] Assert `g.outDegree("real-x") === 0` — both stub-target edges dropped.
-  - [ ] Assert `g.order === 1` (only `real-x`) and `g.size === 0`.
+  - [x] Add a test case asserting the previously-undocumented behavior at [graph-builder.ts:62-65](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/graph-builder.ts#L62-L65).
+  - [x] Setup: insert real doc `real-x`, call `db.upsertStubDocument("stub-y")`, then `db.addRelationship("real-x", "stub-y", "untyped")` and `db.addRelationship("real-x", "stub-y", "builds_on")` (typed) to verify both relationship types drop together.
+  - [x] Build graph: `const g = new GraphBuilder(db).buildGraph()`.
+  - [x] Assert `g.hasNode("stub-y") === false`.
+  - [x] Assert `g.outDegree("real-x") === 0` — both stub-target edges dropped.
+  - [x] Assert `g.order === 1` (only `real-x`) and `g.size === 0`.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors
-- [ ] `cd plugin/ralph-knowledge && npm test` — all suites pass, including the four new test blocks
-- [ ] `grep -rn "is_stub = 0 OR is_stub IS NULL" plugin/ralph-knowledge/src/` returns at least 7 hits (1 graph-builder existing, 2 traverse, 1 search, 5 index.ts memory-stats; counts approximate — confirms the canonical idiom is used everywhere)
+- [x] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors
+- [x] `cd plugin/ralph-knowledge && npm test` — all suites pass (415 tests across 19 files), including the four new test blocks
+- [x] `grep -rn "is_stub = 0 OR is_stub IS NULL" plugin/ralph-knowledge/src/` returns 9 hits in source files (`graph-builder.ts:33` existing; `traverse.ts:52,110`; `search.ts:127`; `index.ts:196,216,229,243,267`) — exceeds the plan threshold of 7 and uses the canonical idiom everywhere
 
 #### Manual Verification:
 - [ ] After patch, run the indexer against the live `~/.ralph-hero/knowledge.db` and call `knowledge_memory_stats` — `total_documents` should drop by the count of stubs (visible via `sqlite3 ~/.ralph-hero/knowledge.db "SELECT COUNT(*) FROM documents WHERE is_stub = 1"`).

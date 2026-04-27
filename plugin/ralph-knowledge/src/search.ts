@@ -124,6 +124,7 @@ export class FtsSearch {
     const { type, tags, includeSuperseded = false, limit = 20, memoryTier } = options;
 
     const conditions: string[] = ["documents_fts MATCH @query"];
+    conditions.push("(d.is_stub = 0 OR d.is_stub IS NULL)");
     const params: Record<string, unknown> = { query: this.escapeFts5Query(query), limit };
 
     if (!includeSuperseded) {

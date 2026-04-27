@@ -193,7 +193,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
         const hasChunks = chunksTableExists(db);
 
         const totalRow = db.db
-          .prepare("SELECT COUNT(*) AS c FROM documents")
+          .prepare("SELECT COUNT(*) AS c FROM documents WHERE is_stub = 0 OR is_stub IS NULL")
           .get() as { c: number };
         const totalDocuments = totalRow.c;
 
@@ -212,7 +212,9 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           const rows = db.db
             .prepare(
               `SELECT memory_tier AS tier, COUNT(*) AS c
-               FROM documents GROUP BY memory_tier`,
+               FROM documents
+               WHERE (is_stub = 0 OR is_stub IS NULL)
+               GROUP BY memory_tier`,
             )
             .all() as Array<{ tier: string; c: number }>;
           for (const r of rows) {
@@ -224,7 +226,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
             .prepare(
               `SELECT memory_tier AS tier, COUNT(*) AS c
                FROM documents
-               WHERE date IS NOT NULL AND date >= @since
+               WHERE date IS NOT NULL AND date >= @since AND (is_stub = 0 OR is_stub IS NULL)
                GROUP BY memory_tier`,
             )
             .all({ since }) as Array<{ tier: string; c: number }>;
@@ -238,7 +240,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           byTier.doc = totalDocuments;
           const newDocRow = db.db
             .prepare(
-              "SELECT COUNT(*) AS c FROM documents WHERE date IS NOT NULL AND date >= ?",
+              "SELECT COUNT(*) AS c FROM documents WHERE date IS NOT NULL AND date >= ? AND (is_stub = 0 OR is_stub IS NULL)",
             )
             .get(since) as { c: number };
           newSince.doc = newDocRow.c;
@@ -262,7 +264,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           const row = db.db
             .prepare(
               `SELECT date FROM documents
-               WHERE memory_tier = 'reflection' AND date IS NOT NULL
+               WHERE memory_tier = 'reflection' AND date IS NOT NULL AND (is_stub = 0 OR is_stub IS NULL)
                ORDER BY date DESC LIMIT 1`,
             )
             .get() as { date: string } | undefined;
