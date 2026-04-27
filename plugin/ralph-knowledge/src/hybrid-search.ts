@@ -81,7 +81,14 @@ export class HybridSearch {
     query: string,
     options: SearchOptions = {},
   ): Promise<SearchResult[]> {
-    const { type, tags, includeSuperseded = false, limit = 20, memoryTier } = options;
+    const {
+      type,
+      tags,
+      includeSuperseded = false,
+      limit = 20,
+      memoryTier,
+      lambda,
+    } = options;
 
     // Run FTS and vector search (FTS already applies memoryTier filter in SQL
     // when the schema supports it).
@@ -223,6 +230,134 @@ export class HybridSearch {
       r.contextPrefix = chunk.context_prefix;
     }
 
+    // MMR diversity rerank (Phase 1, GH-902). Opt-in via `lambda` < 1.0.
+    // When omitted or `lambda === 1.0`, the pure-RRF order is preserved
+    // byte-identically. Values outside [0, 1] are silently clamped.
+    if (lambda !== undefined) {
+      const clamped = Math.max(0, Math.min(1, lambda));
+      if (clamped < 1.0) {
+        return this.applyMMR(filtered, clamped, limit, bestChunkByDoc);
+      }
+    }
+
     return filtered.slice(0, limit);
+  }
+
+  /**
+   * Maximal Marginal Relevance (MMR) reranker — Phase 1, GH-902.
+   *
+   * Greedy iterative selection over the post-RRF candidate set. For each slot
+   * we pick the candidate maximizing:
+   *   `lambda * score_norm(d) - (1 - lambda) * max_{d' in S} cosine(d, d')`
+   *
+   * `score_norm` is the min-max normalization of the RRF score over the
+   * candidate set — required because raw RRF scores are tightly compressed
+   * (~0.01-0.03) which would let the diversity term dominate.
+   *
+   * Cosine similarity uses doc-doc dot product over L2-normalized 384-dim
+   * embeddings (see `VectorSearch.getEmbedding`). Candidates with no
+   * embedding (FTS-only hits or missing chunk) are treated as similarity=0
+   * so they remain eligible — preserves backwards compat for legacy fixtures
+   * with no vector contribution.
+   */
+  private applyMMR(
+    candidates: SearchResult[],
+    lambda: number,
+    limit: number,
+    bestChunkByDoc: Map<string, { chunkId: string; rank: number }>,
+  ): SearchResult[] {
+    if (candidates.length === 0) return candidates;
+
+    // Min-max normalize RRF scores to [0, 1] over the candidate set so the
+    // relevance and diversity terms are on the same scale.
+    let minScore = Infinity;
+    let maxScore = -Infinity;
+    for (const c of candidates) {
+      if (c.score < minScore) minScore = c.score;
+      if (c.score > maxScore) maxScore = c.score;
+    }
+    const range = maxScore - minScore;
+    const scoreNorm = new Map<string, number>();
+    for (const c of candidates) {
+      // When all scores are equal (range = 0) treat as full relevance for all
+      // so the choice falls through to the diversity term.
+      scoreNorm.set(c.id, range > 0 ? (c.score - minScore) / range : 1.0);
+    }
+
+    // Pre-fetch embeddings for the candidate's best chunk. Doc-level vec ids
+    // (legacy back-compat) and FTS-only hits where the doc has no chunk
+    // contribution may have no embedding — those map to null.
+    const embeddings = new Map<string, Float32Array | null>();
+    for (const c of candidates) {
+      const best = bestChunkByDoc.get(c.id);
+      // Try the chunk-level id first (covers chunked docs); fall back to the
+      // doc id (covers pre-chunks fixtures with doc-level vec rows).
+      const tryId = best?.chunkId ?? c.id;
+      let emb = this.vec.getEmbedding(tryId);
+      if (emb === null && tryId !== c.id) {
+        emb = this.vec.getEmbedding(c.id);
+      }
+      embeddings.set(c.id, emb);
+    }
+
+    const targetCount = Math.min(limit, candidates.length);
+    const selected: SearchResult[] = [];
+    const remaining = new Set(candidates.map((c) => c.id));
+    const candidateById = new Map(candidates.map((c) => [c.id, c] as const));
+
+    // Track the running max similarity from each remaining candidate to the
+    // already-selected set. Starts at 0 because nothing is selected yet.
+    const maxSimToSelected = new Map<string, number>();
+    for (const c of candidates) maxSimToSelected.set(c.id, 0);
+
+    while (selected.length < targetCount && remaining.size > 0) {
+      let bestId: string | null = null;
+      let bestMmrScore = -Infinity;
+
+      for (const id of remaining) {
+        const rel = scoreNorm.get(id) ?? 0;
+        const sim = maxSimToSelected.get(id) ?? 0;
+        const mmrScore = lambda * rel - (1 - lambda) * sim;
+        if (mmrScore > bestMmrScore) {
+          bestMmrScore = mmrScore;
+          bestId = id;
+        }
+      }
+
+      if (bestId === null) break; // Defensive — shouldn't happen with non-empty remaining.
+
+      const pick = candidateById.get(bestId)!;
+      selected.push(pick);
+      remaining.delete(bestId);
+
+      // Update max-similarity-to-selected for all remaining candidates using
+      // the newly added doc. Cosine similarity of L2-normalized 384-dim
+      // vectors is just the dot product. Null embeddings -> sim = 0.
+      const pickEmb = embeddings.get(bestId);
+      if (pickEmb) {
+        for (const id of remaining) {
+          const otherEmb = embeddings.get(id);
+          if (!otherEmb) continue; // Treat null as similarity=0 (max diverse)
+          const sim = HybridSearch.cosineSim(pickEmb, otherEmb);
+          const prev = maxSimToSelected.get(id) ?? 0;
+          if (sim > prev) maxSimToSelected.set(id, sim);
+        }
+      }
+    }
+
+    return selected;
+  }
+
+  /**
+   * Cosine similarity for two L2-normalized 384-dim vectors. With unit-length
+   * inputs, cosine similarity reduces to a dot product — no division needed.
+   * If lengths mismatch we return 0 (defensive — should never happen for
+   * matching schema vectors).
+   */
+  private static cosineSim(a: Float32Array, b: Float32Array): number {
+    if (a.length !== b.length) return 0;
+    let s = 0;
+    for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
   }
 }

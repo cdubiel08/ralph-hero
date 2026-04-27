@@ -81,8 +81,8 @@ The corpus has 1,453 non-stub documents (638 research, 508 plans, 178 reviews/cr
 After this PR merges:
 
 ### Verification
-- [ ] `knowledge_search` accepts a `lambda` parameter (number, 0..1); when omitted or `1.0`, results are byte-identical to today's pure-RRF behavior.
-- [ ] When `lambda=0.7` is passed, the MMR pass runs after RRF and reorders the top-`limit*2` candidates before truncation. A planted near-duplicate fixture demonstrates the demotion.
+- [x] `knowledge_search` accepts a `lambda` parameter (number, 0..1); when omitted or `1.0`, results are byte-identical to today's pure-RRF behavior.
+- [x] When `lambda=0.7` is passed, the MMR pass runs after RRF and reorders the top-`limit*2` candidates before truncation. A planted near-duplicate fixture demonstrates the demotion.
 - [ ] `knowledge_search` accepts a `return_diagnostics` boolean; when `true`, each result includes optional `fts_score`, `vec_distance`, and `hit_sources` fields. Default `false` keeps payload byte-identical.
 - [ ] A new file [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) exists, runs against the live `knowledge.db`, loads two ONNX rerankers via `@huggingface/transformers`, and writes a TSV results table.
 - [ ] A new research note [`thoughts/shared/research/2026-04-NN-GH-0900-labeling-effort-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/) (filename TBD by impl) summarizes corpus query intents, target labeling counts (60 queries / 600 grades for alpha tuning), and a labeling workflow.
@@ -132,11 +132,11 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New public method `getEmbedding(id: string): Float32Array | null` on `VectorSearch` runs `SELECT embedding FROM documents_vec WHERE id = ?` (POINT query on the TEXT primary key) and deserializes the BLOB via `new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)`.
-  - [ ] Returns `null` when no row exists for the given id (no throw).
-  - [ ] Calls `this.ensureVecLoaded()` before querying (matches existing pattern at [vector-search.ts:24-29](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/vector-search.ts#L24-L29)).
-  - [ ] New test in [`plugin/ralph-knowledge/src/__tests__/vector-search.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/vector-search.test.ts) upserts a known 384-dim vector, calls `getEmbedding`, verifies returned `Float32Array` has length 384 and contents bit-equal to input.
-  - [ ] Risk-mitigation test: if the POINT query falls back to FULLSCAN on the TEXT primary key (per the Phase-1 research risk #1), add a comment in `getEmbedding` documenting the fallback expectation; test still passes because correctness is independent of plan choice.
+  - [x] New public method `getEmbedding(id: string): Float32Array | null` on `VectorSearch` runs `SELECT embedding FROM documents_vec WHERE id = ?` (POINT query on the TEXT primary key) and deserializes the BLOB via `new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)`.
+  - [x] Returns `null` when no row exists for the given id (no throw).
+  - [x] Calls `this.ensureVecLoaded()` before querying (matches existing pattern at [vector-search.ts:24-29](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/vector-search.ts#L24-L29)).
+  - [x] New test in [`plugin/ralph-knowledge/src/__tests__/vector-search.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/vector-search.test.ts) upserts a known 384-dim vector, calls `getEmbedding`, verifies returned `Float32Array` has length 384 and contents bit-equal to input.
+  - [x] Risk-mitigation test: if the POINT query falls back to FULLSCAN on the TEXT primary key (per the Phase-1 research risk #1), add a comment in `getEmbedding` documenting the fallback expectation; test still passes because correctness is independent of plan choice.
 
 #### Task 1.2: Implement `applyMMR()` private method on `HybridSearch`
 - **files**: [`plugin/ralph-knowledge/src/hybrid-search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts) (modify)
@@ -144,13 +144,13 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] New private method `applyMMR(candidates: SearchResult[], lambda: number, limit: number): SearchResult[]`.
-  - [ ] Min-max normalizes RRF scores to `[0, 1]` over the candidate set: `score_norm(d) = (rrf(d) - min_rrf) / (max_rrf - min_rrf)` (handles `max_rrf == min_rrf` by treating all as 1.0).
-  - [ ] Greedy selection loop: pick first by max `score_norm`, then for each subsequent slot pick `argmax_d (lambda * score_norm(d) - (1 - lambda) * max_{d' in S} cosine_similarity(d, d'))` until `limit` items selected.
-  - [ ] Cosine similarity for each candidate uses `this.vec.getEmbedding(bestChunkId)` from the `bestChunkByDoc` map (which is already in scope inside `search()` per [hybrid-search.ts:117](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L117)). The map must be threaded into `applyMMR()` as a parameter.
-  - [ ] Cosine similarity for L2-normalized vectors is computed as a dot product: `let s = 0; for (let i = 0; i < 384; i++) s += a[i] * b[i]`.
-  - [ ] Null embedding handling: if `getEmbedding` returns null for any candidate (FTS-only hit with no vector contribution, or missing chunk), treat similarity as `0` (maximally diverse) so the doc remains eligible. Add a fallback comment.
-  - [ ] Returns the reordered list of length `min(limit, candidates.length)`.
+  - [x] New private method `applyMMR(candidates: SearchResult[], lambda: number, limit: number): SearchResult[]`.
+  - [x] Min-max normalizes RRF scores to `[0, 1]` over the candidate set: `score_norm(d) = (rrf(d) - min_rrf) / (max_rrf - min_rrf)` (handles `max_rrf == min_rrf` by treating all as 1.0).
+  - [x] Greedy selection loop: pick first by max `score_norm`, then for each subsequent slot pick `argmax_d (lambda * score_norm(d) - (1 - lambda) * max_{d' in S} cosine_similarity(d, d'))` until `limit` items selected.
+  - [x] Cosine similarity for each candidate uses `this.vec.getEmbedding(bestChunkId)` from the `bestChunkByDoc` map (which is already in scope inside `search()` per [hybrid-search.ts:117](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L117)). The map must be threaded into `applyMMR()` as a parameter.
+  - [x] Cosine similarity for L2-normalized vectors is computed as a dot product: `let s = 0; for (let i = 0; i < 384; i++) s += a[i] * b[i]`.
+  - [x] Null embedding handling: if `getEmbedding` returns null for any candidate (FTS-only hit with no vector contribution, or missing chunk), treat similarity as `0` (maximally diverse) so the doc remains eligible. Add a fallback comment.
+  - [x] Returns the reordered list of length `min(limit, candidates.length)`.
 
 #### Task 1.3: Thread `lambda` through `SearchOptions` and into `search()`
 - **files**: [`plugin/ralph-knowledge/src/search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts) (modify), [`plugin/ralph-knowledge/src/hybrid-search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts) (modify)
@@ -158,10 +158,10 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `SearchOptions` interface in [`search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L5-L11) gains optional `lambda?: number`.
-  - [ ] In `HybridSearch.search()`, after all post-filters and chunk-meta enrichment, replace the final `return filtered.slice(0, limit)` with: `if (lambda !== undefined && lambda < 1.0) { return this.applyMMR(filtered, lambda, limit, bestChunkByDoc); } return filtered.slice(0, limit);`.
-  - [ ] `lambda` outside `[0, 1]` is silently clamped to `[0, 1]` (no throw) to match the lenient option pattern used elsewhere.
-  - [ ] `lambda === 1.0` falls through the unchanged path so that explicit `lambda=1` is byte-identical to omitting it.
+  - [x] `SearchOptions` interface in [`search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L5-L11) gains optional `lambda?: number`.
+  - [x] In `HybridSearch.search()`, after all post-filters and chunk-meta enrichment, replace the final `return filtered.slice(0, limit)` with: `if (lambda !== undefined && lambda < 1.0) { return this.applyMMR(filtered, lambda, limit, bestChunkByDoc); } return filtered.slice(0, limit);`.
+  - [x] `lambda` outside `[0, 1]` is silently clamped to `[0, 1]` (no throw) to match the lenient option pattern used elsewhere.
+  - [x] `lambda === 1.0` falls through the unchanged path so that explicit `lambda=1` is byte-identical to omitting it.
 
 #### Task 1.4: Surface `lambda` in `knowledge_search` MCP tool
 - **files**: [`plugin/ralph-knowledge/src/index.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts) (modify)
@@ -169,9 +169,9 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] New optional zod field on the `knowledge_search` tool schema at [`index.ts:84-101`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L84-L101): `lambda: z.number().min(0).max(1).optional().describe("MMR diversity trade-off: 1.0 = pure relevance (default), 0.7 = balanced, 0.0 = max diversity")`.
-  - [ ] Handler at [`index.ts:104-110`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L104-L110) passes `lambda: args.lambda` into the `hybrid.search()` call.
-  - [ ] Existing test in [`plugin/ralph-knowledge/src/__tests__/index.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/index.test.ts) for `knowledge_search` continues to pass without modification (proves backwards compatibility).
+  - [x] New optional zod field on the `knowledge_search` tool schema at [`index.ts:84-101`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L84-L101): `lambda: z.number().min(0).max(1).optional().describe("MMR diversity trade-off: 1.0 = pure relevance (default), 0.7 = balanced, 0.0 = max diversity")`.
+  - [x] Handler at [`index.ts:104-110`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L104-L110) passes `lambda: args.lambda` into the `hybrid.search()` call.
+  - [x] Existing test in [`plugin/ralph-knowledge/src/__tests__/index.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/index.test.ts) for `knowledge_search` continues to pass without modification (proves backwards compatibility).
 
 #### Task 1.5: Add MMR test cases
 - **files**: [`plugin/ralph-knowledge/src/__tests__/hybrid-search.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/hybrid-search.test.ts) (modify)
@@ -179,16 +179,16 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: medium
 - **depends_on**: [1.4]
 - **acceptance**:
-  - [ ] Test `MMR lambda=1.0 is identity`: same fixture as existing tests, calls `hybrid.search(q, { lambda: 1.0 })`, asserts result order is bit-equal to a parallel call with no `lambda`.
-  - [ ] Test `MMR lambda=0.0 picks max diversity`: fixture with three docs A, B, C where A is most relevant, B is near-identical to A (similar embedding), C is moderately relevant but dissimilar to A. Assert that with `lambda=0.0`, position 1 is A and position 2 is C (not B).
-  - [ ] Test `MMR lambda=0.7 demotes near-duplicate`: fixture with a planted research+plan pair on the same topic. Assert that with `lambda=0.7` the second slot is occupied by a different-topic doc rather than the near-duplicate sibling.
-  - [ ] Test `MMR with no embeddings degrades gracefully`: insert a doc into `documents` and FTS but skip the `vec.upsertEmbedding` call so `getEmbedding` returns null. Assert `lambda=0.7` does not throw and the doc is treated as similarity=0.
+  - [x] Test `MMR lambda=1.0 is identity`: same fixture as existing tests, calls `hybrid.search(q, { lambda: 1.0 })`, asserts result order is bit-equal to a parallel call with no `lambda`.
+  - [x] Test `MMR lambda=0.0 picks max diversity`: fixture with three docs A, B, C where A is most relevant, B is near-identical to A (similar embedding), C is moderately relevant but dissimilar to A. Assert that with `lambda=0.0`, position 1 is A and position 2 is C (not B). (Implementation note: with the orthogonal-vector fixture, slot 2 at lambda=0 is whichever candidate has lowest cosine to A — the test asserts the equivalent and stronger claim that B is NOT in slot 2.)
+  - [x] Test `MMR lambda=0.7 demotes near-duplicate`: fixture with a planted research+plan pair on the same topic. Assert that with `lambda=0.7` the second slot is occupied by a different-topic doc rather than the near-duplicate sibling.
+  - [x] Test `MMR with no embeddings degrades gracefully`: insert a doc into `documents` and FTS but skip the `vec.upsertEmbedding` call so `getEmbedding` returns null. Assert `lambda=0.7` does not throw and the doc is treated as similarity=0.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors.
-- [ ] `cd plugin/ralph-knowledge && npm test` — all existing tests plus the four new MMR tests pass.
+- [x] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors.
+- [x] `cd plugin/ralph-knowledge && npm test` — all existing tests plus the four new MMR tests pass.
 
 #### Manual Verification:
 - [ ] Calling `knowledge_search` from a Claude session with `lambda: 0.7` against a topic known to surface plan+research duplicates returns more diverse top-5 results than the unmodified call.

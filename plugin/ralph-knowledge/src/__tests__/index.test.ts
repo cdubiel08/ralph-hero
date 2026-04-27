@@ -130,6 +130,24 @@ describe("knowledge-index server", () => {
     ).not.toThrow();
     expect(() => schema!.parse({ from: "doc-1", memory_tier: "bad" })).toThrow();
   });
+
+  it("knowledge_search schema accepts lambda in [0,1] (Phase 1, GH-902)", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const registered = (server as unknown as Record<string, unknown>)
+      ._registeredTools as Record<string, { inputSchema?: { parse: (v: unknown) => unknown } }>;
+    const schema = registered.knowledge_search?.inputSchema;
+    expect(schema).toBeDefined();
+    // Valid lambda values
+    expect(() => schema!.parse({ query: "hello", lambda: 0.0 })).not.toThrow();
+    expect(() => schema!.parse({ query: "hello", lambda: 0.7 })).not.toThrow();
+    expect(() => schema!.parse({ query: "hello", lambda: 1.0 })).not.toThrow();
+    // lambda omitted is OK (default = no MMR)
+    expect(() => schema!.parse({ query: "hello" })).not.toThrow();
+    // Out-of-range values are rejected by zod (impl clamps internally too).
+    expect(() => schema!.parse({ query: "hello", lambda: -0.1 })).toThrow();
+    expect(() => schema!.parse({ query: "hello", lambda: 1.5 })).toThrow();
+  });
 });
 
 describe("knowledge_search memory_tier + chunk_meta", () => {
@@ -300,6 +318,90 @@ describe("knowledge_search memory_tier + chunk_meta", () => {
     expect(hit!.char_end).toBe(68);
     expect(hit!.context_prefix).toBe("Research context.");
     expect(hit!.best_chunk_id).toBe("c-doc#c0");
+  });
+
+  it("knowledge_search passes lambda through to MMR (Phase 1, GH-902)", async () => {
+    // Verifies that calling knowledge_search with `lambda: 0.7` triggers the
+    // MMR rerank path. End-to-end test: build a fixture where MMR will
+    // observably reorder results, invoke the tool, assert the order changed.
+    const mod = await import("../index.js");
+    const { server, db, fts, vec } = mod.createServer(":memory:", {
+      embedFn: async () => {
+        const v = new Float32Array(384);
+        v[0] = 1.0;
+        return v;
+      },
+    });
+    ensureV3Schema(db);
+
+    function unitAt(d: number): Float32Array {
+      const v = new Float32Array(384);
+      v[d] = 1.0;
+      return v;
+    }
+    function nearDup(v: Float32Array, dim: number, eps: number): Float32Array {
+      const out = new Float32Array(v);
+      out[dim] += eps;
+      let n = 0;
+      for (let i = 0; i < out.length; i++) n += out[i] * out[i];
+      n = Math.sqrt(n);
+      for (let i = 0; i < out.length; i++) out[i] /= n;
+      return out;
+    }
+
+    db.upsertDocument({ id: "mmr-a", path: "a.md", title: "topic anchor", date: "2026-04-01", type: "research", status: "draft", githubIssue: null, content: "topic anchor primary" });
+    db.upsertDocument({ id: "mmr-b", path: "b.md", title: "topic clone", date: "2026-04-02", type: "plan", status: "draft", githubIssue: null, content: "topic clone of a sibling" });
+    db.upsertDocument({ id: "mmr-c", path: "c.md", title: "topic distinct", date: "2026-04-03", type: "research", status: "draft", githubIssue: null, content: "topic distinct from a content different domain" });
+    for (let i = 0; i < 10; i++) {
+      db.upsertDocument({ id: `mmr-floor-${i}`, path: `f${i}.md`, title: "floor", date: `2026-04-${10 + i}`, type: "plan", status: "draft", githubIssue: null, content: "topic floor unrelated filler doc number " + i });
+    }
+    fts.rebuildIndex();
+
+    vec.createIndex();
+    const aVec = unitAt(0);
+    vec.upsertEmbedding("mmr-a", aVec);
+    vec.upsertEmbedding("mmr-b", nearDup(aVec, 1, 0.01));
+    const cVec = new Float32Array(384);
+    cVec[0] = 0.3;
+    cVec[2] = 1.0;
+    let cn = 0;
+    for (let i = 0; i < cVec.length; i++) cn += cVec[i] * cVec[i];
+    cn = Math.sqrt(cn);
+    for (let i = 0; i < cVec.length; i++) cVec[i] /= cn;
+    vec.upsertEmbedding("mmr-c", cVec);
+    for (let i = 0; i < 10; i++) {
+      const v = new Float32Array(384);
+      for (let d = 100; d < 200; d++) v[d] = Math.sin((900 + i) * (d + 1) * 0.1);
+      let n = 0;
+      for (let d = 0; d < v.length; d++) n += v[d] * v[d];
+      n = Math.sqrt(n);
+      for (let d = 0; d < v.length; d++) v[d] /= n;
+      vec.upsertEmbedding(`mmr-floor-${i}`, v);
+    }
+
+    const baseline = await callTool(server, "knowledge_search", {
+      query: "topic",
+      limit: 3,
+    });
+    const withMmr = await callTool(server, "knowledge_search", {
+      query: "topic",
+      limit: 3,
+      lambda: 0.7,
+    });
+
+    expect(baseline.isError).not.toBe(true);
+    expect(withMmr.isError).not.toBe(true);
+
+    const baselineIds = (JSON.parse(baseline.content[0].text) as Array<{ id: string }>).map(r => r.id);
+    const mmrIds = (JSON.parse(withMmr.content[0].text) as Array<{ id: string }>).map(r => r.id);
+
+    // Both should lead with mmr-a (top relevance).
+    expect(baselineIds[0]).toBe("mmr-a");
+    expect(mmrIds[0]).toBe("mmr-a");
+    // Baseline puts the near-duplicate (mmr-b) at slot 2.
+    expect(baselineIds[1]).toBe("mmr-b");
+    // MMR demotes mmr-b — slot 2 is no longer the near-duplicate.
+    expect(mmrIds[1]).not.toBe("mmr-b");
   });
 
   it("omits chunk_index when return_chunk_meta is false (default)", async () => {

@@ -8,6 +8,14 @@ export interface SearchOptions {
   includeSuperseded?: boolean;
   limit?: number;
   memoryTier?: MemoryTier;
+  /**
+   * MMR diversity / relevance trade-off (Phase 1, GH-902). Range [0, 1].
+   * - `1.0` (or omitted): pure relevance — RRF order unchanged (default).
+   * - `0.7`: balanced — recommended; demotes near-duplicate clusters.
+   * - `0.0`: max diversity — selects only on dissimilarity to the running set.
+   * Values outside [0, 1] are silently clamped.
+   */
+  lambda?: number;
 }
 
 export interface SearchResult {

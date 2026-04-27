@@ -98,6 +98,12 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
         .optional()
         .default(false)
         .describe("Include chunk_index/char_start/char_end/context_prefix in each hit when chunk data is available"),
+      lambda: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("MMR diversity trade-off: 1.0 = pure relevance (default), 0.7 = balanced, 0.0 = max diversity. When omitted, results are byte-identical to today's pure-RRF behavior."),
     },
     async (args) => {
       try {
@@ -107,6 +113,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           limit: args.limit ?? 10,
           includeSuperseded: args.includeSuperseded,
           memoryTier: args.memory_tier,
+          lambda: args.lambda,
         });
         const enriched = results.map((r) => {
           // Start with the camelCase SearchResult shape so existing callers

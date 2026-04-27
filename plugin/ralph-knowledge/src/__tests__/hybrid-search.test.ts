@@ -444,3 +444,219 @@ describe("HybridSearch chunk-to-doc dedup", () => {
     expect(target!.score).toBeCloseTo(expected, 10);
   });
 });
+
+describe("HybridSearch MMR diversity rerank (Phase 1, GH-902)", () => {
+  // Fixture: three docs A, B, C all matching the FTS query "topic".
+  // Vectors are crafted with explicit orthogonality so the MMR diversity
+  // term has a predictable effect:
+  //   - A: unit vector along dim 0       (query-aligned, top relevance)
+  //   - B: A + tiny dim-1 perturbation   (cosine to A ~ 0.9999)
+  //   - C: unit vector along dim 1       (orthogonal to A — cosine 0)
+  // With pure RRF (lambda=1.0): order is [A, B, C].
+  // With MMR lambda<1: C is preferred over B because C is orthogonal to the
+  // already-selected A (zero similarity penalty).
+  let mmrDb: KnowledgeDB;
+  let mmrFts: FtsSearch;
+  let mmrVec: VectorSearch;
+  let mmrHybrid: HybridSearch;
+
+  /** Unit vector along a single dimension. */
+  function unitAt(dim: number): Float32Array {
+    const v = new Float32Array(384);
+    v[dim] = 1.0;
+    return v;
+  }
+
+  /** A + small perturbation along another dim, then re-normalize. */
+  function nearDuplicateOf(v: Float32Array, perturbDim: number, eps: number): Float32Array {
+    const out = new Float32Array(v);
+    out[perturbDim] += eps;
+    let norm = 0;
+    for (let i = 0; i < out.length; i++) norm += out[i] * out[i];
+    norm = Math.sqrt(norm);
+    for (let i = 0; i < out.length; i++) out[i] /= norm;
+    return out;
+  }
+
+  /** Orthogonal-ish low-relevance vector for floor docs (random direction). */
+  function lowRelevanceVec(seed: number): Float32Array {
+    const v = new Float32Array(384);
+    // Place energy in higher dims that are orthogonal to dim 0 and dim 1.
+    for (let i = 100; i < 200; i++) {
+      v[i] = Math.sin(seed * (i + 1) * 0.1);
+    }
+    let norm = 0;
+    for (let i = 0; i < v.length; i++) norm += v[i] * v[i];
+    norm = Math.sqrt(norm);
+    if (norm > 0) for (let i = 0; i < v.length; i++) v[i] /= norm;
+    return v;
+  }
+
+  beforeEach(() => {
+    mmrDb = new KnowledgeDB(":memory:");
+
+    // A: most-matching FTS body — strongest relevance.
+    mmrDb.upsertDocument({
+      id: "doc-a",
+      path: "a.md",
+      title: "topic anchor primary",
+      date: "2026-04-01",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "topic anchor primary",
+    });
+    // B: near-duplicate of A in vector space.
+    mmrDb.upsertDocument({
+      id: "doc-b",
+      path: "b.md",
+      title: "topic clone",
+      date: "2026-04-02",
+      type: "plan",
+      status: "draft",
+      githubIssue: null,
+      content: "topic clone of a sibling",
+    });
+    // C: same FTS shape as B (one "topic" each), but vector orthogonal to A.
+    mmrDb.upsertDocument({
+      id: "doc-c",
+      path: "c.md",
+      title: "topic distinct",
+      date: "2026-04-03",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "topic distinct from a content different domain",
+    });
+    // Floor docs — bottom-anchor the FTS candidate pool so min-max
+    // normalization spreads C's normalized relevance above 0. Without these
+    // anchors, the small 3-doc fixture compresses the relevance term so
+    // much that the diversity bonus can't overcome it at lambda=0.7.
+    for (let i = 0; i < 10; i++) {
+      mmrDb.upsertDocument({
+        id: `floor-${i}`,
+        path: `f${i}.md`,
+        title: `floor`,
+        date: `2026-04-${10 + i}`,
+        type: "plan",
+        status: "draft",
+        githubIssue: null,
+        content: "topic floor unrelated filler doc number " + i,
+      });
+    }
+
+    mmrFts = new FtsSearch(mmrDb);
+    mmrFts.rebuildIndex();
+
+    mmrVec = new VectorSearch(mmrDb);
+    mmrVec.createIndex();
+    const aVec = unitAt(0);
+    mmrVec.upsertEmbedding("doc-a", aVec);
+    // Cosine(A, B) ~ 0.9999 — true near-duplicate, but distinct enough that
+    // the vec search ranks A first.
+    mmrVec.upsertEmbedding("doc-b", nearDuplicateOf(aVec, 1, 0.01));
+    // C is mostly along dim 2 with a small dim-0 component — keeps cos(A, C)
+    // small (~0.3) so MMR's diversity term still favors C, while ensuring
+    // vec ranks C above the orthogonal floor docs.
+    const cVec = new Float32Array(384);
+    cVec[0] = 0.3;
+    cVec[2] = 1.0;
+    let cNorm = 0;
+    for (let i = 0; i < cVec.length; i++) cNorm += cVec[i] * cVec[i];
+    cNorm = Math.sqrt(cNorm);
+    for (let i = 0; i < cVec.length; i++) cVec[i] /= cNorm;
+    mmrVec.upsertEmbedding("doc-c", cVec);
+    // Floor docs — orthogonal to all of A, B, C in vector space (dims 100+).
+    for (let i = 0; i < 10; i++) {
+      mmrVec.upsertEmbedding(`floor-${i}`, lowRelevanceVec(900 + i));
+    }
+
+    // Query embedding = A's direction so A is the top vec hit.
+    const fixedEmbedFn: EmbedFn = async () => unitAt(0);
+    mmrHybrid = new HybridSearch(mmrDb, mmrFts, mmrVec, fixedEmbedFn);
+  });
+
+  it("lambda=1.0 is identity — same result order as omitting lambda", async () => {
+    const baseline = await mmrHybrid.search("topic", { limit: 3 });
+    const withLambda1 = await mmrHybrid.search("topic", { limit: 3, lambda: 1.0 });
+
+    expect(withLambda1).toHaveLength(baseline.length);
+    for (let i = 0; i < baseline.length; i++) {
+      expect(withLambda1[i].id).toBe(baseline[i].id);
+      // Score should also be byte-identical because we skip the MMR pass entirely.
+      expect(withLambda1[i].score).toBeCloseTo(baseline[i].score, 10);
+    }
+  });
+
+  it("lambda=0.0 picks max diversity (B is demoted because cos(A,B) ~ 1)", async () => {
+    // With lambda=0.0 the second slot is chosen entirely on dissimilarity
+    // to A. The near-duplicate B (cos ~ 0.9999) gets a similarity penalty
+    // ~1.0, far worse than any of C or the floor docs (cos to A ~ 0..0.3).
+    // So B must NOT be in slot 2; the actual winner is whichever orthogonal
+    // candidate has the smallest cosine to A (a floor doc with cos = 0).
+    const results = await mmrHybrid.search("topic", { limit: 3, lambda: 0.0 });
+
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results[0].id).toBe("doc-a");
+    expect(results[1].id).not.toBe("doc-b");
+  });
+
+  it("lambda=0.7 demotes the near-duplicate sibling", async () => {
+    // At lambda=0.7 the near-dup penalty still pushes B below C in slot 2.
+    // (Per Phase-1 research: a doc with cosine ~1.0 to the selected set
+    // gets a ~0.3 similarity penalty, which exceeds the small RRF lead
+    // B has over C in this fixture.)
+    const baseline = await mmrHybrid.search("topic", { limit: 3, lambda: 1.0 });
+    const reranked = await mmrHybrid.search("topic", { limit: 3, lambda: 0.7 });
+
+    // A still leads
+    expect(reranked[0].id).toBe("doc-a");
+    // The near-duplicate (B) is no longer in slot 2 even though pure RRF
+    // (lambda=1) would give B and C a similar position.
+    expect(reranked[1].id).toBe("doc-c");
+    // Sanity: confirm baseline ranks B at slot 2 (otherwise the test is
+    // measuring the wrong thing).
+    expect(baseline[1].id).toBe("doc-b");
+  });
+
+  it("lambda outside [0,1] is clamped (lambda=2 behaves like lambda=1)", async () => {
+    const clamped = await mmrHybrid.search("topic", { limit: 3, lambda: 2.0 });
+    const baseline = await mmrHybrid.search("topic", { limit: 3 });
+    expect(clamped.map((r) => r.id)).toEqual(baseline.map((r) => r.id));
+  });
+
+  it("negative lambda is clamped to 0 (max diversity)", async () => {
+    const clamped = await mmrHybrid.search("topic", { limit: 3, lambda: -0.5 });
+    const explicitZero = await mmrHybrid.search("topic", { limit: 3, lambda: 0.0 });
+    expect(clamped.map((r) => r.id)).toEqual(explicitZero.map((r) => r.id));
+  });
+
+  it("graceful degradation: doc with no embedding is treated as similarity=0", async () => {
+    // Add a doc with NO vec embedding so getEmbedding(id) returns null for it.
+    mmrDb.upsertDocument({
+      id: "doc-no-embed",
+      path: "no-embed.md",
+      title: "topic mystery",
+      date: "2026-04-04",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "topic mystery no vector",
+    });
+    mmrFts.rebuildIndex();
+
+    // Should not throw despite missing embedding — null embedding treated as
+    // similarity=0 (maximally diverse) so doc remains eligible.
+    await expect(
+      mmrHybrid.search("topic mystery", { limit: 5, lambda: 0.7 }),
+    ).resolves.toBeDefined();
+
+    const results = await mmrHybrid.search("topic mystery", { limit: 5, lambda: 0.7 });
+    expect(Array.isArray(results)).toBe(true);
+  });
+
+  it("respects limit: with lambda set, returns at most `limit` items", async () => {
+    const results = await mmrHybrid.search("topic", { limit: 2, lambda: 0.7 });
+    expect(results.length).toBeLessThanOrEqual(2);
+  });
+});

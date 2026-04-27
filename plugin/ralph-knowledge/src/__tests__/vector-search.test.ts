@@ -90,3 +90,44 @@ describe("VectorSearch", () => {
     expect(hit!.content).toBe("This is the first chunk content.");
   });
 });
+
+describe("VectorSearch.getEmbedding (POINT query)", () => {
+  // Phase 1 (GH-902): MMR diversity rerank needs to fetch raw embeddings for
+  // candidate docs to compute doc-doc cosine similarity. POINT lookup on the
+  // TEXT primary key — sqlite-vec may FULLSCAN, but correctness is invariant.
+  it("returns the exact 384-dim Float32Array that was upserted", () => {
+    const input = mockEmbedding(7);
+    vecSearch.upsertEmbedding("doc-1", input);
+
+    const result = vecSearch.getEmbedding("doc-1");
+    expect(result).not.toBeNull();
+    expect(result!.length).toBe(384);
+    // Bit-equal contents — every dimension must match the input
+    for (let i = 0; i < 384; i++) {
+      expect(result![i]).toBeCloseTo(input[i], 6);
+    }
+  });
+
+  it("returns null for unknown id (no throw)", () => {
+    const result = vecSearch.getEmbedding("does-not-exist");
+    expect(result).toBeNull();
+  });
+
+  it("returns the chunk-level embedding when the id is a chunk id", () => {
+    const chunkEmbedding = mockEmbedding(13);
+    db.db
+      .prepare(
+        `INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run("doc-1#c0", "doc-1", 0, "Chunk content", 0, 13);
+    vecSearch.upsertEmbedding("doc-1#c0", chunkEmbedding);
+
+    const result = vecSearch.getEmbedding("doc-1#c0");
+    expect(result).not.toBeNull();
+    expect(result!.length).toBe(384);
+    for (let i = 0; i < 384; i++) {
+      expect(result![i]).toBeCloseTo(chunkEmbedding[i], 6);
+    }
+  });
+});
