@@ -98,6 +98,17 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
         .optional()
         .default(false)
         .describe("Include chunk_index/char_start/char_end/context_prefix in each hit when chunk data is available"),
+      lambda: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("MMR diversity trade-off: 1.0 = pure relevance (default), 0.7 = balanced, 0.0 = max diversity. When omitted, results are byte-identical to today's pure-RRF behavior."),
+      return_diagnostics: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Include per-retriever diagnostic fields (fts_score, vec_distance, hit_sources) on each result. Default off — keeps payload byte-identical to today's response shape (Phase 2, GH-899 Track-B observability hook)."),
     },
     async (args) => {
       try {
@@ -107,12 +118,24 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           limit: args.limit ?? 10,
           includeSuperseded: args.includeSuperseded,
           memoryTier: args.memory_tier,
+          lambda: args.lambda,
+          diagnosticMode: args.return_diagnostics,
         });
         const enriched = results.map((r) => {
           // Start with the camelCase SearchResult shape so existing callers
           // keep working, then optionally add snake_case aliases for new
-          // chunk fields and strip them when callers didn't opt in.
-          const { chunkIndex, charStart, charEnd, contextPrefix, bestChunkId, ...rest } = r;
+          // chunk + diagnostic fields and strip them when callers didn't opt in.
+          const {
+            chunkIndex,
+            charStart,
+            charEnd,
+            contextPrefix,
+            bestChunkId,
+            ftsScore,
+            vecDistance,
+            hitSources,
+            ...rest
+          } = r;
           const base: Record<string, unknown> = { ...rest, tags: db.getTags(r.id) };
           if (args.return_chunk_meta) {
             if (chunkIndex !== undefined) base.chunk_index = chunkIndex;
@@ -120,6 +143,11 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
             if (charEnd !== undefined) base.char_end = charEnd;
             if (contextPrefix !== undefined) base.context_prefix = contextPrefix;
             if (bestChunkId !== undefined) base.best_chunk_id = bestChunkId;
+          }
+          if (args.return_diagnostics) {
+            if (ftsScore !== undefined) base.fts_score = ftsScore;
+            if (vecDistance !== undefined) base.vec_distance = vecDistance;
+            if (hitSources !== undefined) base.hit_sources = hitSources;
           }
           // SearchResult does not carry githubIssue — fetch from documents table
           const doc = db.getDocument(r.id);

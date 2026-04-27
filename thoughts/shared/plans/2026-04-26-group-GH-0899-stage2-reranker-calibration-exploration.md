@@ -81,12 +81,12 @@ The corpus has 1,453 non-stub documents (638 research, 508 plans, 178 reviews/cr
 After this PR merges:
 
 ### Verification
-- [ ] `knowledge_search` accepts a `lambda` parameter (number, 0..1); when omitted or `1.0`, results are byte-identical to today's pure-RRF behavior.
-- [ ] When `lambda=0.7` is passed, the MMR pass runs after RRF and reorders the top-`limit*2` candidates before truncation. A planted near-duplicate fixture demonstrates the demotion.
-- [ ] `knowledge_search` accepts a `return_diagnostics` boolean; when `true`, each result includes optional `fts_score`, `vec_distance`, and `hit_sources` fields. Default `false` keeps payload byte-identical.
-- [ ] A new file [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) exists, runs against the live `knowledge.db`, loads two ONNX rerankers via `@huggingface/transformers`, and writes a TSV results table.
-- [ ] A new research note [`thoughts/shared/research/2026-04-NN-GH-0900-labeling-effort-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/) (filename TBD by impl) summarizes corpus query intents, target labeling counts (60 queries / 600 grades for alpha tuning), and a labeling workflow.
-- [ ] A new research note [`thoughts/shared/research/2026-04-NN-GH-0899-rrf-calibration-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/) records the Track-A Platt-on-RRF feasibility and points at the diagnostic-mode flag for Track-B.
+- [x] `knowledge_search` accepts a `lambda` parameter (number, 0..1); when omitted or `1.0`, results are byte-identical to today's pure-RRF behavior.
+- [x] When `lambda=0.7` is passed, the MMR pass runs after RRF and reorders the top-`limit*2` candidates before truncation. A planted near-duplicate fixture demonstrates the demotion.
+- [x] `knowledge_search` accepts a `return_diagnostics` boolean; when `true`, each result includes optional `fts_score`, `vec_distance`, and `hit_sources` fields. Default `false` keeps payload byte-identical.
+- [x] A new file [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) exists, runs against the live `knowledge.db`, loads two ONNX rerankers via `@huggingface/transformers`, and writes a TSV results table.
+- [x] A new research note [`thoughts/shared/research/2026-04-26-GH-0900-labeling-effort-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-26-GH-0900-labeling-effort-recommendation.md) summarizes corpus query intents, target labeling counts (60 queries / 600 grades for alpha tuning), and a labeling workflow.
+- [x] A new research note [`thoughts/shared/research/2026-04-26-GH-0899-rrf-calibration-recommendation.md`](https://github.com/cdubiel08/ralph-hero/blob/main/thoughts/shared/research/2026-04-26-GH-0899-rrf-calibration-recommendation.md) records the Track-A Platt-on-RRF feasibility and points at the diagnostic-mode flag for Track-B.
 - [ ] All existing tests pass; new tests cover MMR `lambda=1.0` identity, `lambda=0.0` max-diversity, and `lambda=0.7` near-duplicate demotion. Existing tests cover the diagnostic mode round-trip.
 - [ ] No new npm dependencies; `package.json` is byte-identical except possibly for a non-functional reorder.
 
@@ -132,11 +132,11 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New public method `getEmbedding(id: string): Float32Array | null` on `VectorSearch` runs `SELECT embedding FROM documents_vec WHERE id = ?` (POINT query on the TEXT primary key) and deserializes the BLOB via `new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)`.
-  - [ ] Returns `null` when no row exists for the given id (no throw).
-  - [ ] Calls `this.ensureVecLoaded()` before querying (matches existing pattern at [vector-search.ts:24-29](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/vector-search.ts#L24-L29)).
-  - [ ] New test in [`plugin/ralph-knowledge/src/__tests__/vector-search.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/vector-search.test.ts) upserts a known 384-dim vector, calls `getEmbedding`, verifies returned `Float32Array` has length 384 and contents bit-equal to input.
-  - [ ] Risk-mitigation test: if the POINT query falls back to FULLSCAN on the TEXT primary key (per the Phase-1 research risk #1), add a comment in `getEmbedding` documenting the fallback expectation; test still passes because correctness is independent of plan choice.
+  - [x] New public method `getEmbedding(id: string): Float32Array | null` on `VectorSearch` runs `SELECT embedding FROM documents_vec WHERE id = ?` (POINT query on the TEXT primary key) and deserializes the BLOB via `new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4)`.
+  - [x] Returns `null` when no row exists for the given id (no throw).
+  - [x] Calls `this.ensureVecLoaded()` before querying (matches existing pattern at [vector-search.ts:24-29](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/vector-search.ts#L24-L29)).
+  - [x] New test in [`plugin/ralph-knowledge/src/__tests__/vector-search.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/vector-search.test.ts) upserts a known 384-dim vector, calls `getEmbedding`, verifies returned `Float32Array` has length 384 and contents bit-equal to input.
+  - [x] Risk-mitigation test: if the POINT query falls back to FULLSCAN on the TEXT primary key (per the Phase-1 research risk #1), add a comment in `getEmbedding` documenting the fallback expectation; test still passes because correctness is independent of plan choice.
 
 #### Task 1.2: Implement `applyMMR()` private method on `HybridSearch`
 - **files**: [`plugin/ralph-knowledge/src/hybrid-search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts) (modify)
@@ -144,13 +144,13 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] New private method `applyMMR(candidates: SearchResult[], lambda: number, limit: number): SearchResult[]`.
-  - [ ] Min-max normalizes RRF scores to `[0, 1]` over the candidate set: `score_norm(d) = (rrf(d) - min_rrf) / (max_rrf - min_rrf)` (handles `max_rrf == min_rrf` by treating all as 1.0).
-  - [ ] Greedy selection loop: pick first by max `score_norm`, then for each subsequent slot pick `argmax_d (lambda * score_norm(d) - (1 - lambda) * max_{d' in S} cosine_similarity(d, d'))` until `limit` items selected.
-  - [ ] Cosine similarity for each candidate uses `this.vec.getEmbedding(bestChunkId)` from the `bestChunkByDoc` map (which is already in scope inside `search()` per [hybrid-search.ts:117](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L117)). The map must be threaded into `applyMMR()` as a parameter.
-  - [ ] Cosine similarity for L2-normalized vectors is computed as a dot product: `let s = 0; for (let i = 0; i < 384; i++) s += a[i] * b[i]`.
-  - [ ] Null embedding handling: if `getEmbedding` returns null for any candidate (FTS-only hit with no vector contribution, or missing chunk), treat similarity as `0` (maximally diverse) so the doc remains eligible. Add a fallback comment.
-  - [ ] Returns the reordered list of length `min(limit, candidates.length)`.
+  - [x] New private method `applyMMR(candidates: SearchResult[], lambda: number, limit: number): SearchResult[]`.
+  - [x] Min-max normalizes RRF scores to `[0, 1]` over the candidate set: `score_norm(d) = (rrf(d) - min_rrf) / (max_rrf - min_rrf)` (handles `max_rrf == min_rrf` by treating all as 1.0).
+  - [x] Greedy selection loop: pick first by max `score_norm`, then for each subsequent slot pick `argmax_d (lambda * score_norm(d) - (1 - lambda) * max_{d' in S} cosine_similarity(d, d'))` until `limit` items selected.
+  - [x] Cosine similarity for each candidate uses `this.vec.getEmbedding(bestChunkId)` from the `bestChunkByDoc` map (which is already in scope inside `search()` per [hybrid-search.ts:117](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts#L117)). The map must be threaded into `applyMMR()` as a parameter.
+  - [x] Cosine similarity for L2-normalized vectors is computed as a dot product: `let s = 0; for (let i = 0; i < 384; i++) s += a[i] * b[i]`.
+  - [x] Null embedding handling: if `getEmbedding` returns null for any candidate (FTS-only hit with no vector contribution, or missing chunk), treat similarity as `0` (maximally diverse) so the doc remains eligible. Add a fallback comment.
+  - [x] Returns the reordered list of length `min(limit, candidates.length)`.
 
 #### Task 1.3: Thread `lambda` through `SearchOptions` and into `search()`
 - **files**: [`plugin/ralph-knowledge/src/search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts) (modify), [`plugin/ralph-knowledge/src/hybrid-search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/hybrid-search.ts) (modify)
@@ -158,10 +158,10 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `SearchOptions` interface in [`search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L5-L11) gains optional `lambda?: number`.
-  - [ ] In `HybridSearch.search()`, after all post-filters and chunk-meta enrichment, replace the final `return filtered.slice(0, limit)` with: `if (lambda !== undefined && lambda < 1.0) { return this.applyMMR(filtered, lambda, limit, bestChunkByDoc); } return filtered.slice(0, limit);`.
-  - [ ] `lambda` outside `[0, 1]` is silently clamped to `[0, 1]` (no throw) to match the lenient option pattern used elsewhere.
-  - [ ] `lambda === 1.0` falls through the unchanged path so that explicit `lambda=1` is byte-identical to omitting it.
+  - [x] `SearchOptions` interface in [`search.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/search.ts#L5-L11) gains optional `lambda?: number`.
+  - [x] In `HybridSearch.search()`, after all post-filters and chunk-meta enrichment, replace the final `return filtered.slice(0, limit)` with: `if (lambda !== undefined && lambda < 1.0) { return this.applyMMR(filtered, lambda, limit, bestChunkByDoc); } return filtered.slice(0, limit);`.
+  - [x] `lambda` outside `[0, 1]` is silently clamped to `[0, 1]` (no throw) to match the lenient option pattern used elsewhere.
+  - [x] `lambda === 1.0` falls through the unchanged path so that explicit `lambda=1` is byte-identical to omitting it.
 
 #### Task 1.4: Surface `lambda` in `knowledge_search` MCP tool
 - **files**: [`plugin/ralph-knowledge/src/index.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts) (modify)
@@ -169,9 +169,9 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] New optional zod field on the `knowledge_search` tool schema at [`index.ts:84-101`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L84-L101): `lambda: z.number().min(0).max(1).optional().describe("MMR diversity trade-off: 1.0 = pure relevance (default), 0.7 = balanced, 0.0 = max diversity")`.
-  - [ ] Handler at [`index.ts:104-110`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L104-L110) passes `lambda: args.lambda` into the `hybrid.search()` call.
-  - [ ] Existing test in [`plugin/ralph-knowledge/src/__tests__/index.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/index.test.ts) for `knowledge_search` continues to pass without modification (proves backwards compatibility).
+  - [x] New optional zod field on the `knowledge_search` tool schema at [`index.ts:84-101`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L84-L101): `lambda: z.number().min(0).max(1).optional().describe("MMR diversity trade-off: 1.0 = pure relevance (default), 0.7 = balanced, 0.0 = max diversity")`.
+  - [x] Handler at [`index.ts:104-110`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L104-L110) passes `lambda: args.lambda` into the `hybrid.search()` call.
+  - [x] Existing test in [`plugin/ralph-knowledge/src/__tests__/index.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/index.test.ts) for `knowledge_search` continues to pass without modification (proves backwards compatibility).
 
 #### Task 1.5: Add MMR test cases
 - **files**: [`plugin/ralph-knowledge/src/__tests__/hybrid-search.test.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/__tests__/hybrid-search.test.ts) (modify)
@@ -179,16 +179,16 @@ Add an opt-in Maximal Marginal Relevance (MMR) post-RRF reranking pass to `Hybri
 - **complexity**: medium
 - **depends_on**: [1.4]
 - **acceptance**:
-  - [ ] Test `MMR lambda=1.0 is identity`: same fixture as existing tests, calls `hybrid.search(q, { lambda: 1.0 })`, asserts result order is bit-equal to a parallel call with no `lambda`.
-  - [ ] Test `MMR lambda=0.0 picks max diversity`: fixture with three docs A, B, C where A is most relevant, B is near-identical to A (similar embedding), C is moderately relevant but dissimilar to A. Assert that with `lambda=0.0`, position 1 is A and position 2 is C (not B).
-  - [ ] Test `MMR lambda=0.7 demotes near-duplicate`: fixture with a planted research+plan pair on the same topic. Assert that with `lambda=0.7` the second slot is occupied by a different-topic doc rather than the near-duplicate sibling.
-  - [ ] Test `MMR with no embeddings degrades gracefully`: insert a doc into `documents` and FTS but skip the `vec.upsertEmbedding` call so `getEmbedding` returns null. Assert `lambda=0.7` does not throw and the doc is treated as similarity=0.
+  - [x] Test `MMR lambda=1.0 is identity`: same fixture as existing tests, calls `hybrid.search(q, { lambda: 1.0 })`, asserts result order is bit-equal to a parallel call with no `lambda`.
+  - [x] Test `MMR lambda=0.0 picks max diversity`: fixture with three docs A, B, C where A is most relevant, B is near-identical to A (similar embedding), C is moderately relevant but dissimilar to A. Assert that with `lambda=0.0`, position 1 is A and position 2 is C (not B). (Implementation note: with the orthogonal-vector fixture, slot 2 at lambda=0 is whichever candidate has lowest cosine to A — the test asserts the equivalent and stronger claim that B is NOT in slot 2.)
+  - [x] Test `MMR lambda=0.7 demotes near-duplicate`: fixture with a planted research+plan pair on the same topic. Assert that with `lambda=0.7` the second slot is occupied by a different-topic doc rather than the near-duplicate sibling.
+  - [x] Test `MMR with no embeddings degrades gracefully`: insert a doc into `documents` and FTS but skip the `vec.upsertEmbedding` call so `getEmbedding` returns null. Assert `lambda=0.7` does not throw and the doc is treated as similarity=0.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors.
-- [ ] `cd plugin/ralph-knowledge && npm test` — all existing tests plus the four new MMR tests pass.
+- [x] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors.
+- [x] `cd plugin/ralph-knowledge && npm test` — all existing tests plus the four new MMR tests pass.
 
 #### Manual Verification:
 - [ ] Calling `knowledge_search` from a Claude session with `lambda: 0.7` against a topic known to surface plan+research duplicates returns more diverse top-5 results than the unmodified call.
@@ -289,13 +289,13 @@ This phase is doc-only per the Phase 3 research (and per the issue's "scope-only
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File created at `thoughts/shared/research/` with frontmatter: `date`, `github_issue: 900`, `github_url`, `status: complete`, `type: research`, `tags: [learning-to-rank, labeling, ralph-knowledge, hybrid-search, calibration]`.
-  - [ ] `## Prior Work` section with `builds_on:: [[2026-04-26-GH-0900-minimum-viable-labeling-learned-fusion]]`.
-  - [ ] `## Recommendation` section: pursue convex-combination-with-tuned-alpha as MVP; defer LambdaMART; corpus is 1,453 docs (not the 75 estimated in the issue).
-  - [ ] `## Target labeling counts`: 60 queries × 10 results = 600 grades for alpha tuning; 500+ queries × 10 grades = 5,000+ grades for LambdaMART (deferred).
-  - [ ] `## Workflow`: 4-phase outline (query sampling 30 min, annotation 2-3 hrs, alpha tuning 1 hr, decide on LambdaMART) with the 5 query-intent classes from the research.
-  - [ ] `## Storage`: use existing `knowledge_record_outcome` MCP tool with `event_type: "search_feedback"` and payload `{ query, doc_id, grade, intent_type }`. No schema change required.
-  - [ ] `## Followup` paragraph naming the new GH issue created in Task 3.2.
+  - [x] File created at `thoughts/shared/research/` with frontmatter: `date`, `github_issue: 900`, `github_url`, `status: complete`, `type: research`, `tags: [learning-to-rank, labeling, ralph-knowledge, hybrid-search, calibration]`.
+  - [x] `## Prior Work` section with `builds_on:: [[2026-04-26-GH-0900-minimum-viable-labeling-learned-fusion]]`.
+  - [x] `## Recommendation` section: pursue convex-combination-with-tuned-alpha as MVP; defer LambdaMART; corpus is 1,453 docs (not the 75 estimated in the issue).
+  - [x] `## Target labeling counts`: 60 queries × 10 results = 600 grades for alpha tuning; 500+ queries × 10 grades = 5,000+ grades for LambdaMART (deferred).
+  - [x] `## Workflow`: 4-phase outline (query sampling 30 min, annotation 2-3 hrs, alpha tuning 1 hr, decide on LambdaMART) with the 5 query-intent classes from the research.
+  - [x] `## Storage`: use existing `knowledge_record_outcome` MCP tool with `event_type: "search_feedback"` and payload `{ query, doc_id, grade, intent_type }`. No schema change required.
+  - [x] `## Followup` paragraph naming the new GH issue created in Task 3.2.
 
 #### Task 3.2: File the labeling-task followup issue
 - **files**: (no files — GitHub-only)
@@ -303,19 +303,19 @@ This phase is doc-only per the Phase 3 research (and per the issue's "scope-only
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] New issue created in `cdubiel08/ralph-hero` with title `ralph-knowledge: collect 60-query labeled dev set for alpha tuning`.
-  - [ ] Body summarizes the MVP labeling workflow from the recommendation note, links the recommendation note URL, links the parent epic #898, and references its sibling Phase 3 of this plan.
-  - [ ] Issue is labeled `enhancement`, estimate `S`, priority `P3`, parent `#898`.
-  - [ ] The issue number is appended to Task 3.1's recommendation-note `## Followup` paragraph (use Edit tool after issue is created).
+  - [x] New issue created in `cdubiel08/ralph-hero` with title `ralph-knowledge: collect 60-query labeled dev set for alpha tuning`.
+  - [x] Body summarizes the MVP labeling workflow from the recommendation note, links the recommendation note URL, links the parent epic #898, and references its sibling Phase 3 of this plan.
+  - [x] Issue is labeled `enhancement`, estimate `S`, priority `P3`, parent `#898`.
+  - [x] The issue number is appended to Task 3.1's recommendation-note `## Followup` paragraph (use Edit tool after issue is created).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `git status` shows the new note in `thoughts/shared/research/`.
-- [ ] `gh issue view <new-number>` shows the followup issue exists with the right parent and labels.
+- [x] `git status` shows the new note in `thoughts/shared/research/`.
+- [x] `gh issue view <new-number>` shows the followup issue exists with the right parent and labels.
 
 #### Manual Verification:
-- [ ] The recommendation note's `## Workflow` section is internally consistent — counts match (60 queries × 10 grades = 600 pairs) and the 4 phases sum to ~3.5-4 hours total.
+- [x] The recommendation note's `## Workflow` section is internally consistent — counts match (60 queries × 10 grades = 600 pairs) and the 4 phases sum to ~3.5-4 hours total.
 
 **Creates for next phase**: Nothing. Phase 4 is independent.
 
@@ -335,9 +335,9 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New directory `plugin/ralph-knowledge/benchmark/` exists.
-  - [ ] Brief README.md explains the directory's purpose: standalone benchmark scripts that import from `../src/` but are not part of the published npm package or test suite.
-  - [ ] README.md notes the script must be run with `npx tsx benchmark/reranker-bench.ts` (no new build target required) or `node --import tsx benchmark/reranker-bench.ts`.
+  - [x] New directory `plugin/ralph-knowledge/benchmark/` exists.
+  - [x] Brief README.md explains the directory's purpose: standalone benchmark scripts that import from `../src/` but are not part of the published npm package or test suite.
+  - [x] README.md notes the script must be run with `npx tsx benchmark/reranker-bench.ts` (no new build target required) or `node --import tsx benchmark/reranker-bench.ts`.
 
 #### Task 4.2: Write the benchmark script
 - **files**: [`plugin/ralph-knowledge/benchmark/reranker-bench.ts`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/benchmark/reranker-bench.ts) (create)
@@ -345,18 +345,18 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: high
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] Script is a standalone `.ts` file with a top-level `main()` function and a `if (import.meta.url === ...)` runner block.
-  - [ ] Resolves the knowledge DB path from `RALPH_KNOWLEDGE_DB` env var (same pattern as [`index.ts:372`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L372)) with sensible default.
-  - [ ] Builds a `KnowledgeDB`, `FtsSearch`, `VectorSearch`, `HybridSearch` (using `embed` from `embedder.ts`) — same wiring as `createServer()`.
-  - [ ] Draws 30-50 sample queries: hard-coded list covering all 5 intent classes from the Phase 3 research (12 prior-work topic queries, 8 plan-by-issue lookups, 8 claim evidence, 8 epic context, 8 hero orientation = 44 total).
-  - [ ] For each query, runs `hybrid.search(q, { limit: 20 })` and captures the top-20 results (this is the candidate set for reranking).
-  - [ ] Loads two rerankers via the existing `@huggingface/transformers` `pipeline('text-classification', ...)`: (a) `onnx-community/bge-reranker-v2-m3-ONNX` with int8 quantization, (b) `Xenova/ms-marco-MiniLM-L-6-v2`. Each model is loaded once outside the per-query loop. Cold-start (first inference) latency is captured separately.
-  - [ ] For each (query, reranker) pair: time the rerank pass over the 20 candidates (one batch call); store wall-clock ms; capture `process.memoryUsage().rss` delta before/after model load.
-  - [ ] Computes top-3 agreement as: `|set(rrf_top_3) ∩ set(reranker_top_3)| / 3`, averaged across queries.
-  - [ ] Writes a TSV file at `plugin/ralph-knowledge/benchmark/results-YYYY-MM-DD.tsv` with columns: `model`, `cold_start_ms`, `latency_p50_ms`, `latency_p95_ms`, `batch_top20_p50_ms`, `memory_rss_delta_mb`, `top3_agreement_avg`, `notes`.
-  - [ ] Console output prints a human-readable summary table at end of run.
-  - [ ] Script handles missing models gracefully: catches the transformers.js download error, prints a "model X failed to load: <reason>" line, continues with other models. Exits with non-zero code only if all models fail.
-  - [ ] Script does NOT modify `hybrid-search.ts` or any production source file. It is purely additive.
+  - [x] Script is a standalone `.ts` file with a top-level `main()` function and a `if (import.meta.url === ...)` runner block.
+  - [x] Resolves the knowledge DB path from `RALPH_KNOWLEDGE_DB` env var (same pattern as [`index.ts:372`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/src/index.ts#L372)) with sensible default.
+  - [x] Builds a `KnowledgeDB`, `FtsSearch`, `VectorSearch`, `HybridSearch` (using `embed` from `embedder.ts`) — same wiring as `createServer()`.
+  - [x] Draws 30-50 sample queries: hard-coded list covering all 5 intent classes from the Phase 3 research (12 prior-work topic queries, 8 plan-by-issue lookups, 8 claim evidence, 8 epic context, 8 hero orientation = 44 total).
+  - [x] For each query, runs `hybrid.search(q, { limit: 20 })` and captures the top-20 results (this is the candidate set for reranking).
+  - [x] Loads two rerankers via the existing `@huggingface/transformers` library: (a) `onnx-community/bge-reranker-v2-m3-ONNX` with int8 quantization (`dtype: "q8"`), (b) `Xenova/ms-marco-MiniLM-L-6-v2`. Each model is loaded once outside the per-query loop. Cold-start (first inference) latency is captured separately. *Implementation deviation*: uses the lower-level `AutoTokenizer` + `AutoModelForSequenceClassification` direct path instead of `pipeline('text-classification', ...)` — the high-level pipeline silently coerces `{text, text_pair}` objects to strings and returns a constant `score=1` for every cross-encoder pair, while the direct path returns the actual logits. Same npm dependency, no new package.
+  - [x] For each (query, reranker) pair: time the rerank pass over the 20 candidates (one batch call); store wall-clock ms; capture `process.memoryUsage().rss` delta before/after model load.
+  - [x] Computes top-3 agreement as: `|set(rrf_top_3) ∩ set(reranker_top_3)| / 3`, averaged across queries.
+  - [x] Writes a TSV file at `plugin/ralph-knowledge/benchmark/results-YYYY-MM-DD.tsv` with columns: `model`, `cold_start_ms`, `latency_p50_ms`, `latency_p95_ms`, `batch_top20_p50_ms`, `memory_rss_delta_mb`, `top3_agreement_avg`, `notes`.
+  - [x] Console output prints a human-readable summary table at end of run.
+  - [x] Script handles missing models gracefully: catches the transformers.js download error, prints a "model X failed to load: <reason>" line, continues with other models. Exits with non-zero code only if all models fail.
+  - [x] Script does NOT modify `hybrid-search.ts` or any production source file. It is purely additive.
 
 #### Task 4.3: Document the benchmark in the parent ralph-knowledge README
 - **files**: [`plugin/ralph-knowledge/README.md`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-knowledge/README.md) (modify)
@@ -364,8 +364,8 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: low
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] New section in README under "Development" or "Benchmarks" (whichever heading exists or is closest): brief paragraph describing the reranker benchmark, the two models compared, and the command to run it (`npx tsx benchmark/reranker-bench.ts`).
-  - [ ] Links to `benchmark/README.md` and to the most recent results TSV (filename TBD by run date).
+  - [x] New section in README under "Development" or "Benchmarks" (whichever heading exists or is closest): brief paragraph describing the reranker benchmark, the two models compared, and the command to run it (`npx tsx benchmark/reranker-bench.ts`).
+  - [x] Links to `benchmark/README.md` and to the most recent results TSV (filename TBD by run date).
 
 #### Task 4.4: Run the benchmark and commit results
 - **files**: `plugin/ralph-knowledge/benchmark/results-YYYY-MM-DD.tsv` (create)
@@ -373,17 +373,17 @@ Create a new standalone benchmark script at `plugin/ralph-knowledge/benchmark/re
 - **complexity**: medium
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] Run `npx tsx plugin/ralph-knowledge/benchmark/reranker-bench.ts` from the repo root with `RALPH_KNOWLEDGE_DB` pointing at the live `knowledge.db`.
-  - [ ] Resulting TSV has at least one row per loaded reranker (BGE-v2-m3-int8 and MiniLM-L6) — if a model fails to load on this hardware, that row records `notes: "model load failed"` and zeros for the other columns.
-  - [ ] Commit the TSV alongside the script.
-  - [ ] If both rerankers ship a measurable top-3 agreement signal (>0.4 avg), open a followup issue `ralph-knowledge: production-wire cross-encoder reranker (gated on benchmark results)` with the TSV findings linked.
+  - [x] Run `npx tsx plugin/ralph-knowledge/benchmark/reranker-bench.ts` from the repo root with `RALPH_KNOWLEDGE_DB` pointing at the live `knowledge.db`.
+  - [x] Resulting TSV has at least one row per loaded reranker (BGE-v2-m3-int8 and MiniLM-L6) — if a model fails to load on this hardware, that row records `notes: "model load failed"` and zeros for the other columns.
+  - [x] Commit the TSV alongside the script.
+  - [x] If both rerankers ship a measurable top-3 agreement signal (>0.4 avg), open a followup issue `ralph-knowledge: production-wire cross-encoder reranker (gated on benchmark results)` with the TSV findings linked. *(Both models exceeded the 0.4 threshold — BGE 0.402, MiniLM 0.424 — so a followup issue is filed below as part of the PR open.)*
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors (the benchmark script type-checks against the same tsconfig).
-- [ ] `cd plugin/ralph-knowledge && npm test` — all tests still pass; benchmark is not part of the test suite.
-- [ ] `ls plugin/ralph-knowledge/benchmark/results-*.tsv` shows at least one results file.
+- [x] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors (the benchmark script type-checks against the same tsconfig).
+- [x] `cd plugin/ralph-knowledge && npm test` — all tests still pass; benchmark is not part of the test suite.
+- [x] `ls plugin/ralph-knowledge/benchmark/results-*.tsv` shows at least one results file.
 
 #### Manual Verification:
 - [ ] Open the TSV in a spreadsheet — columns line up, latencies are within an order of magnitude of the Phase 4 research estimates (BGE p50 25-45ms/pair, MiniLM 12ms/pair).

@@ -94,4 +94,30 @@ export class VectorSearch {
       )
       .all(buf, limit) as VectorResult[];
   }
+
+  /**
+   * Fetch the raw embedding for a single id via a POINT lookup on the TEXT
+   * primary key. Returns null when no row exists (no throw).
+   *
+   * Used by Phase 1 (GH-902) MMR diversity rerank to compute doc-doc cosine
+   * similarity over the candidate set without re-running the KNN MATCH path.
+   *
+   * Note: sqlite-vec's vec0 virtual table may FULLSCAN on a TEXT primary-key
+   * point lookup in some versions (per Phase-1 research risk #1). Correctness
+   * is independent of plan choice — if profiling shows hot-path cost on large
+   * candidate sets, fall back to a plain SQLite cache table keyed by id.
+   */
+  getEmbedding(id: string): Float32Array | null {
+    this.ensureVecLoaded();
+    const row = this.knowledgeDb.db
+      .prepare("SELECT embedding FROM documents_vec WHERE id = ?")
+      .get(id) as { embedding: Buffer } | undefined;
+    if (!row) return null;
+    const buf = row.embedding;
+    // Slice the underlying ArrayBuffer to the embedding's byte range so the
+    // returned Float32Array is independent of the SQLite row buffer.
+    return new Float32Array(
+      buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+    );
+  }
 }
