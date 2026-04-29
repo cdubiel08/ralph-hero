@@ -264,8 +264,8 @@ Per the Phase 2 research's two-track recommendation: Track A (fit Platt on RRF o
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors.
-- [ ] `cd plugin/ralph-knowledge && npm test` — all existing + Phase 1 + Phase 2 tests pass.
+- [x] `cd plugin/ralph-knowledge && npm run build` — no TypeScript errors.
+- [x] `cd plugin/ralph-knowledge && npm test` — all existing + Phase 1 + Phase 2 tests pass.
 
 #### Manual Verification:
 - [ ] Calling `knowledge_search` from a Claude session with `return_diagnostics: true` returns each hit with `fts_score`, `vec_distance`, `hit_sources` populated (vec-only hits have no `fts_score`).

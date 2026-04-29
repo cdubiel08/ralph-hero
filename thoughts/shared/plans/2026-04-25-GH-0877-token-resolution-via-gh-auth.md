@@ -4,10 +4,17 @@ status: draft
 type: plan
 tags: [mcp-server, auth, token-resolution, doctor, setup, gh-cli]
 github_issue: 877
-github_issues: [877]
+github_issues: [877, 890, 891, 892]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/877
+  - https://github.com/cdubiel08/ralph-hero/issues/890
+  - https://github.com/cdubiel08/ralph-hero/issues/891
+  - https://github.com/cdubiel08/ralph-hero/issues/892
 primary_issue: 877
+phase_issues:
+  phase_1: 890
+  phase_2: 891
+  phase_3: 892
 ---
 
 # GitHub Token Resolution via `gh auth` Implementation Plan
