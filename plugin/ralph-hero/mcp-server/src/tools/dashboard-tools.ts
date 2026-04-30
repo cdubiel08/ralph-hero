@@ -130,7 +130,7 @@ export interface RawDashboardItem {
     updatedAt?: string;
     closedAt?: string | null;
     assignees?: { nodes: Array<{ login: string }> };
-    trackedInIssues?: { nodes: Array<{ number: number; state: string }> };
+    trackedInIssues?: { nodes: Array<{ number: number; state: string; closedAt: string | null }> };
     trackedIssues?: { nodes: Array<{ number: number; state: string }> };
     repository?: { nameWithOwner: string; name: string } | null;
     subIssues?: { totalCount: number };
@@ -197,6 +197,8 @@ export function toDashboardItems(
         number: n.number,
         workflowState: n.state === "CLOSED" ? "Done" : null,
       })) ?? [],
+      parentNumber: r.content.trackedInIssues?.nodes?.[0]?.number ?? null,
+      parentState: r.content.trackedInIssues?.nodes?.[0]?.state ?? null,
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(projectTitle !== undefined ? { projectTitle } : {}),
       ...(r.content.repository ? { repository: r.content.repository.nameWithOwner } : {}),
@@ -237,6 +239,7 @@ export const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $f
               repository { nameWithOwner name }
               subIssues { totalCount }
               trackedIssues(first: 10) { nodes { number state } }
+              trackedInIssues(first: 3) { nodes { number state closedAt } }
             }
             ... on PullRequest {
               __typename

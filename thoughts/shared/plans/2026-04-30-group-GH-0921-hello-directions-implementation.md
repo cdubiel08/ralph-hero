@@ -142,11 +142,11 @@ Land all ranking logic as pure functions with full test coverage and extend the 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] In `DASHBOARD_ITEMS_QUERY` (`:219-273`), the `... on Issue` block contains a new line `trackedInIssues(first: 3) { nodes { number state closedAt } }` after `trackedIssues(first: 10) { nodes { number state } }` at line 239.
-  - [ ] The candidate's own `closedAt` (line 235) is unchanged — not re-added.
-  - [ ] `RawDashboardItem.content.trackedInIssues` (line 133) is updated to include `closedAt: string | null`: `trackedInIssues?: { nodes: Array<{ number: number; state: string; closedAt: string | null }> };`
-  - [ ] No other behavior changes.
-  - [ ] `grep -q "trackedInIssues(first: 3)" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
+  - [x] In `DASHBOARD_ITEMS_QUERY` (`:219-273`), the `... on Issue` block contains a new line `trackedInIssues(first: 3) { nodes { number state closedAt } }` after `trackedIssues(first: 10) { nodes { number state } }` at line 239.
+  - [x] The candidate's own `closedAt` (line 235) is unchanged — not re-added.
+  - [x] `RawDashboardItem.content.trackedInIssues` (line 133) is updated to include `closedAt: string | null`: `trackedInIssues?: { nodes: Array<{ number: number; state: string; closedAt: string | null }> };`
+  - [x] No other behavior changes.
+  - [x] `grep -q "trackedInIssues(first: 3)" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
 
 #### Task 1.2: Populate `parentNumber`/`parentState` in `toDashboardItems`
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` (modify)
@@ -154,17 +154,17 @@ Land all ranking logic as pure functions with full test coverage and extend the 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] In `lib/dashboard.ts` `DashboardItem` interface (`:31-49`), append two optional fields:
+  - [x] In `lib/dashboard.ts` `DashboardItem` interface (`:31-49`), append two optional fields:
     ```ts
     parentNumber?: number | null;
     parentState?: string | null;
     ```
-  - [ ] In `toDashboardItems` (`tools/dashboard-tools.ts:168-211`), after the `blockedBy` mapping (`:196-199`), add:
+  - [x] In `toDashboardItems` (`tools/dashboard-tools.ts:168-211`), after the `blockedBy` mapping (`:196-199`), add:
     ```ts
     parentNumber: r.content.trackedInIssues?.nodes?.[0]?.number ?? null,
     parentState: r.content.trackedInIssues?.nodes?.[0]?.state ?? null,
     ```
-  - [ ] Existing `dashboard.test.ts` and `dashboard-group-by.test.ts` still pass — the change is additive; existing items just gain `null` fields.
+  - [x] Existing `dashboard.test.ts` and `dashboard-group-by.test.ts` still pass — the change is additive; existing items just gain `null` fields.
 
 #### Task 1.3: Create `src/lib/directions.ts` with ranker types and functions
 - **files**: `plugin/ralph-hero/mcp-server/src/lib/directions.ts` (create), `plugin/ralph-hero/mcp-server/src/lib/dashboard.ts` (read), `plugin/ralph-hero/mcp-server/src/lib/workflow-states.ts` (read)
@@ -172,18 +172,18 @@ Land all ranking logic as pure functions with full test coverage and extend the 
 - **complexity**: high
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] New file `src/lib/directions.ts` exists with no I/O, no async, no `any` escapes.
-  - [ ] Imports: `import type { DashboardItem } from "./dashboard.js";` and `import { LOCK_STATES, STATE_ORDER } from "./workflow-states.js";` only — no other imports.
-  - [ ] Exports: `OpenPR` interface, `Direction` interface (with discriminated `kind: "issue" | "pr" | "tree-continue" | "lock-stale"`), `RankConfig` interface, `DEFAULT_RANK_CONFIG` constant (`limit: 3, stuckThresholdHours: 48, lockStaleHours: 24, treeRecentDoneDays: 7, prStaleHours: 24`), `scoreIssue()`, `detectTreeContinue()`, `detectLockStale()`, `rankDirections()`, `buildReason()`.
-  - [ ] `Direction` shape: `{ rank: number; kind: ...; issue: {...} | null; pr: {...} | null; reason: string; tags: string[]; score: number }`.
-  - [ ] `RankConfig.now: Date` is required and injected by callers (no `Date.now()` inside the lib).
-  - [ ] `scoreIssue` returns winning kind in precedence order: `lock-stale` > `tree-continue` > `issue` (PR ranking happens in `rankDirections`, not here).
-  - [ ] `detectLockStale`: true when `workflowState in LOCK_STATES` and `(now - updatedAt) >= lockStaleHours`.
-  - [ ] `detectTreeContinue`: true when `parentNumber != null` AND (a) at least one sibling has `closedAt` within `treeRecentDoneDays` OR (b) item itself has `updatedAt` within window AND parent has any other open siblings AND parent is not closed.
-  - [ ] `rankDirections`: filters (actionable phase OR lock-stale; not blocked by open `blockedBy`), scores, sorts ascending, applies tree-continue promotion (slot 4 promoted to slot 2 if not already in slot 1), merges PRs (`prScore`), slices to `config.limit`, assigns `rank` 1..N, calls `buildReason`.
-  - [ ] `buildReason`: returns one-sentence prose, distinct shape per `kind`. No template strings — natural English.
-  - [ ] `grep -q "rankDirections" plugin/ralph-hero/mcp-server/src/lib/directions.ts`
-  - [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
+  - [x] New file `src/lib/directions.ts` exists with no I/O, no async, no `any` escapes.
+  - [x] Imports: `import type { DashboardItem } from "./dashboard.js";` and `import { LOCK_STATES, STATE_ORDER } from "./workflow-states.js";` only — no other imports.
+  - [x] Exports: `OpenPR` interface, `Direction` interface (with discriminated `kind: "issue" | "pr" | "tree-continue" | "lock-stale"`), `RankConfig` interface, `DEFAULT_RANK_CONFIG` constant (`limit: 3, stuckThresholdHours: 48, lockStaleHours: 24, treeRecentDoneDays: 7, prStaleHours: 24`), `scoreIssue()`, `detectTreeContinue()`, `detectLockStale()`, `rankDirections()`, `buildReason()`.
+  - [x] `Direction` shape: `{ rank: number; kind: ...; issue: {...} | null; pr: {...} | null; reason: string; tags: string[]; score: number }`.
+  - [x] `RankConfig.now: Date` is required and injected by callers (no `Date.now()` inside the lib).
+  - [x] `scoreIssue` returns winning kind in precedence order: `lock-stale` > `tree-continue` > `issue` (PR ranking happens in `rankDirections`, not here).
+  - [x] `detectLockStale`: true when `workflowState in LOCK_STATES` and `(now - updatedAt) >= lockStaleHours`.
+  - [x] `detectTreeContinue`: true when `parentNumber != null` AND (a) at least one sibling has `closedAt` within `treeRecentDoneDays` OR (b) item itself has `updatedAt` within window AND parent has any other open siblings AND parent is not closed.
+  - [x] `rankDirections`: filters (actionable phase OR lock-stale; not blocked by open `blockedBy`), scores, sorts ascending, applies tree-continue promotion (slot 4 promoted to slot 2 if not already in slot 1), merges PRs (`prScore`), slices to `config.limit`, assigns `rank` 1..N, calls `buildReason`.
+  - [x] `buildReason`: returns one-sentence prose, distinct shape per `kind`. No template strings — natural English.
+  - [x] `grep -q "rankDirections" plugin/ralph-hero/mcp-server/src/lib/directions.ts`
+  - [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
 
 #### Task 1.4: Write `directions.test.ts` covering all ranking criteria
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/directions.test.ts` (create), `plugin/ralph-hero/mcp-server/src/lib/directions.ts` (read)
@@ -191,9 +191,9 @@ Land all ranking logic as pure functions with full test coverage and extend the 
 - **complexity**: medium
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] New file `src/__tests__/directions.test.ts` exists.
-  - [ ] Uses `vitest` `describe`/`it` pattern; injects `now: Date` via `RankConfig` for time-stable tests; fabricates `DashboardItem[]` arrays directly (no GraphQL mock).
-  - [ ] All 13 cases present and passing:
+  - [x] New file `src/__tests__/directions.test.ts` exists.
+  - [x] Uses `vitest` `describe`/`it` pattern; injects `now: Date` via `RankConfig` for time-stable tests; fabricates `DashboardItem[]` arrays directly (no GraphQL mock).
+  - [x] All 13 cases present and passing:
     1. Empty input → `directions: []`.
     2. Pure priority sort (P0/P1/P2 in Plan in Review) → ordered P0, P1, P2.
     3. Phase tiebreaker (all P1 across Plan in Review / In Review / Research Needed) → ordered Plan in Review, In Review, Research Needed.
@@ -211,17 +211,17 @@ Land all ranking logic as pure functions with full test coverage and extend the 
     11. Determinism — same input + same `now` → byte-identical output across two `rankDirections` calls (use `JSON.stringify` equality).
     12. Limit honored — `limit: 1` returns at most one direction even with many candidates.
     13. All criteria off — empty Priority, no stale, no tree, no PRs → falls back to phase-rank-only and still picks something if any actionable phase has items.
-  - [ ] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions.test.ts` — all 13 cases pass.
+  - [x] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions.test.ts` — all 13 cases pass.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (existing tests + 13 new)
-- [ ] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions.test.ts` — 13/13 pass
-- [ ] `grep -q "trackedInIssues" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
-- [ ] `grep -q "rankDirections" plugin/ralph-hero/mcp-server/src/lib/directions.ts`
-- [ ] `dashboard.test.ts` and `dashboard-group-by.test.ts` still pass — additive query change
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (existing tests + 13 new)
+- [x] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions.test.ts` — 13/13 pass
+- [x] `grep -q "trackedInIssues" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
+- [x] `grep -q "rankDirections" plugin/ralph-hero/mcp-server/src/lib/directions.ts`
+- [x] `dashboard.test.ts` and `dashboard-group-by.test.ts` still pass — additive query change
 
 #### Manual Verification:
 - [ ] Spot-check `directions.ts` reads as a single-purpose module (no leaked imports, no I/O, no `any`).
