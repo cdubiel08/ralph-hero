@@ -55,10 +55,10 @@ The fix is two narrow edits — one in `parser.ts` (extract from frontmatter) an
 
 ### Verification
 
-- [ ] `parser.ts` extracts `memory_tier` from frontmatter alongside `date`, `type`, `status`, `github_issue`, `tags`, `superseded_by`. Validates against the three allowed values; coerces invalid/absent values to `'doc'` with a one-line warning for invalid.
-- [ ] `db.ts:upsertDocument()` includes `memory_tier` in both the INSERT column list and the `ON CONFLICT(id) DO UPDATE SET ...` clause.
-- [ ] `reindex.ts` forwards `parsed.memoryTier` into the upsert payload at the existing call site (line ~135).
-- [ ] An end-to-end test writes `memory_tier: raw` markdown to a temp dir on disk, runs `reindex(...)`, opens the produced DB via `new KnowledgeDB(dbPath)`, and asserts `SELECT memory_tier FROM documents WHERE id = ?` returns `'raw'`. The test does not use `:memory:` and does not hand-craft `INSERT` statements.
+- [x] `parser.ts` extracts `memory_tier` from frontmatter alongside `date`, `type`, `status`, `github_issue`, `tags`, `superseded_by`. Validates against the three allowed values; coerces invalid/absent values to `'doc'` with a one-line warning for invalid.
+- [x] `db.ts:upsertDocument()` includes `memory_tier` in both the INSERT column list and the `ON CONFLICT(id) DO UPDATE SET ...` clause.
+- [x] `reindex.ts` forwards `parsed.memoryTier` into the upsert payload at the existing call site (line ~135).
+- [x] An end-to-end test writes `memory_tier: raw` markdown to a temp dir on disk, runs `reindex(...)`, opens the produced DB via `new KnowledgeDB(dbPath)`, and asserts `SELECT memory_tier FROM documents WHERE id = ?` returns `'raw'`. The test does not use `:memory:` and does not hand-craft `INSERT` statements.
 - [ ] After re-running `npm run reindex` on the user's local corpus, `sqlite3 ~/.ralph-hero/knowledge.db "SELECT memory_tier, COUNT(*) FROM documents GROUP BY memory_tier"` reports non-zero counts for `raw` (and, once `reflect.py` runs successfully, for `reflection`). [Manual — depends on GH-907 to also be resolved before all 14 raw files survive a reindex.]
 - [ ] `reflect.py` finds the raw memories in its query window after the manual reindex (currently returns "Loaded 0 raw memories"). [Manual — same dependency.]
 
@@ -159,8 +159,8 @@ Extend the markdown frontmatter parser to extract `memory_tier`, extend the SQL 
 
 #### Automated Verification:
 
-- [ ] `npm run build` (in `plugin/ralph-knowledge/`) — no TypeScript errors
-- [ ] `npm test` (in `plugin/ralph-knowledge/`) — all existing tests pass + new tests in `parser.test.ts`, `db.test.ts`, and `reindex.test.ts` pass
+- [x] `npm run build` (in `plugin/ralph-knowledge/`) — no TypeScript errors
+- [x] `npm test` (in `plugin/ralph-knowledge/`) — all existing tests pass + new tests in `parser.test.ts`, `db.test.ts`, and `reindex.test.ts` pass
 
 #### Manual Verification:
 

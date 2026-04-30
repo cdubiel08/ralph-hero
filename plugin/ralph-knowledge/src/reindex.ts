@@ -141,6 +141,7 @@ export async function reindex(
       status: parsed.status,
       githubIssue: parsed.githubIssue,
       content: parsed.content,
+      memoryTier: parsed.memoryTier,
     });
 
     // Insert new FTS entry AFTER upsert

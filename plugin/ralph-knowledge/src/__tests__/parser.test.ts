@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseDocument, inferTypeFromPath, extractUntypedWikilinks } from "../parser.js";
 
 const FULL_DOC = `---
@@ -434,3 +434,54 @@ Some prose that also mentions [[typed-target]] and [[untyped-target]].
   });
 });
 
+describe("parseDocument memory_tier", () => {
+  function makeDoc(frontmatter: string, body = "# Test\n\nContent."): string {
+    return `---\n${frontmatter}\n---\n\n${body}`;
+  }
+
+  it("extracts memory_tier: raw from frontmatter", () => {
+    const raw = makeDoc("date: 2026-04-29\ntype: research\nmemory_tier: raw");
+    const doc = parseDocument("test-raw", "thoughts/dream-memories/test-raw.md", raw);
+    expect(doc.memoryTier).toBe("raw");
+  });
+
+  it("extracts memory_tier: reflection from frontmatter", () => {
+    const raw = makeDoc("date: 2026-04-29\ntype: research\nmemory_tier: reflection");
+    const doc = parseDocument("test-reflection", "thoughts/dream-memories/reflections/test-reflection.md", raw);
+    expect(doc.memoryTier).toBe("reflection");
+  });
+
+  it("extracts memory_tier: doc from frontmatter", () => {
+    const raw = makeDoc("date: 2026-04-29\ntype: research\nmemory_tier: doc");
+    const doc = parseDocument("test-doc", "thoughts/shared/research/test-doc.md", raw);
+    expect(doc.memoryTier).toBe("doc");
+  });
+
+  it("defaults memory_tier to 'doc' when frontmatter omits the key", () => {
+    const raw = makeDoc("date: 2026-04-29\ntype: research");
+    const doc = parseDocument("test-default", "thoughts/shared/research/test-default.md", raw);
+    expect(doc.memoryTier).toBe("doc");
+  });
+
+  it("coerces invalid memory_tier to 'doc' and warns once", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const raw = makeDoc("date: 2026-04-29\ntype: research\nmemory_tier: garbage");
+      const doc = parseDocument("test-bad", "thoughts/shared/research/test-bad.md", raw);
+      expect(doc.memoryTier).toBe("doc");
+
+      const tierWarnings = warnSpy.mock.calls.filter(args =>
+        args.some(a => typeof a === "string" && /memory_tier 'garbage' on 'test-bad'/.test(a)),
+      );
+      expect(tierWarnings).toHaveLength(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("defaults to 'doc' when memory_tier is null in frontmatter", () => {
+    const raw = makeDoc("date: 2026-04-29\ntype: research\nmemory_tier: null");
+    const doc = parseDocument("test-null", "thoughts/shared/research/test-null.md", raw);
+    expect(doc.memoryTier).toBe("doc");
+  });
+});

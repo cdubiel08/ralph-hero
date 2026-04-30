@@ -734,4 +734,82 @@ describe("incremental reindex", () => {
     }
     db.close();
   });
+
+  // ---- GH-906: memory_tier write path round-trip ----
+  //
+  // These scenarios exercise the full parser -> upsertDocument -> documents.memory_tier
+  // path on real disk + real DB. They do NOT use ":memory:" and do NOT hand-craft
+  // INSERT statements — the bug was that frontmatter values were silently dropped
+  // before reaching the DB, so any test that bypasses parseDocument or upsertDocument
+  // is unable to catch a regression here.
+
+  it("scenario 24: memory_tier from frontmatter is persisted to the documents table", async () => {
+    writeFileSync(
+      join(dir, "raw-memory.md"),
+      `---\ndate: 2026-04-29\ntype: research\nstatus: draft\nmemory_tier: raw\n---\n\n# Raw Memory Sample\n\nDream-loop raw memory body.`,
+    );
+
+    await reindex([dir], dbPath);
+
+    const db = new KnowledgeDB(dbPath);
+    try {
+      expect(db.getMemoryTier("raw-memory")).toBe("raw");
+      // Belt-and-suspenders: assert against raw SQL too, in case getMemoryTier
+      // semantics ever change (e.g., column-existence guard, alias drift).
+      const row = db.db
+        .prepare("SELECT memory_tier FROM documents WHERE id = ?")
+        .get("raw-memory") as { memory_tier: string };
+      expect(row.memory_tier).toBe("raw");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("scenario 25: memory_tier: reflection round-trips through reindex", async () => {
+    writeFileSync(
+      join(dir, "reflection-doc.md"),
+      `---\ndate: 2026-04-29\ntype: research\nstatus: draft\nmemory_tier: reflection\n---\n\n# Reflection Sample\n\nSynthesized reflection body.`,
+    );
+
+    await reindex([dir], dbPath);
+
+    const db = new KnowledgeDB(dbPath);
+    try {
+      expect(db.getMemoryTier("reflection-doc")).toBe("reflection");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("scenario 26: missing memory_tier defaults to 'doc' end-to-end", async () => {
+    writeFileSync(
+      join(dir, "default-doc.md"),
+      `---\ndate: 2026-04-29\ntype: research\nstatus: draft\n---\n\n# Default Doc\n\nNo memory_tier in frontmatter.`,
+    );
+
+    await reindex([dir], dbPath);
+
+    const db = new KnowledgeDB(dbPath);
+    try {
+      expect(db.getMemoryTier("default-doc")).toBe("doc");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("scenario 27: invalid memory_tier in frontmatter coerces to 'doc'", async () => {
+    writeFileSync(
+      join(dir, "garbage-tier.md"),
+      `---\ndate: 2026-04-29\ntype: research\nstatus: draft\nmemory_tier: garbage\n---\n\n# Garbage Tier\n\nInvalid memory_tier value.`,
+    );
+
+    await reindex([dir], dbPath);
+
+    const db = new KnowledgeDB(dbPath);
+    try {
+      expect(db.getMemoryTier("garbage-tier")).toBe("doc");
+    } finally {
+      db.close();
+    }
+  });
 });
