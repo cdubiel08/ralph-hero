@@ -1171,4 +1171,96 @@ describe("HybridSearch rerank wiring (GH-925)", () => {
       expect(r.rerankScore).toBeUndefined();
     }
   });
+
+  it("score fusion respects RRF when rerank logits are mildly negative (post-#927 tuning)", async () => {
+    // Regression test for the post-#927 score fusion behavior. The pure
+    // replace-rerank semantics (logits drive ordering directly) dropped
+    // Hit@1 from 62.5% to 25% on the 8-query golden eval because BGE
+    // assigns negative logits to plan/research docs that the user actually
+    // wants. Fusion (RRF/sigmoid blend) preserves the retriever's ceiling.
+    //
+    // Test: stub returns mildly negative logit for the doc that RRF ranks
+    // first. With pure replace, that doc would lose to a doc with a
+    // positive logit. With fusion (alpha=0.5), the RRF-leader's max-norm
+    // RRF=1.0 keeps it ahead because the rerank delta isn't extreme
+    // enough to override.
+    //
+    // Setup: RRF-leader (A) has logit -0.3, follower (B) has logit +0.3.
+    // - sigmoid(-0.3) ~ 0.426, sigmoid(+0.3) ~ 0.574, delta ~ 0.148.
+    // - normRrf for A = 1.0, for B depends on RRF score gap.
+    // - When RRF gap is at least ~0.15 in normalized space, A keeps slot 0.
+    // - With cache-doc and auth-doc both matching "cache OR auth" the RRF
+    //   gap on this fixture is ~0 (similar ranks), so the fusion gives:
+    //     A: 0.5*1.0 + 0.5*0.426 = 0.713
+    //     B: 0.5*~1.0 + 0.5*0.574 = 0.787
+    //   B wins. To assert "fusion preserves RRF when delta is mild" we
+    //   need a fixture with a clear RRF leader. The "cache" query (not
+    //   "cache OR auth") gives that — only cache-doc has FTS+vec match.
+    const stub = new StubReranker(
+      new Map([
+        ["cache-doc", -0.3],
+        ["auth-doc", 0.3],
+      ]),
+    );
+    const hybridWithStub = new HybridSearch(
+      db,
+      fts,
+      vec,
+      mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stub as any,
+    );
+
+    const baselineNoRerank = await hybridWithStub.search("cache");
+    const withRerank = await hybridWithStub.search("cache", {
+      rerank: true,
+    });
+
+    // RRF-only ranks cache-doc first (it's the only doc that matches
+    // "cache" in FTS).
+    expect(baselineNoRerank[0].id).toBe("cache-doc");
+
+    // With fusion (alpha=0.5): cache-doc has RRF score, auth-doc may not
+    // have one at all (it'd only show up via vector similarity). The key
+    // assertion is that cache-doc still leads after rerank — we don't
+    // claim the rest of the order, just that the top-1 RRF leader is
+    // preserved when its rerank logit is only mildly negative.
+    expect(withRerank[0].id).toBe("cache-doc");
+    // The rerankScore is still stamped (raw logit, NOT post-sigmoid).
+    expect(withRerank[0].rerankScore).toBe(-0.3);
+  });
+
+  it("score fusion is stable under sigmoid: mild logits don't flip RRF ties", async () => {
+    // Companion test: when RRF scores are tied (or near-tied) and rerank
+    // logits also disagree mildly (-0.5 vs +0.5), the fusion math gives
+    // a clear winner to the higher-logit doc. This documents the
+    // intended "rerank breaks ties" behavior — opposite of the regression
+    // test above. Together the two tests pin down the blend semantics.
+    const stub = new StubReranker(
+      new Map([
+        ["auth-doc", 0.5],
+        ["cache-doc", -0.5],
+      ]),
+    );
+    const hybridWithStub = new HybridSearch(
+      db,
+      fts,
+      vec,
+      mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stub as any,
+    );
+
+    // "cache OR auth" matches both docs, RRF scores are similar.
+    const results = await hybridWithStub.search("cache OR auth", {
+      rerank: true,
+    });
+
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    // With mild logits +0.5 vs -0.5, the fusion delta from sigmoid is
+    // 0.622 - 0.378 = 0.244 — enough to flip the order when RRF scores
+    // are within ~24% of each other (which they are on this fixture).
+    expect(results[0].id).toBe("auth-doc");
+    expect(results[0].rerankScore).toBe(0.5);
+  });
 });

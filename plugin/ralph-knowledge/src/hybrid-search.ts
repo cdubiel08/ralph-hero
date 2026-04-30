@@ -288,9 +288,9 @@ export class HybridSearch {
       }
     }
 
-    // Cross-encoder rerank splice (Phase 2, GH-925). Runs AFTER post-filters,
-    // chunk-meta enrichment, and diagnostic-mode population, but BEFORE the
-    // optional MMR pass. Decisions captured here:
+    // Cross-encoder rerank splice (Phase 2, GH-925; tuned post-#927 eval).
+    // Runs AFTER post-filters, chunk-meta enrichment, and diagnostic-mode
+    // population, but BEFORE the optional MMR pass. Decisions captured here:
     //
     // (a) **Score semantics** — `score` continues to mean "RRF score" so
     //     callers that sort/filter on it stay stable across `rerank` on/off.
@@ -298,21 +298,38 @@ export class HybridSearch {
     //     (mirrors the `ftsScore` / `vecDistance` diagnostic-field pattern).
     //     This is Constraint 7 from the GH-0923 group plan.
     //
-    // (b) **Ordering rule** — when both `rerank: true` AND `lambda < 1.0` are
-    //     set, rerank applies BEFORE MMR. MMR receives the rerank-sorted
+    // (b) **Score fusion (post-#927 tuning)** — the rerank-sorted order is a
+    //     WEIGHTED BLEND of normalized RRF score and sigmoid(logit), NOT a
+    //     pure replace. The 8-query golden eval (GH-927) showed pure-replace
+    //     dropped Hit@1 from 62.5% to 25% on this corpus because off-the-shelf
+    //     BGE-Reranker-v2-m3 systematically over-weights critique/review docs
+    //     vs the underlying plans/research they critique, and demotes correct
+    //     docs whose chunks lack the literal query terms. Blending preserves
+    //     the retriever's high ceiling while letting the reranker break ties
+    //     and refine close calls. RERANK_FUSION_ALPHA is the RRF weight; the
+    //     remainder is the sigmoid-of-logit weight. 0.5 = equal weight.
+    //
+    // (c) **Snippet-only input** — the reranker scores `snippet` alone, NOT
+    //     `${title}\n${snippet}`. Per #927, the title prefix amplifies the
+    //     critique-bias failure mode because critique titles (e.g.,
+    //     "GH-911-critique") engage the question vocabulary as densely as
+    //     the body. Dropping the title prefix lets the model judge on the
+    //     chunk content the retriever actually selected.
+    //
+    // (d) **Ordering rule** — when both `rerank: true` AND `lambda < 1.0` are
+    //     set, rerank applies BEFORE MMR. MMR receives the blend-sorted
     //     `filtered` array. Rationale: rerank has already determined "most
     //     relevant"; MMR adds diversity over that relevance order. MMR's
     //     relevance term still uses the RRF `score` field (NOT `rerankScore`)
     //     so the diversity / relevance trade-off math stays unchanged from
     //     the pure-RRF path — Phase 1 (GH-902) calibration carried over.
     //
-    // (c) **Fallback for missing ids** — if the reranker's score map omits a
-    //     doc id, that doc keeps `rerankScore = undefined` and sinks to the
-    //     bottom of the rerank window via `?? -Infinity` in the sort. Docs
-    //     beyond the rerank window (top-N) keep their RRF position. This
-    //     guards against partial reranker failures (e.g., truncated batch).
+    // (e) **Fallback for missing ids** — if the reranker's score map omits a
+    //     doc id, that doc keeps `rerankScore = undefined` and falls back to
+    //     pure RRF placement via `sigmoid(0) = 0.5` neutral in the blend.
+    //     Docs beyond the rerank window (top-N) keep their RRF position.
     //
-    // (d) **Defensive guard** — if `rerank: true` but no `Reranker` was
+    // (f) **Defensive guard** — if `rerank: true` but no `Reranker` was
     //     injected at construction time, the splice is a no-op and the RRF
     //     order is returned. Lets `index.ts` adopt the option incrementally.
     if (rerank && this.reranker && filtered.length > 0) {
@@ -322,17 +339,16 @@ export class HybridSearch {
       const rerankSet = filtered.slice(0, topN);
       const tail = filtered.slice(topN);
 
-      // Build (query, doc) pairs from `${title}\n${snippet}` per the bench
-      // `buildPairs` shape (`benchmark/reranker-bench.ts:193-204`). The
-      // `truncateForRerank` cap matches the bench's 1000-char input window.
+      // Snippet-only input — see decision (c) above. Title prefix dropped
+      // because it pumps critique-doc scores per the #927 eval analysis.
       const inputs: RerankerInput[] = rerankSet.map((r) => ({
         id: r.id,
-        text: truncateForRerank(`${r.title}\n${r.snippet}`),
+        text: truncateForRerank(r.snippet),
       }));
       const scoreMap = await this.reranker.score(query, inputs);
 
       // Stamp the logit onto each candidate. Missing ids leave rerankScore
-      // undefined (see fallback note (c) above).
+      // undefined (see fallback note (e) above).
       for (const r of rerankSet) {
         const logit = scoreMap.get(r.id);
         if (logit !== undefined) {
@@ -340,14 +356,26 @@ export class HybridSearch {
         }
       }
 
-      // Re-sort the rerank window descending by logit. Docs without a
-      // rerankScore sort to the bottom of the window via `?? -Infinity`.
-      rerankSet.sort(
-        (a, b) =>
-          (b.rerankScore ?? -Infinity) - (a.rerankScore ?? -Infinity),
-      );
+      // Score fusion: blend max-normalized RRF score with sigmoid(logit).
+      // Both terms live in [0, 1], so a 0.5/0.5 weight gives equal voice.
+      // See decision (b) above for the eval-driven rationale.
+      const RERANK_FUSION_ALPHA = 0.5;
+      let maxRrf = 0;
+      for (const r of rerankSet) {
+        if (r.score > maxRrf) maxRrf = r.score;
+      }
+      const sigmoid = (x: number): number => 1 / (1 + Math.exp(-x));
+      const blendedScore = (r: SearchResult): number => {
+        const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
+        const normRerank =
+          r.rerankScore !== undefined ? sigmoid(r.rerankScore) : 0.5;
+        return RERANK_FUSION_ALPHA * normRrf + (1 - RERANK_FUSION_ALPHA) * normRerank;
+      };
 
-      // Reassemble: rerank-sorted top-N followed by the un-reranked tail.
+      // Re-sort the rerank window by blended score descending.
+      rerankSet.sort((a, b) => blendedScore(b) - blendedScore(a));
+
+      // Reassemble: blend-sorted top-N followed by the un-reranked tail.
       filtered = [...rerankSet, ...tail];
     }
 
