@@ -852,3 +852,323 @@ describe("HybridSearch diagnosticMode (Phase 2, GH-899)", () => {
     }
   });
 });
+
+describe("HybridSearch rerank wiring (GH-925)", () => {
+  /**
+   * Stub reranker class — implements the same surface as the real
+   * `Reranker` class but returns a deterministic scoreMap supplied at
+   * construction time. Lets tests exercise the splice path without paying
+   * the ~580 MB ONNX model download.
+   *
+   * Shape match: `score(query: string, docs: RerankerInput[]) => Promise<Map<string, number>>`
+   * matches `Reranker.score` from `../reranker.js`. The cast in
+   * `new HybridSearch(..., stub as any)` is safe because the production
+   * code path only calls `.score()` on the injected reranker.
+   */
+  class StubReranker {
+    constructor(public readonly scoreMap: Map<string, number>) {}
+    async score(
+      _query: string,
+      _docs: Array<{ id: string; text: string }>,
+    ): Promise<Map<string, number>> {
+      return this.scoreMap;
+    }
+  }
+
+  it("rerank=false (or omitted) is byte-identical to today", async () => {
+    // Construct two hybrids: one with a stub reranker, one without. Run
+    // three queries — `rerank` omitted, `rerank: false` (with stub),
+    // `rerank: false` (without stub) — and assert all three deep-equal.
+    // Confirms zero side-effects when the option is off.
+    const stub = new StubReranker(
+      new Map([
+        ["auth-doc", 0.99],
+        ["cache-doc", 0.01],
+      ]),
+    );
+    const hybridWithStub = new HybridSearch(
+      db,
+      fts,
+      vec,
+      mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stub as any,
+    );
+
+    const omittedFromBare = await hybrid.search("cache OR auth");
+    const explicitFalseFromStub = await hybridWithStub.search("cache OR auth", {
+      rerank: false,
+    });
+    const omittedFromStub = await hybridWithStub.search("cache OR auth");
+
+    // All three arrays should be deep-equal. The stub reranker's logits
+    // would reverse the order, so any drift here means the splice ran when
+    // it shouldn't have.
+    expect(explicitFalseFromStub).toEqual(omittedFromBare);
+    expect(omittedFromStub).toEqual(omittedFromBare);
+
+    // None of the results should carry rerankScore.
+    for (const r of omittedFromBare) {
+      expect(r.rerankScore).toBeUndefined();
+    }
+    for (const r of explicitFalseFromStub) {
+      expect(r.rerankScore).toBeUndefined();
+    }
+    for (const r of omittedFromStub) {
+      expect(r.rerankScore).toBeUndefined();
+    }
+  });
+
+  it("stub reranker logits drive new order", async () => {
+    // RRF-only order on this fixture would surface auth-doc and cache-doc
+    // — but stub returns logits that put auth-doc strictly above cache-doc.
+    // After rerank, auth-doc must be slot 0 and cache-doc slot 1, and both
+    // must carry rerankScore.
+    const stub = new StubReranker(
+      new Map([
+        ["auth-doc", 0.9],
+        ["cache-doc", 0.1],
+      ]),
+    );
+    const hybridWithStub = new HybridSearch(
+      db,
+      fts,
+      vec,
+      mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stub as any,
+    );
+
+    const results = await hybridWithStub.search("cache OR auth", {
+      rerank: true,
+    });
+
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results[0].id).toBe("auth-doc");
+    expect(results[1].id).toBe("cache-doc");
+    expect(results[0].rerankScore).toBe(0.9);
+    expect(results[1].rerankScore).toBe(0.1);
+  });
+
+  it("stub returns no score for a doc id -> doc keeps RRF position via -Infinity sink", async () => {
+    // Stub only scores auth-doc. cache-doc gets no entry so rerankScore
+    // stays undefined and sorts to the bottom of the rerank window via
+    // the `?? -Infinity` fallback in the sort comparator. The defensive
+    // path is documented in the splice-point comment block.
+    const stub = new StubReranker(new Map([["auth-doc", 0.5]]));
+    const hybridWithStub = new HybridSearch(
+      db,
+      fts,
+      vec,
+      mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stub as any,
+    );
+
+    const results = await hybridWithStub.search("cache OR auth", {
+      rerank: true,
+    });
+
+    const auth = results.find((r) => r.id === "auth-doc");
+    const cache = results.find((r) => r.id === "cache-doc");
+    expect(auth).toBeDefined();
+    expect(cache).toBeDefined();
+
+    // auth-doc is the only doc with a logit (0.5) — cache-doc sorts below
+    // it because undefined -> -Infinity in the comparator.
+    const authIdx = results.findIndex((r) => r.id === "auth-doc");
+    const cacheIdx = results.findIndex((r) => r.id === "cache-doc");
+    expect(authIdx).toBeLessThan(cacheIdx);
+
+    expect(auth!.rerankScore).toBe(0.5);
+    expect(cache!.rerankScore).toBeUndefined();
+  });
+
+  it("rerank + lambda<1 applies rerank before MMR", async () => {
+    // Build a fresh fixture where the rerank-determined order would
+    // disagree with MMR if MMR ran first. Three docs A, B, C:
+    //   - rerank logits: A=0.95, B=0.90, C=0.10 (rerank order: A, B, C)
+    //   - vector geometry: A and B near-duplicates (cos ~ 0.9999),
+    //     C orthogonal to A.
+    // With rerank-then-MMR (lambda=0.7, limit=2): rerank sorts to [A, B, C],
+    // then MMR picks A first (highest relevance), then chooses C over B
+    // because B is a near-duplicate of A.
+    //
+    // If the splice ran in the wrong order (MMR first), MMR would operate
+    // on the RRF-only `filtered` order and could surface a different
+    // second slot. The deliberate ordering decision (Constraint 7,
+    // Task 2.4 acceptance) is verified here.
+    const xdb = new KnowledgeDB(":memory:");
+
+    function unitAt(d: number): Float32Array {
+      const u = new Float32Array(384);
+      u[d] = 1.0;
+      return u;
+    }
+    function nearDup(v: Float32Array, dim: number, eps: number): Float32Array {
+      const out = new Float32Array(v);
+      out[dim] += eps;
+      let norm = 0;
+      for (let i = 0; i < out.length; i++) norm += out[i] * out[i];
+      norm = Math.sqrt(norm);
+      for (let i = 0; i < out.length; i++) out[i] /= norm;
+      return out;
+    }
+
+    xdb.upsertDocument({
+      id: "rr-a",
+      path: "a.md",
+      title: "topic anchor",
+      date: "2026-04-01",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "topic anchor",
+    });
+    xdb.upsertDocument({
+      id: "rr-b",
+      path: "b.md",
+      title: "topic clone",
+      date: "2026-04-02",
+      type: "plan",
+      status: "draft",
+      githubIssue: null,
+      content: "topic clone of anchor",
+    });
+    xdb.upsertDocument({
+      id: "rr-c",
+      path: "c.md",
+      title: "topic distinct",
+      date: "2026-04-03",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "topic distinct different domain",
+    });
+    // Floor docs to give min-max normalization room (mirrors the
+    // existing MMR fixture pattern).
+    for (let i = 0; i < 10; i++) {
+      xdb.upsertDocument({
+        id: `rr-floor-${i}`,
+        path: `f${i}.md`,
+        title: "floor",
+        date: `2026-04-${10 + i}`,
+        type: "plan",
+        status: "draft",
+        githubIssue: null,
+        content: "topic floor unrelated filler doc number " + i,
+      });
+    }
+
+    const xfts = new FtsSearch(xdb);
+    xfts.rebuildIndex();
+    const xvec = new VectorSearch(xdb);
+    xvec.createIndex();
+    const aVec = unitAt(0);
+    xvec.upsertEmbedding("rr-a", aVec);
+    xvec.upsertEmbedding("rr-b", nearDup(aVec, 1, 0.01));
+    // C orthogonal-ish to A.
+    const cVec = new Float32Array(384);
+    cVec[0] = 0.3;
+    cVec[2] = 1.0;
+    let cn = 0;
+    for (let i = 0; i < cVec.length; i++) cn += cVec[i] * cVec[i];
+    cn = Math.sqrt(cn);
+    for (let i = 0; i < cVec.length; i++) cVec[i] /= cn;
+    xvec.upsertEmbedding("rr-c", cVec);
+    for (let i = 0; i < 10; i++) {
+      const v = new Float32Array(384);
+      for (let d = 100; d < 200; d++) v[d] = Math.sin((900 + i) * (d + 1) * 0.1);
+      let n = 0;
+      for (let d = 0; d < v.length; d++) n += v[d] * v[d];
+      n = Math.sqrt(n);
+      for (let d = 0; d < v.length; d++) v[d] /= n;
+      xvec.upsertEmbedding(`rr-floor-${i}`, v);
+    }
+
+    const xEmbedFn: EmbedFn = async () => unitAt(0);
+    const stub = new StubReranker(
+      new Map([
+        ["rr-a", 0.95],
+        ["rr-b", 0.9],
+        ["rr-c", 0.1],
+      ]),
+    );
+    const xhybrid = new HybridSearch(
+      xdb,
+      xfts,
+      xvec,
+      xEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stub as any,
+    );
+
+    const results = await xhybrid.search("topic", {
+      rerank: true,
+      lambda: 0.7,
+      limit: 2,
+    });
+
+    // A still leads (highest rerank logit AND highest RRF relevance).
+    expect(results[0].id).toBe("rr-a");
+    // C (not B) wins slot 2: rerank sorted the candidate list to
+    // [A, B, C, ...floors], MMR then picked A first, then chose C over B
+    // because B is a near-duplicate of A. If MMR had run on the RRF order
+    // first, the rerank would have re-sorted whatever MMR returned —
+    // verify by asserting B is NOT in slot 2.
+    expect(results[1].id).not.toBe("rr-b");
+  });
+
+  it("rerank + return_diagnostics: rerankScore survives MMR reorder", async () => {
+    // Cross-feature plumbing test — when both rerank and diagnosticMode
+    // are enabled, the rerankScore stamped pre-MMR must survive the MMR
+    // reorder (which works on the same SearchResult references).
+    const stub = new StubReranker(
+      new Map([
+        ["auth-doc", 0.7],
+        ["cache-doc", 0.3],
+      ]),
+    );
+    const hybridWithStub = new HybridSearch(
+      db,
+      fts,
+      vec,
+      mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      stub as any,
+    );
+
+    const results = await hybridWithStub.search("cache OR auth", {
+      rerank: true,
+      lambda: 0.7,
+      diagnosticMode: true,
+    });
+
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    for (const r of results) {
+      // diagnosticMode populates hitSources for every returned hit.
+      expect(r.hitSources).toBeDefined();
+      expect(Array.isArray(r.hitSources)).toBe(true);
+      expect(r.hitSources!.length).toBeGreaterThan(0);
+      // rerank populates rerankScore for every doc the stub mapped.
+      expect(r.rerankScore).toBeDefined();
+      expect(typeof r.rerankScore).toBe("number");
+    }
+  });
+
+  it("no reranker injected + rerank=true: behaves as RRF-only", async () => {
+    // Defensive guard from Task 2.2 acceptance: if rerank is requested but
+    // no Reranker was injected, the splice is a no-op and the RRF order
+    // returns unchanged. No errors thrown.
+    // (`hybrid` from the outer beforeEach is constructed without a reranker.)
+    const baseline = await hybrid.search("cache OR auth");
+    const withRerankFlag = await hybrid.search("cache OR auth", {
+      rerank: true,
+    });
+
+    expect(withRerankFlag).toEqual(baseline);
+    for (const r of withRerankFlag) {
+      expect(r.rerankScore).toBeUndefined();
+    }
+  });
+});

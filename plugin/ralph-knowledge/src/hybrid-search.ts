@@ -1,6 +1,7 @@
 import type { KnowledgeDB } from "./db.js";
 import type { FtsSearch, SearchOptions, SearchResult } from "./search.js";
 import type { VectorResult, VectorSearch } from "./vector-search.js";
+import { type Reranker, type RerankerInput, truncateForRerank } from "./reranker.js";
 
 export type EmbedFn = (text: string) => Promise<Float32Array>;
 
@@ -39,6 +40,16 @@ export class HybridSearch {
     private readonly fts: FtsSearch,
     private readonly vec: VectorSearch,
     private readonly embedFn: EmbedFn,
+    /**
+     * Optional cross-encoder reranker (Phase 2, GH-925). When provided AND
+     * `options.rerank === true`, the post-RRF top-N candidate set is rescored
+     * by the cross-encoder before MMR / `slice(limit)`. When omitted, the
+     * `rerank` option is silently ignored — defensive fallback for incremental
+     * rollouts where `index.ts` may register `HybridSearch` before the
+     * reranker is wired up. Tests inject a deterministic stub to avoid the
+     * ~580 MB ONNX model download.
+     */
+    private readonly reranker?: Reranker,
   ) {}
 
   /**
@@ -89,6 +100,7 @@ export class HybridSearch {
       memoryTier,
       lambda,
       diagnosticMode = false,
+      rerank = false,
     } = options;
 
     // Run FTS and vector search (FTS already applies memoryTier filter in SQL
@@ -274,6 +286,69 @@ export class HybridSearch {
         }
         r.hitSources = sources;
       }
+    }
+
+    // Cross-encoder rerank splice (Phase 2, GH-925). Runs AFTER post-filters,
+    // chunk-meta enrichment, and diagnostic-mode population, but BEFORE the
+    // optional MMR pass. Decisions captured here:
+    //
+    // (a) **Score semantics** — `score` continues to mean "RRF score" so
+    //     callers that sort/filter on it stay stable across `rerank` on/off.
+    //     The cross-encoder logit is stamped onto the new `rerankScore` field
+    //     (mirrors the `ftsScore` / `vecDistance` diagnostic-field pattern).
+    //     This is Constraint 7 from the GH-0923 group plan.
+    //
+    // (b) **Ordering rule** — when both `rerank: true` AND `lambda < 1.0` are
+    //     set, rerank applies BEFORE MMR. MMR receives the rerank-sorted
+    //     `filtered` array. Rationale: rerank has already determined "most
+    //     relevant"; MMR adds diversity over that relevance order. MMR's
+    //     relevance term still uses the RRF `score` field (NOT `rerankScore`)
+    //     so the diversity / relevance trade-off math stays unchanged from
+    //     the pure-RRF path — Phase 1 (GH-902) calibration carried over.
+    //
+    // (c) **Fallback for missing ids** — if the reranker's score map omits a
+    //     doc id, that doc keeps `rerankScore = undefined` and sinks to the
+    //     bottom of the rerank window via `?? -Infinity` in the sort. Docs
+    //     beyond the rerank window (top-N) keep their RRF position. This
+    //     guards against partial reranker failures (e.g., truncated batch).
+    //
+    // (d) **Defensive guard** — if `rerank: true` but no `Reranker` was
+    //     injected at construction time, the splice is a no-op and the RRF
+    //     order is returned. Lets `index.ts` adopt the option incrementally.
+    if (rerank && this.reranker && filtered.length > 0) {
+      // Rerank window: at least 50, scale to 5x the requested limit, cap at
+      // the candidate set size. Larger windows trade latency for recall.
+      const topN = Math.min(filtered.length, Math.max(50, limit * 5));
+      const rerankSet = filtered.slice(0, topN);
+      const tail = filtered.slice(topN);
+
+      // Build (query, doc) pairs from `${title}\n${snippet}` per the bench
+      // `buildPairs` shape (`benchmark/reranker-bench.ts:193-204`). The
+      // `truncateForRerank` cap matches the bench's 1000-char input window.
+      const inputs: RerankerInput[] = rerankSet.map((r) => ({
+        id: r.id,
+        text: truncateForRerank(`${r.title}\n${r.snippet}`),
+      }));
+      const scoreMap = await this.reranker.score(query, inputs);
+
+      // Stamp the logit onto each candidate. Missing ids leave rerankScore
+      // undefined (see fallback note (c) above).
+      for (const r of rerankSet) {
+        const logit = scoreMap.get(r.id);
+        if (logit !== undefined) {
+          r.rerankScore = logit;
+        }
+      }
+
+      // Re-sort the rerank window descending by logit. Docs without a
+      // rerankScore sort to the bottom of the window via `?? -Infinity`.
+      rerankSet.sort(
+        (a, b) =>
+          (b.rerankScore ?? -Infinity) - (a.rerankScore ?? -Infinity),
+      );
+
+      // Reassemble: rerank-sorted top-N followed by the un-reranked tail.
+      filtered = [...rerankSet, ...tail];
     }
 
     // MMR diversity rerank (Phase 1, GH-902). Opt-in via `lambda` < 1.0.

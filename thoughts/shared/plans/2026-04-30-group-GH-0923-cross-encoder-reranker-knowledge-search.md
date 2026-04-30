@@ -249,12 +249,12 @@ Plumb the Phase 1 `Reranker` into `HybridSearch.search()` as an optional final-s
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/hybrid-search.test.ts` — full file passes including new rerank block AND existing MMR + diagnostic blocks (no regression).
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no errors.
-- [ ] `cd plugin/ralph-knowledge && npm test` — full test suite passes.
+- [x] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/hybrid-search.test.ts` — full file passes including new rerank block AND existing MMR + diagnostic blocks (no regression).
+- [x] `cd plugin/ralph-knowledge && npm run build` — no errors.
+- [x] `cd plugin/ralph-knowledge && npm test` — full test suite passes.
 
 #### Manual Verification:
-- [ ] Code comment in `hybrid-search.ts` near the splice point documents the rerank-before-MMR ordering and the score semantics decision (Constraint 7 + Task 2.3 + Task 2.4 acceptance).
+- [x] Code comment in `hybrid-search.ts` near the splice point documents the rerank-before-MMR ordering and the score semantics decision (Constraint 7 + Task 2.3 + Task 2.4 acceptance).
 
 **Creates for next phase**: `HybridSearch.search()` accepts `rerank: boolean` end-to-end. The reranker can be passed at construction time. Phase 3 wires production construction in `index.ts`.
 
