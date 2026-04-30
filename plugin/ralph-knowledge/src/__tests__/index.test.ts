@@ -658,3 +658,239 @@ describe("knowledge_traverse memory_tier filter", () => {
     expect(targetIds).toContain("any-reflect");
   });
 });
+
+describe("knowledge_search rerank parameter (GH-926)", () => {
+  /**
+   * Stub Reranker — implements the same `score()` surface as the real
+   * `Reranker` class but returns a deterministic scoreMap supplied at
+   * construction time. Lets MCP tool tests exercise the rerank wiring
+   * without paying the ~580 MB ONNX model download.
+   *
+   * Shape match: `score(query: string, docs: RerankerInput[]) => Promise<Map<string, number>>`
+   * matches `Reranker.score`. The cast to `Reranker` in the
+   * `rerankerFactory` callback is safe because the production code path
+   * (HybridSearch.search) only invokes `.score()` on the injected reranker.
+   */
+  class StubReranker {
+    constructor(public readonly scoreMap: Map<string, number>) {}
+    async score(
+      _query: string,
+      _docs: Array<{ id: string; text: string }>,
+    ): Promise<Map<string, number>> {
+      return this.scoreMap;
+    }
+  }
+
+  it("schema accepts rerank boolean (true/false/omitted) and rejects non-boolean", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const registered = (server as unknown as Record<string, unknown>)
+      ._registeredTools as Record<string, { inputSchema?: { parse: (v: unknown) => unknown } }>;
+    const schema = registered.knowledge_search?.inputSchema;
+    expect(schema).toBeDefined();
+    // Valid forms.
+    expect(() => schema!.parse({ query: "x", rerank: true })).not.toThrow();
+    expect(() => schema!.parse({ query: "x", rerank: false })).not.toThrow();
+    // Omitted is OK (defaults to false).
+    expect(() => schema!.parse({ query: "x" })).not.toThrow();
+    // Wrong type is rejected.
+    expect(() => schema!.parse({ query: "x", rerank: "yes" })).toThrow();
+  });
+
+  it("rerank: true + return_diagnostics: true emits snake_case rerank_score on each hit", async () => {
+    const mod = await import("../index.js");
+    // Stub returns a logit for every seeded doc id so they all carry
+    // rerank_score after the splice runs.
+    const stub = new StubReranker(
+      new Map([
+        ["rerank-mcp-a", 0.95],
+        ["rerank-mcp-b", 0.20],
+      ]),
+    );
+    const { server, db, fts, vec } = mod.createServer(":memory:", {
+      embedFn: mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rerankerFactory: () => stub as any,
+    });
+    ensureV3Schema(db);
+
+    db.upsertDocument({
+      id: "rerank-mcp-a",
+      path: "rerank-mcp-a.md",
+      title: "Rerank A",
+      date: "2026-04-30",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Document A about cross-encoder reranking experiments.",
+    });
+    db.upsertDocument({
+      id: "rerank-mcp-b",
+      path: "rerank-mcp-b.md",
+      title: "Rerank B",
+      date: "2026-04-30",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Document B about cross-encoder reranking experiments.",
+    });
+    fts.rebuildIndex();
+    vec.createIndex();
+    vec.upsertEmbedding("rerank-mcp-a", await mockEmbedFn("rerank-mcp-a"));
+    vec.upsertEmbedding("rerank-mcp-b", await mockEmbedFn("rerank-mcp-b"));
+
+    const result = await callTool(server, "knowledge_search", {
+      query: "cross-encoder reranking",
+      limit: 5,
+      rerank: true,
+      return_diagnostics: true,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>;
+    expect(payload.length).toBeGreaterThan(0);
+    // Every result that the stub scored must carry rerank_score in the
+    // diagnostics-on payload.
+    const scoredIds = new Set(["rerank-mcp-a", "rerank-mcp-b"]);
+    for (const hit of payload) {
+      if (scoredIds.has(hit.id as string)) {
+        expect(hit.rerank_score).toBeDefined();
+        expect(typeof hit.rerank_score).toBe("number");
+      }
+    }
+    // camelCase form must NOT leak through.
+    for (const hit of payload) {
+      expect(hit.rerankScore).toBeUndefined();
+    }
+  });
+
+  it("rerank: true + return_diagnostics: false omits rerank_score (diagnostic discipline)", async () => {
+    const mod = await import("../index.js");
+    const stub = new StubReranker(
+      new Map([
+        ["rerank-nodiag-a", 0.95],
+        ["rerank-nodiag-b", 0.20],
+      ]),
+    );
+    const { server, db, fts, vec } = mod.createServer(":memory:", {
+      embedFn: mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rerankerFactory: () => stub as any,
+    });
+    ensureV3Schema(db);
+
+    db.upsertDocument({
+      id: "rerank-nodiag-a",
+      path: "rerank-nodiag-a.md",
+      title: "Nodiag A",
+      date: "2026-04-30",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Doc about reranking without diagnostics requested.",
+    });
+    db.upsertDocument({
+      id: "rerank-nodiag-b",
+      path: "rerank-nodiag-b.md",
+      title: "Nodiag B",
+      date: "2026-04-30",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Another doc about reranking without diagnostics requested.",
+    });
+    fts.rebuildIndex();
+    vec.createIndex();
+    vec.upsertEmbedding("rerank-nodiag-a", await mockEmbedFn("rerank-nodiag-a"));
+    vec.upsertEmbedding("rerank-nodiag-b", await mockEmbedFn("rerank-nodiag-b"));
+
+    const result = await callTool(server, "knowledge_search", {
+      query: "reranking diagnostics",
+      limit: 5,
+      rerank: true,
+      // return_diagnostics omitted (defaults to false).
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>;
+    expect(payload.length).toBeGreaterThan(0);
+    for (const hit of payload) {
+      expect(hit.rerank_score).toBeUndefined();
+      expect(hit.rerankScore).toBeUndefined();
+    }
+  });
+
+  it("rerank: false (and omitted) is byte-identical and never includes rerank_score", async () => {
+    const mod = await import("../index.js");
+    // Use a stub that, IF it ran, would mutate ordering — so any drift
+    // signals the splice ran when it shouldn't.
+    const stub = new StubReranker(
+      new Map([
+        ["rerank-off-a", 0.01],
+        ["rerank-off-b", 0.99],
+      ]),
+    );
+    const { server, db, fts, vec } = mod.createServer(":memory:", {
+      embedFn: mockEmbedFn,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rerankerFactory: () => stub as any,
+    });
+    ensureV3Schema(db);
+
+    db.upsertDocument({
+      id: "rerank-off-a",
+      path: "rerank-off-a.md",
+      title: "Off A",
+      date: "2026-04-30",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Document A used to verify rerank-off byte-identity.",
+    });
+    db.upsertDocument({
+      id: "rerank-off-b",
+      path: "rerank-off-b.md",
+      title: "Off B",
+      date: "2026-04-30",
+      type: "research",
+      status: "draft",
+      githubIssue: null,
+      content: "Document B used to verify rerank-off byte-identity.",
+    });
+    fts.rebuildIndex();
+    vec.createIndex();
+    vec.upsertEmbedding("rerank-off-a", await mockEmbedFn("rerank-off-a"));
+    vec.upsertEmbedding("rerank-off-b", await mockEmbedFn("rerank-off-b"));
+
+    const omitted = await callTool(server, "knowledge_search", {
+      query: "verify byte identity",
+      limit: 5,
+      // rerank omitted (defaults to false).
+    });
+    const explicitFalse = await callTool(server, "knowledge_search", {
+      query: "verify byte identity",
+      limit: 5,
+      rerank: false,
+    });
+    expect(omitted.isError).not.toBe(true);
+    expect(explicitFalse.isError).not.toBe(true);
+    // Byte-identical — JSON text must match exactly.
+    expect(explicitFalse.content[0].text).toBe(omitted.content[0].text);
+    const payload = JSON.parse(omitted.content[0].text) as Array<Record<string, unknown>>;
+    for (const hit of payload) {
+      expect(hit.rerank_score).toBeUndefined();
+      expect(hit.rerankScore).toBeUndefined();
+    }
+    // Even when return_diagnostics is true but rerank is false, no
+    // rerank_score should leak.
+    const diagOnly = await callTool(server, "knowledge_search", {
+      query: "verify byte identity",
+      limit: 5,
+      rerank: false,
+      return_diagnostics: true,
+    });
+    expect(diagOnly.isError).not.toBe(true);
+    const diagPayload = JSON.parse(diagOnly.content[0].text) as Array<Record<string, unknown>>;
+    for (const hit of diagPayload) {
+      expect(hit.rerank_score).toBeUndefined();
+    }
+  });
+});

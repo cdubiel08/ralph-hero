@@ -74,9 +74,9 @@ These constraints apply to all four phases:
 - [ ] `HybridSearch.search()` accepts `rerank: boolean` in `SearchOptions` and rescores the post-RRF candidate set when set (Phase 2).
 - [ ] `SearchResult.rerankScore?: number` is populated only when `rerank: true` (Phase 2).
 - [ ] When both `rerank: true` and `lambda < 1.0` are set, rerank applies BEFORE MMR; documented in code comment (Phase 2).
-- [ ] `knowledge_search` MCP tool accepts `rerank: boolean` parameter, default `false` (Phase 3).
-- [ ] When `rerank: true` AND `return_diagnostics: true`, results include `rerank_score` (snake_case) (Phase 3).
-- [ ] When `rerank` is omitted/false, MCP response is byte-identical to today (Phase 3).
+- [x] `knowledge_search` MCP tool accepts `rerank: boolean` parameter, default `false` (Phase 3).
+- [x] When `rerank: true` AND `return_diagnostics: true`, results include `rerank_score` (snake_case) (Phase 3).
+- [x] When `rerank` is omitted/false, MCP response is byte-identical to today (Phase 3).
 - [ ] New eval doc at `thoughts/shared/evals/<date>-knowledge-search-with-rerank.md` covers all 8 golden queries with cold/warm latency and Hit@1/Hit@5/MRR vs baseline + ripgrep ceiling (Phase 4).
 - [ ] Verdict in eval doc explicitly addresses parent #919's "Hit@1 ≥ 50%" and "no regression on Q5/Q7" criteria (Phase 4).
 
@@ -276,10 +276,10 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `import { Reranker } from "./reranker.js"` added to the imports block.
-  - [ ] In `createServer`, after `const hybrid = new HybridSearch(db, fts, vec, embedImpl);` (line 78), construct `const reranker = opts.rerankerFactory ? opts.rerankerFactory() : new Reranker();` and re-assign hybrid: `const hybrid = new HybridSearch(db, fts, vec, embedImpl, reranker);`.
-  - [ ] `CreateServerOptions` interface adds optional `rerankerFactory?: () => Reranker` field with JSDoc explaining test-injection pattern (mirrors `embedFn` at line 69).
-  - [ ] Production callers that instantiate `createServer(dbPath)` without opts continue to work — `Reranker` constructor is lazy (no model load until first `score()` call per Phase 1 Task 1.2 acceptance).
+  - [x] `import { Reranker } from "./reranker.js"` added to the imports block.
+  - [x] In `createServer`, after `const hybrid = new HybridSearch(db, fts, vec, embedImpl);` (line 78), construct `const reranker = opts.rerankerFactory ? opts.rerankerFactory() : new Reranker();` and re-assign hybrid: `const hybrid = new HybridSearch(db, fts, vec, embedImpl, reranker);`.
+  - [x] `CreateServerOptions` interface adds optional `rerankerFactory?: () => Reranker` field with JSDoc explaining test-injection pattern (mirrors `embedFn` at line 69).
+  - [x] Production callers that instantiate `createServer(dbPath)` without opts continue to work — `Reranker` constructor is lazy (no model load until first `score()` call per Phase 1 Task 1.2 acceptance).
 
 #### Task 3.2: Add `rerank` parameter to `knowledge_search` zod schema
 - **files**: `plugin/ralph-knowledge/src/index.ts` (modify)
@@ -287,8 +287,8 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] After the `return_diagnostics` schema line (line 111), add: `rerank: z.boolean().optional().default(false).describe("Apply cross-encoder reranking to the post-RRF top-N candidates (BGE-Reranker-v2-m3-int8). Adds ~0.5-1s of latency on first call (cold-start model load) and ~25-45ms per pair on warm calls. Improves Hit@1 on specific-keyword queries; default off until the eval re-run confirms no regression on paraphrase queries."),` — description text MUST mention the latency tradeoff (Constraint 5 acceptance from issue body).
-  - [ ] In the `hybrid.search()` call (line 115), pass `rerank: args.rerank` alongside the existing options.
+  - [x] After the `return_diagnostics` schema line (line 111), add: `rerank: z.boolean().optional().default(false).describe("Apply cross-encoder reranking to the post-RRF top-N candidates (BGE-Reranker-v2-m3-int8). Adds ~0.5-1s of latency on first call (cold-start model load) and ~25-45ms per pair on warm calls. Improves Hit@1 on specific-keyword queries; default off until the eval re-run confirms no regression on paraphrase queries."),` — description text MUST mention the latency tradeoff (Constraint 5 acceptance from issue body).
+  - [x] In the `hybrid.search()` call (line 115), pass `rerank: args.rerank` alongside the existing options.
 
 #### Task 3.3: Plumb `rerank_score` through the enriched payload
 - **files**: `plugin/ralph-knowledge/src/index.ts` (modify)
@@ -296,10 +296,10 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] In the `enriched.map(...)` block (lines 124-159), the destructuring at line 128 adds `rerankScore` alongside `ftsScore`, `vecDistance`, `hitSources`.
-  - [ ] After the `if (args.return_diagnostics) { ... }` block at lines 147-151, ALSO populate `if (args.rerank && args.return_diagnostics) { if (rerankScore !== undefined) base.rerank_score = rerankScore; }`.
-  - [ ] When `rerank: true` AND `return_diagnostics: false`, `rerank_score` is NOT added to the payload (diagnostic field discipline — matches existing pattern that hides `fts_score` etc. unless diagnostics requested). Verified by Task 3.4 test.
-  - [ ] When `rerank: false` (or omitted), `rerank_score` is NEVER in the payload regardless of `return_diagnostics` value. Verified by Task 3.4 test.
+  - [x] In the `enriched.map(...)` block (lines 124-159), the destructuring at line 128 adds `rerankScore` alongside `ftsScore`, `vecDistance`, `hitSources`.
+  - [x] After the `if (args.return_diagnostics) { ... }` block at lines 147-151, ALSO populate `if (args.rerank && args.return_diagnostics) { if (rerankScore !== undefined) base.rerank_score = rerankScore; }`.
+  - [x] When `rerank: true` AND `return_diagnostics: false`, `rerank_score` is NOT added to the payload (diagnostic field discipline — matches existing pattern that hides `fts_score` etc. unless diagnostics requested). Verified by Task 3.4 test.
+  - [x] When `rerank: false` (or omitted), `rerank_score` is NEVER in the payload regardless of `return_diagnostics` value. Verified by Task 3.4 test.
 
 #### Task 3.4: Add MCP tool tests for the rerank parameter
 - **files**: `plugin/ralph-knowledge/src/__tests__/index.test.ts` (modify)
@@ -307,23 +307,23 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: medium
 - **depends_on**: [3.3]
 - **acceptance**:
-  - [ ] New `describe("knowledge_search rerank parameter (GH-926)")` block added.
-  - [ ] Schema validation test: `expect(() => schema.parse({ query: "x", rerank: true })).not.toThrow()`, same for `false`, omitted, and `expect(() => schema.parse({ query: "x", rerank: "yes" })).toThrow()`.
-  - [ ] Smoke test invoking `callTool(server, "knowledge_search", { query, rerank: true, return_diagnostics: true })` against a server constructed with `rerankerFactory: () => stubReranker`. Assert each result in the parsed JSON contains `rerank_score: <number>`.
-  - [ ] Smoke test "rerank: true + return_diagnostics: false → no rerank_score key": same call but `return_diagnostics: false`. Assert no `rerank_score` field on any result.
-  - [ ] Smoke test "rerank: false → byte-identical to today": invoke with `rerank: false` and `rerank` omitted; both responses deep-equal each other and contain no `rerank_score` field.
-  - [ ] Stub `rerankerFactory` returns a minimal stub whose `score()` method returns a deterministic `Map`. Inline class definition in the test file (no shared helper file needed).
+  - [x] New `describe("knowledge_search rerank parameter (GH-926)")` block added.
+  - [x] Schema validation test: `expect(() => schema.parse({ query: "x", rerank: true })).not.toThrow()`, same for `false`, omitted, and `expect(() => schema.parse({ query: "x", rerank: "yes" })).toThrow()`.
+  - [x] Smoke test invoking `callTool(server, "knowledge_search", { query, rerank: true, return_diagnostics: true })` against a server constructed with `rerankerFactory: () => stubReranker`. Assert each result in the parsed JSON contains `rerank_score: <number>`.
+  - [x] Smoke test "rerank: true + return_diagnostics: false → no rerank_score key": same call but `return_diagnostics: false`. Assert no `rerank_score` field on any result.
+  - [x] Smoke test "rerank: false → byte-identical to today": invoke with `rerank: false` and `rerank` omitted; both responses deep-equal each other and contain no `rerank_score` field.
+  - [x] Stub `rerankerFactory` returns a minimal stub whose `score()` method returns a deterministic `Map`. Inline class definition in the test file (no shared helper file needed).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/index.test.ts` — passes including new rerank block AND existing schema/tool registration blocks.
-- [ ] `cd plugin/ralph-knowledge && npm run build` — produces clean `dist/index.js`.
-- [ ] `cd plugin/ralph-knowledge && npm test` — full suite passes.
+- [x] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/index.test.ts` — passes including new rerank block AND existing schema/tool registration blocks.
+- [x] `cd plugin/ralph-knowledge && npm run build` — produces clean `dist/index.js`.
+- [x] `cd plugin/ralph-knowledge && npm test` — full suite passes.
 
 #### Manual Verification:
-- [ ] Tool description string in `index.ts` mentions the `rerank` latency/quality tradeoff (Phase 3 Task 3.2 acceptance).
-- [ ] Default `rerank: false` confirmed by reading the schema definition.
+- [x] Tool description string in `index.ts` mentions the `rerank` latency/quality tradeoff (Phase 3 Task 3.2 acceptance).
+- [x] Default `rerank: false` confirmed by reading the schema definition.
 
 **Creates for next phase**: `knowledge_search` MCP tool accepts `rerank: true` with the real `Reranker` loaded lazily on first call. Phase 4 can now invoke this tool against the user's local DB.
 

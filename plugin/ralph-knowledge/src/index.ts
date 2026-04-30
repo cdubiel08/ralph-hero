@@ -10,6 +10,7 @@ import { VectorSearch } from "./vector-search.js";
 import { HybridSearch } from "./hybrid-search.js";
 import { Traverser } from "./traverse.js";
 import { embed } from "./embedder.js";
+import { Reranker } from "./reranker.js";
 import { formatSearchResults, formatTraverseResults } from "./format.js";
 import { registerGraphTools } from "./graph-tools.js";
 
@@ -64,9 +65,17 @@ function percentile(sortedValues: number[], p: number): number {
  * Options for `createServer`. When `embedFn` is provided it replaces the
  * production `embed` import, allowing tests to bypass the HuggingFace model
  * download.
+ *
+ * `rerankerFactory` mirrors the `embedFn` injection pattern: when provided,
+ * it produces the `Reranker` passed into `HybridSearch` so unit tests can
+ * supply a deterministic stub reranker without paying the ~580 MB ONNX
+ * model download. Production callers omit this field; the default `Reranker`
+ * is lazy-loaded and pays no cold-start cost until `rerank: true` is set on
+ * a `knowledge_search` call.
  */
 export interface CreateServerOptions {
   embedFn?: (text: string) => Promise<Float32Array>;
+  rerankerFactory?: () => Reranker;
 }
 
 export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
@@ -75,7 +84,12 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
   const fts = new FtsSearch(db);
   const vec = new VectorSearch(db);
   const embedImpl = opts.embedFn ?? embed;
-  const hybrid = new HybridSearch(db, fts, vec, embedImpl);
+  // GH-926: production constructs a default `Reranker` (lazy — no model load
+  // until first `rerank: true` call). Tests inject a stub via
+  // `rerankerFactory` to bypass the ONNX model download. Mirrors the
+  // `embedFn` injection above.
+  const reranker = opts.rerankerFactory ? opts.rerankerFactory() : new Reranker();
+  const hybrid = new HybridSearch(db, fts, vec, embedImpl, reranker);
   const traverser = new Traverser(db);
 
   server.tool(
@@ -109,6 +123,11 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
         .optional()
         .default(false)
         .describe("Include per-retriever diagnostic fields (fts_score, vec_distance, hit_sources) on each result. Default off — keeps payload byte-identical to today's response shape (Phase 2, GH-899 Track-B observability hook)."),
+      rerank: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Apply cross-encoder reranking to the post-RRF top-N candidates (BGE-Reranker-v2-m3-int8). Adds ~0.5-1s of latency on first call (cold-start model load) and ~25-45ms per pair on warm calls. Improves Hit@1 on specific-keyword queries; default off until the eval re-run confirms no regression on paraphrase queries."),
     },
     async (args) => {
       try {
@@ -120,6 +139,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           memoryTier: args.memory_tier,
           lambda: args.lambda,
           diagnosticMode: args.return_diagnostics,
+          rerank: args.rerank,
         });
         const enriched = results.map((r) => {
           // Start with the camelCase SearchResult shape so existing callers
@@ -134,6 +154,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
             ftsScore,
             vecDistance,
             hitSources,
+            rerankScore,
             ...rest
           } = r;
           const base: Record<string, unknown> = { ...rest, tags: db.getTags(r.id) };
@@ -148,6 +169,13 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
             if (ftsScore !== undefined) base.fts_score = ftsScore;
             if (vecDistance !== undefined) base.vec_distance = vecDistance;
             if (hitSources !== undefined) base.hit_sources = hitSources;
+          }
+          // GH-926: rerank_score is a diagnostic field — surface it only when
+          // BOTH `rerank` and `return_diagnostics` are true. This matches the
+          // diagnostic-field discipline that hides fts_score/vec_distance
+          // unless diagnostics are explicitly requested.
+          if (args.rerank && args.return_diagnostics) {
+            if (rerankScore !== undefined) base.rerank_score = rerankScore;
           }
           // SearchResult does not carry githubIssue — fetch from documents table
           const doc = db.getDocument(r.id);
