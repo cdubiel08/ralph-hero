@@ -46,6 +46,8 @@ export interface DashboardItem {
   iterationTitle?: string; // Iteration name (e.g., "Sprint 1")
   iterationStartDate?: string; // ISO date string
   iterationDuration?: number; // days
+  parentNumber?: number | null; // Parent issue number (from trackedInIssues edge)
+  parentState?: string | null; // Parent issue GitHub state ("OPEN" / "CLOSED")
 }
 
 /** One row in the pipeline snapshot. */
