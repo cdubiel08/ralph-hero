@@ -208,12 +208,12 @@ Stop unconditionally pushing every `ParsedDocument` into the corpus-wide `parsed
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no errors
-- [ ] `npx vitest run src/__tests__/reindex.test.ts` — all reindex scenarios pass, including new gating test
-- [ ] `npm test` — full suite green
+- [x] `npm run build` — no errors
+- [x] `npx vitest run src/__tests__/reindex.test.ts` — all reindex scenarios pass, including new gating test
+- [x] `npm test` — full suite green
 
 #### Manual Verification:
-- [ ] Diff shows only one conditional wrap and one new test scenario; no other reindex behavior changed.
+- [x] Diff shows only one conditional wrap and one new test scenario; no other reindex behavior changed.
 
 **Creates for next phase**: A reindex run with `generate=false` (the default for the production CLI invocation) no longer pins `ParsedDocument[]` for the full corpus. Combined with Phase 1, this leaves zero unbounded accumulators in the per-document hot path.
 

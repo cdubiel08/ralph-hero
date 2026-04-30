@@ -117,7 +117,15 @@ export async function reindex(
     const id = basename(filePath, ".md");
 
     const parsed = parseDocument(id, relPath, raw);
-    parsedDocs.push(parsed);
+    // GH-911: only accumulate parsed docs when `generate=true` (the rare case
+    // where `generateIndexes()` runs at the end of the loop). On the live
+    // corpus this avoids pinning every parsed document's content + relationships
+    // for the whole run; under `generate=false` (the default CLI path), the
+    // accumulator is skipped entirely so V8 can reclaim each parsed document
+    // immediately after its DB rows are written.
+    if (generate) {
+      parsedDocs.push(parsed);
+    }
 
     const missing: string[] = [];
     if (!parsed.date) missing.push("date");

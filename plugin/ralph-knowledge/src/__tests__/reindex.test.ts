@@ -67,6 +67,22 @@ vi.mock("../llm-client.js", () => ({
   })),
 }));
 
+// GH-911: mock generateIndexes so we can assert the parsedDocs[] accumulator
+// gate. When generate=false (the default CLI path), the accumulator is skipped
+// entirely and generateIndexes is not called. When generate=true, the
+// accumulator is populated and generateIndexes is invoked with a non-empty
+// ParsedDocument[].
+//
+// `vi.hoisted()` is required because `vi.mock` factory bodies are hoisted to
+// the top of the file before regular `const` declarations run. Hoisting the
+// mock fn keeps it accessible from both the factory and the test body.
+const { mockGenerateIndexes } = vi.hoisted(() => ({
+  mockGenerateIndexes: vi.fn(),
+}));
+vi.mock("../generate-indexes.js", () => ({
+  generateIndexes: mockGenerateIndexes,
+}));
+
 import { embedDocument } from "../embedder.js";
 import { reindex } from "../reindex.js";
 import { KnowledgeDB } from "../db.js";
@@ -120,6 +136,8 @@ describe("incremental reindex", () => {
     mockLlmAvailable.mockResolvedValue(true);
     mockLlmContextualize.mockReset();
     mockLlmContextualize.mockResolvedValue("");
+    // Reset the GH-911 generateIndexes mock so per-test call counts are clean.
+    mockGenerateIndexes.mockClear();
     // Default the flag to disabled for legacy tests so the existing 17 scenarios
     // don't accidentally call the mocked LLM — the Phase 6 tests opt back in
     // explicitly via `process.env.RALPH_CONTEXTUAL_RETRIEVAL = "1"`.
@@ -811,5 +829,61 @@ describe("incremental reindex", () => {
     } finally {
       db.close();
     }
+  });
+
+  // ---- GH-911: parsedDocs[] accumulator gating ----
+  //
+  // The accumulator is only consumed by `generateIndexes()` when `generate=true`.
+  // Phase 2 wraps `parsedDocs.push(parsed)` in `if (generate)` so the
+  // unbounded array isn't built up under the default `generate=false` CLI path.
+  // These tests exercise both branches via the mocked `generateIndexes`.
+
+  it("scenario 28: generate=false skips generateIndexes entirely", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+    // Default generate=false (third positional arg omitted).
+    await reindex([dir], dbPath);
+
+    expect(mockGenerateIndexes).not.toHaveBeenCalled();
+  });
+
+  it("scenario 29: generate=true invokes generateIndexes with a non-empty ParsedDocument[]", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+    await reindex([dir], dbPath, true);
+
+    expect(mockGenerateIndexes).toHaveBeenCalledTimes(1);
+    const callArgs = mockGenerateIndexes.mock.calls[0];
+    // First arg: outDir (the first directory passed to reindex).
+    expect(callArgs[0]).toBe(dir);
+    // Second arg: ParsedDocument[] populated with both docs.
+    const parsedDocs = callArgs[1] as Array<{ id: string }>;
+    expect(parsedDocs).toHaveLength(2);
+    const ids = parsedDocs.map((d) => d.id).sort();
+    expect(ids).toEqual(["doc-a", "doc-b"]);
+  });
+
+  it("scenario 30: generate=false produces same DB state as generate=true (only the index files differ)", async () => {
+    writeFileSync(join(dir, "doc-a.md"), makeDoc("Doc A"));
+    writeFileSync(join(dir, "doc-b.md"), makeDoc("Doc B"));
+
+    await reindex([dir], dbPath, false);
+
+    const db = new KnowledgeDB(dbPath);
+    try {
+      expect(db.getDocument("doc-a")).toBeTruthy();
+      expect(db.getDocument("doc-b")).toBeTruthy();
+      // Embedding rows should be present even though the accumulator was skipped.
+      const chunkCount = (db.db
+        .prepare("SELECT COUNT(*) as n FROM chunks")
+        .get() as { n: number }).n;
+      expect(chunkCount).toBeGreaterThanOrEqual(2);
+    } finally {
+      db.close();
+    }
+    // generateIndexes was correctly skipped under the false path.
+    expect(mockGenerateIndexes).not.toHaveBeenCalled();
   });
 });
