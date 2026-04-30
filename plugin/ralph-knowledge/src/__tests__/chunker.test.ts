@@ -244,3 +244,59 @@ describe("chunkText — separator priority", () => {
     expect(lastEnd).toBe(text.length);
   });
 });
+
+describe("chunkText — forward progress invariant", () => {
+  // Regression test for GH-916. Pre-fix this OOMs.
+  it("terminates when a chunk would consist of a single atom shorter than chunkOverlap", () => {
+    // Trigger: atom N is short (< 256 chars), atom N+1 is large enough that
+    // packing them together would exceed chunkSize (2048).
+    const shortAtom = "short paragraph that is under 256 chars.\n\n";
+    const longAtom = "x".repeat(1900) + "\n\n";
+    const text = shortAtom + longAtom + "tail.";
+    const chunks = chunkText(text);
+    // We don't care about the exact count; we care that chunkText returns at
+    // all (pre-fix it loops forever) and that all chunks have non-empty content.
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.length).toBeLessThan(100); // sanity: no runaway
+    for (const c of chunks) {
+      expect(c.content.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("makes strict forward progress: chunk[i+1].charStart > chunk[i].charStart", () => {
+    // Build an input that triggers many single-atom chunks.
+    const blocks = [];
+    for (let i = 0; i < 20; i++) {
+      blocks.push("short " + i + ".\n\n");
+      blocks.push("x".repeat(1900) + "\n\n");
+    }
+    const chunks = chunkText(blocks.join(""));
+    expect(chunks.length).toBeGreaterThan(0);
+    for (let i = 1; i < chunks.length; i++) {
+      expect(chunks[i]!.charStart).toBeGreaterThan(chunks[i - 1]!.charStart);
+    }
+  });
+
+  it("chunks the GH-916 fixture file in bounded time and memory", () => {
+    // Path-independent fixture: a markdown sample that mirrors the trigger
+    // pattern (short paragraphs interspersed with large code blocks).
+    const sample = [
+      "# Heading\n\n",
+      "Short intro paragraph.\n\n",
+      "```python\n" + "code line\n".repeat(180) + "```\n\n",
+      "Short follow-up.\n\n",
+      "```python\n" + "more code\n".repeat(180) + "```\n\n",
+      "End.",
+    ].join("");
+    const start = Date.now();
+    const chunks = chunkText(sample);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(1000); // pre-fix this would not return
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks.length).toBeLessThan(50); // sanity: no runaway
+    // Spot-check the canonical invariant
+    for (const c of chunks) {
+      expect(sample.slice(c.charStart, c.charEnd)).toBe(c.content);
+    }
+  });
+});

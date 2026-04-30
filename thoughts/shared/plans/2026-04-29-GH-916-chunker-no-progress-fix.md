@@ -159,13 +159,13 @@ Update the doc comment on `findOverlapStartIndex` (lines 165-170) to note the ca
 
 #### Automated Verification
 
-- [ ] `npm run build` in `plugin/ralph-knowledge/` exits 0
-- [ ] `npm test` in `plugin/ralph-knowledge/` exits 0 (all 455+ tests still pass)
-- [ ] New tests in `chunker.test.ts` pass (see Phase 2)
+- [x] `npm run build` in `plugin/ralph-knowledge/` exits 0
+- [x] `npm test` in `plugin/ralph-knowledge/` exits 0 (all 455+ tests still pass)
+- [x] New tests in `chunker.test.ts` pass (see Phase 2)
 
 #### Manual Verification
 
-- [ ] Repro command from issue body OOMs pre-fix; succeeds post-fix:
+- [x] Repro command from issue body OOMs pre-fix; succeeds post-fix:
   ```bash
   cd plugin/ralph-knowledge
   node --max-old-space-size=512 -e "
@@ -254,8 +254,8 @@ describe("chunkText — forward progress invariant", () => {
 
 #### Automated Verification
 
-- [ ] `npx vitest run src/__tests__/chunker.test.ts` exits 0 with all 19+ tests passing (16 existing + 3 new)
-- [ ] Pre-fix: confirm at least the first new test hangs/OOMs by reverting Phase 1 in a scratch branch (manual confirmation only, do not commit)
+- [x] `npx vitest run src/__tests__/chunker.test.ts` exits 0 with all 19+ tests passing (16 existing + 3 new)
+- [x] Pre-fix: confirm at least the first new test hangs/OOMs by reverting Phase 1 in a scratch branch (manual confirmation only, do not commit)
 
 ---
 
@@ -315,9 +315,9 @@ The combined fixes from #911 (embedder Tensor disposal + parsedDocs accumulator 
 
 #### Automated Verification
 
-- [ ] `npm run reindex` exits 0 (no SIGABRT, no FATAL ERROR)
-- [ ] `sqlite3 ~/.ralph-hero/knowledge.db "SELECT COUNT(*) FROM documents"` returns >= 1,500 (allowing for some small delta from filesystem-level filtering)
-- [ ] Peak `heap_used` observed during the run is < 600 MB (consistent with the #911 acceptance threshold)
+- [x] `npm run reindex` exits 0 (no SIGABRT, no FATAL ERROR)
+- [x] `sqlite3 ~/.ralph-hero/knowledge.db "SELECT COUNT(*) FROM documents"` returns >= 1,500 (allowing for some small delta from filesystem-level filtering) — observed: 1,710
+- [x] Peak `heap_used` observed during the run is < 600 MB (consistent with the #911 acceptance threshold) — observed: 81.1 MB
 
 #### Manual Verification
 

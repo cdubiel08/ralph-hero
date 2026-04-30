@@ -368,3 +368,46 @@ This OOMs on the **plain `chunker.chunkText()` call** before any embedding occur
 | Synthetic 400-doc corpus, post-#911 | 5.25 | 36.7 |
 
 Pre-fix baseline is unavailable (the original profile run didn't complete enough work to measure end-to-end throughput before OOM), so the "within 20%" comparison is not directly possible. The 36.7 chunks/sec figure is the new baseline against which #913's regression bench should calibrate.
+
+## End-to-end verification (post-#911 + post-#916)
+
+**Date**: 2026-04-29
+**Plugin commit**: feature/GH-916 (after Phase 1+2 of GH-916 land)
+**Node**: v22.22.1 (default 4 GB heap, no `--max-old-space-size` override)
+**Flags**: `RALPH_CONTEXTUAL_RETRIEVAL=0`
+
+### Result
+
+| Metric | Value |
+|---|---|
+| Files on disk | 1,668 |
+| Documents indexed | 1,636 (DB total: 1,710 incl. 14 raw + stub docs) |
+| Chunks indexed | 12,879 |
+| Wall clock (active reindex) | 478.7 s (~8 min) |
+| Peak heap_used | 81.1 MB |
+| Peak heap_total | 104.0 MB |
+| Peak RSS | 532.5 MB |
+| Peak external | 95.0 MB |
+| Exit code | 0 |
+
+Heap sampler trace (250 ms cadence, every 30th sample shown):
+
+```
+t=0.3s    heap_used=25.7 MB  rss=126 MB  external=7 MB
+t=21.7s   heap_used=37.0 MB  rss=430 MB  external=57 MB
+t=86.5s   heap_used=37.5 MB  rss=492 MB  external=7 MB   (model warm)
+t=151.7s  heap_used=48.8 MB  rss=496 MB  external=9 MB
+t=238.5s  heap_used=56.2 MB  rss=507 MB  external=7 MB
+t=325.3s  heap_used=70.9 MB  rss=517 MB  external=8 MB
+t=412.3s  heap_used=67.7 MB  rss=527 MB  external=6 MB
+t=474.5s  heap_used=65.5 MB  rss=532 MB  external=6 MB
+t=478.7s  heap_used=20.8 MB  rss=525 MB  external=6 MB   (Done. 1636 indexed)
+```
+
+Heap_used grew gradually from ~25 MB (cold) to a peak of 81.1 MB, then dropped to ~21 MB after `Done. 1636 documents indexed` printed. Growth was sub-linear and well below the 600 MB acceptance threshold.
+
+### Conclusion
+
+The combined fixes from #911 (embedder Tensor disposal + parsedDocs accumulator gate) and #916 (chunker forward-progress guard) close out the parent #907. The dream-loop reindex now works end-to-end at default 4 GB Node heap on the live 1,668-doc corpus.
+
+The chunker no-progress fix in #916 was specifically validated by the disappearance of the prior OOM at the ~150-chunk mark — the same fixture (`landcrawler-ai/.../oklahoma-permit-raw-migration.md`) that previously OOMed at 8 GB heap now chunks in <1 ms producing 28 chunks at a 512 MB heap cap. The full corpus run reached 12,879 chunks across 1,636 documents, ~85x the pre-fix progress threshold.
