@@ -27,7 +27,19 @@ export async function embed(text: string): Promise<Float32Array> {
     pooling: "mean",
     normalize: true,
   });
-  return new Float32Array(output.data as ArrayLike<number>);
+  // Copy data into a freshly allocated Float32Array (constructor's ArrayLike
+  // overload iterates and assigns, decoupling from the source buffer).
+  const embedding = new Float32Array(output.data as ArrayLike<number>);
+  // GH-911: eagerly release the underlying ONNX-runtime native tensor buffer.
+  // V8 cannot reclaim native (off-heap) memory fast enough across the per-chunk
+  // await loop in `embedDocument()`, which causes the corpus reindex to OOM at
+  // ~150 chunks. `Tensor.dispose()` (transformers.js v3) calls
+  // `ort_tensor.dispose()` which frees the native buffer immediately.
+  // The guard tolerates test mocks that lack a `dispose` method.
+  if (output && typeof (output as { dispose?: unknown }).dispose === "function") {
+    (output as { dispose: () => void }).dispose();
+  }
+  return embedding;
 }
 
 /**

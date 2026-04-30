@@ -3,18 +3,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock @huggingface/transformers so we don't need to load the real ONNX
 // model during unit tests. The fake pipeline returns a constant 384-dim
 // vector; we track call count via the `embedCalls` array below.
+//
+// GH-911: the mock now also exposes a `dispose` mock on each output so we can
+// assert that `embed()` releases the native tensor buffer eagerly. The dispose
+// invocations are aggregated on the module-level `disposeCalls` array so tests
+// can introspect call counts across multiple `embed()` invocations.
 const embedCalls: string[] = [];
+const disposeCalls: ReturnType<typeof vi.fn>[] = [];
 vi.mock("@huggingface/transformers", () => {
   const fakePipeline = async (text: string, _opts: unknown) => {
     embedCalls.push(text);
-    return { data: new Float32Array(384) };
+    const dispose = vi.fn();
+    disposeCalls.push(dispose);
+    return { data: new Float32Array(384), dispose };
   };
   return {
     pipeline: vi.fn(async () => fakePipeline),
   };
 });
 
-import { prepareTextForEmbedding, embedDocument } from "../embedder.js";
+import { prepareTextForEmbedding, embed, embedDocument } from "../embedder.js";
 import type { LlmClient } from "../llm-client.js";
 
 function makeMockLlm(contextualize: LlmClient["contextualize"]): LlmClient {
@@ -120,6 +128,47 @@ describe("prepareTextForEmbedding", () => {
       "First paragraph.\n\nSecond paragraph.",
     );
     expect(result).toBe("My Title\ngraphology, search\nFirst paragraph.");
+  });
+});
+
+// GH-911: regression tests for tensor disposal in embed(). The mock exposes a
+// vi.fn() on each output's `dispose` slot; embed() must invoke it once per
+// call so the underlying ONNX-runtime native buffer is freed eagerly instead
+// of waiting on V8 GC (which cannot keep up with the per-chunk await loop).
+describe("embed (tensor disposal)", () => {
+  beforeEach(() => {
+    embedCalls.length = 0;
+    disposeCalls.length = 0;
+  });
+
+  it("calls output.dispose() exactly once per embed() invocation", async () => {
+    const result = await embed("hello");
+    expect(result).toBeInstanceOf(Float32Array);
+    expect(result.length).toBe(384);
+    expect(disposeCalls).toHaveLength(1);
+    expect(disposeCalls[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls dispose on every output across multiple invocations", async () => {
+    await embed("first");
+    await embed("second");
+    await embed("third");
+    expect(disposeCalls).toHaveLength(3);
+    for (const dispose of disposeCalls) {
+      expect(dispose).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("returns a Float32Array independent of the source tensor (data is copied before dispose)", async () => {
+    const result = await embed("text");
+    // dispose was called, but the returned Float32Array is still usable —
+    // verifies the data was copied (not aliased) before disposal.
+    expect(disposeCalls[0]).toHaveBeenCalledTimes(1);
+    expect(() => {
+      result[0] = 1.0;
+      void result[0];
+    }).not.toThrow();
+    expect(result.length).toBe(384);
   });
 });
 
