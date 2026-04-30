@@ -78,7 +78,7 @@ TRACK C: Co-pilot reviewer                            converges
 
 **Why two tracks:** Track A is the durable solution (scripted assertions, repeatable, CI-ready). Track C delivers value on day one without requiring story-side test code, and uses the same Playwright + Storybook substrate that Track A's local inner loop uses — so investment in C isn't thrown away. As play functions land in Track A, the C-track agent's run upgrades from "exploration" to "scripted run". Same machine, gradually getting smarter.
 
-**Why Chromatic for CI:** purpose-built for Storybook visual regression, made by the Storybook team. Cloud-hosted baselines (no `.png` artifacts in the repo, no artifact-server decision to make), web UI for approving diffs (much better than reviewing PNGs in PR comments), cross-browser snapshots come free, and an off-the-shelf GitHub Action. It replaces what `visual-diff` would otherwise do for the canonical pipeline; `visual-diff` becomes optional/legacy for this design.
+**Why Chromatic for CI:** purpose-built for Storybook visual regression, made by the Storybook team. Cloud-hosted baselines (no `.png` artifacts in the repo, no artifact-server decision to make), web UI for approving diffs (much better than reviewing PNGs in PR comments), cross-browser snapshots come free, and an off-the-shelf GitHub Action. The canonical CI uses the Chromatic GitHub Action directly (declarative, runs on every PR). The existing `visual-diff` skill (which wraps `npx chromatic`) remains useful for **ad-hoc local Chromatic invocations** — e.g., "let me preview the diff before I push" — but isn't part of the canonical CI pipeline.
 
 **Convergence at Phase 3:** the C/A distinction dissolves. `storybook-test` runs play functions where they exist; `explorer-agent` is still available for ad-hoc reviews of components that don't yet have stories. Same substrate, different invocation modes.
 
@@ -96,7 +96,7 @@ From `plugin/ralph-playwright/`:
 | `story-runner-agent` | exists | Phase 3 (A3) | Executes deterministic scripted runs (vs. explorer's freeform) |
 | **`storybook-onboard` skill** | **to be authored** | Day-zero (user entry point) | One-shot setup: audits Storybook, confirms Chromatic, runs `setup`, fires smoke run |
 | **`storybook-review` skill** | **to be authored** | Phase 1 inner loop (user entry point) | Daily verification: dispatches `explorer-agent` against a story-id or component path, returns sub-minute report |
-| ~~`visual-diff` skill~~ | exists | Not used in this design | Superseded by Chromatic for the canonical pipeline; remains available for repos without Chromatic access |
+| `visual-diff` skill | exists | Phase 3 (A3) optional local | Wraps `npx chromatic` for ad-hoc local visual diffs; the canonical CI uses the Chromatic GitHub Action directly, but the skill is useful for "preview the diff before I push" |
 
 **External tooling:**
 
