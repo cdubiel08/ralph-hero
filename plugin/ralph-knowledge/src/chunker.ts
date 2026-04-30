@@ -167,6 +167,10 @@ function buildChunk(
  * chunk ended at `prevEnd`. We walk backward through the atom list to find
  * the atom whose start >= prevEnd - chunkOverlap; that atom begins the
  * overlap region.
+ *
+ * NOTE: this function may return an index <= the previous chunk's first atom
+ * when the previous chunk consisted of a single atom shorter than chunkOverlap.
+ * The caller in chunkText clamps the result to ensure forward progress.
  */
 function findOverlapStartIndex(
   atoms: Piece[],
@@ -272,7 +276,14 @@ export function chunkText(text: string, opts: ChunkerOptions = {}): Chunk[] {
       chunk.charEnd,
       chunkOverlap,
     );
-    i = nextStart;
+    // Ensure forward progress: when a chunk consists of a single atom shorter
+    // than chunkOverlap, the overlap walk would land back on the same atom.
+    // Clamp to i + 1 in that case so we always advance, accepting that the
+    // resulting chunks will not overlap (this is the only correct option:
+    // overlap requires that the next chunk start within the previous chunk's
+    // span, but if the previous chunk has only one atom, there is no earlier
+    // position within its span to start from).
+    i = nextStart > i ? nextStart : i + 1;
   }
 
   return chunks;
