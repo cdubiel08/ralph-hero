@@ -106,11 +106,11 @@ Reproduce the OOM, capture a heap profile, identify the dominant retainer per do
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `~/.ralph-hero/knowledge.db` is renamed (not deleted) to `~/.ralph-hero/knowledge.db.pre-profile-backup` so the reindex starts from scratch and re-embeds the entire corpus (mtime cache won't short-circuit any docs).
-  - [ ] `npm run build` from `plugin/ralph-knowledge/` completes without errors.
-  - [ ] `RALPH_CONTEXTUAL_RETRIEVAL=0` is set in the shell for all subsequent reindex runs to isolate the leak from the LLM contextualize path.
-  - [ ] Roots config at `~/.ralph/knowledge.config.json` exists and points at the same roots the audit listed (verified with `cat ~/.ralph/knowledge.config.json`).
-  - [ ] `du -sh ~/.ralph-hero/knowledge.db.pre-profile-backup` recorded in scratch notes (rough size signal of corpus volume).
+  - [x] `~/.ralph-hero/knowledge.db` is renamed (not deleted) to `~/.ralph-hero/knowledge.db.pre-profile-backup` so the reindex starts from scratch and re-embeds the entire corpus (mtime cache won't short-circuit any docs).
+  - [x] `npm run build` from `plugin/ralph-knowledge/` completes without errors.
+  - [x] `RALPH_CONTEXTUAL_RETRIEVAL=0` is set in the shell for all subsequent reindex runs to isolate the leak from the LLM contextualize path.
+  - [x] Roots config at `~/.ralph/knowledge.config.json` exists and points at the same roots the audit listed (verified with `cat ~/.ralph/knowledge.config.json`).
+  - [x] `du -sh ~/.ralph-hero/knowledge.db.pre-profile-backup` recorded in scratch notes (rough size signal of corpus volume).
 
 #### Task 1.2: Capture baseline OOM with default 4 GB Node heap and `--heap-prof`
 
@@ -119,11 +119,11 @@ Reproduce the OOM, capture a heap profile, identify the dominant retainer per do
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Run executed: `cd plugin/ralph-knowledge && RALPH_CONTEXTUAL_RETRIEVAL=0 node --heap-prof --heap-prof-dir=/tmp dist/reindex.js` (no `--max-old-space-size` override).
-  - [ ] Process exits with `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory` or similar OOM signal.
-  - [ ] `/tmp/Heap.YYYYMMDD.HHMMSS.PID.0.001.heapprofile` (or similar) file exists.
-  - [ ] Recorded data points (in scratch notes): doc count printed before OOM, last "X chunks embedded" log line, wall-clock duration to OOM.
-  - [ ] Saved `/tmp/reindex-default-stdout.log` and `/tmp/reindex-default-stderr.log` (use `2>&1 | tee` redirection).
+  - [x] Run executed: `cd plugin/ralph-knowledge && RALPH_CONTEXTUAL_RETRIEVAL=0 node --heap-prof --heap-prof-dir=/tmp dist/reindex.js` (no `--max-old-space-size` override). *Used `/tmp/heap-prof-gh910/` as the heap-prof dir for hygiene.*
+  - [x] Process exits with `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory` or similar OOM signal. *Confirmed: `Mark-Compact (reduce) 4059.2 -> 4056.8 MB`, exit 134.*
+  - [x] `/tmp/Heap.YYYYMMDD.HHMMSS.PID.0.001.heapprofile` (or similar) file exists. *Note: `--heap-prof` does NOT flush on OOM crash — only the pre-OOM startup-failure run produced a file. Workaround documented in research note: explicit `writeHeapSnapshot()` at iter=1/6/12.*
+  - [x] Recorded data points (in scratch notes): doc count printed before OOM, last "X chunks embedded" log line, wall-clock duration to OOM. *Last log: `150 chunks embedded`; ~12-15 docs; 16 s wall clock.*
+  - [x] Saved `/tmp/reindex-default-stdout.log` and `/tmp/reindex-default-stderr.log` (use `2>&1 | tee` redirection).
 
 #### Task 1.3: Capture extended-heap profile at 8 GB to deepen the corpus walk
 
@@ -132,11 +132,11 @@ Reproduce the OOM, capture a heap profile, identify the dominant retainer per do
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Run executed: `RALPH_CONTEXTUAL_RETRIEVAL=0 NODE_OPTIONS="--max-old-space-size=8192" node --heap-prof --heap-prof-dir=/tmp dist/reindex.js`.
-  - [ ] Either the run completes, or it OOMs at a higher doc count than Task 1.2 (the `--max-old-space-size=8192` audit datapoint).
-  - [ ] Second `/tmp/Heap.*.heapprofile` exists, distinguishable by timestamp from Task 1.2's profile.
-  - [ ] Recorded: docs processed at OOM (or at completion), peak RSS sampled via a parallel `while sleep 5; do ps -o rss= -p $PID; done` loop in another terminal (PID captured from the launching shell).
-  - [ ] Per-doc growth rate computed from the two data points: `(peak_RSS_8gb - peak_RSS_4gb) / (docs_8gb - docs_4gb)` in MB/doc.
+  - [x] Run executed: `RALPH_CONTEXTUAL_RETRIEVAL=0 NODE_OPTIONS="--max-old-space-size=8192" node --heap-prof --heap-prof-dir=/tmp dist/reindex.js`.
+  - [x] Either the run completes, or it OOMs at a higher doc count than Task 1.2 (the `--max-old-space-size=8192` audit datapoint). *OOM reproduced at 8085 MB heap, ~26 s, **same** doc count as 4 GB run (~15 docs / 150 chunks). Doubling heap did not advance the corpus walk — confirms allocation rate dominates.*
+  - [x] Second `/tmp/Heap.*.heapprofile` exists, distinguishable by timestamp from Task 1.2's profile. *Both OOM runs failed to flush `--heap-prof` (V8 limitation). Replaced with three `writeHeapSnapshot()` files at controlled iterations: `/tmp/heap-prof-gh910/snapshot-iter{1,6,12}.heapsnapshot`.*
+  - [x] Recorded: docs processed at OOM (or at completion), peak RSS sampled via a parallel `while sleep 5; do ps -o rss= -p $PID; done` loop in another terminal (PID captured from the launching shell). *RSS sampler caught only stale PIDs — the OOM is fast (16-26 s). Substituted in-process `process.memoryUsage()` via probe scripts.*
+  - [x] Per-doc growth rate computed from the two data points: `(peak_RSS_8gb - peak_RSS_4gb) / (docs_8gb - docs_4gb)` in MB/doc. *Both runs OOM at the SAME doc count, so per-doc growth from the two-data-point method is undefined. Substituted: per-call RSS growth from controlled probe scales linearly with input length (194/412/863 KB per call for 500/2000/4000-char inputs).*
 
 #### Task 1.4: Analyze heap profile and identify dominant retainer
 
@@ -145,12 +145,12 @@ Reproduce the OOM, capture a heap profile, identify the dominant retainer per do
 - **complexity**: high
 - **depends_on**: [1.2, 1.3]
 - **acceptance**:
-  - [ ] One of the heap profiles loaded into Chrome DevTools (chrome://inspect → "Open dedicated DevTools for Node" → Memory tab → "Load profile" → select `.heapprofile`) OR analyzed via `npx --yes node-heapdump-analysis` / `node --inspect` post-mortem.
-  - [ ] Top 5 retainers by retained size identified, with class names recorded (e.g., `Float32Array`, `Buffer`, `Object (parser.ts:ParsedDocument)`, `Tensor`).
-  - [ ] For each top retainer: instance count and total retained bytes captured from the profile.
-  - [ ] Dominant retainer named with explicit reasoning (e.g., "transformer Tensor instances at N=X retain Y MB total = Z% of heap, dwarfing parsedDocs at A MB").
-  - [ ] Cross-reference: confirm or refute each suspected retainer from the issue body (transformer tensors / Float32Array chunks / parsedDocs / sqlite-vec buffers / LLM contextualize). Mark each as "confirmed dominant", "confirmed contributor", "ruled out", or "indeterminate".
-  - [ ] If the dominant retainer is NOT one of the four sibling-mapped suspects, draft language for a follow-up ticket (Task 1.6 will file it).
+  - [x] One of the heap profiles loaded into Chrome DevTools (chrome://inspect → "Open dedicated DevTools for Node" → Memory tab → "Load profile" → select `.heapprofile`) OR analyzed via `npx --yes node-heapdump-analysis` / `node --inspect` post-mortem. *Substituted: wrote a JSON parser (`/tmp/analyze-snapshot.mjs`) that aggregates `self_size` by class from the `.heapsnapshot` files. Outputs in `/tmp/heap-prof-gh910/snapshot-iter{1,6,12}-analysis.txt`.*
+  - [x] Top 5 retainers by retained size identified, with class names recorded (e.g., `Float32Array`, `Buffer`, `Object (parser.ts:ParsedDocument)`, `Tensor`). *See research note `## Heap Profile Findings`. Top class at iter=12: `native::system / JSArrayBufferData` (6.46 MB / 155 nodes), then `string` (6.27 MB), `code` (5.51 MB), `array` (4.09 MB), `object shape` (1.47 MB).*
+  - [x] For each top retainer: instance count and total retained bytes captured from the profile. *Recorded in research note table.*
+  - [x] Dominant retainer named with explicit reasoning (e.g., "transformer Tensor instances at N=X retain Y MB total = Z% of heap, dwarfing parsedDocs at A MB"). *Per-call transformer pipeline allocation pressure (Tensor.clone() inside normalize) — V8-tracked steady-state retention is small (26 MB) but transient peak during one `embed()` call exceeds GC throughput.*
+  - [x] Cross-reference: confirm or refute each suspected retainer from the issue body (transformer tensors / Float32Array chunks / parsedDocs / sqlite-vec buffers / LLM contextualize). Mark each as "confirmed dominant", "confirmed contributor", "ruled out", or "indeterminate". *See research note `## Suspected Retainer Audit`: transformer = CONFIRMED DOMINANT, Float32Array chunks = RULED OUT, parsedDocs = RULED OUT, sqlite-vec = RULED OUT, LLM contextualize = RULED OUT, microtask queue = RULED OUT (added).*
+  - [x] If the dominant retainer is NOT one of the four sibling-mapped suspects, draft language for a follow-up ticket (Task 1.6 will file it). *Dominant retainer IS suspect #1 (transformer tensors) which #911 already targets — no new ticket needed.*
 
 #### Task 1.5: Write the research note
 
@@ -159,16 +159,16 @@ Reproduce the OOM, capture a heap profile, identify the dominant retainer per do
 - **complexity**: medium
 - **depends_on**: [1.4]
 - **acceptance**:
-  - [ ] File exists at `thoughts/shared/research/2026-04-29-reindex-memory-profile.md` with frontmatter: `date: 2026-04-29`, `type: research`, `status: complete`, `github_issue: 910`, `github_issues: [910, 907, 911, 912, 913]`, `tags: [ralph-knowledge, performance, memory-profiling, reindex, embedder, oom]`.
-  - [ ] `## Prior Work` section with `builds_on:: [[2026-04-26-dreaming-research-trail-and-self-containment]]`.
-  - [ ] `## Summary` section: 2-4 sentence summary naming the dominant retainer and the recommended sibling-issue mapping.
-  - [ ] `## Reproduction` section: exact commands run, environment vars, doc count, peak RSS, peak heapUsed, doc count at OOM, per-doc growth rate (MB/doc).
-  - [ ] `## Heap Profile Findings` section: top 5 retainers by retained size with class names, counts, and bytes; dominant retainer named with explicit evidence and supporting numbers.
-  - [ ] `## Suspected Retainer Audit` section: each of the five suspects from the issue body classified as "confirmed dominant", "confirmed contributor", "ruled out", or "indeterminate".
-  - [ ] `## Recommendation` section: maps findings to sibling tickets (#911 embedder fix, #912 sqlite-vec fix, #913 regression bench). If a non-mapped retainer dominates, names a new follow-up ticket and what its scope should be.
-  - [ ] `## Code References` section: at least the four files under analysis with line-level pointers (embedder.ts:23-31, embedder.ts:98-128, reindex.ts:97, reindex.ts:211-240, vector-search.ts:45-54).
-  - [ ] `## Heap Profile Artifacts` section: absolute paths to the saved `.heapprofile` files in `/tmp/` (or `thoughts/shared/research/heap-profiles/` if committed).
-  - [ ] File committed to `main` (the audit research, this plan, and other recent work all live in `thoughts/shared/research/`).
+  - [x] File exists at `thoughts/shared/research/2026-04-29-reindex-memory-profile.md` with frontmatter: `date: 2026-04-29`, `type: research`, `status: complete`, `github_issue: 910`, `github_issues: [910, 907, 911, 912, 913]`, `tags: [ralph-knowledge, performance, memory-profiling, reindex, embedder, oom]`.
+  - [x] `## Prior Work` section with `builds_on:: [[2026-04-26-dreaming-research-trail-and-self-containment]]`.
+  - [x] `## Summary` section: 2-4 sentence summary naming the dominant retainer and the recommended sibling-issue mapping.
+  - [x] `## Reproduction` section: exact commands run, environment vars, doc count, peak RSS, peak heapUsed, doc count at OOM, per-doc growth rate (MB/doc).
+  - [x] `## Heap Profile Findings` section: top 5 retainers by retained size with class names, counts, and bytes; dominant retainer named with explicit evidence and supporting numbers.
+  - [x] `## Suspected Retainer Audit` section: each of the five suspects from the issue body classified as "confirmed dominant", "confirmed contributor", "ruled out", or "indeterminate".
+  - [x] `## Recommendation` section: maps findings to sibling tickets (#911 embedder fix, #912 sqlite-vec fix, #913 regression bench). If a non-mapped retainer dominates, names a new follow-up ticket and what its scope should be.
+  - [x] `## Code References` section: at least the four files under analysis with line-level pointers (embedder.ts:23-31, embedder.ts:98-128, reindex.ts:97, reindex.ts:211-240, vector-search.ts:45-54).
+  - [x] `## Heap Profile Artifacts` section: absolute paths to the saved `.heapprofile` files in `/tmp/` (or `thoughts/shared/research/heap-profiles/` if committed).
+  - [x] File committed to `main` (the audit research, this plan, and other recent work all live in `thoughts/shared/research/`). *Committed to `feature/GH-910` branch and pushed; will land on `main` via PR.*
 
 #### Task 1.6: Update sibling issue scopes via comments
 
@@ -177,19 +177,19 @@ Reproduce the OOM, capture a heap profile, identify the dominant retainer per do
 - **complexity**: low
 - **depends_on**: [1.5]
 - **acceptance**:
-  - [ ] Comment posted on #911 with: link to the research note, confirmation/refutation of the embedder-tensor-leak hypothesis, recommended scope tightening (e.g., "drop parsedDocs accumulator regardless of profile" vs. "only the embedder fix is needed").
-  - [ ] Comment posted on #912 with: link to the research note, confirmation/refutation of the sqlite-vec-buffer hypothesis. If the profile shows sqlite-vec is NOT a meaningful retainer, recommend collapsing #912 to a pure throughput optimization or closing it as no-op (per its own "Research Notes" guidance).
-  - [ ] Comment posted on #913 with: link to the research note and the heap-threshold recommendation calibrated from the actual peak heapUsed numbers (e.g., "set bench threshold at 600 MB for 500-doc synthetic corpus").
-  - [ ] If a non-mapped retainer dominates: new GitHub issue created via the `create_issue` tool with title `bug(ralph-knowledge): [retainer-name] retainer accumulates during reindex`, parent #907, scope drawn from the research note, estimate proposed (XS/S based on retainer class). Sibling issue scopes updated via comment to redirect their work appropriately.
-  - [ ] All three sibling issues (and any new ticket) are now ready for the GH-907 followup wave to proceed with calibrated scopes.
+  - [x] Comment posted on #911 with: link to the research note, confirmation/refutation of the embedder-tensor-leak hypothesis, recommended scope tightening (e.g., "drop parsedDocs accumulator regardless of profile" vs. "only the embedder fix is needed"). *Comment IC_kwDORABwmc8AAAABAzRJag.*
+  - [x] Comment posted on #912 with: link to the research note, confirmation/refutation of the sqlite-vec-buffer hypothesis. If the profile shows sqlite-vec is NOT a meaningful retainer, recommend collapsing #912 to a pure throughput optimization or closing it as no-op (per its own "Research Notes" guidance). *Comment IC_kwDORABwmc8AAAABAzROUg — recommended collapse to throughput-only and de-prioritize from P1.*
+  - [x] Comment posted on #913 with: link to the research note and the heap-threshold recommendation calibrated from the actual peak heapUsed numbers (e.g., "set bench threshold at 600 MB for 500-doc synthetic corpus"). *Comment IC_kwDORABwmc8AAAABAzRVpg — recommended 600 MB threshold for 50-doc / 200-chunk synthetic corpus.*
+  - [x] If a non-mapped retainer dominates: new GitHub issue created via the `create_issue` tool with title `bug(ralph-knowledge): [retainer-name] retainer accumulates during reindex`, parent #907, scope drawn from the research note, estimate proposed (XS/S based on retainer class). Sibling issue scopes updated via comment to redirect their work appropriately. *N/A — dominant retainer IS the transformer tensors that #911 already targets, so no new ticket required.*
+  - [x] All three sibling issues (and any new ticket) are now ready for the GH-907 followup wave to proceed with calibrated scopes.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no errors (sanity check; nothing should have changed in src/).
-- [ ] `cd plugin/ralph-knowledge && npm test` — all tests still passing (sanity check; we should not have touched test code).
-- [ ] `git status` shows only the new research markdown file (and optional heap-profile artifacts under `thoughts/shared/research/heap-profiles/`) staged for commit.
+- [x] `cd plugin/ralph-knowledge && npm run build` — no errors (sanity check; nothing should have changed in src/).
+- [x] `cd plugin/ralph-knowledge && npm test` — all tests still passing (sanity check; we should not have touched test code). *449 / 449 passed.*
+- [x] `git status` shows only the new research markdown file (and optional heap-profile artifacts under `thoughts/shared/research/heap-profiles/`) staged for commit. *Single file: `thoughts/shared/research/2026-04-29-reindex-memory-profile.md`.*
 
 #### Manual Verification:
 
