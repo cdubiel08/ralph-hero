@@ -163,13 +163,13 @@ Lift the `AutoTokenizer.from_pretrained` + `AutoModelForSequenceClassification.f
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no errors (verifies `dist/reranker.js` is produced).
-- [ ] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/reranker.test.ts` — all new tests pass.
-- [ ] `cd plugin/ralph-knowledge && npm test` — full test suite passes (no regressions).
+- [x] `cd plugin/ralph-knowledge && npm run build` — no errors (verifies `dist/reranker.js` is produced).
+- [x] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/reranker.test.ts` — all new tests pass.
+- [x] `cd plugin/ralph-knowledge && npm test` — full test suite passes (no regressions).
 
 #### Manual Verification:
-- [ ] `dist/reranker.js` exists after build with `class Reranker` exported (spot-check the compiled output).
-- [ ] No new lines in `package.json` dependencies (Constraint 1: no new npm deps).
+- [x] `dist/reranker.js` exists after build with `class Reranker` exported (spot-check the compiled output).
+- [x] No new lines in `package.json` dependencies (Constraint 1: no new npm deps).
 
 **Creates for next phase**: `Reranker` class importable as `import { Reranker, type RerankerInput } from "./reranker.js"` in Phase 2's `hybrid-search.ts`.
 
