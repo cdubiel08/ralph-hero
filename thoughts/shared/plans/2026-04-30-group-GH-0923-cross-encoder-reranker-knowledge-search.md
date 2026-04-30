@@ -345,11 +345,11 @@ Re-run the 8-query golden eval against the now-live `knowledge_search` with `rer
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Each of the 8 queries from the baseline doc (lines 35-44) is invoked via the MCP tool with `rerank: true, return_diagnostics: true, limit: 10` against `~/.ralph-hero/knowledge.db`.
-  - [ ] For each query, capture: top-10 doc list (id + path), rank of expected doc (or "not in top-10"), `rerank_score` of the expected doc (when present in top-10).
-  - [ ] First call's wall-clock time is recorded as cold-start latency (model load + warmup + first batch).
-  - [ ] Subsequent 7 calls' wall-clock times are recorded as warm latency. Compute p50 and p95 across the 7 warm calls.
-  - [ ] Optionally repeat each query 3 times after warmup to reduce variance — record median per query.
+  - [x] Each of the 8 queries from the baseline doc (lines 35-44) is invoked via the MCP tool with `rerank: true, return_diagnostics: true, limit: 10` against `~/.ralph-hero/knowledge.db`.
+  - [x] For each query, capture: top-10 doc list (id + path), rank of expected doc (or "not in top-10"), `rerank_score` of the expected doc (when present in top-10).
+  - [x] First call's wall-clock time is recorded as cold-start latency (model load + warmup + first batch).
+  - [x] Subsequent 7 calls' wall-clock times are recorded as warm latency. Compute p50 and p95 across the 7 warm calls.
+  - [x] Optionally repeat each query 3 times after warmup to reduce variance — record median per query.
 
 #### Task 4.2: Write the new eval doc
 - **files**: `thoughts/shared/evals/2026-04-30-knowledge-search-with-rerank.md` (create), `thoughts/shared/evals/2026-04-29-knowledge-search-vs-ripgrep.md` (read)
@@ -357,14 +357,14 @@ Re-run the 8-query golden eval against the now-live `knowledge_search` with `rer
 - **complexity**: medium
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] New file at `thoughts/shared/evals/2026-04-30-knowledge-search-with-rerank.md` (or run-date if implementation slips).
-  - [ ] Frontmatter mirrors the baseline doc: `date`, `status: complete`, `type: eval`, `tags: [ralph-knowledge, retrieval-quality, evaluation, semantic-search, cross-encoder-reranker]`, `github_issues: [919, 923, 925, 926, 927]`.
-  - [ ] Methodology section states: same 8 queries, same DB, same corpus, only difference is `rerank: true`. Lists model id and dtype (`onnx-community/bge-reranker-v2-m3-ONNX`, `q8`).
-  - [ ] Results table: per-query rank-of-expected with three columns (Semantic+rerank, Semantic baseline, Lexical ripgrep ceiling).
-  - [ ] Aggregate metrics table: Hit@1, Hit@5, MRR for Semantic+rerank vs Semantic baseline vs Lexical ceiling.
-  - [ ] Latency table: cold-start ms (first call), warm p50 ms, warm p95 ms — per query and aggregate.
-  - [ ] Per-query observations subsection (mirror the baseline doc's lines 70-86 format) describing what changed for each of the 8 queries.
-  - [ ] Verdict section explicitly states: (a) did Hit@1 ≥ 50%? (b) did Q5 (reranker calibration) and Q7 (context handoff) hold or regress? (c) recommended next action (flip default? remain opt-in? roll back?).
+  - [x] New file at `thoughts/shared/evals/2026-04-30-knowledge-search-with-rerank.md` (or run-date if implementation slips).
+  - [x] Frontmatter mirrors the baseline doc: `date`, `status: complete`, `type: eval`, `tags: [ralph-knowledge, retrieval-quality, evaluation, semantic-search, cross-encoder-reranker]`, `github_issues: [919, 923, 925, 926, 927]`.
+  - [x] Methodology section states: same 8 queries, same DB, same corpus, only difference is `rerank: true`. Lists model id and dtype (`onnx-community/bge-reranker-v2-m3-ONNX`, `q8`).
+  - [x] Results table: per-query rank-of-expected with three columns (Semantic+rerank, Semantic baseline, Lexical ripgrep ceiling).
+  - [x] Aggregate metrics table: Hit@1, Hit@5, MRR for Semantic+rerank vs Semantic baseline vs Lexical ceiling.
+  - [x] Latency table: cold-start ms (first call), warm p50 ms, warm p95 ms — per query and aggregate.
+  - [x] Per-query observations subsection (mirror the baseline doc's lines 70-86 format) describing what changed for each of the 8 queries.
+  - [x] Verdict section explicitly states: (a) did Hit@1 ≥ 50%? (b) did Q5 (reranker calibration) and Q7 (context handoff) hold or regress? (c) recommended next action (flip default? remain opt-in? roll back?).
 
 #### Task 4.3: Update parent #919 with the verdict
 - **files**: (no files — GitHub comment only)
@@ -374,20 +374,20 @@ Re-run the 8-query golden eval against the now-live `knowledge_search` with `rer
 - **acceptance**:
   - [ ] If Hit@1 ≥ 50% AND no regression on Q5/Q7: post a comment on #919 with the aggregate metric table, link to the new eval doc, and check off the "Hit@1 ≥ 50%", "Latency budget documented", and "No regression on Q5/Q7" boxes from the parent's acceptance criteria.
   - [ ] Also append a "Follow-up" section to the existing baseline doc (`evals/2026-04-29-knowledge-search-vs-ripgrep.md`) linking to the new eval doc.
-  - [ ] If criteria are NOT met: post a comment on #919 documenting the failure mode (which queries regressed), recommend whether to keep rerank opt-in, raise topN window, or close #919 as "tried, didn't help". Do NOT check off any acceptance boxes.
+  - [x] If criteria are NOT met: post a comment on #919 documenting the failure mode (which queries regressed), recommend whether to keep rerank opt-in, raise topN window, or close #919 as "tried, didn't help". Do NOT check off any acceptance boxes.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] New eval doc file exists at the expected path.
-- [ ] Doc frontmatter parses as valid YAML (caught by ralph-knowledge reindex if anything is malformed; can be visually verified).
+- [x] New eval doc file exists at the expected path.
+- [x] Doc frontmatter parses as valid YAML (caught by ralph-knowledge reindex if anything is malformed; can be visually verified).
 
 #### Manual Verification:
-- [ ] All 8 queries have a rank-of-expected entry (number or "✗").
-- [ ] Aggregate Hit@1, Hit@5, MRR are tabulated next to baseline + ripgrep.
-- [ ] Cold/warm latency split is captured.
-- [ ] Verdict section explicitly addresses #919's two criteria.
-- [ ] Parent #919 either has the boxes checked (if criteria met) OR has a comment explaining the failure mode.
+- [x] All 8 queries have a rank-of-expected entry (number or "✗").
+- [x] Aggregate Hit@1, Hit@5, MRR are tabulated next to baseline + ripgrep.
+- [x] Cold/warm latency split is captured.
+- [x] Verdict section explicitly addresses #919's two criteria.
+- [x] Parent #919 either has the boxes checked (if criteria met) OR has a comment explaining the failure mode.
 
 **Creates for next phase**: N/A — terminal phase. Outputs feed into a separate follow-up PR (out of scope for this group) that may flip the default to `rerank: true`.
 
