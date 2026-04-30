@@ -25,6 +25,27 @@ export interface SearchOptions {
    * Populates `ftsScore`, `vecDistance`, and `hitSources` per result.
    */
   diagnosticMode?: boolean;
+  /**
+   * Cross-encoder rerank (Phase 2, GH-925). When `true`, the post-RRF
+   * candidate set is rescored by a cross-encoder reranker (default
+   * BGE-Reranker-v2-m3-int8) before MMR / `slice(limit)`. Default `false`
+   * keeps the payload byte-identical to today.
+   *
+   * **Latency tradeoff**: cold-start incurs a 5-10s ONNX model load on the
+   * first call; warm calls add ~25-45ms per (query, doc) pair on M5 Pro per
+   * #901's bench. Opt-in until #927's eval re-run confirms no regression on
+   * paraphrase queries (parent #919 acceptance criteria).
+   *
+   * **Quality**: improves Hit@1 on specific-keyword queries by surfacing FTS
+   * candidates that RRF's `1/(60+rank)` averaging buries when the vector
+   * half doesn't also rank them highly (per the 2026-04-29 8-query golden
+   * eval baseline).
+   *
+   * When `rerank: true` AND `lambda < 1.0` are both set, rerank applies
+   * BEFORE MMR — see the splice-point comment in
+   * `HybridSearch.search()` for the ordering rationale.
+   */
+  rerank?: boolean;
 }
 
 export interface SearchResult {
@@ -64,6 +85,19 @@ export interface SearchResult {
    * vec-only hits less precise than fts+vec hits?).
    */
   hitSources?: Array<"fts" | "vec">;
+  /**
+   * Raw cross-encoder logit produced by the reranker (Phase 2, GH-925).
+   * Populated only when `SearchOptions.rerank === true` AND a `Reranker`
+   * was injected into `HybridSearch`. Higher = more relevant. The RRF
+   * `score` field is preserved separately so callers that sort/filter on
+   * `score` see stable values regardless of `rerank` on/off (Constraint 7
+   * in the GH-0923 group plan).
+   *
+   * `undefined` for docs that had no entry in the reranker's score map
+   * (e.g., the reranker dropped them, or rerank was disabled). Such docs
+   * keep their RRF position relative to the rerank window's tail.
+   */
+  rerankScore?: number;
 }
 
 export class FtsSearch {

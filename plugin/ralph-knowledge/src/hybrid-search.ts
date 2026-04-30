@@ -1,6 +1,7 @@
 import type { KnowledgeDB } from "./db.js";
 import type { FtsSearch, SearchOptions, SearchResult } from "./search.js";
 import type { VectorResult, VectorSearch } from "./vector-search.js";
+import { type Reranker, type RerankerInput, truncateForRerank } from "./reranker.js";
 
 export type EmbedFn = (text: string) => Promise<Float32Array>;
 
@@ -39,6 +40,16 @@ export class HybridSearch {
     private readonly fts: FtsSearch,
     private readonly vec: VectorSearch,
     private readonly embedFn: EmbedFn,
+    /**
+     * Optional cross-encoder reranker (Phase 2, GH-925). When provided AND
+     * `options.rerank === true`, the post-RRF top-N candidate set is rescored
+     * by the cross-encoder before MMR / `slice(limit)`. When omitted, the
+     * `rerank` option is silently ignored — defensive fallback for incremental
+     * rollouts where `index.ts` may register `HybridSearch` before the
+     * reranker is wired up. Tests inject a deterministic stub to avoid the
+     * ~580 MB ONNX model download.
+     */
+    private readonly reranker?: Reranker,
   ) {}
 
   /**
@@ -89,6 +100,7 @@ export class HybridSearch {
       memoryTier,
       lambda,
       diagnosticMode = false,
+      rerank = false,
     } = options;
 
     // Run FTS and vector search (FTS already applies memoryTier filter in SQL
@@ -274,6 +286,97 @@ export class HybridSearch {
         }
         r.hitSources = sources;
       }
+    }
+
+    // Cross-encoder rerank splice (Phase 2, GH-925; tuned post-#927 eval).
+    // Runs AFTER post-filters, chunk-meta enrichment, and diagnostic-mode
+    // population, but BEFORE the optional MMR pass. Decisions captured here:
+    //
+    // (a) **Score semantics** — `score` continues to mean "RRF score" so
+    //     callers that sort/filter on it stay stable across `rerank` on/off.
+    //     The cross-encoder logit is stamped onto the new `rerankScore` field
+    //     (mirrors the `ftsScore` / `vecDistance` diagnostic-field pattern).
+    //     This is Constraint 7 from the GH-0923 group plan.
+    //
+    // (b) **Score fusion (post-#927 tuning)** — the rerank-sorted order is a
+    //     WEIGHTED BLEND of normalized RRF score and sigmoid(logit), NOT a
+    //     pure replace. The 8-query golden eval (GH-927) showed pure-replace
+    //     dropped Hit@1 from 62.5% to 25% on this corpus because off-the-shelf
+    //     BGE-Reranker-v2-m3 systematically over-weights critique/review docs
+    //     vs the underlying plans/research they critique, and demotes correct
+    //     docs whose chunks lack the literal query terms. Blending preserves
+    //     the retriever's high ceiling while letting the reranker break ties
+    //     and refine close calls. RERANK_FUSION_ALPHA is the RRF weight; the
+    //     remainder is the sigmoid-of-logit weight. 0.5 = equal weight.
+    //
+    // (c) **Snippet-only input** — the reranker scores `snippet` alone, NOT
+    //     `${title}\n${snippet}`. Per #927, the title prefix amplifies the
+    //     critique-bias failure mode because critique titles (e.g.,
+    //     "GH-911-critique") engage the question vocabulary as densely as
+    //     the body. Dropping the title prefix lets the model judge on the
+    //     chunk content the retriever actually selected.
+    //
+    // (d) **Ordering rule** — when both `rerank: true` AND `lambda < 1.0` are
+    //     set, rerank applies BEFORE MMR. MMR receives the blend-sorted
+    //     `filtered` array. Rationale: rerank has already determined "most
+    //     relevant"; MMR adds diversity over that relevance order. MMR's
+    //     relevance term still uses the RRF `score` field (NOT `rerankScore`)
+    //     so the diversity / relevance trade-off math stays unchanged from
+    //     the pure-RRF path — Phase 1 (GH-902) calibration carried over.
+    //
+    // (e) **Fallback for missing ids** — if the reranker's score map omits a
+    //     doc id, that doc keeps `rerankScore = undefined` and falls back to
+    //     pure RRF placement via `sigmoid(0) = 0.5` neutral in the blend.
+    //     Docs beyond the rerank window (top-N) keep their RRF position.
+    //
+    // (f) **Defensive guard** — if `rerank: true` but no `Reranker` was
+    //     injected at construction time, the splice is a no-op and the RRF
+    //     order is returned. Lets `index.ts` adopt the option incrementally.
+    if (rerank && this.reranker && filtered.length > 0) {
+      // Rerank window: at least 50, scale to 5x the requested limit, cap at
+      // the candidate set size. Larger windows trade latency for recall.
+      const topN = Math.min(filtered.length, Math.max(50, limit * 5));
+      const rerankSet = filtered.slice(0, topN);
+      const tail = filtered.slice(topN);
+
+      // Snippet-only input — see decision (c) above. Title prefix dropped
+      // because it pumps critique-doc scores per the #927 eval analysis.
+      const inputs: RerankerInput[] = rerankSet.map((r) => ({
+        id: r.id,
+        text: truncateForRerank(r.snippet),
+      }));
+      const scoreMap = await this.reranker.score(query, inputs);
+
+      // Stamp the logit onto each candidate. Missing ids leave rerankScore
+      // undefined (see fallback note (e) above).
+      for (const r of rerankSet) {
+        const logit = scoreMap.get(r.id);
+        if (logit !== undefined) {
+          r.rerankScore = logit;
+        }
+      }
+
+      // Score fusion: blend max-normalized RRF score with sigmoid(logit).
+      // Both terms live in [0, 1], so a 0.5/0.5 weight gives equal voice.
+      // See decision (b) above for the eval-driven rationale.
+      const RERANK_FUSION_ALPHA = 0.5;
+      let maxRrf = 0;
+      for (const r of rerankSet) {
+        if (r.score > maxRrf) maxRrf = r.score;
+      }
+      const sigmoid = (x: number): number => 1 / (1 + Math.exp(-x));
+      const blendedScore = (r: SearchResult): number => {
+        const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
+        const normRerank =
+          r.rerankScore !== undefined ? sigmoid(r.rerankScore) : 0.5;
+        return RERANK_FUSION_ALPHA * normRrf + (1 - RERANK_FUSION_ALPHA) * normRerank;
+      };
+
+      // Re-sort the rerank window by blended score descending.
+      rerankSet.sort((a, b) => blendedScore(b) - blendedScore(a));
+
+      // Reassemble: blend-sorted top-N followed by the un-reranked tail.
+      filtered = [...rerankSet, ...tail];
     }
 
     // MMR diversity rerank (Phase 1, GH-902). Opt-in via `lambda` < 1.0.

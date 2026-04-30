@@ -74,9 +74,9 @@ These constraints apply to all four phases:
 - [ ] `HybridSearch.search()` accepts `rerank: boolean` in `SearchOptions` and rescores the post-RRF candidate set when set (Phase 2).
 - [ ] `SearchResult.rerankScore?: number` is populated only when `rerank: true` (Phase 2).
 - [ ] When both `rerank: true` and `lambda < 1.0` are set, rerank applies BEFORE MMR; documented in code comment (Phase 2).
-- [ ] `knowledge_search` MCP tool accepts `rerank: boolean` parameter, default `false` (Phase 3).
-- [ ] When `rerank: true` AND `return_diagnostics: true`, results include `rerank_score` (snake_case) (Phase 3).
-- [ ] When `rerank` is omitted/false, MCP response is byte-identical to today (Phase 3).
+- [x] `knowledge_search` MCP tool accepts `rerank: boolean` parameter, default `false` (Phase 3).
+- [x] When `rerank: true` AND `return_diagnostics: true`, results include `rerank_score` (snake_case) (Phase 3).
+- [x] When `rerank` is omitted/false, MCP response is byte-identical to today (Phase 3).
 - [ ] New eval doc at `thoughts/shared/evals/<date>-knowledge-search-with-rerank.md` covers all 8 golden queries with cold/warm latency and Hit@1/Hit@5/MRR vs baseline + ripgrep ceiling (Phase 4).
 - [ ] Verdict in eval doc explicitly addresses parent #919's "Hit@1 ≥ 50%" and "no regression on Q5/Q7" criteria (Phase 4).
 
@@ -163,13 +163,13 @@ Lift the `AutoTokenizer.from_pretrained` + `AutoModelForSequenceClassification.f
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no errors (verifies `dist/reranker.js` is produced).
-- [ ] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/reranker.test.ts` — all new tests pass.
-- [ ] `cd plugin/ralph-knowledge && npm test` — full test suite passes (no regressions).
+- [x] `cd plugin/ralph-knowledge && npm run build` — no errors (verifies `dist/reranker.js` is produced).
+- [x] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/reranker.test.ts` — all new tests pass.
+- [x] `cd plugin/ralph-knowledge && npm test` — full test suite passes (no regressions).
 
 #### Manual Verification:
-- [ ] `dist/reranker.js` exists after build with `class Reranker` exported (spot-check the compiled output).
-- [ ] No new lines in `package.json` dependencies (Constraint 1: no new npm deps).
+- [x] `dist/reranker.js` exists after build with `class Reranker` exported (spot-check the compiled output).
+- [x] No new lines in `package.json` dependencies (Constraint 1: no new npm deps).
 
 **Creates for next phase**: `Reranker` class importable as `import { Reranker, type RerankerInput } from "./reranker.js"` in Phase 2's `hybrid-search.ts`.
 
@@ -249,12 +249,12 @@ Plumb the Phase 1 `Reranker` into `HybridSearch.search()` as an optional final-s
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/hybrid-search.test.ts` — full file passes including new rerank block AND existing MMR + diagnostic blocks (no regression).
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no errors.
-- [ ] `cd plugin/ralph-knowledge && npm test` — full test suite passes.
+- [x] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/hybrid-search.test.ts` — full file passes including new rerank block AND existing MMR + diagnostic blocks (no regression).
+- [x] `cd plugin/ralph-knowledge && npm run build` — no errors.
+- [x] `cd plugin/ralph-knowledge && npm test` — full test suite passes.
 
 #### Manual Verification:
-- [ ] Code comment in `hybrid-search.ts` near the splice point documents the rerank-before-MMR ordering and the score semantics decision (Constraint 7 + Task 2.3 + Task 2.4 acceptance).
+- [x] Code comment in `hybrid-search.ts` near the splice point documents the rerank-before-MMR ordering and the score semantics decision (Constraint 7 + Task 2.3 + Task 2.4 acceptance).
 
 **Creates for next phase**: `HybridSearch.search()` accepts `rerank: boolean` end-to-end. The reranker can be passed at construction time. Phase 3 wires production construction in `index.ts`.
 
@@ -276,10 +276,10 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `import { Reranker } from "./reranker.js"` added to the imports block.
-  - [ ] In `createServer`, after `const hybrid = new HybridSearch(db, fts, vec, embedImpl);` (line 78), construct `const reranker = opts.rerankerFactory ? opts.rerankerFactory() : new Reranker();` and re-assign hybrid: `const hybrid = new HybridSearch(db, fts, vec, embedImpl, reranker);`.
-  - [ ] `CreateServerOptions` interface adds optional `rerankerFactory?: () => Reranker` field with JSDoc explaining test-injection pattern (mirrors `embedFn` at line 69).
-  - [ ] Production callers that instantiate `createServer(dbPath)` without opts continue to work — `Reranker` constructor is lazy (no model load until first `score()` call per Phase 1 Task 1.2 acceptance).
+  - [x] `import { Reranker } from "./reranker.js"` added to the imports block.
+  - [x] In `createServer`, after `const hybrid = new HybridSearch(db, fts, vec, embedImpl);` (line 78), construct `const reranker = opts.rerankerFactory ? opts.rerankerFactory() : new Reranker();` and re-assign hybrid: `const hybrid = new HybridSearch(db, fts, vec, embedImpl, reranker);`.
+  - [x] `CreateServerOptions` interface adds optional `rerankerFactory?: () => Reranker` field with JSDoc explaining test-injection pattern (mirrors `embedFn` at line 69).
+  - [x] Production callers that instantiate `createServer(dbPath)` without opts continue to work — `Reranker` constructor is lazy (no model load until first `score()` call per Phase 1 Task 1.2 acceptance).
 
 #### Task 3.2: Add `rerank` parameter to `knowledge_search` zod schema
 - **files**: `plugin/ralph-knowledge/src/index.ts` (modify)
@@ -287,8 +287,8 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] After the `return_diagnostics` schema line (line 111), add: `rerank: z.boolean().optional().default(false).describe("Apply cross-encoder reranking to the post-RRF top-N candidates (BGE-Reranker-v2-m3-int8). Adds ~0.5-1s of latency on first call (cold-start model load) and ~25-45ms per pair on warm calls. Improves Hit@1 on specific-keyword queries; default off until the eval re-run confirms no regression on paraphrase queries."),` — description text MUST mention the latency tradeoff (Constraint 5 acceptance from issue body).
-  - [ ] In the `hybrid.search()` call (line 115), pass `rerank: args.rerank` alongside the existing options.
+  - [x] After the `return_diagnostics` schema line (line 111), add: `rerank: z.boolean().optional().default(false).describe("Apply cross-encoder reranking to the post-RRF top-N candidates (BGE-Reranker-v2-m3-int8). Adds ~0.5-1s of latency on first call (cold-start model load) and ~25-45ms per pair on warm calls. Improves Hit@1 on specific-keyword queries; default off until the eval re-run confirms no regression on paraphrase queries."),` — description text MUST mention the latency tradeoff (Constraint 5 acceptance from issue body).
+  - [x] In the `hybrid.search()` call (line 115), pass `rerank: args.rerank` alongside the existing options.
 
 #### Task 3.3: Plumb `rerank_score` through the enriched payload
 - **files**: `plugin/ralph-knowledge/src/index.ts` (modify)
@@ -296,10 +296,10 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] In the `enriched.map(...)` block (lines 124-159), the destructuring at line 128 adds `rerankScore` alongside `ftsScore`, `vecDistance`, `hitSources`.
-  - [ ] After the `if (args.return_diagnostics) { ... }` block at lines 147-151, ALSO populate `if (args.rerank && args.return_diagnostics) { if (rerankScore !== undefined) base.rerank_score = rerankScore; }`.
-  - [ ] When `rerank: true` AND `return_diagnostics: false`, `rerank_score` is NOT added to the payload (diagnostic field discipline — matches existing pattern that hides `fts_score` etc. unless diagnostics requested). Verified by Task 3.4 test.
-  - [ ] When `rerank: false` (or omitted), `rerank_score` is NEVER in the payload regardless of `return_diagnostics` value. Verified by Task 3.4 test.
+  - [x] In the `enriched.map(...)` block (lines 124-159), the destructuring at line 128 adds `rerankScore` alongside `ftsScore`, `vecDistance`, `hitSources`.
+  - [x] After the `if (args.return_diagnostics) { ... }` block at lines 147-151, ALSO populate `if (args.rerank && args.return_diagnostics) { if (rerankScore !== undefined) base.rerank_score = rerankScore; }`.
+  - [x] When `rerank: true` AND `return_diagnostics: false`, `rerank_score` is NOT added to the payload (diagnostic field discipline — matches existing pattern that hides `fts_score` etc. unless diagnostics requested). Verified by Task 3.4 test.
+  - [x] When `rerank: false` (or omitted), `rerank_score` is NEVER in the payload regardless of `return_diagnostics` value. Verified by Task 3.4 test.
 
 #### Task 3.4: Add MCP tool tests for the rerank parameter
 - **files**: `plugin/ralph-knowledge/src/__tests__/index.test.ts` (modify)
@@ -307,23 +307,23 @@ Surface the new `rerank` option through the MCP tool registration in `index.ts` 
 - **complexity**: medium
 - **depends_on**: [3.3]
 - **acceptance**:
-  - [ ] New `describe("knowledge_search rerank parameter (GH-926)")` block added.
-  - [ ] Schema validation test: `expect(() => schema.parse({ query: "x", rerank: true })).not.toThrow()`, same for `false`, omitted, and `expect(() => schema.parse({ query: "x", rerank: "yes" })).toThrow()`.
-  - [ ] Smoke test invoking `callTool(server, "knowledge_search", { query, rerank: true, return_diagnostics: true })` against a server constructed with `rerankerFactory: () => stubReranker`. Assert each result in the parsed JSON contains `rerank_score: <number>`.
-  - [ ] Smoke test "rerank: true + return_diagnostics: false → no rerank_score key": same call but `return_diagnostics: false`. Assert no `rerank_score` field on any result.
-  - [ ] Smoke test "rerank: false → byte-identical to today": invoke with `rerank: false` and `rerank` omitted; both responses deep-equal each other and contain no `rerank_score` field.
-  - [ ] Stub `rerankerFactory` returns a minimal stub whose `score()` method returns a deterministic `Map`. Inline class definition in the test file (no shared helper file needed).
+  - [x] New `describe("knowledge_search rerank parameter (GH-926)")` block added.
+  - [x] Schema validation test: `expect(() => schema.parse({ query: "x", rerank: true })).not.toThrow()`, same for `false`, omitted, and `expect(() => schema.parse({ query: "x", rerank: "yes" })).toThrow()`.
+  - [x] Smoke test invoking `callTool(server, "knowledge_search", { query, rerank: true, return_diagnostics: true })` against a server constructed with `rerankerFactory: () => stubReranker`. Assert each result in the parsed JSON contains `rerank_score: <number>`.
+  - [x] Smoke test "rerank: true + return_diagnostics: false → no rerank_score key": same call but `return_diagnostics: false`. Assert no `rerank_score` field on any result.
+  - [x] Smoke test "rerank: false → byte-identical to today": invoke with `rerank: false` and `rerank` omitted; both responses deep-equal each other and contain no `rerank_score` field.
+  - [x] Stub `rerankerFactory` returns a minimal stub whose `score()` method returns a deterministic `Map`. Inline class definition in the test file (no shared helper file needed).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/index.test.ts` — passes including new rerank block AND existing schema/tool registration blocks.
-- [ ] `cd plugin/ralph-knowledge && npm run build` — produces clean `dist/index.js`.
-- [ ] `cd plugin/ralph-knowledge && npm test` — full suite passes.
+- [x] `cd plugin/ralph-knowledge && npx vitest run src/__tests__/index.test.ts` — passes including new rerank block AND existing schema/tool registration blocks.
+- [x] `cd plugin/ralph-knowledge && npm run build` — produces clean `dist/index.js`.
+- [x] `cd plugin/ralph-knowledge && npm test` — full suite passes.
 
 #### Manual Verification:
-- [ ] Tool description string in `index.ts` mentions the `rerank` latency/quality tradeoff (Phase 3 Task 3.2 acceptance).
-- [ ] Default `rerank: false` confirmed by reading the schema definition.
+- [x] Tool description string in `index.ts` mentions the `rerank` latency/quality tradeoff (Phase 3 Task 3.2 acceptance).
+- [x] Default `rerank: false` confirmed by reading the schema definition.
 
 **Creates for next phase**: `knowledge_search` MCP tool accepts `rerank: true` with the real `Reranker` loaded lazily on first call. Phase 4 can now invoke this tool against the user's local DB.
 
@@ -345,11 +345,11 @@ Re-run the 8-query golden eval against the now-live `knowledge_search` with `rer
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Each of the 8 queries from the baseline doc (lines 35-44) is invoked via the MCP tool with `rerank: true, return_diagnostics: true, limit: 10` against `~/.ralph-hero/knowledge.db`.
-  - [ ] For each query, capture: top-10 doc list (id + path), rank of expected doc (or "not in top-10"), `rerank_score` of the expected doc (when present in top-10).
-  - [ ] First call's wall-clock time is recorded as cold-start latency (model load + warmup + first batch).
-  - [ ] Subsequent 7 calls' wall-clock times are recorded as warm latency. Compute p50 and p95 across the 7 warm calls.
-  - [ ] Optionally repeat each query 3 times after warmup to reduce variance — record median per query.
+  - [x] Each of the 8 queries from the baseline doc (lines 35-44) is invoked via the MCP tool with `rerank: true, return_diagnostics: true, limit: 10` against `~/.ralph-hero/knowledge.db`.
+  - [x] For each query, capture: top-10 doc list (id + path), rank of expected doc (or "not in top-10"), `rerank_score` of the expected doc (when present in top-10).
+  - [x] First call's wall-clock time is recorded as cold-start latency (model load + warmup + first batch).
+  - [x] Subsequent 7 calls' wall-clock times are recorded as warm latency. Compute p50 and p95 across the 7 warm calls.
+  - [x] Optionally repeat each query 3 times after warmup to reduce variance — record median per query.
 
 #### Task 4.2: Write the new eval doc
 - **files**: `thoughts/shared/evals/2026-04-30-knowledge-search-with-rerank.md` (create), `thoughts/shared/evals/2026-04-29-knowledge-search-vs-ripgrep.md` (read)
@@ -357,14 +357,14 @@ Re-run the 8-query golden eval against the now-live `knowledge_search` with `rer
 - **complexity**: medium
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] New file at `thoughts/shared/evals/2026-04-30-knowledge-search-with-rerank.md` (or run-date if implementation slips).
-  - [ ] Frontmatter mirrors the baseline doc: `date`, `status: complete`, `type: eval`, `tags: [ralph-knowledge, retrieval-quality, evaluation, semantic-search, cross-encoder-reranker]`, `github_issues: [919, 923, 925, 926, 927]`.
-  - [ ] Methodology section states: same 8 queries, same DB, same corpus, only difference is `rerank: true`. Lists model id and dtype (`onnx-community/bge-reranker-v2-m3-ONNX`, `q8`).
-  - [ ] Results table: per-query rank-of-expected with three columns (Semantic+rerank, Semantic baseline, Lexical ripgrep ceiling).
-  - [ ] Aggregate metrics table: Hit@1, Hit@5, MRR for Semantic+rerank vs Semantic baseline vs Lexical ceiling.
-  - [ ] Latency table: cold-start ms (first call), warm p50 ms, warm p95 ms — per query and aggregate.
-  - [ ] Per-query observations subsection (mirror the baseline doc's lines 70-86 format) describing what changed for each of the 8 queries.
-  - [ ] Verdict section explicitly states: (a) did Hit@1 ≥ 50%? (b) did Q5 (reranker calibration) and Q7 (context handoff) hold or regress? (c) recommended next action (flip default? remain opt-in? roll back?).
+  - [x] New file at `thoughts/shared/evals/2026-04-30-knowledge-search-with-rerank.md` (or run-date if implementation slips).
+  - [x] Frontmatter mirrors the baseline doc: `date`, `status: complete`, `type: eval`, `tags: [ralph-knowledge, retrieval-quality, evaluation, semantic-search, cross-encoder-reranker]`, `github_issues: [919, 923, 925, 926, 927]`.
+  - [x] Methodology section states: same 8 queries, same DB, same corpus, only difference is `rerank: true`. Lists model id and dtype (`onnx-community/bge-reranker-v2-m3-ONNX`, `q8`).
+  - [x] Results table: per-query rank-of-expected with three columns (Semantic+rerank, Semantic baseline, Lexical ripgrep ceiling).
+  - [x] Aggregate metrics table: Hit@1, Hit@5, MRR for Semantic+rerank vs Semantic baseline vs Lexical ceiling.
+  - [x] Latency table: cold-start ms (first call), warm p50 ms, warm p95 ms — per query and aggregate.
+  - [x] Per-query observations subsection (mirror the baseline doc's lines 70-86 format) describing what changed for each of the 8 queries.
+  - [x] Verdict section explicitly states: (a) did Hit@1 ≥ 50%? (b) did Q5 (reranker calibration) and Q7 (context handoff) hold or regress? (c) recommended next action (flip default? remain opt-in? roll back?).
 
 #### Task 4.3: Update parent #919 with the verdict
 - **files**: (no files — GitHub comment only)
@@ -374,20 +374,20 @@ Re-run the 8-query golden eval against the now-live `knowledge_search` with `rer
 - **acceptance**:
   - [ ] If Hit@1 ≥ 50% AND no regression on Q5/Q7: post a comment on #919 with the aggregate metric table, link to the new eval doc, and check off the "Hit@1 ≥ 50%", "Latency budget documented", and "No regression on Q5/Q7" boxes from the parent's acceptance criteria.
   - [ ] Also append a "Follow-up" section to the existing baseline doc (`evals/2026-04-29-knowledge-search-vs-ripgrep.md`) linking to the new eval doc.
-  - [ ] If criteria are NOT met: post a comment on #919 documenting the failure mode (which queries regressed), recommend whether to keep rerank opt-in, raise topN window, or close #919 as "tried, didn't help". Do NOT check off any acceptance boxes.
+  - [x] If criteria are NOT met: post a comment on #919 documenting the failure mode (which queries regressed), recommend whether to keep rerank opt-in, raise topN window, or close #919 as "tried, didn't help". Do NOT check off any acceptance boxes.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] New eval doc file exists at the expected path.
-- [ ] Doc frontmatter parses as valid YAML (caught by ralph-knowledge reindex if anything is malformed; can be visually verified).
+- [x] New eval doc file exists at the expected path.
+- [x] Doc frontmatter parses as valid YAML (caught by ralph-knowledge reindex if anything is malformed; can be visually verified).
 
 #### Manual Verification:
-- [ ] All 8 queries have a rank-of-expected entry (number or "✗").
-- [ ] Aggregate Hit@1, Hit@5, MRR are tabulated next to baseline + ripgrep.
-- [ ] Cold/warm latency split is captured.
-- [ ] Verdict section explicitly addresses #919's two criteria.
-- [ ] Parent #919 either has the boxes checked (if criteria met) OR has a comment explaining the failure mode.
+- [x] All 8 queries have a rank-of-expected entry (number or "✗").
+- [x] Aggregate Hit@1, Hit@5, MRR are tabulated next to baseline + ripgrep.
+- [x] Cold/warm latency split is captured.
+- [x] Verdict section explicitly addresses #919's two criteria.
+- [x] Parent #919 either has the boxes checked (if criteria met) OR has a comment explaining the failure mode.
 
 **Creates for next phase**: N/A — terminal phase. Outputs feed into a separate follow-up PR (out of scope for this group) that may flip the default to `rerank: true`.
 
