@@ -160,12 +160,12 @@ Add `output.dispose()` after copying `output.data` into the returned `Float32Arr
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (from `plugin/ralph-knowledge/`) — no TypeScript errors
-- [ ] `npm test` (from `plugin/ralph-knowledge/`) — all tests pass, including new disposal test
-- [ ] `npx vitest run src/__tests__/embedder.test.ts` — embedder suite green
+- [x] `npm run build` (from `plugin/ralph-knowledge/`) — no TypeScript errors
+- [x] `npm test` (from `plugin/ralph-knowledge/`) — all tests pass, including new disposal test
+- [x] `npx vitest run src/__tests__/embedder.test.ts` — embedder suite green
 
 #### Manual Verification:
-- [ ] Diff inspection: only `embed()` body and one mock object are touched. No changes to `getEmbedder()`, `embedDocument()`, or `prepareTextForEmbedding()`.
+- [x] Diff inspection: only `embed()` body and one mock object are touched. No changes to `getEmbedder()`, `embedDocument()`, or `prepareTextForEmbedding()`.
 
 **Creates for next phase**: A guarded `output.dispose()` call in `embed()` that releases native ONNX buffers eagerly, eliminating the per-call retention pressure that currently OOMs the corpus reindex at ~150 chunks.
 
