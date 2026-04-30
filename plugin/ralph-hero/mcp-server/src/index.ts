@@ -22,6 +22,7 @@ import { registerProjectTools } from "./tools/project-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
+import { registerDirectionsTools } from "./tools/directions-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
@@ -458,6 +459,9 @@ async function main(): Promise<void> {
 
   // Dashboard and pipeline visualization tools
   registerDashboardTools(server, client, fieldCache);
+
+  // Hello directions tool — deterministic ranked action items
+  registerDirectionsTools(server, client, fieldCache);
 
   // Phase 5: Batch operations
   registerBatchTools(server, client, fieldCache);
