@@ -345,16 +345,16 @@ Replace the `pipeline_dashboard` call with `ralph_hero__hello_directions` in the
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Step 1 (`SKILL.md:27-46`) restructured into two waves:
+  - [x] Step 1 (`SKILL.md:27-46`) restructured into two waves:
     - **Wave A (parallel)**: Memory read + `gh pr list --state open --json number,title,url,isDraft,reviewDecision,headRefName,createdAt --limit 10 2>/dev/null || echo '[]'`.
     - **Wave B (after Wave A)**: Call `ralph_hero__hello_directions` with `limit: 3` and parsed PR array as `openPRs`.
-  - [ ] Fallback rules documented:
+  - [x] Fallback rules documented:
     - Memory read fails → continue without context.
     - `gh pr list` fails → call `hello_directions` with `openPRs: []`.
     - `hello_directions` fails → report error and stop.
-  - [ ] `grep -q "Wave A" plugin/ralph-hero/skills/hello/SKILL.md`
-  - [ ] `grep -q "Wave B" plugin/ralph-hero/skills/hello/SKILL.md`
-  - [ ] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/skills/hello/SKILL.md`
+  - [x] `grep -q "Wave A" plugin/ralph-hero/skills/hello/SKILL.md`
+  - [x] `grep -q "Wave B" plugin/ralph-hero/skills/hello/SKILL.md`
+  - [x] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/skills/hello/SKILL.md`
 
 #### Task 3.2: Update Step 2 orient and Step 3 directions
 - **files**: `plugin/ralph-hero/skills/hello/SKILL.md` (modify)
@@ -362,9 +362,9 @@ Replace the `pipeline_dashboard` call with `ralph_hero__hello_directions` in the
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] Step 2 references `totalCandidates` instead of `health.warnings[]` and `phases[]` for the "what changed" line. Tone rules unchanged.
-  - [ ] Step 3 instructs: "Render each entry from `directions[]` as a 2-3-sentence paragraph using its `reason` field. Do not re-order, do not skip entries, do not invent new ones. If `directions[]` is empty, end with *'Nothing urgent jumping out — what are you thinking about today?'* and stop."
-  - [ ] No references to `health.warnings[]` or `phases[]` remain in the skill body: `! grep -q "health.warnings" plugin/ralph-hero/skills/hello/SKILL.md` and `! grep -qE "phases\[\]" plugin/ralph-hero/skills/hello/SKILL.md`.
+  - [x] Step 2 references `totalCandidates` instead of `health.warnings[]` and `phases[]` for the "what changed" line. Tone rules unchanged.
+  - [x] Step 3 instructs: "Render each entry from `directions[]` as a 2-3-sentence paragraph using its `reason` field. Do not re-order, do not skip entries, do not invent new ones. If `directions[]` is empty, end with *'Nothing urgent jumping out — what are you thinking about today?'* and stop."
+  - [x] No references to `health.warnings[]` or `phases[]` remain in the skill body: `! grep -q "health.warnings" plugin/ralph-hero/skills/hello/SKILL.md` and `! grep -qE "phases\[\]" plugin/ralph-hero/skills/hello/SKILL.md`.
 
 #### Task 3.3: Update Step 4 picker (1:1 from `directions[]`)
 - **files**: `plugin/ralph-hero/skills/hello/SKILL.md` (modify)
@@ -372,8 +372,8 @@ Replace the `pipeline_dashboard` call with `ralph_hero__hello_directions` in the
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] Step 4 picker maps `directions[]` 1:1 to `AskUserQuestion` options. Each option's `label` is `[Action] [Target]` (e.g., "Review plan #55", "Merge PR #640", "Continue tree #42") and `description` is `direction.reason`.
-  - [ ] Empty-directions case handled: when `directions[]` is empty, Step 4 is **skipped entirely** — Step 3 already exits with the *"Nothing urgent jumping out…"* line and stops. No `AskUserQuestion`, no placeholder.
+  - [x] Step 4 picker maps `directions[]` 1:1 to `AskUserQuestion` options. Each option's `label` is `[Action] [Target]` (e.g., "Review plan #55", "Merge PR #640", "Continue tree #42") and `description` is `direction.reason`.
+  - [x] Empty-directions case handled: when `directions[]` is empty, Step 4 is **skipped entirely** — Step 3 already exits with the *"Nothing urgent jumping out…"* line and stops. No `AskUserQuestion`, no placeholder.
 
 #### Task 3.4: Update Step 5 dispatch table to use `direction.kind`
 - **files**: `plugin/ralph-hero/skills/hello/SKILL.md` (modify)
@@ -381,8 +381,8 @@ Replace the `pipeline_dashboard` call with `ralph_hero__hello_directions` in the
 - **complexity**: low
 - **depends_on**: [3.3]
 - **acceptance**:
-  - [ ] Step 5 dispatch table (currently `SKILL.md:118-129`) references `direction.kind` instead of "Direction Type" prose.
-  - [ ] Mapping per parent plan:
+  - [x] Step 5 dispatch table (currently `SKILL.md:118-129`) references `direction.kind` instead of "Direction Type" prose.
+  - [x] Mapping per parent plan:
     | `kind` | Agent |
     |---|---|
     | `issue` (workflowState=`Plan in Review`) | `review-agent` |
@@ -398,9 +398,9 @@ Replace the `pipeline_dashboard` call with `ralph_hero__hello_directions` in the
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] In `allowed-tools` frontmatter, replace `mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard` with `mcp__plugin_ralph-hero_ralph-github__ralph_hero__hello_directions`.
-  - [ ] `grep -q "mcp__plugin_ralph-hero_ralph-github__ralph_hero__hello_directions" plugin/ralph-hero/skills/hello/SKILL.md`
-  - [ ] `! grep -q "mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard" plugin/ralph-hero/skills/hello/SKILL.md`
+  - [x] In `allowed-tools` frontmatter, replace `mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard` with `mcp__plugin_ralph-hero_ralph-github__ralph_hero__hello_directions`.
+  - [x] `grep -q "mcp__plugin_ralph-hero_ralph-github__ralph_hero__hello_directions" plugin/ralph-hero/skills/hello/SKILL.md`
+  - [x] `! grep -q "mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard" plugin/ralph-hero/skills/hello/SKILL.md`
 
 #### Task 3.6: Update Constraints section wording
 - **files**: `plugin/ralph-hero/skills/hello/SKILL.md` (modify)
@@ -408,7 +408,7 @@ Replace the `pipeline_dashboard` call with `ralph_hero__hello_directions` in the
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] Constraints line updated: "Do not re-fetch data after the initial Wave A + Wave B fetch in Step 1." (was "after the initial parallel fetch").
+  - [x] Constraints line updated: "Do not re-fetch data after the initial Wave A + Wave B fetch in Step 1." (was "after the initial parallel fetch").
 
 #### Task 3.7: Verify GH-0838 output-budget regression guard
 - **files**: `plugin/ralph-hero/skills/hello/SKILL.md` (read)
@@ -416,19 +416,19 @@ Replace the `pipeline_dashboard` call with `ralph_hero__hello_directions` in the
 - **complexity**: low
 - **depends_on**: [3.1, 3.2, 3.3, 3.4, 3.5, 3.6]
 - **acceptance**:
-  - [ ] `grep -q "Output budget (hard limit)" plugin/ralph-hero/skills/hello/SKILL.md` — preserved.
-  - [ ] `grep -q "Do not relay the dispatched agent" plugin/ralph-hero/skills/hello/SKILL.md` — preserved.
-  - [ ] Skill file still parses as valid Markdown with intact YAML frontmatter (e.g., `head -20` shows valid frontmatter block).
+  - [x] `grep -q "Output budget (hard limit)" plugin/ralph-hero/skills/hello/SKILL.md` — preserved.
+  - [x] `grep -q "Do not relay the dispatched agent" plugin/ralph-hero/skills/hello/SKILL.md` — preserved.
+  - [x] Skill file still parses as valid Markdown with intact YAML frontmatter (e.g., `head -20` shows valid frontmatter block).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/skills/hello/SKILL.md`
-- [ ] `! grep -q "mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard" plugin/ralph-hero/skills/hello/SKILL.md`
-- [ ] `grep -q "Wave A" plugin/ralph-hero/skills/hello/SKILL.md` and `grep -q "Wave B" plugin/ralph-hero/skills/hello/SKILL.md`
-- [ ] `grep -q "Output budget (hard limit)" plugin/ralph-hero/skills/hello/SKILL.md && grep -q "Do not relay the dispatched agent" plugin/ralph-hero/skills/hello/SKILL.md`
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (regression guard)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (regression guard)
+- [x] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/skills/hello/SKILL.md`
+- [x] `! grep -q "mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard" plugin/ralph-hero/skills/hello/SKILL.md`
+- [x] `grep -q "Wave A" plugin/ralph-hero/skills/hello/SKILL.md` and `grep -q "Wave B" plugin/ralph-hero/skills/hello/SKILL.md`
+- [x] `grep -q "Output budget (hard limit)" plugin/ralph-hero/skills/hello/SKILL.md && grep -q "Do not relay the dispatched agent" plugin/ralph-hero/skills/hello/SKILL.md`
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (regression guard)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (regression guard)
 
 #### Manual Verification:
 - [ ] `/ralph-hero:hello` in a fresh session produces a ≤40-line briefing.
