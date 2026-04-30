@@ -689,6 +689,108 @@ describe("schema v3: memory_tier column", () => {
   });
 });
 
+describe("upsertDocument memory_tier persistence", () => {
+  it("defaults to 'doc' when memoryTier is omitted from upsert input", () => {
+    db.upsertDocument({
+      id: "no-tier",
+      path: "p",
+      title: "t",
+      date: null,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "",
+    });
+    expect(db.getMemoryTier("no-tier")).toBe("doc");
+  });
+
+  it("persists memoryTier: 'raw' on insert", () => {
+    db.upsertDocument({
+      id: "raw-doc",
+      path: "p",
+      title: "t",
+      date: null,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "",
+      memoryTier: "raw",
+    });
+    expect(db.getMemoryTier("raw-doc")).toBe("raw");
+  });
+
+  it("persists memoryTier: 'reflection' on insert", () => {
+    db.upsertDocument({
+      id: "refl-doc",
+      path: "p",
+      title: "t",
+      date: null,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "",
+      memoryTier: "reflection",
+    });
+    expect(db.getMemoryTier("refl-doc")).toBe("reflection");
+  });
+
+  it("preserves existing 'raw' memory_tier on re-upsert without memoryTier (COALESCE)", () => {
+    db.upsertDocument({
+      id: "preserve",
+      path: "p",
+      title: "t",
+      date: null,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "first",
+      memoryTier: "raw",
+    });
+    expect(db.getMemoryTier("preserve")).toBe("raw");
+
+    // Re-upsert without memoryTier — COALESCE should keep the prior 'raw' value.
+    db.upsertDocument({
+      id: "preserve",
+      path: "p",
+      title: "t-updated",
+      date: null,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "second",
+    });
+    expect(db.getMemoryTier("preserve")).toBe("raw");
+  });
+
+  it("explicit memoryTier on re-upsert wins over the prior value", () => {
+    db.upsertDocument({
+      id: "promote",
+      path: "p",
+      title: "t",
+      date: null,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "",
+      memoryTier: "raw",
+    });
+    expect(db.getMemoryTier("promote")).toBe("raw");
+
+    db.upsertDocument({
+      id: "promote",
+      path: "p",
+      title: "t",
+      date: null,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "",
+      memoryTier: "reflection",
+    });
+    expect(db.getMemoryTier("promote")).toBe("reflection");
+  });
+});
+
 describe("schema v3: clearAll includes chunks", () => {
   it("deletes chunks along with documents", () => {
     db.upsertDocument({ id: "doc-1", path: "p", title: "t", date: null, type: null, status: null, githubIssue: null, content: "" });

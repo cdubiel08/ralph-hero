@@ -220,14 +220,26 @@ export class KnowledgeDB {
     }
   }
 
-  upsertDocument(doc: Omit<DocumentRow, "isStub"> & { isStub?: number }): void {
+  upsertDocument(
+    doc: Omit<DocumentRow, "isStub"> & { isStub?: number; memoryTier?: string | null },
+  ): void {
+    // memoryTier is intentionally optional: callers that don't pass it get the
+    // SQL column default ('doc') on insert and preserve the existing value on
+    // update via COALESCE. This keeps existing test fixtures and any future
+    // call sites that don't care about tiers compiling without changes, while
+    // still letting reindex.ts forward the parsed value through.
+    const params = {
+      ...doc,
+      memoryTier: doc.memoryTier ?? null,
+    };
     this.db.prepare(`
-      INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub)
-      VALUES (@id, @path, @title, @date, @type, @status, @githubIssue, @content, 0)
+      INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier)
+      VALUES (@id, @path, @title, @date, @type, @status, @githubIssue, @content, 0, COALESCE(@memoryTier, 'doc'))
       ON CONFLICT(id) DO UPDATE SET
         path = @path, title = @title, date = @date, type = @type,
-        status = @status, github_issue = @githubIssue, content = @content, is_stub = 0
-    `).run(doc);
+        status = @status, github_issue = @githubIssue, content = @content, is_stub = 0,
+        memory_tier = COALESCE(@memoryTier, memory_tier)
+    `).run(params);
   }
 
   /**

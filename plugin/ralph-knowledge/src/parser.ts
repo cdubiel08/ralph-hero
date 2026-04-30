@@ -25,6 +25,7 @@ export interface ParsedDocument {
   relationships: Relationship[];
   untypedEdges: UntypedEdge[];
   content: string;
+  memoryTier: string;
 }
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---/;
@@ -33,6 +34,10 @@ const WIKILINK_REL_RE = /^- (builds_on|tensions|post_mortem):: \[\[(.+?)\]\]/gm;
 const SUPERSEDED_BY_RE = /\[\[(.+?)\]\]/;
 const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
 const FENCED_CODE_RE = /```[\s\S]*?```/g;
+
+// Allowed memory_tier values mirror the SQL CHECK constraint in db.ts
+// (schema v3). The parser is forgiving: invalid/absent values coerce to 'doc'.
+const ALLOWED_MEMORY_TIERS = new Set<string>(["doc", "raw", "reflection"]);
 
 const PATH_TYPE_MAP: Array<{ segment: string; type: string }> = [
   { segment: "/research/", type: "research" },
@@ -122,6 +127,22 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
 
   const tags: string[] = Array.isArray(frontmatter.tags) ? frontmatter.tags.map(String) : [];
 
+  // memory_tier extraction: validate against the three allowed values from
+  // schema v3's CHECK constraint. Absent/null values default to 'doc'. Invalid
+  // values coerce to 'doc' with a single warning so the indexer never crashes
+  // on garbage frontmatter — the SQL CHECK is the hard guard.
+  const rawMemoryTier = frontmatter.memory_tier;
+  let memoryTier = "doc";
+  if (rawMemoryTier !== undefined && rawMemoryTier !== null) {
+    if (typeof rawMemoryTier === "string" && ALLOWED_MEMORY_TIERS.has(rawMemoryTier)) {
+      memoryTier = rawMemoryTier;
+    } else {
+      console.warn(
+        `memory_tier '${String(rawMemoryTier)}' on '${id}' is not one of doc|raw|reflection — coercing to 'doc'`,
+      );
+    }
+  }
+
   return {
     id, path, title,
     date: frontmatter.date ? String(frontmatter.date) : null,
@@ -139,6 +160,6 @@ export function parseDocument(id: string, path: string, raw: string): ParsedDocu
     githubIssues: Array.isArray(frontmatter.github_issues)
       ? frontmatter.github_issues.filter((n: unknown) => typeof n === "number")
       : [],
-    tags, relationships, untypedEdges, content: body,
+    tags, relationships, untypedEdges, content: body, memoryTier,
   };
 }
