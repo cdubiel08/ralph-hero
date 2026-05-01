@@ -43,6 +43,10 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_query_outcomes
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 
 ## Configuration (resolved at load time)
@@ -143,6 +147,26 @@ When cross-repo scope is detected (during the registry lookup above), add an add
 
 This information is consumed by the hero skill during tree expansion to override the default "assume independent" behavior when evidence contradicts the registry.
 
+### Step 3c: Knowledge Graph Prior Art Discovery
+
+If `knowledge_search`, `knowledge_traverse`, or `knowledge_query_outcomes` MCP tools are available (from the ralph-knowledge plugin), perform prior-art discovery directly before dispatching sub-agents. If unavailable, skip to Step 4.
+
+This step runs autonomously — no user questions, just detect-and-act. Run the following calls in order:
+
+1. `knowledge_search(query="[issue topic]", type="research", brief=true)` — find prior research documents on this topic.
+2. `knowledge_search(query="[issue topic]", type="plan", brief=true)` — find existing plans that may overlap with the issue.
+3. `knowledge_query_outcomes(component_area="[area inferred from issue]", aggregate=true)` — if a component area is identifiable from the issue body, files referenced, or the registry lookup in Step 3a, retrieve aggregate pipeline history (pass/fail trends, drift counts, common blockers).
+
+**How to use the results:**
+- Skip dispatching `thoughts-locator` for topics already comprehensively covered by prior research found here.
+- Target `thoughts-analyzer` at gap areas — components not covered by prior-art results.
+- Include outcome trends and prior-art summaries in the research document's Prior Work and Pipeline History sections.
+
+**Brief-first pattern:**
+- Use `brief: true` for discovery (returns titles + snippets without full content). Only `Read` documents you select for deep analysis. This saves context window.
+
+If the searches return nothing relevant, proceed to Step 4 with full sub-agent dispatch — the knowledge graph may be stale or sparse on this topic. Do NOT skip sub-agent dispatch on the basis of an empty knowledge result alone.
+
 ### Step 4: Conduct Research
 
 1. **Read issue thoroughly** - understand the problem from user perspective
@@ -194,17 +218,33 @@ The document must begin with a `## Prior Work` section immediately after the tit
 ```markdown
 ## Prior Work
 
-- builds_on:: [[document-filename-without-extension]]
-- tensions:: [[document-filename-without-extension]]
+- builds_on:: [[prior-research-doc]] (research — primary evidence)
+- builds_on:: [[prior-plan-doc]] (plan — describes intent, may not reflect outcome)
+- tensions:: [[conflicting-idea-doc]] (idea — unvetted, but flags a considered alternative)
 ```
 
 - `builds_on::` for documents this research extends or was informed by
 - `tensions::` for documents whose conclusions conflict with findings here
-- Populate from thoughts-locator and thoughts-analyzer results gathered during the research phase
+- Populate from thoughts-locator and thoughts-analyzer results gathered during the research phase, plus any prior-art discovered in Step 3c via `knowledge_search`
 - If no relevant prior work exists, include the section with "None identified."
 - Use filenames without extension as wikilink targets
 
+**Evidence weighting**: When citing prior work, qualify each entry with its document type to signal evidence strength: `research` is primary evidence (verified findings about what exists), `review` is secondary evidence (findings validated against actual implementation), `plan` is weak evidence (describes intent — may diverge from what was actually built), and `idea` is weakest (unvetted thinking, useful as alternative-considered context). See `plugin/ralph-hero/skills/prove-claim/SKILL.md` (lines 25-35) for the canonical weighting table. Qualifiers are encouraged for new docs; existing Prior Work entries do not need retroactive annotation.
+
 Include: problem statement, current state analysis, key discoveries with file:line references, potential approaches (pros/cons), risks, and recommended next steps.
+
+If pipeline history was retrieved in Step 3c, include a `## Pipeline History` section in the document. Use this template:
+
+```markdown
+## Pipeline History
+Based on outcome_events for component area `[area]`:
+- N total events, X passed, Y failed
+- Average drift count: Z files
+- Estimate accuracy: [summary]
+- Most common blocker: [if patterns emerge]
+```
+
+Omit this section entirely if no outcome data was retrieved or `knowledge_query_outcomes` is unavailable. Do not invent data.
 
 The document **must** include a `## Files Affected` section with two subsections:
 
@@ -345,6 +385,20 @@ git push origin main
    ```
 2. **Add summary comment** with key findings, recommended approach, and group context (if multi-issue group)
 3. **Move to "Ready for Plan"**: advance the issue to the next state (workflowState "__COMPLETE__", command "ralph_research").
+4. **Record outcome event** (if `knowledge_record_outcome` is available):
+
+   ```
+   knowledge_record_outcome(
+     event_type="research_completed",
+     issue_number=NNN,
+     component_area="[discovered area, e.g., src/tools/]",
+     verdict="complete",
+     model="sonnet",
+     agent_type="analyst"
+   )
+   ```
+
+   Skip silently if the tool is unavailable — do not fail the workflow. This builds the outcome ledger that future research can query (Step 3c).
 
 ### Step 9: Team Result Reporting
 
@@ -368,6 +422,16 @@ Status: Ready for Plan
 Group status: [M of N] issues researched
 Key recommendation: [One sentence]
 ```
+
+## Knowledge Tool Degradation
+
+The Step 3c prior-art discovery, evidence weighting, Pipeline History section, and Step 8 outcome recording all depend on optional MCP tools from the ralph-knowledge plugin. They must degrade gracefully:
+
+1. **Tools unavailable** (MCP server not running, plugin not installed, or tools not in the runtime allowlist): skip Step 3c entirely and rely on the `thoughts-locator` sub-agent in Step 4 — it always works via grep/glob and will populate Prior Work via filesystem scan. Add a footnote to the research document under Prior Work: `Knowledge graph unavailable — prior work discovery via file scan only`. Do not block the research workflow on missing knowledge tools.
+
+2. **Tools available but `knowledge_search` returns zero results**: try broader search terms first (remove specific qualifiers, drop component prefixes), then fall back to grep-based search of the `thoughts/` directory. Do NOT skip sub-agent dispatch — an empty knowledge result may indicate a stale or sparsely-indexed graph rather than a true absence of prior art. Continue with full Step 4 sub-agent dispatch and let `thoughts-locator` cross-check the filesystem.
+
+The Step 8 outcome recording (`knowledge_record_outcome`) is also subject to graceful degradation — silently skip the call if the tool is unavailable. The workflow advancement to "Ready for Plan" must still complete even when the outcome ledger cannot be written.
 
 ## Available Filter Profiles
 
