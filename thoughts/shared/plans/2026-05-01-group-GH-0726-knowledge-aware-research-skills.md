@@ -177,9 +177,9 @@ Add three knowledge graph tools to each sub-agent's tools list and extend their 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Both files lint as valid YAML frontmatter (no parse errors when the agent loader reads them)
-- [ ] `grep -c "knowledge_communities" plugin/ralph-hero/agents/thoughts-locator.md` returns >= 1 (tool listed and used in prose)
-- [ ] `grep -c "knowledge_paths" plugin/ralph-hero/agents/thoughts-analyzer.md` returns >= 1
+- [x] Both files lint as valid YAML frontmatter (no parse errors when the agent loader reads them)
+- [x] `grep -c "knowledge_communities" plugin/ralph-hero/agents/thoughts-locator.md` returns >= 1 (tool listed and used in prose)
+- [x] `grep -c "knowledge_paths" plugin/ralph-hero/agents/thoughts-analyzer.md` returns >= 1
 
 #### Manual Verification:
 - [ ] Reading thoughts-locator.md end-to-end, the new tools' use cases are clear and distinct from each other

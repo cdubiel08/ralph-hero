@@ -1,7 +1,7 @@
 ---
 name: thoughts-locator
 description: Discovers relevant documents in thoughts/ directory -- research docs, plans, tickets, handoffs. Use when researching to find prior context.
-tools: Grep, Glob, Bash, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
+tools: Grep, Glob, Bash, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_communities, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_central, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_bridges
 model: haiku
 color: purple
 ---
@@ -55,6 +55,14 @@ If `knowledge_search` or `knowledge_traverse` MCP tools are available (from the 
 2. **Relationship traversal**: `knowledge_traverse(from="[document-id]", direction="incoming")` returns all documents that `builds_on` or have `tensions` with a given document. Use this to map the knowledge web around a document.
 
 3. **Fall back to grep/glob** if the knowledge tools are not available or return no results. The grep-based patterns below always work without any index.
+
+4. **Community discovery**: `knowledge_communities(query="[search topic]")` returns clusters of documents that co-cite each other on the topic. Use `knowledge_communities` to find document clusters on the search topic. Report the community label and member count alongside individual document results so the caller can see the topic landscape, not just hits.
+
+5. **Important documents**: `knowledge_central(community_id="[id]")` returns the most-cited documents within a cluster, ranked by inbound link count. Use `knowledge_central` scoped to a community ID to find the most-cited documents in a cluster. These are likely foundational references — surface them first when the caller is new to a topic area.
+
+6. **Cross-cutting documents**: `knowledge_bridges(query="[topic]" or scope="[area]")` returns documents that link two or more otherwise-disconnected communities. Use `knowledge_bridges` to find documents that connect different topic areas — these bridge documents often contain key architectural decisions and are easy to miss when searching by single keywords.
+
+**Availability check**: All graph tools are optional. If unavailable, fall back to existing grep/glob patterns.
 
 ### Search Patterns (fallback)
 - Use grep for content searching
