@@ -207,10 +207,10 @@ Dispatch the `triage-agent` against three test Backlog issues (one per scenario)
 
 #### Automated Verification:
 
-- [ ] `git diff plugin/ralph-hero/skills/ralph-triage/eval-scenarios.md` produces no output (source unmodified per Shared Constraint #1)
-- [ ] `git diff thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` shows changes only within the ralph-triage summary-table row, the `## ralph-triage` section, and (optionally) appended bullets in `## Eval-Scenario Quality Findings`
-- [ ] `grep -c '^- \*\*Status\*\*: pending' thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` returns 16 (one less than the original 17 — only ralph-triage transitioned out of pending). Note the literal asterisks in the pattern: the skeleton's actual line format is `- **Status**: pending` (leading dash + bold markup), NOT bare `Status: pending`.
-- [ ] `sed -n '/^## ralph-triage$/,/^## /p' thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md | grep '^- \*\*Status\*\*:'` does NOT match `pending` — confirms the ralph-triage section's status line transitioned to one of `passed|failed|partial|blocked`. The `sed` range scopes the grep to just the ralph-triage section so adjacent skills' pending lines do not leak into the result.
+- [x] `git diff plugin/ralph-hero/skills/ralph-triage/eval-scenarios.md` produces no output (source unmodified per Shared Constraint #1)
+- [x] `git diff thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` shows changes only within the ralph-triage summary-table row, the `## ralph-triage` section, and (optionally) appended bullets in `## Eval-Scenario Quality Findings`
+- [x] `grep -c '^- \*\*Status\*\*: pending' thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md` returns 16 (one less than the original 17 — only ralph-triage transitioned out of pending). Note the literal asterisks in the pattern: the skeleton's actual line format is `- **Status**: pending` (leading dash + bold markup), NOT bare `Status: pending`.
+- [x] `sed -n '/^## ralph-triage$/,/^## /p' thoughts/shared/reviews/2026-04-25-skill-audit-phase-2-eval-results.md | grep '^- \*\*Status\*\*:'` does NOT match `pending` — confirms the ralph-triage section's status line transitioned to one of `passed|failed|partial|blocked`. The `sed` range scopes the grep to just the ralph-triage section so adjacent skills' pending lines do not leak into the result.
 
 #### Manual Verification:
 
