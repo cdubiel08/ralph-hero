@@ -17,6 +17,9 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
   - AskUserQuestion
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_query_outcomes
 ---
 
 ## Configuration (resolved at load time)
@@ -73,6 +76,24 @@ Then wait for the user's research query.
 - Identify specific components, patterns, or concepts to investigate
 - Consider which directories, files, or architectural patterns are relevant
 
+### Step 2.5: Knowledge Graph Prior Art Discovery
+
+If `knowledge_search`, `knowledge_traverse`, or `knowledge_query_outcomes` MCP tools are available (from the ralph-knowledge plugin), perform prior-art discovery directly before dispatching sub-agents. If unavailable, skip to Step 3.
+
+Run the following calls in order:
+
+1. `knowledge_search(query="[research topic]", type="research", brief=true)` — find prior research documents on this topic.
+2. `knowledge_search(query="[research topic]", type="plan", brief=true)` — find existing plans that may overlap with the question.
+3. (Optional) `knowledge_query_outcomes(component_area="[area]", aggregate=true)` — if the issue maps to a known component area (e.g., `src/tools/`, `plugin/ralph-knowledge/`), retrieve aggregate pipeline history (pass/fail trends, drift counts, common blockers).
+
+**How to use the results:**
+- Use these results to (a) skip dispatching `thoughts-locator` for topics already well-documented, (b) target `thoughts-analyzer` at the highest-relevance documents found, and (c) include prior-art summaries in the research document's Prior Work section.
+
+**Brief-first pattern:**
+- Use `brief: true` for discovery (returns titles + snippets without full content). Only `Read` documents you select for deep analysis. This saves context window.
+
+If the searches return nothing relevant, proceed to Step 3 with full sub-agent dispatch — the knowledge graph may be stale or sparse on this topic. Do NOT skip sub-agent dispatch on the basis of an empty knowledge result alone.
+
 ### Step 3: Spawn parallel sub-agent tasks for comprehensive research
 
 Create multiple Task agents to research different aspects concurrently. Use these specialized agents:
@@ -117,7 +138,8 @@ The key is to use these agents intelligently:
 - Include specific file paths and line numbers for reference
 - Highlight patterns, connections, and architectural decisions
 - Answer the user's specific questions with concrete evidence
-- Populate the `## Prior Work` section with `builds_on::` wikilinks to related research and plan documents discovered by the thoughts-locator agent
+- Populate the `## Prior Work` section with `builds_on::` wikilinks to related research and plan documents discovered by the thoughts-locator agent **and by the Step 2.5 knowledge graph search (if performed)**.
+- If pipeline history was queried in Step 2.5, summarize key outcome trends in the synthesis.
 
 ### Step 5: Gather metadata for the research document
 - Get current commit: `git rev-parse HEAD`
@@ -177,7 +199,11 @@ type: research
 
 ## Prior Work
 
-- builds_on:: [[related-research-doc-id]]
+- builds_on:: [[prior-research-doc]] (research — primary evidence)
+- builds_on:: [[prior-plan-doc]] (plan — describes intent, may not reflect outcome)
+- tensions:: [[conflicting-idea-doc]] (idea — unvetted, but flags a considered alternative)
+
+**Evidence weighting**: When citing prior work, qualify each entry with its document type to signal evidence strength: `research` is primary evidence (verified findings about what exists), `review` is secondary evidence (findings validated against actual implementation), `plan` is weak evidence (describes intent — may diverge from what was actually built), and `idea` is weakest (unvetted thinking, useful as alternative-considered context). See `plugin/ralph-hero/skills/prove-claim/SKILL.md` (lines 25-35) for the canonical weighting table. Qualifiers are encouraged for new docs; existing Prior Work entries do not need retroactive annotation.
 
 ## Research Question
 [Original user query]
@@ -339,6 +365,14 @@ AskUserQuestion(
 - Add a new section: `## Follow-up Research [timestamp]`
 - Spawn new sub-agents as needed for additional investigation
 - Continue updating the document
+
+## Knowledge Tool Degradation
+
+The Step 2.5 prior-art discovery, evidence weighting, and outcome lookups all depend on optional MCP tools from the ralph-knowledge plugin. They must degrade gracefully:
+
+1. **Tools unavailable** (MCP server not running, plugin not installed, or tools not in the runtime allowlist): skip Step 2.5 entirely and rely on the `thoughts-locator` sub-agent in Step 3 — it always works via grep/glob and will populate Prior Work via filesystem scan. Add a footnote to the research document under Prior Work: `Knowledge graph unavailable — prior work discovery via file scan only`. Do not block the research workflow on missing knowledge tools.
+
+2. **Tools available but `knowledge_search` returns zero results**: try broader search terms first (remove specific qualifiers, drop component prefixes), then fall back to grep-based search of the `thoughts/` directory. Do NOT skip sub-agent dispatch — an empty knowledge result may indicate a stale or sparsely-indexed graph rather than a true absence of prior art. Continue with full Step 3 sub-agent dispatch and let `thoughts-locator` cross-check the filesystem.
 
 ## Important notes
 - Always use parallel Task agents to maximize efficiency and minimize context usage
