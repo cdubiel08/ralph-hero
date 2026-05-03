@@ -362,7 +362,7 @@ class TestSynthesizeReflection:
         assert r["source_ids"] == ["raw-00", "raw-01", "raw-02"]
         assert r["cluster_size"] == 3
 
-    def test_missing_frontmatter_returns_none(
+    def test_unparseable_response_returns_none(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level("WARNING", logger="ralph.dream.reflect")
@@ -375,8 +375,10 @@ class TestSynthesizeReflection:
 
         r = reflect.synthesize_reflection(cluster, http_post=fake_post)
         assert r is None
+        # The fence-less fallback succeeds at extracting the leading
+        # block but yaml parses it as a string scalar, not a dict.
         assert any(
-            "missing opening frontmatter" in rec.message for rec in caplog.records
+            "not a mapping" in rec.message for rec in caplog.records
         )
 
     def test_non_200_status_returns_none(
@@ -418,6 +420,37 @@ class TestSynthesizeReflection:
         r = reflect.synthesize_reflection(cluster, http_post=fake_post)
         assert r is not None
         assert r["title"] == "Distributed consensus exploration"
+
+    def test_fenceless_yaml_is_parsed(self) -> None:
+        """Gemma 4 26B observed to omit the opening `---` fence; the
+        parser must still extract the leading YAML block (GH-966)."""
+        cluster = _make_cluster()
+        fenceless = (
+            "title: Distributed consensus exploration\n"
+            "summary: These memories all circle around CAP and MVCC.\n"
+            "insights:\n"
+            "  - CAP is a trade, not a theorem\n"
+            "  - MVCC gives lock-free reads\n"
+            "source_ids:\n"
+            "  - raw-00\n"
+            "  - raw-01\n"
+            "  - raw-02\n"
+            "\n"
+            "# Distributed consensus exploration\n"
+            "\n"
+            "Body goes here.\n"
+        )
+
+        def fake_post(url, body, timeout):  # noqa: ARG001
+            return 200, {
+                "choices": [{"message": {"content": fenceless}}]
+            }
+
+        r = reflect.synthesize_reflection(cluster, http_post=fake_post)
+        assert r is not None
+        assert r["title"] == "Distributed consensus exploration"
+        assert len(r["insights"]) == 2
+        assert r["source_ids"] == ["raw-00", "raw-01", "raw-02"]
 
     def test_missing_source_ids_falls_back_to_cluster(self) -> None:
         cluster = _make_cluster()
@@ -592,3 +625,86 @@ class TestMainDryRun:
         assert rc == 0
         out = capsys.readouterr().out
         assert "No raw memories" in out
+
+
+# ---------------------------------------------------------------------------
+# CLI main() — exit-code contract for silent-failure surface (GH-966 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestMainExitCode:
+    def test_returns_nonzero_when_clusters_yield_no_reflections(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When clusters are formed but every LLM call fails to parse,
+        main() must exit non-zero so dream-now sees the failure
+        (mirrors the silent-failure anti-pattern called out in GH-908)."""
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+
+        import yaml as _yaml
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            _yaml.safe_dump(
+                {
+                    "base_dir": str(tmp_path / "out"),
+                    "knowledge_db": str(db),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Force every cluster to fail synthesis (simulates Gemma
+        # returning unparseable output for every cluster).
+        monkeypatch.setattr(
+            reflect, "synthesize_reflection", lambda *a, **kw: None
+        )
+
+        rc = reflect.main(
+            [
+                "--config",
+                str(cfg_path),
+                "--since",
+                "2026-04-18",
+            ]
+        )
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "Wrote 0 reflection(s)." in out
+
+    def test_returns_zero_when_no_clusters_form(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+    ) -> None:
+        """No clusters formed (window empty) is not a silent failure —
+        main() should still exit 0."""
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, [])
+
+        import yaml as _yaml
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            _yaml.safe_dump(
+                {
+                    "base_dir": str(tmp_path / "out"),
+                    "knowledge_db": str(db),
+                }
+            ),
+            encoding="utf-8",
+        )
+        rc = reflect.main(
+            [
+                "--config",
+                str(cfg_path),
+                "--since",
+                "2026-04-18",
+            ]
+        )
+        assert rc == 0
