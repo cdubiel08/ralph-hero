@@ -53,9 +53,9 @@ Key facts established by research:
 
 ### Verification
 
-- [ ] `_parse_llm_response` returns a parsed dict (not None) when the LLM response contains backticks wrapping technical identifiers in YAML scalar values
-- [ ] `_PROMPT_FOOTER` instructs Gemma to avoid backtick formatting within YAML scalar values
-- [ ] New test `test_backtick_in_yaml_scalar_is_tolerated` passes; total test count moves from 22 to 23
+- [x] `_parse_llm_response` returns a parsed dict (not None) when the LLM response contains backticks wrapping technical identifiers in YAML scalar values
+- [x] `_PROMPT_FOOTER` instructs Gemma to avoid backtick formatting within YAML scalar values
+- [x] New test `test_backtick_in_yaml_scalar_is_tolerated` passes; total test count moves from 22 to 23
 - [ ] Manual gate: live `reflect.py --since 30d` writes reflections for both clusters (size 7 AND size 8) where previously cluster 2 was silently dropped
 
 ## What We're NOT Doing
@@ -93,11 +93,11 @@ Make `_parse_llm_response` tolerate Gemma responses that include markdown-style 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] In `_parse_llm_response` (currently lines 368-404), insert a sanitization step between the `_extract_frontmatter_block(raw)` call (line 390) and the `yaml.safe_load(front)` call (line 397)
-  - [ ] The sanitization is `front = re.sub(r"`([^`\n]+)`", r"\1", front)` guarded by `if front:` to skip when extraction returned None
-  - [ ] A comment block above the substitution explains the rationale and references GH-974 (matching existing module documentation style)
-  - [ ] No new imports are added (the `re` module is already imported at line 31)
-  - [ ] All 22 existing tests in `tests/test_reflect.py` still pass
+  - [x] In `_parse_llm_response` (currently lines 368-404), insert a sanitization step between the `_extract_frontmatter_block(raw)` call (line 390) and the `yaml.safe_load(front)` call (line 397)
+  - [x] The sanitization is `front = re.sub(r"`([^`\n]+)`", r"\1", front)` guarded by `if front:` to skip when extraction returned None
+  - [x] A comment block above the substitution explains the rationale and references GH-974 (matching existing module documentation style)
+  - [x] No new imports are added (the `re` module is already imported at line 31)
+  - [x] All 22 existing tests in `tests/test_reflect.py` still pass
 
 #### Task 1.2: Add backtick instruction to _PROMPT_FOOTER
 - **files**: [scripts/dream/reflect.py](https://github.com/cdubiel08/ralph-hero/blob/main/scripts/dream/reflect.py) (modify)
@@ -105,11 +105,11 @@ Make `_parse_llm_response` tolerate Gemma responses that include markdown-style 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `_PROMPT_FOOTER` (currently lines 69-94) includes a new sentence after "Do not wrap the output in a markdown code fence." that instructs the LLM not to use backtick characters to format technical identifiers within YAML scalar values
-  - [ ] The new instruction directs the LLM to write identifiers as plain text within scalar values
-  - [ ] The instruction is a Python string concatenation matching the existing footer style (no f-strings, no triple-quoted blocks) — keep the existing parenthesized concatenation pattern
-  - [ ] The example block in the footer remains intact and continues to demonstrate proper YAML output
-  - [ ] String concatenation is syntactically valid (the test suite still imports the module successfully)
+  - [x] `_PROMPT_FOOTER` (currently lines 69-94) includes a new sentence after "Do not wrap the output in a markdown code fence." that instructs the LLM not to use backtick characters to format technical identifiers within YAML scalar values
+  - [x] The new instruction directs the LLM to write identifiers as plain text within scalar values
+  - [x] The instruction is a Python string concatenation matching the existing footer style (no f-strings, no triple-quoted blocks) — keep the existing parenthesized concatenation pattern
+  - [x] The example block in the footer remains intact and continues to demonstrate proper YAML output
+  - [x] String concatenation is syntactically valid (the test suite still imports the module successfully)
 
 #### Task 1.3: Add test_backtick_in_yaml_scalar_is_tolerated test
 - **files**: [scripts/dream/tests/test_reflect.py](https://github.com/cdubiel08/ralph-hero/blob/main/scripts/dream/tests/test_reflect.py) (modify)
@@ -117,19 +117,19 @@ Make `_parse_llm_response` tolerate Gemma responses that include markdown-style 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] A new test method `test_backtick_in_yaml_scalar_is_tolerated` is added to the `TestSynthesizeReflection` class
-  - [ ] The test fixture is a fenced YAML response where insights list items wrap technical identifiers in backticks (e.g., `` - The two-stage chain: `RALPH_GH_REPO_TOKEN` (highest priority) ``) — replicating the actual failure mode from production
-  - [ ] The test uses the `http_post` seam (matching existing `fake_post` pattern in `test_well_formed_yaml_parses` on line 352)
-  - [ ] The test asserts: result is not None, `r["title"]` is non-empty, `len(r["insights"]) == 2`, `r["source_ids"] == ["raw-00", "raw-01"]`
-  - [ ] The test docstring references GH-974 and explains the failure mode being covered
-  - [ ] The test passes after Task 1.1 is implemented and fails (or errors with YAMLError) without it — this is the regression test for the fix
+  - [x] A new test method `test_backtick_in_yaml_scalar_is_tolerated` is added to the `TestSynthesizeReflection` class
+  - [x] The test fixture is a fenced YAML response where insights list items wrap technical identifiers in backticks (e.g., `` - The two-stage chain: `RALPH_GH_REPO_TOKEN` (highest priority) ``) — replicating the actual failure mode from production
+  - [x] The test uses the `http_post` seam (matching existing `fake_post` pattern in `test_well_formed_yaml_parses` on line 352)
+  - [x] The test asserts: result is not None, `r["title"]` is non-empty, `len(r["insights"]) == 2`, `r["source_ids"] == ["raw-00", "raw-01"]`
+  - [x] The test docstring references GH-974 and explains the failure mode being covered
+  - [x] The test passes after Task 1.1 is implemented and fails (or errors with YAMLError) without it — this is the regression test for the fix
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd scripts/dream && uv run --extra test python -m pytest tests/test_reflect.py -v` — all 23 tests passing
-- [ ] `cd scripts/dream && uv run python -c "import reflect"` — module imports without syntax error
-- [ ] `cd scripts/dream && uv run --extra test python -m pytest tests/test_reflect.py -v -k test_backtick_in_yaml_scalar_is_tolerated` — new test exists and passes
+- [x] `cd scripts/dream && uv run --extra test python -m pytest tests/test_reflect.py -v` — all 23 tests passing
+- [x] `cd scripts/dream && uv run python -c "import reflect"` — module imports without syntax error
+- [x] `cd scripts/dream && uv run --extra test python -m pytest tests/test_reflect.py -v -k test_backtick_in_yaml_scalar_is_tolerated` — new test exists and passes
 
 #### Manual Verification:
 - [ ] Run `gemma-up` then `dream-now` (or directly `cd scripts/dream && uv run reflect.py --since 30d`) against the daily-driver DB at `~/.ralph-hero/knowledge.db`

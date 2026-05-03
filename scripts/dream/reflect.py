@@ -78,7 +78,11 @@ _PROMPT_FOOTER = (
     "YAML keys, then `---` on its own line, then the markdown body. "
     "The frontmatter must contain `title` (string), `summary` "
     "(string), `insights` (list of strings), and `source_ids` (list "
-    "of strings). Do not wrap the output in a markdown code fence.\n\n"
+    "of strings). Do not wrap the output in a markdown code fence. "
+    "Do not use backtick characters to format technical identifiers "
+    "inside YAML scalar values; write identifiers as plain text "
+    "within the values (backticks remain fine inside the markdown "
+    "body below the frontmatter).\n\n"
     "Example:\n"
     "---\n"
     "title: Example reflection title\n"
@@ -393,6 +397,18 @@ def _parse_llm_response(text: str) -> dict[str, Any] | None:
             "LLM response not parseable as frontmatter or leading YAML block"
         )
         return None
+    # GH-974: Strip markdown-style backtick wrappers from inside the
+    # frontmatter block. PyYAML's scanner rejects ``` ` ``` when it
+    # starts an unquoted scalar token (e.g., ``- `IDENTIFIER` `` after a
+    # list dash), even though the same character is valid mid-scalar.
+    # Gemma 4 26B sometimes wraps technical identifiers in markdown
+    # backticks within YAML values; sanitizing here is a deterministic
+    # backstop for the prompt-level guidance in ``_PROMPT_FOOTER``. The
+    # regex is intentionally line-bounded (``[^`\n]+``) so it only
+    # touches single-line backtick pairs in the frontmatter region —
+    # the markdown body is not affected (it is parsed separately).
+    if front:
+        front = re.sub(r"`([^`\n]+)`", r"\1", front)
     try:
         data = yaml.safe_load(front) or {}
     except yaml.YAMLError as exc:

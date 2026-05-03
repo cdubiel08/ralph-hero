@@ -452,6 +452,53 @@ class TestSynthesizeReflection:
         assert len(r["insights"]) == 2
         assert r["source_ids"] == ["raw-00", "raw-01", "raw-02"]
 
+    def test_backtick_in_yaml_scalar_is_tolerated(self) -> None:
+        """Gemma 4 26B sometimes wraps technical identifiers in
+        markdown-style backticks inside YAML scalar values. PyYAML's
+        scanner rejects a backtick that starts an unquoted scalar
+        token (e.g., ``- `RALPH_GH_REPO_TOKEN` (highest priority)`` —
+        the literal failure mode captured in the GH-974 issue body
+        from the live ``reflect.py --since 30d`` run on 2026-05-03).
+        The fix sanitizes the frontmatter region by stripping the
+        backtick wrappers before ``yaml.safe_load``, so parsing
+        succeeds and the literal backticks are removed from the
+        parsed scalar values.
+        """
+        cluster = _make_cluster(n=2)
+        backticked = (
+            "---\n"
+            "title: Token resolution chain audit\n"
+            "summary: These memories trace how the token chain was hardened.\n"
+            "insights:\n"
+            "  - The two-stage chain: `RALPH_GH_REPO_TOKEN` (highest), then fallback\n"
+            "  - `gh auth token` is the keychain-backed default\n"
+            "source_ids:\n"
+            "  - raw-00\n"
+            "  - raw-01\n"
+            "---\n"
+            "# Token resolution chain audit\n"
+            "\n"
+            "Body goes here.\n"
+        )
+
+        def fake_post(url, body, timeout):  # noqa: ARG001
+            return 200, {
+                "choices": [{"message": {"content": backticked}}]
+            }
+
+        r = reflect.synthesize_reflection(cluster, http_post=fake_post)
+        assert r is not None
+        assert r["title"]  # non-empty
+        assert len(r["insights"]) == 2
+        assert r["source_ids"] == ["raw-00", "raw-01"]
+        # Backticks are stripped from the parsed scalar values; the
+        # identifier survives as plain text inside the insight string.
+        for insight in r["insights"]:
+            assert "`" not in insight
+        assert any(
+            "RALPH_GH_REPO_TOKEN" in insight for insight in r["insights"]
+        )
+
     def test_missing_source_ids_falls_back_to_cluster(self) -> None:
         cluster = _make_cluster()
         no_ids = (
