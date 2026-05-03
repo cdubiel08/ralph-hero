@@ -183,10 +183,10 @@ Rewrite `record-activity.sh` to read its tool/agent/project/session metadata fro
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/record-activity.test.sh` — exits 0, all assertions pass
-- [ ] `grep -n 'CLAUDE_TOOL_NAME\|CLAUDE_SKILL_NAME\|CLAUDE_AGENT_NAME\|CLAUDE_PROJECT\|CLAUDE_SESSION_ID' plugin/ralph-hero/hooks/scripts/record-activity.sh` — no matches (env-var reads fully removed)
-- [ ] Bash syntax check: `bash -n plugin/ralph-hero/hooks/scripts/record-activity.sh && bash -n plugin/ralph-hero/hooks/scripts/__tests__/record-activity.test.sh` — exits 0
-- [ ] No build/typecheck commands needed — this is a shell-only change. The `mcp-server/` package is untouched.
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/record-activity.test.sh` — exits 0, all assertions pass
+- [x] `grep -n 'CLAUDE_TOOL_NAME\|CLAUDE_SKILL_NAME\|CLAUDE_AGENT_NAME\|CLAUDE_PROJECT\|CLAUDE_SESSION_ID' plugin/ralph-hero/hooks/scripts/record-activity.sh` — no matches (env-var reads fully removed)
+- [x] Bash syntax check: `bash -n plugin/ralph-hero/hooks/scripts/record-activity.sh && bash -n plugin/ralph-hero/hooks/scripts/__tests__/record-activity.test.sh` — exits 0
+- [x] No build/typecheck commands needed — this is a shell-only change. The `mcp-server/` package is untouched.
 
 #### Manual Verification:
 - [ ] After merging and a fresh Claude Code session, watch `~/.ralph-hero/activity/$(date -u +%Y/%m/%d).jsonl` for 30 seconds. Confirm new events show `target.tool` matching real tool names (e.g., `Read`, `Bash`, `ralph_hero__list_issues`), `project` matching the cwd basename, and `session_id` populated. Confirm `actor` is `claude` for the orchestrator and a stripped agent name (e.g., `impl-agent`) when running inside a sub-agent.
