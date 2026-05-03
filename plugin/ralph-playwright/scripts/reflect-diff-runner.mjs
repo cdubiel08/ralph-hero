@@ -43,6 +43,7 @@ import { matchSteps } from "./match-steps.mjs";
 import {
   buildDiffPayloads,
   parseDiffResponse,
+  DEFAULT_NOISE_FLOOR,
 } from "./diff-emitter.mjs";
 
 /**
@@ -284,7 +285,7 @@ function buildMissingSignal(step) {
 export async function runReflectDiff({
   currentTracePath,
   baselineTracePath,
-  noiseFloor = "medium",
+  noiseFloor = DEFAULT_NOISE_FLOOR,
   modelInvoker = defaultModelInvoker,
   repoRoot,
 }) {
@@ -480,7 +481,7 @@ async function main() {
   const baselineTracePath = args.baseline;
   const noiseFloor = typeof args["noise-floor"] === "string"
     ? args["noise-floor"]
-    : process.env.RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR || "medium";
+    : process.env.RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR || DEFAULT_NOISE_FLOOR;
   const outPath = typeof args.out === "string" ? args.out : null;
 
   if (typeof currentTracePath !== "string" || typeof baselineTracePath !== "string") {

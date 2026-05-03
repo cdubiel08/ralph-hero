@@ -86,6 +86,28 @@ const NO_CHANGE_SENTINEL = "NO-MEANINGFUL-CHANGES";
  */
 const NOISE_FLOOR_LEVELS = new Set(["low", "medium", "high"]);
 
+/**
+ * Canonical default noise-floor level for the in-loop semantic visual diff.
+ *
+ * The default is the level shipped to operators when they invoke
+ * `/ralph-playwright:reflect --baseline <prior-trace>` without `--noise-floor`
+ * or `RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR` set. SKILL.md (both `visual-diff` and
+ * `reflect`) cite this constant by name so the prose stays in sync with the
+ * code: change the value here and the docs do not lie.
+ *
+ * Calibration: a noise-floor pilot (Atomic #820) defines the methodology for
+ * measuring per-level false-positive and true-positive rates against the
+ * `fixtures/semantic-diff-smoke/v1.html` (baseline) vs `v2.html` (changed)
+ * pair. Until an operator runs the live pilot end-to-end (Playwright +
+ * Opus 4.7 vision), the value defaults to `"medium"` — the prompt's stated
+ * default per the rubric paragraph in `semantic-diff-prompt.md`. The pilot
+ * methodology is documented in
+ * `thoughts/shared/research/2026-04-20-semantic-diff-noise-floor-pilot.md`;
+ * once an operator captures live data, that doc records the per-level rates
+ * and either confirms `"medium"` or flips the constant.
+ */
+export const DEFAULT_NOISE_FLOOR = "medium";
+
 // -------------------------------------------------------------------- //
 // DiffEmitterError
 // -------------------------------------------------------------------- //
@@ -175,7 +197,7 @@ function assertNoiseFloor(level) {
 export async function renderPrompt({
   action = "",
   target = "",
-  noiseFloor = "medium",
+  noiseFloor = DEFAULT_NOISE_FLOOR,
 } = {}) {
   assertNoiseFloor(noiseFloor);
   const template = await readTemplate();
@@ -254,7 +276,7 @@ export async function buildDiffPayloads(pairs, options = {}) {
   }
 
   const {
-    noiseFloor = "medium",
+    noiseFloor = DEFAULT_NOISE_FLOOR,
     sessionSlug,
     readBaseline = defaultReadBaseline,
     stepIdFor = defaultStepIdFor,
@@ -461,7 +483,7 @@ export function parseDiffResponse(responseText, ctx = {}) {
     currentStep,
     currentPath = "",
     baselinePath = "",
-    noiseFloor = "medium",
+    noiseFloor = DEFAULT_NOISE_FLOOR,
   } = ctx;
 
   if (typeof responseText !== "string") {
