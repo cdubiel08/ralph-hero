@@ -474,7 +474,20 @@ export function buildReason(
     const hours = Math.round(ageHours(issue.updatedAt, config.now));
     const days = Math.max(1, Math.floor(hours / 24));
     const dayLabel = days === 1 ? "day" : "days";
-    return `${phase} for ${days} ${dayLabel} — likely the most unblocking thing`;
+    const priority = issue.priority;
+    if (priority === "P0") {
+      return `P0 stalled in ${phase} for ${days} ${dayLabel} — top of the queue`;
+    }
+    if (priority === "P1") {
+      return `P1 stalled in ${phase} for ${days} ${dayLabel} — likely the most unblocking thing`;
+    }
+    if (priority === "P2") {
+      return `Sitting in ${phase} for ${days} ${dayLabel} — small unblock if you have a moment`;
+    }
+    if (priority === "P3") {
+      return `Low-priority item in ${phase} for ${days} ${dayLabel}`;
+    }
+    return `Unprioritized in ${phase} for ${days} ${dayLabel}`;
   }
   if (issue.priority === "P0") {
     return `P0 in ${phase} — top of the queue`;

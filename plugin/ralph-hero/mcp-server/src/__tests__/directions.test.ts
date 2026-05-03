@@ -142,6 +142,35 @@ describe("audience param", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 0c. Differentiated stale reasons (Phase 2.3)
+// ---------------------------------------------------------------------------
+
+describe("differentiated stale reasons", () => {
+  it("stale P1 produces a different reason than stale P2", () => {
+    const stale = new Date(NOW.getTime() - 5 * DAY_MS).toISOString();
+    const items = [
+      makeItem({ number: 1, workflowState: "Ready for Plan", priority: "P1", updatedAt: stale }),
+      makeItem({ number: 2, workflowState: "Ready for Plan", priority: "P2", updatedAt: stale }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2 }));
+    const p1Reason = result.find((d) => d.issue?.priority === "P1")?.reason;
+    const p2Reason = result.find((d) => d.issue?.priority === "P2")?.reason;
+    expect(p1Reason).toBeDefined();
+    expect(p2Reason).toBeDefined();
+    expect(p1Reason).not.toBe(p2Reason);
+  });
+
+  it("stale P0 reason mentions urgency", () => {
+    const stale = new Date(NOW.getTime() - 5 * DAY_MS).toISOString();
+    const items = [
+      makeItem({ number: 1, workflowState: "Ready for Plan", priority: "P0", updatedAt: stale }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 1 }));
+    expect(result[0].reason.toLowerCase()).toMatch(/p0|urgent|top/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 1. Empty input
 // ---------------------------------------------------------------------------
 
