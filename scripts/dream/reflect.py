@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import sqlite3
 import struct
@@ -58,6 +59,13 @@ MAX_SLUG_LEN = 60
 # single huge raw memory from blowing past the model's context window.
 PROMPT_CONTENT_CLIP = 800
 
+# HTTP timeout for the LLM completion call. The 26B model with
+# ``max_tokens=3000`` routinely takes 60-120s on Apple Silicon for an
+# 8-member cluster. The previous 60s default sat right on the edge and
+# timed out non-deterministically. Override with
+# ``RALPH_DREAM_LLM_TIMEOUT_S`` if your hardware needs longer.
+DEFAULT_LLM_TIMEOUT_S = int(os.environ.get("RALPH_DREAM_LLM_TIMEOUT_S", "180"))
+
 # Reuse the parent plan's A-Mem prompt header verbatim so the prompt is
 # traceable to the spec. See:
 #   thoughts/shared/plans/2026-04-16-GH-0761-...md (Phase 6 section 2)
@@ -78,7 +86,15 @@ _PROMPT_FOOTER = (
     "YAML keys, then `---` on its own line, then the markdown body. "
     "The frontmatter must contain `title` (string), `summary` "
     "(string), `insights` (list of strings), and `source_ids` (list "
-    "of strings). Do not wrap the output in a markdown code fence.\n\n"
+    "of strings). Do not wrap the output in a markdown code fence. "
+    "Do not use backtick characters to format technical identifiers "
+    "inside YAML scalar values; write identifiers as plain text "
+    "within the values (backticks remain fine inside the markdown "
+    "body below the frontmatter). Inside the YAML frontmatter, use "
+    "`- item` (a hyphen followed by a space) for list entries; do "
+    "not use markdown-style bullet markers like `* item` or "
+    "`*   item` — those are markdown, not YAML, and break the "
+    "parser.\n\n"
     "Example:\n"
     "---\n"
     "title: Example reflection title\n"
@@ -393,6 +409,29 @@ def _parse_llm_response(text: str) -> dict[str, Any] | None:
             "LLM response not parseable as frontmatter or leading YAML block"
         )
         return None
+    # GH-974: Strip markdown-style backtick wrappers from inside the
+    # frontmatter block. PyYAML's scanner rejects ``` ` ``` when it
+    # starts an unquoted scalar token (e.g., ``- `IDENTIFIER` `` after a
+    # list dash), even though the same character is valid mid-scalar.
+    # Gemma 4 26B sometimes wraps technical identifiers in markdown
+    # backticks within YAML values; sanitizing here is a deterministic
+    # backstop for the prompt-level guidance in ``_PROMPT_FOOTER``. The
+    # regex is intentionally line-bounded (``[^`\n]+``) so it only
+    # touches single-line backtick pairs in the frontmatter region —
+    # the markdown body is not affected (it is parsed separately).
+    if front:
+        front = re.sub(r"`([^`\n]+)`", r"\1", front)
+        # Convert markdown-style bullet markers (``*   item``) at line
+        # start to YAML list syntax (``- item``). Gemma occasionally
+        # uses ``*`` despite the prompt instruction; without this
+        # conversion PyYAML scans ``*`` as an anchor reference and the
+        # following ``key:`` as a mapping, raising
+        # ``mapping values are not allowed here``. The substitution is
+        # narrow: it requires the asterisk to be at line start
+        # (``re.MULTILINE``) followed by one or more spaces, so an
+        # asterisk anywhere else in a value (rare but possible) is
+        # untouched.
+        front = re.sub(r"^\*\s+", "- ", front, flags=re.MULTILINE)
     try:
         data = yaml.safe_load(front) or {}
     except yaml.YAMLError as exc:
@@ -439,12 +478,12 @@ def synthesize_reflection(
         if http_post is None:
             import httpx  # type: ignore[import-untyped]
 
-            with httpx.Client(timeout=60) as client:
+            with httpx.Client(timeout=DEFAULT_LLM_TIMEOUT_S) as client:
                 resp = client.post(url, json=body)
             status = resp.status_code
             payload = resp.json()
         else:
-            status, payload = http_post(url, body, 60)
+            status, payload = http_post(url, body, DEFAULT_LLM_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - network errors span many types
         log.warning("LLM call to %s failed: %s", url, exc)
         return None
