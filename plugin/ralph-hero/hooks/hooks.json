@@ -3,6 +3,7 @@
   "description": "Ralph GitHub plugin hook registration",
   "version": "1.0.0",
   "note": "Most hooks are registered via skill frontmatter for granular scoping. This file provides plugin-level hooks that apply across all skills.",
+  "_activity_log_note": "record-activity.sh entries are wired to the Claude Code hook events that exist as of 2026-05: PostToolUse (matcher-less for all tools) and SessionStart. SessionStop, PostSkillInvoke, and agent-spawn/agent-complete event names were probed and are not currently surfaced by the harness; they are intentionally omitted here. Consumers will see fewer events, not errors. Add corresponding entries when those event names land.",
 
   "hooks": {
     "SessionStart": [
@@ -19,6 +20,14 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/superpowers-bridge-session.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/record-activity.sh session_start"
           }
         ]
       }
@@ -146,6 +155,14 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/post-git-validator.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/record-activity.sh tool_called"
           }
         ]
       }
