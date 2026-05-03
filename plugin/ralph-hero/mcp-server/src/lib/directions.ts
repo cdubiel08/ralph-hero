@@ -50,6 +50,12 @@ export interface OpenPR {
 
 export interface Direction {
   rank: number;
+  /**
+   * Exactly one entry has `true` (rank-1 by default). Both modes use this
+   * flag for selection: interactive picker pre-selects it; headless
+   * orchestrators dispatch on it.
+   */
+  recommended: boolean;
   kind: "issue" | "pr" | "tree-continue" | "lock-stale";
   issue: {
     number: number;
@@ -576,6 +582,7 @@ export function rankDirections(
       const reason = buildReason(c.kind, c.item, null, c.tags, config, null);
       return {
         rank,
+        recommended: false,
         kind: c.kind,
         issue: toDirectionIssue(c.item),
         pr: null,
@@ -596,6 +603,7 @@ export function rankDirections(
     );
     return {
       rank,
+      recommended: false,
       kind: "pr",
       issue: null,
       pr: toDirectionPR(p.pr),
@@ -604,6 +612,13 @@ export function rankDirections(
       score: p.score,
     };
   });
+
+  // Mark the top-ranked entry as recommended. Both modes use this
+  // flag for selection: interactive picker pre-selects it; headless
+  // orchestrators dispatch on it.
+  if (directions.length > 0) {
+    directions[0].recommended = true;
+  }
 
   return directions;
 }

@@ -69,6 +69,29 @@ function makePR(overrides: Partial<OpenPR> = {}): OpenPR {
 }
 
 // ---------------------------------------------------------------------------
+// 0. Recommended flag (Phase 2.1)
+// ---------------------------------------------------------------------------
+
+describe("recommended flag", () => {
+  it("marks rank-1 entry as recommended when directions are returned", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Plan in Review", priority: "P1" }),
+      makeItem({ number: 2, workflowState: "Ready for Plan", priority: "P2" }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2 }));
+    expect(result).toHaveLength(2);
+    expect(result[0].recommended).toBe(true);
+    expect(result[1].recommended).toBe(false);
+  });
+
+  it("returns no recommended flag when directions are empty", () => {
+    const result = rankDirections([], [], makeConfig({ limit: 3 }));
+    expect(result).toHaveLength(0);
+    // No assertion needed — just no crash
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 1. Empty input
 // ---------------------------------------------------------------------------
 
