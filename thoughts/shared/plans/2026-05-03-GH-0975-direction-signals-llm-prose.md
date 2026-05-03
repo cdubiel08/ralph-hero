@@ -173,12 +173,12 @@ Introduce `signals: DirectionSignals` on `Direction`. Compute the structured fie
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no errors
-- [ ] `npm test` — all existing tests pass (the determinism test, buildReason smoke checks, and integration tests must remain green)
-- [ ] `npx vitest run src/__tests__/directions.test.ts` — focused run, all passing
+- [x] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no errors
+- [x] `npm test` — all existing tests pass (the determinism test, buildReason smoke checks, and integration tests must remain green)
+- [x] `npx vitest run src/__tests__/directions.test.ts` — focused run, all passing
 
 #### Manual Verification:
-- [ ] `git diff plugin/ralph-hero/mcp-server/src/lib/directions.ts` shows: new `DirectionSignals` interface, extended `Direction`, `signals` computed in `scoreIssue`/`scorePR`, `tiedAtScore` post-sort pass, `buildReason` reading from `signals`. No changes to scoring constants (STALE_BOOST, LOCK_STALE_BOOST, etc.) or to the merged-sort ordering rules.
+- [x] `git diff plugin/ralph-hero/mcp-server/src/lib/directions.ts` shows: new `DirectionSignals` interface, extended `Direction`, `signals` computed in `scoreIssue`/`scorePR`, `tiedAtScore` post-sort pass, `buildReason` reading from `signals`. No changes to scoring constants (STALE_BOOST, LOCK_STALE_BOOST, etc.) or to the merged-sort ordering rules.
 
 **Creates for next phase**: `Direction.signals` field on the wire, populated for every kind. Phase 2 reads from this in the skill prompt.
 
@@ -238,12 +238,12 @@ Replace verbatim `direction.reason` rendering with an LLM synthesis step that co
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] No code changes in this phase, so build/test stays green from Phase 1's run. Confirm by re-running `npm test` in `plugin/ralph-hero/mcp-server/` — all green.
+- [x] No code changes in this phase, so build/test stays green from Phase 1's run. Confirm by re-running `npm test` in `plugin/ralph-hero/mcp-server/` — all green.
 
 #### Manual Verification:
-- [ ] Read `skills/hello/SKILL.md` end-to-end. Confirm the LLM is given enough structured input (signals fields by kind) to write differentiated prose without guessing.
-- [ ] Confirm picker labels would render as `"Plan #566 · Skill audit phase 2"` for the live-smoke-test issue (title `"Skill audit phase 2 — deep individual audits for remaining skills"` truncates to `"Skill audit phase 2 — deep…"` at 30 chars).
-- [ ] Confirm there is no remaining mention of `direction.reason` as a *render source* anywhere in the skill — only as a back-compat note.
+- [x] Read `skills/hello/SKILL.md` end-to-end. Confirm the LLM is given enough structured input (signals fields by kind) to write differentiated prose without guessing.
+- [x] Confirm picker labels would render as `"Plan #566 · Skill audit phase 2"` for the live-smoke-test issue (title `"Skill audit phase 2 — deep individual audits for remaining skills"` truncates to `"Skill audit phase 2 — deep…"` at 30 chars).
+- [x] Confirm there is no remaining mention of `direction.reason` as a *render source* anywhere in the skill — only as a back-compat note.
 
 **Creates for next phase**: A skill that consumes `signals` and is testable via fixture. Phase 3 supplies the fixture.
 
@@ -308,13 +308,13 @@ Add unit tests asserting the new `signals` shape per ranker branch, a tied-at-sc
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm test` (in `plugin/ralph-hero/mcp-server/`) — all tests pass, including the 8+ new `signals` shape assertions, the tied-at-score test, and the integration `signals` check.
-- [ ] `npx vitest run src/__tests__/directions.test.ts -t "signals"` — focused run on new tests, all green.
-- [ ] `npx vitest run src/__tests__/directions-tools.test.ts -t "signals"` — focused integration run, green.
+- [x] `npm test` (in `plugin/ralph-hero/mcp-server/`) — all tests pass, including the 8+ new `signals` shape assertions, the tied-at-score test, and the integration `signals` check.
+- [x] `npx vitest run src/__tests__/directions.test.ts -t "signals"` — focused run on new tests, all green.
+- [x] `npx vitest run src/__tests__/directions-tools.test.ts -t "signals"` — focused integration run, green.
 
 #### Manual Verification:
-- [ ] Run the smoke fixture (or the documented manual checklist) for `/hello` — confirm synthesized prose mentions the title for at least 2 of the 3 directions and varies meaningfully across the two similarly-scored items.
-- [ ] Confirm an XL item's prose never contains the literal `"small unblock"` substring.
+- [x] Run the smoke fixture (or the documented manual checklist) for `/hello` — confirm synthesized prose mentions the title for at least 2 of the 3 directions and varies meaningfully across the two similarly-scored items.
+- [x] Confirm an XL item's prose never contains the literal `"small unblock"` substring.
 
 ---
 

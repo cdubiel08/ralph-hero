@@ -48,6 +48,52 @@ export interface OpenPR {
   ageHours: number;
 }
 
+/**
+ * Structured signals describing why a direction was ranked where it was.
+ * Skills should synthesize per-direction prose from these fields plus the
+ * issue/PR title and any memory context — never render the legacy `reason`
+ * string verbatim.
+ *
+ * Determinism: every field is derived from the same inputs that produced
+ * the legacy `reason` template. No new wall-clock reads, no randomness.
+ */
+export interface DirectionSignals {
+  /** Mirrors the top-level `tags` field during the deprecation window. */
+  tags: string[];
+  /** Days since `updatedAt` for stale issues / lock-stale items. */
+  staleDays?: number;
+  /**
+   * Threshold (in days) used to decide whether the item is stale.
+   * `config.stuckThresholdHours / 24` for non-lock items;
+   * `config.lockStaleHours / 24` for lock-stale items.
+   */
+  staleThresholdDays?: number;
+  /**
+   * Number of directions sharing the top score. Set on every tied entry
+   * when the top-score tie has more than one member; omitted otherwise.
+   */
+  tiedAtScore?: number;
+  /**
+   * Audience-aware estimate penalty applied to the score. Only set when
+   * non-zero (i.e. `audience === "agent"` and the estimate is M / L / XL
+   * / unknown).
+   */
+  estimateWeight?: number;
+  /**
+   * For `kind: "tree-continue"`: a short structured note describing why
+   * the candidate participates in an active tree. Two shapes:
+   *   - "sibling #NNN closed N days ago"
+   *   - "candidate moved N days ago; M open siblings"
+   */
+  parentChainNote?: string;
+  /** For `kind: "pr"`: days since the PR was created. */
+  prAgeDays?: number;
+  /** For `kind: "pr"`: mirrors `direction.pr.reviewDecision`. */
+  prReviewDecision?: string | null;
+  /** For `kind: "pr"`: issue number parsed from `feature/GH-NNNN` head-ref. */
+  linkedIssueNumber?: number;
+}
+
 export interface Direction {
   rank: number;
   /**
@@ -71,7 +117,20 @@ export interface Direction {
     ageHours: number;
     reviewDecision: string | null;
   } | null;
+  /**
+   * Structured signals describing why this direction was ranked. Always
+   * present. Skills consume this to synthesize prose; headless callers
+   * may ignore it.
+   */
+  signals: DirectionSignals;
+  /**
+   * @deprecated Derived from signals. Removed in 2.7.0. Skills should
+   * synthesize prose from signals + title + memory.
+   */
   reason: string;
+  /**
+   * @deprecated Use signals.tags. Removed in 2.7.0.
+   */
   tags: string[];
   score: number;
 }
@@ -287,6 +346,67 @@ export function detectTreeContinue(
   return openSiblings.length > 0;
 }
 
+/**
+ * Compute a structured note describing which `detectTreeContinue` branch
+ * fired and the supporting evidence. Returns `null` if the candidate is
+ * not actually a tree-continue match (caller should not have called this).
+ *
+ * Two shapes (matching `detectTreeContinue`'s rule order):
+ *   - rule (a): "sibling #NNN closed N day(s) ago"
+ *   - rule (b): "candidate moved N day(s) ago; M open sibling(s)"
+ */
+function buildParentChainNote(
+  item: DashboardItem,
+  allItems: DashboardItem[],
+  config: RankConfig,
+): string | null {
+  const parent = item.parentNumber ?? null;
+  if (parent === null || parent === undefined) return null;
+
+  const siblings = allItems.filter(
+    (other) =>
+      other.number !== item.number && other.parentNumber === parent,
+  );
+
+  // Rule (a): find the most-recently-closed sibling within the window
+  // (deterministic: pick the one with the smallest sibling number among
+  // those tied on closedAt, matching the natural source order).
+  let closestSibling: { number: number; days: number } | null = null;
+  for (const sib of siblings) {
+    if (!sib.closedAt) continue;
+    const days = ageDays(sib.closedAt, config.now);
+    if (days > config.treeRecentDoneDays) continue;
+    const dayInt = Math.max(1, Math.floor(days));
+    if (
+      closestSibling === null ||
+      dayInt < closestSibling.days ||
+      (dayInt === closestSibling.days && sib.number < closestSibling.number)
+    ) {
+      closestSibling = { number: sib.number, days: dayInt };
+    }
+  }
+  if (closestSibling !== null) {
+    const dayLabel = closestSibling.days === 1 ? "day" : "days";
+    return `sibling #${closestSibling.number} closed ${closestSibling.days} ${dayLabel} ago`;
+  }
+
+  // Rule (b): candidate-moved branch
+  const candidateDays = Math.max(
+    1,
+    Math.floor(ageDays(item.updatedAt, config.now)),
+  );
+  const openSiblings = siblings.filter(
+    (sib) =>
+      sib.closedAt === null &&
+      sib.workflowState !== "Done" &&
+      sib.workflowState !== "Canceled",
+  );
+  if (openSiblings.length === 0) return null;
+  const dayLabel = candidateDays === 1 ? "day" : "days";
+  const sibLabel = openSiblings.length === 1 ? "sibling" : "siblings";
+  return `candidate moved ${candidateDays} ${dayLabel} ago; ${openSiblings.length} open ${sibLabel}`;
+}
+
 // ---------------------------------------------------------------------------
 // scoreIssue
 // ---------------------------------------------------------------------------
@@ -300,8 +420,10 @@ export function detectTreeContinue(
  *   else -> kind: "issue"
  *
  * `tags[]` carries descriptive signals (e.g. "stale", "high-priority",
- * "blocked") that did NOT win the kind slot but still shape the prose
- * `reason` rendered by `buildReason`.
+ * "blocked"). `signals` carries the structured per-direction explanation
+ * (staleDays, parentChainNote, estimateWeight, etc.) that skills use to
+ * synthesize prose without rendering the legacy `reason` template
+ * verbatim.
  *
  * PR ranking is handled separately by `rankDirections` — this function
  * never returns kind "pr".
@@ -310,14 +432,20 @@ export function scoreIssue(
   item: DashboardItem,
   allItems: DashboardItem[],
   config: RankConfig,
-): { score: number; kind: Exclude<Direction["kind"], "pr">; tags: string[] } {
+): {
+  score: number;
+  kind: Exclude<Direction["kind"], "pr">;
+  tags: string[];
+  signals: DirectionSignals;
+} {
   const tags: string[] = [];
 
   let score = priorityScore(item.priority) + phaseScore(item.workflowState);
 
   // Audience-aware estimate penalty (no-op for "human"; pushes XL items
   // down for "agent" so autonomous loops favor XS/S work).
-  score += audiencePenalty(item, config.audience);
+  const estPenalty = audiencePenalty(item, config.audience);
+  score += estPenalty;
 
   const lockStale = detectLockStale(item, config);
   const treeContinue = detectTreeContinue(item, allItems, config);
@@ -359,7 +487,42 @@ export function scoreIssue(
     kind = "issue";
   }
 
-  return { score, kind, tags };
+  // Compute structured signals for skills to synthesize prose. tiedAtScore
+  // is added later by rankDirections after the post-sort pass.
+  const signals: DirectionSignals = { tags: [...tags] };
+
+  if (kind === "lock-stale") {
+    const days = Math.max(
+      1,
+      Math.floor(ageHours(item.updatedAt, config.now) / 24),
+    );
+    signals.staleDays = days;
+    signals.staleThresholdDays = config.lockStaleHours / 24;
+  } else {
+    // For non-lock items, surface the threshold informationally and
+    // populate staleDays only when the stale tag fired.
+    signals.staleThresholdDays = config.stuckThresholdHours / 24;
+    if (isStale) {
+      const days = Math.max(
+        1,
+        Math.floor(ageHours(item.updatedAt, config.now) / 24),
+      );
+      signals.staleDays = days;
+    }
+  }
+
+  if (estPenalty > 0) {
+    signals.estimateWeight = estPenalty;
+  }
+
+  if (kind === "tree-continue") {
+    const note = buildParentChainNote(item, allItems, config);
+    if (note !== null) {
+      signals.parentChainNote = note;
+    }
+  }
+
+  return { score, kind, tags, signals };
 }
 
 // ---------------------------------------------------------------------------
@@ -373,6 +536,8 @@ interface PRScored {
   tags: string[];
   /** Issue number parsed from a `feature/GH-NNNN` head-ref, if present. */
   linkedIssueNumber: number | null;
+  /** Structured signals for the skill to synthesize prose. */
+  signals: DirectionSignals;
 }
 
 function parseIssueNumberFromHeadRef(headRefName: string): number | null {
@@ -415,12 +580,22 @@ function scorePR(pr: OpenPR, config: RankConfig): PRScored | null {
 
   const linkedIssueNumber = parseIssueNumberFromHeadRef(pr.headRefName);
 
+  const signals: DirectionSignals = {
+    tags: [...tags],
+    prAgeDays: Math.max(1, Math.floor(pr.ageHours / 24)),
+    prReviewDecision: pr.reviewDecision,
+  };
+  if (linkedIssueNumber !== null) {
+    signals.linkedIssueNumber = linkedIssueNumber;
+  }
+
   return {
     pr,
     score,
     reason: "", // filled in by buildReason at finalization time
     tags,
     linkedIssueNumber,
+    signals,
   };
 }
 
@@ -433,15 +608,20 @@ function scorePR(pr: OpenPR, config: RankConfig): PRScored | null {
  * per kind so the output reads as natural English rather than
  * template-y. No trailing period — the consumer wraps the sentence into
  * a paragraph at presentation time.
+ *
+ * @deprecated Reason strings are derived from signals for back-compat.
+ * Skills should synthesize prose from signals directly. Removed in 2.7.0.
  */
 export function buildReason(
   kind: Direction["kind"],
   issue: DashboardItem | null,
   pr: OpenPR | null,
-  tags: string[],
+  signals: DirectionSignals,
   config: RankConfig,
   linkedIssueNumber: number | null = null,
 ): string {
+  const tags = signals.tags;
+
   if (kind === "pr" && pr) {
     const days = Math.max(1, Math.floor(pr.ageHours / 24));
     const dayLabel = days === 1 ? "day" : "days";
@@ -507,6 +687,7 @@ interface ScoredCandidate {
   score: number;
   kind: Exclude<Direction["kind"], "pr">;
   tags: string[];
+  signals: DirectionSignals;
 }
 
 function isCandidatePhase(state: string | null): boolean {
@@ -557,8 +738,8 @@ export function rankDirections(
     const passesPhaseFilter = isCandidatePhase(item.workflowState) || isLockStale;
     if (!passesPhaseFilter) continue;
 
-    const { score, kind, tags } = scoreIssue(item, items, config);
-    scored.push({ item, score, kind, tags });
+    const { score, kind, tags, signals } = scoreIssue(item, items, config);
+    scored.push({ item, score, kind, tags, signals });
   }
 
   // 2. Drop blocked items unless that would empty the candidate set.
@@ -633,17 +814,34 @@ export function rankDirections(
   // 6. Slice to limit and assign rank.
   const sliced = merged.slice(0, Math.max(0, config.limit));
 
+  // 6a. Compute tied-at-top-score count from the sliced (final) list so the
+  //     tie reflects what the user actually sees. Stamped onto each entry's
+  //     signals only when the count is > 1; omitted otherwise.
+  const tiedCount =
+    sliced.length === 0
+      ? 0
+      : sliced.filter((entry) => {
+          const s = entry.kind === "issueRow" ? entry.payload.score : entry.payload.score;
+          const top = sliced[0].kind === "issueRow" ? sliced[0].payload.score : sliced[0].payload.score;
+          return s === top;
+        }).length;
+
   const directions: Direction[] = sliced.map((entry, idx) => {
     const rank = idx + 1;
     if (entry.kind === "issueRow") {
       const c = entry.payload;
-      const reason = buildReason(c.kind, c.item, null, c.tags, config, null);
+      const signals: DirectionSignals = { ...c.signals };
+      if (tiedCount > 1 && c.score === sliced[0].payload.score) {
+        signals.tiedAtScore = tiedCount;
+      }
+      const reason = buildReason(c.kind, c.item, null, signals, config, null);
       return {
         rank,
         recommended: false,
         kind: c.kind,
         issue: toDirectionIssue(c.item),
         pr: null,
+        signals,
         reason,
         tags: c.tags,
         score: c.score,
@@ -651,11 +849,15 @@ export function rankDirections(
     }
     // PR row
     const p = entry.payload;
+    const signals: DirectionSignals = { ...p.signals };
+    if (tiedCount > 1 && p.score === sliced[0].payload.score) {
+      signals.tiedAtScore = tiedCount;
+    }
     const reason = buildReason(
       "pr",
       null,
       p.pr,
-      p.tags,
+      signals,
       config,
       p.linkedIssueNumber,
     );
@@ -665,6 +867,7 @@ export function rankDirections(
       kind: "pr",
       issue: null,
       pr: toDirectionPR(p.pr),
+      signals,
       reason,
       tags: p.tags,
       score: p.score,

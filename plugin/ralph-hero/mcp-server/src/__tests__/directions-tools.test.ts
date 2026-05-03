@@ -343,6 +343,7 @@ describe("ralph_hero__hello_directions", () => {
         pr: unknown;
         reason: string;
         tags: string[];
+        signals: { tags: string[]; staleDays?: number; tiedAtScore?: number };
         score: number;
       }>;
       fetchedAt: string;
@@ -363,14 +364,61 @@ describe("ralph_hero__hello_directions", () => {
     const numbers = payload.directions.map((d) => d.issue?.number);
     expect(numbers).not.toContain(104);
 
-    // Each direction has the documented shape.
+    // Each direction has the documented shape, including the new signals object.
     for (const dir of payload.directions) {
       expect(typeof dir.rank).toBe("number");
       expect(typeof dir.kind).toBe("string");
       expect(typeof dir.reason).toBe("string");
       expect(Array.isArray(dir.tags)).toBe(true);
       expect(typeof dir.score).toBe("number");
+      expect(typeof dir.signals).toBe("object");
+      expect(Array.isArray(dir.signals.tags)).toBe(true);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // 1b. Wire-shape: signals + reason coexist (back-compat window) [GH-975]
+  // -------------------------------------------------------------------------
+  it("returns both reason (back-compat) and signals (new) on every direction", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const fixtures = [
+      rawIssue({
+        number: 600,
+        title: "P0 plan-in-review",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        updatedAt: oneHourAgo,
+      }),
+    ];
+
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures } },
+    );
+
+    registerDirectionsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__next_actions");
+
+    const result = await tool.handler(buildArgs({ limit: 1 }), {});
+    const payload = parsePayload(result) as {
+      directions: Array<{
+        reason: string;
+        tags: string[];
+        signals: { tags: string[] };
+      }>;
+    };
+    expect(result.isError).toBeUndefined();
+    expect(payload.directions).toHaveLength(1);
+    const dir = payload.directions[0];
+    // Back-compat fields still present (deprecated but populated for one minor cycle).
+    expect(typeof dir.reason).toBe("string");
+    expect(dir.reason.length).toBeGreaterThan(0);
+    expect(Array.isArray(dir.tags)).toBe(true);
+    // New structured signals on the wire.
+    expect(typeof dir.signals).toBe("object");
+    expect(Array.isArray(dir.signals.tags)).toBe(true);
+    // signals.tags mirrors top-level tags during deprecation window.
+    expect(dir.signals.tags).toEqual(dir.tags);
   });
 
   // -------------------------------------------------------------------------
