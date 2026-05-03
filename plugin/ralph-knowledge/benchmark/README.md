@@ -60,7 +60,9 @@ Microbenchmark guarding the OOM fix from #907 (#911 embedder tensor disposal,
 synthetic corpus in a tmp dir via a seeded `mulberry32` RNG, runs `reindex()`
 against it with `RALPH_CONTEXTUAL_RETRIEVAL=0`, samples
 `process.memoryUsage()` every 100 ms, and writes a TSV row with peak
-`heap_used`, `rss`, `external`, wall clock, cold start, and chunk count.
+`heap_used`, `rss`, `external`, wall clock, and chunk count. (The reranker
+bench measures cold-start; the heap bench does not, because `reindex()`
+exposes no hook to mark the moment when the embedding model finishes loading.)
 
 ```bash
 # Run once, write TSV row, no exit-1 behavior:
@@ -78,7 +80,7 @@ Results are appended one row per run to `benchmark/results-YYYY-MM-DD.tsv`
 under the same header rather than overwriting). The TSV header is:
 
 ```
-date	doc_count	chunk_count	cold_start_ms	wall_clock_s	peak_heap_used_mb	peak_rss_mb	peak_external_mb	threshold_pass	notes
+date	doc_count	chunk_count	wall_clock_s	peak_heap_used_mb	peak_rss_mb	peak_external_mb	threshold_pass	notes
 ```
 
 Default thresholds (sourced from

@@ -4,7 +4,7 @@
  * Generates a deterministic 50-doc synthetic corpus, runs the production
  * reindex() against it with RALPH_CONTEXTUAL_RETRIEVAL=0 and a 100 ms heap
  * sampler, then writes a TSV row with peak heap_used, peak RSS, peak external,
- * cold-start, wall-clock, and chunk count.
+ * wall-clock, and chunk count.
  *
  * Guards the OOM fix from #907 (#911 + #916). A regression that re-introduces
  * catastrophic transient allocation (10x+ over today's baseline) will push
@@ -59,7 +59,6 @@ interface BenchResult {
   date: string;
   doc_count: number;
   chunk_count: number;
-  cold_start_ms: number;
   wall_clock_s: number;
   peak_heap_used_mb: number;
   peak_rss_mb: number;
@@ -221,16 +220,16 @@ async function runBench(): Promise<BenchResult> {
   generateCorpus(corpusDir);
 
   const sampler = startHeapSampler();
-  // Cold start = model load + first reindex prelude. We approximate by
-  // measuring time-to-first heap-sample-after-reindex-start. In practice
-  // the dominant cost is the transformer model load on the first chunk;
-  // the 100 ms sampler captures a stable peak after that point.
+  // Wall clock spans the entire reindex run: model cold-start, file scan,
+  // chunk loop, and final flush. A separate cold-start metric was removed
+  // (PR #935 review) because reindex() exposes no hook to mark the moment
+  // when model load completes — measuring it from outside the call always
+  // yielded ~0. If a future iteration needs warm vs. cold timing, add an
+  // event hook in reindex.ts and reintroduce the column then.
   const t0 = performance.now();
-  const coldStartMark = performance.now();
   await reindex([corpusDir], dbPath, false);
   const elapsed = (performance.now() - t0) / 1000;
   const peak = sampler.stop();
-  const coldStartMs = Math.round(coldStartMark - t0);
 
   const chunkCount = countChunks(dbPath);
 
@@ -238,7 +237,6 @@ async function runBench(): Promise<BenchResult> {
     date: isoDate(),
     doc_count: DOC_COUNT,
     chunk_count: chunkCount,
-    cold_start_ms: coldStartMs,
     wall_clock_s: Number(elapsed.toFixed(2)),
     peak_heap_used_mb: Number((peak.heapUsed / 1024 / 1024).toFixed(1)),
     peak_rss_mb: Number((peak.rss / 1024 / 1024).toFixed(1)),
@@ -255,7 +253,6 @@ const TSV_HEADERS = [
   "date",
   "doc_count",
   "chunk_count",
-  "cold_start_ms",
   "wall_clock_s",
   "peak_heap_used_mb",
   "peak_rss_mb",
@@ -269,7 +266,6 @@ function rowToTsv(r: BenchResult): string {
     r.date,
     r.doc_count,
     r.chunk_count,
-    r.cold_start_ms,
     r.wall_clock_s,
     r.peak_heap_used_mb,
     r.peak_rss_mb,
@@ -301,7 +297,6 @@ function printSummary(r: BenchResult): void {
   console.log(`  date                : ${r.date}`);
   console.log(`  doc_count           : ${r.doc_count}`);
   console.log(`  chunk_count         : ${r.chunk_count}`);
-  console.log(`  cold_start_ms       : ${r.cold_start_ms}`);
   console.log(`  wall_clock_s        : ${r.wall_clock_s}`);
   console.log(`  peak_heap_used_mb   : ${r.peak_heap_used_mb}`);
   console.log(`  peak_rss_mb         : ${r.peak_rss_mb}`);
