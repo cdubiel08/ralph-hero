@@ -5,6 +5,7 @@ model: claude-opus-4-7
 allowed-tools:
   - Read
   - Write
+  - Bash(node plugin/ralph-playwright/scripts/*)
 ---
 
 # Reflect — Analyze a Journey Trace
@@ -13,6 +14,10 @@ allowed-tools:
 
 Path to a journey trace YAML file (from a previous execute run):
 - Example: `.playwright-cli/2026-03-21-explore-checkout-flow/journey-trace.yaml`
+
+Optional flags:
+- `--baseline PATH` — Run the in-loop semantic visual diff against a prior run's trace. Emits `regression` signals when meaningful layout shifts are detected. See [§ Semantic Visual Diff](#semantic-visual-diff---baseline----update-baseline) below.
+- `--update-baseline [PATH]` — Promote a completed run's screenshots into the baseline directory for the session slug. Explicit action; never combine with `--baseline` in the same invocation.
 
 ## Process
 
@@ -193,6 +198,116 @@ Recommendation: <recommendation>
 Next: Use /ralph-playwright:capture to promote screenshots, or pipe this
 report to the act primitive for automated issue creation.
 ```
+
+## Semantic Visual Diff (`--baseline` / `--update-baseline`)
+
+The `--baseline` and `--update-baseline` flags wire reflect into the in-loop semantic visual diff (epic [#784](https://github.com/cdubiel08/ralph-hero/issues/784) Feature G; atomics [#806](https://github.com/cdubiel08/ralph-hero/issues/806), [#809](https://github.com/cdubiel08/ralph-hero/issues/809), [#813](https://github.com/cdubiel08/ralph-hero/issues/813), [#816](https://github.com/cdubiel08/ralph-hero/issues/816)).
+
+### What the flags do
+
+- **`--baseline <baseline-trace-path>`** — Compare the current run's screenshots against a prior run's matched screenshots. For each matched step, the diff prompt asks Opus 4.7 to identify meaningful visual changes; each bullet becomes a `regression` signal in the merged signal report. Steps added in the current run or missing relative to the baseline emit `anomaly` signals (severity `low`, tagged `step-added-vs-baseline` or `step-missing-vs-baseline`) — they are not regressions.
+- **`--update-baseline [trace-path]`** — Promote a completed run's screenshots into `thoughts/local/baselines/<slug>/<NN>.png`, overwriting any prior baselines for that session slug. Without a path, the most recent trace under `.playwright-cli/` is used. Logs the count and paths of promoted screenshots to stdout; does NOT emit a signal report.
+
+### When to use it
+
+- **Intentional regression sweeps** — Before a release, re-run a known-good journey against the new build with `--baseline <prior-build-trace>` to surface any meaningful UI changes.
+- **"Something feels different" investigations** — When an operator suspects a UI shift but can't pinpoint it, the diff narrates the change in natural language ("Submit button moved ~40px down and lost its drop shadow") rather than producing a pixel-blob.
+- **Sanity-check infrastructure changes** — CSS-framework upgrades, design-token migrations, build-pipeline changes that *shouldn't* alter visual output. The diff is the canary.
+
+### Example invocations
+
+Baseline diff against a prior run:
+
+```
+/ralph-playwright:reflect ./current/journey-trace.yaml \
+  --baseline ./prior/journey-trace.yaml
+```
+
+Promote the current run's screenshots as the new baseline:
+
+```
+/ralph-playwright:reflect --update-baseline ./current/journey-trace.yaml
+```
+
+### Refresh workflow
+
+Promotion is **explicit, never implicit** — `--baseline` only reads, never writes. To accept the current state as the new baseline:
+
+1. Run reflect with `--baseline` and review the regression signals.
+2. If the changes are intentional and the new state should be the baseline, re-invoke with `--update-baseline` (passing the *current* trace path, not the prior one).
+3. The next `--baseline` run compares against the freshly promoted screenshots.
+
+This mirrors Git's stage/commit split: diffing and promoting are distinct acts.
+
+### Mutual exclusivity
+
+`--baseline` and `--update-baseline` cannot combine in one invocation. Using both emits an error citing the conflict — running an update in the same call that also tries to diff is ambiguous (diff against old or new baseline?). Pick one per invocation.
+
+### Missing-baseline failure mode
+
+If `--baseline` is provided but the baseline directory has no screenshots for matched steps, reflect fails loudly with an actionable message:
+
+```
+reflect-diff-runner: baseline screenshot missing.
+  session: explore-checkout
+  step:    03
+  expected: thoughts/local/baselines/explore-checkout/03.png
+Hint: run `node plugin/ralph-playwright/scripts/update-baseline.mjs --trace <baseline-trace>`
+to populate the baseline directory before re-running --baseline.
+```
+
+The error names the session slug, the step id, the expected on-disk path, and the recovery command. There is no silent fallback: an empty baseline directory never produces an empty diff signal.
+
+### Noise-floor knob
+
+The diff prompt's meaningful-change threshold is governed by `RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR` (default `medium`):
+
+```bash
+# Low — include any visible change, including minor alignment shifts
+export RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR=low
+
+# Medium (default) — include changes that affect hierarchy, readability, or affordance
+export RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR=medium
+
+# High — only meaningful layout, state, or functionality changes
+export RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR=high
+```
+
+The CLI also accepts `--noise-floor <level>` directly. The env var and CLI flag are interchangeable; the CLI flag takes precedence when both are set.
+
+The default `medium` may be retuned by [#820](https://github.com/cdubiel08/ralph-hero/issues/820)'s pilot. Operators on noisy frontends can flip to `high` to reduce false positives; operators chasing subtle regressions can flip to `low`.
+
+### Underlying scripts
+
+The flags are implemented as orchestrator scripts the skill invokes via `Bash(node ...)`:
+
+- [`plugin/ralph-playwright/scripts/reflect-diff-runner.mjs`](../../scripts/reflect-diff-runner.mjs) — Loads both traces, calls `matchSteps` ([#809](https://github.com/cdubiel08/ralph-hero/issues/809)), calls `buildDiffPayloads` ([#813](https://github.com/cdubiel08/ralph-hero/issues/813)), invokes the model for each pair, calls `parseDiffResponse`, and merges added/missing-step `anomaly` signals into the result.
+- [`plugin/ralph-playwright/scripts/update-baseline.mjs`](../../scripts/update-baseline.mjs) — Reads a trace, iterates `steps[]`, copies each step's screenshot via `writeBaseline` ([#806](https://github.com/cdubiel08/ralph-hero/issues/806)).
+
+CLI escape hatches (for operators who want to automate without going through the skill):
+
+```
+node plugin/ralph-playwright/scripts/reflect-diff-runner.mjs \
+  --current ./current/journey-trace.yaml \
+  --baseline ./prior/journey-trace.yaml \
+  --noise-floor medium \
+  --out ./signal-report.yaml
+```
+
+```
+node plugin/ralph-playwright/scripts/update-baseline.mjs \
+  --trace ./current/journey-trace.yaml
+```
+
+Note: the standalone `reflect-diff-runner.mjs` CLI requires a `modelInvoker` to be wired in. When invoked from the skill (the normal path), the calling skill's runtime supplies the Opus 4.7 model call between `buildDiffPayloads` and `parseDiffResponse`. The CLI is intended for tests and pre-canned-response automation; for the live model path, invoke through the skill.
+
+### Diff prompt reference
+
+The prompt template lives at [`plugin/ralph-playwright/skills/reflect/references/semantic-diff-prompt.md`](references/semantic-diff-prompt.md). Three placeholders (`{{ACTION}}`, `{{TARGET}}`, `{{NOISE_FLOOR}}`) are filled by `renderPrompt()` in [`scripts/diff-emitter.mjs`](../../scripts/diff-emitter.mjs); the baseline + current PNGs are passed to the model as separate vision attachments (in that order) by the skill runtime.
+
+### See also
+
+- [`skills/visual-diff/SKILL.md`](../visual-diff/SKILL.md) — For Storybook-component-level pixel diffing (Chromatic / Applitools integration). The two diff layers complement each other: in-loop semantic diff catches journey-level regressions; component pixel-diff catches isolated component drift.
 
 ## Model Routing
 

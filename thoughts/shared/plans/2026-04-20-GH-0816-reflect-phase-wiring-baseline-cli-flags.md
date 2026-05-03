@@ -98,20 +98,20 @@ After this atomic merges:
 
 ### Verification
 
-- [ ] `--baseline PATH` flag wired into reflect invocation path
-- [ ] `--update-baseline [PATH]` flag wired, distinct from `--baseline`
-- [ ] Mutually exclusive check fires when both are provided together
-- [ ] `--baseline` loads the prior trace, calls `matchSteps`, resolves baseline paths via `readBaseline`, invokes the emitter for each matched pair, merges results into the signal report
-- [ ] Emitter invocation respects `RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR` env var (or `--noise-floor` sub-flag if the operator passes it)
-- [ ] Added / removed steps emit `anomaly` signals with appropriate tags, not `regression`
-- [ ] Missing-baseline directory case fails loudly: error message cites the expected baseline path, the session slug, and a hint to run `--update-baseline` first
-- [ ] `--update-baseline` copies each PNG from the target run's `.playwright-cli/<session>/` into `thoughts/local/baselines/<slug>/<NN>.png`, overwriting prior baselines
-- [ ] `--update-baseline` logs which files were promoted (count + paths) to stdout; does not emit a signal report
-- [ ] `skills/reflect/SKILL.md` contains a new section documenting both flags with an example invocation
-- [ ] `skills/reflect/SKILL.md` cross-links to `skills/visual-diff/SKILL.md` in a "See also" block
+- [x] `--baseline PATH` flag wired into reflect invocation path
+- [x] `--update-baseline [PATH]` flag wired, distinct from `--baseline`
+- [x] Mutually exclusive check fires when both are provided together
+- [x] `--baseline` loads the prior trace, calls `matchSteps`, resolves baseline paths via `readBaseline`, invokes the emitter for each matched pair, merges results into the signal report
+- [x] Emitter invocation respects `RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR` env var (or `--noise-floor` sub-flag if the operator passes it)
+- [x] Added / removed steps emit `anomaly` signals with appropriate tags, not `regression`
+- [x] Missing-baseline directory case fails loudly: error message cites the expected baseline path, the session slug, and a hint to run `--update-baseline` first
+- [x] `--update-baseline` copies each PNG from the target run's `.playwright-cli/<session>/` into `thoughts/local/baselines/<slug>/<NN>.png`, overwriting prior baselines
+- [x] `--update-baseline` logs which files were promoted (count + paths) to stdout; does not emit a signal report
+- [x] `skills/reflect/SKILL.md` contains a new section documenting both flags with an example invocation
+- [x] `skills/reflect/SKILL.md` cross-links to `skills/visual-diff/SKILL.md` in a "See also" block
 - [ ] End-to-end smoke: run the flow twice with a known layout change between runs; confirm a `regression` signal fires on the changed step
 - [ ] End-to-end smoke: run the flow twice without any change; confirm no `regression` signals fire (modulo noise-floor tolerance from the pilot — this atomic ships with default `medium`; #820 may retune)
-- [ ] Signal report with merged diff signals passes `validate-primitive-io.sh`
+- [x] Signal report with merged diff signals passes `validate-primitive-io.sh`
 
 ## What We're NOT Doing
 
@@ -157,9 +157,9 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] ESM `.mjs`, uses only `node:fs/promises`, `node:path`, a YAML parser (if `yq` is available in the plugin's environment, shelling out to it via `child_process.execFile` is acceptable; otherwise use a tiny inline YAML parser — PREFER the `yq` shell-out because the existing hook already depends on `yq` per `validate-primitive-io.sh`, keeping dep surface constant), and imports from `./baseline-store.mjs`, `./match-steps.mjs`, `./diff-emitter.mjs`
-  - [ ] CLI surface: `node plugin/ralph-playwright/scripts/reflect-diff-runner.mjs --current PATH --baseline PATH [--noise-floor LEVEL] [--out PATH]` (options parsed manually; no `commander` / `yargs` dep)
-  - [ ] Function surface (exported for tests): `runReflectDiff({ currentTracePath, baselineTracePath, noiseFloor, modelInvoker })`:
+  - [x] ESM `.mjs`, uses only `node:fs/promises`, `node:path`, a YAML parser (if `yq` is available in the plugin's environment, shelling out to it via `child_process.execFile` is acceptable; otherwise use a tiny inline YAML parser — PREFER the `yq` shell-out because the existing hook already depends on `yq` per `validate-primitive-io.sh`, keeping dep surface constant), and imports from `./baseline-store.mjs`, `./match-steps.mjs`, `./diff-emitter.mjs`
+  - [x] CLI surface: `node plugin/ralph-playwright/scripts/reflect-diff-runner.mjs --current PATH --baseline PATH [--noise-floor LEVEL] [--out PATH]` (options parsed manually; no `commander` / `yargs` dep)
+  - [x] Function surface (exported for tests): `runReflectDiff({ currentTracePath, baselineTracePath, noiseFloor, modelInvoker })`:
     - Loads `currentTracePath` as YAML
     - Loads `baselineTracePath` as YAML
     - Calls `matchSteps(current, baseline)`
@@ -168,10 +168,10 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
     - Builds informational signals for `addedInCurrent` and `missingFromCurrent`:
       - Each becomes one `anomaly` signal with `severity: low`, `tags: ['step-added-vs-baseline']` or `['step-missing-vs-baseline']`, description includes the step's `(action, target)`
     - Returns `{ signals: [...diffSignals, ...infoSignals], meta: { pairsCount, addedCount, missingCount, noiseFloor } }`
-  - [ ] `modelInvoker` is a dependency-injection parameter. Default (production) implementation: call Claude via whatever mechanism is available in the skill runtime context. For the SCRIPT CLI path, the default modelInvoker is a thin shell-out to a separate tool (skipped if no credentials available — the CLI then prints a sane error). For TESTING, a stub modelInvoker is injected that returns pre-canned response text. This keeps the module testable.
-  - [ ] Missing baseline file at `baselineTracePath` → fail loudly with a readable error
-  - [ ] Missing baseline PNG for a matched pair (`BaselineNotFoundError` from `readBaseline`) → fail loudly citing the pair's step index, session slug, and expected path
-  - [ ] If `--out` is provided, write the produced signal array to that YAML file (embedded in a minimal signal-report.yaml envelope); otherwise print to stdout as JSON
+  - [x] `modelInvoker` is a dependency-injection parameter. Default (production) implementation: call Claude via whatever mechanism is available in the skill runtime context. For the SCRIPT CLI path, the default modelInvoker is a thin shell-out to a separate tool (skipped if no credentials available — the CLI then prints a sane error). For TESTING, a stub modelInvoker is injected that returns pre-canned response text. This keeps the module testable.
+  - [x] Missing baseline file at `baselineTracePath` → fail loudly with a readable error
+  - [x] Missing baseline PNG for a matched pair (`BaselineNotFoundError` from `readBaseline`) → fail loudly citing the pair's step index, session slug, and expected path
+  - [x] If `--out` is provided, write the produced signal array to that YAML file (embedded in a minimal signal-report.yaml envelope); otherwise print to stdout as JSON
 
 #### Task 1.2: Author `update-baseline.mjs`
 
@@ -181,15 +181,15 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] ESM `.mjs`, minimal deps (`fs/promises`, `path`, `./baseline-store.mjs`)
-  - [ ] CLI surface: `node plugin/ralph-playwright/scripts/update-baseline.mjs --trace PATH` (or no arg → find the most recent `.playwright-cli/<session>/journey-trace.yaml`)
-  - [ ] Function surface (exported for tests): `updateBaseline({ tracePath })`:
+  - [x] ESM `.mjs`, minimal deps (`fs/promises`, `path`, `./baseline-store.mjs`)
+  - [x] CLI surface: `node plugin/ralph-playwright/scripts/update-baseline.mjs --trace PATH` (or no arg → find the most recent `.playwright-cli/<session>/journey-trace.yaml`)
+  - [x] Function surface (exported for tests): `updateBaseline({ tracePath })`:
     - Loads the trace
     - Resolves session slug from `trace.session`
     - Iterates `trace.steps[]`; for each step with a non-empty `screenshot` path, calls `writeBaseline(slug, step.index, step.screenshot)`
     - Returns `{ promoted: [{ stepIndex, dest }, ...], slug, tracePath }`
-  - [ ] CLI prints a summary: `N screenshots promoted to thoughts/local/baselines/<slug>/` with the path list
-  - [ ] Missing trace path → fail loudly with the standard error envelope
+  - [x] CLI prints a summary: `N screenshots promoted to thoughts/local/baselines/<slug>/` with the path list
+  - [x] Missing trace path → fail loudly with the standard error envelope
 
 #### Task 1.3: Unit tests for both orchestrators
 
@@ -200,20 +200,20 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
 - **complexity**: medium
 - **depends_on**: [1.1, 1.2]
 - **acceptance**:
-  - [ ] `reflect-diff-runner.test.mjs` covers:
+  - [x] `reflect-diff-runner.test.mjs` covers:
     - Happy path: two traces, three matching steps, stub modelInvoker returns one bullet per pair → 3 regression signals + 0 info signals
     - Added step: current has one extra step → 0 regression + 1 `anomaly` with `tag: step-added-vs-baseline`
     - Missing step: baseline has one extra step → 0 regression + 1 `anomaly` with `tag: step-missing-vs-baseline`
     - Identical response (`NO-MEANINGFUL-CHANGES`): 0 signals
     - Missing baseline file (trace exists but PNG absent): throws with a readable error citing step / slug / path
     - `noiseFloor` option propagates to the payload builder (verify by capturing the payloads with a spy-modelInvoker)
-  - [ ] `update-baseline.test.mjs` covers:
+  - [x] `update-baseline.test.mjs` covers:
     - Trace with N steps whose screenshots exist in a tmp session dir → N files promoted to a tmp baseline dir; `promoted.length === N`
     - Trace with a step whose screenshot path is missing on disk → the step is skipped with a warning but other steps still promote; returned `promoted` excludes the skipped step
     - Trace with no steps → empty `promoted`, no error
     - Slug resolution matches `resolveSessionSlug(trace.session)` from `baseline-store.mjs`
-  - [ ] Both tests use `os.tmpdir()` / `fs.mkdtemp` for scratch space; cleanup in after-hooks
-  - [ ] `node --test plugin/ralph-playwright/scripts/reflect-diff-runner.test.mjs plugin/ralph-playwright/scripts/update-baseline.test.mjs` exits 0
+  - [x] Both tests use `os.tmpdir()` / `fs.mkdtemp` for scratch space; cleanup in after-hooks
+  - [x] `node --test plugin/ralph-playwright/scripts/reflect-diff-runner.test.mjs plugin/ralph-playwright/scripts/update-baseline.test.mjs` exits 0
 
 #### Task 1.4: Update `skills/reflect/SKILL.md` with flag documentation
 
@@ -223,8 +223,8 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
 - **complexity**: medium
 - **depends_on**: [1.1, 1.2]
 - **acceptance**:
-  - [ ] Input section (line 12-15) keeps the existing "Path to a journey trace YAML file" sentence and adds: "Optional flags — `--baseline PATH` to run semantic visual diff against a prior run's trace; `--update-baseline [PATH]` to promote a completed run's screenshots into the baseline dir."
-  - [ ] A new section BEFORE the Model Routing section titled **Semantic Visual Diff (`--baseline` / `--update-baseline`)** explains:
+  - [x] Input section (line 12-15) keeps the existing "Path to a journey trace YAML file" sentence and adds: "Optional flags — `--baseline PATH` to run semantic visual diff against a prior run's trace; `--update-baseline [PATH]` to promote a completed run's screenshots into the baseline dir."
+  - [x] A new section BEFORE the Model Routing section titled **Semantic Visual Diff (`--baseline` / `--update-baseline`)** explains:
     1. What the flag does ("compare current screenshots against a prior run's baselines; emit `regression` signals for meaningful changes")
     2. When to use it (intentional regression checks, pre-release sanity sweeps, investigating "something feels different" reports)
     3. Example invocation (matches the explore skill's flag-documentation style, lines 19-24):
@@ -238,7 +238,7 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
     7. Noise-floor knob: `RALPH_PLAYWRIGHT_DIFF_NOISE_FLOOR=low|medium|high` (default `medium`, may be updated by #820's pilot)
     8. Pointer to the diff prompt text: `plugin/ralph-playwright/skills/reflect/references/semantic-diff-prompt.md` (linked)
     9. **See also** subsection linking `skills/visual-diff/SKILL.md` with a one-line "for Storybook-component-level pixel diffing, see Chromatic/Applitools integration" pointer
-  - [ ] CLI invocation for the underlying script is shown as an escape hatch for operators who want to automate:
+  - [x] CLI invocation for the underlying script is shown as an escape hatch for operators who want to automate:
     ```
     node plugin/ralph-playwright/scripts/reflect-diff-runner.mjs \
       --current ./current/journey-trace.yaml \
@@ -246,13 +246,13 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
       --noise-floor medium \
       --out ./signal-report.yaml
     ```
-  - [ ] `--update-baseline` CLI escape hatch:
+  - [x] `--update-baseline` CLI escape hatch:
     ```
     node plugin/ralph-playwright/scripts/update-baseline.mjs \
       --trace ./current/journey-trace.yaml
     ```
-  - [ ] Steps 1-5 of the existing flow remain intact. The new section is additive, placed between Step 5 and the Model Routing section.
-  - [ ] `allowed-tools` frontmatter gains `Bash(node *)` (or more narrowly `Bash(node plugin/ralph-playwright/scripts/*)`) to let the skill invoke the orchestrator scripts. Existing `Read` and `Write` remain.
+  - [x] Steps 1-5 of the existing flow remain intact. The new section is additive, placed between Step 5 and the Model Routing section.
+  - [x] `allowed-tools` frontmatter gains `Bash(node *)` (or more narrowly `Bash(node plugin/ralph-playwright/scripts/*)`) to let the skill invoke the orchestrator scripts. Existing `Read` and `Write` remain.
 
 #### Task 1.5: End-to-end smoke test against a fixture
 
@@ -263,8 +263,8 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
 - **complexity**: medium
 - **depends_on**: [1.1, 1.2, 1.4]
 - **acceptance**:
-  - [ ] Fixture directory contains `v1.html` and `v2.html`; the only difference is a CSS change on the primary CTA (e.g., `margin-top` increase + `box-shadow: none`) and/or the addition of a visible element
-  - [ ] A short `README.md` in the fixture directory documents how to serve it (`python3 -m http.server -d ./plugin/ralph-playwright/fixtures/semantic-diff-smoke 8765`) and the expected diff outcome
+  - [x] Fixture directory contains `v1.html` and `v2.html`; the only difference is a CSS change on the primary CTA (e.g., `margin-top` increase + `box-shadow: none`) and/or the addition of a visible element
+  - [x] A short `README.md` in the fixture directory documents how to serve it (`python3 -m http.server -d ./plugin/ralph-playwright/fixtures/semantic-diff-smoke 8765`) and the expected diff outcome
   - [ ] Operator runs `/ralph-playwright:explore http://localhost:8765/v1.html` to produce the baseline session
   - [ ] Operator runs `/ralph-playwright:reflect <baseline-session-trace> --update-baseline` to promote the baseline PNGs
   - [ ] Operator runs `/ralph-playwright:explore http://localhost:8765/v2.html` to produce the "current" session
@@ -273,17 +273,17 @@ Author the diff-runner and baseline-updater scripts. Document the flags in `refl
     - `validate-primitive-io.sh` exits 0 on the produced `signal-report.yaml`
     - `signal-report.yaml` also validates through the unit-test's property-shape matcher if re-run
   - [ ] Re-running the same flow against `v1.html` with `v1.html` as both baseline and current produces zero `regression` signals (at default noise-floor)
-  - [ ] Pilot notes capture: observed signal count, description quality, false-positive count, any surprises
+  - [x] Pilot notes capture: observed signal count, description quality, false-positive count, any surprises (template seeded; values pending live operator run)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `node --test plugin/ralph-playwright/scripts/reflect-diff-runner.test.mjs` — exits 0
-- [ ] `node --test plugin/ralph-playwright/scripts/update-baseline.test.mjs` — exits 0
-- [ ] `node --test plugin/ralph-playwright/scripts/` — all plugin test files pass together
-- [ ] `validate-primitive-io.sh` exits 0 on a synthesized `signal-report.yaml` containing diff + informational signals
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing
+- [x] `node --test plugin/ralph-playwright/scripts/reflect-diff-runner.test.mjs` — exits 0
+- [x] `node --test plugin/ralph-playwright/scripts/update-baseline.test.mjs` — exits 0
+- [x] `node --test plugin/ralph-playwright/scripts/` — all plugin test files pass together
+- [x] `validate-primitive-io.sh` exits 0 on a synthesized `signal-report.yaml` containing diff + informational signals
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing
 
 #### Manual Verification:
 - [ ] Reviewer reads updated `reflect/SKILL.md` and confirms: flag docs are complete, example invocations are copy-paste-ready, See-also pointer to `visual-diff/SKILL.md` renders

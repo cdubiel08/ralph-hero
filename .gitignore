@@ -23,3 +23,6 @@ thoughts/_issues/
 
 # Baseline screenshots for semantic diff (local-only, per-developer state)
 thoughts/local/baselines/
+
+# Pilot notes for in-loop semantic visual diff (per-operator session notes)
+thoughts/local/pilots/
