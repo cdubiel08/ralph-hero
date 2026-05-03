@@ -86,3 +86,30 @@ describe("readActivity — populated log", () => {
     expect(result.events[0].ts).toBe("2026-05-01T12:00:00Z");
   });
 });
+
+describe("readActivity — error tolerance", () => {
+  it("skips corrupt JSONL lines and counts them", () => {
+    const dir = path.join(tmpDir, "2026", "05");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "02.jsonl"),
+      [
+        '{"ts":"2026-05-02T08:00:00Z","kind":"tool_called","category":"work"}',
+        'not json at all',
+        '{"ts":"2026-05-02T09:00:00Z","kind":"tool_called","category":"work"}',
+        '{"ts":"invalid-date","kind":"x","category":"work"}',
+      ].join("\n"),
+    );
+    const result = readActivity(makeConfig({ category: "work" }));
+    expect(result.events).toHaveLength(2);
+    expect(result.skipped_lines).toBe(2);
+  });
+
+  it("handles sparse logs (missing days within range)", () => {
+    writeEvents(tmpDir, "2026-05-01", [{ ts: "2026-05-01T12:00:00Z", kind: "x", category: "work" }]);
+    // Skip 2026-05-02
+    writeEvents(tmpDir, "2026-05-03", [{ ts: "2026-05-03T12:00:00Z", kind: "x", category: "work" }]);
+    const result = readActivity(makeConfig({ category: "work", since: "2026-05-01T00:00:00Z" }));
+    expect(result.events).toHaveLength(2);
+  });
+});
