@@ -1,13 +1,45 @@
 ---
 date: 2026-05-03
-status: draft
+status: reverted
 type: plan
 github_issue: 968
 github_issues: [968]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/968
 primary_issue: 968
-tags: [release, ci, npm, version-drift, postcheck]
+tags: [release, ci, npm, version-drift, postcheck, tombstoned]
+---
+
+> # TOMBSTONE — this plan was implemented and then reverted
+>
+> **Status: reverted on 2026-05-03 (same day as merge).**
+>
+> This plan addressed what was diagnosed as a "release publish drift bug": skill-only
+> PRs bumped `mcp-server/package.json` but didn't publish to npm, leaving the registry
+> behind the local version. The implementation (PR #973) decoupled the bump step from
+> `mcp_changed` so skill-only PRs would only bump `plugin.json`, keeping `package.json`
+> in lockstep with npm.
+>
+> **Why this was wrong:** the original "drift" was cosmetic, not functional. ralph-hero
+> ships through two distribution channels — plugins via git tags / GitHub Releases, MCP
+> server via npm. The two were intentionally decoupled. The pre-#968 workflow was
+> correct: ALWAYS bump+tag, conditionally publish. Phase 4/5 work was already deployed
+> via the plugin marketplace; the "stranded on git" framing was an overstatement.
+>
+> **What broke:** the new logic let `plugin.json` advance independently of `package.json`,
+> creating tags at versions `package.json` would later try to compute itself. PR #977's
+> merge tried to bump `package.json` 2.5.85 → 2.5.86, but git tag `v2.5.86` already
+> existed (from PR #971's plugin-only release). The release job aborted before npm
+> publish, requiring manual recovery (skip-ci sync commit + workflow_dispatch).
+>
+> **Resolution:** workflow change reverted in a follow-up PR; a clarifying design-note
+> comment added to `.github/workflows/release.yml` explaining the intentional decoupling
+> so this isn't re-litigated. See the review tombstone at
+> `thoughts/shared/reviews/2026-05-03-GH-0968-critique.md`.
+>
+> Everything below this block describes the now-reverted approach. Kept for the
+> historical record. Do not implement from this plan.
+
 ---
 
 # Fix Release Publish Drift (GH-968) - Atomic Implementation Plan
