@@ -79,7 +79,7 @@ const openPRSchema = z.object({
 // `audience` is internal; callers only pass it via the `next_actions` tool.
 // ---------------------------------------------------------------------------
 
-interface OpenPRArg {
+export interface OpenPRArg {
   number: number;
   title: string;
   url: string;
@@ -89,7 +89,7 @@ interface OpenPRArg {
   createdAt: string;
 }
 
-interface RunDirectionsArgs {
+export interface RunDirectionsArgs {
   owner?: string;
   projectNumbers?: number[];
   limit?: number;
@@ -103,11 +103,13 @@ interface RunDirectionsArgs {
 
 // ---------------------------------------------------------------------------
 // Shared implementation — extracted so both `hello_directions` (deprecated)
-// and `next_actions` (current) can route through the same code path. Keep
-// file-private (no export) — alias lives in this same file.
+// and `next_actions` (current) can route through the same code path. Also
+// exported so the deprecated `pick_actionable_issue` wrapper in
+// `issue-tools.ts` can delegate without duplicating the data-fetch +
+// scoring pipeline.
 // ---------------------------------------------------------------------------
 
-function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionCache) {
+export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionCache) {
   return async function runDirections(args: RunDirectionsArgs) {
     try {
       const owner = args.owner || resolveProjectOwner(client.config);

@@ -33,6 +33,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__decompose_feature
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__detect_stream_positions
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__next_actions
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pick_actionable_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search

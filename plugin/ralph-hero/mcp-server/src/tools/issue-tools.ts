@@ -26,6 +26,7 @@ import {
   WORKFLOW_STATE_TO_STATUS,
 } from "../lib/workflow-states.js";
 import { buildBatchMutationQuery } from "./batch-tools.js";
+import { makeRunDirections } from "./directions-tools.js";
 import { resolveState } from "../lib/state-resolution.js";
 import { parseDateMath } from "../lib/date-math.js";
 import { expandProfile } from "../lib/filter-profiles.js";
@@ -1663,11 +1664,22 @@ export function registerIssueTools(
   );
 
   // -------------------------------------------------------------------------
-  // ralph_hero__pick_actionable_issue
+  // ralph_hero__pick_actionable_issue [DEPRECATED]
+  //
+  // Thin wrapper that delegates to the shared `runDirections` helper from
+  // `directions-tools.ts` (audience="agent"). Preserves the legacy
+  // `{ found, issue, group, alternatives }` shape so existing callers
+  // (justfile recipes, hero/team allowlists) keep working until removal in
+  // 2.7.0. Same backwards-compat pattern as `hello_directions` from Phase 2.
+  //
+  // Migration: callers should switch to
+  //   ralph_hero__next_actions(limit=1, audience="agent")
+  // and consume the rank-1 (recommended) entry directly.
   // -------------------------------------------------------------------------
+  const runDirections = makeRunDirections(client, fieldCache);
   server.tool(
     "ralph_hero__pick_actionable_issue",
-    "Find the highest-priority issue matching a workflow state that is not blocked or locked. Returns: found, issue (with number, title, workflowState, estimate, priority, group context), alternatives count. Used by dispatch loop to find work for idle teammates. Recovery: if no issues found, try a different workflowState or increase maxEstimate.",
+    "[DEPRECATED — use ralph_hero__next_actions(limit=1, audience='agent') instead. Removed in 2.7.0.] Find the highest-priority issue matching a workflow state that is not blocked or locked. Returns: found, issue (with number, title, workflowState, estimate, priority, group context), alternatives count. Used by dispatch loop to find work for idle teammates.",
     {
       owner: z
         .string()
@@ -1681,8 +1693,9 @@ export function registerIssueTools(
         .describe("Project number override (defaults to configured project)"),
       workflowState: z
         .string()
+        .optional()
         .describe(
-          "Target workflow state (e.g., 'Research Needed', 'Ready for Plan')",
+          "Target workflow state (e.g., 'Research Needed', 'Ready for Plan'). Optional — when omitted, the rank-1 (recommended) direction across all actionable phases is returned (same as next_actions(limit=1, audience='agent')).",
         ),
       maxEstimate: z
         .string()
@@ -1692,8 +1705,9 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
-        // Validate workflow state
-        if (!isValidState(args.workflowState)) {
+        // Validate workflow state (only when provided — wrapper allows
+        // omission so it can mirror next_actions(limit=1, audience='agent')).
+        if (args.workflowState !== undefined && !isValidState(args.workflowState)) {
           return toolError(
             `Unknown workflow state '${args.workflowState}'. ` +
               `Valid states: ${VALID_STATES.join(", ")}. ` +
@@ -1714,118 +1728,76 @@ export function registerIssueTools(
           );
         }
 
-        const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
-          client,
-          args,
-        );
+        const { owner, repo } = resolveFullConfig(client, args);
 
-        // Ensure field cache is populated
-        await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+        // Delegate to the shared ranker with audience="agent". Use a
+        // generous limit so we have enough entries to filter by
+        // workflowState + maxEstimate while still finding the highest
+        // priority candidate. The ranker uses priority + audience-aware
+        // estimate penalty as the dominant ordering signal, which matches
+        // the legacy P0 -> P3 sort.
+        const directionsResult = await runDirections({
+          owner,
+          projectNumbers: args.projectNumber !== undefined ? [args.projectNumber] : undefined,
+          limit: 50,
+          openPRs: [],
+          audience: "agent",
+        });
 
-        const projectId = fieldCache.getProjectId(projectNumber);
-        if (!projectId) {
-          return toolError("Could not resolve project ID");
+        if (directionsResult.isError) {
+          // Surface the underlying error verbatim so callers see the same
+          // recovery hints they would from next_actions.
+          return directionsResult;
         }
 
-        // Fetch all project items
-        const itemsResult = await paginateConnection<RawProjectItem>(
-          (q, v) => client.projectQuery(q, v),
-          `query($projectId: ID!, $cursor: String, $first: Int!) {
-            node(id: $projectId) {
-              ... on ProjectV2 {
-                items(first: $first, after: $cursor) {
-                  totalCount
-                  pageInfo { hasNextPage endCursor }
-                  nodes {
-                    id
-                    type
-                    content {
-                      ... on Issue {
-                        number
-                        title
-                        body
-                        state
-                        url
-                        labels(first: 10) { nodes { name } }
-                        trackedIssues(first: 10) {
-                          nodes { number state }
-                        }
-                      }
-                    }
-                    fieldValues(first: 20) {
-                      nodes {
-                        ... on ProjectV2ItemFieldSingleSelectValue {
-                          __typename
-                          name
-                          optionId
-                          field { ... on ProjectV2FieldCommon { name } }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-          { projectId, first: 100 },
-          "node.items",
-          { maxItems: 500 },
+        const payload = JSON.parse(
+          directionsResult.content[0].text,
+        ) as {
+          directions: Array<{
+            kind: string;
+            issue: {
+              number: number;
+              title: string;
+              workflowState: string | null;
+              priority: string | null;
+              estimate: string | null;
+            } | null;
+            tags: string[];
+          }>;
+        };
+
+        // Restrict to plain "issue" directions — exclude PRs (kind="pr"),
+        // lock-stale items (kind="lock-stale"), and tree-continue picks
+        // (kind="tree-continue") since legacy semantics returned a single
+        // ready-to-claim issue.
+        let issueDirections = payload.directions.filter(
+          (d) => d.kind === "issue" && d.issue !== null,
         );
 
-        // Filter to matching items
-        let candidates = itemsResult.nodes.filter((item) => {
-          if (item.type !== "ISSUE" || !item.content) return false;
-          const content = item.content as Record<string, unknown>;
-          if (content.state !== "OPEN") return false;
+        // Apply legacy filters: workflowState (if provided) and maxEstimate.
+        if (args.workflowState !== undefined) {
+          issueDirections = issueDirections.filter(
+            (d) => d.issue!.workflowState === args.workflowState,
+          );
+        }
 
-          // Check workflow state
-          const ws = getFieldValue(item, "Workflow State");
-          if (ws !== args.workflowState) return false;
-
-          // Check estimate
-          const est = getFieldValue(item, "Estimate");
-          if (est) {
-            const estIdx = validEstimates.indexOf(est);
-            const maxIdx = validEstimates.indexOf(maxEstimate);
-            if (estIdx > maxIdx) return false;
-          }
-
-          return true;
+        const maxIdx = validEstimates.indexOf(maxEstimate);
+        issueDirections = issueDirections.filter((d) => {
+          const est = d.issue!.estimate;
+          if (!est) return true;
+          const estIdx = validEstimates.indexOf(est);
+          if (estIdx < 0) return true;
+          return estIdx <= maxIdx;
         });
 
-        // Filter out locked issues (in a lock state - shouldn't happen if matching target state, but safety check)
-        candidates = candidates.filter((item) => {
-          const ws = getFieldValue(item, "Workflow State");
-          return !ws || !LOCK_STATES.includes(ws);
-        });
+        // Drop blocked items (legacy behavior). The ranker already strips
+        // these unless that would empty the candidate set; the "blocked"
+        // tag still rides along when it kept them as a fallback.
+        issueDirections = issueDirections.filter(
+          (d) => !d.tags.includes("blocked"),
+        );
 
-        // Filter out issues with unresolved blockers
-        candidates = candidates.filter((item) => {
-          const content = item.content as Record<string, unknown>;
-          const blockedBy = content.trackedIssues as
-            | { nodes: Array<{ number: number; state: string }> }
-            | undefined;
-          if (!blockedBy?.nodes || blockedBy.nodes.length === 0) return true;
-          // Issue is blocked if any blocker is still OPEN
-          return !blockedBy.nodes.some((dep) => dep.state === "OPEN");
-        });
-
-        // Sort by priority (P0 > P1 > P2 > P3 > none)
-        const priorityOrder: Record<string, number> = {
-          P0: 0,
-          P1: 1,
-          P2: 2,
-          P3: 3,
-        };
-        candidates.sort((a, b) => {
-          const pA = getFieldValue(a, "Priority");
-          const pB = getFieldValue(b, "Priority");
-          const orderA = pA ? (priorityOrder[pA] ?? 99) : 99;
-          const orderB = pB ? (priorityOrder[pB] ?? 99) : 99;
-          return orderA - orderB;
-        });
-
-        if (candidates.length === 0) {
+        if (issueDirections.length === 0) {
           return toolSuccess({
             found: false,
             issue: null,
@@ -1833,11 +1805,10 @@ export function registerIssueTools(
           });
         }
 
-        const best = candidates[0];
-        const content = best.content as Record<string, unknown>;
-        const issueNumber = content.number as number;
+        const best = issueDirections[0].issue!;
+        const issueNumber = best.number;
 
-        // Detect group context for the picked issue (best-effort)
+        // Detect group context for the picked issue (best-effort).
         let group: {
           isGroup: boolean;
           primary: { number: number; title: string };
@@ -1880,16 +1851,19 @@ export function registerIssueTools(
           found: true,
           issue: {
             number: issueNumber,
-            title: content.title,
-            description: content.body || "",
-            workflowState: getFieldValue(best, "Workflow State"),
-            estimate: getFieldValue(best, "Estimate") || null,
-            priority: getFieldValue(best, "Priority") || null,
+            title: best.title,
+            // Body is not fetched by the ranker's data pipeline — kept
+            // empty for backward compat. Callers needing the body should
+            // chain a `get_issue` call (or migrate to `next_actions`).
+            description: "",
+            workflowState: best.workflowState,
+            estimate: best.estimate || null,
+            priority: best.priority || null,
             isLocked: false,
             blockedBy: [],
           },
           group,
-          alternatives: candidates.length - 1,
+          alternatives: issueDirections.length - 1,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
