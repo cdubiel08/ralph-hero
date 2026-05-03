@@ -35,6 +35,7 @@ if [[ -z "$ticket_id" ]]; then
 fi
 
 plans_dir="$(get_project_root)/thoughts/shared/plans"
+alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
 
 # Check 1: Direct plan
 plan_doc=$(find_existing_artifact "$plans_dir" "$ticket_id")
@@ -42,11 +43,17 @@ plan_doc=$(find_existing_artifact "$plans_dir" "$ticket_id")
 # Check 2: Group plan
 if [[ -z "$plan_doc" ]]; then
   plan_doc=$(find "$plans_dir" -name "*group*${ticket_id}*" -type f 2>/dev/null | head -1)
+  if [[ -z "$plan_doc" && -n "$alt_ticket_id" ]]; then
+    plan_doc=$(find "$plans_dir" -name "*group*${alt_ticket_id}*" -type f 2>/dev/null | head -1)
+  fi
 fi
 
 # Check 3: Stream plan
 if [[ -z "$plan_doc" ]]; then
   plan_doc=$(find "$plans_dir" -name "*stream*${ticket_id}*" -type f 2>/dev/null | head -1)
+  if [[ -z "$plan_doc" && -n "$alt_ticket_id" ]]; then
+    plan_doc=$(find "$plans_dir" -name "*stream*${alt_ticket_id}*" -type f 2>/dev/null | head -1)
+  fi
 fi
 
 # Check 4: Plan Reference (parent-planned atomic issue)

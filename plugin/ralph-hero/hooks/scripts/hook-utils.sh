@@ -126,7 +126,24 @@ validate_state() {
   return 1
 }
 
-# Check if file exists matching ticket pattern
+# Returns the zero-padded 4-digit form of a ticket ID (GH-NNN -> GH-0NNN),
+# or empty if the input is already padded or doesn't parse.
+# Used by callers that need to search for artifacts whose filename uses the
+# padded form while the ticket_id was derived from a worktree dir (unpadded).
+ticket_id_alt_form() {
+  local ticket_id="$1"
+  if [[ "$ticket_id" =~ ^GH-0*([0-9]+)$ ]]; then
+    local candidate
+    candidate=$(printf "GH-%04d" "${BASH_REMATCH[1]}")
+    if [[ "$candidate" != "$ticket_id" ]]; then
+      echo "$candidate"
+    fi
+  fi
+}
+
+# Check if file exists matching ticket pattern. Tolerates padding asymmetry
+# between unpadded ticket IDs (worktree dirs) and the zero-padded form used
+# in artifact filenames.
 find_existing_artifact() {
   local artifact_dir="$1"
   local ticket_id="$2"
@@ -135,7 +152,18 @@ find_existing_artifact() {
     return 1
   fi
 
-  find "$artifact_dir" -name "*${ticket_id}*" -type f 2>/dev/null | head -1
+  local result
+  result=$(find "$artifact_dir" -name "*${ticket_id}*" -type f 2>/dev/null | head -1)
+  if [[ -n "$result" ]]; then
+    echo "$result"
+    return 0
+  fi
+
+  local alt
+  alt=$(ticket_id_alt_form "$ticket_id")
+  if [[ -n "$alt" ]]; then
+    find "$artifact_dir" -name "*${alt}*" -type f 2>/dev/null | head -1
+  fi
 }
 
 # Output JSON response for allowing with context
