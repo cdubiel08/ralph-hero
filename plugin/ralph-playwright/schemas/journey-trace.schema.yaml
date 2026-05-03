@@ -114,6 +114,15 @@ properties:
               type: string
               enum: [pass, fail, out_of_bounds]
               description: "Dispatch-level outcome: pass = eval click succeeded; fail = locator returned None or eval errored; out_of_bounds = pre-dispatch bounds check rejected coords."
+        # --- Semantic visual diff baseline reference (GH-809, additive, backward-compatible) ---
+        # `baseline_ref` is populated by the reflect-phase wiring (GH-816) when a
+        # baseline is available for this step. The matcher in
+        # plugin/ralph-playwright/scripts/match-steps.mjs (GH-809) consumes the
+        # baseline trace to find the corresponding step; the diff emitter (GH-813)
+        # then loads the PNG via baseline-store.mjs#readBaseline().
+        baseline_ref:
+          type: string
+          description: "Optional. Relative path under `thoughts/local/baselines/<session-slug>/` to the baseline screenshot used for semantic-diff comparison (GH-791). When absent, no baseline is available for this step and the diff emitter skips it. When present, `plugin/ralph-playwright/scripts/baseline-store.mjs#readBaseline()` must be able to resolve the path; otherwise the emitter fails loudly (see GH-816)."
         capture:
           type: object
           description: "Optional capture metadata. Present when step opted into --high-res or otherwise used a non-default resolution. Absence means default viewport capture. Added in GH-794."
