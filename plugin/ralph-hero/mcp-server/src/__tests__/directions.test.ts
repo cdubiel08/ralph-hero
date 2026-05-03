@@ -698,7 +698,13 @@ describe("buildReason", () => {
       workflowState: "In Progress",
       updatedAt: new Date(NOW.getTime() - 48 * HOUR_MS).toISOString(),
     });
-    const reason = buildReason("lock-stale", item, null, ["stalled"], makeConfig());
+    const reason = buildReason(
+      "lock-stale",
+      item,
+      null,
+      { tags: ["stalled"] },
+      makeConfig(),
+    );
     expect(reason).toContain("In Progress");
     expect(reason.toLowerCase()).toContain("stuck");
   });
@@ -708,7 +714,13 @@ describe("buildReason", () => {
       number: 1510,
       workflowState: "Plan in Review",
     });
-    const reason = buildReason("tree-continue", item, null, ["tree"], makeConfig());
+    const reason = buildReason(
+      "tree-continue",
+      item,
+      null,
+      { tags: ["tree"] },
+      makeConfig(),
+    );
     expect(reason).toContain("#1510");
     expect(reason.toLowerCase()).toContain("tree");
   });
@@ -719,8 +731,240 @@ describe("buildReason", () => {
       reviewDecision: "REVIEW_REQUIRED",
       ageHours: 48,
     });
-    const reason = buildReason("pr", null, pr, ["needs-review"], makeConfig(), 42);
+    const reason = buildReason(
+      "pr",
+      null,
+      pr,
+      { tags: ["needs-review"] },
+      makeConfig(),
+      42,
+    );
     expect(reason).toContain("#1520");
     expect(reason).toContain("issue #42");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Direction signals shape (Phase 1 GH-975)
+// ---------------------------------------------------------------------------
+
+describe("Direction signals shape", () => {
+  it("kind: 'issue' with stale tag — signals carry staleDays + threshold + tags mirror", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1600,
+        priority: "P2",
+        workflowState: "Ready for Plan",
+        updatedAt: new Date(NOW.getTime() - 5 * DAY_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 1 }));
+    expect(result).toHaveLength(1);
+    const dir = result[0];
+    expect(dir.kind).toBe("issue");
+    expect(dir.signals.staleDays).toBe(5);
+    expect(typeof dir.signals.staleDays).toBe("number");
+    expect(dir.signals.staleThresholdDays).toBe(2); // 48h / 24
+    expect(dir.signals.tags).toEqual(dir.tags);
+    expect(dir.signals.tags).toContain("stale");
+  });
+
+  it("kind: 'issue' non-stale — staleDays undefined, threshold still set", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1601,
+        priority: "P1",
+        workflowState: "Plan in Review",
+        updatedAt: new Date(NOW.getTime() - 1 * HOUR_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 1 }));
+    const dir = result[0];
+    expect(dir.kind).toBe("issue");
+    expect(dir.signals.staleDays).toBeUndefined();
+    expect(dir.signals.staleThresholdDays).toBe(2);
+  });
+
+  it("kind: 'lock-stale' — staleDays set, threshold matches lockStaleHours/24", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1610,
+        priority: "P2",
+        workflowState: "In Progress",
+        updatedAt: new Date(NOW.getTime() - 30 * HOUR_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 1 }));
+    const dir = result[0];
+    expect(dir.kind).toBe("lock-stale");
+    expect(dir.signals.staleDays).toBe(1); // 30h / 24 -> 1 day
+    expect(dir.signals.staleThresholdDays).toBe(1); // lockStaleHours=24 / 24
+  });
+
+  it("kind: 'tree-continue' (sibling-closed branch) — parentChainNote matches sibling pattern", () => {
+    const sibClosed = makeItem({
+      number: 1700,
+      workflowState: "Done",
+      closedAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      parentNumber: 999,
+      parentState: "OPEN",
+    });
+    const candidate = makeItem({
+      number: 1620,
+      priority: "P3",
+      workflowState: "Plan in Review",
+      parentNumber: 999,
+      parentState: "OPEN",
+    });
+    const result = rankDirections(
+      [candidate, sibClosed],
+      [],
+      makeConfig({ limit: 1 }),
+    );
+    const dir = result[0];
+    expect(dir.kind).toBe("tree-continue");
+    expect(dir.signals.parentChainNote).toBeDefined();
+    expect(dir.signals.parentChainNote).toMatch(/sibling #\d+ closed \d+ days? ago/);
+    expect(dir.signals.parentChainNote).toContain("#1700");
+  });
+
+  it("kind: 'tree-continue' (candidate-moved branch) — parentChainNote describes open siblings", () => {
+    // No closed sibling -> fall through to rule (b): candidate moved
+    // recently AND has open siblings.
+    const openSibling = makeItem({
+      number: 1701,
+      workflowState: "Plan in Review",
+      parentNumber: 999,
+      parentState: "OPEN",
+      closedAt: null,
+    });
+    const candidate = makeItem({
+      number: 1630,
+      priority: "P3",
+      workflowState: "Plan in Review",
+      parentNumber: 999,
+      parentState: "OPEN",
+      updatedAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+    });
+    const result = rankDirections(
+      [candidate, openSibling],
+      [],
+      makeConfig({ limit: 2 }),
+    );
+    // candidate is the tree-continue match (openSibling is just a sibling)
+    const dir = result.find((d) => d.kind === "tree-continue");
+    expect(dir).toBeDefined();
+    expect(dir!.signals.parentChainNote).toBeDefined();
+    expect(dir!.signals.parentChainNote).toMatch(/candidate moved.*\d+ open sibling/);
+  });
+
+  it("kind: 'pr' REVIEW_REQUIRED with linked issue — signals carry prAgeDays / prReviewDecision / linkedIssueNumber", () => {
+    const prs: OpenPR[] = [
+      makePR({
+        number: 1720,
+        reviewDecision: "REVIEW_REQUIRED",
+        headRefName: "feature/GH-42",
+        ageHours: 36,
+        createdAt: new Date(NOW.getTime() - 36 * HOUR_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections([], prs, makeConfig({ limit: 1 }));
+    const dir = result[0];
+    expect(dir.kind).toBe("pr");
+    expect(dir.signals.prAgeDays).toBe(1); // 36h / 24 = 1
+    expect(dir.signals.prReviewDecision).toBe("REVIEW_REQUIRED");
+    expect(dir.signals.linkedIssueNumber).toBe(42);
+    expect(dir.signals.tags).toContain("needs-review");
+  });
+
+  it("audience='agent' with XL item — signals.estimateWeight === 60", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1640,
+        priority: "P2",
+        workflowState: "Ready for Plan",
+        estimate: "XL",
+      }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({ limit: 1, audience: "agent" }),
+    );
+    expect(result[0].signals.estimateWeight).toBe(60);
+  });
+
+  it("audience='human' with XL item — signals.estimateWeight is undefined", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1641,
+        priority: "P2",
+        workflowState: "Ready for Plan",
+        estimate: "XL",
+      }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({ limit: 1, audience: "human" }),
+    );
+    expect(result[0].signals.estimateWeight).toBeUndefined();
+    // Also assert it round-trips through JSON.stringify as not-present
+    const serialized = JSON.parse(JSON.stringify(result[0])) as {
+      signals: { estimateWeight?: number };
+    };
+    expect("estimateWeight" in serialized.signals).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rankDirections — tied-at-score (Phase 3 GH-975)
+// ---------------------------------------------------------------------------
+
+describe("rankDirections — tied-at-score", () => {
+  it("three identically-scored P2 stale items — all signal tiedAtScore=3, ranks stable by issue number", () => {
+    const stale = new Date(NOW.getTime() - 5 * DAY_MS).toISOString();
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 2000,
+        priority: "P2",
+        workflowState: "Ready for Plan",
+        updatedAt: stale,
+      }),
+      makeItem({
+        number: 2001,
+        priority: "P2",
+        workflowState: "Ready for Plan",
+        updatedAt: stale,
+      }),
+      makeItem({
+        number: 2002,
+        priority: "P2",
+        workflowState: "Ready for Plan",
+        updatedAt: stale,
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3 }));
+    expect(result).toHaveLength(3);
+    expect(result[0].signals.tiedAtScore).toBe(3);
+    expect(result[1].signals.tiedAtScore).toBe(3);
+    expect(result[2].signals.tiedAtScore).toBe(3);
+    // Stable by issue number (matches existing secondary sort).
+    expect(result.map((d) => d.issue?.number)).toEqual([2000, 2001, 2002]);
+  });
+
+  it("no tie at top score — signals.tiedAtScore is undefined on rank-1", () => {
+    const items: DashboardItem[] = [
+      makeItem({ number: 2100, priority: "P0", workflowState: "Plan in Review" }),
+      makeItem({ number: 2101, priority: "P1", workflowState: "Plan in Review" }),
+      makeItem({ number: 2102, priority: "P2", workflowState: "Plan in Review" }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3 }));
+    expect(result[0].signals.tiedAtScore).toBeUndefined();
+    // Round-trip via JSON: field should be absent, not present-as-undefined
+    const serialized = JSON.parse(JSON.stringify(result[0])) as {
+      signals: { tiedAtScore?: number };
+    };
+    expect("tiedAtScore" in serialized.signals).toBe(false);
   });
 });

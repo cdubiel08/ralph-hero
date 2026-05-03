@@ -50,10 +50,27 @@ Output ≤ 40 lines total. Structure:
 
 1. The catch-up narrative (one paragraph, 2-4 sentences) verbatim from the catch-up skill output. If catch-up was empty/errored, skip this paragraph.
 
-2. One sentence introducing the recommendations, naming the recommended pick:
-   > Right now the recommended direction is [recommended.kind] #[recommended.issue.number or recommended.pr.number] — [short rephrase of recommended.reason].
+2. One sentence introducing the recommendations, naming the recommended pick. Synthesize this sentence from `direction.signals` + `direction.issue.title` (or `direction.pr.title`) + the catch-up narrative — do NOT quote `direction.reason` verbatim. Example shape:
+   > Right now the recommended direction is [recommended.kind] #[recommended.issue.number or recommended.pr.number] — [synthesized one-clause reason that mentions the title and at least one structured signal].
 
 3. Then the picker (Step 4).
+
+### Synthesizing per-direction prose
+
+For each direction's description (used in Step 4) and for the introductory sentence above, **compose** the prose from `direction.signals + direction.issue.title (or direction.pr.title) + memory context (catch-up output and MEMORY.md)`. **Never render `direction.reason` verbatim** — it exists only as a back-compat field for non-skill callers and is `@deprecated`. Always reach for `signals` first, then bring in the title for human-meaningful context.
+
+Per-kind synthesis guidance:
+
+| `direction.kind` | Signal cues to incorporate | Example shape |
+|---|---|---|
+| `issue` (with `signals.staleDays`) | `staleDays`, `staleThresholdDays`, `issue.workflowState`, `issue.priority`, `issue.title` | "skill audit phase 2 has been sitting in Ready for Plan for 7 days — the largest stale block on the board" |
+| `issue` (with `signals.estimateWeight` set, i.e. M/L/XL agent run) | `issue.estimate`, `issue.title` | "a large block of work — non-trivial scope, plan first" — **never** use phrases like "small unblock" for an XL item |
+| `issue` (with `signals.tiedAtScore > 1`) | `tiedAtScore`, `issue.title`, rank | "tied with N others at the top score; rank-1 by issue number — pick this one if you don't have context for the others" |
+| `lock-stale` | `signals.staleDays`, `issue.workflowState`, `issue.title` | "stuck in Plan in Progress for 2 days — title suggests it may need an unblock" |
+| `tree-continue` | `signals.parentChainNote`, `issue.title` | "sibling #809 closed 2 days ago — keep this one moving" |
+| `pr` | `pr.title`, `signals.prAgeDays`, `signals.linkedIssueNumber`, `signals.prReviewDecision` | "PR #999 (issue #42) — open 2 days awaiting review" |
+
+If `signals.tiedAtScore > 1`, surface tiebreak transparency in the prose so the reader understands rank-1 was an implicit pick. If `signals.estimateWeight` is set (the item is M/L/XL in an agent run), reflect that size honestly — never describe XL work as "small". If `signals.parentChainNote` is set on a tree-continue, weave that note into the prose rather than emitting the bare phrase "active tree".
 
 **Tone rules:**
 - No severity tags (CRITICAL, STUCK, etc.)
@@ -69,16 +86,22 @@ Skip the picker. Stop.
 
 Present `AskUserQuestion` with options derived 1:1 from `directions[]`. The option corresponding to `recommended: true` should be the FIRST option (so it's the default selection).
 
-Per-option label rules (same as before):
-- `kind: "issue"` + `workflowState: "Plan in Review"` → `"Review plan #NNN"`
-- `kind: "issue"` + `workflowState: "Ready for Plan"` → `"Plan #NNN"`
-- `kind: "issue"` + `workflowState: "Research Needed"` → `"Research #NNN"`
-- `kind: "issue"` + `workflowState: "In Review"` → `"Review #NNN"`
-- `kind: "pr"` → `"Merge PR #NNN"`
-- `kind: "tree-continue"` → `"Continue tree #NNN"`
-- `kind: "lock-stale"` → `"Unstick #NNN"`
+Per-option label rules — each label is `"<verb> #<NNN> · <title fragment>"` where the title fragment is `direction.issue.title` (or `direction.pr.title`) truncated to ≤30 characters with `…` suffix when truncation occurred:
 
-Description: `direction.reason` verbatim.
+- `kind: "issue"` + `workflowState: "Plan in Review"` → `"Review plan #NNN · <fragment>"`
+- `kind: "issue"` + `workflowState: "Ready for Plan"` → `"Plan #NNN · <fragment>"`
+- `kind: "issue"` + `workflowState: "Research Needed"` → `"Research #NNN · <fragment>"`
+- `kind: "issue"` + `workflowState: "In Review"` → `"Review #NNN · <fragment>"`
+- `kind: "pr"` → `"Merge PR #NNN · <fragment>"`
+- `kind: "tree-continue"` → `"Continue tree #NNN · <fragment>"`
+- `kind: "lock-stale"` → `"Unstick #NNN · <fragment>"`
+
+**Title fragment truncation rule:**
+1. If `title.length <= 30`, use the title as-is (no ellipsis).
+2. Otherwise, slice to 30 chars. Drop trailing whitespace. If a clean word boundary (a space) exists within the last 5 chars of the slice, cut at that boundary instead — so the fragment never ends mid-word when a word boundary is nearby. Append `…`.
+3. Example: title `"Skill audit phase 2 — deep individual audits for remaining skills"` (64 chars) → fragment `"Skill audit phase 2 — deep…"`.
+
+Description: the synthesized prose from Step 3 for this direction (NOT `direction.reason`).
 
 Add a final option: `{label: "Work through these in order", description: "Address each direction in order"}`.
 
@@ -112,4 +135,5 @@ Session complete.
 - Catch-up, gh pr list, and next_actions all run in the initial gather; do not refetch
 - ≤ 40 lines for the briefing
 - Never echo tool JSON, gh pr list output, or skill return strings verbatim
+- Never render `direction.reason` verbatim — it exists only for back-compat and is `@deprecated`. Always synthesize prose from `signals + title + memory`
 - Skill invocation cost: catch-up runs in its own context (Skill() is fork-safe)
