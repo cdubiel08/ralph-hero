@@ -20,6 +20,13 @@ plans_dir="$(get_project_root)/thoughts/shared/plans"
 doc=$(find "$plans_dir" -name "*${ticket_id}*" -type f -mmin -30 2>/dev/null | head -1)
 
 if [[ -z "$doc" ]]; then
+  alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
+  if [[ -n "$alt_ticket_id" ]]; then
+    doc=$(find "$plans_dir" -name "*${alt_ticket_id}*" -type f -mmin -30 2>/dev/null | head -1)
+  fi
+fi
+
+if [[ -z "$doc" ]]; then
   block "Plan postcondition failed
 
 Expected: Plan document for $ticket_id

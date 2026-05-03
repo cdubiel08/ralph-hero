@@ -24,7 +24,7 @@ if [[ -z "$ticket_id" ]]; then
 fi
 
 project_root=$(get_project_root)
-existing=$(find "$project_root/thoughts/shared/reviews" -name "*${ticket_id}*" -type f 2>/dev/null | head -1)
+existing=$(find_existing_artifact "$project_root/thoughts/shared/reviews" "$ticket_id")
 
 if [[ -n "$existing" ]]; then
   block "DUPLICATE CRITIQUE BLOCKED
