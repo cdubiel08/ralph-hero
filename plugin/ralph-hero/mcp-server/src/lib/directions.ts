@@ -50,6 +50,12 @@ export interface OpenPR {
 
 export interface Direction {
   rank: number;
+  /**
+   * Exactly one entry has `true` (rank-1 by default). Both modes use this
+   * flag for selection: interactive picker pre-selects it; headless
+   * orchestrators dispatch on it.
+   */
+  recommended: boolean;
   kind: "issue" | "pr" | "tree-continue" | "lock-stale";
   issue: {
     number: number;
@@ -70,6 +76,14 @@ export interface Direction {
   score: number;
 }
 
+/**
+ * Consumer kind for ranking. "human" (default) keeps the existing
+ * presentation-friendly ordering. "agent" tilts scoring to honor the
+ * autonomous-loop XS/S preference, penalizing larger estimates so
+ * agent loops dispatch on bite-sized items first.
+ */
+export type Audience = "human" | "agent";
+
 export interface RankConfig {
   /** Max directions to return. Default 3. */
   limit: number;
@@ -81,6 +95,12 @@ export interface RankConfig {
   treeRecentDoneDays: number;
   /** Hours before an open PR is considered stale (older PRs rank higher). Default 24. */
   prStaleHours: number;
+  /**
+   * Tilts scoring per consumer kind. "human" (default) keeps existing
+   * behavior; "agent" penalizes large estimates to honor autonomous-loop
+   * XS/S preference.
+   */
+  audience: Audience;
   /** Injected for testability — never read from the wall clock inside the lib. */
   now: Date;
 }
@@ -91,6 +111,7 @@ export const DEFAULT_RANK_CONFIG: Omit<RankConfig, "now"> = {
   lockStaleHours: 24,
   treeRecentDoneDays: 7,
   prStaleHours: 24,
+  audience: "human",
 };
 
 // ---------------------------------------------------------------------------
@@ -122,6 +143,19 @@ const STALE_BOOST = -50;
 const LOCK_STALE_BOOST = -100;
 const TREE_CONTINUE_BOOST = -75;
 const PR_REVIEW_REQUIRED_BOOST = -200;
+
+/**
+ * Per-estimate penalty applied when audience === "agent". Larger items
+ * cost more (positive score), pushing them down the ranking so agent
+ * loops dispatch on XS/S items first.
+ */
+const ESTIMATE_PENALTY: Readonly<Record<string, number>> = {
+  XS: 0,
+  S: 0,
+  M: 20,
+  L: 40,
+  XL: 60,
+};
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -166,6 +200,19 @@ function hasOpenBlockers(item: DashboardItem): boolean {
 
 function isLockState(state: string | null): boolean {
   return state !== null && LOCK_STATES.includes(state);
+}
+
+/**
+ * Returns a positive score adjustment when audience === "agent" so larger
+ * estimates get pushed down the ranking. Returns 0 for human audience
+ * (existing behavior). Items with unknown estimate get a mid-tier penalty
+ * (30) so unestimated work doesn't accidentally outrank XS/S items.
+ */
+function audiencePenalty(item: DashboardItem, audience: Audience): number {
+  if (audience !== "agent") return 0;
+  const est = item.estimate;
+  if (est === null || est === undefined) return 30; // unknown: mid penalty
+  return ESTIMATE_PENALTY[est] ?? 30;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +314,10 @@ export function scoreIssue(
   const tags: string[] = [];
 
   let score = priorityScore(item.priority) + phaseScore(item.workflowState);
+
+  // Audience-aware estimate penalty (no-op for "human"; pushes XL items
+  // down for "agent" so autonomous loops favor XS/S work).
+  score += audiencePenalty(item, config.audience);
 
   const lockStale = detectLockStale(item, config);
   const treeContinue = detectTreeContinue(item, allItems, config);
@@ -423,7 +474,20 @@ export function buildReason(
     const hours = Math.round(ageHours(issue.updatedAt, config.now));
     const days = Math.max(1, Math.floor(hours / 24));
     const dayLabel = days === 1 ? "day" : "days";
-    return `${phase} for ${days} ${dayLabel} — likely the most unblocking thing`;
+    const priority = issue.priority;
+    if (priority === "P0") {
+      return `P0 stalled in ${phase} for ${days} ${dayLabel} — top of the queue`;
+    }
+    if (priority === "P1") {
+      return `P1 stalled in ${phase} for ${days} ${dayLabel} — likely the most unblocking thing`;
+    }
+    if (priority === "P2") {
+      return `Sitting in ${phase} for ${days} ${dayLabel} — small unblock if you have a moment`;
+    }
+    if (priority === "P3") {
+      return `Low-priority item in ${phase} for ${days} ${dayLabel}`;
+    }
+    return `Unprioritized in ${phase} for ${days} ${dayLabel}`;
   }
   if (issue.priority === "P0") {
     return `P0 in ${phase} — top of the queue`;
@@ -576,6 +640,7 @@ export function rankDirections(
       const reason = buildReason(c.kind, c.item, null, c.tags, config, null);
       return {
         rank,
+        recommended: false,
         kind: c.kind,
         issue: toDirectionIssue(c.item),
         pr: null,
@@ -596,6 +661,7 @@ export function rankDirections(
     );
     return {
       rank,
+      recommended: false,
       kind: "pr",
       issue: null,
       pr: toDirectionPR(p.pr),
@@ -604,6 +670,13 @@ export function rankDirections(
       score: p.score,
     };
   });
+
+  // Mark the top-ranked entry as recommended. Both modes use this
+  // flag for selection: interactive picker pre-selects it; headless
+  // orchestrators dispatch on it.
+  if (directions.length > 0) {
+    directions[0].recommended = true;
+  }
 
   return directions;
 }

@@ -603,3 +603,130 @@ describe("ralph_hero__hello_directions", () => {
     expect(payload.directions.map((d) => d.issue?.number)).toEqual([500, 501, 502]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2.4 — ralph_hero__next_actions
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__next_actions", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("registers under the new name and accepts audience param", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const fixtures = [
+      rawIssue({
+        number: 700,
+        title: "P0 plan-in-review",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        updatedAt: oneHourAgo,
+      }),
+    ];
+
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures } },
+    );
+
+    registerDirectionsTools(server, client, fieldCache);
+
+    // Tool is registered under the new name
+    const tool = getTool(server, "ralph_hero__next_actions");
+    expect(tool).toBeDefined();
+
+    // Call with audience=agent
+    const result = await tool.handler(
+      buildArgs({ limit: 1, audience: "agent" }),
+      {},
+    );
+    const payload = parsePayload(result) as {
+      directions: Array<{ recommended: boolean }>;
+    };
+    expect(result.isError).toBeUndefined();
+    expect(payload.directions).toBeDefined();
+    if (payload.directions.length > 0) {
+      expect(payload.directions[0].recommended).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2.5 — hello_directions backwards-compat parity
+// ---------------------------------------------------------------------------
+
+describe("hello_directions backwards-compat", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("hello_directions still returns same shape as next_actions(audience=human)", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const fixtures = [
+      rawIssue({
+        number: 800,
+        title: "P0 plan-in-review",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 801,
+        title: "P1 ready-for-plan",
+        workflowState: "Ready for Plan",
+        priority: "P1",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 802,
+        title: "P2 in-review",
+        workflowState: "In Review",
+        priority: "P2",
+        updatedAt: oneHourAgo,
+      }),
+    ];
+
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures } },
+    );
+
+    registerDirectionsTools(server, client, fieldCache);
+
+    const oldTool = getTool(server, "ralph_hero__hello_directions");
+    const newTool = getTool(server, "ralph_hero__next_actions");
+
+    const oldResult = await oldTool.handler(
+      buildArgs({ limit: 3, openPRs: [] }),
+      {},
+    );
+    const newResult = await newTool.handler(
+      buildArgs({ limit: 3, audience: "human", openPRs: [] }),
+      {},
+    );
+
+    const oldPayload = parsePayload(oldResult) as {
+      directions: Array<{ recommended: boolean }>;
+    };
+    const newPayload = parsePayload(newResult) as {
+      directions: Array<{ recommended: boolean }>;
+    };
+
+    expect(oldResult.isError).toBeUndefined();
+    expect(newResult.isError).toBeUndefined();
+    expect(oldPayload.directions.length).toBe(newPayload.directions.length);
+    if (oldPayload.directions.length > 0) {
+      expect(oldPayload.directions[0].recommended).toBe(true);
+      expect(newPayload.directions[0].recommended).toBe(true);
+    }
+  });
+});

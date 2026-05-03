@@ -69,6 +69,108 @@ function makePR(overrides: Partial<OpenPR> = {}): OpenPR {
 }
 
 // ---------------------------------------------------------------------------
+// 0. Recommended flag (Phase 2.1)
+// ---------------------------------------------------------------------------
+
+describe("recommended flag", () => {
+  it("marks rank-1 entry as recommended when directions are returned", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Plan in Review", priority: "P1" }),
+      makeItem({ number: 2, workflowState: "Ready for Plan", priority: "P2" }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2 }));
+    expect(result).toHaveLength(2);
+    expect(result[0].recommended).toBe(true);
+    expect(result[1].recommended).toBe(false);
+  });
+
+  it("returns no recommended flag when directions are empty", () => {
+    const result = rankDirections([], [], makeConfig({ limit: 3 }));
+    expect(result).toHaveLength(0);
+    // No assertion needed — just no crash
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0b. Audience param (Phase 2.2)
+// ---------------------------------------------------------------------------
+
+describe("audience param", () => {
+  it("audience='human' (default) does not penalize XL items", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "XL",
+        updatedAt: new Date(NOW.getTime() - 10 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "S",
+        updatedAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2, audience: "human" }));
+    // The XL item is much staler so should rank first under human audience
+    expect(result[0].issue?.number).toBe(1);
+  });
+
+  it("audience='agent' penalizes XL items, preferring smaller", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "XL",
+        updatedAt: new Date(NOW.getTime() - 10 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "S",
+        updatedAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2, audience: "agent" }));
+    // The S item should rank first because XL is penalized
+    expect(result[0].issue?.number).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0c. Differentiated stale reasons (Phase 2.3)
+// ---------------------------------------------------------------------------
+
+describe("differentiated stale reasons", () => {
+  it("stale P1 produces a different reason than stale P2", () => {
+    const stale = new Date(NOW.getTime() - 5 * DAY_MS).toISOString();
+    const items = [
+      makeItem({ number: 1, workflowState: "Ready for Plan", priority: "P1", updatedAt: stale }),
+      makeItem({ number: 2, workflowState: "Ready for Plan", priority: "P2", updatedAt: stale }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2 }));
+    const p1Reason = result.find((d) => d.issue?.priority === "P1")?.reason;
+    const p2Reason = result.find((d) => d.issue?.priority === "P2")?.reason;
+    expect(p1Reason).toBeDefined();
+    expect(p2Reason).toBeDefined();
+    expect(p1Reason).not.toBe(p2Reason);
+  });
+
+  it("stale P0 reason mentions urgency", () => {
+    const stale = new Date(NOW.getTime() - 5 * DAY_MS).toISOString();
+    const items = [
+      makeItem({ number: 1, workflowState: "Ready for Plan", priority: "P0", updatedAt: stale }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 1 }));
+    expect(result[0].reason.toLowerCase()).toMatch(/p0|urgent|top/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 1. Empty input
 // ---------------------------------------------------------------------------
 
