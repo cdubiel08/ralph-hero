@@ -90,6 +90,10 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Heap regression bench (GH-913)
+        run: npm run bench:heap -- --assert
+        timeout-minutes: 5
+
   test-cli:
     runs-on: ubuntu-latest
     steps:
