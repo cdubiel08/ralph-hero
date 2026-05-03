@@ -103,5 +103,42 @@ assert_eq "work" "$CAT_SKILL" "skill_invoked categorized as work"
 assert_eq "meta" "$CAT_SESSION" "session_start categorized as meta"
 
 echo
+echo "Test: silent failure on read-only path"
+RALPH_ACTIVITY_DIR="/dev/null/cannot-create-here" \
+  CLAUDE_HOOK_EVENT="PostToolUse" \
+  CLAUDE_TOOL_NAME="ralph_hero__get_issue" \
+  "$SCRIPT" tool_called
+EXIT_CODE=$?
+assert_eq "0" "$EXIT_CODE" "script exits 0 even with unwritable path"
+
+echo
+echo "Test: missing kind argument"
+"$SCRIPT" >/dev/null 2>&1
+EXIT_CODE=$?
+assert_eq "0" "$EXIT_CODE" "script exits 0 even with no args (defaults to unknown)"
+
+echo
+echo "Test: concurrent writes don't corrupt file"
+rm -rf "$TEST_DIR/activity"
+export RALPH_ACTIVITY_DIR="$TEST_DIR/activity"
+
+# Fire 50 parallel writes
+for i in $(seq 1 50); do
+  CLAUDE_HOOK_EVENT="PostToolUse" CLAUDE_TOOL_NAME="ralph_hero__test_$i" "$SCRIPT" tool_called &
+done
+wait
+
+TODAY=$(date -u +%Y/%m/%d)
+LOG_FILE="$RALPH_ACTIVITY_DIR/$TODAY.jsonl"
+LINE_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+assert_eq "50" "$LINE_COUNT" "all 50 concurrent writes landed"
+
+# Every line must be valid JSON
+INVALID=$(grep -v '^$' "$LOG_FILE" | while IFS= read -r line; do
+  echo "$line" | jq -e . >/dev/null 2>&1 || echo "BAD"
+done | wc -l | tr -d ' ')
+assert_eq "0" "$INVALID" "no corrupt lines from concurrent writes"
+
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
