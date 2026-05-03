@@ -30,6 +30,7 @@ import { registerDebugTools } from "./tools/debug-tools.js";
 import { registerDecomposeTools } from "./tools/decompose-tools.js";
 import { registerViewTools } from "./tools/view-tools.js";
 import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
+import { registerActivityTools } from "./tools/activity-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -480,6 +481,9 @@ async function main(): Promise<void> {
 
   // Plan graph sync tool (sync plan dependency edges to GitHub)
   registerPlanGraphTools(server, client);
+
+  // Activity log reader (recent_activity tool — pure filesystem, no GitHub client)
+  registerActivityTools(server);
 
   // Debug tools (only when RALPH_DEBUG=true)
   if (process.env.RALPH_DEBUG === 'true') {
