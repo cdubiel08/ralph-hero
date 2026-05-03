@@ -64,7 +64,7 @@ PROMPT_CONTENT_CLIP = 800
 _PROMPT_HEADER = (
     "You are consolidating short-term memories into a single reflection "
     "note.\n\n"
-    "Below are {n} related memories from the last 24 hours:\n\n"
+    "Below are {n} related memories from a recent time window:\n\n"
 )
 _PROMPT_FOOTER = (
     "Produce a reflection with:\n"
@@ -73,10 +73,24 @@ _PROMPT_FOOTER = (
     "3. 3-5 bullet points of specific insights, decisions, or "
     "unresolved questions\n"
     "4. A list of the memory ids this reflection links to\n\n"
-    "Format as YAML frontmatter followed by a markdown body. The "
-    "frontmatter must contain `title` (string), `summary` (string), "
-    "`insights` (list of strings), and `source_ids` (list of strings). "
-    "Do not wrap the output in a markdown code fence.\n"
+    "Format the output as YAML frontmatter followed by a markdown "
+    "body. Begin the response with `---` on its own line, then the "
+    "YAML keys, then `---` on its own line, then the markdown body. "
+    "The frontmatter must contain `title` (string), `summary` "
+    "(string), `insights` (list of strings), and `source_ids` (list "
+    "of strings). Do not wrap the output in a markdown code fence.\n\n"
+    "Example:\n"
+    "---\n"
+    "title: Example reflection title\n"
+    "summary: Brief summary of the theme.\n"
+    "insights:\n"
+    "  - First insight\n"
+    "source_ids:\n"
+    "  - raw-id-001\n"
+    "---\n"
+    "# Example reflection title\n"
+    "\n"
+    "Markdown body goes here.\n"
 )
 
 
@@ -323,10 +337,41 @@ def _build_prompt(cluster: list[RawMemoryRow]) -> str:
     return "".join(blocks)
 
 
+def _extract_frontmatter_block(raw: str) -> str | None:
+    """Return the YAML frontmatter region, fence-tolerant.
+
+    Tries the strict ``---``-fenced form first (preserves
+    backwards-compat with well-formed responses). On miss, falls back
+    to parsing the leading block — everything up to the first blank
+    line or first ``# `` markdown heading — as YAML. Gemma 4 26B
+    observed in practice omits the opening fence despite the prompt
+    instructing otherwise (see GH-966).
+    """
+    if raw.startswith("---"):
+        rest = raw[len("---") :].lstrip("\n")
+        close_idx = rest.find("\n---")
+        if close_idx == -1:
+            return None
+        return rest[:close_idx]
+
+    # Fence-less fallback — split at first blank line or markdown h1.
+    head_lines: list[str] = []
+    for line in raw.split("\n"):
+        if line.strip() == "" or line.startswith("# "):
+            break
+        head_lines.append(line)
+    if not head_lines:
+        return None
+    return "\n".join(head_lines)
+
+
 def _parse_llm_response(text: str) -> dict[str, Any] | None:
     """Split the first YAML frontmatter block off an LLM response.
 
     Returns ``None`` on any parse failure so callers can fail open.
+    Tolerates the two formats Gemma 4 26B emits in practice: strict
+    ``---``-fenced (the prompt's intent) and bare leading YAML keys
+    (observed without the explicit fence instruction — see GH-966).
     """
     if yaml is None:  # pragma: no cover - import guard
         log.warning("pyyaml missing; cannot parse reflection response")
@@ -342,16 +387,12 @@ def _parse_llm_response(text: str) -> dict[str, Any] | None:
         if raw.rstrip().endswith("```"):
             raw = raw.rstrip()[: -3].rstrip()
 
-    # Expect opening ---
-    if not raw.startswith("---"):
-        log.warning("LLM response missing opening frontmatter fence")
+    front = _extract_frontmatter_block(raw)
+    if front is None:
+        log.warning(
+            "LLM response not parseable as frontmatter or leading YAML block"
+        )
         return None
-    rest = raw[len("---") :].lstrip("\n")
-    close_idx = rest.find("\n---")
-    if close_idx == -1:
-        log.warning("LLM response missing closing frontmatter fence")
-        return None
-    front = rest[:close_idx]
     try:
         data = yaml.safe_load(front) or {}
     except yaml.YAMLError as exc:
@@ -389,7 +430,7 @@ def synthesize_reflection(
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 1500,
+        "max_tokens": 3000,
         "temperature": 0.3,
     }
     url = llm_url.rstrip("/") + "/v1/chat/completions"
