@@ -135,11 +135,11 @@ Modify `.github/workflows/release.yml` so skill-only changes don't bump `mcp-ser
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] The `Bump version` step (currently `release.yml:112-120`) is split into two parallel logical bumps: `mcp-server/package.json` only when `steps.classify.outputs.mcp_changed == 'true'`; `.claude-plugin/plugin.json` always.
-  - [ ] When `mcp_changed=false`, the new version for `plugin.json` is computed by reading the current `plugin.json` version and applying patch/minor/major (not by reading `package.json`'s post-bump version). This severs the coupling.
-  - [ ] When `mcp_changed=true`, the new version is computed once via `npm version --no-git-tag-version` and applied to both files (existing behavior preserved).
-  - [ ] The output `steps.version.outputs.new` reflects the actual new plugin version regardless of branch.
-  - [ ] Reference implementation sketch:
+  - [x] The `Bump version` step (currently `release.yml:112-120`) is split into two parallel logical bumps: `mcp-server/package.json` only when `steps.classify.outputs.mcp_changed == 'true'`; `.claude-plugin/plugin.json` always.
+  - [x] When `mcp_changed=false`, the new version for `plugin.json` is computed by reading the current `plugin.json` version and applying patch/minor/major (not by reading `package.json`'s post-bump version). This severs the coupling.
+  - [x] When `mcp_changed=true`, the new version is computed once via `npm version --no-git-tag-version` and applied to both files (existing behavior preserved).
+  - [x] The output `steps.version.outputs.new` reflects the actual new plugin version regardless of branch.
+  - [x] Reference implementation sketch:
     ```yaml
     - name: Bump version
       id: version
@@ -172,10 +172,10 @@ Modify `.github/workflows/release.yml` so skill-only changes don't bump `mcp-ser
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] The `Commit version bump and tag` step (currently `release.yml:134-153`) only `git add`s `plugin/ralph-hero/mcp-server/package.json` and `package-lock.json` when `MCP_CHANGED=true`.
-  - [ ] `plugin/ralph-hero/.claude-plugin/plugin.json` is always staged (regardless of `MCP_CHANGED`).
-  - [ ] The existing `if [ "$MCP_CHANGED" = "true" ]` block (lines 145-149) for `justfile`, `.mcp.json`, `cli-dispatch.sh` stays exactly as-is.
-  - [ ] Reference change to lines 142-149:
+  - [x] The `Commit version bump and tag` step (currently `release.yml:134-153`) only `git add`s `plugin/ralph-hero/mcp-server/package.json` and `package-lock.json` when `MCP_CHANGED=true`.
+  - [x] `plugin/ralph-hero/.claude-plugin/plugin.json` is always staged (regardless of `MCP_CHANGED`).
+  - [x] The existing `if [ "$MCP_CHANGED" = "true" ]` block (lines 145-149) for `justfile`, `.mcp.json`, `cli-dispatch.sh` stays exactly as-is.
+  - [x] Reference change to lines 142-149:
     ```yaml
     git add plugin/ralph-hero/.claude-plugin/plugin.json
     if [ "$MCP_CHANGED" = "true" ]; then
@@ -186,8 +186,8 @@ Modify `.github/workflows/release.yml` so skill-only changes don't bump `mcp-ser
       git add plugin/ralph-hero/scripts/cli-dispatch.sh
     fi
     ```
-  - [ ] The commit message remains `chore(release): v${NEW_VERSION} [skip ci]` (using the plugin version when MCP unchanged).
-  - [ ] The tag remains `v${NEW_VERSION}`.
+  - [x] The commit message remains `chore(release): v${NEW_VERSION} [skip ci]` (using the plugin version when MCP unchanged).
+  - [x] The tag remains `v${NEW_VERSION}`.
 
 #### Task 1.3: Add npm sync postcheck step
 
@@ -196,11 +196,11 @@ Modify `.github/workflows/release.yml` so skill-only changes don't bump `mcp-ser
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] A new step `Postcheck: verify npm sync` is added after `Publish to npm` (around `release.yml:160`) and before `Create GitHub Release`.
-  - [ ] The step runs only when `mcp_changed=true` (skipping when no publish was attempted, since npm and `package.json` will legitimately differ on plugin-only releases — `package.json` doesn't change in that case anyway, but explicit guard avoids confusion).
-  - [ ] The step polls `npm view ralph-hero-mcp-server version` with retry to handle npm registry propagation latency. Retry up to 12 times, sleeping 5 seconds between (60-second total budget).
-  - [ ] The step fails with a clear error message if `npm view` version != `package.json` version after the retry budget.
-  - [ ] Reference implementation:
+  - [x] A new step `Postcheck: verify npm sync` is added after `Publish to npm` (around `release.yml:160`) and before `Create GitHub Release`.
+  - [x] The step runs only when `mcp_changed=true` (skipping when no publish was attempted, since npm and `package.json` will legitimately differ on plugin-only releases — `package.json` doesn't change in that case anyway, but explicit guard avoids confusion).
+  - [x] The step polls `npm view ralph-hero-mcp-server version` with retry to handle npm registry propagation latency. Retry up to 12 times, sleeping 5 seconds between (60-second total budget).
+  - [x] The step fails with a clear error message if `npm view` version != `package.json` version after the retry budget.
+  - [x] Reference implementation:
     ```yaml
     - name: Postcheck verify npm sync
       if: steps.classify.outputs.mcp_changed == 'true'
@@ -242,10 +242,10 @@ Modify `.github/workflows/release.yml` so skill-only changes don't bump `mcp-ser
 - **complexity**: low
 - **depends_on**: [1.4]
 - **acceptance**:
-  - [ ] If Task 1.4 publishes v2.5.83 directly, leave `.mcp.json` at `2.5.81` — the workflow's "Pin version" step (`release.yml:122-132`) only runs when `mcp_changed=true`, and v2.5.82/v2.5.83 were skill-only commits, so the pin lagging is correct historical state.
-  - [ ] If Task 1.4 takes the workflow_dispatch path and publishes v2.5.84, the workflow itself updates `.mcp.json` to `2.5.84` automatically (existing behavior). No manual edit needed.
-  - [ ] **Net result**: Either the pin stays at 2.5.81 (correct because no MCP source changed) OR it advances to 2.5.84 with a new MCP-changed cycle. Both are valid end states.
-  - [ ] Document the chosen path in the PR description.
+  - [x] If Task 1.4 publishes v2.5.83 directly, leave `.mcp.json` at `2.5.81` — the workflow's "Pin version" step (`release.yml:122-132`) only runs when `mcp_changed=true`, and v2.5.82/v2.5.83 were skill-only commits, so the pin lagging is correct historical state.
+  - [x] If Task 1.4 takes the workflow_dispatch path and publishes v2.5.84, the workflow itself updates `.mcp.json` to `2.5.84` automatically (existing behavior). No manual edit needed.
+  - [x] **Net result**: Either the pin stays at 2.5.81 (correct because no MCP source changed) OR it advances to 2.5.84 with a new MCP-changed cycle. Both are valid end states.
+  - [x] Document the chosen path in the PR description.
 
   **This task is mostly verification, not action**: confirm the `.mcp.json` pin is in a consistent state with the chosen recovery path.
 
@@ -253,9 +253,9 @@ Modify `.github/workflows/release.yml` so skill-only changes don't bump `mcp-ser
 
 #### Automated Verification:
 
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity, this PR doesn't touch TS)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (sanity)
-- [ ] YAML syntax check: `python -c "import yaml; yaml.safe_load(open('.github/workflows/release.yml'))"` — no errors
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity, this PR doesn't touch TS)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (1089 tests, 50 files)
+- [x] YAML syntax check: `yq eval '.' .github/workflows/release.yml` — no errors
 - [ ] After merge, the release workflow run for this PR completes successfully:
   - Classifies `mcp_changed=false` (this PR only touches `.github/workflows/release.yml`, which is NOT in the publish trigger paths — so the workflow won't even fire on this merge; see "Edge case: trigger paths" below)
 - [ ] After a follow-up MCP-source change, the workflow's `Postcheck verify npm sync` step passes.
