@@ -499,6 +499,39 @@ class TestSynthesizeReflection:
             "RALPH_GH_REPO_TOKEN" in insight for insight in r["insights"]
         )
 
+    def test_markdown_bullets_in_yaml_are_tolerated(self) -> None:
+        """Gemma occasionally emits markdown-style bullet markers
+        (``*   item``) inside the YAML frontmatter despite the prompt
+        instruction. PyYAML reads ``*`` at line-start as an anchor
+        reference, so the next ``key:`` token raises
+        ``mapping values are not allowed here``. The fix converts
+        leading ``*\\s+`` to ``-`` (proper YAML list syntax) inside
+        the frontmatter region before ``yaml.safe_load`` runs.
+        """
+        cluster = _make_cluster(n=2)
+        bulleted = (
+            "---\n"
+            "title: Cluster summary with bullets\n"
+            "summary: Memories grouped by theme.\n"
+            "insights:\n"
+            "*   First bullet using markdown asterisk\n"
+            "*   Second bullet using markdown asterisk\n"
+            "source_ids:\n"
+            "  - raw-00\n"
+            "  - raw-01\n"
+            "---\n"
+            "# Body\n"
+        )
+
+        def fake_post(url, body, timeout):  # noqa: ARG001
+            return 200, {"choices": [{"message": {"content": bulleted}}]}
+
+        r = reflect.synthesize_reflection(cluster, http_post=fake_post)
+        assert r is not None
+        assert r["title"]
+        assert len(r["insights"]) == 2
+        assert r["source_ids"] == ["raw-00", "raw-01"]
+
     def test_missing_source_ids_falls_back_to_cluster(self) -> None:
         cluster = _make_cluster()
         no_ids = (
@@ -755,3 +788,42 @@ class TestMainExitCode:
             ]
         )
         assert rc == 0
+
+
+class TestLlmTimeoutConfig:
+    """Verify the LLM HTTP timeout is configurable via the
+    ``RALPH_DREAM_LLM_TIMEOUT_S`` env var with a sane default. The 60s
+    default we shipped with #966 was right at the edge for 8-member
+    clusters at ``max_tokens=3000`` on Apple Silicon, causing
+    non-deterministic timeouts; the new default is 180s.
+    """
+
+    def test_default_timeout_is_propagated_to_http_post(self) -> None:
+        cluster = _make_cluster(n=2)
+        well_formed = (
+            "---\n"
+            "title: t\n"
+            "summary: s\n"
+            "insights:\n"
+            "  - a\n"
+            "source_ids:\n"
+            "  - raw-00\n"
+            "  - raw-01\n"
+            "---\n"
+            "# t\n"
+        )
+        captured: dict[str, Any] = {}
+
+        def fake_post(url, body, timeout):  # noqa: ARG001
+            captured["timeout"] = timeout
+            return 200, {"choices": [{"message": {"content": well_formed}}]}
+
+        r = reflect.synthesize_reflection(cluster, http_post=fake_post)
+        assert r is not None
+        # Default is read from the module-level constant which is set
+        # at import time from RALPH_DREAM_LLM_TIMEOUT_S env var (180
+        # default). Asserting >= 120 keeps the test green on an
+        # operator-overridden default while flagging accidental
+        # regressions to the old 60s value.
+        assert captured["timeout"] == reflect.DEFAULT_LLM_TIMEOUT_S
+        assert reflect.DEFAULT_LLM_TIMEOUT_S >= 120

@@ -56,7 +56,16 @@ Key facts established by research:
 - [x] `_parse_llm_response` returns a parsed dict (not None) when the LLM response contains backticks wrapping technical identifiers in YAML scalar values
 - [x] `_PROMPT_FOOTER` instructs Gemma to avoid backtick formatting within YAML scalar values
 - [x] New test `test_backtick_in_yaml_scalar_is_tolerated` passes; total test count moves from 22 to 23
-- [ ] Manual gate: live `reflect.py --since 30d` writes reflections for both clusters (size 7 AND size 8) where previously cluster 2 was silently dropped
+- [x] Manual gate: live `reflect.py --since 30d` writes reflections for both clusters (size 7 AND size 8) where previously cluster 2 was silently dropped — verified 2026-05-03; both clusters wrote reflection markdown files
+
+### Scope expansion (post-initial-implementation)
+
+During the manual verification gate, two additional reliability bugs surfaced and were fixed in the same PR rather than spawned as separate tickets:
+
+- [x] Markdown bullet markers (`*   item`) inside YAML frontmatter — Gemma occasionally produces these despite the prompt instruction; PyYAML reads `*` at line-start as an anchor reference. Fix: parser converts `^\*\s+` to `- ` inside the frontmatter region; prompt instructs against this pattern with example. New test `test_markdown_bullets_in_yaml_are_tolerated`.
+- [x] Hardcoded 60s `httpx.Client(timeout=60)` was right at the edge for 8-member clusters with `max_tokens=3000` (bumped in GH-966). Caused non-deterministic timeouts. Fix: extracted to `DEFAULT_LLM_TIMEOUT_S` module constant, default 180s, overridable via `RALPH_DREAM_LLM_TIMEOUT_S` env var. New test `test_default_timeout_is_propagated_to_http_post`.
+
+Total tests after scope expansion: 25 (was 22 pre-PR, 23 after initial backtick fix).
 
 ## What We're NOT Doing
 
