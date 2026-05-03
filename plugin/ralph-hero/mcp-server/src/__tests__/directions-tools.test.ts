@@ -655,3 +655,78 @@ describe("ralph_hero__next_actions", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2.5 — hello_directions backwards-compat parity
+// ---------------------------------------------------------------------------
+
+describe("hello_directions backwards-compat", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("hello_directions still returns same shape as next_actions(audience=human)", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const fixtures = [
+      rawIssue({
+        number: 800,
+        title: "P0 plan-in-review",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 801,
+        title: "P1 ready-for-plan",
+        workflowState: "Ready for Plan",
+        priority: "P1",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 802,
+        title: "P2 in-review",
+        workflowState: "In Review",
+        priority: "P2",
+        updatedAt: oneHourAgo,
+      }),
+    ];
+
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures } },
+    );
+
+    registerDirectionsTools(server, client, fieldCache);
+
+    const oldTool = getTool(server, "ralph_hero__hello_directions");
+    const newTool = getTool(server, "ralph_hero__next_actions");
+
+    const oldResult = await oldTool.handler(
+      buildArgs({ limit: 3, openPRs: [] }),
+      {},
+    );
+    const newResult = await newTool.handler(
+      buildArgs({ limit: 3, audience: "human", openPRs: [] }),
+      {},
+    );
+
+    const oldPayload = parsePayload(oldResult) as {
+      directions: Array<{ recommended: boolean }>;
+    };
+    const newPayload = parsePayload(newResult) as {
+      directions: Array<{ recommended: boolean }>;
+    };
+
+    expect(oldResult.isError).toBeUndefined();
+    expect(newResult.isError).toBeUndefined();
+    expect(oldPayload.directions.length).toBe(newPayload.directions.length);
+    if (oldPayload.directions.length > 0) {
+      expect(oldPayload.directions[0].recommended).toBe(true);
+      expect(newPayload.directions[0].recommended).toBe(true);
+    }
+  });
+});

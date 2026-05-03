@@ -210,7 +210,7 @@ export function registerDirectionsTools(
 
   server.tool(
     "ralph_hero__hello_directions",
-    "Compute up to N deterministic 'directions' for the hello skill's session briefing. Single tool call returns a fixed-shape JSON payload with ranked issue/PR action items. Open PRs must be passed in as a parameter (the MCP server does not fetch them itself).",
+    "[DEPRECATED — use ralph_hero__next_actions instead. Removed in 2.7.0.] Compute up to N deterministic 'directions' for the hello skill's session briefing.",
     {
       owner: z
         .string()
