@@ -603,3 +603,55 @@ describe("ralph_hero__hello_directions", () => {
     expect(payload.directions.map((d) => d.issue?.number)).toEqual([500, 501, 502]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2.4 — ralph_hero__next_actions
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__next_actions", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("registers under the new name and accepts audience param", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const fixtures = [
+      rawIssue({
+        number: 700,
+        title: "P0 plan-in-review",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        updatedAt: oneHourAgo,
+      }),
+    ];
+
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures } },
+    );
+
+    registerDirectionsTools(server, client, fieldCache);
+
+    // Tool is registered under the new name
+    const tool = getTool(server, "ralph_hero__next_actions");
+    expect(tool).toBeDefined();
+
+    // Call with audience=agent
+    const result = await tool.handler(
+      buildArgs({ limit: 1, audience: "agent" }),
+      {},
+    );
+    const payload = parsePayload(result) as {
+      directions: Array<{ recommended: boolean }>;
+    };
+    expect(result.isError).toBeUndefined();
+    expect(payload.directions).toBeDefined();
+    if (payload.directions.length > 0) {
+      expect(payload.directions[0].recommended).toBe(true);
+    }
+  });
+});
