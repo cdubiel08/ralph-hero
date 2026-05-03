@@ -57,5 +57,21 @@ JSON_VALID=$(echo "$LINE" | jq -e . >/dev/null 2>&1 && echo "yes" || echo "no")
 assert_eq "yes" "$JSON_VALID" "line is valid JSON"
 
 echo
+echo "Test: includes actor and target fields"
+rm -rf "$TEST_DIR/activity"
+CLAUDE_HOOK_EVENT="PostToolUse" \
+  CLAUDE_TOOL_NAME="ralph_hero__save_issue" \
+  CLAUDE_PROJECT="ralph-hero" \
+  "$SCRIPT" tool_called >/dev/null 2>&1
+TODAY=$(date -u +%Y/%m/%d)
+LOG_FILE="$TEST_DIR/activity/$TODAY.jsonl"
+LINE=$(head -1 "$LOG_FILE" 2>/dev/null)
+ACTOR=$(echo "$LINE" | jq -r '.actor // "missing"' 2>/dev/null)
+TARGET_TOOL=$(echo "$LINE" | jq -r '.target.tool // "missing"' 2>/dev/null)
+PROJECT=$(echo "$LINE" | jq -r '.project // "missing"' 2>/dev/null)
+assert_eq "ralph_hero__save_issue" "$TARGET_TOOL" "target.tool populated from CLAUDE_TOOL_NAME"
+assert_eq "ralph-hero" "$PROJECT" "project field populated from CLAUDE_PROJECT"
+
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
