@@ -16,6 +16,7 @@
     "start": "node dist/index.js",
     "reindex": "node dist/reindex.js",
     "test": "vitest run",
+    "bench:heap": "tsx benchmark/reindex-heap-bench.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -39,6 +40,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^4.0.0"
   }

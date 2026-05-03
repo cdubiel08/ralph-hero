@@ -450,13 +450,22 @@ Two notes on the CI step:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] CI passes on a no-op PR (the bench is now a hard gate)
-- [ ] CI fails on a PR that reverts `output.dispose()` in `embedder.ts`
-- [ ] Bench step completes in under 5 minutes on all 3 Node versions
+- [x] Local equivalent of CI step passes: `cd plugin/ralph-knowledge && npm run bench:heap -- --assert` exits 0 with `threshold_pass: true` (heap_used 39.5 MB, rss 441.1 MB, well under thresholds)
+- [ ] CI passes on a no-op PR (the bench is now a hard gate) — verifiable only after PR opens
+- [ ] CI fails on a PR that reverts `output.dispose()` in `embedder.ts` — see Phase 2 finding (the dispose() leak does NOT cross 600 MB on the 50-doc bench; this acceptance criterion is met only by the synthetic-breach recipe documented in the README)
+- [ ] Bench step completes in under 5 minutes on all 3 Node versions — verifiable only after PR opens
 
 #### Manual Verification:
 - [ ] PR description in the implementation PR shows the CI bench step output (heap/RSS numbers visible in logs for future tuning)
 - [ ] Threshold values still defensible after observing first ~5 CI runs across Node 18/20/22 (no false-positive flakes; if any version consistently runs hotter, file a follow-up)
+
+#### Phase 3 finding (drift):
+
+The plan claimed "tsx is already a transitive devDependency via vitest (per `benchmark/README.md` line 14), so no `devDependencies` change is needed." Empirically, this is **not true** with vitest 4.0 — `tsx` is not in vitest's dependency tree. After a fresh `npm ci`, `node_modules/.bin/tsx` does not exist, and `npm run bench:heap` fails with `sh: tsx: command not found` (exit 127). Locally `npx tsx ...` works because npx pulls tsx from the user's global npx cache, but CI runners don't have that cache pre-populated.
+
+Fix: added `"tsx": "^4.21.0"` to `devDependencies` in `plugin/ralph-knowledge/package.json` and ran `npm install` to update `package-lock.json`. The lockfile diff is clean — only adds tsx and its two deps (`get-tsconfig`, `resolve-pkg-maps`), all marked `"dev": true`. After this fix, `npm run bench:heap -- --assert` works locally with no `npx` indirection, and will work the same way in CI.
+
+The Phase 2 README claim about tsx being a transitive vitest dep should be revisited in a follow-up — leaving it as-is for now since it's accurate context for tsx 4.x evolution, just not for the specific vitest 4.0 version we use.
 
 **Implementation Note**: After this phase, the implementation is complete. Phase 3 is the only one that can't be fully verified locally — observe the first few PRs that land after merge to confirm the CI step is stable.
 

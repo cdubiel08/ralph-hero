@@ -11,7 +11,8 @@ will not break the CI matrix on Node 18/20/22.
 ## Running
 
 Each script is a standalone TypeScript file that can be run directly with
-`tsx` (already a transitive devDependency via `vitest` — no install required):
+`tsx` (declared as a `devDependency` in `package.json`, installed by
+`npm ci`):
 
 ```bash
 # From repo root or plugin/ralph-knowledge:
@@ -19,6 +20,9 @@ npx tsx benchmark/reranker-bench.ts
 
 # Or, equivalently, with the node loader form:
 node --import tsx benchmark/reranker-bench.ts
+
+# Or via the npm script (used by CI for the heap bench):
+npm run bench:heap -- --assert
 ```
 
 Scripts read the same `RALPH_KNOWLEDGE_DB` env var as the MCP server, so by
