@@ -402,9 +402,9 @@ class TestMainExitCode:
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Full reflect test suite passes: `cd scripts/dream && uv run pytest tests/test_reflect.py -v`
-- [ ] New `TestMainExitCode` tests pass
-- [ ] `_repro_reflect_parse_bug.py` no longer exists: `test ! -f scripts/dream/_repro_reflect_parse_bug.py`
+- [x] Full reflect test suite passes: `cd scripts/dream && uv run pytest tests/test_reflect.py -v`
+- [x] New `TestMainExitCode` tests pass
+- [x] `_repro_reflect_parse_bug.py` no longer exists: `test ! -f scripts/dream/_repro_reflect_parse_bug.py`
 
 #### Manual Verification
 - [ ] Confirm that under a forced-failure path, the aggregate `dream-now`-style command returns non-zero. Easiest reproduction: temporarily set `RALPH_DREAM_LLM_URL` (or edit `config.yaml`) to a non-existent endpoint, run `cd scripts/dream && uv run reflect.py --since 7d; echo "exit: $?"` — exit should be `1`.

@@ -625,3 +625,86 @@ class TestMainDryRun:
         assert rc == 0
         out = capsys.readouterr().out
         assert "No raw memories" in out
+
+
+# ---------------------------------------------------------------------------
+# CLI main() — exit-code contract for silent-failure surface (GH-966 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestMainExitCode:
+    def test_returns_nonzero_when_clusters_yield_no_reflections(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When clusters are formed but every LLM call fails to parse,
+        main() must exit non-zero so dream-now sees the failure
+        (mirrors the silent-failure anti-pattern called out in GH-908)."""
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+
+        import yaml as _yaml
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            _yaml.safe_dump(
+                {
+                    "base_dir": str(tmp_path / "out"),
+                    "knowledge_db": str(db),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Force every cluster to fail synthesis (simulates Gemma
+        # returning unparseable output for every cluster).
+        monkeypatch.setattr(
+            reflect, "synthesize_reflection", lambda *a, **kw: None
+        )
+
+        rc = reflect.main(
+            [
+                "--config",
+                str(cfg_path),
+                "--since",
+                "2026-04-18",
+            ]
+        )
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "Wrote 0 reflection(s)." in out
+
+    def test_returns_zero_when_no_clusters_form(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+    ) -> None:
+        """No clusters formed (window empty) is not a silent failure —
+        main() should still exit 0."""
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, [])
+
+        import yaml as _yaml
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            _yaml.safe_dump(
+                {
+                    "base_dir": str(tmp_path / "out"),
+                    "knowledge_db": str(db),
+                }
+            ),
+            encoding="utf-8",
+        )
+        rc = reflect.main(
+            [
+                "--config",
+                str(cfg_path),
+                "--since",
+                "2026-04-18",
+            ]
+        )
+        assert rc == 0

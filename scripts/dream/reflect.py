@@ -801,6 +801,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote {len(written_paths)} reflection(s).")
     for p in written_paths:
         print(f"  {p}")
+
+    # If we processed clusters but wrote nothing, something went wrong
+    # (LLM unreachable, output unparseable, etc.). Surface the failure
+    # so callers like `dream-now` see a non-zero aggregate exit code.
+    if clusters and not written_paths:
+        log.warning(
+            "Processed %d cluster(s) but wrote 0 reflections; "
+            "see WARNING logs above. Exiting non-zero so callers can "
+            "detect the silent failure.",
+            len(clusters),
+        )
+        return 1
     return 0
 
 
