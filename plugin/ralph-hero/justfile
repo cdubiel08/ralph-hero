@@ -53,6 +53,8 @@ assign number user:
         '{"number":{{number}},"assignees":["{{user}}"]}'
 
 # Find next actionable issue
+# NOTE: intentional deprecated-alias caller — pick_actionable_issue removed in 2.7.0.
+# Migrate to: ralph_hero__next_actions(limit=1, audience="agent")
 [group('commands')]
 pick state="Research Needed" max-estimate="S":
     @just _mcp_call "ralph_hero__pick_actionable_issue" \
@@ -583,6 +585,8 @@ quick-move issue state:
         '{"number":{{issue}},"workflowState":"{{state}}","command":"ralph_cli"}'
 
 # Find next actionable issue by workflow state - instant, no API cost
+# NOTE: intentional deprecated-alias caller — pick_actionable_issue removed in 2.7.0.
+# Migrate to: ralph_hero__next_actions(limit=1, audience="agent")
 [private]
 quick-pick state="Research Needed" max-estimate="S":
     @just _mcp_call "ralph_hero__pick_actionable_issue" \
