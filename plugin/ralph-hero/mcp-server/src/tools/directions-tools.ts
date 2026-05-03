@@ -183,6 +183,9 @@ export function registerDirectionsTools(
         }
 
         // Build the RankConfig from args + defaults + injected `now`.
+        // audience is fixed at "human" for the legacy hello_directions
+        // handler; the new next_actions tool (Phase 2.4) accepts the
+        // audience param.
         const config: RankConfig = {
           limit: args.limit ?? DEFAULT_RANK_CONFIG.limit,
           stuckThresholdHours:
@@ -193,6 +196,7 @@ export function registerDirectionsTools(
             args.treeRecentDoneDays ?? DEFAULT_RANK_CONFIG.treeRecentDoneDays,
           prStaleHours:
             args.prStaleHours ?? DEFAULT_RANK_CONFIG.prStaleHours,
+          audience: DEFAULT_RANK_CONFIG.audience,
           now,
         };
 

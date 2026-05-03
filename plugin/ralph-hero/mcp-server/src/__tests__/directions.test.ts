@@ -92,6 +92,56 @@ describe("recommended flag", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 0b. Audience param (Phase 2.2)
+// ---------------------------------------------------------------------------
+
+describe("audience param", () => {
+  it("audience='human' (default) does not penalize XL items", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "XL",
+        updatedAt: new Date(NOW.getTime() - 10 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "S",
+        updatedAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2, audience: "human" }));
+    // The XL item is much staler so should rank first under human audience
+    expect(result[0].issue?.number).toBe(1);
+  });
+
+  it("audience='agent' penalizes XL items, preferring smaller", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "XL",
+        updatedAt: new Date(NOW.getTime() - 10 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        estimate: "S",
+        updatedAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 2, audience: "agent" }));
+    // The S item should rank first because XL is penalized
+    expect(result[0].issue?.number).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 1. Empty input
 // ---------------------------------------------------------------------------
 
