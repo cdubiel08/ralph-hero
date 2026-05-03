@@ -359,15 +359,23 @@ Do NOT commit the revert — this is a one-time confirmation that the assertion 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `npx tsx benchmark/reindex-heap-bench.ts` exits 0 (no `--assert` flag) regardless of measurements
-- [ ] `npx tsx benchmark/reindex-heap-bench.ts --assert` exits 0 on current main (heap_used < 600, rss < 800)
-- [ ] TSV grows by one row per invocation (does not overwrite)
-- [ ] `npm run build` and `npm test` still pass
+- [x] `npx tsx benchmark/reindex-heap-bench.ts` exits 0 (no `--assert` flag) regardless of measurements
+- [x] `npx tsx benchmark/reindex-heap-bench.ts --assert` exits 0 on current main (heap_used < 600, rss < 800)
+- [x] TSV grows by one row per invocation (does not overwrite)
+- [x] `npm run build` and `npm test` still pass
 
 #### Manual Verification:
-- [ ] Local regression test: comment `output.dispose()` in `src/embedder.ts`, rebuild, run with `--assert`. Confirm exit code 1 AND `peak_heap_used_mb > 600`. Restore the file.
-- [ ] README's threshold rationale + tuning recipe are clear enough that a future maintainer can recalibrate without re-reading #910's profile note
-- [ ] Console output shows `THRESHOLD BREACH: …` line when assertion fails
+- [x] Local regression test (revised — see Phase 2 finding below): pivoted from "revert dispose()" to "lower HEAP_THRESHOLD_MB" because the dispose() leak does NOT cross 600 MB on the 50-doc bench corpus. Verified by setting `HEAP_THRESHOLD_MB = 30`: bench prints `THRESHOLD BREACH: heap_used 41.7 > 30` and exits with code 1. Threshold restored to 600 before commit.
+- [x] README's threshold rationale + tuning recipe are clear enough that a future maintainer can recalibrate without re-reading #910's profile note
+- [x] Console output shows `THRESHOLD BREACH: …` line when assertion fails
+
+#### Phase 2 finding (drift):
+
+The plan's Key Discoveries claimed "On 200 chunks (the bench corpus size), [removing dispose] is ~6 GB of transient pressure — comfortably exceeds the 600 MB threshold." Empirically (verified by commenting out lines 39-41 of `embedder.ts`, rebuilding, and running the bench at both 50 docs / 240 chunks and 200 docs / 954 chunks), `peak_heap_used_mb` stays at ~41 MB and `peak_rss_mb` stays under 470 MB. The dispose() leak shows in `peak_external_mb` (21 MB → 65 MB at 200 docs) but does not cross either configured threshold.
+
+The bench is still valuable as a guard against catastrophic regressions (10x+ allocation increases) but cannot demonstrably catch the specific dispose() leak at 50-doc scale. The README's manual-verification section was rewritten to reflect this empirical result and use a synthetic threshold-lowering recipe instead. Acceptance criterion #3 from #913 ("fails on a known-bad commit by reverting one of the #911 fixes") is met in spirit by the synthetic-breach recipe but not literally by the dispose() revert; this is documented in the README so future maintainers don't waste time replicating the original suggestion.
+
+Also fixed during Phase 2: switched from `process.exit(1)` to `process.exitCode = 1` to avoid a libc++ abort during ONNX runtime teardown that returned 134 (SIGABRT) instead of 1.
 
 **Implementation Note**: After completing this phase and the manual regression test verifies the bench correctly catches the reverted-dispose case, pause here for manual confirmation before proceeding to Phase 3.
 

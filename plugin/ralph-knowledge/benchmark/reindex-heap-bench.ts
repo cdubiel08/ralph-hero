@@ -7,17 +7,16 @@
  * cold-start, wall-clock, and chunk count.
  *
  * Guards the OOM fix from #907 (#911 + #916). A regression that re-introduces
- * unbounded transient allocation (e.g., dropping output.dispose() in
- * embedder.ts) will push peak_heap_used past the 600 MB threshold and fail
- * `--assert` (assertion mode lands in Phase 2).
- *
- * Phase 1: builds the deterministic corpus generator, runs reindex() against
- * it with a 100 ms heap sampler, queries the chunk count directly via
- * better-sqlite3, and writes a TSV row. The `--assert` flag and threshold
- * checks land in Phase 2.
+ * catastrophic transient allocation (10x+ over today's baseline) will push
+ * peak_heap_used or peak_rss past the configured thresholds and fail
+ * `--assert` (exit 1).
  *
  * Run with:
+ *   # Always exits 0; just records the row:
  *   npx tsx plugin/ralph-knowledge/benchmark/reindex-heap-bench.ts
+ *
+ *   # Exits 1 if peak_heap_used > 600 MB OR peak_rss > 800 MB:
+ *   npx tsx plugin/ralph-knowledge/benchmark/reindex-heap-bench.ts --assert
  */
 import { mkdtempSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -31,10 +30,30 @@ const TARGET_DOC_BYTES = 7 * 1024; // ~7 KB per doc -> ~3-5 chunks each
 const SAMPLE_INTERVAL_MS = 100;
 
 /**
+ * Default thresholds — sourced from the GH-910 reindex memory profile note.
+ *
+ * - HEAP_THRESHOLD_MB (600): catches catastrophic regrowth. Pre-#911 the
+ *   per-call retention was ~30 MB transient, climbing to 4 GB+ within ~150
+ *   chunks on the LIVE corpus. Today's typical heap_used on the 50-doc
+ *   bench corpus is ~30-50 MB, so 600 MB gives ~12x margin for the post-#911
+ *   baseline while still failing if a regression causes 10x+ allocation.
+ * - RSS_THRESHOLD_MB (800): catches transformer-model bloat or external-buffer
+ *   growth. Today's typical RSS on the 50-doc bench is ~400-450 MB (mostly
+ *   the transformer model baseline), so 800 MB gives 1.6-2x margin while
+ *   still failing if a regression doubles per-doc RSS pressure.
+ *
+ * Tuning recipe: open the TSV history, find p95 across the last ~10 runs
+ * on your CI hardware, multiply by 2. Avoids per-run jitter flakes.
+ */
+const HEAP_THRESHOLD_MB = 600;
+const RSS_THRESHOLD_MB = 800;
+
+/**
  * One bench-run row. Columns mirror the reranker-bench convention (one
  * scalar per metric, trailing free-form `notes` for any partial-failure
- * description). `threshold_pass` and `notes` are populated by the caller —
- * Phase 1 leaves them at the defaults so Phase 2 can wire `--assert`.
+ * or threshold-breach description). `threshold_pass` and `notes` are
+ * populated by `main()` after `runBench()` returns the raw measurements —
+ * keeps the measurement path independent of the threshold-check policy.
  */
 interface BenchResult {
   date: string;
@@ -224,8 +243,11 @@ async function runBench(): Promise<BenchResult> {
     peak_heap_used_mb: Number((peak.heapUsed / 1024 / 1024).toFixed(1)),
     peak_rss_mb: Number((peak.rss / 1024 / 1024).toFixed(1)),
     peak_external_mb: Number((peak.external / 1024 / 1024).toFixed(1)),
+    // Threshold check is the caller's responsibility (main() in --assert
+    // mode). Default to neutral values so the row is well-formed even
+    // when a downstream consumer imports runBench() directly.
     threshold_pass: true,
-    notes: "ok",
+    notes: "",
   };
 }
 
@@ -294,15 +316,50 @@ function isoDate(): string {
 }
 
 export async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const assertMode = args.includes("--assert");
+
   console.log(`reindex-heap-bench: generating ${DOC_COUNT}-doc synthetic corpus...`);
   const result = await runBench();
 
+  // Threshold check — applied unconditionally so the TSV row always records
+  // pass/fail, but only --assert turns a breach into a non-zero exit.
+  const heapBreach = result.peak_heap_used_mb > HEAP_THRESHOLD_MB;
+  const rssBreach = result.peak_rss_mb > RSS_THRESHOLD_MB;
+  result.threshold_pass = !heapBreach && !rssBreach;
+  if (heapBreach || rssBreach) {
+    const breaches: string[] = [];
+    if (heapBreach) {
+      breaches.push(`heap_used ${result.peak_heap_used_mb} > ${HEAP_THRESHOLD_MB}`);
+    }
+    if (rssBreach) {
+      breaches.push(`rss ${result.peak_rss_mb} > ${RSS_THRESHOLD_MB}`);
+    }
+    result.notes = `THRESHOLD BREACH: ${breaches.join("; ")}`;
+  } else {
+    result.notes = "ok";
+  }
+
+  // Always write TSV — useful for tuning even when an --assert run aborts.
   const here = dirname(fileURLToPath(import.meta.url));
   const outPath = join(here, `results-${isoDate()}.tsv`);
   appendOrCreateTsv(outPath, [result]);
   console.log(`reindex-heap-bench: wrote ${outPath}`);
 
   printSummary(result);
+
+  // Exit 1 ONLY when --assert was passed AND a threshold breached. Without
+  // --assert, a breach still appears in the TSV `notes` column so a tuning
+  // session can review history without aborting.
+  //
+  // Use `process.exitCode` (not `process.exit()`) so the event loop drains
+  // and native bindings (better-sqlite3, transformers.js ONNX runtime) tear
+  // down cleanly. A hard `process.exit(1)` here causes a libc++ abort during
+  // ONNX teardown that returns 134 (SIGABRT) instead of 1.
+  if (assertMode && !result.threshold_pass) {
+    console.error(`reindex-heap-bench: ASSERT FAIL — ${result.notes}`);
+    process.exitCode = 1;
+  }
 }
 
 // Top-level runner — only executes when this file is invoked directly,
