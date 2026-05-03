@@ -1,6 +1,6 @@
 ---
 date: 2026-04-20
-status: draft
+status: in-progress
 type: plan
 github_issue: 809
 github_issues: [809]
@@ -104,15 +104,15 @@ After this atomic merges:
 
 ### Verification
 
-- [ ] `journey-trace.schema.yaml` has `baseline_ref` under `step.properties` as an optional string with a `description` explaining the field semantics
-- [ ] A sample `journey-trace.yaml` with NO `baseline_ref` field on any step passes `validate-primitive-io.sh`
-- [ ] A sample `journey-trace.yaml` WITH `baseline_ref` set on some steps passes `validate-primitive-io.sh`
-- [ ] `match-steps.mjs` exports `matchSteps`
-- [ ] `matchSteps({steps: [...]}, {steps: [...]})` returns the exact shape `{ pairs: [{current, baseline}], addedInCurrent: [...], missingFromCurrent: [...] }`
-- [ ] Primary-key normalization is applied before equality check
-- [ ] Fallback-to-index kicks in only when primary-key matching is ambiguous / missing / duplicated
-- [ ] `node --test plugin/ralph-playwright/scripts/match-steps.test.mjs` exits 0
-- [ ] All five canonical scenarios have dedicated test cases
+- [x] `journey-trace.schema.yaml` has `baseline_ref` under `step.properties` as an optional string with a `description` explaining the field semantics
+- [x] A sample `journey-trace.yaml` with NO `baseline_ref` field on any step passes `validate-primitive-io.sh`
+- [x] A sample `journey-trace.yaml` WITH `baseline_ref` set on some steps passes `validate-primitive-io.sh`
+- [x] `match-steps.mjs` exports `matchSteps`
+- [x] `matchSteps({steps: [...]}, {steps: [...]})` returns the exact shape `{ pairs: [{current, baseline}], addedInCurrent: [...], missingFromCurrent: [...] }`
+- [x] Primary-key normalization is applied before equality check
+- [x] Fallback-to-index kicks in only when primary-key matching is ambiguous / missing / duplicated
+- [x] `node --test plugin/ralph-playwright/scripts/match-steps.test.mjs` exits 0
+- [x] All five canonical scenarios have dedicated test cases
 
 ## What We're NOT Doing
 
@@ -149,12 +149,12 @@ Add `baseline_ref` to the journey-trace schema. Implement `matchSteps` and its t
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `step.properties` gains `baseline_ref` as a string type
-  - [ ] Field is NOT added to `step.required`
-  - [ ] `description:` explains the semantics: "Optional. Relative path under `thoughts/local/baselines/<session-slug>/` to the baseline screenshot used for semantic-diff comparison (GH-791). When absent, no baseline is available for this step and the diff emitter skips it. When present, `plugin/ralph-playwright/scripts/baseline-store.mjs#readBaseline()` must be able to resolve the path; otherwise the emitter fails loudly (see GH-816)."
-  - [ ] Field is documented alongside other optional step fields, in an order consistent with the file (group with other cross-run / session-level annotations)
-  - [ ] A sample `journey-trace.yaml` with `baseline_ref: "2026-04-20-explore-checkout/00.png"` on a step passes `validate-primitive-io.sh` when fed through the hook manually (or the test harness described in #786's plan)
-  - [ ] A pre-existing `journey-trace.yaml` with NO `baseline_ref` on any step still passes (regression proof)
+  - [x] `step.properties` gains `baseline_ref` as a string type
+  - [x] Field is NOT added to `step.required`
+  - [x] `description:` explains the semantics: "Optional. Relative path under `thoughts/local/baselines/<session-slug>/` to the baseline screenshot used for semantic-diff comparison (GH-791). When absent, no baseline is available for this step and the diff emitter skips it. When present, `plugin/ralph-playwright/scripts/baseline-store.mjs#readBaseline()` must be able to resolve the path; otherwise the emitter fails loudly (see GH-816)."
+  - [x] Field is documented alongside other optional step fields, in an order consistent with the file (group with other cross-run / session-level annotations)
+  - [x] A sample `journey-trace.yaml` with `baseline_ref: "2026-04-20-explore-checkout/00.png"` on a step passes `validate-primitive-io.sh` when fed through the hook manually (or the test harness described in #786's plan)
+  - [x] A pre-existing `journey-trace.yaml` with NO `baseline_ref` on any step still passes (regression proof)
 
 #### Task 1.2: Author `match-steps.mjs`
 
@@ -164,23 +164,23 @@ Add `baseline_ref` to the journey-trace schema. Implement `matchSteps` and its t
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] ESM `.mjs`, no external deps
-  - [ ] Exports `normalizeActionTarget(action, target)` returning a normalized tuple string (e.g., `click::submit-button`). Rules: trim both, lowercase both, replace internal runs of whitespace with a single space. Null/undefined inputs are treated as the empty string for the purposes of normalization, but a "missing" (null/undefined/empty-after-normalize) action OR target signals the fallback path to the matcher.
-  - [ ] Exports `matchSteps(currentTrace, baselineTrace)`:
+  - [x] ESM `.mjs`, no external deps
+  - [x] Exports `normalizeActionTarget(action, target)` returning a normalized tuple string (e.g., `click::submit-button`). Rules: trim both, lowercase both, replace internal runs of whitespace with a single space. Null/undefined inputs are treated as the empty string for the purposes of normalization, but a "missing" (null/undefined/empty-after-normalize) action OR target signals the fallback path to the matcher.
+  - [x] Exports `matchSteps(currentTrace, baselineTrace)`:
     - Input: two objects conforming to the journey-trace schema (must have a `steps` array)
     - Output: `{ pairs: Array<{ current: Step, baseline: Step, via: 'action-target' | 'index' }>, addedInCurrent: Array<Step>, missingFromCurrent: Array<Step> }`
     - `via` is informational — #813's emitter may log it or ignore it
-  - [ ] Algorithm:
+  - [x] Algorithm:
     1. Build a map from `normalizeActionTarget(step.action, step.target)` to baseline step(s). Entries with a "missing" key (see normalization rule) are excluded from the primary-key map and queued for index-fallback.
     2. For each current step:
        a. If its key is "missing", skip to index fallback for that step.
        b. Look up the key in the baseline map. If the baseline map has exactly one un-consumed entry for this key, pair them (consume the baseline entry) with `via: 'action-target'`.
-       c. If the baseline map has multiple un-consumed entries for this key (duplicates), use index-fallback: pick the first un-consumed baseline step whose `index` matches the current step's `index`. If none match by index, pick the first un-consumed baseline step regardless; `via: 'index'`.
+       c. If the baseline map has multiple un-consumed entries for this key (duplicates), use index-fallback: pick the first un-consumed baseline step whose `index` matches the current step's `index`. If none match by index, pick the first un-consumed baseline step regardless; `via: 'index'`. Implementation note: `via` is determined by whether the ORIGINAL bucket size > 1, not the live un-consumed count, so duplicate-key pairs are consistently labelled `via: 'index'` even if only one un-consumed candidate remains by the time it is processed.
        d. If no baseline entry remains for this key, the current step falls to `addedInCurrent`.
     3. Index-fallback pass: for each current step not yet paired (those with "missing" keys), pair with the baseline step at the same index that is STILL un-consumed. Mark `via: 'index'`. Unmatched → `addedInCurrent`.
     4. Any baseline step not consumed after both passes → `missingFromCurrent`.
-  - [ ] All functions pure (no I/O; no module-level state)
-  - [ ] File exports both `matchSteps` and `normalizeActionTarget` (the latter is useful for ad-hoc matching in #813's prompt context)
+  - [x] All functions pure (no I/O; no module-level state)
+  - [x] File exports both `matchSteps` and `normalizeActionTarget` (the latter is useful for ad-hoc matching in #813's prompt context)
 
 #### Task 1.3: Test suite `match-steps.test.mjs`
 
@@ -190,25 +190,25 @@ Add `baseline_ref` to the journey-trace schema. Implement `matchSteps` and its t
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Uses `node:test` + `node:assert/strict`
-  - [ ] Test `normalizeActionTarget` covers: trim both sides, lowercase both sides, collapse double-space in target, null action falls through to empty-string normalization
-  - [ ] Scenario 1 (exact match): current steps `[{action:'click',target:'#submit',index:0}, {action:'fill',target:'email',index:1}]`, baseline identical. Expect: 2 pairs (both `via: 'action-target'`), 0 added, 0 missing.
-  - [ ] Scenario 2 (reorder): current has the two steps in reversed order; baseline in original order. Expect: 2 pairs by `action-target`, 0 added, 0 missing. `pairs[i].current.index` may not equal `pairs[i].baseline.index` — the matcher pairs by key not position.
-  - [ ] Scenario 3 (extra in current): current has 3 steps, baseline has 2 (the third current step's `(action,target)` is unique). Expect: 2 pairs, 1 `addedInCurrent` (the extra step), 0 missing.
-  - [ ] Scenario 4 (removed from current): current has 2, baseline has 3 (the missing one's `(action,target)` is unique). Expect: 2 pairs, 0 added, 1 `missingFromCurrent` (the baseline step not represented in current).
-  - [ ] Scenario 5 (duplicate `(action,target)` disambiguated by index): current has `[{action:'click',target:'next',index:0}, {action:'click',target:'next',index:2}]`, baseline has `[{action:'click',target:'next',index:0}, {action:'click',target:'next',index:3}]`. Expect: 2 pairs — `index:0` to `index:0`, and `index:2` to `index:3` (first un-consumed baseline step with matching key; index-fallback disambiguation). `via: 'index'` on the second pair.
-  - [ ] Scenario 6 (missing `target` triggers index fallback): one step has no `target` field. Expect: that step pairs with the same-index baseline step via index-fallback, `via: 'index'`.
-  - [ ] Scenario 7 (regression — baseline has extra index-only noise): baseline has 4 steps, current has 3 all matching `action-target`. Expect: 3 pairs (`action-target`), 1 `missingFromCurrent`.
-  - [ ] Cleanup unnecessary — tests pure-function, no I/O.
-  - [ ] `node --test plugin/ralph-playwright/scripts/match-steps.test.mjs` exits 0.
+  - [x] Uses `node:test` + `node:assert/strict`
+  - [x] Test `normalizeActionTarget` covers: trim both sides, lowercase both sides, collapse double-space in target, null action falls through to empty-string normalization
+  - [x] Scenario 1 (exact match): current steps `[{action:'click',target:'#submit',index:0}, {action:'fill',target:'email',index:1}]`, baseline identical. Expect: 2 pairs (both `via: 'action-target'`), 0 added, 0 missing.
+  - [x] Scenario 2 (reorder): current has the two steps in reversed order; baseline in original order. Expect: 2 pairs by `action-target`, 0 added, 0 missing. `pairs[i].current.index` may not equal `pairs[i].baseline.index` — the matcher pairs by key not position.
+  - [x] Scenario 3 (extra in current): current has 3 steps, baseline has 2 (the third current step's `(action,target)` is unique). Expect: 2 pairs, 1 `addedInCurrent` (the extra step), 0 missing.
+  - [x] Scenario 4 (removed from current): current has 2, baseline has 3 (the missing one's `(action,target)` is unique). Expect: 2 pairs, 0 added, 1 `missingFromCurrent` (the baseline step not represented in current).
+  - [x] Scenario 5 (duplicate `(action,target)` disambiguated by index): current has `[{action:'click',target:'next',index:0}, {action:'click',target:'next',index:2}]`, baseline has `[{action:'click',target:'next',index:0}, {action:'click',target:'next',index:3}]`. Expect: 2 pairs — `index:0` to `index:0`, and `index:2` to `index:3` (first un-consumed baseline step with matching key; index-fallback disambiguation). `via: 'index'` on the second pair.
+  - [x] Scenario 6 (missing `target` triggers index fallback): one step has no `target` field. Expect: that step pairs with the same-index baseline step via index-fallback, `via: 'index'`.
+  - [x] Scenario 7 (regression — baseline has extra index-only noise): baseline has 4 steps, current has 3 all matching `action-target`. Expect: 3 pairs (`action-target`), 1 `missingFromCurrent`.
+  - [x] Cleanup unnecessary — tests pure-function, no I/O.
+  - [x] `node --test plugin/ralph-playwright/scripts/match-steps.test.mjs` exits 0.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `node --test plugin/ralph-playwright/scripts/match-steps.test.mjs` — exits 0, all 7 scenarios pass
-- [ ] Schema validation smoke-test: craft a minimal `journey-trace.yaml` with and without `baseline_ref`; run `validate-primitive-io.sh` on each; both exit 0
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing
+- [x] `node --test plugin/ralph-playwright/scripts/match-steps.test.mjs` — exits 0, all 7 scenarios pass (20 tests including edge cases)
+- [x] Schema validation smoke-test: craft a minimal `journey-trace.yaml` with and without `baseline_ref`; run `validate-primitive-io.sh` on each; both exit 0
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (1100/1100)
 
 #### Manual Verification:
 - [ ] Reviewer confirms `baseline_ref` description accurately documents the "missing means skip, present means required-to-resolve" semantics
