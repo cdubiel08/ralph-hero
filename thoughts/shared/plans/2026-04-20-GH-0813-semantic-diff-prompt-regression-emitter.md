@@ -116,19 +116,19 @@ After this atomic merges:
 
 ### Verification
 
-- [ ] Reference file `semantic-diff-prompt.md` exists under `plugin/ralph-playwright/skills/reflect/references/`
-- [ ] Prompt text includes all six ignore items verbatim: anti-aliasing, font hinting, animation frames, timestamps, cursor/caret position, sub-pixel rendering
-- [ ] Prompt text cites "reflect Step 2 seven categories" by reference (does NOT inline them)
-- [ ] Prompt text specifies "bulleted list of natural-language change descriptions" and forbids "raw diff dumps" / "image descriptions"
-- [ ] Prompt text documents the three noise-floor levels with short rubric per level
-- [ ] `diff-emitter.mjs` exports `buildDiffPayloads`, `parseDiffResponse`, `renderPrompt`
-- [ ] Payload builder iterates `pairs` from `matchSteps`, calls `readBaseline` for each to resolve baseline path
-- [ ] Payload includes: prompt text (from `renderPrompt`), two image paths (current + baseline), step context (index, action, target)
-- [ ] Parser on empty/sentinel response returns `[]`
-- [ ] Parser on bullet-list response returns one `Signal` per bullet
-- [ ] Each produced `Signal` has `type: 'regression'`, `severity` (defaulted or per-bullet heuristic), `title` (first sentence or first N chars), `description` (full bullet), `evidence: { steps: [currentStep.index], screenshots: [currentPath, baselinePath] }`, `tags: ['semantic-diff', noiseFloor]`
-- [ ] `node --test plugin/ralph-playwright/scripts/diff-emitter.test.mjs` exits 0
-- [ ] A produced signal-report that merges diff signals with regular reflect signals passes `validate-primitive-io.sh`
+- [x] Reference file `semantic-diff-prompt.md` exists under `plugin/ralph-playwright/skills/reflect/references/`
+- [x] Prompt text includes all six ignore items verbatim: anti-aliasing, font hinting, animation frames, timestamps, cursor/caret position, sub-pixel rendering
+- [x] Prompt text cites "reflect Step 2 seven categories" by reference (does NOT inline them)
+- [x] Prompt text specifies "bulleted list of natural-language change descriptions" and forbids "raw diff dumps" / "image descriptions"
+- [x] Prompt text documents the three noise-floor levels with short rubric per level
+- [x] `diff-emitter.mjs` exports `buildDiffPayloads`, `parseDiffResponse`, `renderPrompt`
+- [x] Payload builder iterates `pairs` from `matchSteps`, calls `readBaseline` for each to resolve baseline path
+- [x] Payload includes: prompt text (from `renderPrompt`), two image paths (current + baseline), step context (index, action, target)
+- [x] Parser on empty/sentinel response returns `[]`
+- [x] Parser on bullet-list response returns one `Signal` per bullet
+- [x] Each produced `Signal` has `type: 'regression'`, `severity` (defaulted or per-bullet heuristic), `title` (first sentence or first N chars), `description` (full bullet), `evidence: { steps: [currentStep.index], screenshots: [currentPath, baselinePath] }`, `tags: ['semantic-diff', noiseFloor]`
+- [x] `node --test plugin/ralph-playwright/scripts/diff-emitter.test.mjs` exits 0
+- [x] A produced signal-report that merges diff signals with regular reflect signals passes `validate-primitive-io.sh`
 
 ## What We're NOT Doing
 
@@ -166,21 +166,21 @@ Author the reference prompt file. Implement the payload-builder and response-par
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File is a plain markdown document, no YAML frontmatter (matches the existing `plugin/ralph-playwright/skills/browser/references/` pattern)
-  - [ ] Opens with a one-paragraph orientation: "This prompt powers the in-loop semantic visual diff in `reflect`'s `--baseline` mode (see #791/#816). It compares a current screenshot against its matched baseline screenshot from a prior run and emits a bulleted list of meaningful visual changes, framed in the same rubric as reflect's Step 2 structured visual audit."
-  - [ ] References reflect's Step 2 seven categories BY NAME (layout integrity, typography, imagery, state visibility, visual hierarchy, chart & data UIs, viewport/responsive) with a one-line pointer to `skills/reflect/SKILL.md` Step 2 — does NOT re-author the categories
-  - [ ] Ignore list stated verbatim: "Ignore these as rendering noise, not regressions: anti-aliasing, font hinting, animation frames, timestamps, cursor/caret position, minor sub-pixel rendering."
-  - [ ] Output specification:
+  - [x] File is a plain markdown document, no YAML frontmatter (matches the existing `plugin/ralph-playwright/skills/browser/references/` pattern)
+  - [x] Opens with a one-paragraph orientation: "This prompt powers the in-loop semantic visual diff in `reflect`'s `--baseline` mode (see #791/#816). It compares a current screenshot against its matched baseline screenshot from a prior run and emits a bulleted list of meaningful visual changes, framed in the same rubric as reflect's Step 2 structured visual audit."
+  - [x] References reflect's Step 2 seven categories BY NAME (layout integrity, typography, imagery, state visibility, visual hierarchy, chart & data UIs, viewport/responsive) with a one-line pointer to `skills/reflect/SKILL.md` Step 2 — does NOT re-author the categories
+  - [x] Ignore list stated verbatim: "Ignore these as rendering noise, not regressions: anti-aliasing, font hinting, animation frames, timestamps, cursor/caret position, minor sub-pixel rendering."
+  - [x] Output specification:
     - "Return a markdown bulleted list. One bullet per meaningful change."
     - "Each bullet is a single natural-language sentence: <subject> <change> [quantity/direction]. Examples: 'Submit button moved ~40px down and lost its drop shadow.' 'Primary navigation changed from horizontal to hamburger; three links removed.' 'Error banner replaced with inline field-level errors.'"
     - "Do NOT describe the images. Do NOT produce raw diff output. Do NOT describe unchanged elements."
     - "If there are no meaningful changes, return exactly the single line: `NO-MEANINGFUL-CHANGES`"
-  - [ ] Noise-floor rubric:
+  - [x] Noise-floor rubric:
     - `low`: Include any change you can see. Minor alignment shifts, color variations, font-weight changes all count.
     - `medium` (default): Include changes that affect visual hierarchy, readability, or user affordance. Skip micro-alignments and color palette tweaks that preserve intent.
     - `high`: Include only changes that meaningfully alter layout, state, or functionality. Skip stylistic refinements.
-  - [ ] Input slots documented: `{{ACTION}}`, `{{TARGET}}`, `{{NOISE_FLOOR}}` — the prompt template carries these placeholders; `renderPrompt` fills them
-  - [ ] Concrete example section at the bottom: shows a prompt with placeholders filled and a realistic expected response of 2-3 bullets
+  - [x] Input slots documented: `{{ACTION}}`, `{{TARGET}}`, `{{NOISE_FLOOR}}` — the prompt template carries these placeholders; `renderPrompt` fills them
+  - [x] Concrete example section at the bottom: shows a prompt with placeholders filled and a realistic expected response of 2-3 bullets
 
 #### Task 1.2: Author `diff-emitter.mjs`
 
@@ -190,13 +190,13 @@ Author the reference prompt file. Implement the payload-builder and response-par
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] ESM `.mjs`, uses only `node:fs/promises`, `node:path`, and imports from `./baseline-store.mjs` and `./match-steps.mjs`
-  - [ ] Reads the prompt template from `plugin/ralph-playwright/skills/reflect/references/semantic-diff-prompt.md` at module load OR on each call (either is acceptable; favor on-each-call for simplicity unless profiling says otherwise)
-  - [ ] Exports `renderPrompt({ action, target, noiseFloor })` returning the template with placeholders substituted
-  - [ ] Exports `buildDiffPayloads(pairs, { noiseFloor = 'medium', sessionSlug, stepIdFor = (s) => String(s.index).padStart(2, '0') })`:
+  - [x] ESM `.mjs`, uses only `node:fs/promises`, `node:path`, and imports from `./baseline-store.mjs` and `./match-steps.mjs`
+  - [x] Reads the prompt template from `plugin/ralph-playwright/skills/reflect/references/semantic-diff-prompt.md` at module load OR on each call (either is acceptable; favor on-each-call for simplicity unless profiling says otherwise)
+  - [x] Exports `renderPrompt({ action, target, noiseFloor })` returning the template with placeholders substituted
+  - [x] Exports `buildDiffPayloads(pairs, { noiseFloor = 'medium', sessionSlug, stepIdFor = (s) => String(s.index).padStart(2, '0') })`:
     - For each pair: resolves baseline path via `readBaseline(sessionSlug, stepIdFor(pair.baseline))`; returns an array of `{ currentStep, baselineStep, currentPath: pair.current.screenshot, baselinePath, prompt: renderPrompt({action, target, noiseFloor}), noiseFloor }`
     - On `BaselineNotFoundError`, propagates the error with context about which pair failed
-  - [ ] Exports `parseDiffResponse(responseText, { currentStep, currentPath, baselinePath, noiseFloor })`:
+  - [x] Exports `parseDiffResponse(responseText, { currentStep, currentPath, baselinePath, noiseFloor })`:
     - Trims and normalizes the response
     - If the response equals `NO-MEANINGFUL-CHANGES` (case-insensitive, optional leading / trailing whitespace), returns `[]`
     - Otherwise parses bullet lines (lines starting with `- ` or `* `), emitting one signal per bullet
@@ -209,9 +209,9 @@ Author the reference prompt file. Implement the payload-builder and response-par
       - `evidence.screenshots: [currentPath, baselinePath]` (both filenames as-is from the input payload)
       - `tags: ['semantic-diff', noiseFloor]`
     - Lines not matching a bullet pattern are ignored (robustness against model chatty preambles)
-  - [ ] Exports `DiffEmitterError` subclassing `Error` with a `.code` for emitter-specific error paths (payload-build failure, response-parse failure). `BaselineNotFoundError` from #806 propagates as-is.
-  - [ ] Module exports are named (not default)
-  - [ ] All functions pure except for prompt-template I/O
+  - [x] Exports `DiffEmitterError` subclassing `Error` with a `.code` for emitter-specific error paths (payload-build failure, response-parse failure). `BaselineNotFoundError` from #806 propagates as-is.
+  - [x] Module exports are named (not default)
+  - [x] All functions pure except for prompt-template I/O
 
 #### Task 1.3: Test suite `diff-emitter.test.mjs`
 
@@ -221,19 +221,19 @@ Author the reference prompt file. Implement the payload-builder and response-par
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Uses `node:test` + `node:assert/strict`
-  - [ ] Test `renderPrompt` substitutes `{{ACTION}}`, `{{TARGET}}`, `{{NOISE_FLOOR}}` in the template
-  - [ ] Test `renderPrompt` on each of `low`, `medium`, `high` produces three distinguishable texts (the noise-floor rubric paragraph differs per level)
-  - [ ] Test `parseDiffResponse('NO-MEANINGFUL-CHANGES', ctx)` returns `[]`
-  - [ ] Test `parseDiffResponse('  NO-MEANINGFUL-CHANGES\n', ctx)` (whitespace-tolerant) returns `[]`
-  - [ ] Test a multi-bullet response produces N signals matching the bullet count:
+  - [x] Uses `node:test` + `node:assert/strict`
+  - [x] Test `renderPrompt` substitutes `{{ACTION}}`, `{{TARGET}}`, `{{NOISE_FLOOR}}` in the template
+  - [x] Test `renderPrompt` on each of `low`, `medium`, `high` produces three distinguishable texts (the noise-floor rubric paragraph differs per level)
+  - [x] Test `parseDiffResponse('NO-MEANINGFUL-CHANGES', ctx)` returns `[]`
+  - [x] Test `parseDiffResponse('  NO-MEANINGFUL-CHANGES\n', ctx)` (whitespace-tolerant) returns `[]`
+  - [x] Test a multi-bullet response produces N signals matching the bullet count:
     ```
     - Submit button moved ~40px down and lost its drop shadow.
     - Primary navigation collapsed from horizontal tabs to hamburger menu.
     ```
     returns 2 signals, first `description` contains "Submit button moved", second `description` contains "Primary navigation"
-  - [ ] Test produced signal `type === 'regression'`, `severity === 'medium'`, `tags` includes `'semantic-diff'` AND the noise-floor value, `evidence.steps === [currentStep.index]`, `evidence.screenshots` contains both current and baseline paths
-  - [ ] Test response with chatty preamble + bullets parses correctly (ignore non-bullet lines):
+  - [x] Test produced signal `type === 'regression'`, `severity === 'medium'`, `tags` includes `'semantic-diff'` AND the noise-floor value, `evidence.steps === [currentStep.index]`, `evidence.screenshots` contains both current and baseline paths
+  - [x] Test response with chatty preamble + bullets parses correctly (ignore non-bullet lines):
     ```
     After reviewing both screenshots I noticed the following meaningful changes:
     - Submit button moved ~40px down and lost its drop shadow.
@@ -241,19 +241,19 @@ Author the reference prompt file. Implement the payload-builder and response-par
     Those are the ones worth flagging at the medium noise floor.
     ```
     returns 1 signal
-  - [ ] Test `buildDiffPayloads` with a mock `readBaseline` (injected via module stub pattern or direct function param — prefer the direct-param approach by accepting `readBaseline` in the options bag for testability) iterates pairs and returns payload array of matching length
-  - [ ] Test `buildDiffPayloads` propagates the underlying `BaselineNotFoundError` when a baseline is missing — does not swallow
-  - [ ] Schema-conformance test: pass a synthesized signal through the signal-report shape (embed in a minimal `signal-report.yaml` dict) and confirm it validates against `signal-report.schema.yaml` via a small `yq`-backed assertion OR by direct property-shape matching (since the hook validator is shell-based, property-shape matching in the unit test is acceptable)
-  - [ ] `node --test plugin/ralph-playwright/scripts/diff-emitter.test.mjs` exits 0
+  - [x] Test `buildDiffPayloads` with a mock `readBaseline` (injected via module stub pattern or direct function param — prefer the direct-param approach by accepting `readBaseline` in the options bag for testability) iterates pairs and returns payload array of matching length
+  - [x] Test `buildDiffPayloads` propagates the underlying `BaselineNotFoundError` when a baseline is missing — does not swallow
+  - [x] Schema-conformance test: pass a synthesized signal through the signal-report shape (embed in a minimal `signal-report.yaml` dict) and confirm it validates against `signal-report.schema.yaml` via a small `yq`-backed assertion OR by direct property-shape matching (since the hook validator is shell-based, property-shape matching in the unit test is acceptable)
+  - [x] `node --test plugin/ralph-playwright/scripts/diff-emitter.test.mjs` exits 0
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `node --test plugin/ralph-playwright/scripts/diff-emitter.test.mjs` — exits 0, all tests green
-- [ ] `node --test plugin/ralph-playwright/scripts/` — all three plugin test files (annotate, baseline-store, match-steps, diff-emitter) pass together
-- [ ] Synthesized signal-report containing a diff-generated `regression` signal passes `validate-primitive-io.sh` with `CLAUDE_PLUGIN_ROOT=plugin/ralph-playwright` (exit 0)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing
+- [x] `node --test plugin/ralph-playwright/scripts/diff-emitter.test.mjs` — exits 0, 35/35 green
+- [x] `node --test plugin/ralph-playwright/scripts/*.test.mjs` — all four plugin test files (annotate, baseline-store, match-steps, diff-emitter) pass together (95/95). Note: `node --test plugin/ralph-playwright/scripts/` (directory form) fails on Node 22.22.1 with `MODULE_NOT_FOUND` — appears to be a runner regression that treats the directory as a module path. Glob form is the working invocation; both forms exercise the same files.
+- [x] Synthesized signal-report containing a diff-generated `regression` signal passes `validate-primitive-io.sh` with `CLAUDE_PLUGIN_ROOT=plugin/ralph-playwright` (exit 0)
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — 1100/1100 passing
 
 #### Manual Verification:
 - [ ] Reviewer reads `semantic-diff-prompt.md` and confirms the seven categories are referenced (not duplicated), the ignore list is verbatim, the output format is unambiguous, and noise-floor rubrics are distinguishable
