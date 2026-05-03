@@ -47,3 +47,42 @@ describe("readActivity — empty cases", () => {
     expect(result.cursor_advanced_to).toBeNull();
   });
 });
+
+function writeEvents(rootDir: string, dateYMD: string, events: object[]) {
+  const [y, m, d] = dateYMD.split("-");
+  const dir = path.join(rootDir, y, m);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${d}.jsonl`);
+  fs.writeFileSync(file, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+}
+
+describe("readActivity — populated log", () => {
+  it("returns events from today's file in chronological order", () => {
+    const events = [
+      { ts: "2026-05-02T08:00:00Z", kind: "skill_invoked", category: "work", actor: "ralph-hero:hello" },
+      { ts: "2026-05-02T09:00:00Z", kind: "tool_called", category: "work", actor: "claude", target: { tool: "ralph_hero__save_issue" } },
+      { ts: "2026-05-02T10:00:00Z", kind: "tool_called", category: "meta", actor: "claude", target: { tool: "ralph_hero__get_issue" } },
+    ];
+    writeEvents(tmpDir, "2026-05-02", events);
+    const result = readActivity(makeConfig({ category: "work" }));
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0].ts).toBe("2026-05-02T08:00:00Z");
+    expect(result.events[1].ts).toBe("2026-05-02T09:00:00Z");
+    expect(result.cursor_advanced_to).toBe("2026-05-02T09:00:00Z");
+  });
+
+  it("walks multiple daily files", () => {
+    writeEvents(tmpDir, "2026-05-01", [
+      { ts: "2026-05-01T12:00:00Z", kind: "skill_invoked", category: "work" },
+    ]);
+    writeEvents(tmpDir, "2026-05-02", [
+      { ts: "2026-05-02T08:00:00Z", kind: "tool_called", category: "work" },
+    ]);
+    const result = readActivity(makeConfig({
+      category: "work",
+      since: "2026-05-01T00:00:00Z",
+    }));
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0].ts).toBe("2026-05-01T12:00:00Z");
+  });
+});
