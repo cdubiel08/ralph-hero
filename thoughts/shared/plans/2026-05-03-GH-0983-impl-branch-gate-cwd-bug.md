@@ -63,11 +63,11 @@ After this fix:
 
 ### Verification
 
-- [ ] All four positive cases above (worktree feature branch commits) pass without false-positive blocks under `RALPH_COMMAND=impl` and `agent_type=impl-agent`.
-- [ ] Explicit-main negative case still blocks.
-- [ ] Ambiguous case (no `cd`, no `RALPH_WORKTREE_PATHS`, current cwd on main) emits a warn and allows — does not block.
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-impl-branch-gate.sh` reports `0 failed`.
-- [ ] No regressions in existing `bash plugin/ralph-hero/hooks/scripts/__tests__/test-agent-phase-gate.sh` run.
+- [x] All four positive cases above (worktree feature branch commits) pass without false-positive blocks under `RALPH_COMMAND=impl` and `agent_type=impl-agent`.
+- [x] Explicit-main negative case still blocks.
+- [x] Ambiguous case (no `cd`, no `RALPH_WORKTREE_PATHS`, current cwd on main) emits a warn and allows — does not block.
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-impl-branch-gate.sh` reports `0 failed`.
+- [x] No regressions in existing `bash plugin/ralph-hero/hooks/scripts/__tests__/test-agent-phase-gate.sh` run.
 
 ## What We're NOT Doing
 
@@ -156,14 +156,14 @@ Replace the broken `git branch --show-current` call at line 41 with a worktree-a
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/hooks/scripts/impl-branch-gate.sh` — no syntax errors
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-impl-branch-gate.sh` — all assertions pass, exits 0
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-agent-phase-gate.sh` — all assertions pass, exits 0
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — TypeScript build still passes (sanity, since hooks dir is sibling to mcp-server)
+- [x] `bash -n plugin/ralph-hero/hooks/scripts/impl-branch-gate.sh` — no syntax errors
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-impl-branch-gate.sh` — all assertions pass, exits 0
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/test-agent-phase-gate.sh` — all assertions pass, exits 0
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — TypeScript build still passes (sanity, since hooks dir is sibling to mcp-server)
 
 #### Manual Verification:
-- [ ] Manual repro of the original bug confirms the false-positive block no longer fires for `cd worktrees/GH-NNN && git commit`.
-- [ ] Manual confirmation that `cd <main-repo-root> && git commit` is still blocked (true-positive preserved).
+- [x] Manual repro of the original bug confirms the false-positive block no longer fires for `cd worktrees/GH-NNN && git commit`.
+- [x] Manual confirmation that `cd <main-repo-root> && git commit` is still blocked (true-positive preserved).
 
 **Creates for next phase**: This is the only phase; no downstream artifacts.
 
