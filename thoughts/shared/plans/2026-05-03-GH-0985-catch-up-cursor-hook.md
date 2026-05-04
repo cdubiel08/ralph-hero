@@ -164,8 +164,8 @@ Register the new script in `hooks.json` under `PostToolUse` matched on `ralph_he
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] New entry inserted in the `"PostToolUse"` array (alongside the existing `ralph_hero__save_issue`, `ralph_hero__create_comment`, `ralph_hero__get_issue`, `Write`, `Bash` entries — see [`hooks.json:107-168`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/hooks/hooks.json#L107-L168))
-  - [ ] Entry shape matches existing matchers exactly:
+  - [x] New entry inserted in the `"PostToolUse"` array (alongside the existing `ralph_hero__save_issue`, `ralph_hero__create_comment`, `ralph_hero__get_issue`, `Write`, `Bash` entries — see [`hooks.json:107-168`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/hooks/hooks.json#L107-L168))
+  - [x] Entry shape matches existing matchers exactly:
     ```json
     {
       "matcher": "ralph_hero__recent_activity",
@@ -177,9 +177,9 @@ Register the new script in `hooks.json` under `PostToolUse` matched on `ralph_he
       ]
     }
     ```
-  - [ ] Inserted before the matcher-less `record-activity.sh tool_called` entry at the end of `PostToolUse` (so the cursor advance fires before the activity log records the tool call — order is best-effort but conceptually the cursor advance is more specific)
-  - [ ] `jq . plugin/ralph-hero/hooks/hooks.json` parses cleanly (validates JSON syntax)
-  - [ ] No other entries removed or reordered
+  - [x] Inserted before the matcher-less `record-activity.sh tool_called` entry at the end of `PostToolUse` (so the cursor advance fires before the activity log records the tool call — order is best-effort but conceptually the cursor advance is more specific)
+  - [x] `jq . plugin/ralph-hero/hooks/hooks.json` parses cleanly (validates JSON syntax)
+  - [x] No other entries removed or reordered
 
 #### Task 2.2: Edit catch-up SKILL.md
 
@@ -188,25 +188,25 @@ Register the new script in `hooks.json` under `PostToolUse` matched on `ralph_he
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `allowed-tools` list (currently lines 10-13) reduced to two entries: `Read` and `mcp__plugin_ralph-hero_ralph-github__ralph_hero__recent_activity`. Entry `Write` removed.
-  - [ ] Step 5 section (lines 59-67, "## Step 5: Advance cursor" through the closing `Use the Write tool...` paragraph) removed entirely
-  - [ ] Old "## Step 6: Output" section renamed to "## Step 5: Output" so step numbering remains contiguous (1-2-3-4-5)
-  - [ ] Constraints section (currently lines 73-78): "Cursor only advances on successful synthesis" bullet REMOVED (cursor advance is no longer a skill responsibility); "Never advance cursor when `recent_activity` errors" bullet REMOVED for the same reason. Other bullets (single output, sentence cap) retained.
-  - [ ] A new comment line added near the top of the skill body (after the `# Catch-up` heading or in a brief note section) explaining: cursor advancement is now automatic via the `cursor-advance-catch-up.sh` PostToolUse hook; the skill no longer manages the cursor file directly. One sentence, no extra ceremony.
-  - [ ] Step 1 (Read cursor) is UNCHANGED — the LLM still needs to read the cursor to compute the `since` parameter for `recent_activity`
-  - [ ] Step 4 empty-case wording ("Do not advance the cursor. Stop here.") is updated to drop the "Do not advance the cursor" phrase since that's now automatic; "Stop here." or equivalent terminator retained
-  - [ ] File still parses as a valid skill (frontmatter intact, code blocks balanced)
+  - [x] `allowed-tools` list (currently lines 10-13) reduced to two entries: `Read` and `mcp__plugin_ralph-hero_ralph-github__ralph_hero__recent_activity`. Entry `Write` removed.
+  - [x] Step 5 section (lines 59-67, "## Step 5: Advance cursor" through the closing `Use the Write tool...` paragraph) removed entirely
+  - [x] Old "## Step 6: Output" section renamed to "## Step 5: Output" so step numbering remains contiguous (1-2-3-4-5)
+  - [x] Constraints section (currently lines 73-78): "Cursor only advances on successful synthesis" bullet REMOVED (cursor advance is no longer a skill responsibility); "Never advance cursor when `recent_activity` errors" bullet REMOVED for the same reason. Other bullets (single output, sentence cap) retained.
+  - [x] A new comment line added near the top of the skill body (after the `# Catch-up` heading or in a brief note section) explaining: cursor advancement is now automatic via the `cursor-advance-catch-up.sh` PostToolUse hook; the skill no longer manages the cursor file directly. One sentence, no extra ceremony.
+  - [x] Step 1 (Read cursor) is UNCHANGED — the LLM still needs to read the cursor to compute the `since` parameter for `recent_activity`
+  - [x] Step 4 empty-case wording ("Do not advance the cursor. Stop here.") is updated to drop the "Do not advance the cursor" phrase since that's now automatic; "Stop here." or equivalent terminator retained
+  - [x] File still parses as a valid skill (frontmatter intact, code blocks balanced)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `jq . plugin/ralph-hero/hooks/hooks.json > /dev/null` — JSON valid
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — TypeScript build still passes (no source changed but sanity check the workspace is healthy)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes (no source changed; this catches accidental cross-module breakage)
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/cursor-advance-catch-up.test.sh` — still passes
-- [ ] `grep -c "^## Step " plugin/ralph-hero/skills/catch-up/SKILL.md` — returns `5` (Steps 1-5, with old Step 6 renumbered)
-- [ ] `grep "^  - Write$" plugin/ralph-hero/skills/catch-up/SKILL.md` — returns nothing (Write removed from allowed-tools)
+- [x] `jq . plugin/ralph-hero/hooks/hooks.json > /dev/null` — JSON valid
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — TypeScript build still passes (no source changed but sanity check the workspace is healthy)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes (no source changed; this catches accidental cross-module breakage)
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/cursor-advance-catch-up.test.sh` — still passes
+- [x] `grep -c "^## Step " plugin/ralph-hero/skills/catch-up/SKILL.md` — returns `5` (Steps 1-5, with old Step 6 renumbered)
+- [x] `grep "^  - Write$" plugin/ralph-hero/skills/catch-up/SKILL.md` — returns nothing (Write removed from allowed-tools)
 
 #### Manual Verification:
 

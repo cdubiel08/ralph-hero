@@ -9,13 +9,14 @@ argument-hint: ""
 context: inline
 allowed-tools:
   - Read
-  - Write
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__recent_activity
 ---
 
 # Catch-up
 
 You synthesize a short narrative of what's changed since the user last ran catch-up.
+
+> **Note**: cursor advancement is automatic — the `cursor-advance-catch-up.sh` PostToolUse hook persists `~/.ralph-hero/cursors/catch-up.json` from the `recent_activity` response, so this skill no longer manages the cursor file directly.
 
 ## Step 1: Read cursor
 
@@ -42,7 +43,7 @@ Capture the response: `events[]` and `cursor_advanced_to`.
 
 > Nothing's changed since last time you checked.
 
-Do not advance the cursor. Stop here.
+Stop here.
 
 **Populated case**: write 2-4 sentences describing what happened. Lean on:
 - What kinds of events fired (PRs opened/merged, issues advanced, agents dispatched)
@@ -56,23 +57,11 @@ Tone rules (same as /hello):
 
 If `events.length` was at the `limit` cap, prefix with: *"A lot has happened since last time — here are the highlights:"*
 
-## Step 5: Advance cursor
-
-Only on successful synthesis: write `~/.ralph-hero/cursors/catch-up.json` with:
-
-```json
-{ "last_event_ts": "<cursor_advanced_to value from response>" }
-```
-
-Use the Write tool. Create the parent directory if needed.
-
-## Step 6: Output
+## Step 5: Output
 
 Return only the narrative text. No frontmatter, no headers, no metadata. The caller (interactive /hello, or a programmatic invoker) takes the text as-is.
 
 ## Constraints
 
 - Single output: prose narrative or the empty-case sentence
-- Cursor only advances on successful synthesis
-- Never advance cursor when `recent_activity` errors
 - No more than 4 sentences in the populated case
