@@ -99,17 +99,17 @@ Create the new `cursor-advance-catch-up.sh` script following the `outcome-collec
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] First line is `#!/bin/bash`; second line is a header comment explaining purpose and the matched event (`PostToolUse(ralph_hero__recent_activity)`)
-  - [ ] `set -euo pipefail` at top
-  - [ ] Reads full stdin into a variable using `INPUT=$(cat)` (matches `outcome-collector.sh:26` pattern). Does NOT need to source `hook-utils.sh` — direct `jq` on `$INPUT` is fine, mirroring `outcome-collector.sh`.
-  - [ ] Resolves cursor dir as `${RALPH_CURSOR_DIR:-${HOME}/.ralph-hero/cursors}` and cursor file as `$CURSOR_DIR/catch-up.json`
-  - [ ] Extracts `tool_response.cursor_advanced_to` via `jq -r '.tool_response.cursor_advanced_to // empty'` (the `// empty` idiom emits empty-string for null/missing — same pattern as `outcome-collector.sh:108-110`)
-  - [ ] If extracted value is empty (null cursor case), exits 0 without writing
-  - [ ] If extracted value is non-empty, runs `mkdir -p "$CURSOR_DIR"` (suppressing error to `2>/dev/null || true` per `outcome-collector.sh:23` pattern) then writes `{"last_event_ts":"<value>"}` via `jq -n --arg ts "$cursor" '{last_event_ts: $ts}' > "$CURSOR_FILE"`
-  - [ ] Final line is `exit 0` so script always succeeds (best-effort)
-  - [ ] Wraps the write in `|| { echo "WARNING: cursor-advance-catch-up failed to write cursor" >&2; exit 0; }` matching `outcome-collector.sh:88` defensive style
-  - [ ] File is `chmod +x` (verify with `stat -f %p` on macOS or via `git ls-files --stage` showing `100755`)
-  - [ ] Total script length under 50 lines (sanity check on simplicity)
+  - [x] First line is `#!/bin/bash`; second line is a header comment explaining purpose and the matched event (`PostToolUse(ralph_hero__recent_activity)`)
+  - [x] `set -euo pipefail` at top
+  - [x] Reads full stdin into a variable using `INPUT=$(cat)` (matches `outcome-collector.sh:26` pattern). Does NOT need to source `hook-utils.sh` — direct `jq` on `$INPUT` is fine, mirroring `outcome-collector.sh`.
+  - [x] Resolves cursor dir as `${RALPH_CURSOR_DIR:-${HOME}/.ralph-hero/cursors}` and cursor file as `$CURSOR_DIR/catch-up.json`
+  - [x] Extracts `tool_response.cursor_advanced_to` via `jq -r '.tool_response.cursor_advanced_to // empty'` (the `// empty` idiom emits empty-string for null/missing — same pattern as `outcome-collector.sh:108-110`)
+  - [x] If extracted value is empty (null cursor case), exits 0 without writing
+  - [x] If extracted value is non-empty, runs `mkdir -p "$CURSOR_DIR"` (suppressing error to `2>/dev/null || true` per `outcome-collector.sh:23` pattern) then writes `{"last_event_ts":"<value>"}` via `jq -n --arg ts "$cursor" '{last_event_ts: $ts}' > "$CURSOR_FILE"`
+  - [x] Final line is `exit 0` so script always succeeds (best-effort)
+  - [x] Wraps the write in `|| { echo "WARNING: cursor-advance-catch-up failed to write cursor" >&2; exit 0; }` matching `outcome-collector.sh:88` defensive style
+  - [x] File is `chmod +x` (verify with `stat -f %p` on macOS or via `git ls-files --stage` showing `100755`)
+  - [x] Total script length under 50 lines (sanity check on simplicity)
 
 #### Task 1.2: Create test file with four required cases
 
@@ -118,30 +118,30 @@ Create the new `cursor-advance-catch-up.sh` script following the `outcome-collec
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Shebang `#!/usr/bin/env bash`; `set -uo pipefail` (matching `record-activity.test.sh:5`); resolves `SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/cursor-advance-catch-up.sh"`
-  - [ ] Uses `TEST_DIR="$(mktemp -d)"` with `trap "rm -rf $TEST_DIR" EXIT` (matching `record-activity.test.sh:8-9`)
-  - [ ] Defines `assert_eq` and `assert_file_exists` helpers identical in shape to `record-activity.test.sh:14-39`; tracks `PASS` and `FAIL` counters; final line `[ "$FAIL" -eq 0 ]`
-  - [ ] Sets `export RALPH_CURSOR_DIR="$TEST_DIR/cursors"` before each test block (or per-block reset via `rm -rf "$TEST_DIR/cursors"`)
-  - [ ] **Test case 1 (non-null cursor written)**: Pipe `'{"tool_name":"ralph_hero__recent_activity","tool_response":{"cursor_advanced_to":"2026-05-03T10:00:00.000Z","events":[],"skipped_lines":0}}'` to script. Assert cursor file exists at `$TEST_DIR/cursors/catch-up.json`. Assert `jq -r .last_event_ts < $CURSOR_FILE` equals `"2026-05-03T10:00:00.000Z"`. Assert script exit 0.
-  - [ ] **Test case 2 (null cursor skipped)**: Pipe `'{"tool_name":"ralph_hero__recent_activity","tool_response":{"cursor_advanced_to":null,"events":[],"skipped_lines":0}}'` to script. Assert cursor file does NOT exist. Assert script exit 0.
-  - [ ] **Test case 3 (missing parent dir auto-created)**: Set `RALPH_CURSOR_DIR="$TEST_DIR/deeply/nested/cursors"` (parent does not pre-exist). Pipe a non-null cursor payload. Assert the directory was created and the file exists.
-  - [ ] **Test case 4 (malformed stdin doesn't crash)**: Pipe literal `not json at all` to script. Assert exit 0. Pipe empty string to script. Assert exit 0. Pipe `'{}'` (valid JSON, no fields). Assert exit 0 and no cursor file written.
-  - [ ] **Bonus: `cursor_advanced_to` field missing entirely**: Pipe `'{"tool_name":"ralph_hero__recent_activity","tool_response":{"events":[]}}'` (no cursor_advanced_to key). Assert exit 0, no cursor written.
-  - [ ] Test file ends with `echo "Results: $PASS passed, $FAIL failed"` line then `[ "$FAIL" -eq 0 ]` (matches `record-activity.test.sh:210-211`)
-  - [ ] File is `chmod +x` so it can be invoked directly
+  - [x] Shebang `#!/usr/bin/env bash`; `set -uo pipefail` (matching `record-activity.test.sh:5`); resolves `SCRIPT="$(cd "$(dirname "$0")/.." && pwd)/cursor-advance-catch-up.sh"`
+  - [x] Uses `TEST_DIR="$(mktemp -d)"` with `trap "rm -rf $TEST_DIR" EXIT` (matching `record-activity.test.sh:8-9`)
+  - [x] Defines `assert_eq` and `assert_file_exists` helpers identical in shape to `record-activity.test.sh:14-39`; tracks `PASS` and `FAIL` counters; final line `[ "$FAIL" -eq 0 ]`
+  - [x] Sets `export RALPH_CURSOR_DIR="$TEST_DIR/cursors"` before each test block (or per-block reset via `rm -rf "$TEST_DIR/cursors"`)
+  - [x] **Test case 1 (non-null cursor written)**: Pipe `'{"tool_name":"ralph_hero__recent_activity","tool_response":{"cursor_advanced_to":"2026-05-03T10:00:00.000Z","events":[],"skipped_lines":0}}'` to script. Assert cursor file exists at `$TEST_DIR/cursors/catch-up.json`. Assert `jq -r .last_event_ts < $CURSOR_FILE` equals `"2026-05-03T10:00:00.000Z"`. Assert script exit 0.
+  - [x] **Test case 2 (null cursor skipped)**: Pipe `'{"tool_name":"ralph_hero__recent_activity","tool_response":{"cursor_advanced_to":null,"events":[],"skipped_lines":0}}'` to script. Assert cursor file does NOT exist. Assert script exit 0.
+  - [x] **Test case 3 (missing parent dir auto-created)**: Set `RALPH_CURSOR_DIR="$TEST_DIR/deeply/nested/cursors"` (parent does not pre-exist). Pipe a non-null cursor payload. Assert the directory was created and the file exists.
+  - [x] **Test case 4 (malformed stdin doesn't crash)**: Pipe literal `not json at all` to script. Assert exit 0. Pipe empty string to script. Assert exit 0. Pipe `'{}'` (valid JSON, no fields). Assert exit 0 and no cursor file written.
+  - [x] **Bonus: `cursor_advanced_to` field missing entirely**: Pipe `'{"tool_name":"ralph_hero__recent_activity","tool_response":{"events":[]}}'` (no cursor_advanced_to key). Assert exit 0, no cursor written.
+  - [x] Test file ends with `echo "Results: $PASS passed, $FAIL failed"` line then `[ "$FAIL" -eq 0 ]` (matches `record-activity.test.sh:210-211`)
+  - [x] File is `chmod +x` so it can be invoked directly
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/cursor-advance-catch-up.test.sh` — exits 0 with all assertions passing
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/record-activity.test.sh` — still passes (no regression in adjacent test file)
-- [ ] `shellcheck plugin/ralph-hero/hooks/scripts/cursor-advance-catch-up.sh` — no errors (if shellcheck available; non-blocking if not installed)
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/cursor-advance-catch-up.test.sh` — exits 0 with all assertions passing
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/record-activity.test.sh` — still passes (no regression in adjacent test file)
+- [x] `shellcheck plugin/ralph-hero/hooks/scripts/cursor-advance-catch-up.sh` — no errors (if shellcheck available; non-blocking if not installed)
 
 #### Manual Verification:
 
-- [ ] Read the script source — confirm it follows the `outcome-collector.sh` style (set -euo pipefail, INPUT=$(cat), jq extraction, defensive mkdir, exit 0)
-- [ ] Verify the script handles `RALPH_CURSOR_DIR` override correctly by running it manually with the env var set
+- [x] Read the script source — confirm it follows the `outcome-collector.sh` style (set -euo pipefail, INPUT=$(cat), jq extraction, defensive mkdir, exit 0)
+- [x] Verify the script handles `RALPH_CURSOR_DIR` override correctly by running it manually with the env var set
 
 **Creates for next phase**: A working, tested hook script ready to be wired into `hooks.json`.
 
@@ -164,8 +164,8 @@ Register the new script in `hooks.json` under `PostToolUse` matched on `ralph_he
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] New entry inserted in the `"PostToolUse"` array (alongside the existing `ralph_hero__save_issue`, `ralph_hero__create_comment`, `ralph_hero__get_issue`, `Write`, `Bash` entries — see [`hooks.json:107-168`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/hooks/hooks.json#L107-L168))
-  - [ ] Entry shape matches existing matchers exactly:
+  - [x] New entry inserted in the `"PostToolUse"` array (alongside the existing `ralph_hero__save_issue`, `ralph_hero__create_comment`, `ralph_hero__get_issue`, `Write`, `Bash` entries — see [`hooks.json:107-168`](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/hooks/hooks.json#L107-L168))
+  - [x] Entry shape matches existing matchers exactly:
     ```json
     {
       "matcher": "ralph_hero__recent_activity",
@@ -177,9 +177,9 @@ Register the new script in `hooks.json` under `PostToolUse` matched on `ralph_he
       ]
     }
     ```
-  - [ ] Inserted before the matcher-less `record-activity.sh tool_called` entry at the end of `PostToolUse` (so the cursor advance fires before the activity log records the tool call — order is best-effort but conceptually the cursor advance is more specific)
-  - [ ] `jq . plugin/ralph-hero/hooks/hooks.json` parses cleanly (validates JSON syntax)
-  - [ ] No other entries removed or reordered
+  - [x] Inserted before the matcher-less `record-activity.sh tool_called` entry at the end of `PostToolUse` (so the cursor advance fires before the activity log records the tool call — order is best-effort but conceptually the cursor advance is more specific)
+  - [x] `jq . plugin/ralph-hero/hooks/hooks.json` parses cleanly (validates JSON syntax)
+  - [x] No other entries removed or reordered
 
 #### Task 2.2: Edit catch-up SKILL.md
 
@@ -188,25 +188,25 @@ Register the new script in `hooks.json` under `PostToolUse` matched on `ralph_he
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `allowed-tools` list (currently lines 10-13) reduced to two entries: `Read` and `mcp__plugin_ralph-hero_ralph-github__ralph_hero__recent_activity`. Entry `Write` removed.
-  - [ ] Step 5 section (lines 59-67, "## Step 5: Advance cursor" through the closing `Use the Write tool...` paragraph) removed entirely
-  - [ ] Old "## Step 6: Output" section renamed to "## Step 5: Output" so step numbering remains contiguous (1-2-3-4-5)
-  - [ ] Constraints section (currently lines 73-78): "Cursor only advances on successful synthesis" bullet REMOVED (cursor advance is no longer a skill responsibility); "Never advance cursor when `recent_activity` errors" bullet REMOVED for the same reason. Other bullets (single output, sentence cap) retained.
-  - [ ] A new comment line added near the top of the skill body (after the `# Catch-up` heading or in a brief note section) explaining: cursor advancement is now automatic via the `cursor-advance-catch-up.sh` PostToolUse hook; the skill no longer manages the cursor file directly. One sentence, no extra ceremony.
-  - [ ] Step 1 (Read cursor) is UNCHANGED — the LLM still needs to read the cursor to compute the `since` parameter for `recent_activity`
-  - [ ] Step 4 empty-case wording ("Do not advance the cursor. Stop here.") is updated to drop the "Do not advance the cursor" phrase since that's now automatic; "Stop here." or equivalent terminator retained
-  - [ ] File still parses as a valid skill (frontmatter intact, code blocks balanced)
+  - [x] `allowed-tools` list (currently lines 10-13) reduced to two entries: `Read` and `mcp__plugin_ralph-hero_ralph-github__ralph_hero__recent_activity`. Entry `Write` removed.
+  - [x] Step 5 section (lines 59-67, "## Step 5: Advance cursor" through the closing `Use the Write tool...` paragraph) removed entirely
+  - [x] Old "## Step 6: Output" section renamed to "## Step 5: Output" so step numbering remains contiguous (1-2-3-4-5)
+  - [x] Constraints section (currently lines 73-78): "Cursor only advances on successful synthesis" bullet REMOVED (cursor advance is no longer a skill responsibility); "Never advance cursor when `recent_activity` errors" bullet REMOVED for the same reason. Other bullets (single output, sentence cap) retained.
+  - [x] A new comment line added near the top of the skill body (after the `# Catch-up` heading or in a brief note section) explaining: cursor advancement is now automatic via the `cursor-advance-catch-up.sh` PostToolUse hook; the skill no longer manages the cursor file directly. One sentence, no extra ceremony.
+  - [x] Step 1 (Read cursor) is UNCHANGED — the LLM still needs to read the cursor to compute the `since` parameter for `recent_activity`
+  - [x] Step 4 empty-case wording ("Do not advance the cursor. Stop here.") is updated to drop the "Do not advance the cursor" phrase since that's now automatic; "Stop here." or equivalent terminator retained
+  - [x] File still parses as a valid skill (frontmatter intact, code blocks balanced)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `jq . plugin/ralph-hero/hooks/hooks.json > /dev/null` — JSON valid
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — TypeScript build still passes (no source changed but sanity check the workspace is healthy)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes (no source changed; this catches accidental cross-module breakage)
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/cursor-advance-catch-up.test.sh` — still passes
-- [ ] `grep -c "^## Step " plugin/ralph-hero/skills/catch-up/SKILL.md` — returns `5` (Steps 1-5, with old Step 6 renumbered)
-- [ ] `grep "^  - Write$" plugin/ralph-hero/skills/catch-up/SKILL.md` — returns nothing (Write removed from allowed-tools)
+- [x] `jq . plugin/ralph-hero/hooks/hooks.json > /dev/null` — JSON valid
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — TypeScript build still passes (no source changed but sanity check the workspace is healthy)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes (no source changed; this catches accidental cross-module breakage)
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/cursor-advance-catch-up.test.sh` — still passes
+- [x] `grep -c "^## Step " plugin/ralph-hero/skills/catch-up/SKILL.md` — returns `5` (Steps 1-5, with old Step 6 renumbered)
+- [x] `grep "^  - Write$" plugin/ralph-hero/skills/catch-up/SKILL.md` — returns nothing (Write removed from allowed-tools)
 
 #### Manual Verification:
 
