@@ -53,16 +53,24 @@ resolve_target_branch() {
   local cd_path=""
   local resolved_path=""
 
-  # Tier 1: leading `cd <path>` parse.
-  # Anchor at the start of the command (allowing leading whitespace), capture
-  # the first whitespace-delimited token after `cd` that does not contain
-  # &, ;, |, or whitespace.
-  if [[ "$cmd" =~ ^[[:space:]]*cd[[:space:]]+([^\&\;\|[:space:]]+) ]]; then
+  # Tier 1: leading `cd <path>` parse (quote-aware).
+  # Anchor at the start of the command (allowing leading whitespace) and try
+  # three alternatives in order so quoted paths containing spaces are handled:
+  #   1a. `cd "..."`  — double-quoted path (may contain spaces)
+  #   1b. `cd '...'`  — single-quoted path (may contain spaces)
+  #   1c. `cd <bare>` — unquoted token, stops at whitespace or shell separator
+  local cd_matched=0
+  if [[ "$cmd" =~ ^[[:space:]]*cd[[:space:]]+\"([^\"]*)\" ]]; then
     cd_path="${BASH_REMATCH[1]}"
-    # Strip surrounding single or double quotes if present.
-    if [[ "$cd_path" =~ ^\"(.*)\"$ ]] || [[ "$cd_path" =~ ^\'(.*)\'$ ]]; then
-      cd_path="${BASH_REMATCH[1]}"
-    fi
+    cd_matched=1
+  elif [[ "$cmd" =~ ^[[:space:]]*cd[[:space:]]+\'([^\']*)\' ]]; then
+    cd_path="${BASH_REMATCH[1]}"
+    cd_matched=1
+  elif [[ "$cmd" =~ ^[[:space:]]*cd[[:space:]]+([^\&\;\|[:space:]]+) ]]; then
+    cd_path="${BASH_REMATCH[1]}"
+    cd_matched=1
+  fi
+  if [[ $cd_matched -eq 1 ]]; then
     # Expand leading tilde via ${HOME} substitution (no eval).
     if [[ "$cd_path" == "~" ]]; then
       cd_path="${HOME}"

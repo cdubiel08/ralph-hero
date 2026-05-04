@@ -7,6 +7,8 @@
 #   3. cd-prefix resolving to main branch is blocked
 #   4. git checkout is always allowed (existing behavior preserved)
 #   5. non-impl context falls through allow
+#   6. cd-prefix with double-quoted path containing space is allowed
+#   7. cd-prefix with single-quoted path containing space is allowed
 
 set -euo pipefail
 
@@ -53,7 +55,18 @@ MAIN_TMP_DIR=$(mktemp -d)
   && git config user.name "test" \
   && git commit --allow-empty -qm "init" ) > /dev/null
 
-trap 'rm -rf "$TMP_DIR" "$MAIN_TMP_DIR"' EXIT
+# ── Fixture: feature-branch worktree at a path containing a space ─────────
+SPACE_PARENT=$(mktemp -d)
+SPACE_DIR="$SPACE_PARENT/path with space"
+mkdir -p "$SPACE_DIR"
+( cd "$SPACE_DIR" \
+  && git -c init.defaultBranch=main init -q \
+  && git config user.email "test@test" \
+  && git config user.name "test" \
+  && git commit --allow-empty -qm "init" \
+  && git checkout -qb GH-983-test ) > /dev/null
+
+trap 'rm -rf "$TMP_DIR" "$MAIN_TMP_DIR" "$SPACE_PARENT"' EXIT
 
 # Sanity-check the fixtures so failures here are obvious.
 fixture_branch=$(cd "$TMP_DIR" && git branch --show-current)
@@ -86,6 +99,20 @@ assert_eq "0" "$result" "git checkout is always allowed (existing behavior prese
 input=$(make_input "git commit" "")
 result=$(echo "$input" | bash "$GATE" 2>/dev/null; echo $?)
 assert_eq "0" "$result" "non-impl context falls through allow"
+
+# ── Test 6: cd-prefix with double-quoted path containing space is allowed ─
+# Regression: the original `cd <path>` regex stopped at the first whitespace,
+# so `cd "/tmp/foo bar" && ...` captured only `"/tmp/foo`. With a quote-aware
+# parser, the double-quoted alternative should match the full path and the
+# branch lookup should succeed (worktree feature branch -> exit 0).
+input=$(make_input "cd \"$SPACE_DIR\" && git commit -m test" "impl-agent")
+result=$(echo "$input" | RALPH_COMMAND=impl bash "$GATE" 2>/dev/null; echo $?)
+assert_eq "0" "$result" "cd-prefix with double-quoted path containing space is allowed"
+
+# ── Test 7: cd-prefix with single-quoted path containing space is allowed ─
+input=$(make_input "cd '$SPACE_DIR' && git commit -m test" "impl-agent")
+result=$(echo "$input" | RALPH_COMMAND=impl bash "$GATE" 2>/dev/null; echo $?)
+assert_eq "0" "$result" "cd-prefix with single-quoted path containing space is allowed"
 
 echo ""
 echo "Results: $pass passed, $fail failed"
