@@ -246,13 +246,13 @@ Wrap the pure ranker as the MCP tool `ralph_hero__hello_directions`. Single tool
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `DASHBOARD_ITEMS_QUERY` is `export`ed (already verified at `:219`).
-  - [ ] `toDashboardItems` is `export`ed (already verified at `:168`).
-  - [ ] `RawDashboardItem` type is `export`ed (already verified at `:122`).
-  - [ ] If any are missing `export`, add it. If all present, no edit needed.
-  - [ ] `grep -q "^export const DASHBOARD_ITEMS_QUERY" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
-  - [ ] `grep -q "^export function toDashboardItems" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
-  - [ ] `grep -q "^export interface RawDashboardItem" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
+  - [x] `DASHBOARD_ITEMS_QUERY` is `export`ed (already verified at `:219`).
+  - [x] `toDashboardItems` is `export`ed (already verified at `:168`).
+  - [x] `RawDashboardItem` type is `export`ed (already verified at `:122`).
+  - [x] If any are missing `export`, add it. If all present, no edit needed.
+  - [x] `grep -q "^export const DASHBOARD_ITEMS_QUERY" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
+  - [x] `grep -q "^export function toDashboardItems" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
+  - [x] `grep -q "^export interface RawDashboardItem" plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts`
 
 #### Task 2.2: Create `src/tools/directions-tools.ts` with `registerDirectionsTools`
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/directions-tools.ts` (create)
@@ -260,8 +260,8 @@ Wrap the pure ranker as the MCP tool `ralph_hero__hello_directions`. Single tool
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] New file exists with `registerDirectionsTools(server, client, fieldCache)` exported.
-  - [ ] Imports (verified paths):
+  - [x] New file exists with `registerDirectionsTools(server, client, fieldCache)` exported.
+  - [x] Imports (verified paths):
     - `ensureFieldCache` and `paginateConnection` from `../lib/helpers.js` — **note**: research shows `paginateConnection` actually lives in `../lib/pagination.js` and `ensureFieldCache` is currently a private helper in `dashboard-tools.ts`. Implementer should:
        - Either import `paginateConnection` from `../lib/pagination.js` (correct path; mirrors `dashboard-tools.ts:13`)
        - And export `ensureFieldCache` from `dashboard-tools.ts` (currently private at `:36`) and import it from there, OR copy the small helper into `directions-tools.ts` (10 lines).
@@ -271,9 +271,9 @@ Wrap the pure ranker as the MCP tool `ralph_hero__hello_directions`. Single tool
     - `rankDirections`, `DEFAULT_RANK_CONFIG`, `OpenPR`, `RankConfig` from `../lib/directions.js`.
     - `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js`, `z` from `zod`.
     - `GitHubClient` (type) from `../github-client.js`, `FieldOptionCache` (type) from `../lib/cache.js`.
-  - [ ] Tool name `ralph_hero__hello_directions` registered with the description from the parent plan.
-  - [ ] Zod schema with optional fields: `owner`, `projectNumbers`, `limit (default 3)`, `stuckThresholdHours (48)`, `lockStaleHours (24)`, `treeRecentDoneDays (7)`, `prStaleHours (24)`, `openPRs[]` (default `[]`) with `{ number, title, url, isDraft, reviewDecision (nullable), headRefName, createdAt }`.
-  - [ ] Behavior:
+  - [x] Tool name `ralph_hero__hello_directions` registered with the description from the parent plan.
+  - [x] Zod schema with optional fields: `owner`, `projectNumbers`, `limit (default 3)`, `stuckThresholdHours (48)`, `lockStaleHours (24)`, `treeRecentDoneDays (7)`, `prStaleHours (24)`, `openPRs[]` (default `[]`) with `{ number, title, url, isDraft, reviewDecision (nullable), headRefName, createdAt }`.
+  - [x] Behavior:
     - Resolve `owner` via arg or `resolveProjectOwner(client.config)`; error via `toolError("owner is required")` if missing.
     - Resolve project numbers via arg or `resolveProjectNumbers(client.config)`; error via `toolError("No project numbers configured.")` if empty.
     - For each project number: `await ensureFieldCache(client, fieldCache, owner, pn)`, then `await paginateConnection<RawDashboardItem>(...)` against `DASHBOARD_ITEMS_QUERY` with `{ projectId, first: 100 }`, `"node.items"` path, `{ maxItems: 500 }`.
@@ -283,8 +283,8 @@ Wrap the pure ranker as the MCP tool `ralph_hero__hello_directions`. Single tool
     - Call `rankDirections(allItems, enrichedPRs, config)`.
     - Return `toolSuccess({ directions, fetchedAt: now.toISOString(), totalCandidates: allItems.length })`.
     - Wrap in `try/catch`; on error return `toolError("Failed to compute hello directions: ${message}")`.
-  - [ ] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/mcp-server/src/tools/directions-tools.ts`
-  - [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
+  - [x] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/mcp-server/src/tools/directions-tools.ts`
+  - [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
 
 #### Task 2.3: Register `registerDirectionsTools` in `index.ts`
 - **files**: `plugin/ralph-hero/mcp-server/src/index.ts` (modify)
@@ -292,10 +292,10 @@ Wrap the pure ranker as the MCP tool `ralph_hero__hello_directions`. Single tool
 - **complexity**: low
 - **depends_on**: [2.2]
 - **acceptance**:
-  - [ ] Add `import { registerDirectionsTools } from "./tools/directions-tools.js";` near the existing `registerDashboardTools` import (currently at `index.ts:24`).
-  - [ ] Add `registerDirectionsTools(server, client, fieldCache);` adjacent to the existing `registerDashboardTools(server, client, fieldCache);` call (currently at `index.ts:460`).
-  - [ ] `grep -q "registerDirectionsTools" plugin/ralph-hero/mcp-server/src/index.ts`
-  - [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
+  - [x] Add `import { registerDirectionsTools } from "./tools/directions-tools.js";` near the existing `registerDashboardTools` import (currently at `index.ts:24`).
+  - [x] Add `registerDirectionsTools(server, client, fieldCache);` adjacent to the existing `registerDashboardTools(server, client, fieldCache);` call (currently at `index.ts:460`).
+  - [x] `grep -q "registerDirectionsTools" plugin/ralph-hero/mcp-server/src/index.ts`
+  - [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors.
 
 #### Task 2.4: Write `directions-tools.test.ts` integration tests
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/directions-tools.test.ts` (create), `plugin/ralph-hero/mcp-server/src/__tests__/auto-advance-parent.test.ts` (read for pattern), `plugin/ralph-hero/mcp-server/src/__tests__/repo-inference.test.ts` (read for pattern)
@@ -303,24 +303,24 @@ Wrap the pure ranker as the MCP tool `ralph_hero__hello_directions`. Single tool
 - **complexity**: medium
 - **depends_on**: [2.3]
 - **acceptance**:
-  - [ ] New file uses the `vi.fn()`-based `mockClient` literal pattern from `auto-advance-parent.test.ts:81-110` and `repo-inference.test.ts:30-41`. Stubs all `GitHubClient` methods: `query`, `projectQuery`, `projectMutate`, `mutate`, `getCache`, `getAuthenticatedUser`. Does **not** mirror `dashboard.test.ts` (pure-function-only).
-  - [ ] All 6 cases present and passing:
+  - [x] New file uses the `vi.fn()`-based `mockClient` literal pattern from `auto-advance-parent.test.ts:81-110` and `repo-inference.test.ts:30-41`. Stubs all `GitHubClient` methods: `query`, `projectQuery`, `projectMutate`, `mutate`, `getCache`, `getAuthenticatedUser`. Does **not** mirror `dashboard.test.ts` (pure-function-only).
+  - [x] All 6 cases present and passing:
     1. End-to-end happy path (mock returns 5 issues across phases) → tool returns top 3 with correct shape (`directions` array, `fetchedAt` ISO string, `totalCandidates: 5`).
     2. Empty board (mock returns 0 items) → `directions: []`, no error.
     3. Multi-project (mock returns items across 2 project numbers, `RALPH_GH_PROJECT_NUMBERS` style) → tool fetches both projects and merges.
     4. Field cache miss (`ensureFieldCache` throws) → returns `toolError`.
     5. PR injection — `openPRs: [{ REVIEW_REQUIRED, age 30h, isDraft: false }]` → tool returns PR as direction 1.
     6. Defaults applied — call with no config args; verify `config.limit=3, stuckThresholdHours=48, lockStaleHours=24, treeRecentDoneDays=7, prStaleHours=24` actually used (e.g., assert via boundary case behavior or by exposing `RankConfig` if the implementation calls a spy).
-  - [ ] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions-tools.test.ts` — 6/6 pass.
+  - [x] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions-tools.test.ts` — 6/6 pass.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (existing + 13 + 6)
-- [ ] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions-tools.test.ts` — 6/6 pass
-- [ ] `grep -q "registerDirectionsTools" plugin/ralph-hero/mcp-server/src/index.ts`
-- [ ] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/mcp-server/src/tools/directions-tools.ts`
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (existing + 13 + 6)
+- [x] `cd plugin/ralph-hero/mcp-server && npx vitest run src/__tests__/directions-tools.test.ts` — 6/6 pass
+- [x] `grep -q "registerDirectionsTools" plugin/ralph-hero/mcp-server/src/index.ts`
+- [x] `grep -q "ralph_hero__hello_directions" plugin/ralph-hero/mcp-server/src/tools/directions-tools.ts`
 
 #### Manual Verification:
 - [ ] After build, invoke `ralph_hero__hello_directions` directly in a fresh Claude Code session. Response is well under 50 lines and matches expected shape.

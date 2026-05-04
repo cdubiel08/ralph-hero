@@ -76,3 +76,5 @@ Reflect additionally routes **per-step** within a single invocation: Sonnet 4.6 
 | [a11y-scan](skills/a11y-scan/SKILL.md) | Run a WCAG 2.2 AA accessibility audit against a URL — snapshots, violation analysis, auto-created issues. |
 | [storybook-test](skills/storybook-test/SKILL.md) | Run Storybook 9 component tests (interaction + a11y) via Vitest browser mode or legacy test-runner. |
 | [visual-diff](skills/visual-diff/SKILL.md) | Visual regression testing via Chromatic (default) or Applitools Eyes; detects unintended UI changes across Storybook stories. |
+| [storybook-onboard](skills/storybook-onboard/SKILL.md) | One-shot Day-Zero setup for the Angular + Storybook verification loop — audits Storybook + addons, confirms Chromatic access, runs setup + smoke `explorer-agent`, emits a green/yellow/red report. |
+| [storybook-review](skills/storybook-review/SKILL.md) | Daily inner-loop verification of Storybook stories — dispatches `explorer-agent` against a story-id, glob, or git-diff-derived set; sub-minute report with drift vs. local cached baseline. |
