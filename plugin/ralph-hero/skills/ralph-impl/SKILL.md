@@ -105,32 +105,19 @@ After fetching the issue, check its current state:
    **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "implementation plan GH-${number} [issue title keywords]", type "plan", limit 3.
    If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If not available or no results, continue with standard Artifact Comment Protocol discovery below.
 
-   **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-8 below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
+   **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip the discovery sequence below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.
 
-   Find the plan using the Artifact Comment Protocol:
-   1. Search issue comments for these headers (in priority order):
-      a. `## Implementation Plan` or `## Group Implementation Plan` — direct plan ownership
-      b. `## Plan Reference` — parent-planned atomic (backreference to parent plan + phase anchor)
-   2. If multiple matches of same type, use the **most recent** (last) match.
-   3. Extract the GitHub URL from the line after the header
-   4. Convert to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
-   5. If resolved via `## Plan Reference`: extract phase anchor from URL (e.g., `#phase-1`), read parent plan, extract specific phase + `## Shared Constraints` section. Set `RALPH_PLAN_REFERENCE` env var.
-   6. Read the plan document fully
-   5. **Fallback**: If no comment found, glob for the plan doc. Try both padded and unpadded:
-      - `thoughts/shared/plans/*GH-${number}*`
-      - `thoughts/shared/plans/*GH-$(printf '%04d' ${number})*`
-      Use the most recent match if multiple found.
-   6. **Group fallback**: If standard glob fails, try `thoughts/shared/plans/*group*GH-{primary}*` where `{primary}` is the primary issue number from the issue's group context.
-   6b. **Stream fallback**: If group fallback also fails, try `thoughts/shared/plans/*stream*GH-{number}*` to find stream plans containing this issue.
-   7. **If fallback found, self-heal**: Post the missing artifact comment to the issue:
-      ```markdown
-      ## Implementation Plan
+   Find the plan using the Artifact Comment Protocol. For this skill, the artifact `{type}` is `plans` and the comment headers searched (in priority order) are:
+   a. `## Implementation Plan` or `## Group Implementation Plan` — direct plan ownership
+   b. `## Plan Reference` — parent-planned atomic (backreference to parent plan + phase anchor)
 
-      https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]
+   Apply the generic discovery sequence:
 
-      (Self-healed: artifact was found on disk but not linked via comment)
-      ```
-   8. **If neither found**: STOP with "Issue #NNN has no implementation plan. Run /ralph-plan first."
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/artifact-discovery.md
+
+   **Plan Reference handling (impl-specific)**: If the matching comment was `## Plan Reference`, extract the phase anchor from the URL (e.g., `#phase-1`), read the parent plan, extract the specific phase + `## Shared Constraints` section, and set `RALPH_PLAN_REFERENCE` env var.
+
+   **If neither found**: STOP with "Issue #NNN has no implementation plan. Run /ralph-plan first."
 
 3. **Read plan document fully**
 

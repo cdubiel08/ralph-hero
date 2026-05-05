@@ -161,25 +161,13 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
    **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "research GH-${number} [issue title keywords]", type "research", limit 3.
    If a high-relevance result is returned, read that file directly and skip steps 1-7 below. If not available or no results, continue with standard Artifact Comment Protocol discovery below.
 
-   **Artifact shortcut**: If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip steps 1-7 below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
+   **Artifact shortcut**: If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip the discovery sequence below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
 
-   1. Fetch the full issue details — response includes comments
-   2. Search comments for `## Research Document` header. If multiple matches, use the **most recent** (last) match.
-   3. Extract the URL from the line after the header
-   4. Convert GitHub URL to local path: strip `https://github.com/OWNER/REPO/blob/main/` prefix
-   5. Read the local research file
-   6. **Fallback**: If no comment found, glob for the research doc. Try both padded and unpadded:
-      - `thoughts/shared/research/*GH-${number}*`
-      - `thoughts/shared/research/*GH-$(printf '%04d' ${number})*`
-   7. **If fallback found, self-heal**: Post the missing artifact comment on the issue:
-      ```markdown
-      ## Research Document
+   For this skill, the artifact `{type}` is `research` and the comment header is `## Research Document`. Apply the generic discovery sequence:
 
-      https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/[path]
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/artifact-discovery.md
 
-      (Self-healed: artifact was found on disk but not linked via comment)
-      ```
-   8. **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
+   **If neither found**: STOP with "Issue #NNN has no research document. Run /ralph-research first."
 2. **Read research-mapped files directly**: Extract the file paths from each research document's `## Files Affected` section (both "Will Modify" and "Will Read" subsections). Read those files in full — they are your primary codebase context. Do NOT run find, ls, or glob to re-discover source files that the research already identified. If after reading the listed files you have a specific reason to believe a critical file was missed, you may search for it — but note the gap in the plan as a research deficiency.
 2.5. **Check for UI Baseline**: After reading each research document, check if it contains a `## UI Baseline` section. If found:
    - Extract: capture date, dev server command/port, routes scanned, a11y violation counts (total, critical, serious, moderate), tooling detected (storybook yes/no + addon name, visual regression tool, existing user story count)

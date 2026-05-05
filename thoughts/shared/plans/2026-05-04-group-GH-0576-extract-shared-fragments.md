@@ -206,10 +206,10 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Canonical fragment is `plugin/ralph-hero/skills/shared/fragments/artifact-discovery.md` (already exists; this is the one consumer skills will `!cat`)
-  - [ ] Decide: does the long-form `shared/artifact-comment-protocol.md` reference doc add value beyond the fragment? If yes, keep it but add a header note pointing readers to the fragment for the canonical discovery sequence. If no, delete it. Document the decision in the commit message
-  - [ ] Verify the existing `shared/fragments/artifact-discovery.md` content covers the discovery steps used by ralph-plan, ralph-impl, ralph-review. If gaps exist (e.g., `## Plan Reference` handling for parent-planned atomics — present in ralph-impl but not the fragment), extend the fragment to cover them generically
-  - [ ] Fragment must remain self-contained (no cross-file references)
+  - [x] Canonical fragment is `plugin/ralph-hero/skills/shared/fragments/artifact-discovery.md` (already exists; this is the one consumer skills will `!cat`)
+  - [x] Decide: does the long-form `shared/artifact-comment-protocol.md` reference doc add value beyond the fragment? If yes, keep it but add a header note pointing readers to the fragment for the canonical discovery sequence. If no, delete it. Document the decision in the commit message
+  - [x] Verify the existing `shared/fragments/artifact-discovery.md` content covers the discovery steps used by ralph-plan, ralph-impl, ralph-review. If gaps exist (e.g., `## Plan Reference` handling for parent-planned atomics — present in ralph-impl but not the fragment), extend the fragment to cover them generically
+  - [x] Fragment must remain self-contained (no cross-file references)
 
 #### Task 2.2: Replace ralph-plan inline discovery with fragment include
 - **files**: `plugin/ralph-hero/skills/ralph-plan/SKILL.md` (modify)
@@ -217,9 +217,9 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] The discovery sequence inside Step 3 ("Gather Group Context", lines ~159-184) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/artifact-discovery.md`
-  - [ ] The skill-specific glue prose (knowledge graph shortcut, --research-doc flag handling, "If neither found: STOP with..." escalation) STAYS inline above/below the include — only the generic 7-step discovery is fragmented
-  - [ ] Specific research doc header `## Research Document` references stay in the inline glue (the fragment is generic; the consumer specifies which header to look for)
+  - [x] The discovery sequence inside Step 3 ("Gather Group Context", lines ~159-184) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/artifact-discovery.md`
+  - [x] The skill-specific glue prose (knowledge graph shortcut, --research-doc flag handling, "If neither found: STOP with..." escalation) STAYS inline above/below the include — only the generic 7-step discovery is fragmented
+  - [x] Specific research doc header `## Research Document` references stay in the inline glue (the fragment is generic; the consumer specifies which header to look for)
 
 #### Task 2.3: Replace ralph-impl inline discovery with fragment include
 - **files**: `plugin/ralph-hero/skills/ralph-impl/SKILL.md` (modify)
@@ -227,9 +227,9 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] The discovery sequence in Step 1 ("Find linked plan document", lines ~106-133) replaces the generic 7-step body with the `!cat` include
-  - [ ] The `## Plan Reference` parent-plan-handling step stays inline (it's skill-specific to atomic children with parent plans)
-  - [ ] Group/stream fallback paths stay inline if they are not in the fragment (verify in Task 2.1 whether to extend fragment or keep inline)
+  - [x] The discovery sequence in Step 1 ("Find linked plan document", lines ~106-133) replaces the generic 7-step body with the `!cat` include
+  - [x] The `## Plan Reference` parent-plan-handling step stays inline (it's skill-specific to atomic children with parent plans)
+  - [x] Group/stream fallback paths stay inline if they are not in the fragment (verify in Task 2.1 whether to extend fragment or keep inline)
 
 #### Task 2.4: Replace ralph-review inline discovery with fragment include
 - **files**: `plugin/ralph-hero/skills/ralph-review/SKILL.md` (modify)
@@ -237,8 +237,8 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] The discovery sequence in Step 3 ("Validate Plan Exists", lines ~108-136) replaces the generic 7-step body with the `!cat` include
-  - [ ] The skill-specific intro ("Find the plan using the Artifact Comment Protocol:") stays inline — only the numbered procedural body becomes the fragment include
+  - [x] The discovery sequence in Step 3 ("Validate Plan Exists", lines ~108-136) replaces the generic 7-step body with the `!cat` include
+  - [x] The skill-specific intro ("Find the plan using the Artifact Comment Protocol:") stays inline — only the numbered procedural body becomes the fragment include
 
 #### Task 2.5: Verify Phase 2 mechanical correctness
 - **files**: (read-only verification)
@@ -246,19 +246,19 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: low
 - **depends_on**: [2.2, 2.3, 2.4]
 - **acceptance**:
-  - [ ] `grep -rln "skills/shared/fragments/artifact-discovery.md" plugin/ralph-hero/skills/` returns 3 matches (ralph-plan, ralph-impl, ralph-review)
-  - [ ] `grep -rln "Convert GitHub URL to local path: strip" plugin/ralph-hero/skills/` returns 1 match (the fragment file) — confirms the inline procedural prose is gone from consumer skills
-  - [ ] ralph-val, bridge-artifact, plan-epic, plan, impl SKILL.md files are unchanged (they have skill-specific discovery shapes — their inline prose stays)
+  - [x] `grep -rln "skills/shared/fragments/artifact-discovery.md" plugin/ralph-hero/skills/` returns 3 matches (ralph-plan, ralph-impl, ralph-review)
+  - [x] `grep -rln "Convert GitHub URL to local path: strip" plugin/ralph-hero/skills/` returns 1 match (the fragment file) — confirms the inline procedural prose is gone from consumer skills
+  - [x] ralph-val, bridge-artifact, plan-epic, plan, impl SKILL.md files are unchanged (they have skill-specific discovery shapes — their inline prose stays)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Grep checks in Task 2.5 pass with exact counts
-- [ ] No occurrence of `## See artifact-comment-protocol.md` or similar dangling references remains
+- [x] Grep checks in Task 2.5 pass with exact counts
+- [x] No occurrence of `## See artifact-comment-protocol.md` or similar dangling references remains
 
 #### Manual Verification:
-- [ ] Read ralph-impl Step 1 end-to-end and confirm the discovery flow still makes sense: knowledge shortcut → --plan-doc shortcut → fragment-included generic discovery → Plan Reference handling → fallback chain → STOP
-- [ ] Diff one modified skill: only the generic discovery prose is removed; skill-specific glue intact
+- [x] Read ralph-impl Step 1 end-to-end and confirm the discovery flow still makes sense: knowledge shortcut → --plan-doc shortcut → fragment-included generic discovery → Plan Reference handling → fallback chain → STOP
+- [x] Diff one modified skill: only the generic discovery prose is removed; skill-specific glue intact
 
 **Creates for next phase**: Confidence that fragments can include partial procedural sections surrounded by skill-specific prose without breaking the !cat injection.
 
