@@ -280,12 +280,12 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File exists at `plugin/ralph-hero/skills/shared/fragments/task-template.md`
-  - [ ] Content captures the table (8 rows: Triage, Research, Plan, Review, Implement, Validate, Create PR, Merge) with columns: Phase, Subject Pattern, Owner, Command, activeForm — matching [skills/team/SKILL.md:115-124](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L115-L124)
-  - [ ] Includes the `**Required metadata for every task**` footer line about `issue_number`, `issue_url`, `command`, `phase`, `estimate`, plus group fields
-  - [ ] Includes the intro sentence: "Each task must satisfy `task-schema-validator.sh`. Use these templates:"
-  - [ ] Does NOT include the `### Task Template Per Phase` heading (that stays in team SKILL.md)
-  - [ ] Self-contained
+  - [x] File exists at `plugin/ralph-hero/skills/shared/fragments/task-template.md`
+  - [x] Content captures the table (8 rows: Triage, Research, Plan, Review, Implement, Validate, Create PR, Merge) with columns: Phase, Subject Pattern, Owner, Command, activeForm — matching [skills/team/SKILL.md:115-124](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L115-L124)
+  - [x] Includes the `**Required metadata for every task**` footer line about `issue_number`, `issue_url`, `command`, `phase`, `estimate`, plus group fields
+  - [x] Includes the intro sentence: "Each task must satisfy `task-schema-validator.sh`. Use these templates:"
+  - [x] Does NOT include the `### Task Template Per Phase` heading (that stays in team SKILL.md)
+  - [x] Self-contained
 
 #### Task 3.2: Replace team/SKILL.md inline table with fragment include
 - **files**: `plugin/ralph-hero/skills/team/SKILL.md` (modify)
@@ -293,9 +293,9 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] The `### Task Template Per Phase` heading (line ~111) is retained
-  - [ ] The body (intro sentence + table + required metadata line) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/task-template.md`
-  - [ ] Surrounding sections ("Build the Task List" before, "Full Graph Example" after) are unchanged
+  - [x] The `### Task Template Per Phase` heading (line ~111) is retained
+  - [x] The body (intro sentence + table + required metadata line) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/task-template.md`
+  - [x] Surrounding sections ("Build the Task List" before, "Full Graph Example" after) are unchanged
 
 #### Task 3.3: Document hero scope deviation
 - **files**: `plugin/ralph-hero/skills/shared/fragments/task-template.md` (modify if needed for clarity)
@@ -303,8 +303,8 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] If a comment is needed inside the fragment to clarify it's currently used only by team skill (since hero has no equivalent table), include it as a markdown HTML comment `<!-- Used by: team/SKILL.md -->` at the top
-  - [ ] Otherwise, document the team-only scope in the commit message
+  - [x] If a comment is needed inside the fragment to clarify it's currently used only by team skill (since hero has no equivalent table), include it as a markdown HTML comment `<!-- Used by: team/SKILL.md -->` at the top
+  - [x] Otherwise, document the team-only scope in the commit message
 
 #### Task 3.4: Verify Phase 3 mechanical correctness
 - **files**: (read-only)
@@ -312,18 +312,18 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] `grep -rln "skills/shared/fragments/task-template.md" plugin/ralph-hero/skills/` returns exactly 1 match (team/SKILL.md)
-  - [ ] `grep -rn "| Phase | Subject Pattern | Owner | Command | activeForm |" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment file)
-  - [ ] hero/SKILL.md has no `Subject Pattern | Owner | Command | activeForm` table heading (confirms hero out-of-scope decision)
+  - [x] `grep -rln "skills/shared/fragments/task-template.md" plugin/ralph-hero/skills/` returns exactly 1 match (team/SKILL.md)
+  - [x] `grep -rn "| Phase | Subject Pattern | Owner | Command | activeForm |" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment file)
+  - [x] hero/SKILL.md has no `Subject Pattern | Owner | Command | activeForm` table heading (confirms hero out-of-scope decision)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Grep checks in Task 3.4 pass
+- [x] Grep checks in Task 3.4 pass
 
 #### Manual Verification:
-- [ ] Open team/SKILL.md, scroll to "Task Template Per Phase" section, confirm `!cat` directive replaces the inline table cleanly
-- [ ] Open the new fragment file, confirm it would render as a complete table when inlined
+- [x] Open team/SKILL.md, scroll to "Task Template Per Phase" section, confirm `!cat` directive replaces the inline table cleanly
+- [x] Open the new fragment file, confirm it would render as a complete table when inlined
 
 **Creates for next phase**: None (independent of Phase 4).
 
