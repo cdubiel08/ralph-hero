@@ -345,9 +345,9 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Identify the byte-equivalent procedural shared content. The most likely candidate is team's "Stream Detection Before Implementation Tasks — Fallback" 7-step block ([team/SKILL.md:166-191](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L166-L191)) — it captures: extract file paths from research, call detect_stream_positions, read suggestedRoster.builder, spawn additional builders, create tasks with stream tags, single-stream fallback, overflow assignment
-  - [ ] Hero's Step 2.5 ([hero/SKILL.md:250-260](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/hero/SKILL.md#L250-L260)) is shorter and has different framing ("Groups >= 3"). Confirm: the 3-step body of hero's Step 2.5 (detect → restructure → single-stream fallback) IS a strict subset of team's 7-step block. Therefore the fragment should contain the team-shaped 7-step procedure; hero will `!cat` it and the framing intro ("Step 2.5: Stream Detection (Groups >= 3) — Fallback" + the note about it being a fallback) stays inline above the include
-  - [ ] Document the decision in a planning note inside the fragment (HTML comment) or in the commit message
+  - [x] Identify the byte-equivalent procedural shared content. The most likely candidate is team's "Stream Detection Before Implementation Tasks — Fallback" 7-step block ([team/SKILL.md:166-191](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L166-L191)) — it captures: extract file paths from research, call detect_stream_positions, read suggestedRoster.builder, spawn additional builders, create tasks with stream tags, single-stream fallback, overflow assignment
+  - [x] Hero's Step 2.5 ([hero/SKILL.md:250-260](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/hero/SKILL.md#L250-L260)) is shorter and has different framing ("Groups >= 3"). Confirm: the 3-step body of hero's Step 2.5 (detect → restructure → single-stream fallback) IS a strict subset of team's 7-step block. Therefore the fragment should contain the team-shaped 7-step procedure; hero will `!cat` it and the framing intro ("Step 2.5: Stream Detection (Groups >= 3) — Fallback" + the note about it being a fallback) stays inline above the include
+  - [x] Document the decision in a planning note inside the fragment (HTML comment) or in the commit message
 
 #### Task 4.2: Create the stream-detection.md fragment file
 - **files**: `plugin/ralph-hero/skills/shared/fragments/stream-detection.md` (create)
@@ -355,10 +355,10 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] File exists at `plugin/ralph-hero/skills/shared/fragments/stream-detection.md`
-  - [ ] Content is the 7-step "Stream Detection Before Implementation Tasks" procedural body from team/SKILL.md, plus the "Stream Detection Timing" subsection ([team/SKILL.md:193-197](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L193-L197)) and "Stream Detection Refinement" subsection ([team/SKILL.md:209-216](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L209-L216))
-  - [ ] Does NOT include the `### Stream Detection Before Implementation Tasks — Fallback` heading itself (that stays in each consumer skill)
-  - [ ] Self-contained, no cross-file references
+  - [x] File exists at `plugin/ralph-hero/skills/shared/fragments/stream-detection.md`
+  - [x] Content is the 7-step "Stream Detection Before Implementation Tasks" procedural body from team/SKILL.md, plus the "Stream Detection Timing" subsection ([team/SKILL.md:193-197](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L193-L197)) and "Stream Detection Refinement" subsection ([team/SKILL.md:209-216](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L209-L216))
+  - [x] Does NOT include the `### Stream Detection Before Implementation Tasks — Fallback` heading itself (that stays in each consumer skill)
+  - [x] Self-contained, no cross-file references
 
 #### Task 4.3: Replace team/SKILL.md inline blocks with includes
 - **files**: `plugin/ralph-hero/skills/team/SKILL.md` (modify)
@@ -366,10 +366,10 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] The body of "Stream Detection Before Implementation Tasks — Fallback" is replaced with the `!cat` include
-  - [ ] Subsections "Stream Detection Timing" and "Stream Detection Refinement" — keep their headings but replace bodies with the same `!cat` include (consolidated into one fragment) OR keep distinct subsections inline if the fragment is structured as a single block. Decide in Task 4.1 whether the fragment is one combined block or three subsections; ensure team/SKILL.md result reads coherently
-  - [ ] Surrounding "Implementation Task Ordering (Dependency-Graph-Aware)" section is unchanged
-  - [ ] Stream-related framing in the worker-roster section ([team/SKILL.md:101-105](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L101-L105) — "Builder scaling at implementation phase" + "Stream-scoped builder prompts") stays inline (it's framing, not procedural detection)
+  - [x] The body of "Stream Detection Before Implementation Tasks — Fallback" is replaced with the `!cat` include
+  - [x] Subsections "Stream Detection Timing" and "Stream Detection Refinement" — keep their headings but replace bodies with the same `!cat` include (consolidated into one fragment) OR keep distinct subsections inline if the fragment is structured as a single block. Decide in Task 4.1 whether the fragment is one combined block or three subsections; ensure team/SKILL.md result reads coherently
+  - [x] Surrounding "Implementation Task Ordering (Dependency-Graph-Aware)" section is unchanged
+  - [x] Stream-related framing in the worker-roster section ([team/SKILL.md:101-105](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L101-L105) — "Builder scaling at implementation phase" + "Stream-scoped builder prompts") stays inline (it's framing, not procedural detection)
 
 #### Task 4.4: Replace hero/SKILL.md Step 2.5 body with include
 - **files**: `plugin/ralph-hero/skills/hero/SKILL.md` (modify)
@@ -377,10 +377,10 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] Step 2.5 heading retained (`### Step 2.5: Stream Detection (Groups >= 3) — Fallback`)
-  - [ ] Hero's framing note ("Stream detection is a fallback for plans without explicit `depends_on` annotations...") stays inline above the include
-  - [ ] The 3-step body (detect → restructure → single-stream fallback) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/stream-detection.md`
-  - [ ] Surrounding Step 3 (Execution Loop) is unchanged
+  - [x] Step 2.5 heading retained (`### Step 2.5: Stream Detection (Groups >= 3) — Fallback`)
+  - [x] Hero's framing note ("Stream detection is a fallback for plans without explicit `depends_on` annotations...") stays inline above the include
+  - [x] The 3-step body (detect → restructure → single-stream fallback) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/stream-detection.md`
+  - [x] Surrounding Step 3 (Execution Loop) is unchanged
 
 #### Task 4.5: Verify Phase 4 mechanical correctness
 - **files**: (read-only)
@@ -388,18 +388,18 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: low
 - **depends_on**: [4.3, 4.4]
 - **acceptance**:
-  - [ ] `grep -rln "skills/shared/fragments/stream-detection.md" plugin/ralph-hero/skills/` returns at least 2 matches (team, hero)
-  - [ ] `grep -rn "Extract \"Will Modify\" file paths" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment) — confirms the procedural body is no longer inline in team
-  - [ ] Stream-tagging behavioral logic (the `[stream-N]` tag pattern, `detect_stream_positions` call site) is unchanged: `grep -rln "detect_stream_positions" plugin/ralph-hero/skills/` should still return both team and hero plus the fragment
+  - [x] `grep -rln "skills/shared/fragments/stream-detection.md" plugin/ralph-hero/skills/` returns at least 2 matches (team, hero)
+  - [x] `grep -rn "Extract \"Will Modify\" file paths" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment) — confirms the procedural body is no longer inline in team
+  - [x] Stream-tagging behavioral logic (the `[stream-N]` tag pattern, `detect_stream_positions` call site) is unchanged: `grep -rln "detect_stream_positions" plugin/ralph-hero/skills/` should still return both team and hero plus the fragment
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Grep checks in Task 4.5 pass
+- [x] Grep checks in Task 4.5 pass
 
 #### Manual Verification:
-- [ ] Open team/SKILL.md, read the "Build the Task List" → "Stream Detection ..." section end-to-end. Confirm that with the `!cat` substitutions visualized, the flow still makes sense (intro framing → procedural detail → timing → refinement)
-- [ ] Open hero/SKILL.md, read Step 2.5 with the include visualized. Confirm hero's "Groups >= 3" framing reads coherently before the included procedural body
+- [x] Open team/SKILL.md, read the "Build the Task List" → "Stream Detection ..." section end-to-end. Confirm that with the `!cat` substitutions visualized, the flow still makes sense (intro framing → procedural detail → timing → refinement)
+- [x] Open hero/SKILL.md, read Step 2.5 with the include visualized. Confirm hero's "Groups >= 3" framing reads coherently before the included procedural body
 
 **Creates for next phase**: All 4 fragments are now in place; Phase 5 verifies the rollup.
 

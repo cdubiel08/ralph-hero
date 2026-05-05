@@ -253,11 +253,7 @@ This metadata flows to builder sub-agents so they know which directories to work
 
 After all research tasks complete (detectable when plan tasks become unblocked), if `isGroup=true` and `issues.length >= 3`:
 
-1. Detect stream positions for the issue numbers to cluster by file overlap
-2. If `totalStreams > 1`: restructure implementation tasks into per-stream parallel chains
-   - Issues within the same stream: sequential `blockedBy` chain
-   - Streams independent of each other: no cross-stream `blockedBy`
-3. If `totalStreams == 1`: single sequential implementation chain (unchanged)
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/stream-detection.md
 
 ### Step 3: Execution Loop
 
