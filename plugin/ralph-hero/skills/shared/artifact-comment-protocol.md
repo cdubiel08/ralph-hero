@@ -1,5 +1,7 @@
 # Artifact Comment Protocol
 
+> **Note:** This is the long-form reference for comment header conventions and format examples across the pipeline. For the canonical *discovery sequence* used by consumer skills at runtime, see [`fragments/artifact-discovery.md`](fragments/artifact-discovery.md) — that fragment is what consumer skills (ralph-plan, ralph-impl, ralph-review) `!cat`-include. Keep this document for header taxonomy and producer-side comment format examples.
+
 Standard comment headers used to link documents to GitHub issues. All document-producing and document-consuming skills use these headers for discovery.
 
 ## Comment Headers

@@ -179,8 +179,8 @@ Create `skills/shared/fragments/link-formatting.md` with the canonical Link Form
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] All grep checks in Task 1.3 pass with exact match counts
-- [ ] No syntax errors introduced (skill markdown has no compiler — relies on Claude Code's loader; visual inspection of one rendered skill is sufficient)
+- [x] All grep checks in Task 1.3 pass with exact match counts
+- [x] No syntax errors introduced (skill markdown has no compiler — relies on Claude Code's loader; visual inspection of one rendered skill is sufficient)
 
 #### Manual Verification:
 - [ ] Open one modified skill (e.g., ralph-plan) and confirm the `## Link Formatting` section reads cleanly as `## Link Formatting` followed by the `!cat` directive
@@ -206,10 +206,10 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Canonical fragment is `plugin/ralph-hero/skills/shared/fragments/artifact-discovery.md` (already exists; this is the one consumer skills will `!cat`)
-  - [ ] Decide: does the long-form `shared/artifact-comment-protocol.md` reference doc add value beyond the fragment? If yes, keep it but add a header note pointing readers to the fragment for the canonical discovery sequence. If no, delete it. Document the decision in the commit message
-  - [ ] Verify the existing `shared/fragments/artifact-discovery.md` content covers the discovery steps used by ralph-plan, ralph-impl, ralph-review. If gaps exist (e.g., `## Plan Reference` handling for parent-planned atomics — present in ralph-impl but not the fragment), extend the fragment to cover them generically
-  - [ ] Fragment must remain self-contained (no cross-file references)
+  - [x] Canonical fragment is `plugin/ralph-hero/skills/shared/fragments/artifact-discovery.md` (already exists; this is the one consumer skills will `!cat`)
+  - [x] Decide: does the long-form `shared/artifact-comment-protocol.md` reference doc add value beyond the fragment? If yes, keep it but add a header note pointing readers to the fragment for the canonical discovery sequence. If no, delete it. Document the decision in the commit message
+  - [x] Verify the existing `shared/fragments/artifact-discovery.md` content covers the discovery steps used by ralph-plan, ralph-impl, ralph-review. If gaps exist (e.g., `## Plan Reference` handling for parent-planned atomics — present in ralph-impl but not the fragment), extend the fragment to cover them generically
+  - [x] Fragment must remain self-contained (no cross-file references)
 
 #### Task 2.2: Replace ralph-plan inline discovery with fragment include
 - **files**: `plugin/ralph-hero/skills/ralph-plan/SKILL.md` (modify)
@@ -217,9 +217,9 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] The discovery sequence inside Step 3 ("Gather Group Context", lines ~159-184) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/artifact-discovery.md`
-  - [ ] The skill-specific glue prose (knowledge graph shortcut, --research-doc flag handling, "If neither found: STOP with..." escalation) STAYS inline above/below the include — only the generic 7-step discovery is fragmented
-  - [ ] Specific research doc header `## Research Document` references stay in the inline glue (the fragment is generic; the consumer specifies which header to look for)
+  - [x] The discovery sequence inside Step 3 ("Gather Group Context", lines ~159-184) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/artifact-discovery.md`
+  - [x] The skill-specific glue prose (knowledge graph shortcut, --research-doc flag handling, "If neither found: STOP with..." escalation) STAYS inline above/below the include — only the generic 7-step discovery is fragmented
+  - [x] Specific research doc header `## Research Document` references stay in the inline glue (the fragment is generic; the consumer specifies which header to look for)
 
 #### Task 2.3: Replace ralph-impl inline discovery with fragment include
 - **files**: `plugin/ralph-hero/skills/ralph-impl/SKILL.md` (modify)
@@ -227,9 +227,9 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] The discovery sequence in Step 1 ("Find linked plan document", lines ~106-133) replaces the generic 7-step body with the `!cat` include
-  - [ ] The `## Plan Reference` parent-plan-handling step stays inline (it's skill-specific to atomic children with parent plans)
-  - [ ] Group/stream fallback paths stay inline if they are not in the fragment (verify in Task 2.1 whether to extend fragment or keep inline)
+  - [x] The discovery sequence in Step 1 ("Find linked plan document", lines ~106-133) replaces the generic 7-step body with the `!cat` include
+  - [x] The `## Plan Reference` parent-plan-handling step stays inline (it's skill-specific to atomic children with parent plans)
+  - [x] Group/stream fallback paths stay inline if they are not in the fragment (verify in Task 2.1 whether to extend fragment or keep inline)
 
 #### Task 2.4: Replace ralph-review inline discovery with fragment include
 - **files**: `plugin/ralph-hero/skills/ralph-review/SKILL.md` (modify)
@@ -237,8 +237,8 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] The discovery sequence in Step 3 ("Validate Plan Exists", lines ~108-136) replaces the generic 7-step body with the `!cat` include
-  - [ ] The skill-specific intro ("Find the plan using the Artifact Comment Protocol:") stays inline — only the numbered procedural body becomes the fragment include
+  - [x] The discovery sequence in Step 3 ("Validate Plan Exists", lines ~108-136) replaces the generic 7-step body with the `!cat` include
+  - [x] The skill-specific intro ("Find the plan using the Artifact Comment Protocol:") stays inline — only the numbered procedural body becomes the fragment include
 
 #### Task 2.5: Verify Phase 2 mechanical correctness
 - **files**: (read-only verification)
@@ -246,19 +246,19 @@ Resolve duplication between existing `skills/shared/artifact-comment-protocol.md
 - **complexity**: low
 - **depends_on**: [2.2, 2.3, 2.4]
 - **acceptance**:
-  - [ ] `grep -rln "skills/shared/fragments/artifact-discovery.md" plugin/ralph-hero/skills/` returns 3 matches (ralph-plan, ralph-impl, ralph-review)
-  - [ ] `grep -rln "Convert GitHub URL to local path: strip" plugin/ralph-hero/skills/` returns 1 match (the fragment file) — confirms the inline procedural prose is gone from consumer skills
-  - [ ] ralph-val, bridge-artifact, plan-epic, plan, impl SKILL.md files are unchanged (they have skill-specific discovery shapes — their inline prose stays)
+  - [x] `grep -rln "skills/shared/fragments/artifact-discovery.md" plugin/ralph-hero/skills/` returns 3 matches (ralph-plan, ralph-impl, ralph-review)
+  - [x] `grep -rln "Convert GitHub URL to local path: strip" plugin/ralph-hero/skills/` returns 1 match (the fragment file) — confirms the inline procedural prose is gone from consumer skills
+  - [x] ralph-val, bridge-artifact, plan-epic, plan, impl SKILL.md files are unchanged (they have skill-specific discovery shapes — their inline prose stays)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Grep checks in Task 2.5 pass with exact counts
-- [ ] No occurrence of `## See artifact-comment-protocol.md` or similar dangling references remains
+- [x] Grep checks in Task 2.5 pass with exact counts
+- [x] No occurrence of `## See artifact-comment-protocol.md` or similar dangling references remains
 
 #### Manual Verification:
-- [ ] Read ralph-impl Step 1 end-to-end and confirm the discovery flow still makes sense: knowledge shortcut → --plan-doc shortcut → fragment-included generic discovery → Plan Reference handling → fallback chain → STOP
-- [ ] Diff one modified skill: only the generic discovery prose is removed; skill-specific glue intact
+- [x] Read ralph-impl Step 1 end-to-end and confirm the discovery flow still makes sense: knowledge shortcut → --plan-doc shortcut → fragment-included generic discovery → Plan Reference handling → fallback chain → STOP
+- [x] Diff one modified skill: only the generic discovery prose is removed; skill-specific glue intact
 
 **Creates for next phase**: Confidence that fragments can include partial procedural sections surrounded by skill-specific prose without breaking the !cat injection.
 
@@ -280,12 +280,12 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File exists at `plugin/ralph-hero/skills/shared/fragments/task-template.md`
-  - [ ] Content captures the table (8 rows: Triage, Research, Plan, Review, Implement, Validate, Create PR, Merge) with columns: Phase, Subject Pattern, Owner, Command, activeForm — matching [skills/team/SKILL.md:115-124](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L115-L124)
-  - [ ] Includes the `**Required metadata for every task**` footer line about `issue_number`, `issue_url`, `command`, `phase`, `estimate`, plus group fields
-  - [ ] Includes the intro sentence: "Each task must satisfy `task-schema-validator.sh`. Use these templates:"
-  - [ ] Does NOT include the `### Task Template Per Phase` heading (that stays in team SKILL.md)
-  - [ ] Self-contained
+  - [x] File exists at `plugin/ralph-hero/skills/shared/fragments/task-template.md`
+  - [x] Content captures the table (8 rows: Triage, Research, Plan, Review, Implement, Validate, Create PR, Merge) with columns: Phase, Subject Pattern, Owner, Command, activeForm — matching [skills/team/SKILL.md:115-124](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L115-L124)
+  - [x] Includes the `**Required metadata for every task**` footer line about `issue_number`, `issue_url`, `command`, `phase`, `estimate`, plus group fields
+  - [x] Includes the intro sentence: "Each task must satisfy `task-schema-validator.sh`. Use these templates:"
+  - [x] Does NOT include the `### Task Template Per Phase` heading (that stays in team SKILL.md)
+  - [x] Self-contained
 
 #### Task 3.2: Replace team/SKILL.md inline table with fragment include
 - **files**: `plugin/ralph-hero/skills/team/SKILL.md` (modify)
@@ -293,9 +293,9 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] The `### Task Template Per Phase` heading (line ~111) is retained
-  - [ ] The body (intro sentence + table + required metadata line) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/task-template.md`
-  - [ ] Surrounding sections ("Build the Task List" before, "Full Graph Example" after) are unchanged
+  - [x] The `### Task Template Per Phase` heading (line ~111) is retained
+  - [x] The body (intro sentence + table + required metadata line) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/task-template.md`
+  - [x] Surrounding sections ("Build the Task List" before, "Full Graph Example" after) are unchanged
 
 #### Task 3.3: Document hero scope deviation
 - **files**: `plugin/ralph-hero/skills/shared/fragments/task-template.md` (modify if needed for clarity)
@@ -303,8 +303,8 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] If a comment is needed inside the fragment to clarify it's currently used only by team skill (since hero has no equivalent table), include it as a markdown HTML comment `<!-- Used by: team/SKILL.md -->` at the top
-  - [ ] Otherwise, document the team-only scope in the commit message
+  - [x] If a comment is needed inside the fragment to clarify it's currently used only by team skill (since hero has no equivalent table), include it as a markdown HTML comment `<!-- Used by: team/SKILL.md -->` at the top
+  - [x] Otherwise, document the team-only scope in the commit message
 
 #### Task 3.4: Verify Phase 3 mechanical correctness
 - **files**: (read-only)
@@ -312,18 +312,18 @@ Extract the 8-row task template table (Triage/Research/Plan/Review/Implement/Val
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] `grep -rln "skills/shared/fragments/task-template.md" plugin/ralph-hero/skills/` returns exactly 1 match (team/SKILL.md)
-  - [ ] `grep -rn "| Phase | Subject Pattern | Owner | Command | activeForm |" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment file)
-  - [ ] hero/SKILL.md has no `Subject Pattern | Owner | Command | activeForm` table heading (confirms hero out-of-scope decision)
+  - [x] `grep -rln "skills/shared/fragments/task-template.md" plugin/ralph-hero/skills/` returns exactly 1 match (team/SKILL.md)
+  - [x] `grep -rn "| Phase | Subject Pattern | Owner | Command | activeForm |" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment file)
+  - [x] hero/SKILL.md has no `Subject Pattern | Owner | Command | activeForm` table heading (confirms hero out-of-scope decision)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Grep checks in Task 3.4 pass
+- [x] Grep checks in Task 3.4 pass
 
 #### Manual Verification:
-- [ ] Open team/SKILL.md, scroll to "Task Template Per Phase" section, confirm `!cat` directive replaces the inline table cleanly
-- [ ] Open the new fragment file, confirm it would render as a complete table when inlined
+- [x] Open team/SKILL.md, scroll to "Task Template Per Phase" section, confirm `!cat` directive replaces the inline table cleanly
+- [x] Open the new fragment file, confirm it would render as a complete table when inlined
 
 **Creates for next phase**: None (independent of Phase 4).
 
@@ -345,9 +345,9 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Identify the byte-equivalent procedural shared content. The most likely candidate is team's "Stream Detection Before Implementation Tasks — Fallback" 7-step block ([team/SKILL.md:166-191](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L166-L191)) — it captures: extract file paths from research, call detect_stream_positions, read suggestedRoster.builder, spawn additional builders, create tasks with stream tags, single-stream fallback, overflow assignment
-  - [ ] Hero's Step 2.5 ([hero/SKILL.md:250-260](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/hero/SKILL.md#L250-L260)) is shorter and has different framing ("Groups >= 3"). Confirm: the 3-step body of hero's Step 2.5 (detect → restructure → single-stream fallback) IS a strict subset of team's 7-step block. Therefore the fragment should contain the team-shaped 7-step procedure; hero will `!cat` it and the framing intro ("Step 2.5: Stream Detection (Groups >= 3) — Fallback" + the note about it being a fallback) stays inline above the include
-  - [ ] Document the decision in a planning note inside the fragment (HTML comment) or in the commit message
+  - [x] Identify the byte-equivalent procedural shared content. The most likely candidate is team's "Stream Detection Before Implementation Tasks — Fallback" 7-step block ([team/SKILL.md:166-191](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L166-L191)) — it captures: extract file paths from research, call detect_stream_positions, read suggestedRoster.builder, spawn additional builders, create tasks with stream tags, single-stream fallback, overflow assignment
+  - [x] Hero's Step 2.5 ([hero/SKILL.md:250-260](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/hero/SKILL.md#L250-L260)) is shorter and has different framing ("Groups >= 3"). Confirm: the 3-step body of hero's Step 2.5 (detect → restructure → single-stream fallback) IS a strict subset of team's 7-step block. Therefore the fragment should contain the team-shaped 7-step procedure; hero will `!cat` it and the framing intro ("Step 2.5: Stream Detection (Groups >= 3) — Fallback" + the note about it being a fallback) stays inline above the include
+  - [x] Document the decision in a planning note inside the fragment (HTML comment) or in the commit message
 
 #### Task 4.2: Create the stream-detection.md fragment file
 - **files**: `plugin/ralph-hero/skills/shared/fragments/stream-detection.md` (create)
@@ -355,10 +355,10 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] File exists at `plugin/ralph-hero/skills/shared/fragments/stream-detection.md`
-  - [ ] Content is the 7-step "Stream Detection Before Implementation Tasks" procedural body from team/SKILL.md, plus the "Stream Detection Timing" subsection ([team/SKILL.md:193-197](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L193-L197)) and "Stream Detection Refinement" subsection ([team/SKILL.md:209-216](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L209-L216))
-  - [ ] Does NOT include the `### Stream Detection Before Implementation Tasks — Fallback` heading itself (that stays in each consumer skill)
-  - [ ] Self-contained, no cross-file references
+  - [x] File exists at `plugin/ralph-hero/skills/shared/fragments/stream-detection.md`
+  - [x] Content is the 7-step "Stream Detection Before Implementation Tasks" procedural body from team/SKILL.md, plus the "Stream Detection Timing" subsection ([team/SKILL.md:193-197](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L193-L197)) and "Stream Detection Refinement" subsection ([team/SKILL.md:209-216](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L209-L216))
+  - [x] Does NOT include the `### Stream Detection Before Implementation Tasks — Fallback` heading itself (that stays in each consumer skill)
+  - [x] Self-contained, no cross-file references
 
 #### Task 4.3: Replace team/SKILL.md inline blocks with includes
 - **files**: `plugin/ralph-hero/skills/team/SKILL.md` (modify)
@@ -366,10 +366,10 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] The body of "Stream Detection Before Implementation Tasks — Fallback" is replaced with the `!cat` include
-  - [ ] Subsections "Stream Detection Timing" and "Stream Detection Refinement" — keep their headings but replace bodies with the same `!cat` include (consolidated into one fragment) OR keep distinct subsections inline if the fragment is structured as a single block. Decide in Task 4.1 whether the fragment is one combined block or three subsections; ensure team/SKILL.md result reads coherently
-  - [ ] Surrounding "Implementation Task Ordering (Dependency-Graph-Aware)" section is unchanged
-  - [ ] Stream-related framing in the worker-roster section ([team/SKILL.md:101-105](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L101-L105) — "Builder scaling at implementation phase" + "Stream-scoped builder prompts") stays inline (it's framing, not procedural detection)
+  - [x] The body of "Stream Detection Before Implementation Tasks — Fallback" is replaced with the `!cat` include
+  - [x] Subsections "Stream Detection Timing" and "Stream Detection Refinement" — keep their headings but replace bodies with the same `!cat` include (consolidated into one fragment) OR keep distinct subsections inline if the fragment is structured as a single block. Decide in Task 4.1 whether the fragment is one combined block or three subsections; ensure team/SKILL.md result reads coherently
+  - [x] Surrounding "Implementation Task Ordering (Dependency-Graph-Aware)" section is unchanged
+  - [x] Stream-related framing in the worker-roster section ([team/SKILL.md:101-105](https://github.com/cdubiel08/ralph-hero/blob/main/plugin/ralph-hero/skills/team/SKILL.md#L101-L105) — "Builder scaling at implementation phase" + "Stream-scoped builder prompts") stays inline (it's framing, not procedural detection)
 
 #### Task 4.4: Replace hero/SKILL.md Step 2.5 body with include
 - **files**: `plugin/ralph-hero/skills/hero/SKILL.md` (modify)
@@ -377,10 +377,10 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: medium
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] Step 2.5 heading retained (`### Step 2.5: Stream Detection (Groups >= 3) — Fallback`)
-  - [ ] Hero's framing note ("Stream detection is a fallback for plans without explicit `depends_on` annotations...") stays inline above the include
-  - [ ] The 3-step body (detect → restructure → single-stream fallback) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/stream-detection.md`
-  - [ ] Surrounding Step 3 (Execution Loop) is unchanged
+  - [x] Step 2.5 heading retained (`### Step 2.5: Stream Detection (Groups >= 3) — Fallback`)
+  - [x] Hero's framing note ("Stream detection is a fallback for plans without explicit `depends_on` annotations...") stays inline above the include
+  - [x] The 3-step body (detect → restructure → single-stream fallback) is replaced with `!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/stream-detection.md`
+  - [x] Surrounding Step 3 (Execution Loop) is unchanged
 
 #### Task 4.5: Verify Phase 4 mechanical correctness
 - **files**: (read-only)
@@ -388,18 +388,18 @@ The stream detection content in team/SKILL.md is fuller than hero's Step 2.5. Ex
 - **complexity**: low
 - **depends_on**: [4.3, 4.4]
 - **acceptance**:
-  - [ ] `grep -rln "skills/shared/fragments/stream-detection.md" plugin/ralph-hero/skills/` returns at least 2 matches (team, hero)
-  - [ ] `grep -rn "Extract \"Will Modify\" file paths" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment) — confirms the procedural body is no longer inline in team
-  - [ ] Stream-tagging behavioral logic (the `[stream-N]` tag pattern, `detect_stream_positions` call site) is unchanged: `grep -rln "detect_stream_positions" plugin/ralph-hero/skills/` should still return both team and hero plus the fragment
+  - [x] `grep -rln "skills/shared/fragments/stream-detection.md" plugin/ralph-hero/skills/` returns at least 2 matches (team, hero)
+  - [x] `grep -rn "Extract \"Will Modify\" file paths" plugin/ralph-hero/skills/` returns exactly 1 match (the fragment) — confirms the procedural body is no longer inline in team
+  - [x] Stream-tagging behavioral logic (the `[stream-N]` tag pattern, `detect_stream_positions` call site) is unchanged: `grep -rln "detect_stream_positions" plugin/ralph-hero/skills/` should still return both team and hero plus the fragment
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Grep checks in Task 4.5 pass
+- [x] Grep checks in Task 4.5 pass
 
 #### Manual Verification:
-- [ ] Open team/SKILL.md, read the "Build the Task List" → "Stream Detection ..." section end-to-end. Confirm that with the `!cat` substitutions visualized, the flow still makes sense (intro framing → procedural detail → timing → refinement)
-- [ ] Open hero/SKILL.md, read Step 2.5 with the include visualized. Confirm hero's "Groups >= 3" framing reads coherently before the included procedural body
+- [x] Open team/SKILL.md, read the "Build the Task List" → "Stream Detection ..." section end-to-end. Confirm that with the `!cat` substitutions visualized, the flow still makes sense (intro framing → procedural detail → timing → refinement)
+- [x] Open hero/SKILL.md, read Step 2.5 with the include visualized. Confirm hero's "Groups >= 3" framing reads coherently before the included procedural body
 
 **Creates for next phase**: All 4 fragments are now in place; Phase 5 verifies the rollup.
 

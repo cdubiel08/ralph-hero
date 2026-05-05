@@ -253,11 +253,7 @@ This metadata flows to builder sub-agents so they know which directories to work
 
 After all research tasks complete (detectable when plan tasks become unblocked), if `isGroup=true` and `issues.length >= 3`:
 
-1. Detect stream positions for the issue numbers to cluster by file overlap
-2. If `totalStreams > 1`: restructure implementation tasks into per-stream parallel chains
-   - Issues within the same stream: sequential `blockedBy` chain
-   - Streams independent of each other: no cross-stream `blockedBy`
-3. If `totalStreams == 1`: single sequential implementation chain (unchanged)
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/stream-detection.md
 
 ### Step 3: Execution Loop
 
@@ -519,15 +515,4 @@ Ralph Hero is **resumable** across context windows:
 
 ## Link Formatting
 
-**Single-repo (default):**
-
-| Reference type | Format |
-|---------------|--------|
-| File only | `[path/file.py](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py)` |
-| With line | `[path/file.py:42](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42)` |
-| Line range | `[path/file.py:42-50](https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/path/file.py#L42-L50)` |
-
-**Cross-repo:** Resolve owner/repo from the registry entry for each file:
-- `[repo-name:path/file.py](https://github.com/{owner}/{repo}/blob/main/path/file.py)`
-
-When operating on a cross-repo issue, look up each file's repo in the registry to get the correct `owner` and repo name for link URLs. Do NOT hardcode `$RALPH_GH_OWNER/$RALPH_GH_REPO` for files in other repos.
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/link-formatting.md
