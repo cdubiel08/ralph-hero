@@ -179,8 +179,8 @@ Create `skills/shared/fragments/link-formatting.md` with the canonical Link Form
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] All grep checks in Task 1.3 pass with exact match counts
-- [ ] No syntax errors introduced (skill markdown has no compiler — relies on Claude Code's loader; visual inspection of one rendered skill is sufficient)
+- [x] All grep checks in Task 1.3 pass with exact match counts
+- [x] No syntax errors introduced (skill markdown has no compiler — relies on Claude Code's loader; visual inspection of one rendered skill is sufficient)
 
 #### Manual Verification:
 - [ ] Open one modified skill (e.g., ralph-plan) and confirm the `## Link Formatting` section reads cleanly as `## Link Formatting` followed by the `!cat` directive
