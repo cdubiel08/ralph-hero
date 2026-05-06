@@ -40,3 +40,17 @@ GitHub's [CodeQL default setup](https://docs.github.com/en/code-security/code-sc
 ## Dependency Management
 
 Dependency updates are managed by [Dependabot](https://docs.github.com/en/code-security/dependabot). The configuration lives in [`.github/dependabot.yml`](.github/dependabot.yml) and covers npm and GitHub Actions ecosystems. Dependabot **security updates** are enabled, so vulnerable transitive dependencies are auto-flagged and PRs opened automatically. See [#1028](https://github.com/cdubiel08/ralph-hero/issues/1028) (S1: Enable Dependabot version + security updates) for the enabling change.
+
+## Token Rotation
+
+### npm publishing (OIDC trusted publishing)
+
+Both `ralph-hero-mcp-server` and `ralph-knowledge` are published to npm using [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers). The release workflows ([`release.yml`](.github/workflows/release.yml) and [`release-knowledge.yml`](.github/workflows/release-knowledge.yml)) request a short-lived OIDC token from GitHub at publish time (via `id-token: write` job permission), and npm verifies the token against the trusted-publisher configuration on each package.
+
+**There is no static `NPM_TOKEN` to rotate.** The `NPM_TOKEN` repository secret was removed once the first OIDC publish was verified. See [#1035](https://github.com/cdubiel08/ralph-hero/issues/1035) (S8: Migrate npm publish to OIDC trusted publishing) for the migration.
+
+To revoke npm publish access in an emergency, remove the trusted-publisher configuration on npmjs.com (per package, under Settings -> Publishing). No secret rotation in GitHub is required.
+
+### GitHub tokens
+
+Workflows use the built-in `GITHUB_TOKEN` (auto-rotated per workflow run) wherever possible. The remaining long-lived secret is `ROUTING_PAT`, used by the issue-routing workflow; replacing it with a GitHub App is tracked in [#1036](https://github.com/cdubiel08/ralph-hero/issues/1036) (S9: Research GitHub App alternative to ROUTING_PAT).
