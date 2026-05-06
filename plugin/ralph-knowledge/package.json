@@ -17,6 +17,7 @@
     "reindex": "node dist/reindex.js",
     "test": "vitest run",
     "bench:heap": "tsx benchmark/reindex-heap-bench.ts",
+    "eval:retrieval": "tsx scripts/eval-retrieval.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

@@ -84,6 +84,14 @@ jobs:
           cache: npm
           cache-dependency-path: plugin/ralph-knowledge/package-lock.json
 
+      - name: Cache HuggingFace models (GH-920)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: ${{ runner.os }}-hf-${{ hashFiles('plugin/ralph-knowledge/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-hf-
+
       - name: Install dependencies
         run: npm ci
 
@@ -96,6 +104,10 @@ jobs:
       - name: Heap regression bench (GH-913)
         run: npm run bench:heap -- --assert
         timeout-minutes: 5
+
+      - name: Retrieval eval (GH-920)
+        run: npm run eval:retrieval -- --assert
+        timeout-minutes: 10
 
   test-cli:
     runs-on: ubuntu-latest

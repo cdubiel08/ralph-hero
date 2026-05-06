@@ -339,8 +339,8 @@ Add the `eval:retrieval` npm script, the GitHub Actions step, and the HuggingFac
 
 #### Automated Verification:
 
-- [ ] `npm run eval:retrieval -- --assert` (in `plugin/ralph-knowledge/`) — exits 0 with `Hit@5 >= 5/8`.
-- [ ] `actionlint` passes against `.github/workflows/ci.yml` (run via the `lint-workflows` CI job).
+- [x] `npm run eval:retrieval -- --assert` (in `plugin/ralph-knowledge/`) — exits 0 with `Hit@5 >= 5/8`.
+- [x] `actionlint` passes against `.github/workflows/ci.yml` (run via the `lint-workflows` CI job).
 - [ ] PR CI run shows the `Retrieval eval (GH-920)` step succeeded across all three Node matrix versions (18, 20, 22).
 
 #### Manual Verification:
