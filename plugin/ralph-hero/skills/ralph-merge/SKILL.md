@@ -209,6 +209,57 @@ And stop.
    - If user selects **"Merge without review"**: proceed to Step 5.
    - If user selects **"Stop"** or **"Other"**: stop.
 
+## Step 4a: Autonomous Merge Gate
+
+**Runs only when `RALPH_AUTO_MERGE=true`.** When the env var is unset or set to anything else (the standalone `just merge NNN` case), skip this step entirely and continue with the existing flow at Step 5 — backwards compatibility with interactive merging is preserved.
+
+This gate is the safety net that lets the loop runner (`scripts/ralph-loop.sh --auto-merge`) merge approved PRs autonomously. It is intentionally orthogonal to `RALPH_REVIEW_MODE` (which only gates the code-review step in Step 4): you can have auto code-review without auto-merge, and vice versa.
+
+```bash
+if [ "${RALPH_AUTO_MERGE:-false}" != "true" ]; then
+    echo "RALPH_AUTO_MERGE not set; skipping autonomous merge gate."
+    # fall through to Step 5 — interactive flow
+fi
+```
+
+When `RALPH_AUTO_MERGE=true`, evaluate **all** of the following criteria. If any one fails, output `AUTO-MERGE BLOCKED` (see below) and STOP. The loop will retry on the next iteration.
+
+### Criteria (ALL must hold)
+
+1. **Review approved**: `gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'` returns `APPROVED`.
+   - Exception: an XS-estimated issue with zero review comments is treated as approved (small changes do not require explicit review approval). Use `gh pr view PR_NUMBER --json comments --jq '.comments | length'` and the issue's `estimate` field to detect this case.
+2. **CI green**: `gh pr checks PR_NUMBER --json name,state,conclusion` returns checks where every entry has `state: completed` AND `conclusion: success`. Pending or failing checks block the merge.
+3. **PR open and mergeable**: `gh pr view PR_NUMBER --json state,mergeable --jq '{state,mergeable}'` shows `state: OPEN` and `mergeable: MERGEABLE`. A `CONFLICTING` or `UNKNOWN` mergeable status blocks.
+
+### Recommended invocation
+
+```bash
+review_decision=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision')
+ci_status=$(gh pr checks "$PR_NUMBER" --json name,state,conclusion)
+pr_state=$(gh pr view "$PR_NUMBER" --json state,mergeable --jq '{state,mergeable}')
+```
+
+Then evaluate the three criteria together. The XS exception is checked only if `review_decision` is null/empty.
+
+### On miss — `AUTO-MERGE BLOCKED`
+
+If any criterion fails, output the following block and STOP. The block uses a distinct status string so callers (including the loop runner) can distinguish it from `MERGE BLOCKED` (human change request) and `MERGE NOT READY` (transient mergeability issue):
+
+```
+AUTO-MERGE BLOCKED
+Issue: #NNN
+PR: #PR_NUMBER
+Review: [APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|null]
+CI: [summary — e.g., "2/5 checks pending", "1 failing: lint", "all green"]
+Reason: [first failing criterion in plain English]
+```
+
+The next loop iteration will re-evaluate. There is no fix cycle here — `RALPH_AUTO_MERGE` only merges when everything is already green; it never edits code.
+
+### On pass
+
+All criteria hold. Proceed to Step 5 (the existing readiness check + merge flow).
+
 ## Step 5: Check PR Readiness (with Rejection Detection)
 
 ```bash

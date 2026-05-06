@@ -160,6 +160,39 @@ impl *args:
     set -- $_args
     dispatch "ralph-impl" "$@"
 
+# Validate completed implementation - run tests, smoke checks, summarize verdict
+[group('workflow')]
+val *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-val" "$@"
+
+# Open a pull request for an "In Progress" issue with a feature branch
+[group('workflow')]
+pr *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-pr" "$@"
+
+# Merge an approved PR after code review and move issues to Done
+[group('workflow')]
+merge *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-merge" "$@"
+
 # Run project hygiene check - stale items, archive candidates
 [group('workflow')]
 hygiene *args:
@@ -211,14 +244,15 @@ hero *args:
     set -- $_args
     dispatch "hero" "$@"
 
-# Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
+# Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl, val, pr, code-review, [merge]
 [group('orchestrate')]
-loop mode="all" review="auto" split="auto" hygiene="auto" budget="8.00" timeout="60m":
+loop mode="all" review="auto" split="auto" hygiene="auto" budget="8.00" timeout="60m" auto-merge="false":
     #!/usr/bin/env bash
     set -eu
     args=""
     if [ "{{mode}}" != "all" ]; then args="--{{mode}}-only"; fi
     args="$args --review={{review}} --split={{split}} --hygiene={{hygiene}}"
+    if [ "{{auto-merge}}" = "true" ]; then args="$args --auto-merge"; fi
     RALPH_BUDGET="{{budget}}" TIMEOUT="{{timeout}}" "{{justfile_directory()}}"/scripts/ralph-loop.sh $args
 
 # One-time project setup - create GitHub Project V2 with required fields
