@@ -1,11 +1,17 @@
 ---
 date: 2026-04-06
-status: draft
+status: superseded
 type: plan
 tags: [hero, dispatch, agents, context-window, haiku]
 ---
 
 # Haiku Skill-to-Agent Dispatch Fix
+
+## Superseded By
+
+[2026-05-05-GH-0895-depth-2-dispatch-resolution](2026-05-05-GH-0895-depth-2-dispatch-resolution.md)
+
+The ralph-pr conversion described in Phase 1 of this plan was absorbed into Phase 1 Task 1.3 of the GH-895 depth-2 dispatch resolution plan and shipped together with the code-review hoist. The ralph-merge conversion described in Phase 2 was rejected: research (`thoughts/shared/research/2026-05-05-GH-0895-depth-2-dispatch-resolution-path.md`) found that converting merge to Agent dispatch would push the `code-review:code-review` plugin's parallel-reviewer fan-out to depth 2 (forbidden by the Claude Code runtime). Path B was adopted instead — the code review gate moves from ralph-merge up to finish, which preserves the depth-0 fan-out without converting merge. ralph-merge remains a `Skill()` invoked inline by finish.
 
 ## Overview
 

@@ -68,14 +68,14 @@ After this plan:
 
 ### Verification
 
-- [ ] `grep -n 'code-review:code-review' plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns zero matches
-- [ ] `grep -n 'code-review:code-review' plugin/ralph-hero/skills/finish/SKILL.md` returns at least one match (the new inline call)
-- [ ] `grep -n 'Skill.*ralph-pr' plugin/ralph-hero/skills/hero/SKILL.md` returns zero matches
-- [ ] `grep -n 'Agent.*pr-agent' plugin/ralph-hero/skills/hero/SKILL.md` returns at least one match
-- [ ] ralph-merge's `allowed-tools` does NOT include `Skill`
-- [ ] ralph-merge's frontmatter `context: fork` is removed (it became misleading — the skill is now a leaf and runs in caller context as a normal Skill())
-- [ ] Standalone `just merge NNN` on a PR with no review decision outputs `MERGE BLOCKED — review required` and stops
-- [ ] `RALPH_REVIEW_MODE=auto` finish run on a PR with auto-review feedback dispatches impl-agent and re-runs the merge path
+- [x] `grep -n 'code-review:code-review' plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns zero matches
+- [x] `grep -n 'code-review:code-review' plugin/ralph-hero/skills/finish/SKILL.md` returns at least one match (the new inline call)
+- [x] `grep -n 'Skill.*ralph-pr' plugin/ralph-hero/skills/hero/SKILL.md` returns zero matches
+- [x] `grep -n 'Agent.*pr-agent' plugin/ralph-hero/skills/hero/SKILL.md` returns at least one match
+- [x] ralph-merge's `allowed-tools` does NOT include `Skill`
+- [x] ralph-merge's frontmatter `context: fork` is removed (it became misleading — the skill is now a leaf and runs in caller context as a normal Skill())
+- [ ] Standalone `just merge NNN` on a PR with no review decision outputs `MERGE BLOCKED — review required` and stops (manual)
+- [ ] `RALPH_REVIEW_MODE=auto` finish run on a PR with auto-review feedback dispatches impl-agent and re-runs the merge path (manual)
 
 ## What We're NOT Doing
 
@@ -114,19 +114,19 @@ Single phase implementing the full Path B resolution plus the independent ralph-
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] A new step (Step 3.5 or renamed Step 4 with merge dispatch becoming Step 5) runs the code-review gate BEFORE the merge-mechanics dispatch.
-  - [ ] The new step calls `gh pr view PR_NUMBER --json reviewDecision` and branches:
+  - [x] A new step (Step 3.5 or renamed Step 4 with merge dispatch becoming Step 5) runs the code-review gate BEFORE the merge-mechanics dispatch.
+  - [x] The new step calls `gh pr view PR_NUMBER --json reviewDecision` and branches:
     - If `APPROVED` → continue to merge dispatch.
     - If `CHANGES_REQUESTED` (human reviewer) → output `FINISH BLOCKED` with reason "Human reviewer requested changes" and stop.
     - If null/empty → check `RALPH_REVIEW_MODE`:
       - `auto` → dispatch `Skill("code-review:code-review", "PR_NUMBER")` directly inline (legal: finish runs at depth 0, code-review runs at depth 0, fan-out at depth 1).
       - `interactive` (default) → present the existing AskUserQuestion choice ("Run code review" / "Merge without review"), behavior matching the prior ralph-merge Step 4 interactive branch.
-  - [ ] After the auto code-review completes, re-check `reviewDecision`:
+  - [x] After the auto code-review completes, re-check `reviewDecision`:
     - `APPROVED` → continue to merge dispatch.
     - `CHANGES_REQUESTED` → dispatch impl-agent in Address Mode (the existing Step 4a logic, now repurposed as the post-review fix cycle). Max 1 fix cycle. Re-run code-review once after the fix; if still `CHANGES_REQUESTED`, output `FINISH BLOCKED — code review feedback unresolved` and stop.
-  - [ ] After the gate resolves, the merge dispatch step calls `Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")` (unchanged) and handles `MERGED`, `MERGE BLOCKED`, `MERGE NOT READY` as before.
-  - [ ] The `CODE_REVIEW_FEEDBACK` status path is removed from finish — the fix cycle is now driven from the new gate step, not from interpreting ralph-merge's output.
-  - [ ] Configuration section adds `- Review mode: !` `echo ${RALPH_REVIEW_MODE:-interactive}` `` resolution line.
+  - [x] After the gate resolves, the merge dispatch step calls `Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")` (unchanged) and handles `MERGED`, `MERGE BLOCKED`, `MERGE NOT READY` as before.
+  - [x] The `CODE_REVIEW_FEEDBACK` status path is removed from finish — the fix cycle is now driven from the new gate step, not from interpreting ralph-merge's output.
+  - [x] Configuration section adds `- Review mode: !` `echo ${RALPH_REVIEW_MODE:-interactive}` `` resolution line.
 
 #### Task 1.2: Strip code-review gate from ralph-merge/SKILL.md
 - **files**: `plugin/ralph-hero/skills/ralph-merge/SKILL.md` (modify)
@@ -134,19 +134,19 @@ Single phase implementing the full Path B resolution plus the independent ralph-
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] The entire Step 4 ("Code Review Gate", lines ~103-211) is replaced with a smaller "Step 4: Review Decision Guard":
+  - [x] The entire Step 4 ("Code Review Gate", lines ~103-211) is replaced with a smaller "Step 4: Review Decision Guard":
     - Calls `gh pr view PR_NUMBER --json reviewDecision`.
     - If `APPROVED` or null AND the issue's estimate is `XS` with zero PR comments → continue to Step 4a / Step 5 (preserves the existing XS-no-review exception in Step 4a).
     - If `null` (and not the XS exception) → output `MERGE BLOCKED` with reason "Code review required — invoke /ralph-hero:finish or /ralph-hero:ralph-code-review first" and stop.
     - If `CHANGES_REQUESTED` → output `MERGE BLOCKED` with reason "Reviewer requested changes — address feedback before merging" and stop.
-  - [ ] No `Skill("code-review:code-review", ...)` call remains anywhere in ralph-merge.
-  - [ ] No `AskUserQuestion` for code-review remains in ralph-merge (interactive prompt now lives in finish).
-  - [ ] The output-contract table at the top of Step 4 is updated: `CODE_REVIEW_FEEDBACK` row is removed (no longer emitted by ralph-merge).
-  - [ ] Step 4a (Autonomous Merge Gate, `RALPH_AUTO_MERGE=true`) is unchanged.
-  - [ ] Step 5 (Check PR Readiness) and all subsequent steps are unchanged.
-  - [ ] Frontmatter `allowed-tools` no longer contains `Skill` and no longer contains `AskUserQuestion`.
-  - [ ] Frontmatter `context: fork` is removed (the skill now runs inline as a leaf merge-mechanics skill; `context: fork` was misleading documentation and is not enforced anyway).
-  - [ ] The skill's description in frontmatter is updated to reflect the new scope (e.g., "Merge an approved pull request — handles PR readiness, merges, cleans up worktree, moves issues to Done. Code review must be run by the caller (finish or ralph-code-review).").
+  - [x] No `Skill("code-review:code-review", ...)` call remains anywhere in ralph-merge.
+  - [x] No `AskUserQuestion` for code-review remains in ralph-merge (interactive prompt now lives in finish).
+  - [x] The output-contract table at the top of Step 4 is updated: `CODE_REVIEW_FEEDBACK` row is removed (no longer emitted by ralph-merge).
+  - [x] Step 4a (Autonomous Merge Gate, `RALPH_AUTO_MERGE=true`) is unchanged.
+  - [x] Step 5 (Check PR Readiness) and all subsequent steps are unchanged.
+  - [x] Frontmatter `allowed-tools` no longer contains `Skill` and no longer contains `AskUserQuestion`.
+  - [x] Frontmatter `context: fork` is removed (the skill now runs inline as a leaf merge-mechanics skill; `context: fork` was misleading documentation and is not enforced anyway).
+  - [x] The skill's description in frontmatter is updated to reflect the new scope (e.g., "Merge an approved pull request — handles PR readiness, merges, cleans up worktree, moves issues to Done. Code review must be run by the caller (finish or ralph-code-review).").
 
 #### Task 1.3: Convert hero's PR dispatch from Skill to pr-agent
 - **files**: `plugin/ralph-hero/skills/hero/SKILL.md` (modify)
@@ -154,9 +154,9 @@ Single phase implementing the full Path B resolution plus the independent ralph-
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] The `Skill("ralph-hero:ralph-pr", args="NNN")` call is replaced with `Agent(subagent_type="ralph-hero:pr-agent", prompt="Create PR for GH-NNN. Worktree: worktrees/GH-NNN", description="PR for GH-NNN")`.
-  - [ ] The Dispatch Architecture explanation block is updated to document the new pattern: PR phase always uses `Agent()` (haiku in isolated context); merge phase remains `Skill()` inline (Path B preserves code-review fan-out).
-  - [ ] No other dispatch calls in hero/SKILL.md are changed.
+  - [x] The `Skill("ralph-hero:ralph-pr", args="NNN")` call is replaced with `Agent(subagent_type="ralph-hero:pr-agent", prompt="Create PR for GH-NNN. Worktree: worktrees/GH-NNN", description="PR for GH-NNN")`.
+  - [x] The Dispatch Architecture explanation block is updated to document the new pattern: PR phase always uses `Agent()` (haiku in isolated context); merge phase remains `Skill()` inline (Path B preserves code-review fan-out).
+  - [x] No other dispatch calls in hero/SKILL.md are changed.
 
 #### Task 1.4: Mark superseded draft plans
 - **files**:
@@ -166,9 +166,9 @@ Single phase implementing the full Path B resolution plus the independent ralph-
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `2026-04-06-haiku-skill-to-agent-dispatch.md`: front-matter `status` changed from `draft` to `superseded`. A `## Superseded By` section added near the top pointing to this plan with one-paragraph explanation: ralph-pr conversion was absorbed into Phase 1 Task 1.3 of this plan; ralph-merge conversion was rejected in favor of Path B (hoist code-review out of merge instead of converting merge to Agent).
-  - [ ] `2026-04-06-auto-code-review-impl-fix-loop.md`: front-matter `status` changed from `draft` to `superseded`. A `## Superseded By` section added pointing to this plan with one-paragraph explanation: the auto code-review gate moved up to finish (Task 1.1) instead of staying in ralph-merge; the impl-agent fix-cycle pattern is preserved but now keyed on the new finish-owned gate, not on ralph-merge's `CODE_REVIEW_FEEDBACK` output.
-  - [ ] Both files retain all existing content below the new header — no historical content is deleted.
+  - [x] `2026-04-06-haiku-skill-to-agent-dispatch.md`: front-matter `status` changed from `draft` to `superseded`. A `## Superseded By` section added near the top pointing to this plan with one-paragraph explanation: ralph-pr conversion was absorbed into Phase 1 Task 1.3 of this plan; ralph-merge conversion was rejected in favor of Path B (hoist code-review out of merge instead of converting merge to Agent).
+  - [x] `2026-04-06-auto-code-review-impl-fix-loop.md`: front-matter `status` changed from `draft` to `superseded`. A `## Superseded By` section added pointing to this plan with one-paragraph explanation: the auto code-review gate moved up to finish (Task 1.1) instead of staying in ralph-merge; the impl-agent fix-cycle pattern is preserved but now keyed on the new finish-owned gate, not on ralph-merge's `CODE_REVIEW_FEEDBACK` output.
+  - [x] Both files retain all existing content below the new header — no historical content is deleted.
 
 #### Task 1.5: Verify standalone safety + cross-skill consistency
 - **files**: read-only across the repo (no file edits)
@@ -176,22 +176,22 @@ Single phase implementing the full Path B resolution plus the independent ralph-
 - **complexity**: low
 - **depends_on**: [1.1, 1.2, 1.3]
 - **acceptance**:
-  - [ ] `grep -rn 'code-review:code-review' plugin/ralph-hero/skills/ralph-merge/` returns zero matches.
-  - [ ] `grep -rn 'code-review:code-review' plugin/ralph-hero/skills/finish/` returns at least one match.
-  - [ ] `grep -rn 'Skill.*ralph-pr' plugin/ralph-hero/skills/hero/SKILL.md` returns zero matches.
-  - [ ] `grep -rn 'Agent.*pr-agent' plugin/ralph-hero/skills/hero/SKILL.md` returns at least one match.
-  - [ ] ralph-merge's `allowed-tools` block does not contain `Skill` (mechanical inspection of frontmatter).
-  - [ ] ralph-code-review's `Skill("code-review:code-review", ...)` call is unchanged (this skill is the other depth-0 entry point — Path B does not affect it).
+  - [x] `grep -rn 'code-review:code-review' plugin/ralph-hero/skills/ralph-merge/` returns zero matches.
+  - [x] `grep -rn 'code-review:code-review' plugin/ralph-hero/skills/finish/` returns at least one match.
+  - [x] `grep -rn 'Skill.*ralph-pr' plugin/ralph-hero/skills/hero/SKILL.md` returns zero matches.
+  - [x] `grep -rn 'Agent.*pr-agent' plugin/ralph-hero/skills/hero/SKILL.md` returns at least one match.
+  - [x] ralph-merge's `allowed-tools` block does not contain `Skill` (mechanical inspection of frontmatter).
+  - [x] ralph-code-review's `Skill("code-review:code-review", ...)` call is unchanged (this skill is the other depth-0 entry point — Path B does not affect it).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors (the plan only edits markdown skill bodies, but the build catches accidental syntactic drift in the broader plugin).
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all existing tests pass (no behavior change in tools; the plan edits skill instructions only, not MCP tool implementations).
-- [ ] `grep -rn 'code-review:code-review' plugin/ralph-hero/skills/ralph-merge/` — zero matches.
-- [ ] `grep -rn 'CODE_REVIEW_FEEDBACK' plugin/ralph-hero/skills/ralph-merge/` — zero matches.
-- [ ] `grep -rn 'Skill.*ralph-pr' plugin/ralph-hero/skills/hero/SKILL.md` — zero matches.
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors (the plan only edits markdown skill bodies, but the build catches accidental syntactic drift in the broader plugin).
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all existing tests pass (no behavior change in tools; the plan edits skill instructions only, not MCP tool implementations).
+- [x] `grep -rn 'code-review:code-review' plugin/ralph-hero/skills/ralph-merge/` — zero matches.
+- [x] `grep -rn 'CODE_REVIEW_FEEDBACK' plugin/ralph-hero/skills/ralph-merge/` — zero matches.
+- [x] `grep -rn 'Skill.*ralph-pr' plugin/ralph-hero/skills/hero/SKILL.md` — zero matches.
 
 #### Manual Verification:
 
