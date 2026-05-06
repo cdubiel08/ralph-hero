@@ -112,7 +112,7 @@ jobs:
       # trusted publishing (npm CLI >= 11.5.1). Earlier attempts with Node 22
       # + in-place `npm install -g npm@latest` hit MODULE_NOT_FOUND on
       # promise-retry during the self-upgrade reify step.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org

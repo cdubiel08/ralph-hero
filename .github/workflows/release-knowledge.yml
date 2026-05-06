@@ -75,7 +75,7 @@ jobs:
           echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
           echo "Classification: mcp_changed=$MCP_CHANGED"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
