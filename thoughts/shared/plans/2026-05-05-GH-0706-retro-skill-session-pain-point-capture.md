@@ -1,6 +1,6 @@
 ---
 date: 2026-05-05
-status: draft
+status: complete
 type: plan
 github_issue: 706
 github_issues: [706]
@@ -202,14 +202,14 @@ Author the `plugin/ralph-hero/skills/retro/SKILL.md` file containing a complete 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -f plugin/ralph-hero/skills/retro/SKILL.md` — file exists
-- [ ] `head -1 plugin/ralph-hero/skills/retro/SKILL.md | grep -q '^---$'` — file starts with frontmatter delimiter
-- [ ] `awk '/^---$/{n++; if(n==2) exit} n==1' plugin/ralph-hero/skills/retro/SKILL.md | grep -q 'model: opus'` — frontmatter declares opus model
-- [ ] `awk '/^---$/{n++; if(n==2) exit} n==1' plugin/ralph-hero/skills/retro/SKILL.md | grep -vq 'context: fork'` — frontmatter does NOT declare context: fork
-- [ ] `grep -q 'codebase-locator' plugin/ralph-hero/skills/retro/SKILL.md && grep -q 'codebase-analyzer' plugin/ralph-hero/skills/retro/SKILL.md` — both sub-agents referenced
-- [ ] `grep -q 'AskUserQuestion' plugin/ralph-hero/skills/retro/SKILL.md` — interactive confirmation present
-- [ ] `grep -q 'thoughts/shared/research/' plugin/ralph-hero/skills/retro/SKILL.md` — research doc output path is referenced
-- [ ] `grep -q 'ralph-postmortem' plugin/ralph-hero/skills/retro/SKILL.md` — postmortem dedup mention present
+- [x] `test -f plugin/ralph-hero/skills/retro/SKILL.md` — file exists
+- [x] `head -1 plugin/ralph-hero/skills/retro/SKILL.md | grep -q '^---$'` — file starts with frontmatter delimiter
+- [x] `awk '/^---$/{n++; if(n==2) exit} n==1' plugin/ralph-hero/skills/retro/SKILL.md | grep -q 'model: opus'` — frontmatter declares opus model
+- [x] `awk '/^---$/{n++; if(n==2) exit} n==1' plugin/ralph-hero/skills/retro/SKILL.md | grep -vq 'context: fork'` — frontmatter does NOT declare context: fork
+- [x] `grep -q 'codebase-locator' plugin/ralph-hero/skills/retro/SKILL.md && grep -q 'codebase-analyzer' plugin/ralph-hero/skills/retro/SKILL.md` — both sub-agents referenced
+- [x] `grep -q 'AskUserQuestion' plugin/ralph-hero/skills/retro/SKILL.md` — interactive confirmation present
+- [x] `grep -q 'thoughts/shared/research/' plugin/ralph-hero/skills/retro/SKILL.md` — research doc output path is referenced
+- [x] `grep -q 'ralph-postmortem' plugin/ralph-hero/skills/retro/SKILL.md` — postmortem dedup mention present
 
 #### Manual Verification:
 - [ ] Reading the skill end-to-end conveys a coherent flow from invocation to research doc output
