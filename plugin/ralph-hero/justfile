@@ -202,7 +202,7 @@ hero *args:
 
 # Sequential autonomous loop - hygiene, triage, split, research, plan, review, impl
 [group('orchestrate')]
-loop mode="all" review="skip" split="auto" hygiene="auto" budget="5.00" timeout="60m":
+loop mode="all" review="auto" split="auto" hygiene="auto" budget="8.00" timeout="60m":
     #!/usr/bin/env bash
     set -eu
     args=""

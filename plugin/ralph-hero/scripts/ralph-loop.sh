@@ -10,8 +10,8 @@
 # Repeats until no eligible tickets in any queue
 #
 # Review modes:
-#   --review=skip        Skip review phase (default, backwards compatible)
-#   --review=auto        Opus critiques plan automatically
+#   --review=auto        Opus critiques plan automatically (default)
+#   --review=skip        Skip review phase
 #   --review=interactive Human reviews via wizard
 #
 # Hygiene modes:
@@ -51,7 +51,7 @@ portable_timeout() {
 
 # Parse all arguments
 MODE="all"
-REVIEW_MODE="${RALPH_REVIEW_MODE:-interactive}"
+REVIEW_MODE="${RALPH_REVIEW_MODE:-auto}"
 SPLIT_MODE="${RALPH_SPLIT_MODE:-auto}"
 HYGIENE_MODE="${RALPH_HYGIENE_MODE:-auto}"
 for arg in "$@"; do
@@ -125,7 +125,7 @@ run_claude() {
     echo ""
 
     # Return 1 if queue was empty (no work done)
-    if echo "$output" | grep -qi "Queue empty"; then
+    if echo "$output" | grep -qiE "Queue empty|Triage complete"; then
         return 1
     fi
     return 0

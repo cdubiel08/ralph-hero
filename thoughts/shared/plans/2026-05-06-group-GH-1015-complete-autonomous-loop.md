@@ -95,10 +95,10 @@ Default: issues end at "In Review" with a code-reviewed PR. `just loop auto-merg
 
 ### Verification
 
-- [ ] Phase 1: `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-triage/SKILL.md` ≥ 1
-- [ ] Phase 1: `grep 'REVIEW_MODE.*:-' plugin/ralph-hero/scripts/ralph-loop.sh` shows `auto`
-- [ ] Phase 1: `just triage` on empty backlog outputs `"Queue empty"`
-- [ ] Phase 1: `just loop --triage-only` on empty backlog exits after 1 iteration
+- [x] Phase 1: `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-triage/SKILL.md` ≥ 1
+- [x] Phase 1: `grep 'REVIEW_MODE.*:-' plugin/ralph-hero/scripts/ralph-loop.sh` shows `auto`
+- [x] Phase 1: `just triage` on empty backlog outputs `"Queue empty"`
+- [x] Phase 1: `just loop --triage-only` on empty backlog exits after 1 iteration
 - [ ] Phase 2: `just val`/`pr`/`merge` (no args) on empty queues each output `"Queue empty"`
 - [ ] Phase 3: `test -f plugin/ralph-hero/skills/ralph-code-review/SKILL.md`
 - [ ] Phase 3: `npx vitest run src/__tests__/state-resolution.test.ts` passes (consistency test)
@@ -145,9 +145,9 @@ Standardize queue-empty output, change review/budget defaults, and broaden the l
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Line ~91 changed from `No untriaged issues in Backlog. Triage complete.` to `No untriaged issues in Backlog. Queue empty.`
-  - [ ] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns ≥ 1
-  - [ ] No other occurrences of `"Triage complete"` left in the skill body (legacy phrasing fully replaced)
+  - [x] Line ~91 changed from `No untriaged issues in Backlog. Triage complete.` to `No untriaged issues in Backlog. Queue empty.`
+  - [x] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-triage/SKILL.md` returns ≥ 1
+  - [x] No other occurrences of `"Triage complete"` left in the skill body (legacy phrasing fully replaced)
 
 #### Task 1.2: Switch ralph-loop.sh review default and update usage banner
 - **files**: `plugin/ralph-hero/scripts/ralph-loop.sh` (modify)
@@ -155,10 +155,10 @@ Standardize queue-empty output, change review/budget defaults, and broaden the l
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Line 54 changed: `REVIEW_MODE="${RALPH_REVIEW_MODE:-auto}"` (was `interactive`)
-  - [ ] Usage comment at line 13 reflects new default: `"--review=auto        Opus critiques plan automatically (default)"`
-  - [ ] `grep 'REVIEW_MODE.*:-' plugin/ralph-hero/scripts/ralph-loop.sh` shows `auto`, not `interactive`
-  - [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` (syntax check) passes
+  - [x] Line 54 changed: `REVIEW_MODE="${RALPH_REVIEW_MODE:-auto}"` (was `interactive`)
+  - [x] Usage comment at line 13 reflects new default: `"--review=auto        Opus critiques plan automatically (default)"`
+  - [x] `grep 'REVIEW_MODE.*:-' plugin/ralph-hero/scripts/ralph-loop.sh` shows `auto`, not `interactive`
+  - [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` (syntax check) passes
 
 #### Task 1.3: Broaden run_claude queue-empty grep to safety-net pattern
 - **files**: `plugin/ralph-hero/scripts/ralph-loop.sh` (modify)
@@ -166,10 +166,10 @@ Standardize queue-empty output, change review/budget defaults, and broaden the l
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Line 128 changed from `grep -qi "Queue empty"` to `grep -qiE "Queue empty|Triage complete"`
-  - [ ] `grep -E 'Queue empty\|Triage complete' plugin/ralph-hero/scripts/ralph-loop.sh` matches the safety-net pattern
-  - [ ] Smoke test: `echo "No untriaged issues in Backlog. Queue empty." | grep -qiE "Queue empty|Triage complete"` exits 0
-  - [ ] Smoke test: `echo "No substantive issues found" | grep -qiE "Queue empty|Triage complete"` exits non-zero (no false positive on val output)
+  - [x] Line 128 changed from `grep -qi "Queue empty"` to `grep -qiE "Queue empty|Triage complete"`
+  - [x] `grep -E 'Queue empty\|Triage complete' plugin/ralph-hero/scripts/ralph-loop.sh` matches the safety-net pattern
+  - [x] Smoke test: `echo "No untriaged issues in Backlog. Queue empty." | grep -qiE "Queue empty|Triage complete"` exits 0
+  - [x] Smoke test: `echo "No substantive issues found" | grep -qiE "Queue empty|Triage complete"` exits non-zero (no false positive on val output)
 
 #### Task 1.4: Sync justfile loop recipe defaults
 - **files**: `plugin/ralph-hero/justfile` (modify)
@@ -177,10 +177,10 @@ Standardize queue-empty output, change review/budget defaults, and broaden the l
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Line 205 changed from `loop mode="all" review="skip" split="auto" hygiene="auto" budget="5.00" timeout="60m":` to `loop mode="all" review="auto" split="auto" hygiene="auto" budget="8.00" timeout="60m":`
-  - [ ] `grep 'review="auto"' plugin/ralph-hero/justfile` confirms the change
-  - [ ] `grep 'budget="8.00"' plugin/ralph-hero/justfile` confirms the budget bump
-  - [ ] `just --list 2>&1 | grep -q "loop"` exits 0 (justfile still parses)
+  - [x] Line 205 changed from `loop mode="all" review="skip" split="auto" hygiene="auto" budget="5.00" timeout="60m":` to `loop mode="all" review="auto" split="auto" hygiene="auto" budget="8.00" timeout="60m":`
+  - [x] `grep 'review="auto"' plugin/ralph-hero/justfile` confirms the change
+  - [x] `grep 'budget="8.00"' plugin/ralph-hero/justfile` confirms the budget bump
+  - [x] `just --list 2>&1 | grep -q "loop"` exits 0 (justfile still parses)
 
 #### Task 1.5: Update docs/cli.md with loop recipe + review defaults
 - **files**: `docs/cli.md` (modify or append)
@@ -188,21 +188,21 @@ Standardize queue-empty output, change review/budget defaults, and broaden the l
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] cli.md contains a section documenting `just loop` with the parameters: `mode`, `review` (default `auto`), `split` (default `auto`), `hygiene` (default `auto`), `budget` (default `"8.00"`), `timeout` (default `"60m"`), and the new `auto-merge` parameter (note its default is `"false"`, expecting Phase 4 to land later)
-  - [ ] Review-mode defaults section explicitly states: `auto` (default), `interactive`, `skip`
-  - [ ] `grep -i "review.*auto" docs/cli.md` returns ≥ 1
-  - [ ] No references to `review="skip"` as default remain in cli.md
+  - [x] cli.md contains a section documenting `just loop` with the parameters: `mode`, `review` (default `auto`), `split` (default `auto`), `hygiene` (default `auto`), `budget` (default `"8.00"`), `timeout` (default `"60m"`), and the new `auto-merge` parameter (note its default is `"false"`, expecting Phase 4 to land later)
+  - [x] Review-mode defaults section explicitly states: `auto` (default), `interactive`, `skip`
+  - [x] `grep -i "review.*auto" docs/cli.md` returns ≥ 1
+  - [x] No references to `review="skip"` as default remain in cli.md
 
 ### Phase 1 Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors (sanity that no TS broke)
-- [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` — passes
-- [ ] All five Task acceptance grep checks pass
+- [x] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors (sanity that no TS broke)
+- [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` — passes
+- [x] All five Task acceptance grep checks pass
 
 #### Manual Verification:
-- [ ] `just triage` on an empty backlog outputs the literal `"Queue empty"`
-- [ ] `just loop --triage-only` on an empty backlog exits after 1 iteration (banner shows `Iteration 1 of 10`, then `>>> No work found in any queue. Stopping.`)
+- [x] `just triage` on an empty backlog outputs the literal `"Queue empty"`
+- [x] `just loop --triage-only` on an empty backlog exits after 1 iteration (banner shows `Iteration 1 of 10`, then `>>> No work found in any queue. Stopping.`)
 
 **Creates for next phase**: A reliable queue-empty signal for the loop runner. Phases 2–4 will emit `"Queue empty"` from their integrator skills and depend on this grep pattern matching.
 

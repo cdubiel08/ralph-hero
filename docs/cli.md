@@ -162,3 +162,30 @@ just quick-draft "Refactor cache layer" priority="P2" estimate="M" state="Backlo
 | `priority` | `""` | Priority level |
 | `estimate` | `""` | Size estimate |
 | `state` | `"Backlog"` | Initial workflow state |
+
+---
+
+## Orchestration Recipes
+
+### `loop`
+
+Run the autonomous workflow loop until all queues are empty. Sequence: hygiene → triage → split → research → plan → review → impl (integrator phases land in a later phase).
+
+```bash
+just loop                                  # Default: full pipeline, review=auto
+just loop mode="triage"                    # Triage-only iteration
+just loop review="interactive"             # Human-in-the-loop plan review
+just loop budget="12.00" timeout="90m"     # Bigger budget per task
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `mode` | `"all"` | Run mode: `"all"`, or one of `triage`, `split`, `research`, `plan`, `review`, `impl`, `hygiene`, `analyst`, `builder`, `integrator` (each becomes a `--<mode>-only` flag) |
+| `review` | `"auto"` | Plan review mode: `"auto"` (Opus critiques the plan automatically), `"interactive"` (human reviews via wizard), `"skip"` (no review) |
+| `split` | `"auto"` | Split mode: `"auto"` (split oversized tickets automatically), `"skip"` (no split) |
+| `hygiene` | `"auto"` | Hygiene mode: `"auto"` (run board-scan before triage), `"skip"` (no hygiene) |
+| `budget` | `"8.00"` | Per-task budget in USD passed to `claude --max-budget-usd` |
+| `timeout` | `"60m"` | Per-task timeout passed to the loop's `portable_timeout` wrapper |
+| `auto-merge` | `"false"` | When `"true"`, the integrator merge phase will auto-merge approved PRs with passing CI (wiring lands in a later phase) |
+
+**Review-mode defaults.** The default is `auto` — Opus critiques each plan and posts the verdict as a comment. Use `interactive` when you want a human-in-the-loop wizard; use `skip` to bypass plan review entirely (e.g., for fast smoke tests). The loop's underlying script (`scripts/ralph-loop.sh`) reads `RALPH_REVIEW_MODE` from the environment if you want to set it once for a shell session.

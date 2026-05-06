@@ -88,7 +88,7 @@ Then STOP. Do not proceed.
 
 If no untriaged issue found (all numbers are in `triaged_numbers`, or Backlog is empty), respond:
 ```
-No untriaged issues in Backlog. Triage complete.
+No untriaged issues in Backlog. Queue empty.
 ```
 Then STOP.
 
@@ -250,7 +250,7 @@ When running as a team worker, mark your assigned task complete via TaskUpdate. 
 ### Step 9: Report
 
 ```
-Triage complete for #NNN: [Title]
+Triage done for #NNN: [Title]
 
 Action: [CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP]
 Reason: [Brief explanation]
