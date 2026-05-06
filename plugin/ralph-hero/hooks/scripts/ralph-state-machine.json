@@ -238,6 +238,21 @@
         "GitHub issue closed via PR auto-link"
       ]
     },
+    "ralph_code_review": {
+      "description": "Run code review on a PR and address feedback via impl-agent address mode (up to 3 rounds before escalating to Human Needed)",
+      "valid_input_states": ["In Review"],
+      "valid_output_states": ["In Review", "Human Needed"],
+      "preconditions": [
+        "Ticket must be in In Review state",
+        "Open PR must exist on the issue's feature branch",
+        "code-review:code-review skill must be available"
+      ],
+      "postconditions": [
+        "If review clean: ticket remains In Review",
+        "If review found issues and impl-agent fixed them: ticket remains In Review",
+        "If 3 review rounds exhausted: ticket moved to Human Needed with ## Code Review comment posted"
+      ]
+    },
     "ralph_review": {
       "description": "Review implementation plans before execution",
       "valid_input_states": ["Plan in Review"],

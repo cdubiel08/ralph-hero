@@ -100,8 +100,8 @@ Default: issues end at "In Review" with a code-reviewed PR. `just loop auto-merg
 - [x] Phase 1: `just triage` on empty backlog outputs `"Queue empty"`
 - [x] Phase 1: `just loop --triage-only` on empty backlog exits after 1 iteration
 - [x] Phase 2: `just val`/`pr`/`merge` (no args) on empty queues each output `"Queue empty"`
-- [ ] Phase 3: `test -f plugin/ralph-hero/skills/ralph-code-review/SKILL.md`
-- [ ] Phase 3: `npx vitest run src/__tests__/state-resolution.test.ts` passes (consistency test)
+- [x] Phase 3: `test -f plugin/ralph-hero/skills/ralph-code-review/SKILL.md`
+- [x] Phase 3: `npx vitest run src/__tests__/state-resolution.test.ts` passes (consistency test)
 - [ ] Phase 3: `just code-review NNN` on a PR with comments runs review and reports
 - [ ] Phase 4: `just loop --integrator-only` on an "In Progress" issue runs val → pr → code-review
 - [ ] Phase 4: `RALPH_AUTO_MERGE=true just merge NNN` with passing CI + approved review merges; with failing CI prints `"AUTO-MERGE BLOCKED"`
@@ -309,10 +309,10 @@ Create a standalone `ralph-code-review` skill that picks an "In Review" issue wi
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Add `ralph_code_review: ["In Review", "Human Needed"]` to `COMMAND_ALLOWED_STATES` (after `ralph_merge` entry)
-  - [ ] No changes to `SEMANTIC_INTENTS` (the `__ESCALATE__` wildcard `"*": "Human Needed"` already covers escalation)
-  - [ ] `grep -c "ralph_code_review" plugin/ralph-hero/mcp-server/src/lib/state-resolution.ts` returns ≥ 1
-  - [ ] `npm run build --prefix plugin/ralph-hero/mcp-server` — no TypeScript errors
+  - [x] Add `ralph_code_review: ["In Review", "Human Needed"]` to `COMMAND_ALLOWED_STATES` (after `ralph_merge` entry)
+  - [x] No changes to `SEMANTIC_INTENTS` (the `__ESCALATE__` wildcard `"*": "Human Needed"` already covers escalation)
+  - [x] `grep -c "ralph_code_review" plugin/ralph-hero/mcp-server/src/lib/state-resolution.ts` returns ≥ 1
+  - [x] `npm run build --prefix plugin/ralph-hero/mcp-server` — no TypeScript errors
 
 #### Task 3.2: Register ralph_code_review in state-machine JSON
 - **files**: `plugin/ralph-hero/hooks/scripts/ralph-state-machine.json` (modify)
@@ -320,10 +320,10 @@ Create a standalone `ralph-code-review` skill that picks an "In Review" issue wi
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] Add a `commands.ralph_code_review` block with: `description`, `valid_input_states: ["In Review"]`, `valid_output_states: ["In Review", "Human Needed"]`, plus `preconditions`/`postconditions` arrays following the structure of the `ralph_merge` block
-  - [ ] `grep -c "ralph_code_review" plugin/ralph-hero/hooks/scripts/ralph-state-machine.json` returns ≥ 1
-  - [ ] JSON validates: `node -e "JSON.parse(require('fs').readFileSync('plugin/ralph-hero/hooks/scripts/ralph-state-machine.json','utf8'))"` exits 0
-  - [ ] `npx vitest run plugin/ralph-hero/mcp-server/src/__tests__/state-resolution.test.ts` — both consistency tests at 317 and 347 pass (TS hardcoded entry matches JSON)
+  - [x] Add a `commands.ralph_code_review` block with: `description`, `valid_input_states: ["In Review"]`, `valid_output_states: ["In Review", "Human Needed"]`, plus `preconditions`/`postconditions` arrays following the structure of the `ralph_merge` block
+  - [x] `grep -c "ralph_code_review" plugin/ralph-hero/hooks/scripts/ralph-state-machine.json` returns ≥ 1
+  - [x] JSON validates: `node -e "JSON.parse(require('fs').readFileSync('plugin/ralph-hero/hooks/scripts/ralph-state-machine.json','utf8'))"` exits 0
+  - [x] `npx vitest run plugin/ralph-hero/mcp-server/src/__tests__/state-resolution.test.ts` — both consistency tests at 317 and 347 pass (TS hardcoded entry matches JSON)
 
 #### Task 3.3: Register ralph_code_review in command contracts
 - **files**: `plugin/ralph-hero/hooks/scripts/ralph-command-contracts.json` (modify)
@@ -331,10 +331,10 @@ Create a standalone `ralph-code-review` skill that picks an "In Review" issue wi
 - **complexity**: low
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] Add a `ralph_code_review` entry following the structure of the `ralph_merge` and `ralph_impl` entries already present
-  - [ ] Entry includes: `description`, `valid_input_states`, `valid_output_states`, `preconditions`, `postconditions`
-  - [ ] `grep -c "ralph_code_review" plugin/ralph-hero/hooks/scripts/ralph-command-contracts.json` returns ≥ 1
-  - [ ] JSON validates: `node -e "JSON.parse(require('fs').readFileSync('plugin/ralph-hero/hooks/scripts/ralph-command-contracts.json','utf8'))"` exits 0
+  - [x] Add a `ralph_code_review` entry following the structure of the `ralph_merge` and `ralph_impl` entries already present
+  - [x] Entry includes: `description`, `valid_input_states`, `valid_output_states`, `preconditions`, `postconditions`
+  - [x] `grep -c "ralph_code_review" plugin/ralph-hero/hooks/scripts/ralph-command-contracts.json` returns ≥ 1
+  - [x] JSON validates: `node -e "JSON.parse(require('fs').readFileSync('plugin/ralph-hero/hooks/scripts/ralph-command-contracts.json','utf8'))"` exits 0
 
 #### Task 3.4: Create ralph-code-review skill file
 - **files**: `plugin/ralph-hero/skills/ralph-code-review/SKILL.md` (create)
@@ -342,20 +342,20 @@ Create a standalone `ralph-code-review` skill that picks an "In Review" issue wi
 - **complexity**: high
 - **depends_on**: [3.3]
 - **acceptance**:
-  - [ ] File created at the path
-  - [ ] Frontmatter includes: `description`, `user-invocable: false`, `argument-hint: [optional-issue-number]`, `context: fork`, `model: sonnet`
-  - [ ] Frontmatter `hooks.SessionStart` runs `set-skill-env.sh RALPH_COMMAND=code-review`
-  - [ ] `allowed-tools` includes: `Read, Glob, Grep, Bash, Agent, Skill, get_issue, list_issues, save_issue, create_comment` (full MCP tool names)
-  - [ ] Body has 7 numbered Steps: Select Issue, Find PR, Check Existing Review State, Run Code Review, Address Feedback (Fix Loop), Re-Review (Loop), Report Result
-  - [ ] Step 1 implements queue-picking pattern: if no issue number, list "In Review" issues, output `"Queue empty."` and STOP if none
-  - [ ] Step 4 invokes `Skill("code-review:code-review", "PR_NUMBER")` (positional, matches `ralph-merge:123`)
-  - [ ] Step 4 records `BEFORE_COUNT = gh pr view ... --json comments --jq '.comments | length'` and re-checks `AFTER_COUNT` after the review; outputs `"Code review clean — no issues found"` and STOPs if equal
-  - [ ] Step 5 dispatches `Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback for issue #NNN...")`
-  - [ ] Step 6 enforces `MAX_ROUNDS = 3`; on exhaustion, calls `save_issue(workflowState="Human Needed", command="ralph_code_review")` and posts a `## Code Review` comment, then STOPs
-  - [ ] Skill body documents the budget-vs-rounds reconciliation: explicit cap at 3 rounds with `DEFAULT_BUDGET=8.00` (matches recipe). Note that 3 rounds may exhaust the budget; on budget exhaustion the skill exits cleanly. The 3-round cap is enforced at the loop level in the skill (counter + max), not at the budget level.
-  - [ ] Skill body documents: `code-review-agent` does NOT need Write/Edit (delegates writes to nested `impl-agent`)
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-code-review/SKILL.md` returns ≥ 1
-  - [ ] Frontmatter contains `context: fork` and `user-invocable: false` (verified: `grep -c "context: fork" SKILL.md` ≥ 1 and `grep -c "user-invocable: false" SKILL.md` ≥ 1)
+  - [x] File created at the path
+  - [x] Frontmatter includes: `description`, `user-invocable: false`, `argument-hint: [optional-issue-number]`, `context: fork`, `model: sonnet`
+  - [x] Frontmatter `hooks.SessionStart` runs `set-skill-env.sh RALPH_COMMAND=code-review`
+  - [x] `allowed-tools` includes: `Read, Glob, Grep, Bash, Agent, Skill, get_issue, list_issues, save_issue, create_comment` (full MCP tool names)
+  - [x] Body has 7 numbered Steps: Select Issue, Find PR, Check Existing Review State, Run Code Review, Address Feedback (Fix Loop), Re-Review (Loop), Report Result
+  - [x] Step 1 implements queue-picking pattern: if no issue number, list "In Review" issues, output `"Queue empty."` and STOP if none
+  - [x] Step 4 invokes `Skill("code-review:code-review", "PR_NUMBER")` (positional, matches `ralph-merge:123`)
+  - [x] Step 4 records `BEFORE_COUNT = gh pr view ... --json comments --jq '.comments | length'` and re-checks `AFTER_COUNT` after the review; outputs `"Code review clean — no issues found"` and STOPs if equal
+  - [x] Step 5 dispatches `Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback for issue #NNN...")`
+  - [x] Step 6 enforces `MAX_ROUNDS = 3`; on exhaustion, calls `save_issue(workflowState="Human Needed", command="ralph_code_review")` and posts a `## Code Review` comment, then STOPs
+  - [x] Skill body documents the budget-vs-rounds reconciliation: explicit cap at 3 rounds with `DEFAULT_BUDGET=8.00` (matches recipe). Note that 3 rounds may exhaust the budget; on budget exhaustion the skill exits cleanly. The 3-round cap is enforced at the loop level in the skill (counter + max), not at the budget level.
+  - [x] Skill body documents: `code-review-agent` does NOT need Write/Edit (delegates writes to nested `impl-agent`)
+  - [x] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-code-review/SKILL.md` returns ≥ 1
+  - [x] Frontmatter contains `context: fork` and `user-invocable: false` (verified: `grep -c "context: fork" SKILL.md` ≥ 1 and `grep -c "user-invocable: false" SKILL.md` ≥ 1)
 
 #### Task 3.5: Create code-review-agent file
 - **files**: `plugin/ralph-hero/agents/code-review-agent.md` (create)
@@ -363,13 +363,13 @@ Create a standalone `ralph-code-review` skill that picks an "In Review" issue wi
 - **complexity**: low
 - **depends_on**: [3.4]
 - **acceptance**:
-  - [ ] File created at the path
-  - [ ] Frontmatter: `name: code-review-agent`, `description: ...`, `model: sonnet`
-  - [ ] `tools:` field is comma-separated: `Read, Glob, Grep, Bash, Agent, Skill, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues, mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment`
-  - [ ] `skills:` field includes `- ralph-hero:ralph-code-review`
-  - [ ] Body is one short paragraph instructing the agent to follow the preloaded skill (matches pattern of `val-agent.md`, `pr-agent.md`)
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/agents/code-review-agent.md` returns ≥ 1
-  - [ ] No Write/Edit in `tools:` (intentional — nested impl-agent does writes)
+  - [x] File created at the path
+  - [x] Frontmatter: `name: code-review-agent`, `description: ...`, `model: sonnet`
+  - [x] `tools:` field is comma-separated: `Read, Glob, Grep, Bash, Agent, Skill, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues, mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment`
+  - [x] `skills:` field includes `- ralph-hero:ralph-code-review`
+  - [x] Body is one short paragraph instructing the agent to follow the preloaded skill (matches pattern of `val-agent.md`, `pr-agent.md`)
+  - [x] `grep -c "list_issues" plugin/ralph-hero/agents/code-review-agent.md` returns ≥ 1
+  - [x] No Write/Edit in `tools:` (intentional — nested impl-agent does writes)
 
 #### Task 3.6: Add code-review recipe to justfile
 - **files**: `plugin/ralph-hero/justfile` (modify)
@@ -377,22 +377,22 @@ Create a standalone `ralph-code-review` skill that picks an "In Review" issue wi
 - **complexity**: low
 - **depends_on**: [3.5]
 - **acceptance**:
-  - [ ] New recipe added after the `review` recipe (around line 138)
-  - [ ] Recipe uses `[group('workflow')]`, `dispatch "ralph-code-review" "$@"`, `DEFAULT_BUDGET=8.00 DEFAULT_TIMEOUT=30m`
-  - [ ] Recipe shape matches `review` recipe (sources `cli-dispatch.sh`, parses args, calls `dispatch`)
-  - [ ] `grep -c "code-review" plugin/ralph-hero/justfile` returns ≥ 1
-  - [ ] `just --list 2>&1 | grep -q "code-review"` exits 0
+  - [x] New recipe added after the `review` recipe (around line 138)
+  - [x] Recipe uses `[group('workflow')]`, `dispatch "ralph-code-review" "$@"`, `DEFAULT_BUDGET=8.00 DEFAULT_TIMEOUT=30m`
+  - [x] Recipe shape matches `review` recipe (sources `cli-dispatch.sh`, parses args, calls `dispatch`)
+  - [x] `grep -c "code-review" plugin/ralph-hero/justfile` returns ≥ 1
+  - [x] `just --list 2>&1 | grep -q "code-review"` exits 0
 
 ### Phase 3 Success Criteria
 
 #### Automated Verification:
-- [ ] `test -f plugin/ralph-hero/skills/ralph-code-review/SKILL.md` exits 0
-- [ ] `test -f plugin/ralph-hero/agents/code-review-agent.md` exits 0
-- [ ] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors
-- [ ] `npx vitest run plugin/ralph-hero/mcp-server/src/__tests__/state-resolution.test.ts` — passes (consistency test at line 347)
-- [ ] `npm test --prefix plugin/ralph-hero/mcp-server` — full suite passes
-- [ ] All Task acceptance grep checks pass
-- [ ] Both JSON files validate (state-machine + command-contracts)
+- [x] `test -f plugin/ralph-hero/skills/ralph-code-review/SKILL.md` exits 0
+- [x] `test -f plugin/ralph-hero/agents/code-review-agent.md` exits 0
+- [x] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors
+- [x] `npx vitest run plugin/ralph-hero/mcp-server/src/__tests__/state-resolution.test.ts` — passes (consistency test at line 347)
+- [x] `npm test --prefix plugin/ralph-hero/mcp-server` — full suite passes
+- [x] All Task acceptance grep checks pass
+- [x] Both JSON files validate (state-machine + command-contracts)
 
 #### Manual Verification:
 - [ ] `just code-review NNN` on an issue with an open PR runs review and reports
