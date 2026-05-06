@@ -108,20 +108,16 @@ jobs:
           echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
           echo "Classification: mcp_changed=$MCP_CHANGED"
 
+      # Node 24 ships with npm 11.x natively, which is required for OIDC
+      # trusted publishing (npm CLI >= 11.5.1). Earlier attempts with Node 22
+      # + in-place `npm install -g npm@latest` hit MODULE_NOT_FOUND on
+      # promise-retry during the self-upgrade reify step.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: plugin/ralph-hero/mcp-server/package-lock.json
-
-      # Upgrade npm to >= 11.5.1 — required for OIDC trusted publishing.
-      # Node 22 ships with npm 10.x, which silently fails OIDC and returns
-      # a misleading 404 from the registry on `npm publish`.
-      # `--force` works around the in-place self-upgrade module-loading bug
-      # where new npm tries to import modules from the old install mid-upgrade.
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest --force
 
       - name: Install dependencies
         run: npm ci
