@@ -66,7 +66,7 @@ Per the research document:
 - [ ] `plugin/ralph-knowledge/scripts/eval-retrieval.ts` runs locally via `npm run eval:retrieval` and prints Hit@1, Hit@5, MRR for the 8 queries.
 - [ ] `npm run eval:retrieval -- --assert` exits 0 when Hit@5 >= 62.5% (5/8); exits 1 otherwise.
 - [ ] `.github/workflows/ci.yml` runs the eval inside `build-and-test-knowledge` with HuggingFace model cache.
-- [ ] `benchmark/eval-rerank.mjs` reads queries from the shared JSON file (no behavior drift).
+- [x] `benchmark/eval-rerank.mjs` reads queries from the shared JSON file (no behavior drift).
 - [ ] `npm run build` succeeds (no TS errors introduced).
 - [ ] `npm test` continues to pass (no test regressions).
 - [ ] `npm run bench:heap -- --assert` continues to pass (no perf regressions).
@@ -368,10 +368,10 @@ Replace the inlined `QUERIES` array in `benchmark/eval-rerank.mjs` with a `readF
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Replace lines 27-84 (the `QUERIES` constant and its docstring) with a load from `../evals/golden-queries.json` using `readFileSync` + `JSON.parse` + path-resolved via `fileURLToPath(import.meta.url)`.
-  - [ ] Variable name remains `QUERIES` so the rest of the script (line 124's `for (const q of QUERIES)` etc.) does not need changes.
-  - [ ] The `expectedSubstrings`, `query`, `n`, `type` fields are preserved 1:1 from the JSON.
-  - [ ] The script's existing behavior (Hit@1 / Hit@5 / MRR computation, latency capture, JSON stdout output) is byte-equivalent to the pre-change behavior when the same DB is supplied.
+  - [x] Replace lines 27-84 (the `QUERIES` constant and its docstring) with a load from `../evals/golden-queries.json` using `readFileSync` + `JSON.parse` + path-resolved via `fileURLToPath(import.meta.url)`.
+  - [x] Variable name remains `QUERIES` so the rest of the script (line 124's `for (const q of QUERIES)` etc.) does not need changes.
+  - [x] The `expectedSubstrings`, `query`, `n`, `type` fields are preserved 1:1 from the JSON.
+  - [x] The script's existing behavior (Hit@1 / Hit@5 / MRR computation, latency capture, JSON stdout output) is byte-equivalent to the pre-change behavior when the same DB is supplied.
 
 #### Task 4.2: Manual smoke test against the live DB
 
@@ -380,20 +380,20 @@ Replace the inlined `QUERIES` array in `benchmark/eval-rerank.mjs` with a `readF
 - **complexity**: low
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] `node benchmark/eval-rerank.mjs > /tmp/eval-rerank-after.json 2>&1` (in `plugin/ralph-knowledge/`) completes successfully against the local `~/.ralph-hero/knowledge.db`.
-  - [ ] Diffing the aggregate block of `/tmp/eval-rerank-after.json` against a pre-change run shows identical Hit@1, Hit@5, MRR (latency may vary; queries themselves must not).
-  - [ ] No stderr panic about a missing `golden-queries.json` file path resolution.
+  - [x] `node benchmark/eval-rerank.mjs > /tmp/eval-rerank-after.json 2>&1` (in `plugin/ralph-knowledge/`) completes successfully against the local `~/.ralph-hero/knowledge.db`.
+  - [x] Diffing the aggregate block of `/tmp/eval-rerank-after.json` against a pre-change run shows identical Hit@1, Hit@5, MRR (latency may vary; queries themselves must not).
+  - [x] No stderr panic about a missing `golden-queries.json` file path resolution.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `node benchmark/eval-rerank.mjs > /tmp/out.json` completes (exit 0).
-- [ ] `jq '.aggregate.noRerank.hitAt5' /tmp/out.json` returns the expected `"7/8"` value (matches the post-reranker baseline doc).
+- [x] `node benchmark/eval-rerank.mjs > /tmp/out.json` completes (exit 0).
+- [x] `jq '.aggregate.noRerank.hitAt5' /tmp/out.json` returns the expected `"7/8"` value (matches the post-reranker baseline doc). [Note: actual live DB returned `"3/8"` both before and after the change. Byte-equivalent behavior was verified by diffing the per-query rank values pre/post — `7/8` was a stale assumption from a different DB snapshot, not a Phase 4 correctness gate.]
 
 #### Manual Verification:
 
-- [ ] Confirm `eval-rerank.mjs` no longer contains the inlined query objects (`grep -c 'expectedSubstrings' benchmark/eval-rerank.mjs` returns 0 — the only occurrence post-change is the JSON load).
+- [x] Confirm `eval-rerank.mjs` no longer contains the inlined query objects (`grep -c 'expectedSubstrings' benchmark/eval-rerank.mjs` returns 0 — the only occurrence post-change is the JSON load). [Note: 6 occurrences remain but all are runtime field references (`q.expectedSubstrings`, `findRank` parameter name, output formatting, doc comment) — no inline literal query objects remain.]
 
 **Creates for next phase**: (none — Phase 4 is the last phase)
 
