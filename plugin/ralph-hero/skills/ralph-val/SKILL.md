@@ -19,6 +19,7 @@ allowed-tools:
   - Grep
   - Bash
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
 ---
 
@@ -41,9 +42,27 @@ Extract issue number and optional `--plan-doc` flag from args:
 ```
 args: "NNN"                        -> issue_number=NNN, plan_doc=nil
 args: "NNN --plan-doc path/to/doc" -> issue_number=NNN, plan_doc=path
+args: ""                           -> issue_number=nil, queue-pick (see below)
 ```
 
 Export: `export RALPH_TICKET_ID="NNN"`
+
+**If no issue number** is provided, run the queue-picking branch:
+
+1. Query `list_issues(workflowState: "In Progress", limit: 10)` for candidates ready for validation.
+2. For each candidate (in returned order), check whether `worktrees/GH-NNN` exists relative to the git root (`git rev-parse --show-toplevel`). The first candidate with an existing worktree is the selected issue.
+3. If no candidate has a worktree, output BOTH lines and STOP:
+
+   ```
+   VALIDATION PASS — no work
+   Queue empty.
+   ```
+
+   Both lines are required: `VALIDATION PASS — no work` satisfies the `val-postcondition.sh` Stop hook (which accepts `VALIDATION PASS`, `VALIDATION FAIL`, or `Queue empty` as terminal verdicts), and `Queue empty.` is the literal token the loop runner greps for to detect an empty queue (`grep -qiE "Queue empty|Triage complete"`).
+
+4. Otherwise, set `issue_number` to the selected candidate and continue with Step 2 as if the number had been passed in as an argument.
+
+This branch mirrors the queue-picking pattern in `ralph-impl/SKILL.md` Step 1 so the loop runner can invoke `just val` argument-less.
 
 ## Step 2: Fetch Issue
 

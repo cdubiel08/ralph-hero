@@ -19,6 +19,7 @@ allowed-tools:
   - Glob
   - Bash
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
@@ -42,10 +43,33 @@ Extract issue number and optional `--worktree` flag from args:
 
 ```
 args: "NNN"                           -> issue_number=NNN, worktree=nil
-args: "NNN --worktree path/to/dir"   -> issue_number=NNN, worktree=path
+args: "NNN --worktree path/to/dir"    -> issue_number=NNN, worktree=path
+args: ""                              -> issue_number=nil, queue-pick (see below)
 ```
 
 Export: `export RALPH_TICKET_ID="GH-NNN"`
+
+**If no issue number** is provided, run the queue-picking branch:
+
+1. Query `list_issues(workflowState: "In Progress", limit: 10)` for candidates whose implementation has completed.
+2. For each candidate (in returned order), check BOTH conditions:
+   - `worktrees/GH-NNN` exists relative to the git root (`git rev-parse --show-toplevel`).
+   - No open PR exists for the candidate's branch:
+     ```bash
+     gh pr list --head feature/GH-NNN --json number --jq '.[0]'
+     ```
+     A `null` (or empty) result means no PR exists yet — eligible.
+3. The first candidate matching BOTH conditions is the selected issue.
+4. If no candidate matches, output the literal line and STOP:
+
+   ```
+   Queue empty.
+   ```
+
+   This is the token the loop runner greps for to detect an empty PR queue (`grep -qiE "Queue empty|Triage complete"`).
+5. Otherwise, set `issue_number` to the selected candidate and continue with Step 2 as if the number had been passed in as an argument.
+
+This branch mirrors the queue-picking pattern in `ralph-impl/SKILL.md` Step 1 so the loop runner can invoke `just pr` argument-less.
 
 ## Step 2: Fetch Issue
 
