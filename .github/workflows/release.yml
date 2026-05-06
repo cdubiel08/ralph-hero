@@ -115,6 +115,12 @@ jobs:
           cache: npm
           cache-dependency-path: plugin/ralph-hero/mcp-server/package-lock.json
 
+      # Upgrade npm to >= 11.5.1 — required for OIDC trusted publishing.
+      # Node 22 ships with npm 10.x, which silently fails OIDC and returns
+      # a misleading 404 from the registry on `npm publish`.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm ci
 
