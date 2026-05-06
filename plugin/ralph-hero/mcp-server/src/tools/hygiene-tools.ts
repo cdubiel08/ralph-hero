@@ -10,20 +10,20 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { paginateConnection } from "../lib/pagination.js";
-import { ensureFieldCache } from "../lib/helpers.js";
 import {
   buildHygieneReport,
   formatHygieneMarkdown,
   type HygieneConfig,
   DEFAULT_HYGIENE_CONFIG,
 } from "../lib/hygiene.js";
+import { fetchDashboardItems } from "../lib/dashboard-fetch.js";
+import type { DashboardItem } from "../lib/dashboard.js";
 import {
-  DASHBOARD_ITEMS_QUERY,
-  toDashboardItems,
-  type RawDashboardItem,
-} from "./dashboard-tools.js";
-import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+  toolSuccess,
+  toolError,
+  resolveProjectOwner,
+  resolveProjectNumbers,
+} from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Register hygiene tools
@@ -42,6 +42,12 @@ export function registerHygieneTools(
         .string()
         .optional()
         .describe("GitHub owner. Defaults to env var"),
+      projectNumbers: z
+        .array(z.coerce.number())
+        .optional()
+        .describe(
+          "Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.",
+        ),
       archiveDays: z
         .number()
         .optional()
@@ -83,34 +89,46 @@ export function registerHygieneTools(
     async (args) => {
       try {
         const owner = args.owner || resolveProjectOwner(client.config);
-        const projectNumber = client.config.projectNumber;
-
         if (!owner) {
           return toolError("owner is required");
         }
-        if (!projectNumber) {
-          return toolError("project number is required");
+
+        // Resolve project numbers
+        const projectNumbers =
+          args.projectNumbers ?? resolveProjectNumbers(client.config);
+
+        if (projectNumbers.length === 0) {
+          return toolError(
+            "No project numbers configured. Set RALPH_GH_PROJECT_NUMBER or RALPH_GH_PROJECT_NUMBERS.",
+          );
         }
 
-        // Ensure field cache
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        // Fetch items from all projects via the shared helper. We mirror
+        // the dashboard tool: when an explicit `projectNumbers` argument
+        // is provided, iterate one project at a time so the helper hits
+        // exactly the requested set; otherwise let the helper read the
+        // configured project list once.
+        const allItems: DashboardItem[] = [];
+        const fetchWarnings: string[] = [];
 
-        const projectId = fieldCache.getProjectId(projectNumber);
-        if (!projectId) {
-          return toolError("Could not resolve project ID");
+        if (args.projectNumbers && args.projectNumbers.length > 0) {
+          for (const pn of args.projectNumbers) {
+            const { items, warnings } = await fetchDashboardItems(
+              client,
+              fieldCache,
+              pn,
+            );
+            allItems.push(...items);
+            fetchWarnings.push(...warnings);
+          }
+        } else {
+          const { items, warnings } = await fetchDashboardItems(
+            client,
+            fieldCache,
+          );
+          allItems.push(...items);
+          fetchWarnings.push(...warnings);
         }
-
-        // Fetch all project items (reuse dashboard query)
-        const result = await paginateConnection<RawDashboardItem>(
-          (q, v) => client.projectQuery(q, v),
-          DASHBOARD_ITEMS_QUERY,
-          { projectId, first: 100 },
-          "node.items",
-          { maxItems: 500 },
-        );
-
-        // Convert to dashboard items
-        const dashboardItems = toDashboardItems(result.nodes);
 
         // Build hygiene config
         const hygieneConfig: HygieneConfig = {
@@ -122,18 +140,22 @@ export function registerHygieneTools(
           similarityThreshold: args.similarityThreshold ?? 0.8,
         };
 
-        // Build report
-        const report = buildHygieneReport(dashboardItems, hygieneConfig);
+        // Build report from merged items
+        const report = buildHygieneReport(allItems, hygieneConfig);
 
         // Format output
         if (args.format === "markdown") {
           return toolSuccess({
             ...report,
             formatted: formatHygieneMarkdown(report),
+            ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
           });
         }
 
-        return toolSuccess(report);
+        return toolSuccess({
+          ...report,
+          ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+        });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to generate hygiene report: ${message}`);
