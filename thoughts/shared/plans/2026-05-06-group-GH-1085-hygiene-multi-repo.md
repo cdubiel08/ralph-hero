@@ -283,8 +283,8 @@ Add per-repo breakdowns to `HygieneReport` (mirroring `DashboardData.repoBreakdo
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no errors
-- [ ] `npm test` — all tests pass, including the new repoBreakdowns tests
+- [x] `npm run build` — no errors
+- [x] `npm test` — all tests pass, including the new repoBreakdowns tests
 
 #### Manual Verification:
 - [ ] Live invocation with multi-repo project shows `## Per-Repository Breakdown` in markdown
