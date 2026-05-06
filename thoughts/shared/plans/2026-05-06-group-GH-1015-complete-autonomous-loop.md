@@ -99,7 +99,7 @@ Default: issues end at "In Review" with a code-reviewed PR. `just loop auto-merg
 - [x] Phase 1: `grep 'REVIEW_MODE.*:-' plugin/ralph-hero/scripts/ralph-loop.sh` shows `auto`
 - [x] Phase 1: `just triage` on empty backlog outputs `"Queue empty"`
 - [x] Phase 1: `just loop --triage-only` on empty backlog exits after 1 iteration
-- [ ] Phase 2: `just val`/`pr`/`merge` (no args) on empty queues each output `"Queue empty"`
+- [x] Phase 2: `just val`/`pr`/`merge` (no args) on empty queues each output `"Queue empty"`
 - [ ] Phase 3: `test -f plugin/ralph-hero/skills/ralph-code-review/SKILL.md`
 - [ ] Phase 3: `npx vitest run src/__tests__/state-resolution.test.ts` passes (consistency test)
 - [ ] Phase 3: `just code-review NNN` on a PR with comments runs review and reports
@@ -223,10 +223,10 @@ Add `list_issues` to the allowed-tools and an "If no issue number" branch to `ra
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] The hook accepts as terminal: `VALIDATION PASS`, `VALIDATION FAIL`, OR `Queue empty` (any one of the three present in the transcript)
-  - [ ] If none of the three are present, hook still exits 2 with the existing message
-  - [ ] Test (smoke): `echo '{"transcript_path":"/dev/null","stop_hook_active":false}' | bash plugin/ralph-hero/hooks/scripts/val-postcondition.sh` exits 2 (no verdict in input)
-  - [ ] No removal of the existing `STOP_HOOK_ACTIVE` early-return branch
+  - [x] The hook accepts as terminal: `VALIDATION PASS`, `VALIDATION FAIL`, OR `Queue empty` (any one of the three present in the transcript)
+  - [x] If none of the three are present, hook still exits 2 with the existing message
+  - [x] Test (smoke): `echo '{"transcript_path":"/dev/null","stop_hook_active":false}' | bash plugin/ralph-hero/hooks/scripts/val-postcondition.sh` exits 2 (no verdict in input)
+  - [x] No removal of the existing `STOP_HOOK_ACTIVE` early-return branch
 
 #### Task 2.2: Add queue-picking to ralph-val
 - **files**: `plugin/ralph-hero/skills/ralph-val/SKILL.md` (modify)
@@ -234,12 +234,12 @@ Add `list_issues` to the allowed-tools and an "If no issue number" branch to `ra
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to `allowed-tools` frontmatter
-  - [ ] Step 1 has a new "**If no issue number**" subsection that: queries `list_issues(workflowState: "In Progress", limit: 10)`, iterates candidates, checks `worktrees/GH-NNN` directory exists (relative to git root), picks the first match
-  - [ ] If no eligible issues, the skill outputs both: `VALIDATION PASS — no work` AND `Queue empty.` then STOPs (so val-postcondition is satisfied AND the loop's grep matches)
-  - [ ] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-val/SKILL.md` returns ≥ 1
-  - [ ] `grep -c "If no issue number" plugin/ralph-hero/skills/ralph-val/SKILL.md` returns ≥ 1
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-val/SKILL.md` returns ≥ 1
+  - [x] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to `allowed-tools` frontmatter
+  - [x] Step 1 has a new "**If no issue number**" subsection that: queries `list_issues(workflowState: "In Progress", limit: 10)`, iterates candidates, checks `worktrees/GH-NNN` directory exists (relative to git root), picks the first match
+  - [x] If no eligible issues, the skill outputs both: `VALIDATION PASS — no work` AND `Queue empty.` then STOPs (so val-postcondition is satisfied AND the loop's grep matches)
+  - [x] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-val/SKILL.md` returns ≥ 1
+  - [x] `grep -c "If no issue number" plugin/ralph-hero/skills/ralph-val/SKILL.md` returns ≥ 1
+  - [x] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-val/SKILL.md` returns ≥ 1
 
 #### Task 2.3: Add queue-picking to ralph-pr
 - **files**: `plugin/ralph-hero/skills/ralph-pr/SKILL.md` (modify)
@@ -247,12 +247,12 @@ Add `list_issues` to the allowed-tools and an "If no issue number" branch to `ra
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to `allowed-tools` frontmatter
-  - [ ] Step 1 has a new "**If no issue number**" subsection that: queries `list_issues(workflowState: "In Progress", limit: 10)`, iterates candidates, checks worktree exists AND `gh pr list --head feature/GH-NNN --json number --jq '.[0]'` is null, picks the first match
-  - [ ] If no eligible issues, outputs `Queue empty.` then STOPs
-  - [ ] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥ 1
-  - [ ] `grep -c "If no issue number" plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥ 1
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥ 1
+  - [x] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to `allowed-tools` frontmatter
+  - [x] Step 1 has a new "**If no issue number**" subsection that: queries `list_issues(workflowState: "In Progress", limit: 10)`, iterates candidates, checks worktree exists AND `gh pr list --head feature/GH-NNN --json number --jq '.[0]'` is null, picks the first match
+  - [x] If no eligible issues, outputs `Queue empty.` then STOPs
+  - [x] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥ 1
+  - [x] `grep -c "If no issue number" plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥ 1
+  - [x] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥ 1
 
 #### Task 2.4: Add queue-picking to ralph-merge
 - **files**: `plugin/ralph-hero/skills/ralph-merge/SKILL.md` (modify)
@@ -260,11 +260,11 @@ Add `list_issues` to the allowed-tools and an "If no issue number" branch to `ra
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to `allowed-tools` frontmatter
-  - [ ] Step 1 has a new "**If no issue number**" subsection that: queries `list_issues(workflowState: "In Review", limit: 10)`, iterates candidates, finds an open PR via `gh pr list --head feature/GH-NNN --json number,state --jq '.[0]'`, picks the first match
-  - [ ] If no eligible issues, outputs `Queue empty.` then STOPs
-  - [ ] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
+  - [x] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` added to `allowed-tools` frontmatter
+  - [x] Step 1 has a new "**If no issue number**" subsection that: queries `list_issues(workflowState: "In Review", limit: 10)`, iterates candidates, finds an open PR via `gh pr list --head feature/GH-NNN --json number,state --jq '.[0]'`, picks the first match
+  - [x] If no eligible issues, outputs `Queue empty.` then STOPs
+  - [x] `grep -c "Queue empty" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
+  - [x] `grep -c "list_issues" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
 
 #### Task 2.5: Add list_issues to integrator agents
 - **files**: `plugin/ralph-hero/agents/val-agent.md` (modify), `plugin/ralph-hero/agents/pr-agent.md` (modify), `plugin/ralph-hero/agents/merge-agent.md` (modify)
@@ -272,18 +272,18 @@ Add `list_issues` to the allowed-tools and an "If no issue number" branch to `ra
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` appears in the `tools:` field of each of the three agent files
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/agents/val-agent.md` returns ≥ 1
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/agents/pr-agent.md` returns ≥ 1
-  - [ ] `grep -c "list_issues" plugin/ralph-hero/agents/merge-agent.md` returns ≥ 1
-  - [ ] No accidental tool-list reordering or removal — the only diff per file is adding the new tool
+  - [x] `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues` appears in the `tools:` field of each of the three agent files
+  - [x] `grep -c "list_issues" plugin/ralph-hero/agents/val-agent.md` returns ≥ 1
+  - [x] `grep -c "list_issues" plugin/ralph-hero/agents/pr-agent.md` returns ≥ 1
+  - [x] `grep -c "list_issues" plugin/ralph-hero/agents/merge-agent.md` returns ≥ 1
+  - [x] No accidental tool-list reordering or removal — the only diff per file is adding the new tool
 
 ### Phase 2 Success Criteria
 
 #### Automated Verification:
-- [ ] All five Task acceptance grep checks pass
-- [ ] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors
-- [ ] `npm test --prefix plugin/ralph-hero/mcp-server` — passes (no regressions)
+- [x] All five Task acceptance grep checks pass
+- [x] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors
+- [x] `npm test --prefix plugin/ralph-hero/mcp-server` — passes (no regressions)
 
 #### Manual Verification:
 - [ ] `just val` (no args) with no "In Progress" issues → outputs both `VALIDATION PASS — no work` AND `Queue empty`

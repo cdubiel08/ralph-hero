@@ -21,6 +21,7 @@ allowed-tools:
   - AskUserQuestion
   - Skill
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_dependencies
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
@@ -47,9 +48,30 @@ Extract issue number and optional `--pr-url` flag from args:
 ```
 args: "NNN"                         -> issue_number=NNN, pr_url=nil
 args: "NNN --pr-url https://..."    -> issue_number=NNN, pr_url=provided
+args: ""                            -> issue_number=nil, queue-pick (see below)
 ```
 
 Export: `export RALPH_TICKET_ID="GH-NNN"`
+
+**If no issue number** is provided, run the queue-picking branch:
+
+1. Query `list_issues(workflowState: "In Review", limit: 10)` for candidates whose PR has been created and is awaiting merge.
+2. For each candidate (in returned order), check whether an open PR exists on the candidate's branch:
+   ```bash
+   gh pr list --head feature/GH-NNN --json number,state --jq '.[0]'
+   ```
+   A non-null result with `state: OPEN` indicates the candidate is eligible for merge.
+3. The first candidate with an open PR is the selected issue.
+4. If no candidate has an open PR, output the literal line and STOP:
+
+   ```
+   Queue empty.
+   ```
+
+   This is the token the loop runner greps for to detect an empty merge queue (`grep -qiE "Queue empty|Triage complete"`).
+5. Otherwise, set `issue_number` to the selected candidate and continue with Step 2 as if the number had been passed in as an argument.
+
+This branch mirrors the queue-picking pattern in `ralph-impl/SKILL.md` Step 1 so the loop runner can invoke `just merge` argument-less.
 
 ## Step 2: Fetch Issue
 
