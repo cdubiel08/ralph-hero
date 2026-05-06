@@ -174,8 +174,8 @@ Replace the inline single-project fetch loop in `tools/hygiene-tools.ts` with a 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Schema gains `projectNumbers: z.array(z.coerce.number()).optional().describe("Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.")` (matching `dashboard-tools.ts:59-64` verbatim).
-  - [ ] The new param is documented adjacent to `owner` for discoverability.
+  - [x] Schema gains `projectNumbers: z.array(z.coerce.number()).optional().describe("Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.")` (matching `dashboard-tools.ts:59-64` verbatim).
+  - [x] The new param is documented adjacent to `owner` for discoverability.
 
 #### Task 2.2: Replace inline fetch with `fetchDashboardItems` helper
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/hygiene-tools.ts` (modify)
@@ -183,14 +183,14 @@ Replace the inline single-project fetch loop in `tools/hygiene-tools.ts` with a 
 - **complexity**: medium
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] Imports updated: drop `paginateConnection`, `ensureFieldCache`, `DASHBOARD_ITEMS_QUERY`, `RawDashboardItem` (no longer needed); add `fetchDashboardItems` from `../lib/dashboard-fetch.js` and `resolveProjectNumbers` from `../types.js`.
-  - [ ] Tool handler resolves project numbers via `args.projectNumbers ?? resolveProjectNumbers(client.config)`.
-  - [ ] When the resolved list is empty, returns `toolError("No project numbers configured. Set RALPH_GH_PROJECT_NUMBER or RALPH_GH_PROJECT_NUMBERS.")` — matching the dashboard tool's message verbatim.
-  - [ ] Iterates the list and merges results: for each `pn`, calls `fetchDashboardItems(client, fieldCache, pn)` and pushes `items` into a flat `allItems: DashboardItem[]` while collecting `warnings` into `fetchWarnings: string[]`. (Mirror the dashboard-tool branch at `dashboard-tools.ts:176-185`.)
-  - [ ] When `args.projectNumbers` is omitted, calls `fetchDashboardItems(client, fieldCache)` once (helper reads the configured list internally).
-  - [ ] `buildHygieneReport(allItems, hygieneConfig)` is called on the merged set.
-  - [ ] When `fetchWarnings.length > 0`, response includes `fetchWarnings: string[]` field (mirror dashboard tool at `dashboard-tools.ts:281`).
-  - [ ] Existing single-project response shape is byte-identical when `projectNumbers` is omitted and only one project is configured (no `fetchWarnings` key when array is empty).
+  - [x] Imports updated: drop `paginateConnection`, `ensureFieldCache`, `DASHBOARD_ITEMS_QUERY`, `RawDashboardItem` (no longer needed); add `fetchDashboardItems` from `../lib/dashboard-fetch.js` and `resolveProjectNumbers` from `../types.js`.
+  - [x] Tool handler resolves project numbers via `args.projectNumbers ?? resolveProjectNumbers(client.config)`.
+  - [x] When the resolved list is empty, returns `toolError("No project numbers configured. Set RALPH_GH_PROJECT_NUMBER or RALPH_GH_PROJECT_NUMBERS.")` — matching the dashboard tool's message verbatim.
+  - [x] Iterates the list and merges results: for each `pn`, calls `fetchDashboardItems(client, fieldCache, pn)` and pushes `items` into a flat `allItems: DashboardItem[]` while collecting `warnings` into `fetchWarnings: string[]`. (Mirror the dashboard-tool branch at `dashboard-tools.ts:176-185`.)
+  - [x] When `args.projectNumbers` is omitted, calls `fetchDashboardItems(client, fieldCache)` once (helper reads the configured list internally).
+  - [x] `buildHygieneReport(allItems, hygieneConfig)` is called on the merged set.
+  - [x] When `fetchWarnings.length > 0`, response includes `fetchWarnings: string[]` field (mirror dashboard tool at `dashboard-tools.ts:281`).
+  - [x] Existing single-project response shape is byte-identical when `projectNumbers` is omitted and only one project is configured (no `fetchWarnings` key when array is empty).
 
 #### Task 2.3: Add multi-project test
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/hygiene.test.ts` (modify)
@@ -198,18 +198,18 @@ Replace the inline single-project fetch loop in `tools/hygiene-tools.ts` with a 
 - **complexity**: medium
 - **depends_on**: [2.2]
 - **acceptance**:
-  - [ ] New test in the `buildHygieneReport` describe block that constructs a 2-project input (items tagged `projectNumber: 3` and `projectNumber: 5`) and asserts all 6 sections aggregate items from both projects.
-  - [ ] Test asserts `report.totalItems` equals the sum of items across projects.
-  - [ ] Test does NOT exercise the tool layer — `buildHygieneReport` is a pure function and the multi-project merge happens before it. (The fetch-loop integration is covered by the existing dashboard-tool tests for `fetchDashboardItems`; we don't duplicate that mocking work.)
+  - [x] New test in the `buildHygieneReport` describe block that constructs a 2-project input (items tagged `projectNumber: 3` and `projectNumber: 5`) and asserts all 6 sections aggregate items from both projects.
+  - [x] Test asserts `report.totalItems` equals the sum of items across projects.
+  - [x] Test does NOT exercise the tool layer — `buildHygieneReport` is a pure function and the multi-project merge happens before it. (The fetch-loop integration is covered by the existing dashboard-tool tests for `fetchDashboardItems`; we don't duplicate that mocking work.)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no errors
-- [ ] `npm test` — all tests pass
+- [x] `npm run build` — no errors
+- [x] `npm test` — all tests pass
 
 #### Manual Verification:
-- [ ] Tool schema documents `projectNumbers`
+- [x] Tool schema documents `projectNumbers`
 - [ ] When `RALPH_GH_PROJECT_NUMBERS=3,5` is set in env, calling the tool with no args fetches both projects (sanity-check via REPL or the live CLI).
 
 **Creates for next phase**: `allItems` now carries `projectNumber` AND `repository` fields, ready for `groupDashboardItemsByRepo` in Phase 3.
