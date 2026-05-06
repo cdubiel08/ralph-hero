@@ -419,12 +419,12 @@ Extend `ralph-loop.sh` with the four integrator phases (val → pr → code-revi
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] After line 56 (init block), add `AUTO_MERGE="${RALPH_AUTO_MERGE:-false}"`
-  - [ ] In the for-arg loop (around line 76), add a `--auto-merge)` case that sets `AUTO_MERGE="true"`
-  - [ ] After the loop, add `export RALPH_AUTO_MERGE="$AUTO_MERGE"`
-  - [ ] In the banner (around line 95), add `echo "Auto-merge: $AUTO_MERGE"`
-  - [ ] `grep -c "auto-merge\|AUTO_MERGE" plugin/ralph-hero/scripts/ralph-loop.sh` returns ≥ 4 (init + flag parse + export + banner)
-  - [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
+  - [x] After line 56 (init block), add `AUTO_MERGE="${RALPH_AUTO_MERGE:-false}"`
+  - [x] In the for-arg loop (around line 76), add a `--auto-merge)` case that sets `AUTO_MERGE="true"`
+  - [x] After the loop, add `export RALPH_AUTO_MERGE="$AUTO_MERGE"`
+  - [x] In the banner (around line 95), add `echo "Auto-merge: $AUTO_MERGE"`
+  - [x] `grep -c "auto-merge\|AUTO_MERGE" plugin/ralph-hero/scripts/ralph-loop.sh` returns ≥ 4 (init + flag parse + export + banner)
+  - [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
 
 #### Task 4.2: Add new --*-only modes to ralph-loop.sh case
 - **files**: `plugin/ralph-hero/scripts/ralph-loop.sh` (modify)
@@ -432,10 +432,10 @@ Extend `ralph-loop.sh` with the four integrator phases (val → pr → code-revi
 - **complexity**: low
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] The mode case statement (around line 71) extended to include: `--val-only|--pr-only|--code-review-only|--merge-only`
-  - [ ] `grep -E "val-only.*pr-only.*code-review-only.*merge-only" plugin/ralph-hero/scripts/ralph-loop.sh` matches (all four on one alternation line)
-  - [ ] Existing `--analyst-only|--builder-only|--integrator-only` still in the case
-  - [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
+  - [x] The mode case statement (around line 71) extended to include: `--val-only|--pr-only|--code-review-only|--merge-only`
+  - [x] `grep -E "val-only.*pr-only.*code-review-only.*merge-only" plugin/ralph-hero/scripts/ralph-loop.sh` matches (all four on one alternation line)
+  - [x] Existing `--analyst-only|--builder-only|--integrator-only` still in the case
+  - [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
 
 #### Task 4.3: Replace integrator stub with four phase blocks
 - **files**: `plugin/ralph-hero/scripts/ralph-loop.sh` (modify)
@@ -443,13 +443,13 @@ Extend `ralph-loop.sh` with the four integrator phases (val → pr → code-revi
 - **complexity**: medium
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] Lines 219-223 (current stub `# Future: run_claude...`) replaced with four `if [ "$MODE" = ... ]` blocks: val, pr, code-review, merge
-  - [ ] Each non-merge block guarded by: `[ "$MODE" = "all" ] || [ "$MODE" = "--<phase>-only" ] || [ "$MODE" = "--integrator-only" ]`
-  - [ ] Merge block additionally guarded by `[ "$AUTO_MERGE" = "true" ]` so `just loop --merge-only` without auto-merge is a no-op
-  - [ ] When `MODE=--merge-only` and `AUTO_MERGE=false`, an explicit warning is echoed (e.g., `"--merge-only requires --auto-merge or auto-merge=true; skipping merge phase"`) — not silent
-  - [ ] Each phase calls `run_claude "/ralph-hero:ralph-<phase>" "<phase-name>"` and sets `work_done=true` on success
-  - [ ] `grep -c "ralph-val\|ralph-pr\|ralph-code-review\|ralph-merge" plugin/ralph-hero/scripts/ralph-loop.sh` returns ≥ 4
-  - [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
+  - [x] Lines 219-223 (current stub `# Future: run_claude...`) replaced with four `if [ "$MODE" = ... ]` blocks: val, pr, code-review, merge
+  - [x] Each non-merge block guarded by: `[ "$MODE" = "all" ] || [ "$MODE" = "--<phase>-only" ] || [ "$MODE" = "--integrator-only" ]`
+  - [x] Merge block additionally guarded by `[ "$AUTO_MERGE" = "true" ]` so `just loop --merge-only` without auto-merge is a no-op
+  - [x] When `MODE=--merge-only` and `AUTO_MERGE=false`, an explicit warning is echoed (e.g., `"--merge-only requires --auto-merge or auto-merge=true; skipping merge phase"`) — not silent
+  - [x] Each phase calls `run_claude "/ralph-hero:ralph-<phase>" "<phase-name>"` and sets `work_done=true` on success
+  - [x] `grep -c "ralph-val\|ralph-pr\|ralph-code-review\|ralph-merge" plugin/ralph-hero/scripts/ralph-loop.sh` returns ≥ 4
+  - [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
 
 #### Task 4.4: Update justfile loop recipe with auto-merge parameter
 - **files**: `plugin/ralph-hero/justfile` (modify)
@@ -457,11 +457,11 @@ Extend `ralph-loop.sh` with the four integrator phases (val → pr → code-revi
 - **complexity**: low
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] `loop` recipe signature gains an `auto-merge="false"` parameter (last position)
-  - [ ] Recipe body conditionally appends `--auto-merge` to args when `{{auto-merge}}` is `"true"`
-  - [ ] `grep -c "auto-merge" plugin/ralph-hero/justfile` returns ≥ 2 (parameter + conditional)
-  - [ ] `just --list 2>&1 | grep -q "loop"` exits 0
-  - [ ] Backwards compat: invoking `just loop` (no args) still works (auto-merge defaults to `"false"`)
+  - [x] `loop` recipe signature gains an `auto-merge="false"` parameter (last position)
+  - [x] Recipe body conditionally appends `--auto-merge` to args when `{{auto-merge}}` is `"true"`
+  - [x] `grep -c "auto-merge" plugin/ralph-hero/justfile` returns ≥ 2 (parameter + conditional)
+  - [x] `just --list 2>&1 | grep -q "loop"` exits 0
+  - [x] Backwards compat: invoking `just loop` (no args) still works (auto-merge defaults to `"false"`)
 
 #### Task 4.5: Add val, pr, merge justfile recipes
 - **files**: `plugin/ralph-hero/justfile` (modify)
@@ -469,12 +469,12 @@ Extend `ralph-loop.sh` with the four integrator phases (val → pr → code-revi
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Three new recipes added after the `impl` recipe (around line 150): `val`, `pr`, `merge`
-  - [ ] Each follows the `dispatch "ralph-<name>"` shape used by other workflow recipes
-  - [ ] Each uses `DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m`
-  - [ ] `[group('workflow')]` annotation on each
-  - [ ] `just --list 2>&1 | grep -cE "val|pr|merge|code-review"` returns ≥ 4 (val + pr + merge + code-review from Phase 3)
-  - [ ] `just --list 2>&1 | grep -q "val "` exits 0 (recipe parses)
+  - [x] Three new recipes added after the `impl` recipe (around line 150): `val`, `pr`, `merge`
+  - [x] Each follows the `dispatch "ralph-<name>"` shape used by other workflow recipes
+  - [x] Each uses `DEFAULT_BUDGET=1.00 DEFAULT_TIMEOUT=10m`
+  - [x] `[group('workflow')]` annotation on each
+  - [x] `just --list 2>&1 | grep -cE "val|pr|merge|code-review"` returns ≥ 4 (val + pr + merge + code-review from Phase 3)
+  - [x] `just --list 2>&1 | grep -q "val "` exits 0 (recipe parses)
 
 #### Task 4.6: Insert Step 4a Autonomous Merge Gate in ralph-merge
 - **files**: `plugin/ralph-hero/skills/ralph-merge/SKILL.md` (modify)
@@ -482,26 +482,26 @@ Extend `ralph-loop.sh` with the four integrator phases (val → pr → code-revi
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New Step 4a section inserted between existing Step 4 (Code Review Gate, line ~190) and Step 5 (Check PR Readiness)
-  - [ ] Section header: `## Step 4a: Autonomous Merge Gate`
-  - [ ] Body documents: only runs when `RALPH_AUTO_MERGE=true`; otherwise skipped entirely
-  - [ ] Documents commands: `gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'` and `gh pr checks PR_NUMBER --json name,state,conclusion`
-  - [ ] Documents merge criteria (ALL must be true): reviewDecision is APPROVED OR no review comments on XS issue; all CI `state: completed` AND `conclusion: success`; PR `OPEN` and `mergeable: MERGEABLE`
-  - [ ] On miss, outputs `AUTO-MERGE BLOCKED` block with `Issue:`, `PR:`, `Review:`, `CI:`, `Reason:` fields, then STOPs
-  - [ ] On pass, proceeds to Step 5 (existing flow)
-  - [ ] `grep -c "RALPH_AUTO_MERGE" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 2
-  - [ ] `grep -c "AUTO-MERGE BLOCKED" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
-  - [ ] `grep -c "gh pr checks" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
-  - [ ] No frontmatter changes (RALPH_AUTO_MERGE is read from env at runtime)
+  - [x] New Step 4a section inserted between existing Step 4 (Code Review Gate, line ~190) and Step 5 (Check PR Readiness)
+  - [x] Section header: `## Step 4a: Autonomous Merge Gate`
+  - [x] Body documents: only runs when `RALPH_AUTO_MERGE=true`; otherwise skipped entirely
+  - [x] Documents commands: `gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'` and `gh pr checks PR_NUMBER --json name,state,conclusion`
+  - [x] Documents merge criteria (ALL must be true): reviewDecision is APPROVED OR no review comments on XS issue; all CI `state: completed` AND `conclusion: success`; PR `OPEN` and `mergeable: MERGEABLE`
+  - [x] On miss, outputs `AUTO-MERGE BLOCKED` block with `Issue:`, `PR:`, `Review:`, `CI:`, `Reason:` fields, then STOPs
+  - [x] On pass, proceeds to Step 5 (existing flow)
+  - [x] `grep -c "RALPH_AUTO_MERGE" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 2
+  - [x] `grep -c "AUTO-MERGE BLOCKED" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
+  - [x] `grep -c "gh pr checks" plugin/ralph-hero/skills/ralph-merge/SKILL.md` returns ≥ 1
+  - [x] No frontmatter changes (RALPH_AUTO_MERGE is read from env at runtime)
 
 ### Phase 4 Success Criteria
 
 #### Automated Verification:
-- [ ] All six Task acceptance grep checks pass
-- [ ] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
-- [ ] `just --list 2>&1 | grep -cE "val|pr|merge|code-review"` returns ≥ 4
-- [ ] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors
-- [ ] `npm test --prefix plugin/ralph-hero/mcp-server` — passes (no regressions)
+- [x] All six Task acceptance grep checks pass
+- [x] `bash -n plugin/ralph-hero/scripts/ralph-loop.sh` passes
+- [x] `just --list 2>&1 | grep -cE "val|pr|merge|code-review"` returns ≥ 4
+- [x] `npm run build --prefix plugin/ralph-hero/mcp-server` — no errors
+- [x] `npm test --prefix plugin/ralph-hero/mcp-server` — passes (no regressions)
 
 #### Manual Verification:
 - [ ] `just loop --integrator-only` on an "In Progress" issue with completed impl runs val → pr → code-review (no merge without auto-merge)
