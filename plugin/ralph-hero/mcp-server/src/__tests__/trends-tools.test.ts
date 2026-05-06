@@ -449,3 +449,148 @@ describe("ralph_hero__capture_snapshot", () => {
     expect(payload.error).toMatch(/RALPH_GH_/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// metrics_trends (Phase 3, GH-1024)
+// ---------------------------------------------------------------------------
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function syntheticSnapshot(
+  owner: string,
+  projectNumber: number,
+  hoursAgo: number,
+  velocity: number,
+  riskScore: number = 0,
+  wipByPhase: Record<string, number> = { Backlog: 1, "In Progress": 1 },
+): Snapshot {
+  return {
+    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    capturedAt: new Date(Date.now() - hoursAgo * HOUR_MS).toISOString(),
+    owner,
+    projectNumber,
+    velocity,
+    windowDays: 7,
+    riskScore,
+    status: "green",
+    wipByPhase,
+    pointsByPhase: {},
+    doneInWindow: 0,
+    newInWindow: 0,
+    warnings: { critical: 0, warning: 0, info: 0 },
+  };
+}
+
+describe("ralph_hero__metrics_trends", () => {
+  let tmpRoot: string;
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "trends-tool-test-"));
+    __setSnapshotRoot(tmpRoot);
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  afterEach(async () => {
+    __setSnapshotRoot(null);
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("returns JSON series with deltas from a fixture of 5 snapshots", async () => {
+    for (let i = 0; i < 5; i++) {
+      const hoursAgo = (4 - i) * 24 + 1;
+      await appendSnapshot(syntheticSnapshot("octocat", 7, hoursAgo, i + 1));
+    }
+
+    const { client } = createMockClient({
+      owner: "octocat",
+      projectOwner: "octocat",
+      projectNumber: 7,
+    });
+
+    registerTrendsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__metrics_trends");
+
+    const result = await tool.handler({ format: "json" }, {});
+    expect(result.isError).toBeFalsy();
+
+    const payload = parsePayload(result);
+    expect(payload.owner).toBe("octocat");
+    expect(payload.projectNumber).toBe(7);
+    const series = payload.series as Array<{
+      metric: string;
+      points: unknown[];
+      delta1d: number | null;
+    }>;
+    expect(series).toHaveLength(4);
+    expect(series.map((s) => s.metric)).toEqual([
+      "velocity",
+      "riskScore",
+      "wipTotal",
+      "leadTimeP50Hours",
+    ]);
+    expect(series[0].delta1d).toBe(1);
+  });
+
+  it("returns markdown with metric names and sparkline characters", async () => {
+    for (let i = 0; i < 3; i++) {
+      const hoursAgo = (2 - i) * 24 + 1;
+      await appendSnapshot(syntheticSnapshot("octocat", 7, hoursAgo, i + 1));
+    }
+
+    const { client } = createMockClient({
+      owner: "octocat",
+      projectOwner: "octocat",
+      projectNumber: 7,
+    });
+
+    registerTrendsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__metrics_trends");
+
+    const result = await tool.handler({ format: "markdown" }, {});
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    const md = payload.markdown as string;
+    expect(md).toMatch(/velocity/);
+    expect(md).toMatch(/riskScore/);
+    expect(/[▁-█]/.test(md)).toBe(true);
+  });
+
+  it("returns empty series (json) when the JSONL file does not exist", async () => {
+    const { client } = createMockClient({
+      owner: "octocat",
+      projectOwner: "octocat",
+      projectNumber: 99,
+    });
+
+    registerTrendsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__metrics_trends");
+
+    const result = await tool.handler({ format: "json" }, {});
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    const series = payload.series as Array<{ points: unknown[] }>;
+    expect(series).toHaveLength(4);
+    for (const s of series) {
+      expect(s.points).toEqual([]);
+    }
+  });
+
+  it("returns the 'No snapshots yet' message in markdown for an empty store", async () => {
+    const { client } = createMockClient({
+      owner: "octocat",
+      projectOwner: "octocat",
+      projectNumber: 99,
+    });
+
+    registerTrendsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__metrics_trends");
+
+    const result = await tool.handler({ format: "markdown" }, {});
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    expect(payload.markdown).toBe("No snapshots yet for octocat/99.");
+  });
+});
