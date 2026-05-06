@@ -27,6 +27,12 @@ on:
         description: 'GitHub PAT with repo + project scopes'
         required: true
 
+# Least-privilege permissions: GITHUB_TOKEN is read-only here.
+# All Projects V2 + issue label/comment writes go through ROUTING_PAT.
+permissions:
+  contents: read
+  issues: read
+
 # Prevent concurrent routing for the same issue/PR.
 # cancel-in-progress: false ensures a routing run isn't killed mid-mutation.
 concurrency:

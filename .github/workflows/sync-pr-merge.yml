@@ -27,6 +27,11 @@ on:
         required: true
         type: number
 
+# Least-privilege permissions: GITHUB_TOKEN is read-only.
+# All writes (Workflow State updates) go through ROUTING_PAT.
+permissions:
+  contents: read
+
 concurrency:
   group: pr-merge-${{ github.event.pull_request.number || inputs.pr_number }}
   cancel-in-progress: false

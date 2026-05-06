@@ -31,6 +31,11 @@ concurrency:
   group: release-knowledge
   cancel-in-progress: false
 
+# Top-level default: read-only. The release job widens to contents: write +
+# id-token: write at the job level (needed for tag/push and npm provenance).
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: plugin/ralph-knowledge

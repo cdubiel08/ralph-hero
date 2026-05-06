@@ -16,6 +16,11 @@ on:
   repository_dispatch:
     types: [project-item-workflow-state-changed]
 
+# Least-privilege permissions: GITHUB_TOKEN is read-only.
+# All writes (Workflow State propagation) go through ROUTING_PAT.
+permissions:
+  contents: read
+
 concurrency:
   group: sync-project-state-${{ github.event.inputs.content_node_id || github.event.client_payload.content_node_id }}
   cancel-in-progress: false
