@@ -159,15 +159,15 @@ Create the shared query specification file and copy the 11 corpus markdown docum
 
 #### Automated Verification:
 
-- [ ] `node -e "require('fs').readFileSync('plugin/ralph-knowledge/evals/golden-queries.json'); console.log('ok')"` — file is readable.
-- [ ] `node -e "const j=JSON.parse(require('fs').readFileSync('plugin/ralph-knowledge/evals/golden-queries.json','utf8')); if(j.queries.length!==8) throw new Error('expected 8 queries, got '+j.queries.length); console.log('ok')"` — has 8 queries.
-- [ ] `ls plugin/ralph-knowledge/__tests__/eval-corpus/*.md | wc -l` returns `11`.
-- [ ] `npm test` (in `plugin/ralph-knowledge/`) — all existing tests still pass.
-- [ ] `npm run build` (in `plugin/ralph-knowledge/`) — TS compiles cleanly.
+- [x] `node -e "require('fs').readFileSync('plugin/ralph-knowledge/evals/golden-queries.json'); console.log('ok')"` — file is readable.
+- [x] `node -e "const j=JSON.parse(require('fs').readFileSync('plugin/ralph-knowledge/evals/golden-queries.json','utf8')); if(j.queries.length!==8) throw new Error('expected 8 queries, got '+j.queries.length); console.log('ok')"` — has 8 queries.
+- [x] `ls plugin/ralph-knowledge/__tests__/eval-corpus/*.md | wc -l` returns `11`.
+- [x] `npm test` (in `plugin/ralph-knowledge/`) — all existing tests still pass.
+- [x] `npm run build` (in `plugin/ralph-knowledge/`) — TS compiles cleanly.
 
 #### Manual Verification:
 
-- [ ] Spot-check three corpus files for non-empty content matching the source originals.
+- [x] Spot-check three corpus files for non-empty content matching the source originals.
 
 **Creates for next phase**: `evals/golden-queries.json` (consumed by `scripts/eval-retrieval.ts` in Phase 2, and by `benchmark/eval-rerank.mjs` in Phase 4); `__tests__/eval-corpus/` directory (reindexed by Phase 2's runner).
 
