@@ -105,7 +105,7 @@ jobs:
           node-version: 20
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@v4
 
       - name: Run CLI tests
         uses: bats-core/bats-action@2.0.0
