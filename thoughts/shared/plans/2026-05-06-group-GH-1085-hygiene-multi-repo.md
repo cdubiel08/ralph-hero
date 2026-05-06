@@ -352,8 +352,8 @@ Add a `groupBy: "repo"` schema option to `ralph_hero__project_hygiene`. When set
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no errors
-- [ ] `npm test` — all tests pass
+- [x] `npm run build` — no errors
+- [x] `npm test` — all tests pass
 
 #### Manual Verification:
 - [ ] Live invocation with `groupBy: "repo"` returns `{ groupBy: "repo", repos: { ... } }` JSON

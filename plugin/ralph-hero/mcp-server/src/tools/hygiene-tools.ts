@@ -14,10 +14,14 @@ import {
   buildHygieneReport,
   formatHygieneMarkdown,
   type HygieneConfig,
+  type HygieneReport,
   DEFAULT_HYGIENE_CONFIG,
 } from "../lib/hygiene.js";
 import { fetchDashboardItems } from "../lib/dashboard-fetch.js";
-import type { DashboardItem } from "../lib/dashboard.js";
+import {
+  groupDashboardItemsByRepo,
+  type DashboardItem,
+} from "../lib/dashboard.js";
 import {
   toolSuccess,
   toolError,
@@ -85,6 +89,12 @@ export function registerHygieneTools(
         .optional()
         .default("json")
         .describe("Output format (default: json)"),
+      groupBy: z
+        .enum(["repo"])
+        .optional()
+        .describe(
+          "Group hygiene output by dimension. 'repo' returns one full hygiene sub-report per repository (response shape becomes { groupBy: 'repo', repos: { ... } } instead of the flat report).",
+        ),
     },
     async (args) => {
       try {
@@ -139,6 +149,50 @@ export function registerHygieneTools(
           wipLimits: args.wipLimits ?? {},
           similarityThreshold: args.similarityThreshold ?? 0.8,
         };
+
+        // If groupBy=repo, build per-repo sub-reports and early-return.
+        // Mirrors pipeline_dashboard's groupBy=repo branch
+        // (dashboard-tools.ts:219-249): we do NOT compute a merged report;
+        // instead we return one HygieneReport per repository. Items missing
+        // `repository` fall under the "(unknown)" key (delegated to
+        // groupDashboardItemsByRepo, matching the dashboard precedent).
+        if (args.groupBy === "repo") {
+          const repoGroups = groupDashboardItemsByRepo(allItems);
+          // Sort repo names alphabetically so JSON insertion order and
+          // markdown rendering order are deterministic, matching the
+          // per-repo breakdown sort in formatHygieneMarkdown (Phase 3).
+          const sortedRepoNames = Object.keys(repoGroups).sort((a, b) =>
+            a.localeCompare(b),
+          );
+
+          if (args.format === "markdown") {
+            let md = "# Project Hygiene (by repo)\n\n";
+            for (const repoName of sortedRepoNames) {
+              const repoItems = repoGroups[repoName];
+              const sub = buildHygieneReport(repoItems, hygieneConfig);
+              md += `## ${repoName} (${repoItems.length} items)\n\n`;
+              md += formatHygieneMarkdown(sub) + "\n\n";
+            }
+            return toolSuccess({
+              markdown: md,
+              ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+            });
+          }
+
+          // JSON format
+          const repoResults: Record<string, HygieneReport> = {};
+          for (const repoName of sortedRepoNames) {
+            repoResults[repoName] = buildHygieneReport(
+              repoGroups[repoName],
+              hygieneConfig,
+            );
+          }
+          return toolSuccess({
+            groupBy: "repo",
+            repos: repoResults,
+            ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+          });
+        }
 
         // Build report from merged items
         const report = buildHygieneReport(allItems, hygieneConfig);
