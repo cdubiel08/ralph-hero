@@ -262,6 +262,10 @@ Tests use [Vitest](https://vitest.dev/) with 38 test files covering tools, lib m
 
 **Release process**: Merges to `main` that touch MCP server source automatically bump the version, tag, and publish to npm. Include `#minor` or `#major` in a commit message for larger version bumps.
 
+## Security
+
+To report a vulnerability or review our supported versions and disclosure process, see [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT
