@@ -11,18 +11,18 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@remotion/cli": "^4.0.0",
-    "@remotion/transitions": "^4.0.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "remotion": "^4.0.0",
+    "@remotion/cli": "^4.0.457",
+    "@remotion/transitions": "^4.0.457",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "remotion": "^4.0.457",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
-    "@types/react": "19.2.7",
-    "@types/web": "0.0.166",
+    "@types/react": "19.2.14",
+    "@types/web": "0.0.349",
     "jsdom": "^25.0.0",
     "typescript": "5.9.3",
     "vitest": "^3.0.0"
