@@ -18,8 +18,11 @@ import type { GitHubClientConfig } from "../types.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import {
   __setSnapshotRoot,
+  appendSnapshot,
   readSnapshots,
   snapshotPath,
+  SNAPSHOT_SCHEMA_VERSION,
+  type Snapshot,
 } from "../lib/snapshots.js";
 
 // ---------------------------------------------------------------------------
@@ -150,12 +153,19 @@ function isProjectTitleQuery(q: string): boolean {
 interface MockClientOptions {
   itemsByProject?: Record<number, unknown[]>;
   projectTitle?: string;
+  /** When set, `client.query` returns `comments(last: 100)` nodes for the
+   * matching issue number. Issues not in the map return `{ nodes: [] }`. */
+  commentsByIssueNumber?: Record<number, Array<{ body: string; createdAt: string }>>;
 }
 
 function createMockClient(
   config: Partial<GitHubClientConfig>,
   options: MockClientOptions = {},
-): { client: GitHubClient; projectQuery: ReturnType<typeof vi.fn> } {
+): {
+  client: GitHubClient;
+  projectQuery: ReturnType<typeof vi.fn>;
+  query: ReturnType<typeof vi.fn>;
+} {
   const fullConfig: GitHubClientConfig = {
     token: "tok",
     owner: "octocat",
@@ -181,9 +191,21 @@ function createMockClient(
     throw new Error(`Unmocked projectQuery: ${q.slice(0, 80)}`);
   });
 
+  const query = vi.fn(async (_q: string, vars: Record<string, unknown>) => {
+    const number = vars.number as number;
+    const nodes = options.commentsByIssueNumber?.[number] ?? [];
+    return {
+      repository: {
+        issue: {
+          comments: { nodes },
+        },
+      },
+    };
+  });
+
   const client = {
     config: fullConfig,
-    query: vi.fn(),
+    query,
     projectQuery,
     projectMutate: vi.fn(),
     mutate: vi.fn(),
@@ -195,7 +217,7 @@ function createMockClient(
     getAuthenticatedUser: vi.fn(),
   } as unknown as GitHubClient;
 
-  return { client, projectQuery };
+  return { client, projectQuery, query };
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +366,71 @@ describe("ralph_hero__capture_snapshot", () => {
     expect(result.isError).toBe(true);
     const payload = parsePayload(result);
     expect(payload.error).toMatch(/RALPH_GH_OWNER/);
+  });
+
+  it("populates cycleTime when a Done item has parseable transition comments", async () => {
+    const recent = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const fixtures = [
+      rawIssue({
+        number: 42,
+        title: "done with transitions",
+        workflowState: "Done",
+        priority: "P1",
+        estimate: "S",
+        updatedAt: recent,
+        closedAt: recent,
+      }),
+    ];
+
+    // Two transitions 4h apart so the rollup yields a real lead time.
+    const t1 = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+    const t2 = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+    const transitionA = `<!-- ralph-transition: ${JSON.stringify({
+      from: "In Progress",
+      to: "In Review",
+      command: "ralph_pr",
+      at: t1,
+    })} -->`;
+    const transitionB = `<!-- ralph-transition: ${JSON.stringify({
+      from: "In Review",
+      to: "Done",
+      command: "ralph_merge",
+      at: t2,
+    })} -->`;
+
+    const { client } = createMockClient(
+      { owner: "octocat", projectNumber: 7, projectOwner: "octocat" },
+      {
+        itemsByProject: { 7: fixtures },
+        commentsByIssueNumber: {
+          42: [
+            { body: transitionA, createdAt: t1 },
+            { body: transitionB, createdAt: t2 },
+          ],
+        },
+      },
+    );
+
+    registerTrendsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__capture_snapshot");
+
+    const result = await tool.handler({ windowDays: 7 }, {});
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+
+    expect(payload.cycleTime).toBeDefined();
+    const ct = payload.cycleTime as Record<string, unknown>;
+    expect(ct.sampleSize).toBe(1);
+    // Lead-time is the 4h interval between the two transitions.
+    expect(ct.leadTimeP50Hours).toBeCloseTo(4, 1);
+
+    // JSONL row also carries the cycleTime.
+    const file = snapshotPath("octocat", 7);
+    const raw = await fs.readFile(file, "utf8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    expect(lines).toHaveLength(1);
+    const written = JSON.parse(lines[0]) as Record<string, unknown>;
+    expect((written.cycleTime as Record<string, unknown>).sampleSize).toBe(1);
   });
 
   it("returns an error when projectNumber is unset and no arg supplied", async () => {

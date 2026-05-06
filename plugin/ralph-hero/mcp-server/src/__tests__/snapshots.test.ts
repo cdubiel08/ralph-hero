@@ -13,14 +13,17 @@ import * as path from "node:path";
 import {
   __setSnapshotRoot,
   appendSnapshot,
+  fetchTransitionedIssues,
   readSnapshots,
   snapshotPath,
   toSnapshot,
   SNAPSHOT_SCHEMA_VERSION,
   type Snapshot,
 } from "../lib/snapshots.js";
-import type { DashboardData } from "../lib/dashboard.js";
+import type { DashboardData, DashboardItem } from "../lib/dashboard.js";
 import type { MetricsResult } from "../lib/metrics.js";
+import type { GitHubClient } from "../github-client.js";
+import { buildTransitionComment } from "../lib/transition-comments.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -265,5 +268,186 @@ describe("toSnapshot", () => {
     const ts = new Date(snap.capturedAt).getTime();
     expect(ts).toBeGreaterThanOrEqual(before);
     expect(ts).toBeLessThanOrEqual(after);
+  });
+
+  it("includes cycleTime when provided in input", () => {
+    const snap = toSnapshot({
+      owner: "octocat",
+      projectNumber: 7,
+      data: {
+        generatedAt: "2026-05-05T12:00:00.000Z",
+        totalIssues: 0,
+        phases: [],
+        health: { ok: true, warnings: [] },
+        archive: {
+          eligibleForArchive: 0,
+          eligibleItems: [],
+          recentlyCompleted: 0,
+          archiveThresholdDays: 14,
+        },
+      },
+      metrics: {
+        velocity: 0,
+        riskScore: 0,
+        status: "ON_TRACK",
+        highlights: { recentlyCompleted: [], newlyAdded: [] },
+      },
+      windowDays: 7,
+      cycleTime: {
+        leadTimeP50Hours: 5,
+        leadTimeP90Hours: 7,
+        perPhaseDwellHours: { "In Progress": { p50: 3, p90: 4, n: 2 } },
+        sampleSize: 2,
+      },
+    });
+    expect(snap.cycleTime?.sampleSize).toBe(2);
+    expect(snap.cycleTime?.leadTimeP50Hours).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchTransitionedIssues
+// ---------------------------------------------------------------------------
+
+function makeDashboardItem(overrides: Partial<DashboardItem> = {}): DashboardItem {
+  return {
+    number: 100,
+    title: "Test issue",
+    updatedAt: "2026-05-04T00:00:00.000Z",
+    closedAt: "2026-05-04T05:00:00.000Z",
+    workflowState: "Done",
+    priority: "P1",
+    estimate: "S",
+    assignees: [],
+    subIssueCount: 0,
+    blockedBy: [],
+    repository: "octocat/repo",
+    ...overrides,
+  } as DashboardItem;
+}
+
+interface MockClientCtl {
+  client: GitHubClient;
+  query: ReturnType<typeof vi.fn>;
+}
+
+function createMockRepoClient(
+  perIssue: (number: number) => unknown | Error,
+): MockClientCtl {
+  const query = vi.fn(async (_q: string, vars: Record<string, unknown>) => {
+    const result = perIssue(vars.number as number);
+    if (result instanceof Error) throw result;
+    return result;
+  });
+  const client = {
+    query,
+    projectQuery: vi.fn(),
+    mutate: vi.fn(),
+    projectMutate: vi.fn(),
+    config: {},
+  } as unknown as GitHubClient;
+  return { client, query };
+}
+
+describe("fetchTransitionedIssues", () => {
+  it("returns one TransitionedIssue per item with at least one transition", async () => {
+    const transitionComment = buildTransitionComment({
+      from: "In Progress",
+      to: "Done",
+      command: "ralph_merge",
+      at: "2026-05-04T05:00:00.000Z",
+    });
+    const { client } = createMockRepoClient(() => ({
+      repository: {
+        issue: {
+          comments: {
+            nodes: [
+              { body: `Some prose. ${transitionComment}`, createdAt: "2026-05-04T05:00:00.000Z" },
+            ],
+          },
+        },
+      },
+    }));
+
+    const items = [makeDashboardItem({ number: 100 })];
+    const out = await fetchTransitionedIssues(client, items);
+    expect(out).toHaveLength(1);
+    expect(out[0].issueNumber).toBe(100);
+    expect(out[0].transitions).toHaveLength(1);
+    expect(out[0].transitions[0].to).toBe("Done");
+    expect(out[0].closedAt).toBe("2026-05-04T05:00:00.000Z");
+  });
+
+  it("returns [] when comments contain no transitions", async () => {
+    const { client } = createMockRepoClient(() => ({
+      repository: {
+        issue: {
+          comments: {
+            nodes: [
+              { body: "Just a normal comment", createdAt: "2026-05-04T05:00:00.000Z" },
+            ],
+          },
+        },
+      },
+    }));
+
+    const out = await fetchTransitionedIssues(client, [makeDashboardItem({ number: 100 })]);
+    expect(out).toEqual([]);
+  });
+
+  it("logs warning and continues when one issue's fetch throws", async () => {
+    const goodTransition = buildTransitionComment({
+      from: "In Progress",
+      to: "Done",
+      command: "ralph_merge",
+      at: "2026-05-04T05:00:00.000Z",
+    });
+    const { client } = createMockRepoClient((number) => {
+      if (number === 101) return new Error("rate limited");
+      return {
+        repository: {
+          issue: {
+            comments: {
+              nodes: [
+                { body: goodTransition, createdAt: "2026-05-04T05:00:00.000Z" },
+              ],
+            },
+          },
+        },
+      };
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const items = [
+        makeDashboardItem({ number: 101 }),
+        makeDashboardItem({ number: 102 }),
+      ];
+      const out = await fetchTransitionedIssues(client, items);
+      expect(out).toHaveLength(1);
+      expect(out[0].issueNumber).toBe(102);
+      expect(warnSpy).toHaveBeenCalled();
+      const warnMsg = warnSpy.mock.calls[0][0] as string;
+      expect(warnMsg).toContain("101");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("skips items without a resolvable repository field", async () => {
+    const { client, query } = createMockRepoClient(() => ({
+      repository: { issue: { comments: { nodes: [] } } },
+    }));
+    const items = [makeDashboardItem({ number: 100, repository: undefined })];
+    const out = await fetchTransitionedIssues(client, items);
+    expect(out).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("returns [] for empty input without making any queries", async () => {
+    const { client, query } = createMockRepoClient(() => ({}));
+    const out = await fetchTransitionedIssues(client, []);
+    expect(out).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
   });
 });

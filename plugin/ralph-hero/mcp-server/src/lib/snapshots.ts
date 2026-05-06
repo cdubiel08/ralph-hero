@@ -14,8 +14,11 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { DashboardData } from "./dashboard.js";
+import type { GitHubClient } from "../github-client.js";
+import type { DashboardData, DashboardItem } from "./dashboard.js";
 import type { MetricsResult, ProjectHealthStatus } from "./metrics.js";
+import { parseAllTransitions } from "./transition-comments.js";
+import type { TransitionedIssue, CycleTimeRollup as CycleTimeRollupV2 } from "./cycle-times.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -29,17 +32,11 @@ export const SNAPSHOT_SCHEMA_VERSION = 1 as const;
 // ---------------------------------------------------------------------------
 
 /**
- * Reserved roll-up shape for cycle-time metrics. Phase 2 (GH-1023)
- * defines the concrete fields. Phase 1 leaves the field unset.
+ * Cycle-time roll-up populated by Phase 2 (GH-1023). Re-exported from
+ * `./cycle-times.ts` so existing imports of `CycleTimeRollup` from
+ * `./snapshots.js` continue to work.
  */
-export interface CycleTimeRollup {
-  /** Median cycle time in hours across the window. */
-  medianHours?: number;
-  /** Sample size used to compute the median. */
-  sampleSize?: number;
-  /** Per-phase median time-in-state (hours). */
-  byPhase?: Record<string, number>;
-}
+export type CycleTimeRollup = CycleTimeRollupV2;
 
 /** A single point-in-time snapshot row appended to JSONL. */
 export interface Snapshot {
@@ -203,6 +200,9 @@ export interface ToSnapshotInput {
   windowDays: number;
   /** Override capture timestamp (tests). Defaults to `new Date()`. */
   capturedAt?: Date;
+  /** Optional Phase 2 cycle-time rollup. When omitted or empty,
+   * `Snapshot.cycleTime` is left unset. */
+  cycleTime?: CycleTimeRollup;
 }
 
 /**
@@ -232,7 +232,7 @@ export function toSnapshot(input: ToSnapshotInput): Snapshot {
     else if (w.severity === "info") info++;
   }
 
-  return {
+  const snapshot: Snapshot = {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     capturedAt: (input.capturedAt ?? new Date()).toISOString(),
     owner,
@@ -247,4 +247,121 @@ export function toSnapshot(input: ToSnapshotInput): Snapshot {
     newInWindow,
     warnings: { critical, warning, info },
   };
+
+  if (input.cycleTime !== undefined) {
+    snapshot.cycleTime = input.cycleTime;
+  }
+
+  return snapshot;
+}
+
+// ---------------------------------------------------------------------------
+// Cycle-time fetch helper (Phase 2, GH-1023)
+// ---------------------------------------------------------------------------
+
+/**
+ * GraphQL response shape for `fetchTransitionedIssues`. One issue's
+ * `comments(last: 100)` connection.
+ */
+interface IssueCommentsResponse {
+  repository?: {
+    issue?: {
+      comments?: {
+        nodes?: Array<{
+          body?: string | null;
+          createdAt?: string | null;
+        }>;
+      };
+    } | null;
+  } | null;
+}
+
+const ISSUE_COMMENTS_QUERY = `
+  query IssueComments($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      issue(number: $number) {
+        comments(last: 100) {
+          nodes {
+            body
+            createdAt
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Parse a `DashboardItem.repository` ("owner/repo" nameWithOwner) into
+ * its parts. Returns `null` on missing or malformed input.
+ */
+function splitRepo(repo: string | undefined): { owner: string; name: string } | null {
+  if (!repo) return null;
+  const idx = repo.indexOf("/");
+  if (idx <= 0 || idx === repo.length - 1) return null;
+  return { owner: repo.slice(0, idx), name: repo.slice(idx + 1) };
+}
+
+/**
+ * Fetch comments for the given Done-in-window items and run
+ * `parseAllTransitions()` against each comment. Returns one
+ * `TransitionedIssue` per item that has at least one parsed transition.
+ *
+ * Best-effort:
+ *   - Issues without a resolvable `repository` field are skipped.
+ *   - Per-issue fetch failures are caught + logged via `console.warn`
+ *     and do not abort the batch.
+ *   - Issues whose comments yield zero transitions are silently
+ *     dropped (not returned).
+ *
+ * Concurrency: sequential `await` per spec. Done-in-window count is
+ * small (~10/window per the parent plan's perf section); this keeps
+ * GraphQL rate-limit usage predictable.
+ */
+export async function fetchTransitionedIssues(
+  client: GitHubClient,
+  doneItems: DashboardItem[],
+): Promise<TransitionedIssue[]> {
+  const out: TransitionedIssue[] = [];
+
+  for (const item of doneItems) {
+    const repoParts = splitRepo(item.repository);
+    if (!repoParts) continue;
+
+    let response: IssueCommentsResponse;
+    try {
+      response = await client.query<IssueCommentsResponse>(
+        ISSUE_COMMENTS_QUERY,
+        {
+          owner: repoParts.owner,
+          repo: repoParts.name,
+          number: item.number,
+        },
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[snapshots] Failed to fetch comments for ${item.repository}#${item.number}: ${msg}`,
+      );
+      continue;
+    }
+
+    const commentNodes = response.repository?.issue?.comments?.nodes ?? [];
+    const transitions = [];
+    for (const c of commentNodes) {
+      if (!c?.body || !c?.createdAt) continue;
+      const parsed = parseAllTransitions(c.body, c.createdAt);
+      for (const t of parsed) transitions.push(t);
+    }
+
+    if (transitions.length === 0) continue;
+
+    out.push({
+      issueNumber: item.number,
+      transitions,
+      closedAt: item.closedAt ?? null,
+    });
+  }
+
+  return out;
 }

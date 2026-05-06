@@ -20,7 +20,12 @@ import {
   calculateMetrics,
   DEFAULT_METRICS_CONFIG,
 } from "../lib/metrics.js";
-import { appendSnapshot, toSnapshot } from "../lib/snapshots.js";
+import {
+  appendSnapshot,
+  fetchTransitionedIssues,
+  toSnapshot,
+} from "../lib/snapshots.js";
+import { rollupCycleTimes } from "../lib/cycle-times.js";
 import { resolveProjectOwner, toolError, toolSuccess } from "../types.js";
 
 export function registerTrendsTools(
@@ -78,12 +83,31 @@ export function registerTrendsTools(
           velocityWindowDays: windowDays,
         });
 
+        // Phase 2 (GH-1023): cycle-time enrichment.
+        // Best-effort: fetch comments for Done-in-window items, parse
+        // transition records, roll up percentiles. Failures are logged
+        // inside fetchTransitionedIssues and never abort the snapshot.
+        const now = Date.now();
+        const cutoffMs = now - windowDays * 24 * 60 * 60 * 1000;
+        const doneInWindow = items.filter((it) => {
+          if (it.workflowState !== "Done" || !it.closedAt) return false;
+          const ts = Date.parse(it.closedAt);
+          return Number.isFinite(ts) && ts >= cutoffMs;
+        });
+
+        const transitioned = await fetchTransitionedIssues(client, doneInWindow);
+        const rollup = rollupCycleTimes(transitioned, now);
+        const includeCycleTime =
+          rollup.sampleSize > 0 ||
+          Object.keys(rollup.perPhaseDwellHours).length > 0;
+
         const snapshot = toSnapshot({
           owner,
           projectNumber,
           data,
           metrics,
           windowDays,
+          ...(includeCycleTime ? { cycleTime: rollup } : {}),
         });
 
         await appendSnapshot(snapshot);
