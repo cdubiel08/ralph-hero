@@ -10,7 +10,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { paginateConnection } from "../lib/pagination.js";
 import {
   buildDashboard,
   formatMarkdown,
@@ -20,6 +19,12 @@ import {
   type HealthConfig,
   DEFAULT_HEALTH_CONFIG,
 } from "../lib/dashboard.js";
+import {
+  fetchDashboardItems,
+  DASHBOARD_ITEMS_QUERY,
+  toDashboardItems,
+  type RawDashboardItem,
+} from "../lib/dashboard-fetch.js";
 import { toolSuccess, toolError, resolveProjectOwner, resolveProjectNumbers } from "../types.js";
 import { detectWorkStreams, type IssueFileOwnership } from "../lib/work-stream-detection.js";
 import { detectStreamPipelinePositions, type IssueState } from "../lib/pipeline-detection.js";
@@ -29,251 +34,10 @@ import {
   type MetricsConfig,
 } from "../lib/metrics.js";
 
-// ---------------------------------------------------------------------------
-// Helper: Ensure field option cache is populated
-// ---------------------------------------------------------------------------
-
-async function ensureFieldCache(
-  client: GitHubClient,
-  fieldCache: FieldOptionCache,
-  owner: string,
-  projectNumber: number,
-): Promise<void> {
-  if (fieldCache.isPopulated(projectNumber)) return;
-
-  const project = await fetchProjectForCache(client, owner, projectNumber);
-  if (!project) {
-    throw new Error(`Project #${projectNumber} not found for owner "${owner}"`);
-  }
-
-  fieldCache.populate(
-    projectNumber,
-    project.id,
-    project.fields.nodes.map((f) => ({
-      id: f.id,
-      name: f.name,
-      options: f.options,
-    })),
-  );
-}
-
-interface ProjectCacheResponse {
-  id: string;
-  fields: {
-    nodes: Array<{
-      id: string;
-      name: string;
-      dataType: string;
-      options?: Array<{ id: string; name: string }>;
-    }>;
-  };
-}
-
-async function fetchProjectForCache(
-  client: GitHubClient,
-  owner: string,
-  number: number,
-): Promise<ProjectCacheResponse | null> {
-  const QUERY = `query($owner: String!, $number: Int!) {
-    OWNER_TYPE(login: $owner) {
-      projectV2(number: $number) {
-        id
-        fields(first: 50) {
-          nodes {
-            ... on ProjectV2FieldCommon {
-              id
-              name
-              dataType
-            }
-            ... on ProjectV2SingleSelectField {
-              id
-              name
-              dataType
-              options { id name }
-            }
-          }
-        }
-      }
-    }
-  }`;
-
-  for (const ownerType of ["user", "organization"]) {
-    try {
-      const result = await client.projectQuery<
-        Record<string, { projectV2: ProjectCacheResponse | null }>
-      >(
-        QUERY.replace("OWNER_TYPE", ownerType),
-        { owner, number },
-        { cache: true, cacheTtlMs: 10 * 60 * 1000 },
-      );
-      const project = result[ownerType]?.projectV2;
-      if (project) return project;
-    } catch {
-      // Try next owner type
-    }
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Raw item shape from GraphQL
-// ---------------------------------------------------------------------------
-
-export interface RawDashboardItem {
-  id: string;
-  type: string;
-  content: {
-    __typename?: string;
-    number?: number;
-    title?: string;
-    state?: string;
-    updatedAt?: string;
-    closedAt?: string | null;
-    assignees?: { nodes: Array<{ login: string }> };
-    trackedInIssues?: { nodes: Array<{ number: number; state: string; closedAt: string | null }> };
-    trackedIssues?: { nodes: Array<{ number: number; state: string }> };
-    repository?: { nameWithOwner: string; name: string } | null;
-    subIssues?: { totalCount: number };
-  } | null;
-  fieldValues: {
-    nodes: Array<{
-      __typename?: string;
-      name?: string;
-      iterationId?: string;
-      title?: string;
-      startDate?: string;
-      duration?: number;
-      field?: { name: string };
-    }>;
-  };
-}
-
-function getFieldValue(
-  item: RawDashboardItem,
-  fieldName: string,
-): string | null {
-  const fv = item.fieldValues.nodes.find(
-    (n) =>
-      n.field?.name === fieldName &&
-      n.__typename === "ProjectV2ItemFieldSingleSelectValue",
-  );
-  return fv?.name ?? null;
-}
-
-/**
- * Convert raw GraphQL project items to DashboardItem[].
- * When projectNumber/projectTitle are provided, they are set on each item
- * for multi-project dashboard support.
- */
-export function toDashboardItems(
-  raw: RawDashboardItem[],
-  projectNumber?: number,
-  projectTitle?: string,
-): DashboardItem[] {
-  const items: DashboardItem[] = [];
-
-  for (const r of raw) {
-    // Only include issues (not PRs or drafts)
-    if (!r.content || r.content.__typename !== "Issue") continue;
-    if (r.content.number === undefined) continue;
-
-    // Extract iteration value (if any)
-    const iterFv = r.fieldValues.nodes.find(
-      (n) => n.__typename === "ProjectV2ItemFieldIterationValue",
-    );
-
-    items.push({
-      number: r.content.number,
-      title: r.content.title ?? "(untitled)",
-      updatedAt: r.content.updatedAt ?? new Date(0).toISOString(),
-      closedAt: r.content.closedAt ?? null,
-      workflowState: getFieldValue(r, "Workflow State"),
-      priority: getFieldValue(r, "Priority"),
-      estimate: getFieldValue(r, "Estimate"),
-      assignees:
-        r.content.assignees?.nodes?.map((a) => a.login) ?? [],
-      subIssueCount: r.content.subIssues?.totalCount ?? 0,
-      blockedBy: r.content.trackedIssues?.nodes?.map((n) => ({
-        number: n.number,
-        workflowState: n.state === "CLOSED" ? "Done" : null,
-      })) ?? [],
-      parentNumber: r.content.trackedInIssues?.nodes?.[0]?.number ?? null,
-      parentState: r.content.trackedInIssues?.nodes?.[0]?.state ?? null,
-      ...(projectNumber !== undefined ? { projectNumber } : {}),
-      ...(projectTitle !== undefined ? { projectTitle } : {}),
-      ...(r.content.repository ? { repository: r.content.repository.nameWithOwner } : {}),
-      ...(iterFv?.iterationId ? {
-        iterationId: iterFv.iterationId,
-        iterationTitle: iterFv.title ?? undefined,
-        iterationStartDate: iterFv.startDate ?? undefined,
-        iterationDuration: iterFv.duration ?? undefined,
-      } : {}),
-    });
-  }
-
-  return items;
-}
-
-// ---------------------------------------------------------------------------
-// GraphQL query for dashboard items
-// ---------------------------------------------------------------------------
-
-export const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $first: Int!) {
-  node(id: $projectId) {
-    ... on ProjectV2 {
-      items(first: $first, after: $cursor) {
-        totalCount
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          type
-          content {
-            ... on Issue {
-              __typename
-              number
-              title
-              state
-              updatedAt
-              closedAt
-              assignees(first: 5) { nodes { login } }
-              repository { nameWithOwner name }
-              subIssues { totalCount }
-              trackedIssues(first: 10) { nodes { number state } }
-              trackedInIssues(first: 3) { nodes { number state closedAt } }
-            }
-            ... on PullRequest {
-              __typename
-              number
-              title
-              state
-            }
-            ... on DraftIssue {
-              __typename
-              title
-            }
-          }
-          fieldValues(first: 20) {
-            nodes {
-              ... on ProjectV2ItemFieldSingleSelectValue {
-                __typename
-                name
-                field { ... on ProjectV2FieldCommon { name } }
-              }
-              ... on ProjectV2ItemFieldIterationValue {
-                __typename
-                iterationId
-                title
-                startDate
-                duration
-                field { ... on ProjectV2FieldCommon { name } }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}`;
+// Re-export for backwards compatibility — tests + downstream tools used to
+// pull these symbols straight out of dashboard-tools.ts before they were
+// hoisted into lib/dashboard-fetch.ts.
+export { DASHBOARD_ITEMS_QUERY, toDashboardItems, type RawDashboardItem };
 
 // ---------------------------------------------------------------------------
 // Register dashboard tools
@@ -401,53 +165,31 @@ export function registerDashboardTools(
           );
         }
 
-        // Fetch items from all projects
+        // Fetch items from all projects via the shared helper. We pass
+        // projectNumber=undefined and let the helper read the configured
+        // project list, but if the caller passed an explicit
+        // `projectNumbers` argument we iterate one at a time so the
+        // helper hits exactly the requested set.
         const allItems: DashboardItem[] = [];
         const fetchWarnings: string[] = [];
 
-        for (const pn of projectNumbers) {
-          try {
-            await ensureFieldCache(client, fieldCache, owner, pn);
-          } catch (e) {
-            fetchWarnings.push(
-              `Project #${pn}: ${e instanceof Error ? e.message : String(e)}, skipping`,
+        if (args.projectNumbers && args.projectNumbers.length > 0) {
+          for (const pn of args.projectNumbers) {
+            const { items, warnings } = await fetchDashboardItems(
+              client,
+              fieldCache,
+              pn,
             );
-            continue;
+            allItems.push(...items);
+            fetchWarnings.push(...warnings);
           }
-
-          const projectId = fieldCache.getProjectId(pn);
-          if (!projectId) {
-            fetchWarnings.push(
-              `Project #${pn}: could not resolve project ID, skipping`,
-            );
-            continue;
-          }
-
-          // Fetch project title
-          let projectTitle: string | undefined;
-          try {
-            const titleResult = await client.projectQuery<{
-              node: { title: string } | null;
-            }>(
-              `query($projectId: ID!) { node(id: $projectId) { ... on ProjectV2 { title } } }`,
-              { projectId },
-            );
-            projectTitle = titleResult.node?.title;
-          } catch {
-            // Non-fatal -- proceed without title
-          }
-
-          // Fetch items
-          const result = await paginateConnection<RawDashboardItem>(
-            (q, v) => client.projectQuery(q, v),
-            DASHBOARD_ITEMS_QUERY,
-            { projectId, first: 100 },
-            "node.items",
-            { maxItems: 500 },
+        } else {
+          const { items, warnings } = await fetchDashboardItems(
+            client,
+            fieldCache,
           );
-
-          const items = toDashboardItems(result.nodes, pn, projectTitle);
           allItems.push(...items);
+          fetchWarnings.push(...warnings);
         }
 
         // Build health config

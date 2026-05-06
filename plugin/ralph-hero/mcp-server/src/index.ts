@@ -31,6 +31,7 @@ import { registerDecomposeTools } from "./tools/decompose-tools.js";
 import { registerViewTools } from "./tools/view-tools.js";
 import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
 import { registerActivityTools } from "./tools/activity-tools.js";
+import { registerTrendsTools } from "./tools/trends-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -484,6 +485,9 @@ async function main(): Promise<void> {
 
   // Activity log reader (recent_activity tool — pure filesystem, no GitHub client)
   registerActivityTools(server);
+
+  // Trends tools (capture_snapshot — JSONL persistence under ~/.ralph-hero/snapshots/)
+  registerTrendsTools(server, client, fieldCache);
 
   // Debug tools (only when RALPH_DEBUG=true)
   if (process.env.RALPH_DEBUG === 'true') {

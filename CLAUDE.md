@@ -142,6 +142,18 @@ Key state categories defined in `workflow-states.ts`:
 
 `save_issue` automatically syncs the Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping when setting `workflowState`. The sync is best-effort and one-way.
 
+### Performance tracking over time
+
+Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead time can be trended without re-querying GitHub history.
+
+- **Capture**: `ralph_hero__capture_snapshot` (registered by `trends-tools.ts`) appends one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. Pure helpers live in `src/lib/snapshots.ts` (`appendSnapshot`, `readSnapshots`, `toSnapshot`).
+- **Schema**: `Snapshot` is schema-versioned (`SNAPSHOT_SCHEMA_VERSION`). Rows whose version does not match the current value are skipped on read with a `console.warn` so a single bad append cannot poison a file.
+- **Cycle time**: `src/lib/cycle-times.ts` rolls per-issue `TransitionRecord[]` into p50/p90 lead-time + per-phase dwell. The optional `Snapshot.cycleTime` field carries this rollup forward into trends.
+- **Trends**: `src/lib/trends.ts` exposes `computeTrends()` (1d/7d/30d deltas across `velocity`, `riskScore`, `wipTotal`, `leadTimeP50Hours`) and `renderSparkline()` (8-bucket Unicode block render). `ralph_hero__metrics_trends` returns markdown or JSON.
+- **Skill**: `/trends` (`plugin/ralph-hero/skills/trends/SKILL.md`) captures a fresh snapshot, then prints the markdown trend report. Read-only — nothing is posted to GitHub.
+- **Fixture**: `src/__tests__/fixtures/snapshots.fixture.jsonl` holds 30 synthetic schema-valid rows used by `trends.test.ts` and as a documentation example of the on-disk format.
+- **Schedule**: optional launchd template at `plugin/ralph-hero/scripts/snapshot/launchd/com.ralph.snapshot.plist.template` — captures one snapshot per day so the JSONL accumulates a daily history without manual intervention.
+
 ### Caching Strategy
 
 Two separate caches serve different purposes:
