@@ -3,9 +3,20 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { computeTrends, renderSparkline } from "../lib/trends.js";
 import type { Snapshot } from "../lib/snapshots.js";
 import { SNAPSHOT_SCHEMA_VERSION } from "../lib/snapshots.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FIXTURE_PATH = path.join(
+  __dirname,
+  "fixtures",
+  "snapshots.fixture.jsonl",
+);
 
 interface MakeSnapshotInput {
   hoursAgo: number;
@@ -178,6 +189,65 @@ describe("computeTrends", () => {
     expect(velocity.sparkline!.length).toBe(3);
     expect(velocity.sparkline!.startsWith("▁")).toBe(true);
     expect(velocity.sparkline!.endsWith("█")).toBe(true);
+  });
+});
+
+describe("snapshots.fixture.jsonl", () => {
+  it("loads 30 schema-valid rows consumable by computeTrends", () => {
+    const raw = fs.readFileSync(FIXTURE_PATH, "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+    expect(lines).toHaveLength(30);
+
+    const snaps: Snapshot[] = lines.map((l) => JSON.parse(l));
+
+    // Schema validation — every row must have required fields and the
+    // current schema version. This is the contract trends.ts depends on.
+    for (const s of snaps) {
+      expect(s.schemaVersion).toBe(SNAPSHOT_SCHEMA_VERSION);
+      expect(typeof s.capturedAt).toBe("string");
+      expect(Number.isFinite(Date.parse(s.capturedAt))).toBe(true);
+      expect(typeof s.owner).toBe("string");
+      expect(typeof s.projectNumber).toBe("number");
+      expect(typeof s.velocity).toBe("number");
+      expect(typeof s.windowDays).toBe("number");
+      expect(typeof s.riskScore).toBe("number");
+      expect(["green", "yellow", "red"]).toContain(s.status);
+      expect(s.wipByPhase).toBeTypeOf("object");
+      expect(s.pointsByPhase).toBeTypeOf("object");
+      expect(typeof s.doneInWindow).toBe("number");
+      expect(typeof s.newInWindow).toBe("number");
+      expect(s.warnings).toMatchObject({
+        critical: expect.any(Number),
+        warning: expect.any(Number),
+        info: expect.any(Number),
+      });
+    }
+
+    // Anchor `now` 1 day past the last row's timestamp so that the
+    // 30-day lookback (now - 30d) lands on or before row 0 — every
+    // requested deltaNd is then guaranteed to find a prior sample.
+    const lastTs = Date.parse(snaps[snaps.length - 1].capturedAt);
+    const now = lastTs + 86400000;
+    const trends = computeTrends(snaps, now);
+    expect(trends.map((t) => t.metric)).toEqual([
+      "velocity",
+      "riskScore",
+      "wipTotal",
+      "leadTimeP50Hours",
+    ]);
+
+    const velocity = trends.find((t) => t.metric === "velocity")!;
+    expect(velocity.points).toHaveLength(30);
+    expect(velocity.delta1d).not.toBeNull();
+    expect(velocity.delta7d).not.toBeNull();
+    expect(velocity.delta30d).not.toBeNull();
+    expect(velocity.sparkline).toBeDefined();
+    expect(velocity.sparkline!.length).toBe(30);
+
+    // Lead-time series should produce non-null deltas because the
+    // fixture populates `cycleTime` for rows after the warmup window.
+    const lead = trends.find((t) => t.metric === "leadTimeP50Hours")!;
+    expect(lead.delta1d).not.toBeNull();
   });
 });
 
