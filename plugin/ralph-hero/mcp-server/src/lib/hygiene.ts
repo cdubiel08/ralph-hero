@@ -33,6 +33,7 @@ export interface HygieneItem {
   title: string;
   workflowState: string | null;
   ageDays: number;
+  repository?: string; // "owner/repo" nameWithOwner format
 }
 
 export interface DuplicateCandidate {
@@ -81,6 +82,7 @@ function toHygieneItem(item: DashboardItem, now: number): HygieneItem {
     title: item.title,
     workflowState: item.workflowState,
     ageDays: Math.round(ageDays(item.updatedAt, now) * 10) / 10,
+    ...(item.repository ? { repository: item.repository } : {}),
   };
 }
 

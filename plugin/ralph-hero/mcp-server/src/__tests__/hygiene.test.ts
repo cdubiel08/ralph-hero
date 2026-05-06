@@ -543,3 +543,137 @@ describe("findDuplicateCandidates", () => {
     expect(report.summary.duplicateCandidateCount).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// repository field preservation (Phase 1)
+// ---------------------------------------------------------------------------
+
+describe("repository field preservation", () => {
+  it("findArchiveCandidates preserves repository on items", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+    ];
+    const result = findArchiveCandidates(items, NOW, 14);
+    expect(result).toHaveLength(1);
+    expect(result[0].repository).toBe("owner/repo-a");
+  });
+
+  it("findStaleItems preserves repository on items", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+    const result = findStaleItems(items, NOW, 7);
+    expect(result).toHaveLength(1);
+    expect(result[0].repository).toBe("owner/repo-b");
+  });
+
+  it("findOrphanedItems preserves repository on items", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        assignees: [],
+        updatedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        repository: "owner/repo-c",
+      }),
+    ];
+    const result = findOrphanedItems(items, NOW, 14);
+    expect(result).toHaveLength(1);
+    expect(result[0].repository).toBe("owner/repo-c");
+  });
+
+  it("findFieldGaps preserves repository on missingEstimate and missingPriority", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        estimate: null,
+        priority: "P1",
+        repository: "owner/repo-d",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        estimate: "S",
+        priority: null,
+        repository: "owner/repo-e",
+      }),
+    ];
+    const gaps = findFieldGaps(items, NOW);
+    expect(gaps.missingEstimate).toHaveLength(1);
+    expect(gaps.missingEstimate[0].repository).toBe("owner/repo-d");
+    expect(gaps.missingPriority).toHaveLength(1);
+    expect(gaps.missingPriority[0].repository).toBe("owner/repo-e");
+  });
+
+  it("findWipViolations preserves repository on items inside each violation", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "In Progress",
+        repository: "owner/repo-f",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "In Progress",
+        repository: "owner/repo-g",
+      }),
+      makeItem({
+        number: 3,
+        workflowState: "In Progress",
+        repository: "owner/repo-h",
+      }),
+    ];
+    const violations = findWipViolations(items, NOW, { "In Progress": 2 });
+    expect(violations).toHaveLength(1);
+    expect(violations[0].items).toHaveLength(3);
+    expect(violations[0].items[0].repository).toBe("owner/repo-f");
+    expect(violations[0].items[1].repository).toBe("owner/repo-g");
+    expect(violations[0].items[2].repository).toBe("owner/repo-h");
+  });
+
+  it("findDuplicateCandidates preserves repository on both items in each pair", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        title: "Add caching to API layer",
+        workflowState: "Backlog",
+        repository: "owner/repo-i",
+      }),
+      makeItem({
+        number: 2,
+        title: "Add caching to API layers",
+        workflowState: "Backlog",
+        repository: "owner/repo-j",
+      }),
+    ];
+    const result = findDuplicateCandidates(items, NOW, 0.8);
+    expect(result).toHaveLength(1);
+    expect(result[0].items[0].repository).toBe("owner/repo-i");
+    expect(result[0].items[1].repository).toBe("owner/repo-j");
+  });
+
+  it("toHygieneItem omits repository key when source has none (no undefined value)", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        // no repository field
+      }),
+    ];
+    const result = findArchiveCandidates(items, NOW, 14);
+    expect(result).toHaveLength(1);
+    expect("repository" in result[0]).toBe(false);
+  });
+});

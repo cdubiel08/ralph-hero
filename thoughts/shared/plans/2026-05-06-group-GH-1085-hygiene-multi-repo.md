@@ -147,12 +147,12 @@ Add `repository?: string` to the `HygieneItem` type and update `toHygieneItem()`
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no errors
-- [ ] `npm test` — all tests pass, including the 6 new repository-preservation tests
+- [x] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no errors
+- [x] `npm test` — all tests pass, including the 6 new repository-preservation tests
 
 #### Manual Verification:
-- [ ] `HygieneItem` type definition includes `repository?: string`
-- [ ] `toHygieneItem` copies `item.repository` through unchanged
+- [x] `HygieneItem` type definition includes `repository?: string`
+- [x] `toHygieneItem` copies `item.repository` through unchanged
 
 **Creates for next phase**: `HygieneItem` carries repository data end-to-end so Phase 3's per-repo grouping can read it. Phase 2 doesn't strictly need Phase 1 to compile, but completing it first keeps the type consistent across all phases.
 
