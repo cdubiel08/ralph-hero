@@ -20,6 +20,7 @@ allowed-tools:
   - Bash
   - Skill
   - Agent
+  - Monitor
   - AskUserQuestion
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
@@ -248,25 +249,78 @@ Check the skill output:
 
 After merge completes, watch CI checks on the merge commit.
 
+CI watch uses the `Monitor` tool — a streaming-notification primitive — rather than a 30-second polling loop. The Monitor runs a background poll script whose stdout lines arrive as conversation notifications **only when the run summary changes** (state transitions only, not every poll cycle). The agent does not burn a tool turn per poll; the underlying `sleep 30` lives inside the Monitor script. A `timeout_ms=600000` (10 minutes) safety net kills the script if CI never reaches a terminal state.
+
+First, capture the merge SHA:
+
 ```bash
 MERGE_SHA=$(gh pr view PR_NUMBER --json mergeCommit --jq '.mergeCommit.oid')
 ```
 
-Poll every 30 seconds for up to 10 minutes:
+Then invoke Monitor with the poll script. The script emits a one-line summary on each state transition, and a final terminal verdict line (`CI PASSED:`, `CI FAILED:`, or `CI SKIPPED:`) immediately before exiting. Use `printf '%s\n'` (not `echo`) so newlines are deterministic, and guard every `gh`/`jq` invocation with `2>/dev/null || ...` so transient API failures don't kill the loop. **Substitute the literal merge SHA into the `command` string before invoking Monitor** — Monitor runs the command in its own subshell and does not inherit shell-local variables from prior Bash calls; the `$MERGE_SHA` placeholder below is illustrative and must be replaced with the actual SHA captured above:
 
-```bash
-gh run list --commit "$MERGE_SHA" --json status,conclusion,name,url --limit 10
+```
+Monitor(
+  command='last_status=""
+while true; do
+  current=$(gh run list --commit "$MERGE_SHA" --json status,conclusion,name --limit 10 2>/dev/null || echo "[]")
+  count=$(printf "%s" "$current" | jq -r "length" 2>/dev/null || echo "0")
+  if [ "$count" = "0" ]; then
+    printf "%s\n" "CI SKIPPED: no runs found for $MERGE_SHA"
+    exit 0
+  fi
+  summary=$(printf "%s" "$current" | jq -r "[.[] | \"\\(.name): \\(.status)/\\(.conclusion)\"] | join(\", \")" 2>/dev/null || echo "")
+  if [ "$summary" != "$last_status" ]; then
+    printf "%s\n" "$summary"
+    last_status="$summary"
+  fi
+  if printf "%s" "$current" | jq -e "length > 0 and all(.conclusion != null)" >/dev/null 2>&1; then
+    if printf "%s" "$current" | jq -e "all(.conclusion == \"success\")" >/dev/null 2>&1; then
+      printf "%s\n" "CI PASSED: all runs succeeded"
+    else
+      failed=$(printf "%s" "$current" | jq -r "[.[] | select(.conclusion != \"success\") | \"\\(.name): \\(.conclusion)\"] | join(\", \")" 2>/dev/null || echo "unknown")
+      printf "%s\n" "CI FAILED: $failed"
+    fi
+    exit 0
+  fi
+  sleep 30
+done',
+  description='CI watch for merge SHA',
+  timeout_ms=600000
+)
 ```
 
-Check the results:
-- If all runs have `conclusion=success`: CI passed.
-- If any run has `conclusion=failure`: CI failed.
-- If any run still has `status=in_progress` or `status=queued`: keep polling.
-- If 10 minutes elapsed and runs are still in progress: report timeout.
+The script's contract:
 
-If no runs are found for the merge commit (e.g., no CI configured), report CI as skipped.
+1. Initialize `last_status=""`.
+2. Loop forever (`while true`).
+3. Fetch CI runs via `gh run list --commit "$MERGE_SHA" --json status,conclusion,name --limit 10` (stderr suppressed, fallback to `[]`).
+4. **Empty array** (`length == 0`): print `CI SKIPPED: no runs found for $MERGE_SHA` and `exit 0` immediately — no looping forever when no CI is configured.
+5. Compute a one-line `summary` via `jq -r` of `name: status/conclusion` per run, joined with `, `.
+6. Print `summary` via `printf '%s\n'` only when it differs from `last_status` (then update `last_status`).
+7. Check terminal state: `length > 0 and all(.conclusion != null)`.
+8. Terminal: print `CI PASSED: all runs succeeded` (all `conclusion == "success"`) **or** `CI FAILED: <failed run names with conclusions>` (any non-success). The terminal verdict line is the LAST line emitted before `exit 0`.
+9. Otherwise, `sleep 30` and re-loop.
+
+The four terminal outcomes the agent sees:
+
+| Outcome | Source signal |
+|---------|---------------|
+| `CI PASSED: ...`   | Last Monitor line begins with `CI PASSED:` (script exited 0 after all-success terminal). |
+| `CI FAILED: ...`   | Last Monitor line begins with `CI FAILED:` (script exited 0 after any-failure terminal). |
+| `CI SKIPPED: ...`  | Last Monitor line begins with `CI SKIPPED:` (script exited 0 immediately on empty array). |
+| `CI PENDING`       | Monitor reached `timeout_ms` (10 minutes) without ever emitting a `CI PASSED:` / `CI FAILED:` / `CI SKIPPED:` line. (Monitor sends SIGTERM on timeout, so the script cannot reliably emit a final line itself — absence of a terminal-prefix line within 10 min IS the `PENDING` signal.) |
 
 ## Step 7: Report Final Status
+
+Parse the LAST notification received from the Monitor (Step 6) as the CI verdict, mapping its prefix to one of `PASS`, `FAIL`, `SKIPPED`, or `PENDING`:
+
+- `CI PASSED:` -> `PASS`
+- `CI FAILED:` -> `FAIL` (also surface the failed run names from the Monitor line — they are included after the colon by the Step 6 script)
+- `CI SKIPPED:` -> `SKIPPED`
+- (Monitor reached `timeout_ms` with no terminal-prefix line emitted) -> `PENDING`
+
+Then emit the report:
 
 ```
 FINISHED

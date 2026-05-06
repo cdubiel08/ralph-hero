@@ -69,13 +69,13 @@ After this plan:
 
 ### Verification
 
-- [ ] Step 6 of `skills/finish/SKILL.md` no longer contains the language "Poll every 30 seconds for up to 10 minutes" or any `sleep 30` instruction.
-- [ ] `Monitor(` literal appears exactly once in Step 6.
-- [ ] `Monitor` literal appears in the YAML frontmatter `allowed-tools` of `skills/finish/SKILL.md`.
-- [ ] `Monitor` literal appears in the YAML frontmatter `tools` of `agents/finish-agent.md`.
-- [ ] Step 7 verdict parsing handles all four terminal lines (`CI PASSED:`, `CI FAILED:`, `CI PENDING:`, `CI SKIPPED:`).
-- [ ] Existing skill output formatting (`FINISHED`, `Issue: #NNN`, etc.) is byte-for-byte preserved.
-- [ ] The plan's research doc reference (`thoughts/shared/research/2026-04-12-monitor-tool-codebase-compositions.md`) is reachable.
+- [x] Step 6 of `skills/finish/SKILL.md` no longer contains the language "Poll every 30 seconds for up to 10 minutes" or any `sleep 30` instruction. (Note: the embedded Monitor poll script contains an internal `sleep 30` between iterations — this is the script's loop pacing, not an agent-blocking poll. The skill prose at the agent level is sleep-free.)
+- [x] `Monitor(` literal appears exactly once in Step 6.
+- [x] `Monitor` literal appears in the YAML frontmatter `allowed-tools` of `skills/finish/SKILL.md`.
+- [x] `Monitor` literal appears in the YAML frontmatter `tools` of `agents/finish-agent.md`.
+- [x] Step 7 verdict parsing handles all four terminal lines (`CI PASSED:`, `CI FAILED:`, `CI PENDING:`, `CI SKIPPED:`).
+- [x] Existing skill output formatting (`FINISHED`, `Issue: #NNN`, etc.) is byte-for-byte preserved.
+- [x] The plan's research doc reference (`thoughts/shared/research/2026-04-12-monitor-tool-codebase-compositions.md`) is reachable.
 
 ## What We're NOT Doing
 
@@ -115,9 +115,9 @@ Update Step 6 of the finish skill to invoke `Monitor(...)` with a state-transiti
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] The YAML frontmatter `allowed-tools:` list at lines 16-30 of `skills/finish/SKILL.md` includes `Monitor` as a new entry.
-  - [ ] No other entries in the allowlist are removed or reordered.
-  - [ ] The YAML remains valid (parses with no errors).
+  - [x] The YAML frontmatter `allowed-tools:` list at lines 16-30 of `skills/finish/SKILL.md` includes `Monitor` as a new entry.
+  - [x] No other entries in the allowlist are removed or reordered.
+  - [x] The YAML remains valid (parses with no errors).
 
 #### Task 1.2: Add Monitor to finish-agent tools allowlist
 - **files**: `plugin/ralph-hero/agents/finish-agent.md` (modify)
@@ -125,9 +125,9 @@ Update Step 6 of the finish skill to invoke `Monitor(...)` with a state-transiti
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] The `tools:` line in the frontmatter of `agents/finish-agent.md` includes `Monitor` (added to the existing comma-separated list).
-  - [ ] All existing tools (`Read`, `Glob`, `Grep`, `Bash`, `Skill`, `AskUserQuestion`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__*`) remain present and unchanged.
-  - [ ] The frontmatter parses as valid YAML.
+  - [x] The `tools:` line in the frontmatter of `agents/finish-agent.md` includes `Monitor` (added to the existing comma-separated list).
+  - [x] All existing tools (`Read`, `Glob`, `Grep`, `Bash`, `Skill`, `AskUserQuestion`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__*`) remain present and unchanged.
+  - [x] The frontmatter parses as valid YAML.
 
 #### Task 1.3: Replace polling loop in Step 6 with Monitor invocation
 - **files**: `plugin/ralph-hero/skills/finish/SKILL.md` (modify)
@@ -135,15 +135,15 @@ Update Step 6 of the finish skill to invoke `Monitor(...)` with a state-transiti
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Step 6 ("CI Watch") in `skills/finish/SKILL.md` no longer contains the literal text "Poll every 30 seconds for up to 10 minutes".
-  - [ ] Step 6 contains exactly one `Monitor(` literal call.
-  - [ ] The Monitor invocation passes `timeout_ms=600000` (10 minutes in ms).
-  - [ ] The Monitor invocation includes a `description` field (required parameter).
-  - [ ] The embedded poll script does the following in this order: (a) initialize `last_status=""`, (b) loop forever, (c) call `gh run list --commit "$MERGE_SHA" --json status,conclusion,name --limit 10 2>/dev/null || echo "[]"`, (d) compute a one-line summary via `jq -r`, (e) print the summary via `printf` only when it differs from `last_status`, (f) check terminal state via `jq -e 'length > 0 and all(.conclusion != null)'`, (g) on terminal: print `CI PASSED:` (all success), `CI FAILED:` (any non-success), or `CI SKIPPED:` (length == 0), and exit 0, (h) `sleep 30` between iterations.
-  - [ ] The script handles the empty-array case (no CI runs configured): prints `CI SKIPPED: no runs found for $MERGE_SHA` and exits 0 immediately rather than looping forever.
-  - [ ] The script uses `printf '%s\n'` (not `echo`) for its summary lines so newlines are deterministic.
-  - [ ] All `gh` and `jq` invocations have `2>/dev/null` and `|| true` (or equivalent fallback like `|| echo "[]"`) to keep the loop alive across transient API failures.
-  - [ ] The terminal verdict line is the LAST line the script emits before `exit 0`.
+  - [x] Step 6 ("CI Watch") in `skills/finish/SKILL.md` no longer contains the literal text "Poll every 30 seconds for up to 10 minutes".
+  - [x] Step 6 contains exactly one `Monitor(` literal call.
+  - [x] The Monitor invocation passes `timeout_ms=600000` (10 minutes in ms).
+  - [x] The Monitor invocation includes a `description` field (required parameter).
+  - [x] The embedded poll script does the following in this order: (a) initialize `last_status=""`, (b) loop forever, (c) call `gh run list --commit "$MERGE_SHA" --json status,conclusion,name --limit 10 2>/dev/null || echo "[]"`, (d) compute a one-line summary via `jq -r`, (e) print the summary via `printf` only when it differs from `last_status`, (f) check terminal state via `jq -e 'length > 0 and all(.conclusion != null)'`, (g) on terminal: print `CI PASSED:` (all success), `CI FAILED:` (any non-success), or `CI SKIPPED:` (length == 0), and exit 0, (h) `sleep 30` between iterations.
+  - [x] The script handles the empty-array case (no CI runs configured): prints `CI SKIPPED: no runs found for $MERGE_SHA` and exits 0 immediately rather than looping forever.
+  - [x] The script uses `printf '%s\n'` (not `echo`) for its summary lines so newlines are deterministic.
+  - [x] All `gh` and `jq` invocations have `2>/dev/null` and `|| true` (or equivalent fallback like `|| echo "[]"`) to keep the loop alive across transient API failures.
+  - [x] The terminal verdict line is the LAST line the script emits before `exit 0`.
 
 #### Task 1.4: Adapt Step 7 verdict parsing for Monitor terminal lines
 - **files**: `plugin/ralph-hero/skills/finish/SKILL.md` (modify)
@@ -151,10 +151,10 @@ Update Step 6 of the finish skill to invoke `Monitor(...)` with a state-transiti
 - **complexity**: medium
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] Step 7 includes instructions for the agent to parse the LAST notification received from the Monitor as the CI verdict.
-  - [ ] Step 7 explicitly enumerates the four verdict states with their source signals: `PASS` (Monitor's last line begins with `CI PASSED:`), `FAIL` (begins with `CI FAILED:`), `SKIPPED` (begins with `CI SKIPPED:`), `PENDING` (Monitor reached `timeout_ms` without emitting any of the three terminal prefixes).
-  - [ ] The `FINISHED` report block at the top of Step 7 still produces the four verdict labels (`PASS / FAIL / PENDING (timeout) / SKIPPED (no runs)`) byte-for-byte unchanged.
-  - [ ] Step 7 retains the existing instruction "If CI FAIL: links to failed runs" — the Monitor script's `CI FAILED:` line MUST include the failed run names (per Task 1.3), and Step 7 instructs the agent to surface those names.
+  - [x] Step 7 includes instructions for the agent to parse the LAST notification received from the Monitor as the CI verdict.
+  - [x] Step 7 explicitly enumerates the four verdict states with their source signals: `PASS` (Monitor's last line begins with `CI PASSED:`), `FAIL` (begins with `CI FAILED:`), `SKIPPED` (begins with `CI SKIPPED:`), `PENDING` (Monitor reached `timeout_ms` without emitting any of the three terminal prefixes).
+  - [x] The `FINISHED` report block at the top of Step 7 still produces the four verdict labels (`PASS / FAIL / PENDING (timeout) / SKIPPED (no runs)`) byte-for-byte unchanged.
+  - [x] Step 7 retains the existing instruction "If CI FAIL: links to failed runs" — the Monitor script's `CI FAILED:` line MUST include the failed run names (per Task 1.3), and Step 7 instructs the agent to surface those names.
 
 #### Task 1.5: Update Step 6 prose to describe Monitor semantics
 - **files**: `plugin/ralph-hero/skills/finish/SKILL.md` (modify)
@@ -162,28 +162,28 @@ Update Step 6 of the finish skill to invoke `Monitor(...)` with a state-transiti
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] Step 6's introductory prose explains that CI watch uses Monitor (a streaming-notification tool) rather than 30-second polling.
-  - [ ] Step 6 mentions that notifications arrive only on state transitions (not every poll cycle).
-  - [ ] Step 6 mentions the 10-minute `timeout_ms` safety net.
-  - [ ] No reference to "every 30 seconds" or "burning a tool call" remains in Step 6 prose (these are implementation details now hidden inside the Monitor script).
+  - [x] Step 6's introductory prose explains that CI watch uses Monitor (a streaming-notification tool) rather than 30-second polling.
+  - [x] Step 6 mentions that notifications arrive only on state transitions (not every poll cycle).
+  - [x] Step 6 mentions the 10-minute `timeout_ms` safety net.
+  - [x] No reference to "every 30 seconds" or "burning a tool call" remains in Step 6 prose (these are implementation details now hidden inside the Monitor script).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/skills/finish/SKILL.md').read().split('---')[1])"` — frontmatter parses with no error.
-- [ ] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/agents/finish-agent.md').read().split('---')[1])"` — frontmatter parses with no error.
-- [ ] `grep -q "^  - Monitor$" plugin/ralph-hero/skills/finish/SKILL.md` — Monitor present in skill allowlist.
-- [ ] `grep -q "Monitor" plugin/ralph-hero/agents/finish-agent.md` — Monitor present in agent tools.
-- [ ] `grep -c "Monitor(" plugin/ralph-hero/skills/finish/SKILL.md` returns `1` — exactly one Monitor invocation in skill body.
-- [ ] `! grep -q "Poll every 30 seconds for up to 10 minutes" plugin/ralph-hero/skills/finish/SKILL.md` — old polling language removed.
-- [ ] `grep -q "CI PASSED:" plugin/ralph-hero/skills/finish/SKILL.md && grep -q "CI FAILED:" plugin/ralph-hero/skills/finish/SKILL.md && grep -q "CI SKIPPED:" plugin/ralph-hero/skills/finish/SKILL.md` — all three terminal verdicts present.
-- [ ] `grep -q "timeout_ms=600000\|timeout_ms: 600000\|timeout_ms = 600000" plugin/ralph-hero/skills/finish/SKILL.md` — 10-minute timeout configured.
+- [x] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/skills/finish/SKILL.md').read().split('---')[1])"` — frontmatter parses with no error. (Run via `uv run --with pyyaml python3 -c '...'` since system python3 lacks PyYAML; semantically equivalent.)
+- [x] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/agents/finish-agent.md').read().split('---')[1])"` — frontmatter parses with no error.
+- [x] `grep -q "^  - Monitor$" plugin/ralph-hero/skills/finish/SKILL.md` — Monitor present in skill allowlist.
+- [x] `grep -q "Monitor" plugin/ralph-hero/agents/finish-agent.md` — Monitor present in agent tools.
+- [x] `grep -c "Monitor(" plugin/ralph-hero/skills/finish/SKILL.md` returns `1` — exactly one Monitor invocation in skill body.
+- [x] `! grep -q "Poll every 30 seconds for up to 10 minutes" plugin/ralph-hero/skills/finish/SKILL.md` — old polling language removed.
+- [x] `grep -q "CI PASSED:" plugin/ralph-hero/skills/finish/SKILL.md && grep -q "CI FAILED:" plugin/ralph-hero/skills/finish/SKILL.md && grep -q "CI SKIPPED:" plugin/ralph-hero/skills/finish/SKILL.md` — all three terminal verdicts present.
+- [x] `grep -q "timeout_ms=600000\|timeout_ms: 600000\|timeout_ms = 600000" plugin/ralph-hero/skills/finish/SKILL.md` — 10-minute timeout configured.
 
 #### Manual Verification:
-- [ ] Read the modified Step 6 end-to-end and confirm the Monitor script logic matches the research doc lines 71-91 with the documented refinements (empty-array `CI SKIPPED`, `printf` over `echo`, transient-failure guards).
-- [ ] Confirm Step 7's verdict-parsing prose is unambiguous about which Monitor line maps to which verdict.
-- [ ] Confirm the `FINISHED` report template at the top of Step 7 is byte-for-byte identical to the current version.
-- [ ] Manually trace the path: finish-agent → finish skill Step 6 → Monitor → Step 7 → `FINISHED` report. No tool that the agent needs is missing from its allowlist.
+- [x] Read the modified Step 6 end-to-end and confirm the Monitor script logic matches the research doc lines 71-91 with the documented refinements (empty-array `CI SKIPPED`, `printf` over `echo`, transient-failure guards).
+- [x] Confirm Step 7's verdict-parsing prose is unambiguous about which Monitor line maps to which verdict.
+- [x] Confirm the `FINISHED` report template at the top of Step 7 is byte-for-byte identical to the current version.
+- [x] Manually trace the path: finish-agent → finish skill Step 6 → Monitor → Step 7 → `FINISHED` report. No tool that the agent needs is missing from its allowlist.
 
 **Creates for next phase**: N/A (single-phase plan).
 
