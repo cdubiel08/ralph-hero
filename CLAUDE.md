@@ -160,6 +160,58 @@ Two separate caches serve different purposes:
 - **`SessionCache`**: API response cache keyed with `query:` prefix + stable node ID lookups (`issue-node-id:*`, `project-item-id:*`). Mutations invalidate `query:` entries only — node ID lookups are stable.
 - **`FieldOptionCache`**: In-memory project field option IDs, populated by `fetchProjectForCache()`. Multi-project aware (keyed by project number).
 
+### Hook Patterns
+
+Hook scripts in `plugin/ralph-hero/hooks/scripts/` are bash gates registered in skill frontmatter under `PreToolUse`, `PostToolUse`, or `Stop`. The default pattern is a single-event gate; this section documents the less-obvious **PostToolUse-for-response-inspection** pattern.
+
+**When to use PostToolUse for response inspection:**
+
+Pick PostToolUse over PreToolUse when the data the gate needs to evaluate lives in the **tool response**, not the tool args. Typical cases:
+
+- The gate needs to inspect a fetched issue's estimate, status, or relationships before allowing the next step
+- The gate needs to verify a side-effect actually produced the expected shape (e.g., `add_sub_issue` returned a real linkage)
+
+PreToolUse only sees `tool_input` — it cannot see what the tool returned. If the constraint is "block if the response shape is X," PreToolUse alone cannot enforce it.
+
+**Mechanics:**
+
+1. Register both `PreToolUse` and `PostToolUse` matchers in the skill's frontmatter, pointing at the same script:
+   ```yaml
+   PreToolUse:
+     - matcher: "ralph_hero__get_issue"
+       hooks:
+         - { type: command, command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh" }
+   PostToolUse:
+     - matcher: "ralph_hero__get_issue"
+       hooks:
+         - { type: command, command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh" }
+   ```
+
+2. Discriminate inside the script via `.hook_event_name`:
+   ```bash
+   event_name=$(get_field '.hook_event_name')
+   if [[ "$event_name" == "PreToolUse" ]]; then
+     # Surface a context reminder via stderr; exit 0 to allow the call
+   else
+     # PostToolUse: parse tool_response.content[0].text, exit 2 to block
+   fi
+   ```
+
+3. **Exit codes**: `exit 0` allows the agent to continue; `exit 2` (with a clear stderr message) blocks the next step. PostToolUse cannot mutate the response — it can only allow or block subsequent skill steps.
+
+**Reference implementation:** `plugin/ralph-hero/hooks/scripts/split-estimate-gate.sh` + `plugin/ralph-hero/skills/ralph-split/SKILL.md` frontmatter. The gate surfaces an M/L/XL reminder on PreToolUse, then on PostToolUse parses `tool_response.content[0].text`, extracts the issue's estimate, and blocks with exit 2 if the estimate is XS or S — preventing the agent from proceeding to splitting an already-atomic issue.
+
+**Picking PreToolUse vs PostToolUse:**
+
+| Gate purpose | Event |
+|--------------|-------|
+| Inject context / remind the agent of constraints | PreToolUse |
+| Validate `tool_input` (args correctness) | PreToolUse |
+| Validate `tool_response` shape or content | PostToolUse |
+| Verify a side-effect succeeded with the expected payload | PostToolUse |
+
+Combine both when the gate needs both behaviors (context reminder + response inspection), as `split-estimate-gate.sh` does.
+
 ## Key Implementation Gotchas
 
 - **`@octokit/graphql` v9 reserves `query`, `method`, and `url`** as option keys. Never use these as GraphQL variable names.

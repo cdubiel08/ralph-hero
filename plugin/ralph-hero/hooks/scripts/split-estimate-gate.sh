@@ -9,6 +9,10 @@
 # mis-estimated XS/S issue can no longer be silently splitted because the
 # PostToolUse pass blocks the agent before it proceeds to Step 5.
 #
+# Pattern reference: see "Hook Patterns" → "PostToolUse for Response Inspection"
+# in the repo-root CLAUDE.md for the canonical discussion of when to use
+# dual-event hooks like this one.
+#
 # Environment:
 #   RALPH_MIN_ESTIMATE       - Minimum estimate for splitting (default: M).
 #                              The set of allowed estimates is computed from this:
