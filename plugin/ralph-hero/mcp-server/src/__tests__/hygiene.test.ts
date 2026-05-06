@@ -18,8 +18,12 @@ import {
   buildHygieneReport,
   formatHygieneMarkdown,
   DEFAULT_HYGIENE_CONFIG,
+  type HygieneReport,
 } from "../lib/hygiene.js";
-import type { DashboardItem } from "../lib/dashboard.js";
+import {
+  groupDashboardItemsByRepo,
+  type DashboardItem,
+} from "../lib/dashboard.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -1203,5 +1207,323 @@ describe("formatHygieneMarkdown — Per-Repository Breakdown", () => {
     expect(repoBSlice).toContain("#202");
     expect(repoBSlice).toContain("Repo B stale item");
     expect(repoBSlice).not.toContain("#101");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// groupBy=repo composition (Phase 4)
+//
+// The tool layer (hygiene-tools.ts) implements groupBy=repo by composing
+// groupDashboardItemsByRepo + buildHygieneReport per repo group. These
+// tests exercise that pure-function composition directly — no tool-layer
+// mocking is required. They validate the response-shape contract from
+// the issue's acceptance criteria:
+//
+//   { groupBy: "repo", repos: Record<string, HygieneReport> }
+//
+// and the markdown contract:
+//
+//   "# Project Hygiene (by repo)" with one "## owner/repo" heading per repo
+// ---------------------------------------------------------------------------
+
+describe("groupBy=repo composition (Phase 4)", () => {
+  it("composes groupDashboardItemsByRepo + buildHygieneReport into a per-repo report map", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+
+    const repoGroups = groupDashboardItemsByRepo(items);
+    const repoResults: Record<string, HygieneReport> = {};
+    for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+      repoResults[repoName] = buildHygieneReport(
+        repoItems,
+        DEFAULT_HYGIENE_CONFIG,
+        NOW,
+      );
+    }
+
+    expect(Object.keys(repoResults).sort()).toEqual([
+      "owner/repo-a",
+      "owner/repo-b",
+    ]);
+    expect(repoResults["owner/repo-a"].totalItems).toBe(1);
+    expect(repoResults["owner/repo-b"].totalItems).toBe(1);
+  });
+
+  it("buckets items with no repository under '(unknown)'", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        // no repository
+      }),
+    ];
+
+    const repoGroups = groupDashboardItemsByRepo(items);
+    expect(Object.keys(repoGroups).sort()).toEqual([
+      "(unknown)",
+      "owner/repo-a",
+    ]);
+
+    const repoResults: Record<string, HygieneReport> = {};
+    for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+      repoResults[repoName] = buildHygieneReport(
+        repoItems,
+        DEFAULT_HYGIENE_CONFIG,
+        NOW,
+      );
+    }
+    expect(repoResults["(unknown)"]).toBeDefined();
+    expect(repoResults["(unknown)"].totalItems).toBe(1);
+    expect(repoResults["owner/repo-a"].totalItems).toBe(1);
+  });
+
+  it("each per-repo HygieneReport contains only that repo's items in every section", () => {
+    // Each repo gets one item that exercises a different hygiene section so
+    // we can verify partitioning across all six sections at once.
+    const items: DashboardItem[] = [
+      // repo-a: archive (Done, old) + stale (Backlog, old) + WIP violation
+      makeItem({
+        number: 11,
+        title: "Repo A archive",
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 12,
+        title: "Repo A stale",
+        workflowState: "Backlog",
+        assignees: [],
+        updatedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 13,
+        title: "Repo A wip",
+        workflowState: "In Progress",
+        repository: "owner/repo-a",
+      }),
+      // repo-b: only an in-progress item that doesn't trip any threshold
+      makeItem({
+        number: 21,
+        title: "Repo B active",
+        workflowState: "In Progress",
+        estimate: "S",
+        priority: "P1",
+        repository: "owner/repo-b",
+      }),
+    ];
+
+    const repoGroups = groupDashboardItemsByRepo(items);
+    const repoResults: Record<string, HygieneReport> = {};
+    for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+      repoResults[repoName] = buildHygieneReport(
+        repoItems,
+        { ...DEFAULT_HYGIENE_CONFIG, wipLimits: { "In Progress": 0 } },
+        NOW,
+      );
+    }
+
+    const repoA = repoResults["owner/repo-a"];
+    const repoB = repoResults["owner/repo-b"];
+
+    // repo-a has the archive candidate, stale item, and WIP violation
+    expect(repoA.archiveCandidates.map((i) => i.number)).toEqual([11]);
+    expect(repoA.staleItems.map((i) => i.number)).toEqual([12]);
+    expect(repoA.wipViolations).toHaveLength(1);
+    expect(repoA.wipViolations[0].items.map((i) => i.number)).toEqual([13]);
+
+    // repo-b sections should NOT contain any repo-a issue numbers
+    const repoBNumbersAll = [
+      ...repoB.archiveCandidates,
+      ...repoB.staleItems,
+      ...repoB.orphanedItems,
+      ...repoB.fieldGaps.missingEstimate,
+      ...repoB.fieldGaps.missingPriority,
+      ...repoB.duplicateCandidates.flatMap((d) => d.items),
+      ...repoB.wipViolations.flatMap((v) => v.items),
+    ].map((i) => i.number);
+    expect(repoBNumbersAll).not.toContain(11);
+    expect(repoBNumbersAll).not.toContain(12);
+    expect(repoBNumbersAll).not.toContain(13);
+
+    // repo-b has its own WIP violation containing only #21
+    expect(repoB.wipViolations).toHaveLength(1);
+    expect(repoB.wipViolations[0].items.map((i) => i.number)).toEqual([21]);
+  });
+
+  it("markdown composition produces one '## owner/repo' heading per repo", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+
+    // Replicate the tool-layer composition for markdown output.
+    const repoGroups = groupDashboardItemsByRepo(items);
+    const sortedRepoNames = Object.keys(repoGroups).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    let md = "# Project Hygiene (by repo)\n\n";
+    for (const repoName of sortedRepoNames) {
+      const repoItems = repoGroups[repoName];
+      const sub = buildHygieneReport(repoItems, DEFAULT_HYGIENE_CONFIG, NOW);
+      md += `## ${repoName} (${repoItems.length} items)\n\n`;
+      md += formatHygieneMarkdown(sub) + "\n\n";
+    }
+
+    expect(md).toContain("# Project Hygiene (by repo)");
+    expect(md).toContain("## owner/repo-a (1 items)");
+    expect(md).toContain("## owner/repo-b (1 items)");
+    // Headings appear in alphabetical order (deterministic).
+    const aIdx = md.indexOf("## owner/repo-a");
+    const bIdx = md.indexOf("## owner/repo-b");
+    expect(aIdx).toBeGreaterThan(0);
+    expect(bIdx).toBeGreaterThan(0);
+    expect(aIdx).toBeLessThan(bIdx);
+  });
+
+  it("renders repos in alphabetical order regardless of input order", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "zeta/last",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "alpha/first",
+      }),
+      makeItem({
+        number: 3,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "mid/middle",
+      }),
+    ];
+
+    const repoGroups = groupDashboardItemsByRepo(items);
+    const sortedRepoNames = Object.keys(repoGroups).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    expect(sortedRepoNames).toEqual([
+      "alpha/first",
+      "mid/middle",
+      "zeta/last",
+    ]);
+  });
+
+  it("composes correctly across multiple projects (multi-project + groupBy=repo)", () => {
+    // The tool concats items from multiple projects before grouping — verify
+    // the composition surfaces items from both projects in the right repo
+    // bucket.
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1,
+        title: "Issue from project 3 in repo-a",
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        projectNumber: 3,
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        title: "Issue from project 5 in repo-a",
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        projectNumber: 5,
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 3,
+        title: "Issue from project 5 in repo-b",
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        projectNumber: 5,
+        repository: "owner/repo-b",
+      }),
+    ];
+
+    const repoGroups = groupDashboardItemsByRepo(items);
+    const repoResults: Record<string, HygieneReport> = {};
+    for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+      repoResults[repoName] = buildHygieneReport(
+        repoItems,
+        DEFAULT_HYGIENE_CONFIG,
+        NOW,
+      );
+    }
+
+    expect(repoResults["owner/repo-a"].totalItems).toBe(2);
+    expect(repoResults["owner/repo-b"].totalItems).toBe(1);
+
+    // repo-a's stale items should include both #1 (project 3) and #2 (project 5)
+    const repoAStaleNums = repoResults["owner/repo-a"].staleItems
+      .map((i) => i.number)
+      .sort((a, b) => a - b);
+    expect(repoAStaleNums).toEqual([1, 2]);
+  });
+
+  it("when groupBy is omitted, buildHygieneReport on the merged set is the response shape (no regression)", () => {
+    // Phase 3 already covers the merged-shape regression; this assertion
+    // confirms the Phase 4 branch does not affect the default (groupBy
+    // omitted) path: a merged report has the standard HygieneReport shape
+    // with no `groupBy` or `repos` keys.
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+    const merged = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+
+    // Standard fields present
+    expect(merged.totalItems).toBe(2);
+    expect(merged.staleItems).toBeDefined();
+    expect(merged.summary).toBeDefined();
+    // Phase 3 emits repoBreakdowns when items span >=2 repos; this is the
+    // default path, NOT the groupBy=repo path.
+    expect(merged.repoBreakdowns).toBeDefined();
+    // Confirm the merged report has no `groupBy` or `repos` field — those
+    // belong to the groupBy=repo response shape only.
+    expect((merged as unknown as Record<string, unknown>).groupBy).toBeUndefined();
+    expect((merged as unknown as Record<string, unknown>).repos).toBeUndefined();
   });
 });
