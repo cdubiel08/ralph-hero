@@ -34,6 +34,11 @@ on:
           - Canceled
           - Backlog
 
+# Least-privilege permissions: GITHUB_TOKEN is read-only.
+# All writes (Workflow State updates) go through ROUTING_PAT.
+permissions:
+  contents: read
+
 concurrency:
   group: sync-issue-${{ github.event.issue.number || inputs.issue_number }}
   cancel-in-progress: false

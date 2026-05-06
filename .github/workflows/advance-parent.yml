@@ -22,6 +22,11 @@ on:
         required: true
         type: number
 
+# Least-privilege permissions: GITHUB_TOKEN is read-only.
+# All writes (Workflow State updates, parent issue close) go through ROUTING_PAT.
+permissions:
+  contents: read
+
 jobs:
   advance-parent:
     runs-on: ubuntu-latest
