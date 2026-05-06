@@ -1,6 +1,6 @@
 ---
 description: Generate and post a project status report. Queries pipeline dashboard with velocity metrics, composes a markdown report, auto-determines health status (ON_TRACK/AT_RISK/OFF_TRACK), and posts via GitHub Projects V2 status updates.
-argument-hint: "[optional: --dry-run] [optional: --window N] [optional: --status ON_TRACK|AT_RISK|OFF_TRACK]"
+argument-hint: "[optional: --dry-run] [optional: --window N] [optional: --status ON_TRACK|AT_RISK|OFF_TRACK] [optional: --with-trends]"
 context: fork
 model: sonnet
 hooks:
@@ -11,6 +11,7 @@ hooks:
 allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_status_update
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__metrics_trends
 ---
 
 # Ralph Project Report
@@ -26,8 +27,9 @@ Parse the argument string for optional flags:
 - `--dry-run`: Generate the report but do not post it. Display the composed markdown and determined status.
 - `--window N`: Override the time window in days for velocity and highlights (default: 7).
 - `--status ON_TRACK|AT_RISK|OFF_TRACK`: Override the auto-determined status with a manual designation.
+- `--with-trends`: Append a "Trends" section (sparklines + 1d/7d/30d deltas) to the report body. Default: off. When set, the skill calls `metrics_trends` after composing the body and appends its markdown only if `≥2` snapshots exist.
 
-All arguments are optional. Default behavior: 7-day window, auto-determined status, post to GitHub.
+All arguments are optional. Default behavior: 7-day window, auto-determined status, no trends section, post to GitHub.
 
 ### Step 2: Fetch Dashboard with Metrics
 
@@ -102,6 +104,16 @@ All clear — no health warnings.
 {If auto-determined: "Auto-determined from risk score ({riskScore})."}
 {If manually overridden: "Manually set to {STATUS}."}
 ```
+
+### Step 4b: Append Trends Section (optional)
+
+Only run this step when `--with-trends` was passed; otherwise skip entirely.
+
+1. Call `metrics_trends` with `format: "markdown"` and the default `since` window (no override).
+2. If the response indicates fewer than 2 snapshots — for example, an empty `markdown` field, an "insufficient history" payload, or any signal that trends are not yet meaningful — do NOT append anything and do NOT fail. Silently skip.
+3. Otherwise, append the returned markdown to the body composed in Step 4 under a new `## Trends` H2 heading. Place the appended section after the `## Status: {STATUS}` block (or substitute the trend tool's own headings under `## Trends` — keep the resulting body well-formed markdown).
+
+This step is purely additive: when `--with-trends` is omitted, the body produced by Step 4 is unchanged from pre-Phase-4 behavior.
 
 ### Step 5: Determine Final Status
 
