@@ -851,3 +851,357 @@ describe("repository field preservation", () => {
     expect("repository" in result[0]).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// repoBreakdowns auto-emission (Phase 3)
+// ---------------------------------------------------------------------------
+
+describe("repoBreakdowns auto-emission", () => {
+  it("single-repo input produces report.repoBreakdowns === undefined", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "In Progress",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    expect(report.repoBreakdowns).toBeUndefined();
+  });
+
+  it("zero-item input produces report.repoBreakdowns === undefined", () => {
+    const report = buildHygieneReport([], DEFAULT_HYGIENE_CONFIG, NOW);
+    expect(report.repoBreakdowns).toBeUndefined();
+  });
+
+  it("2-repo input produces repoBreakdowns with exactly 2 keys matching repo names", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        repository: "owner/repo-b",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    expect(report.repoBreakdowns).toBeDefined();
+    expect(Object.keys(report.repoBreakdowns!).sort()).toEqual([
+      "owner/repo-a",
+      "owner/repo-b",
+    ]);
+  });
+
+  it("each per-repo breakdown contains only items from that repo", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+      makeItem({
+        number: 3,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    expect(report.repoBreakdowns).toBeDefined();
+
+    const repoA = report.repoBreakdowns!["owner/repo-a"];
+    expect(repoA).toBeDefined();
+    expect(repoA.staleItems).toHaveLength(1);
+    expect(repoA.staleItems[0].number).toBe(1);
+
+    const repoB = report.repoBreakdowns!["owner/repo-b"];
+    expect(repoB).toBeDefined();
+    expect(repoB.staleItems).toHaveLength(2);
+    const staleNumbers = repoB.staleItems.map((i) => i.number).sort();
+    expect(staleNumbers).toEqual([2, 3]);
+  });
+
+  it("items with no repository bucketed under '(unknown)' when other repos present", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        // no repository
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    expect(report.repoBreakdowns).toBeDefined();
+    expect(Object.keys(report.repoBreakdowns!).sort()).toEqual([
+      "(unknown)",
+      "owner/repo-a",
+    ]);
+    expect(report.repoBreakdowns!["(unknown)"].repoName).toBe("(unknown)");
+  });
+
+  it("per-repo summary counts match per-repo section lengths", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const repoA = report.repoBreakdowns!["owner/repo-a"];
+    expect(repoA.summary.archiveCandidateCount).toBe(
+      repoA.archiveCandidates.length,
+    );
+    expect(repoA.summary.archiveCandidateCount).toBe(1);
+    const repoB = report.repoBreakdowns!["owner/repo-b"];
+    expect(repoB.summary.staleCount).toBe(repoB.staleItems.length);
+    expect(repoB.summary.staleCount).toBe(1);
+  });
+
+  it("per-repo breakdowns do NOT recursively contain repoBreakdowns", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        repository: "owner/repo-b",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    for (const [, breakdown] of Object.entries(report.repoBreakdowns!)) {
+      // HygieneRepoBreakdown shape: no repoBreakdowns field exists on it
+      expect(
+        (breakdown as Record<string, unknown>).repoBreakdowns,
+      ).toBeUndefined();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatHygieneMarkdown — Per-Repository Breakdown rendering (Phase 3)
+// ---------------------------------------------------------------------------
+
+describe("formatHygieneMarkdown — Per-Repository Breakdown", () => {
+  it("single-repo input does NOT contain 'Per-Repository Breakdown' (regression-safe)", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    expect(md).not.toContain("Per-Repository Breakdown");
+    expect(md).not.toContain("## Per-Repository Breakdown");
+  });
+
+  it("zero-repo input does NOT contain 'Per-Repository Breakdown'", () => {
+    const report = buildHygieneReport([], DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    expect(md).not.toContain("Per-Repository Breakdown");
+  });
+
+  it("2-repo input contains '## Per-Repository Breakdown' and one '### owner/repo' heading per repo", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    expect(md).toContain("## Per-Repository Breakdown");
+    expect(md).toContain("### owner/repo-a");
+    expect(md).toContain("### owner/repo-b");
+  });
+
+  it("per-repo sub-sections render in alphabetical repo-name order", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "zeta/repo",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "alpha/repo",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    const alphaIdx = md.indexOf("### alpha/repo");
+    const zetaIdx = md.indexOf("### zeta/repo");
+    expect(alphaIdx).toBeGreaterThan(0);
+    expect(zetaIdx).toBeGreaterThan(0);
+    expect(alphaIdx).toBeLessThan(zetaIdx);
+  });
+
+  it("per-repo sub-section omits empty section tables", () => {
+    // repo-a: a Done archive candidate only (no stale/orphan/etc).
+    // repo-b: a Backlog item with assignee, age 10d → stale only (no orphan,
+    // no archive). Both repos exercise different sections.
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        estimate: "S",
+        priority: "P1",
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Backlog",
+        assignees: ["alice"],
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        estimate: "S",
+        priority: "P1",
+        repository: "owner/repo-b",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    // Per-Repository Breakdown should appear
+    expect(md).toContain("## Per-Repository Breakdown");
+
+    const aStart = md.indexOf("### owner/repo-a");
+    const bStart = md.indexOf("### owner/repo-b");
+    expect(aStart).toBeLessThan(bStart);
+
+    // The repo-a sub-section should contain Archive Candidates only.
+    const repoASlice = md.slice(aStart, bStart);
+    expect(repoASlice).toContain("#### Archive Candidates");
+    expect(repoASlice).not.toContain("#### Stale Items");
+    expect(repoASlice).not.toContain("#### Orphaned Items");
+    expect(repoASlice).not.toContain("#### Field Gaps");
+    expect(repoASlice).not.toContain("#### WIP Violations");
+    expect(repoASlice).not.toContain("#### Duplicate Candidates");
+
+    // The repo-b sub-section should contain Stale Items only.
+    const repoBSlice = md.slice(bStart);
+    expect(repoBSlice).toContain("#### Stale Items");
+    expect(repoBSlice).not.toContain("#### Archive Candidates");
+    expect(repoBSlice).not.toContain("#### Orphaned Items");
+    expect(repoBSlice).not.toContain("#### Field Gaps");
+    expect(repoBSlice).not.toContain("#### WIP Violations");
+    expect(repoBSlice).not.toContain("#### Duplicate Candidates");
+  });
+
+  it("byte-identical markdown for single-repo input vs no-repo input (backward-compat)", () => {
+    // This guards Phase 3's backward-compat promise: when repoBreakdowns is
+    // undefined the markdown formatter must produce the same output it
+    // produced before Phase 3 existed.
+    const itemsWithRepo = [
+      makeItem({
+        number: 42,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+    ];
+    const itemsNoRepo = [
+      makeItem({
+        number: 42,
+        workflowState: "Done",
+        closedAt: new Date(NOW - 20 * DAY_MS).toISOString(),
+      }),
+    ];
+    const reportWithRepo = buildHygieneReport(
+      itemsWithRepo,
+      DEFAULT_HYGIENE_CONFIG,
+      NOW,
+    );
+    const reportNoRepo = buildHygieneReport(
+      itemsNoRepo,
+      DEFAULT_HYGIENE_CONFIG,
+      NOW,
+    );
+
+    expect(reportWithRepo.repoBreakdowns).toBeUndefined();
+    expect(reportNoRepo.repoBreakdowns).toBeUndefined();
+
+    const mdWithRepo = formatHygieneMarkdown(reportWithRepo);
+    const mdNoRepo = formatHygieneMarkdown(reportNoRepo);
+    expect(mdWithRepo).toBe(mdNoRepo);
+    expect(mdWithRepo).not.toContain("Per-Repository Breakdown");
+  });
+
+  it("renders per-repo Stale Items rows with correct issue numbers", () => {
+    const items = [
+      makeItem({
+        number: 101,
+        title: "Repo A stale item",
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-a",
+      }),
+      makeItem({
+        number: 202,
+        title: "Repo B stale item",
+        workflowState: "Backlog",
+        updatedAt: new Date(NOW - 10 * DAY_MS).toISOString(),
+        repository: "owner/repo-b",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+
+    const aStart = md.indexOf("### owner/repo-a");
+    const bStart = md.indexOf("### owner/repo-b");
+    const repoASlice = md.slice(aStart, bStart);
+    const repoBSlice = md.slice(bStart);
+
+    expect(repoASlice).toContain("#101");
+    expect(repoASlice).toContain("Repo A stale item");
+    expect(repoASlice).not.toContain("#202");
+
+    expect(repoBSlice).toContain("#202");
+    expect(repoBSlice).toContain("Repo B stale item");
+    expect(repoBSlice).not.toContain("#101");
+  });
+});
