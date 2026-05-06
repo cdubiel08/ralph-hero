@@ -137,6 +137,17 @@ review *args:
     set -- $_args
     dispatch "ralph-review" "$@"
 
+# Run code review on an "In Review" PR and address feedback (3-round loop)
+[group('workflow')]
+code-review *args:
+    #!/usr/bin/env bash
+    set -eu
+    source "{{justfile_directory()}}/scripts/cli-dispatch.sh"
+    DEFAULT_BUDGET=8.00 DEFAULT_TIMEOUT=30m
+    _args={{quote(args)}}
+    set -- $_args
+    dispatch "ralph-code-review" "$@"
+
 # Implement an issue following its approved plan
 [group('workflow')]
 impl *args:

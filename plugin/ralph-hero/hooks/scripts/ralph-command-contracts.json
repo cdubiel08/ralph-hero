@@ -140,6 +140,30 @@
       },
       "creates_artifacts": ["thoughts/shared/reviews/YYYY-MM-DD-GH-{number}-critique.md"],
       "artifact_path_pattern": "thoughts/shared/reviews/YYYY-MM-DD-GH-{number}-*.md"
+    },
+
+    "ralph_code_review": {
+      "preconditions": {
+        "git_branch": null,
+        "ticket_states": ["In Review"],
+        "ticket_estimates": null,
+        "required_attachments": [],
+        "open_pr_required": true
+      },
+      "lock_state": null,
+      "postconditions": {
+        "ticket_state_changed": false,
+        "valid_end_states": ["In Review", "Human Needed"],
+        "if_review_clean": {
+          "ticket_state": "In Review"
+        },
+        "if_max_rounds_exhausted": {
+          "ticket_state": "Human Needed",
+          "comment_added": true
+        }
+      },
+      "artifacts_created": [],
+      "artifacts_required": []
     }
   },
 

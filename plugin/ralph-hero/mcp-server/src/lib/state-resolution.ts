@@ -50,6 +50,7 @@ const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
   ralph_review: ["In Progress", "Ready for Plan", "Human Needed"],
   ralph_hero: ["In Review", "Human Needed"],
   ralph_merge: ["Done", "Human Needed"],
+  ralph_code_review: ["In Review", "Human Needed"],
 };
 
 // --- Helpers ---
