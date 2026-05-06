@@ -112,3 +112,16 @@ jobs:
         with:
           support-path: plugin/ralph-hero/scripts/__tests__
           tests-path: plugin/ralph-hero/scripts/__tests__
+
+  shellcheck-hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ludeeus/action-shellcheck v2.0.0 (pinned to commit SHA)
+      - name: Run ShellCheck on bash hooks
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
+        with:
+          scandir: plugin/ralph-hero/hooks
+          severity: error
+          format: gcc
