@@ -44,11 +44,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout routing script (cross-repo calls)
         if: github.repository != 'cdubiel08/ralph-hero'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: cdubiel08/ralph-hero
           path: .ralph-hero
