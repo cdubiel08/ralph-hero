@@ -118,8 +118,10 @@ jobs:
       # Upgrade npm to >= 11.5.1 — required for OIDC trusted publishing.
       # Node 22 ships with npm 10.x, which silently fails OIDC and returns
       # a misleading 404 from the registry on `npm publish`.
+      # `--force` works around the in-place self-upgrade module-loading bug
+      # where new npm tries to import modules from the old install mid-upgrade.
       - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@latest --force
 
       - name: Install dependencies
         run: npm ci
