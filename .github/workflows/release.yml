@@ -108,9 +108,13 @@ jobs:
           echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
           echo "Classification: mcp_changed=$MCP_CHANGED"
 
+      # Node 24 ships with npm 11.x natively, which is required for OIDC
+      # trusted publishing (npm CLI >= 11.5.1). Earlier attempts with Node 22
+      # + in-place `npm install -g npm@latest` hit MODULE_NOT_FOUND on
+      # promise-retry during the self-upgrade reify step.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: plugin/ralph-hero/mcp-server/package-lock.json
@@ -187,10 +191,10 @@ jobs:
           git push origin main --tags
 
       - name: Publish to npm
+        # Uses OIDC trusted publishing (id-token: write at job level).
+        # npm CLI >= 11.5.1 auto-detects OIDC; no NODE_AUTH_TOKEN needed.
         if: steps.classify.outputs.mcp_changed == 'true'
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         working-directory: .

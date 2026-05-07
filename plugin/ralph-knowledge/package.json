@@ -1,6 +1,6 @@
 {
   "name": "ralph-hero-knowledge-index",
-  "version": "0.1.33",
+  "version": "0.1.34",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -17,6 +17,7 @@
     "reindex": "node dist/reindex.js",
     "test": "vitest run",
     "bench:heap": "tsx benchmark/reindex-heap-bench.ts",
+    "eval:retrieval": "tsx scripts/eval-retrieval.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

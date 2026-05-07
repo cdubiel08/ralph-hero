@@ -1,5 +1,5 @@
 ---
-description: Validate, merge, and watch CI for a completed implementation. Chains ralph-val → ralph-merge → CI watch into one command. Code review is handled by ralph-merge's built-in gate; when RALPH_REVIEW_MODE=auto and code review flags issues, dispatches impl-agent to fix them.
+description: Validate, run code review, merge, and watch CI for a completed implementation. Owns the code review gate (preserves depth-0 fan-out for the code-review:code-review plugin); when RALPH_REVIEW_MODE=auto and code review flags issues, dispatches impl-agent to fix them then re-runs code review (max 1 fix cycle). Once review resolves, dispatches ralph-merge for merge mechanics only.
 user-invocable: true
 argument-hint: <issue-number> [--pr-url url] [--plan-doc path]
 context: inline
@@ -20,6 +20,7 @@ allowed-tools:
   - Bash
   - Skill
   - Agent
+  - Monitor
   - AskUserQuestion
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
@@ -34,12 +35,13 @@ allowed-tools:
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
+- Review mode: !`echo ${RALPH_REVIEW_MODE:-interactive}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
 
 # Ralph Finish
 
-Validate, merge, and watch CI for a completed implementation. Code review is handled by ralph-merge's built-in gate — when `RALPH_REVIEW_MODE=auto`, finish also orchestrates a code-review → impl-fix → re-merge cycle if the automated review flags issues (max 1 fix cycle).
+Validate, run code review, merge, and watch CI for a completed implementation. Finish owns the code review gate (so the `code-review:code-review` plugin's parallel-agent fan-out always runs at depth 0, depth-2 safe). When `RALPH_REVIEW_MODE=auto` and code review flags issues, finish dispatches impl-agent to fix them, then re-runs code review (max 1 fix cycle). Once review passes, finish dispatches `ralph-merge` for merge mechanics only.
 
 ## Step 1: Parse Arguments
 
@@ -104,23 +106,105 @@ Check the agent output for the verdict:
 - If output contains `VALIDATION FIX`: mechanical issues only (formatting, lint). Dispatch impl-agent to apply the listed fix commands in the worktree, commit, then re-run val-agent. Max 1 fix cycle — if it still fails after fixes, treat as FAIL.
 - If output contains `VALIDATION FAIL`: stop with the validation report. Substantive failures require implementation work.
 
-## Step 4: Merge (dispatch ralph-merge)
+## Step 4: Code Review Gate
 
-Build args for ralph-merge — always pass the PR URL to avoid redundant lookup:
+> **Why code review runs HERE (not inside ralph-merge):**
+>
+> The `code-review:code-review` plugin spawns 5 parallel Sonnet reviewers + N parallel Haiku scorers via the `Agent` tool. Those parallel agents land at depth 1 only when `code-review:code-review` itself is invoked from depth 0. By keeping the code review gate inline in finish (which runs at depth 0), we preserve the parallel-agent fan-out. If code review were dispatched from inside an agent context, the runtime's no-depth-2-Agent rule would silently break the parallel reviewers.
+
+Check whether the PR has received a code review:
+
+```bash
+gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'
+```
+
+**If `reviewDecision` is `APPROVED`**: a code review has been performed and approved. Proceed to Step 5.
+
+**If `reviewDecision` is `CHANGES_REQUESTED`**: a human reviewer (not the automated code-review skill) requested changes. Output:
 
 ```
-Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")
+FINISH BLOCKED
+Issue: #NNN
+PR: #PR_NUMBER
+Reason: Human reviewer requested changes — address feedback before merging.
 ```
 
-ralph-merge handles: code review gate (including optional `code-review:code-review` dispatch), PR readiness check, merge via `merge-pr.sh`, worktree cleanup, state transition to Done, parent advancement, cross-repo unblock, and posting the Merged comment.
+And stop.
 
-Check the skill output:
+**If no review decision exists** (`reviewDecision` is null or empty), branch on `RALPH_REVIEW_MODE`:
 
-- If output contains `MERGE BLOCKED` or `MERGE NOT READY`: report the status and stop.
-- If output contains `MERGED`: continue to Step 5.
-- If output contains `CODE_REVIEW_FEEDBACK`: automated code review flagged issues. Proceed to Step 4a.
+### Auto mode (`RALPH_REVIEW_MODE=auto`)
+
+Run code review automatically — do NOT prompt the user:
+
+```
+Skill("code-review:code-review", "PR_NUMBER")
+```
+
+The `code-review:code-review` skill runs inline at depth 0; its parallel reviewer agents land at depth 1 (legal). After the review skill completes, re-check `reviewDecision`:
+
+```bash
+gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'
+```
+
+- If `APPROVED`: continue to Step 5.
+- If `CHANGES_REQUESTED`: proceed to Step 4a (Code Review Fix Cycle).
+
+### Interactive mode (`RALPH_REVIEW_MODE=interactive`, default)
+
+Present a choice:
+
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
+
+```
+AskUserQuestion(
+  questions=[{
+    "question": "This PR has no code review yet. Would you like to run one before merging?",
+    "header": "Code Review",
+    "options": [
+      {"label": "Run code review", "description": "Invoke /code-review:code-review on PR #PR_NUMBER before merging"},
+      {"label": "Merge without review", "description": "Skip code review and proceed to merge"}
+    ],
+    "multiSelect": false
+  }]
+)
+```
+
+- If user selects **"Run code review"**: invoke `Skill("code-review:code-review", "PR_NUMBER")`. After it completes, re-check `reviewDecision`. If `APPROVED`, continue to Step 5. If `CHANGES_REQUESTED`, proceed to Step 4a.
+- If user selects **"Merge without review"**: continue to Step 5.
+- If user selects **"Other"**: stop.
+
+### Skill not available
+
+If the `code-review:code-review` skill is NOT installed:
+
+```
+This PR has no code review. Consider installing the code-review plugin:
+  claude plugins install @anthropic/code-review
+```
+
+Then present:
+
+```
+AskUserQuestion(
+  questions=[{
+    "question": "Proceed without code review?",
+    "header": "No Code Review Plugin",
+    "options": [
+      {"label": "Merge without review", "description": "Skip code review and proceed to merge"},
+      {"label": "Stop", "description": "Stop here — install the code-review plugin first"}
+    ],
+    "multiSelect": false
+  }]
+)
+```
+
+- If user selects **"Merge without review"**: continue to Step 5.
+- If user selects **"Stop"** or **"Other"**: stop.
 
 ## Step 4a: Code Review Fix Cycle
+
+Triggered when the auto code review (or interactive "Run code review") returned `CHANGES_REQUESTED`.
 
 Dispatch impl-agent in Address Mode to fix the flagged issues. The issue is already "In Review" with an open PR that has review comments — impl-agent will auto-detect Address Mode.
 
@@ -128,40 +212,115 @@ Dispatch impl-agent in Address Mode to fix the flagged issues. The issue is alre
 Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback for GH-NNN. The automated code review flagged issues on PR #PR_NUMBER. Fix the MUST_FIX and SHOULD_FIX items, push, and reply to comments.")
 ```
 
-After impl-agent completes, re-run ralph-merge:
+After impl-agent completes, re-run code review once:
+
+```
+Skill("code-review:code-review", "PR_NUMBER")
+```
+
+Then re-check `reviewDecision`:
+
+- If `APPROVED`: continue to Step 5.
+- If `CHANGES_REQUESTED` again: stop. Max 1 fix cycle. Output:
+
+```
+FINISH BLOCKED
+Issue: #NNN
+PR: #PR_NUMBER
+Reason: Code review feedback unresolved after 1 fix cycle.
+```
+
+## Step 5: Merge (dispatch ralph-merge)
+
+Code review has resolved (approved, skipped by user, or no skill available). Dispatch ralph-merge for merge mechanics only — always pass the PR URL to avoid redundant lookup:
 
 ```
 Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")
 ```
 
-Check the output again:
+ralph-merge is now a leaf skill: it handles PR readiness check, merge via `merge-pr.sh`, worktree cleanup, state transition to Done, parent advancement, cross-repo unblock, and posting the Merged comment. It does NOT run code review (that's owned by Step 4 above).
 
-- If `MERGED`: continue to Step 5.
-- If `MERGE BLOCKED`, `MERGE NOT READY`, or `CODE_REVIEW_FEEDBACK` again: stop. Max 1 fix cycle — report the status and let the human intervene.
+Check the skill output:
 
-## Step 5: CI Watch
+- If output contains `MERGE BLOCKED` or `MERGE NOT READY`: report the status and stop.
+- If output contains `MERGED`: continue to Step 6.
+
+## Step 6: CI Watch
 
 After merge completes, watch CI checks on the merge commit.
+
+CI watch uses the `Monitor` tool — a streaming-notification primitive — rather than a 30-second polling loop. The Monitor runs a background poll script whose stdout lines arrive as conversation notifications **only when the run summary changes** (state transitions only, not every poll cycle). The agent does not burn a tool turn per poll; the underlying `sleep 30` lives inside the Monitor script. A `timeout_ms=600000` (10 minutes) safety net kills the script if CI never reaches a terminal state.
+
+First, capture the merge SHA:
 
 ```bash
 MERGE_SHA=$(gh pr view PR_NUMBER --json mergeCommit --jq '.mergeCommit.oid')
 ```
 
-Poll every 30 seconds for up to 10 minutes:
+Then invoke Monitor with the poll script. The script emits a one-line summary on each state transition, and a final terminal verdict line (`CI PASSED:`, `CI FAILED:`, or `CI SKIPPED:`) immediately before exiting. Use `printf '%s\n'` (not `echo`) so newlines are deterministic, and guard every `gh`/`jq` invocation with `2>/dev/null || ...` so transient API failures don't kill the loop. **Substitute the literal merge SHA into the `command` string before invoking Monitor** — Monitor runs the command in its own subshell and does not inherit shell-local variables from prior Bash calls; the `$MERGE_SHA` placeholder below is illustrative and must be replaced with the actual SHA captured above:
 
-```bash
-gh run list --commit "$MERGE_SHA" --json status,conclusion,name,url --limit 10
+```
+Monitor(
+  command='last_status=""
+while true; do
+  current=$(gh run list --commit "$MERGE_SHA" --json status,conclusion,name --limit 10 2>/dev/null || echo "[]")
+  count=$(printf "%s" "$current" | jq -r "length" 2>/dev/null || echo "0")
+  if [ "$count" = "0" ]; then
+    printf "%s\n" "CI SKIPPED: no runs found for $MERGE_SHA"
+    exit 0
+  fi
+  summary=$(printf "%s" "$current" | jq -r "[.[] | \"\\(.name): \\(.status)/\\(.conclusion)\"] | join(\", \")" 2>/dev/null || echo "")
+  if [ "$summary" != "$last_status" ]; then
+    printf "%s\n" "$summary"
+    last_status="$summary"
+  fi
+  if printf "%s" "$current" | jq -e "length > 0 and all(.conclusion != null)" >/dev/null 2>&1; then
+    if printf "%s" "$current" | jq -e "all(.conclusion == \"success\")" >/dev/null 2>&1; then
+      printf "%s\n" "CI PASSED: all runs succeeded"
+    else
+      failed=$(printf "%s" "$current" | jq -r "[.[] | select(.conclusion != \"success\") | \"\\(.name): \\(.conclusion)\"] | join(\", \")" 2>/dev/null || echo "unknown")
+      printf "%s\n" "CI FAILED: $failed"
+    fi
+    exit 0
+  fi
+  sleep 30
+done',
+  description='CI watch for merge SHA',
+  timeout_ms=600000
+)
 ```
 
-Check the results:
-- If all runs have `conclusion=success`: CI passed.
-- If any run has `conclusion=failure`: CI failed.
-- If any run still has `status=in_progress` or `status=queued`: keep polling.
-- If 10 minutes elapsed and runs are still in progress: report timeout.
+The script's contract:
 
-If no runs are found for the merge commit (e.g., no CI configured), report CI as skipped.
+1. Initialize `last_status=""`.
+2. Loop forever (`while true`).
+3. Fetch CI runs via `gh run list --commit "$MERGE_SHA" --json status,conclusion,name --limit 10` (stderr suppressed, fallback to `[]`).
+4. **Empty array** (`length == 0`): print `CI SKIPPED: no runs found for $MERGE_SHA` and `exit 0` immediately — no looping forever when no CI is configured.
+5. Compute a one-line `summary` via `jq -r` of `name: status/conclusion` per run, joined with `, `.
+6. Print `summary` via `printf '%s\n'` only when it differs from `last_status` (then update `last_status`).
+7. Check terminal state: `length > 0 and all(.conclusion != null)`.
+8. Terminal: print `CI PASSED: all runs succeeded` (all `conclusion == "success"`) **or** `CI FAILED: <failed run names with conclusions>` (any non-success). The terminal verdict line is the LAST line emitted before `exit 0`.
+9. Otherwise, `sleep 30` and re-loop.
 
-## Step 6: Report Final Status
+The four terminal outcomes the agent sees:
+
+| Outcome | Source signal |
+|---------|---------------|
+| `CI PASSED: ...`   | Last Monitor line begins with `CI PASSED:` (script exited 0 after all-success terminal). |
+| `CI FAILED: ...`   | Last Monitor line begins with `CI FAILED:` (script exited 0 after any-failure terminal). |
+| `CI SKIPPED: ...`  | Last Monitor line begins with `CI SKIPPED:` (script exited 0 immediately on empty array). |
+| `CI PENDING`       | Monitor reached `timeout_ms` (10 minutes) without ever emitting a `CI PASSED:` / `CI FAILED:` / `CI SKIPPED:` line. (Monitor sends SIGTERM on timeout, so the script cannot reliably emit a final line itself — absence of a terminal-prefix line within 10 min IS the `PENDING` signal.) |
+
+## Step 7: Report Final Status
+
+Parse the LAST notification received from the Monitor (Step 6) as the CI verdict, mapping its prefix to one of `PASS`, `FAIL`, `SKIPPED`, or `PENDING`:
+
+- `CI PASSED:` -> `PASS`
+- `CI FAILED:` -> `FAIL` (also surface the failed run names from the Monitor line — they are included after the colon by the Step 6 script)
+- `CI SKIPPED:` -> `SKIPPED`
+- (Monitor reached `timeout_ms` with no terminal-prefix line emitted) -> `PENDING`
+
+Then emit the report:
 
 ```
 FINISHED
