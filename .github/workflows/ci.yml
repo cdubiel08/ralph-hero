@@ -128,6 +128,23 @@ jobs:
           support-path: plugin/ralph-hero/scripts/__tests__
           tests-path: plugin/ralph-hero/scripts/__tests__
 
+  test-hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Run hook tests
+        shell: bash
+        run: |
+          # Glob both naming conventions used today (*.test.sh and test-*.sh).
+          # Each file runs in its own subshell so a `set -e` exit in one test
+          # cannot abort the suite. First non-zero rc propagates.
+          find plugin/ralph-hero/hooks/scripts/__tests__ \
+            \( -name '*.test.sh' -o -name 'test-*.sh' \) \
+            -type f -print0 \
+            | sort -z \
+            | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"; rc=$?; if [ $rc -ne 0 ]; then echo "FAIL: $0 exited $rc"; exit $rc; fi'
+
   lint-workflows:
     runs-on: ubuntu-latest
     permissions:
