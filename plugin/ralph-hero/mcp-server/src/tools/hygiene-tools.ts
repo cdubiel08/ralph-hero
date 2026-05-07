@@ -10,20 +10,24 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { paginateConnection } from "../lib/pagination.js";
-import { ensureFieldCache } from "../lib/helpers.js";
 import {
   buildHygieneReport,
   formatHygieneMarkdown,
   type HygieneConfig,
+  type HygieneReport,
   DEFAULT_HYGIENE_CONFIG,
 } from "../lib/hygiene.js";
+import { fetchDashboardItems } from "../lib/dashboard-fetch.js";
 import {
-  DASHBOARD_ITEMS_QUERY,
-  toDashboardItems,
-  type RawDashboardItem,
-} from "./dashboard-tools.js";
-import { toolSuccess, toolError, resolveProjectOwner } from "../types.js";
+  groupDashboardItemsByRepo,
+  type DashboardItem,
+} from "../lib/dashboard.js";
+import {
+  toolSuccess,
+  toolError,
+  resolveProjectOwner,
+  resolveProjectNumbers,
+} from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Register hygiene tools
@@ -42,6 +46,12 @@ export function registerHygieneTools(
         .string()
         .optional()
         .describe("GitHub owner. Defaults to env var"),
+      projectNumbers: z
+        .array(z.coerce.number())
+        .optional()
+        .describe(
+          "Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.",
+        ),
       archiveDays: z
         .number()
         .optional()
@@ -79,38 +89,56 @@ export function registerHygieneTools(
         .optional()
         .default("json")
         .describe("Output format (default: json)"),
+      groupBy: z
+        .enum(["repo"])
+        .optional()
+        .describe(
+          "Group hygiene output by dimension. 'repo' returns one full hygiene sub-report per repository (response shape becomes { groupBy: 'repo', repos: { ... } } instead of the flat report).",
+        ),
     },
     async (args) => {
       try {
         const owner = args.owner || resolveProjectOwner(client.config);
-        const projectNumber = client.config.projectNumber;
-
         if (!owner) {
           return toolError("owner is required");
         }
-        if (!projectNumber) {
-          return toolError("project number is required");
+
+        // Resolve project numbers
+        const projectNumbers =
+          args.projectNumbers ?? resolveProjectNumbers(client.config);
+
+        if (projectNumbers.length === 0) {
+          return toolError(
+            "No project numbers configured. Set RALPH_GH_PROJECT_NUMBER or RALPH_GH_PROJECT_NUMBERS.",
+          );
         }
 
-        // Ensure field cache
-        await ensureFieldCache(client, fieldCache, owner, projectNumber);
+        // Fetch items from all projects via the shared helper. We mirror
+        // the dashboard tool: when an explicit `projectNumbers` argument
+        // is provided, iterate one project at a time so the helper hits
+        // exactly the requested set; otherwise let the helper read the
+        // configured project list once.
+        const allItems: DashboardItem[] = [];
+        const fetchWarnings: string[] = [];
 
-        const projectId = fieldCache.getProjectId(projectNumber);
-        if (!projectId) {
-          return toolError("Could not resolve project ID");
+        if (args.projectNumbers && args.projectNumbers.length > 0) {
+          for (const pn of args.projectNumbers) {
+            const { items, warnings } = await fetchDashboardItems(
+              client,
+              fieldCache,
+              pn,
+            );
+            allItems.push(...items);
+            fetchWarnings.push(...warnings);
+          }
+        } else {
+          const { items, warnings } = await fetchDashboardItems(
+            client,
+            fieldCache,
+          );
+          allItems.push(...items);
+          fetchWarnings.push(...warnings);
         }
-
-        // Fetch all project items (reuse dashboard query)
-        const result = await paginateConnection<RawDashboardItem>(
-          (q, v) => client.projectQuery(q, v),
-          DASHBOARD_ITEMS_QUERY,
-          { projectId, first: 100 },
-          "node.items",
-          { maxItems: 500 },
-        );
-
-        // Convert to dashboard items
-        const dashboardItems = toDashboardItems(result.nodes);
 
         // Build hygiene config
         const hygieneConfig: HygieneConfig = {
@@ -122,18 +150,66 @@ export function registerHygieneTools(
           similarityThreshold: args.similarityThreshold ?? 0.8,
         };
 
-        // Build report
-        const report = buildHygieneReport(dashboardItems, hygieneConfig);
+        // If groupBy=repo, build per-repo sub-reports and early-return.
+        // Mirrors pipeline_dashboard's groupBy=repo branch
+        // (dashboard-tools.ts:219-249): we do NOT compute a merged report;
+        // instead we return one HygieneReport per repository. Items missing
+        // `repository` fall under the "(unknown)" key (delegated to
+        // groupDashboardItemsByRepo, matching the dashboard precedent).
+        if (args.groupBy === "repo") {
+          const repoGroups = groupDashboardItemsByRepo(allItems);
+          // Sort repo names alphabetically so JSON insertion order and
+          // markdown rendering order are deterministic, matching the
+          // per-repo breakdown sort in formatHygieneMarkdown (Phase 3).
+          const sortedRepoNames = Object.keys(repoGroups).sort((a, b) =>
+            a.localeCompare(b),
+          );
+
+          if (args.format === "markdown") {
+            let md = "# Project Hygiene (by repo)\n\n";
+            for (const repoName of sortedRepoNames) {
+              const repoItems = repoGroups[repoName];
+              const sub = buildHygieneReport(repoItems, hygieneConfig);
+              md += `## ${repoName} (${repoItems.length} items)\n\n`;
+              md += formatHygieneMarkdown(sub) + "\n\n";
+            }
+            return toolSuccess({
+              markdown: md,
+              ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+            });
+          }
+
+          // JSON format
+          const repoResults: Record<string, HygieneReport> = {};
+          for (const repoName of sortedRepoNames) {
+            repoResults[repoName] = buildHygieneReport(
+              repoGroups[repoName],
+              hygieneConfig,
+            );
+          }
+          return toolSuccess({
+            groupBy: "repo",
+            repos: repoResults,
+            ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+          });
+        }
+
+        // Build report from merged items
+        const report = buildHygieneReport(allItems, hygieneConfig);
 
         // Format output
         if (args.format === "markdown") {
           return toolSuccess({
             ...report,
             formatted: formatHygieneMarkdown(report),
+            ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
           });
         }
 
-        return toolSuccess(report);
+        return toolSuccess({
+          ...report,
+          ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+        });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to generate hygiene report: ${message}`);

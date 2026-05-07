@@ -2,11 +2,13 @@
 # Run the Ralph GitHub workflow loop until all queues are empty
 #
 # Usage: ./scripts/ralph-loop.sh [--triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only]
+#        ./scripts/ralph-loop.sh [--val-only|--pr-only|--code-review-only|--merge-only]
 #        ./scripts/ralph-loop.sh [--analyst-only|--builder-only|--integrator-only]
 #        ./scripts/ralph-loop.sh --split=auto|skip --review=auto|skip|interactive --hygiene=auto|skip
-#        ./scripts/ralph-loop.sh --budget=5.00
+#        ./scripts/ralph-loop.sh --budget=5.00 [--auto-merge]
 #
-# Runs: hygiene (optional) -> triage -> split (optional) -> research -> plan -> review (optional) -> implement in sequence
+# Runs: hygiene (optional) -> triage -> split (optional) -> research -> plan -> review (optional) -> implement
+#    -> val -> pr -> code-review -> [merge] in sequence
 # Repeats until no eligible tickets in any queue
 #
 # Review modes:
@@ -17,6 +19,11 @@
 # Hygiene modes:
 #   --hygiene=auto       Run hygiene before triage (default)
 #   --hygiene=skip       Skip hygiene phase
+#
+# Auto-merge:
+#   --auto-merge         Enable autonomous merge gate (RALPH_AUTO_MERGE=true).
+#                        Without this flag, the merge phase is a no-op (issues
+#                        end at "In Review" with a code-reviewed PR).
 
 set -e
 
@@ -54,6 +61,7 @@ MODE="all"
 REVIEW_MODE="${RALPH_REVIEW_MODE:-auto}"
 SPLIT_MODE="${RALPH_SPLIT_MODE:-auto}"
 HYGIENE_MODE="${RALPH_HYGIENE_MODE:-auto}"
+AUTO_MERGE="${RALPH_AUTO_MERGE:-false}"
 for arg in "$@"; do
     case "$arg" in
         --review=*)
@@ -68,7 +76,13 @@ for arg in "$@"; do
         --budget=*)
             BUDGET="${arg#*=}"
             ;;
+        --auto-merge)
+            AUTO_MERGE="true"
+            ;;
         --triage-only|--split-only|--research-only|--plan-only|--review-only|--impl-only|--hygiene-only)
+            MODE="$arg"
+            ;;
+        --val-only|--pr-only|--code-review-only|--merge-only)
             MODE="$arg"
             ;;
         --analyst-only|--builder-only|--integrator-only)
@@ -79,6 +93,7 @@ done
 export RALPH_REVIEW_MODE="$REVIEW_MODE"
 export RALPH_SPLIT_MODE="$SPLIT_MODE"
 export RALPH_HYGIENE_MODE="$HYGIENE_MODE"
+export RALPH_AUTO_MERGE="$AUTO_MERGE"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
 TIMEOUT="${TIMEOUT:-15m}"
 BUDGET="${RALPH_BUDGET:-5.00}"
@@ -90,6 +105,7 @@ echo "Mode: $MODE"
 echo "Hygiene mode: $HYGIENE_MODE"
 echo "Split mode: $SPLIT_MODE"
 echo "Review mode: $REVIEW_MODE"
+echo "Auto-merge: $AUTO_MERGE"
 echo "Max iterations: $MAX_ITERATIONS"
 echo "Timeout per task: $TIMEOUT"
 echo "Budget per task: \$${BUDGET}"
@@ -217,9 +233,46 @@ while [ $iteration -lt $MAX_ITERATIONS ]; do
     fi
 
     # === INTEGRATOR PHASE ===
-    if [ "$MODE" = "all" ] || [ "$MODE" = "--integrator-only" ]; then
-        echo "--- Integrator Phase (report only) ---"
-        # Future: run_claude "/ralph-hero:ralph-integrate" "integrate"
+
+    # Validation phase
+    if [ "$MODE" = "all" ] || [ "$MODE" = "--val-only" ] || [ "$MODE" = "--integrator-only" ]; then
+        echo "--- Integrator: Validation Phase ---"
+        if run_claude "/ralph-hero:ralph-val" "val"; then
+            work_done=true
+        fi
+    fi
+
+    # PR phase
+    if [ "$MODE" = "all" ] || [ "$MODE" = "--pr-only" ] || [ "$MODE" = "--integrator-only" ]; then
+        echo "--- Integrator: PR Phase ---"
+        if run_claude "/ralph-hero:ralph-pr" "pr"; then
+            work_done=true
+        fi
+    fi
+
+    # Code review phase
+    if [ "$MODE" = "all" ] || [ "$MODE" = "--code-review-only" ] || [ "$MODE" = "--integrator-only" ]; then
+        echo "--- Integrator: Code Review Phase ---"
+        if run_claude "/ralph-hero:ralph-code-review" "code-review"; then
+            work_done=true
+        fi
+    fi
+
+    # Merge phase (gated by --auto-merge to remain safe-by-default)
+    if [ "$MODE" = "all" ] || [ "$MODE" = "--merge-only" ] || [ "$MODE" = "--integrator-only" ]; then
+        if [ "$AUTO_MERGE" = "true" ]; then
+            echo "--- Integrator: Merge Phase (auto-merge enabled) ---"
+            if run_claude "/ralph-hero:ralph-merge" "merge"; then
+                work_done=true
+            fi
+        elif [ "$MODE" = "--merge-only" ]; then
+            # Explicit warning so --merge-only is never silent
+            echo ">>> --merge-only requires --auto-merge or auto-merge=true; skipping merge phase."
+            echo "    To enable autonomous merging: just loop --merge-only --auto-merge"
+            echo "    Or:                          RALPH_AUTO_MERGE=true just loop --merge-only"
+        else
+            echo "--- Integrator: Merge Phase: SKIPPED (auto-merge disabled) ---"
+        fi
     fi
 
     # Exit early if no work found in any queue

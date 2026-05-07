@@ -1,8 +1,7 @@
 ---
-description: Merge a pull request after code review — handles review gate, merges, cleans up worktree, moves issues to Done. Use when you want to merge a PR for a completed issue.
+description: Merge an approved pull request — handles PR readiness, merges, cleans up worktree, moves issues to Done. Code review must be run by the caller (finish or ralph-code-review); ralph-merge refuses to merge a PR with no review decision.
 user-invocable: false
 argument-hint: <issue-number> [--pr-url url]
-context: fork
 model: haiku
 hooks:
   SessionStart:
@@ -18,8 +17,6 @@ allowed-tools:
   - Read
   - Glob
   - Bash
-  - AskUserQuestion
-  - Skill
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
@@ -33,13 +30,12 @@ allowed-tools:
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
-- Review mode: !`echo ${RALPH_REVIEW_MODE:-interactive}`
 
 Use these resolved values when constructing GitHub URLs or referencing the repository.
 
 # Ralph Merge
 
-Merge an approved pull request and move issues to Done.
+Merge an approved pull request and move issues to Done. This is a leaf merge-mechanics skill — code review is the responsibility of the orchestrating caller (finish or ralph-code-review). Standalone callers (`just merge NNN`) that invoke this skill on an unreviewed PR will be rejected with `MERGE BLOCKED — review required` to preserve safety.
 
 ## Step 1: Parse Arguments
 
@@ -100,29 +96,28 @@ gh pr list --head feature/GH-NNN --json number,url,state --jq '.[0]'
 
 If no PR found, report and stop.
 
-## Step 4: Code Review Gate
+## Step 4: Review Decision Guard (Standalone Safety)
 
 > **Output contract for callers (orchestrators: ralph-finish, ralph-hero):**
 >
-> This step can produce three distinct stop statuses that callers MUST handle:
+> This step produces two stop statuses that callers MUST handle:
 >
 > | Status | Meaning | Caller action |
 > |--------|---------|---------------|
-> | `MERGE BLOCKED` | A human reviewer requested changes (manual `CHANGES_REQUESTED` review on GitHub). Hard block. | Stop. Surface to human; do NOT auto-fix. |
-> | `CODE_REVIEW_FEEDBACK` | Auto-mode code review (via `code-review:code-review` skill) requested changes. Soft block — fix cycle is appropriate. | Dispatch impl-agent to address review findings, then re-invoke ralph-merge. |
-> | `MERGE NOT READY` | PR is open but not mergeable (conflicts, draft, missing review). Transient. | Retry later or escalate. |
+> | `MERGE BLOCKED` | Either a human reviewer requested changes, OR no code review has been run on the PR. Hard block. | Run code review (via finish/ralph-code-review) or surface to human. |
+> | `MERGE NOT READY` | PR is open but not mergeable (conflicts, draft). Transient. | Retry later or escalate. |
 >
-> The distinction between `MERGE BLOCKED` and `CODE_REVIEW_FEEDBACK` matters: a caller that only handles `MERGE BLOCKED` will treat `CODE_REVIEW_FEEDBACK` as an unrecognized status and lose the auto-fix opportunity. Orchestrators MUST switch on all three statuses.
+> Code review is the responsibility of the orchestrating caller — this step only verifies that a review decision exists before letting merge proceed. This guard preserves safety for standalone `just merge NNN` callers that bypass the finish orchestrator.
 
-Check whether the PR has received a code review:
+Check the PR's review decision:
 
 ```bash
-gh pr view NNN --json reviewDecision
+gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'
 ```
 
-**If `reviewDecision` is `APPROVED`**: a code review has been performed and approved. Proceed to Step 5.
+**If `reviewDecision` is `APPROVED`**: a code review has been performed and approved. Proceed to Step 4a.
 
-**If `reviewDecision` is `CHANGES_REQUESTED`**: a code review was performed but the reviewer requested changes. Output:
+**If `reviewDecision` is `CHANGES_REQUESTED`**: a reviewer requested changes. Output:
 
 ```
 MERGE BLOCKED
@@ -135,79 +130,72 @@ And stop.
 
 **If no review decision exists** (`reviewDecision` is null or empty):
 
-1. Check if the `code-review:code-review` skill is available by looking for it in the available skills list (it is an official Anthropic plugin).
+Check the XS-no-review exception. Use the issue's `estimate` field and the PR's comment count:
 
-2. **If the skill is available AND review mode is "auto":**
+```bash
+PR_COMMENT_COUNT=$(gh pr view PR_NUMBER --json comments --jq '.comments | length')
+```
 
-   Run code review automatically — do NOT prompt the user:
+- If the issue's estimate is `XS` AND `PR_COMMENT_COUNT == 0`: small unreviewed changes are permitted. Proceed to Step 4a (the autonomous merge gate also re-checks this exception when `RALPH_AUTO_MERGE=true`).
+- Otherwise: output and stop:
 
-   ```
-   Skill("code-review:code-review", "PR_NUMBER")
-   ```
+```
+MERGE BLOCKED
+Issue: #NNN
+PR: #PR_NUMBER
+Reason: Code review required — invoke /ralph-hero:finish or /ralph-hero:ralph-code-review first.
+```
 
-   After the review completes, re-check `reviewDecision` via `gh pr view`.
+## Step 4a: Autonomous Merge Gate
 
-   - If the PR was approved: continue to Step 5.
-   - If changes were requested: output the review findings with a distinct status so the caller (finish) can dispatch a fix cycle:
+**Runs only when `RALPH_AUTO_MERGE=true`.** When the env var is unset or set to anything else (the standalone `just merge NNN` case), skip this step entirely and continue with the existing flow at Step 5 — backwards compatibility with interactive merging is preserved.
 
-   ```
-   CODE_REVIEW_FEEDBACK
-   Issue: #NNN
-   PR: #PR_NUMBER
-   Reason: Automated code review flagged issues — impl-agent fix cycle available.
-   ```
+This gate is the safety net that lets the loop runner (`scripts/ralph-loop.sh --auto-merge`) merge approved PRs autonomously. It is intentionally orthogonal to `RALPH_REVIEW_MODE` (which only gates the code-review step in Step 4): you can have auto code-review without auto-merge, and vice versa.
 
-   And stop. Do NOT output `MERGE BLOCKED` for automated review feedback — the `CODE_REVIEW_FEEDBACK` status signals that finish should attempt a fix cycle.
+```bash
+if [ "${RALPH_AUTO_MERGE:-false}" != "true" ]; then
+    echo "RALPH_AUTO_MERGE not set; skipping autonomous merge gate."
+    # fall through to Step 5 — interactive flow
+fi
+```
 
-3. **If the skill is available AND review mode is "interactive" (default):**
+When `RALPH_AUTO_MERGE=true`, evaluate **all** of the following criteria. If any one fails, output `AUTO-MERGE BLOCKED` (see below) and STOP. The loop will retry on the next iteration.
 
-   Present a choice:
+### Criteria (ALL must hold)
 
-   !cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
+1. **Review approved**: `gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'` returns `APPROVED`.
+   - Exception: an XS-estimated issue with zero review comments is treated as approved (small changes do not require explicit review approval). Use `gh pr view PR_NUMBER --json comments --jq '.comments | length'` and the issue's `estimate` field to detect this case.
+2. **CI green**: `gh pr checks PR_NUMBER --json name,state,conclusion` returns checks where every entry has `state: completed` AND `conclusion: success`. Pending or failing checks block the merge.
+3. **PR open and mergeable**: `gh pr view PR_NUMBER --json state,mergeable --jq '{state,mergeable}'` shows `state: OPEN` and `mergeable: MERGEABLE`. A `CONFLICTING` or `UNKNOWN` mergeable status blocks.
 
-   ```
-   AskUserQuestion(
-     questions=[{
-       "question": "This PR has no code review yet. Would you like to run one before merging?",
-       "header": "Code Review",
-       "options": [
-         {"label": "Run code review", "description": "Invoke /code-review:code-review on PR #NNN before merging"},
-         {"label": "Merge without review", "description": "Skip code review and proceed to merge"}
-       ],
-       "multiSelect": false
-     }]
-   )
-   ```
+### Recommended invocation
 
-   - If user selects **"Run code review"**: invoke `Skill("code-review:code-review", "PR_NUMBER")` where PR_NUMBER is the PR number obtained in Step 3 (not the issue number). After the review completes, re-check `reviewDecision` via `gh pr view`. If the PR was approved, continue to Step 5. If changes were requested, output the review findings and stop — the user needs to address feedback first.
-   - If user selects **"Merge without review"**: proceed to Step 5.
-   - If user selects **"Other"**: stop.
+```bash
+review_decision=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision')
+ci_status=$(gh pr checks "$PR_NUMBER" --json name,state,conclusion)
+pr_state=$(gh pr view "$PR_NUMBER" --json state,mergeable --jq '{state,mergeable}')
+```
 
-4. **If the skill is NOT available**, inform the user:
+Then evaluate the three criteria together. The XS exception is checked only if `review_decision` is null/empty.
 
-   ```
-   This PR has no code review. Consider installing the code-review plugin:
-     claude plugins install @anthropic/code-review
-   ```
+### On miss — `AUTO-MERGE BLOCKED`
 
-   Then present:
+If any criterion fails, output the following block and STOP. The block uses a distinct status string so callers (including the loop runner) can distinguish it from `MERGE BLOCKED` (human change request) and `MERGE NOT READY` (transient mergeability issue):
 
-   ```
-   AskUserQuestion(
-     questions=[{
-       "question": "Proceed without code review?",
-       "header": "No Code Review Plugin",
-       "options": [
-         {"label": "Merge without review", "description": "Skip code review and proceed to merge"},
-         {"label": "Stop", "description": "Stop here — install the code-review plugin first"}
-       ],
-       "multiSelect": false
-     }]
-   )
-   ```
+```
+AUTO-MERGE BLOCKED
+Issue: #NNN
+PR: #PR_NUMBER
+Review: [APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|null]
+CI: [summary — e.g., "2/5 checks pending", "1 failing: lint", "all green"]
+Reason: [first failing criterion in plain English]
+```
 
-   - If user selects **"Merge without review"**: proceed to Step 5.
-   - If user selects **"Stop"** or **"Other"**: stop.
+The next loop iteration will re-evaluate. There is no fix cycle here — `RALPH_AUTO_MERGE` only merges when everything is already green; it never edits code.
+
+### On pass
+
+All criteria hold. Proceed to Step 5 (the existing readiness check + merge flow).
 
 ## Step 5: Check PR Readiness (with Rejection Detection)
 

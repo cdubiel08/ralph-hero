@@ -6,6 +6,7 @@
  */
 
 import { TERMINAL_STATES } from "./workflow-states.js";
+import { groupDashboardItemsByRepo } from "./dashboard.js";
 import type { DashboardItem } from "./dashboard.js";
 
 // ---------------------------------------------------------------------------
@@ -33,11 +34,37 @@ export interface HygieneItem {
   title: string;
   workflowState: string | null;
   ageDays: number;
+  repository?: string; // "owner/repo" nameWithOwner format
 }
 
 export interface DuplicateCandidate {
   items: [HygieneItem, HygieneItem];
   similarity: number; // 0-1
+}
+
+export interface HygieneSummary {
+  archiveCandidateCount: number;
+  staleCount: number;
+  orphanCount: number;
+  fieldCoveragePercent: number;
+  wipViolationCount: number;
+  duplicateCandidateCount: number;
+}
+
+export interface HygieneRepoBreakdown {
+  repoName: string;
+  archiveCandidates: HygieneItem[];
+  staleItems: HygieneItem[];
+  orphanedItems: HygieneItem[];
+  fieldGaps: { missingEstimate: HygieneItem[]; missingPriority: HygieneItem[] };
+  wipViolations: Array<{
+    state: string;
+    count: number;
+    limit: number;
+    items: HygieneItem[];
+  }>;
+  duplicateCandidates: DuplicateCandidate[];
+  summary: HygieneSummary;
 }
 
 export interface HygieneReport {
@@ -54,14 +81,8 @@ export interface HygieneReport {
     items: HygieneItem[];
   }>;
   duplicateCandidates: DuplicateCandidate[];
-  summary: {
-    archiveCandidateCount: number;
-    staleCount: number;
-    orphanCount: number;
-    fieldCoveragePercent: number;
-    wipViolationCount: number;
-    duplicateCandidateCount: number;
-  };
+  summary: HygieneSummary;
+  repoBreakdowns?: Record<string, HygieneRepoBreakdown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +102,7 @@ function toHygieneItem(item: DashboardItem, now: number): HygieneItem {
     title: item.title,
     workflowState: item.workflowState,
     ageDays: Math.round(ageDays(item.updatedAt, now) * 10) / 10,
+    ...(item.repository ? { repository: item.repository } : {}),
   };
 }
 
@@ -299,6 +321,64 @@ export function findDuplicateCandidates(
 // ---------------------------------------------------------------------------
 
 /**
+ * Build a per-repo hygiene breakdown. Runs each section function over the
+ * supplied items (a single repo's subset of the merged item set).
+ *
+ * Does NOT recursively emit `repoBreakdowns` — per-repo breakdowns are flat.
+ */
+function buildRepoBreakdown(
+  repoName: string,
+  items: DashboardItem[],
+  config: HygieneConfig,
+  now: number,
+): HygieneRepoBreakdown {
+  const archiveCandidates = findArchiveCandidates(
+    items,
+    now,
+    config.archiveDays,
+  );
+  const staleItems = findStaleItems(items, now, config.staleDays);
+  const orphanedItems = findOrphanedItems(items, now, config.orphanDays);
+  const fieldGaps = findFieldGaps(items, now);
+  const wipViolations = findWipViolations(items, now, config.wipLimits);
+  const duplicateCandidates = findDuplicateCandidates(
+    items,
+    now,
+    config.similarityThreshold,
+  );
+
+  const nonTerminal = items.filter((item) => {
+    const ws = item.workflowState;
+    return !ws || !TERMINAL_STATES.includes(ws);
+  });
+  const withBothFields = nonTerminal.filter(
+    (item) => item.estimate !== null && item.priority !== null,
+  );
+  const fieldCoveragePercent =
+    nonTerminal.length > 0
+      ? Math.round((withBothFields.length / nonTerminal.length) * 100)
+      : 100;
+
+  return {
+    repoName,
+    archiveCandidates,
+    staleItems,
+    orphanedItems,
+    fieldGaps,
+    wipViolations,
+    duplicateCandidates,
+    summary: {
+      archiveCandidateCount: archiveCandidates.length,
+      staleCount: staleItems.length,
+      orphanCount: orphanedItems.length,
+      fieldCoveragePercent,
+      wipViolationCount: wipViolations.length,
+      duplicateCandidateCount: duplicateCandidates.length,
+    },
+  };
+}
+
+/**
  * Build a complete hygiene report from project items.
  */
 export function buildHygieneReport(
@@ -334,6 +414,22 @@ export function buildHygieneReport(
       ? Math.round((withBothFields.length / nonTerminal.length) * 100)
       : 100;
 
+  // Per-repo breakdown (only emitted when items span 2+ repos, mirroring
+  // buildDashboard's repoBreakdowns threshold at lib/dashboard.ts:781).
+  const repoGroups = groupDashboardItemsByRepo(items);
+  let repoBreakdowns: Record<string, HygieneRepoBreakdown> | undefined;
+  if (Object.keys(repoGroups).length >= 2) {
+    repoBreakdowns = {};
+    for (const [repoName, repoItems] of Object.entries(repoGroups)) {
+      repoBreakdowns[repoName] = buildRepoBreakdown(
+        repoName,
+        repoItems,
+        config,
+        now,
+      );
+    }
+  }
+
   return {
     generatedAt: new Date(now).toISOString(),
     totalItems: items.length,
@@ -351,6 +447,7 @@ export function buildHygieneReport(
       wipViolationCount: wipViolations.length,
       duplicateCandidateCount: duplicateCandidates.length,
     },
+    ...(repoBreakdowns ? { repoBreakdowns } : {}),
   };
 }
 
@@ -471,6 +568,119 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
       );
     }
     lines.push("");
+  }
+
+  // Per-repository breakdown (only for multi-repo). Mirrors
+  // formatMarkdown's per-repo rendering at lib/dashboard.ts:948+.
+  if (
+    report.repoBreakdowns &&
+    Object.keys(report.repoBreakdowns).length >= 2
+  ) {
+    lines.push("## Per-Repository Breakdown");
+    lines.push("");
+
+    const sortedRepos = Object.values(report.repoBreakdowns).sort((a, b) =>
+      a.repoName.localeCompare(b.repoName),
+    );
+
+    for (const repo of sortedRepos) {
+      lines.push(`### ${repo.repoName}`);
+      lines.push("");
+
+      let renderedAny = false;
+
+      if (repo.archiveCandidates.length > 0) {
+        lines.push("#### Archive Candidates");
+        lines.push("| Issue | Title | State | Age |");
+        lines.push("|-------|-------|-------|-----|");
+        for (const item of repo.archiveCandidates) {
+          lines.push(formatItemRow(item));
+        }
+        lines.push("");
+        renderedAny = true;
+      }
+
+      if (repo.staleItems.length > 0) {
+        lines.push("#### Stale Items");
+        lines.push("| Issue | Title | State | Age |");
+        lines.push("|-------|-------|-------|-----|");
+        for (const item of repo.staleItems) {
+          lines.push(formatItemRow(item));
+        }
+        lines.push("");
+        renderedAny = true;
+      }
+
+      if (repo.orphanedItems.length > 0) {
+        lines.push("#### Orphaned Items");
+        lines.push("| Issue | Title | State | Age |");
+        lines.push("|-------|-------|-------|-----|");
+        for (const item of repo.orphanedItems) {
+          lines.push(formatItemRow(item));
+        }
+        lines.push("");
+        renderedAny = true;
+      }
+
+      const repoTotalGaps =
+        repo.fieldGaps.missingEstimate.length +
+        repo.fieldGaps.missingPriority.length;
+      if (repoTotalGaps > 0) {
+        lines.push("#### Field Gaps");
+        if (repo.fieldGaps.missingEstimate.length > 0) {
+          lines.push("##### Missing Estimate");
+          lines.push("| Issue | Title | State | Age |");
+          lines.push("|-------|-------|-------|-----|");
+          for (const item of repo.fieldGaps.missingEstimate) {
+            lines.push(formatItemRow(item));
+          }
+          lines.push("");
+        }
+        if (repo.fieldGaps.missingPriority.length > 0) {
+          lines.push("##### Missing Priority");
+          lines.push("| Issue | Title | State | Age |");
+          lines.push("|-------|-------|-------|-----|");
+          for (const item of repo.fieldGaps.missingPriority) {
+            lines.push(formatItemRow(item));
+          }
+          lines.push("");
+        }
+        renderedAny = true;
+      }
+
+      if (repo.wipViolations.length > 0) {
+        lines.push("#### WIP Violations");
+        for (const v of repo.wipViolations) {
+          lines.push(`##### ${v.state}: ${v.count} items (limit: ${v.limit})`);
+          lines.push("| Issue | Title | State | Age |");
+          lines.push("|-------|-------|-------|-----|");
+          for (const item of v.items) {
+            lines.push(formatItemRow(item));
+          }
+          lines.push("");
+        }
+        renderedAny = true;
+      }
+
+      if (repo.duplicateCandidates.length > 0) {
+        lines.push("#### Duplicate Candidates");
+        lines.push("| Issue A | Title A | Issue B | Title B | Similarity |");
+        lines.push("|---------|---------|---------|---------|------------|");
+        for (const dup of repo.duplicateCandidates) {
+          const [a, b] = dup.items;
+          lines.push(
+            `| #${a.number} | ${a.title} | #${b.number} | ${b.title} | ${dup.similarity.toFixed(2)} |`,
+          );
+        }
+        lines.push("");
+        renderedAny = true;
+      }
+
+      if (!renderedAny) {
+        lines.push("_No hygiene issues_");
+        lines.push("");
+      }
+    }
   }
 
   return lines.join("\n");

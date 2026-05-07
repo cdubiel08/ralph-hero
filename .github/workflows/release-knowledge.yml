@@ -31,6 +31,11 @@ concurrency:
   group: release-knowledge
   cancel-in-progress: false
 
+# Top-level default: read-only. The release job widens to contents: write +
+# id-token: write at the job level (needed for tag/push and npm provenance).
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: plugin/ralph-knowledge
@@ -141,10 +146,10 @@ jobs:
           git push origin main --tags
 
       - name: Publish to npm
+        # Uses OIDC trusted publishing (id-token: write at job level).
+        # npm CLI >= 11.5.1 auto-detects OIDC; no NODE_AUTH_TOKEN needed.
         if: steps.classify.outputs.mcp_changed == 'true'
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         working-directory: .

@@ -1,6 +1,6 @@
 ---
 date: 2026-04-06
-status: draft
+status: superseded
 type: plan
 tags: [code-review, ralph-merge, finish, impl-agent, automation, plan-skill, auto-mode]
 github_issues: [756]
@@ -11,6 +11,12 @@ github_issue: 756
 ---
 
 # Auto Mode Pipeline Gaps — Implementation Plan
+
+## Superseded By
+
+[2026-05-05-GH-0895-depth-2-dispatch-resolution](2026-05-05-GH-0895-depth-2-dispatch-resolution.md)
+
+Phases 1 and 2 of this plan placed the auto code-review gate inside `ralph-merge` and built a `CODE_REVIEW_FEEDBACK` output contract that finish would interpret. The GH-895 depth-2 dispatch resolution plan (Path B) moved the code review gate up one level: `finish` now owns the code review gate directly (auto vs interactive branching, impl-agent fix cycle), and `ralph-merge` became a leaf merge-mechanics skill that no longer runs code review or emits `CODE_REVIEW_FEEDBACK`. The impl-agent fix-cycle pattern is preserved, but it is now triggered from finish's new Step 4a (post-review fix cycle) rather than from interpreting ralph-merge's output. Phases 3 and 4 of this plan (plan-skill auto mode + documentation updates) are not affected by GH-895 and may be revived independently if still desired.
 
 ## Prior Work
 

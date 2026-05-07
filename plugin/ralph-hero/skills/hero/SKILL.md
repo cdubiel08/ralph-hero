@@ -423,13 +423,20 @@ Agent(subagent_type="ralph-hero:impl-agent", prompt="Implement GH-NNN")
 
 Hero uses **two distinct dispatch modes** depending on session type:
 
-**Single-session mode (default)**: Hero dispatches pipeline phases via `Skill()`. Skills run inline in hero's context window and CAN dispatch sub-agents via `Agent()`. This is the dispatch mode described above.
+**Single-session mode (default)**: Hero mixes `Skill()` and `Agent()` dispatch by phase:
 
-- `model:` in skill frontmatter is honored — opus for planning/review/impl, sonnet for research/triage, haiku for PR
+- **Analyst phases (research, plan, review)**: `Skill()` inline — opus/sonnet models that benefit from context sharing in hero's window.
+- **Implementation**: `Agent(impl-agent)` — runs in isolated worktree, opus model.
+- **PR phase**: `Agent(pr-agent)` — haiku model in isolated context (haiku in Opus 1M envelope is wasteful, and pr-agent has no nested fan-out so it's depth-2 safe).
+- **Validate phase**: `Agent(val-agent)` — haiku model in isolated context.
+- **Merge phase**: `Skill(ralph-merge)` inline (called from `finish`) — preserves the `code-review:code-review` parallel-agent fan-out at depth 0. Hoisting code review into `finish` (per Path B in GH-895) means `ralph-merge` is now a leaf merge-mechanics skill; running it inline keeps the merge chain depth-2 safe.
+- **Finish phase**: `Skill(finish)` inline — orchestrator that owns the code review gate plus dispatches val/impl/merge as needed.
+
+Key properties:
+- `model:` in skill frontmatter is honored for inline `Skill()` calls
 - `hooks:` in skill frontmatter fire automatically — SessionStart sets `RALPH_COMMAND`, PreToolUse/PostToolUse enforce phase gates
 - Skills accept args via the `args` parameter matching their `argument-hint:` field
-- Sub-agent dispatch inside skills (codebase-locator, thoughts-locator, etc.) executes successfully
-- Skill output is visible in hero's context — artifact paths (research docs, plan docs) can be observed directly or via TaskUpdate metadata
+- `Agent()` dispatches use natural-language prompts and run in isolated context windows
 
 **Team mode**: Team spawns per-phase agents as teammates via Claude Code Agent Teams. Each agent is a full session with its own context window and CAN dispatch sub-agents. Per-phase agent definitions in `plugin/ralph-hero/agents/` serve this mode.
 
@@ -437,7 +444,7 @@ If any implementation fails, STOP immediately. Do NOT continue to next issue.
 
 #### PR tasks
 ```
-Skill("ralph-hero:ralph-pr", args="NNN")
+Agent(subagent_type="ralph-hero:pr-agent", prompt="Create PR for GH-NNN. Worktree: worktrees/GH-NNN", description="PR for GH-NNN")
 ```
 
 #### MERGE GATE

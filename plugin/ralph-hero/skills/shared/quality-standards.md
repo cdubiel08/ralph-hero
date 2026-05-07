@@ -93,3 +93,37 @@ When reviewing plans or research, avoid:
 - Over-critiquing minor style issues
 - Blocking on subjective preferences
 - Creating critique without actionable feedback
+
+## Description Phrasing
+
+A skill's `description:` field is what the runtime matches against natural language to decide which skill applies. The `user-invocable` flag determines the voice:
+
+| `user-invocable` | Voice | Pattern |
+|------------------|-------|---------|
+| `true` | Second-person, trigger-rich | `Use when...`, `Use this skill whenever...`, with concrete trigger keywords the user might say |
+| `false` | Third-person, autonomous-voice | `Autonomous X` / `For orchestrator dispatch only` — describe what it does and who calls it |
+
+### Examples
+
+**`user-invocable: true`** — `draft/SKILL.md`:
+> Quickly capture an idea or thought for later refinement. Runs inline, asks 2-3 clarifying questions, saves to `thoughts/shared/ideas/`. Suggest `/ralph-hero:form` as next step.
+
+**`user-invocable: true`** — `research/SKILL.md`:
+> Interactive codebase research with human collaboration. ... Use when you want to research interactively, investigate a topic collaboratively, or explore the codebase with human guidance. Unlike `ralph-research` (autonomous, no questions), this skill works WITH the user...
+
+**`user-invocable: false`** — `ralph-triage/SKILL.md`:
+> Autonomous backlog groomer — picks oldest untriaged Backlog issue, assesses validity, closes duplicates, splits large tickets, or routes to research. For orchestrator dispatch only.
+
+**`user-invocable: false`** — `ralph-hygiene/SKILL.md`:
+> Autonomous board-cleanup specialist — runs `project_hygiene` to surface archive candidates ... For orchestrator dispatch only.
+
+### Anti-Patterns
+
+- **`Use when you want to...` on a `user-invocable: false` skill** — users can't invoke it directly, so trigger phrasing is misleading. State the autonomous role and the dispatcher instead. (PR #844 fixed several occurrences.)
+- **Missing `description` field altogether** — without a description the runtime can't match the skill. Always declare one. (PR #844 fixed `idea-hunt` and `record-demo`.)
+- **Description that only restates the skill name** — `"Run code review"` is uninformative. Describe what it does, what state it expects, and what it produces.
+- **Trigger keywords absent from a `user-invocable: true` description** — if you want the runtime to surface this skill when the user mentions a domain (e.g., "Storybook", "voice memo", "horse race"), include those exact keywords in the description.
+
+### Sibling-Skill Disambiguation
+
+When two skills have similar names (e.g., `plan` and `ralph-plan`, `research` and `ralph-research`, `impl` and `ralph-impl`), each description should include an "Unlike X, this skill..." clause that disambiguates them. See `plan/SKILL.md` and `research/SKILL.md` for the canonical pattern.

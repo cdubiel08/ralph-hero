@@ -83,6 +83,35 @@ Each skill handles one phase of the workflow:
 | `/ralph-hero:ralph-review` | Review implementation plan for quality |
 | `/ralph-hero:ralph-impl` | Implement one planned issue in isolated worktree |
 
+### Trends
+
+Ralph captures a daily JSONL snapshot of each project (velocity, riskScore, WIP, points-by-phase, lead-time percentiles) under `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. The `/trends` skill captures a fresh row and prints a markdown report with sparklines and 1d/7d/30d deltas — read-only, nothing is posted back to GitHub.
+
+```bash
+# Default — capture now, trend the last 7 days
+claude "/ralph-hero:trends"
+
+# Wider window
+claude "/ralph-hero:trends --since 30d"
+```
+
+Sample output:
+
+```
+## velocity   ▁▂▃▄▅▆▇█   12.3
+- 1d: +1.2   7d: +4.5   30d: +9.1
+
+## riskScore  █▇▆▅▄▃▂▁   0.27
+- 1d: -0.04  7d: -0.18  30d: -0.42
+```
+
+Under the hood:
+
+- `ralph_hero__capture_snapshot` appends one schema-versioned row to the JSONL file.
+- `ralph_hero__metrics_trends` reads the file, computes deltas, and renders markdown or JSON.
+- An optional launchd template at `plugin/ralph-hero/scripts/snapshot/launchd/com.ralph.snapshot.plist.template` schedules a daily capture so history accumulates without manual runs.
+- A 30-row reference fixture lives at `plugin/ralph-hero/mcp-server/src/__tests__/fixtures/snapshots.fixture.jsonl` for tests and as a documentation example of the on-disk format.
+
 ### Orchestrators
 
 | Skill | Description |

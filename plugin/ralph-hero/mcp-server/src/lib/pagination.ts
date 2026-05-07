@@ -26,25 +26,6 @@ function getNestedValue(obj: unknown, path: string): unknown {
   return current;
 }
 
-/**
- * Set a nested value on an object using a dot-separated path.
- */
-function setNestedValue(
-  obj: Record<string, unknown>,
-  path: string,
-  value: unknown,
-): void {
-  const parts = path.split(".");
-  let current: Record<string, unknown> = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (current[parts[i]] == null || typeof current[parts[i]] !== "object") {
-      current[parts[i]] = {};
-    }
-    current = current[parts[i]] as Record<string, unknown>;
-  }
-  current[parts[parts.length - 1]] = value;
-}
-
 export interface PaginateOptions {
   /** Maximum number of items per page (default: 100) */
   pageSize?: number;

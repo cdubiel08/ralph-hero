@@ -1,0 +1,89 @@
+# Dependabot configuration
+#
+# Manages version updates for npm packages across all workspaces and for
+# GitHub Actions workflows. Security updates are delivered as separate
+# (ungrouped) PRs so they land immediately rather than waiting for the
+# weekly grouped batch.
+#
+# Note: enabling "Dependabot security updates" is a separate repo-settings
+# toggle (see GH-1028 PR body for the gh api command).
+version: 2
+
+updates:
+  # ---- npm: ralph-hero MCP server ----
+  - package-ecosystem: "npm"
+    directory: "/plugin/ralph-hero/mcp-server"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      ralph-hero-mcp-server-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- npm: ralph-knowledge plugin ----
+  - package-ecosystem: "npm"
+    directory: "/plugin/ralph-knowledge"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      ralph-knowledge-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- npm: ralph-demo remotion (uses pnpm; Dependabot reads package.json) ----
+  - package-ecosystem: "npm"
+    directory: "/plugin/ralph-demo/remotion"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      ralph-demo-remotion-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- npm: .github/scripts/sync ----
+  - package-ecosystem: "npm"
+    directory: "/.github/scripts/sync"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-scripts-sync-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- npm: scripts/routing ----
+  - package-ecosystem: "npm"
+    directory: "/scripts/routing"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      scripts-routing-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- GitHub Actions ----
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"

@@ -11,9 +11,11 @@
  * The script imports the compiled `dist/` modules so it exercises the exact
  * code path `knowledge_search` runs in production.
  */
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 import { KnowledgeDB } from "../dist/db.js";
 import { FtsSearch } from "../dist/search.js";
 import { VectorSearch } from "../dist/vector-search.js";
@@ -28,60 +30,17 @@ const DB_PATH = process.env.RALPH_KNOWLEDGE_DB
  * The 8 golden queries from the 2026-04-29 baseline eval. `expectedSubstrings`
  * lists path-segment substrings any of which counts as a hit (some queries
  * have multiple legitimate primary docs per the baseline).
+ *
+ * Loaded from `evals/golden-queries.json` so this benchmark and the CI guard
+ * (`scripts/eval-retrieval.ts`) share a single source of truth (GH-920).
  */
-const QUERIES = [
-  {
-    n: 1,
-    query: "what causes the reindex to OOM in ralph-knowledge",
-    expectedSubstrings: ["2026-04-29-reindex-memory-profile"],
-    type: "specific-keyword",
-  },
-  {
-    n: 2,
-    query: "release transformer tensors after embedding to free memory",
-    expectedSubstrings: ["2026-04-29-GH-911-release-embedder-tensors"],
-    type: "specific-keyword",
-  },
-  {
-    n: 3,
-    query: "chunker forward progress infinite loop fix",
-    expectedSubstrings: ["2026-04-29-GH-916-chunker-no-progress-fix"],
-    type: "specific-keyword",
-  },
-  {
-    n: 4,
-    query: "dream-loop memory consolidation pipeline architecture",
-    expectedSubstrings: [
-      "2026-04-26-dreaming-research-trail-and-self-containment",
-      "2026-04-16-GH-0761",
-    ],
-    type: "mixed",
-  },
-  {
-    n: 5,
-    query: "cross-encoder reranker score calibration",
-    expectedSubstrings: ["2026-04-26-softmax-and-rerank-calibration"],
-    type: "mixed",
-  },
-  {
-    n: 6,
-    query: "wikilink extractor for markdown",
-    expectedSubstrings: ["2026-04-26-ralph-knowledge-wikilink-extractor"],
-    type: "specific-keyword",
-  },
-  {
-    n: 7,
-    query: "context handoff topology between agents",
-    expectedSubstrings: ["2026-04-22-context-handoff-topology"],
-    type: "mixed",
-  },
-  {
-    n: 8,
-    query: "landcrawler permit raw data migration hardening",
-    expectedSubstrings: ["2026-04-24-landcrawler-backend-hardening-postmortem"],
-    type: "specific-keyword",
-  },
-];
+const QUERIES_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "evals",
+  "golden-queries.json",
+);
+const QUERIES = JSON.parse(readFileSync(QUERIES_PATH, "utf8")).queries;
 
 function findRank(results, expectedSubstrings) {
   for (let i = 0; i < results.length; i++) {
