@@ -35,7 +35,7 @@
     "graphology-types": "^0.24.8",
     "ignore": "^7.0.5",
     "sqlite-vec": "^0.1.7-alpha.10",
-    "yaml": "^2.7.0",
+    "yaml": "^2.8.4",
     "zod": "^3.25.0"
   },
   "devDependencies": {
