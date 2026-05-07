@@ -5,6 +5,6 @@
   "description": "GitHub Actions routing script for issue/PR project assignment",
   "dependencies": {
     "@octokit/graphql": "^9.0.3",
-    "yaml": "^2.7.0"
+    "yaml": "^2.8.4"
   }
 }
