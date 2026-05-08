@@ -26,3 +26,7 @@ thoughts/local/baselines/
 
 # Pilot notes for in-loop semantic visual diff (per-operator session notes)
 thoughts/local/pilots/
+
+# Vitest coverage output (rebuilt by `npm test` / `pnpm test`)
+plugin/*/coverage/
+plugin/*/*/coverage/
