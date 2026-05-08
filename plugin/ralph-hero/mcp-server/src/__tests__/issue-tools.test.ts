@@ -260,3 +260,23 @@ describe("removed tools verification (GH-454)", () => {
     expect(issueToolsSrc).not.toContain("function computeDistance");
   });
 });
+
+// ---------------------------------------------------------------------------
+// list_issues totalCount removal (GH-1129)
+// ---------------------------------------------------------------------------
+
+describe("list_issues totalCount removal (GH-1129)", () => {
+  it("does not return the misleading totalCount field in the response", () => {
+    // Regression guard: the list_issues toolSuccess call must not include
+    // `totalCount: itemsResult.totalCount` — that value is the unfiltered
+    // project board total and was confusing analysts. See GH-1129.
+    expect(issueToolsSrc).not.toContain("totalCount: itemsResult.totalCount");
+  });
+
+  it("still returns filteredCount derived from formattedItems.length", () => {
+    // Positive guard: filteredCount is the surviving count field and must
+    // remain in the toolSuccess response so callers keep getting an accurate
+    // post-filter count.
+    expect(issueToolsSrc).toContain("filteredCount: formattedItems.length");
+  });
+});

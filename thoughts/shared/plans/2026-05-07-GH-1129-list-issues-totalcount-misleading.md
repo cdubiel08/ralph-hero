@@ -58,11 +58,11 @@ The pagination helper (`src/lib/pagination.ts:46-100`) captures `totalCount` fro
 
 ### Verification
 
-- [ ] `ralph_hero__list_issues` response no longer contains a `totalCount` key
-- [ ] `filteredCount` and `items` continue to reflect the post-filter result set unchanged
-- [ ] `npm run build` passes with no errors
-- [ ] `npm test` passes (existing tests unchanged + new regression test green)
-- [ ] No other tool's response shape is altered (only `list_issues`)
+- [x] `ralph_hero__list_issues` response no longer contains a `totalCount` key
+- [x] `filteredCount` and `items` continue to reflect the post-filter result set unchanged
+- [x] `npm run build` passes with no errors
+- [x] `npm test` passes (existing tests unchanged + new regression test green)
+- [x] No other tool's response shape is altered (only `list_issues`)
 
 ## What We're NOT Doing
 
@@ -93,11 +93,11 @@ Delete the `totalCount: itemsResult.totalCount` line from the `toolSuccess` retu
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Line `totalCount: itemsResult.totalCount,` is deleted from the `toolSuccess` call (currently at line 496)
-  - [ ] The remaining `toolSuccess` call returns `{ filteredCount: formattedItems.length, items: formattedItems }`
-  - [ ] No other lines in `issue-tools.ts` are modified — the GraphQL query at line 221 still selects `totalCount` (cosmetic payload field, intentionally left alone)
-  - [ ] `itemsResult.totalCount` is no longer referenced anywhere in the `list_issues` handler scope (may still be referenced inside `paginateConnection` internals — that is fine)
-  - [ ] `npm run build` passes (no TS errors from the change)
+  - [x] Line `totalCount: itemsResult.totalCount,` is deleted from the `toolSuccess` call (currently at line 496)
+  - [x] The remaining `toolSuccess` call returns `{ filteredCount: formattedItems.length, items: formattedItems }`
+  - [x] No other lines in `issue-tools.ts` are modified — the GraphQL query at line 221 still selects `totalCount` (cosmetic payload field, intentionally left alone)
+  - [x] `itemsResult.totalCount` is no longer referenced anywhere in the `list_issues` handler scope (may still be referenced inside `paginateConnection` internals — that is fine)
+  - [x] `npm run build` passes (no TS errors from the change)
 
 #### Task 1.2: Add structural regression test asserting `totalCount` is absent from list_issues response
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/issue-tools.test.ts` (modify)
@@ -105,19 +105,19 @@ Delete the `totalCount: itemsResult.totalCount` line from the `toolSuccess` retu
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] A new `describe("list_issues totalCount removal (GH-1129)", ...)` block is added to the existing test file, following the file's structural-assertion style (uses `issueToolsSrc` already loaded at top of file via `fs.readFileSync`)
-  - [ ] Includes an assertion that `issueToolsSrc` does NOT contain the literal substring `totalCount: itemsResult.totalCount` (regression guard)
-  - [ ] Includes an assertion that `issueToolsSrc` DOES contain `filteredCount: formattedItems.length` (positive guard — confirms the surviving field stays)
-  - [ ] `npm test` passes including the new tests
-  - [ ] Existing tests are not modified
+  - [x] A new `describe("list_issues totalCount removal (GH-1129)", ...)` block is added to the existing test file, following the file's structural-assertion style (uses `issueToolsSrc` already loaded at top of file via `fs.readFileSync`)
+  - [x] Includes an assertion that `issueToolsSrc` does NOT contain the literal substring `totalCount: itemsResult.totalCount` (regression guard)
+  - [x] Includes an assertion that `issueToolsSrc` DOES contain `filteredCount: formattedItems.length` (positive guard — confirms the surviving field stays)
+  - [x] `npm test` passes including the new tests
+  - [x] Existing tests are not modified
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no errors
-- [ ] `npm test` (in `plugin/ralph-hero/mcp-server/`) — all passing including the two new structural assertions
-- [ ] `npx vitest run src/__tests__/issue-tools.test.ts` — passes
+- [x] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no errors
+- [x] `npm test` (in `plugin/ralph-hero/mcp-server/`) — all passing including the two new structural assertions
+- [x] `npx vitest run src/__tests__/issue-tools.test.ts` — passes
 
 #### Manual Verification:
 
