@@ -204,12 +204,12 @@ No source files in `plugin/ralph-knowledge/` are modified by this phase.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] State-resolution JSON-vs-TS drift test passes (existing test): `npx vitest run src/__tests__/state-resolution.test.ts`
-- [ ] Type checking passes: `cd plugin/ralph-hero/mcp-server && npm run build`
-- [ ] New unit test passes: `resolveState("In Progress", "ralph_unblock")` returns `In Progress` without error
-- [ ] New unit test passes: `resolveState("Done", "ralph_unblock")` throws (Done not in allowed list)
-- [ ] New hook unit test (or shellcheck-passing manual test) passes: `RALPH_COMMAND=unblock RALPH_CURRENT_STATE='Human Needed'` allows save_issue; `RALPH_COMMAND=triage RALPH_CURRENT_STATE='Human Needed'` blocks it
+- [x] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] State-resolution JSON-vs-TS drift test passes (existing test): `npx vitest run src/__tests__/state-resolution.test.ts`
+- [x] Type checking passes: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] New unit test passes: `resolveState("In Progress", "ralph_unblock")` returns `In Progress` without error
+- [x] New unit test passes: `resolveState("Done", "ralph_unblock")` throws (Done not in allowed list)
+- [x] New hook unit test (or shellcheck-passing manual test) passes: `RALPH_COMMAND=unblock RALPH_CURRENT_STATE='Human Needed'` allows save_issue; `RALPH_COMMAND=triage RALPH_CURRENT_STATE='Human Needed'` blocks it
 
 #### Manual Verification:
 - [ ] Inspecting `state-resolution.ts` and `ralph-state-machine.json` side by side, the new `ralph_unblock` entries match in input/output states

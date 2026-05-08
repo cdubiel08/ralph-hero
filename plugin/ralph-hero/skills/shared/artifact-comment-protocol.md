@@ -26,6 +26,8 @@ Standard comment headers used to link documents to GitHub issues. All document-p
 | `## Phase N Review` | Issue | Phase code quality review result (APPROVED/NEEDS_FIXES) | `ralph-impl` |
 | `## Drift Log — Phase N` | Issue (if drift occurred) | List of adaptations with minor/major severity | `ralph-impl` |
 | `## Plan Revision Request` | Sibling or parent issue | What's needed, why current plan doesn't provide it | `ralph-impl` or `ralph-plan-feature` |
+| `## Unblock Request` | Issue (Human Needed) | 1–5 specific blocking questions extracted from `## Escalation` or LLM-reasoned | `ralph-unblock` |
+| `## Unblock Resolution` | Issue (Human Needed) | Question/answer pairs + chosen return state | `unblock` |
 
 ## Comment Format Examples
 
