@@ -204,12 +204,12 @@ No source files in `plugin/ralph-knowledge/` are modified by this phase.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] State-resolution JSON-vs-TS drift test passes (existing test): `npx vitest run src/__tests__/state-resolution.test.ts`
-- [ ] Type checking passes: `cd plugin/ralph-hero/mcp-server && npm run build`
-- [ ] New unit test passes: `resolveState("In Progress", "ralph_unblock")` returns `In Progress` without error
-- [ ] New unit test passes: `resolveState("Done", "ralph_unblock")` throws (Done not in allowed list)
-- [ ] New hook unit test (or shellcheck-passing manual test) passes: `RALPH_COMMAND=unblock RALPH_CURRENT_STATE='Human Needed'` allows save_issue; `RALPH_COMMAND=triage RALPH_CURRENT_STATE='Human Needed'` blocks it
+- [x] All tests pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] State-resolution JSON-vs-TS drift test passes (existing test): `npx vitest run src/__tests__/state-resolution.test.ts`
+- [x] Type checking passes: `cd plugin/ralph-hero/mcp-server && npm run build`
+- [x] New unit test passes: `resolveState("In Progress", "ralph_unblock")` returns `In Progress` without error
+- [x] New unit test passes: `resolveState("Done", "ralph_unblock")` throws (Done not in allowed list)
+- [x] New hook unit test (or shellcheck-passing manual test) passes: `RALPH_COMMAND=unblock RALPH_CURRENT_STATE='Human Needed'` allows save_issue; `RALPH_COMMAND=triage RALPH_CURRENT_STATE='Human Needed'` blocks it
 
 #### Manual Verification:
 - [ ] Inspecting `state-resolution.ts` and `ralph-state-machine.json` side by side, the new `ralph_unblock` entries match in input/output states
@@ -513,10 +513,10 @@ esac
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Skill file is valid YAML+markdown
-- [ ] Hook script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/unblock-state-gate.sh`
-- [ ] Hook unit test (or manual): `target_state=Done` blocks with stderr; `target_state="In Progress"` allows
-- [ ] Hook unit test: with `RALPH_COMMAND=unblock` set, `human-needed-outbound-block.sh` allows transition (regression test for Phase 1)
+- [x] Skill file is valid YAML+markdown
+- [x] Hook script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/unblock-state-gate.sh`
+- [x] Hook unit test (or manual): `target_state=Done` blocks with stderr; `target_state="In Progress"` allows
+- [x] Hook unit test: with `RALPH_COMMAND=unblock` set, `human-needed-outbound-block.sh` allows transition (regression test for Phase 1)
 
 #### Manual Verification:
 - [ ] End-to-end: escalate a real test issue via `ralph-impl`, run `/ralph-hero:ralph-unblock` to post questions, run `/ralph-hero:unblock 42` to walk through them, confirm the issue lands in `In Progress` and both `## Unblock Request` and `## Unblock Resolution` comments are present
@@ -644,12 +644,12 @@ exec claude -p "Run the ralph-hero:ralph-unblock skill once. Pick the oldest Hum
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All tests still pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] Type check passes: `npm run build`
-- [ ] `next_actions` test (new): a Human Needed issue with `## Unblock Request` produces a direction of `kind: "human-needed-unblock"`
-- [ ] `next_actions` test (new): a Human Needed issue without `## Unblock Request` does NOT produce a direction of that kind (it should still surface separately, but not as an unblock invitation)
-- [ ] Launchd plist parses: `plutil -lint plugin/ralph-hero/scripts/unblock/launchd/com.ralph.unblock.plist.template` returns OK
-- [ ] `run.sh` is executable: `test -x plugin/ralph-hero/scripts/unblock/run.sh`
+- [x] All tests still pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] Type check passes: `npm run build`
+- [x] `next_actions` test (new): a Human Needed issue with `## Unblock Request` produces a direction of `kind: "human-needed-unblock"`
+- [x] `next_actions` test (new): a Human Needed issue without `## Unblock Request` does NOT produce a direction of that kind (it should still surface separately, but not as an unblock invitation)
+- [x] Launchd plist parses: `plutil -lint plugin/ralph-hero/scripts/unblock/launchd/com.ralph.unblock.plist.template` returns OK
+- [x] `run.sh` is executable: `test -x plugin/ralph-hero/scripts/unblock/run.sh`
 
 #### Manual Verification:
 - [ ] After Phase 4 complete, run `/ralph-hero:hello` in a project with a Human Needed issue that has a `## Unblock Request` — verify the unblock direction appears in the picker

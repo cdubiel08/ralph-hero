@@ -29,6 +29,11 @@ if [[ -z "$command" ]]; then
   allow  # No skill active — could be a human calling save_issue directly
 fi
 
+# unblock is the explicit bridge skill out of Human Needed
+if [[ "$command" == "unblock" ]]; then
+  allow
+fi
+
 # Check current state (set by skill after fetching issue)
 current_state="${RALPH_CURRENT_STATE:-}"
 if [[ -z "$current_state" ]]; then

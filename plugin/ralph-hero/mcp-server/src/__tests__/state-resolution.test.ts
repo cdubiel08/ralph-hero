@@ -275,6 +275,78 @@ describe("resolveState - ralph_pr command", () => {
   });
 });
 
+describe("resolveState - ralph_unblock command", () => {
+  it("accepts In Progress as direct state", () => {
+    const result = resolveState("In Progress", "ralph_unblock");
+    expect(result.resolvedState).toBe("In Progress");
+    expect(result.wasIntent).toBe(false);
+  });
+
+  it("accepts Backlog as direct state", () => {
+    expect(resolveState("Backlog", "ralph_unblock").resolvedState).toBe(
+      "Backlog",
+    );
+  });
+
+  it("accepts Research Needed as direct state", () => {
+    expect(resolveState("Research Needed", "ralph_unblock").resolvedState).toBe(
+      "Research Needed",
+    );
+  });
+
+  it("accepts Ready for Plan as direct state", () => {
+    expect(resolveState("Ready for Plan", "ralph_unblock").resolvedState).toBe(
+      "Ready for Plan",
+    );
+  });
+
+  it("accepts Human Needed as direct state (no-op for autonomous variant)", () => {
+    expect(resolveState("Human Needed", "ralph_unblock").resolvedState).toBe(
+      "Human Needed",
+    );
+  });
+
+  it("rejects Done (not in allowed list)", () => {
+    expect(() => resolveState("Done", "ralph_unblock")).toThrow(
+      /not a valid output for ralph_unblock/i,
+    );
+    expect(() => resolveState("Done", "ralph_unblock")).toThrow(/recovery/i);
+  });
+
+  it("rejects In Review (not in allowed list)", () => {
+    expect(() => resolveState("In Review", "ralph_unblock")).toThrow(
+      /not a valid output for ralph_unblock/i,
+    );
+  });
+
+  it("resolves __ESCALATE__ for ralph_unblock", () => {
+    expect(resolveState("__ESCALATE__", "ralph_unblock").resolvedState).toBe(
+      "Human Needed",
+    );
+  });
+
+  it("rejects __LOCK__ for ralph_unblock (no lock state)", () => {
+    expect(() => resolveState("__LOCK__", "ralph_unblock")).toThrow(
+      /not valid for ralph_unblock/i,
+    );
+  });
+
+  it("rejects __COMPLETE__ for ralph_unblock (not mapped)", () => {
+    expect(() => resolveState("__COMPLETE__", "ralph_unblock")).toThrow(
+      /not valid for ralph_unblock/i,
+    );
+  });
+
+  it("normalizeCommand('unblock') returns 'ralph_unblock'", () => {
+    expect(normalizeCommand("unblock")).toBe("ralph_unblock");
+  });
+
+  it("accepts bare 'unblock' command name via normalization", () => {
+    const result = resolveState("In Progress", "unblock");
+    expect(result.resolvedState).toBe("In Progress");
+  });
+});
+
 describe("resolveState - command validation", () => {
   it("rejects unknown commands with recovery guidance", () => {
     expect(() => resolveState("__LOCK__", "foo")).toThrow(/unknown command/i);

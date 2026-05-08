@@ -69,6 +69,7 @@ Per-kind synthesis guidance:
 | `lock-stale` | `signals.staleDays`, `issue.workflowState`, `issue.title` | "stuck in Plan in Progress for 2 days — title suggests it may need an unblock" |
 | `tree-continue` | `signals.parentChainNote`, `issue.title` | "sibling #809 closed 2 days ago — keep this one moving" |
 | `pr` | `pr.title`, `signals.prAgeDays`, `signals.linkedIssueNumber`, `signals.prReviewDecision` | "PR #999 (issue #42) — open 2 days awaiting review" |
+| `human-needed-unblock` | `signals.unblockRequestAgeDays`, `signals.questionCount`, `issue.title` | "issue #42 has 3 unblock questions waiting since 2 days ago" |
 
 If `signals.tiedAtScore > 1`, surface tiebreak transparency in the prose so the reader understands rank-1 was an implicit pick. If `signals.estimateWeight` is set (the item is M/L/XL in an agent run), reflect that size honestly — never describe XL work as "small". If `signals.parentChainNote` is set on a tree-continue, weave that note into the prose rather than emitting the bare phrase "active tree".
 
@@ -95,6 +96,7 @@ Per-option label rules — each label is `"<verb> #<NNN> · <title fragment>"` w
 - `kind: "pr"` → `"Merge PR #NNN · <fragment>"`
 - `kind: "tree-continue"` → `"Continue tree #NNN · <fragment>"`
 - `kind: "lock-stale"` → `"Unstick #NNN · <fragment>"`
+- `kind: "human-needed-unblock"` → `"Unblock #NNN · <fragment>"`
 
 **Title fragment truncation rule:**
 1. If `title.length <= 30`, use the title as-is (no ellipsis).
@@ -120,6 +122,7 @@ Based on the user's pick, dispatch via `Agent()`. Use the existing dispatch tabl
 | `pr` | — | `Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR #NNN", description="Merge PR #NNN")` |
 | `tree-continue` | — | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Continue tree work on issue #NNN", description="Triage GH-NNN")` |
 | `lock-stale` | — | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Triage stalled issue #NNN", description="Triage GH-NNN")` |
+| `human-needed-unblock` | `Human Needed` | `Skill("ralph-hero:unblock", args="<NNN>")` |
 
 For "Work through these in order": dispatch sequentially in `directions[]` order. Note before each subsequent dispatch: *"Earlier actions may have changed board state."*
 

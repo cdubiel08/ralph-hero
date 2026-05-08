@@ -8,13 +8,13 @@
       "description": "Ticket awaiting triage",
       "allowed_transitions": ["Research Needed", "Ready for Plan", "Done", "Canceled"],
       "required_by_commands": [],
-      "produces_for_commands": ["ralph_triage", "ralph_split"]
+      "produces_for_commands": ["ralph_triage", "ralph_split", "ralph_unblock"]
     },
     "Research Needed": {
       "description": "Ticket needs investigation before planning",
       "allowed_transitions": ["Research in Progress", "Ready for Plan", "Human Needed"],
       "required_by_commands": ["ralph_research", "ralph_split"],
-      "produces_for_commands": ["ralph_triage"]
+      "produces_for_commands": ["ralph_triage", "ralph_unblock"]
     },
     "Research in Progress": {
       "description": "Research actively being conducted (LOCKED)",
@@ -27,7 +27,7 @@
       "description": "Research complete, ready for implementation planning",
       "allowed_transitions": ["Plan in Progress", "Human Needed"],
       "required_by_commands": ["ralph_plan", "ralph_plan_epic"],
-      "produces_for_commands": ["ralph_research", "ralph_split"]
+      "produces_for_commands": ["ralph_research", "ralph_split", "ralph_unblock"]
     },
     "Plan in Progress": {
       "description": "Plan actively being created (LOCKED)",
@@ -47,7 +47,7 @@
       "description": "Implementation actively underway or children being worked",
       "allowed_transitions": ["In Review", "Human Needed"],
       "required_by_commands": ["ralph_impl"],
-      "produces_for_commands": ["ralph_plan_epic", "ralph_plan", "ralph_review", "ralph_split"]
+      "produces_for_commands": ["ralph_plan_epic", "ralph_plan", "ralph_review", "ralph_split", "ralph_unblock"]
     },
     "In Review": {
       "description": "PR created, awaiting code review",
@@ -59,7 +59,7 @@
     "Human Needed": {
       "description": "Escalated - requires human intervention",
       "allowed_transitions": ["Backlog", "Research Needed", "Ready for Plan", "In Progress"],
-      "required_by_commands": [],
+      "required_by_commands": ["ralph_unblock"],
       "produces_for_commands": ["*"],
       "requires_human_action": true
     },
@@ -271,6 +271,20 @@
         "Ticket state changed to In Progress (approved) or Ready for Plan (needs-iteration)",
         "If AUTO mode: critique document created and committed",
         "If rejected: needs-iteration label added"
+      ]
+    },
+    "ralph_unblock": {
+      "description": "Bridge Human Needed issues back into the pipeline by capturing missing context",
+      "valid_input_states": ["Human Needed"],
+      "valid_output_states": ["Backlog", "Research Needed", "Ready for Plan", "In Progress", "Human Needed"],
+      "modes": ["autonomous", "interactive"],
+      "preconditions": [
+        "Must be on main branch",
+        "Ticket must be in Human Needed state"
+      ],
+      "postconditions": [
+        "Autonomous mode: ## Unblock Request comment posted, ticket remains Human Needed",
+        "Interactive mode: ## Unblock Resolution comment posted, ticket transitioned to one of the 4 valid re-entry states"
       ]
     }
   },

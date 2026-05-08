@@ -7,8 +7,8 @@ import {
 import { VALID_STATES } from "../lib/workflow-states.js";
 
 describe("FILTER_PROFILES", () => {
-  it("contains exactly 6 profiles", () => {
-    expect(Object.keys(FILTER_PROFILES)).toHaveLength(6);
+  it("contains exactly 7 profiles", () => {
+    expect(Object.keys(FILTER_PROFILES)).toHaveLength(7);
   });
 
   it("analyst-triage filters to Backlog", () => {
@@ -47,6 +47,12 @@ describe("FILTER_PROFILES", () => {
     });
   });
 
+  it("analyst-unblock filters to Human Needed", () => {
+    expect(FILTER_PROFILES["analyst-unblock"]).toEqual({
+      workflowState: "Human Needed",
+    });
+  });
+
   it("all profile workflowState values are valid workflow states", () => {
     for (const [name, params] of Object.entries(FILTER_PROFILES)) {
       if (params.workflowState) {
@@ -60,7 +66,7 @@ describe("FILTER_PROFILES", () => {
 });
 
 describe("VALID_PROFILE_NAMES", () => {
-  it("contains all 6 expected profile names", () => {
+  it("contains all 7 expected profile names", () => {
     expect(VALID_PROFILE_NAMES).toEqual(
       expect.arrayContaining([
         "analyst-triage",
@@ -69,9 +75,10 @@ describe("VALID_PROFILE_NAMES", () => {
         "builder-planned",
         "review-queue",
         "integrator-merge",
+        "analyst-unblock",
       ]),
     );
-    expect(VALID_PROFILE_NAMES).toHaveLength(6);
+    expect(VALID_PROFILE_NAMES).toHaveLength(7);
   });
 });
 

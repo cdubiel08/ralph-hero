@@ -13,7 +13,10 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerDirectionsTools } from "../tools/directions-tools.js";
+import {
+  registerDirectionsTools,
+  extractUnblockSignal,
+} from "../tools/directions-tools.js";
 import type { GitHubClient } from "../github-client.js";
 import type { GitHubClientConfig } from "../types.js";
 import { FieldOptionCache } from "../lib/cache.js";
@@ -776,5 +779,104 @@ describe("hello_directions backwards-compat", () => {
       expect(oldPayload.directions[0].recommended).toBe(true);
       expect(newPayload.directions[0].recommended).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractUnblockSignal — comment parsing for `human-needed-unblock`
+// (GH-1146 Phase 4)
+// ---------------------------------------------------------------------------
+
+describe("extractUnblockSignal", () => {
+  const NOW = new Date("2026-05-08T12:00:00Z");
+  const HOUR_MS = 60 * 60 * 1000;
+  const DAY_MS = 24 * HOUR_MS;
+
+  it("returns null when there is no `## Unblock Request` comment", () => {
+    const comments = [
+      {
+        body: "## Escalation\n\nProblem with build.",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    expect(extractUnblockSignal(comments, NOW)).toBeNull();
+  });
+
+  it("returns signal with question count from numbered list", () => {
+    const comments = [
+      {
+        body: [
+          "## Unblock Request",
+          "",
+          "Please answer the following questions:",
+          "",
+          "1. What is the expected behavior?",
+          "2. Should we keep this feature?",
+          "3. Is there a workaround?",
+          "",
+          "Thanks!",
+        ].join("\n"),
+        createdAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractUnblockSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.questionCount).toBe(3);
+    expect(signal?.unblockRequestAgeDays).toBe(2);
+  });
+
+  it("returns null when an Escalation comment is newer than the Unblock Request", () => {
+    const comments = [
+      {
+        body: "## Unblock Request\n\n1. Question?",
+        createdAt: new Date(NOW.getTime() - 3 * DAY_MS).toISOString(),
+      },
+      {
+        body: "## Escalation\n\nNew problem occurred.",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    expect(extractUnblockSignal(comments, NOW)).toBeNull();
+  });
+
+  it("uses the most recent Unblock Request when multiple exist", () => {
+    const comments = [
+      {
+        body: "## Unblock Request\n\n1. Q1?\n2. Q2?",
+        createdAt: new Date(NOW.getTime() - 5 * DAY_MS).toISOString(),
+      },
+      {
+        body: "## Unblock Request\n\n1. Q1?",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractUnblockSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.questionCount).toBe(1);
+    expect(signal?.unblockRequestAgeDays).toBe(1);
+  });
+
+  it("treats today's unblock request as 0 days old", () => {
+    const comments = [
+      {
+        body: "## Unblock Request\n\n1. Quick question",
+        createdAt: new Date(NOW.getTime() - 2 * HOUR_MS).toISOString(),
+      },
+    ];
+    const signal = extractUnblockSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.unblockRequestAgeDays).toBe(0);
+  });
+
+  it("returns 0 question count when the body has no numbered list lines", () => {
+    const comments = [
+      {
+        body: "## Unblock Request\n\nFreeform unblock — please advise.",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractUnblockSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.questionCount).toBe(0);
   });
 });

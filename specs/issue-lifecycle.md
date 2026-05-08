@@ -184,6 +184,8 @@ One-way, best-effort mapping from workflow states to the GitHub Projects default
 | Human Needed is NOT terminal — it can return to Backlog, Research Needed, Ready for Plan, or In Progress | `[x]` `ralph-state-machine.json` |
 | Only a human MAY transition issues out of Human Needed | `[x]` `human-needed-outbound-block.sh` (blocks save_issue when RALPH_CURRENT_STATE is Human Needed and RALPH_COMMAND is set) |
 
+**Exit paths**: Human Needed allows transitions to Backlog, Research Needed, Ready for Plan, or In Progress. Two paths exist: (a) human directly transitions via the GitHub Projects board, or (b) the `ralph_unblock` command captures human input via the interactive `ralph-hero:unblock` skill and transitions on the human's behalf. Other automated commands remain blocked from transitioning out of Human Needed via `human-needed-outbound-block.sh`.
+
 ### 9. Parent Gate States
 
 When all children of a parent issue reach a gate state, the parent issue advancement check triggers.

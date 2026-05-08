@@ -968,3 +968,126 @@ describe("rankDirections — tied-at-score", () => {
     expect("tiedAtScore" in serialized.signals).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// rankDirections — human-needed-unblock (GH-1146 Phase 4)
+// ---------------------------------------------------------------------------
+
+describe("rankDirections — human-needed-unblock", () => {
+  it("emits exactly one human-needed-unblock direction when one Human Needed issue carries an unblock signal and another does not", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 3000,
+        title: "Has Unblock Request",
+        workflowState: "Human Needed",
+        priority: "P2",
+        updatedAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      }),
+      makeItem({
+        number: 3001,
+        title: "No Unblock Request",
+        workflowState: "Human Needed",
+        priority: "P2",
+        updatedAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({
+        limit: 5,
+        unblockSignals: {
+          3000: { unblockRequestAgeDays: 2, questionCount: 3 },
+        },
+      }),
+    );
+
+    const unblockDirections = result.filter(
+      (d) => d.kind === "human-needed-unblock",
+    );
+    expect(unblockDirections).toHaveLength(1);
+    expect(unblockDirections[0].issue?.number).toBe(3000);
+    expect(unblockDirections[0].signals.questionCount).toBe(3);
+    expect(unblockDirections[0].signals.unblockRequestAgeDays).toBe(2);
+    expect(unblockDirections[0].tags).toContain("unblock-requested");
+
+    // The issue without an unblock signal should NOT surface as
+    // human-needed-unblock (it might still be excluded entirely because
+    // Human Needed is not an actionable phase by default).
+    const direction3001 = result.find((d) => d.issue?.number === 3001);
+    if (direction3001 !== undefined) {
+      expect(direction3001.kind).not.toBe("human-needed-unblock");
+    }
+  });
+
+  it("scores human-needed-unblock high enough to outrank lock-stale", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 3100,
+        title: "Lock-stale candidate",
+        workflowState: "In Progress",
+        priority: "P2",
+        updatedAt: new Date(NOW.getTime() - 30 * HOUR_MS).toISOString(),
+      }),
+      makeItem({
+        number: 3101,
+        title: "Human Needed unblock",
+        workflowState: "Human Needed",
+        priority: "P2",
+        updatedAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({
+        limit: 2,
+        unblockSignals: {
+          3101: { unblockRequestAgeDays: 1, questionCount: 2 },
+        },
+      }),
+    );
+
+    expect(result[0].kind).toBe("human-needed-unblock");
+    expect(result[0].issue?.number).toBe(3101);
+    expect(result[1].kind).toBe("lock-stale");
+  });
+
+  it("does not surface a human-needed-unblock direction when unblockSignals is empty", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 3200,
+        workflowState: "Human Needed",
+        priority: "P0",
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 5 }));
+    expect(result.find((d) => d.kind === "human-needed-unblock")).toBeUndefined();
+  });
+
+  it("includes age + question count in signals", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 3300,
+        title: "Stale unblock",
+        workflowState: "Human Needed",
+        priority: "P1",
+      }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({
+        limit: 3,
+        unblockSignals: {
+          3300: { unblockRequestAgeDays: 5, questionCount: 4 },
+        },
+      }),
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe("human-needed-unblock");
+    expect(result[0].signals.unblockRequestAgeDays).toBe(5);
+    expect(result[0].signals.questionCount).toBe(4);
+  });
+});

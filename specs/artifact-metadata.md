@@ -93,6 +93,8 @@ Skills link artifacts to issues by posting a GitHub comment with a standardized 
 | The artifact URL MUST appear on the line immediately after the header | [x] `artifact-comment-validator.sh` |
 | Artifact discovery MUST search issue comments for the header, then extract the URL | [ ] not enforced (implemented in skill prompts, not hooks) |
 | When multiple comments match a header, the MOST RECENT (last) match MUST be used | [x] `artifact-comment-validator.sh` (records most-recent URL via marker file); read-time: skill prompt |
+| Unblock-question artifacts MUST be linked with a `## Unblock Request` comment header (created by `ralph-unblock` autonomous skill on Human Needed issues) | [ ] not enforced (skill prompt) |
+| Unblock-resolution artifacts MUST be linked with a `## Unblock Resolution` comment header (created by `unblock` interactive skill on Human Needed issues) | [ ] not enforced (skill prompt) |
 
 ### Artifact Discovery Sequence
 
