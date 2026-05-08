@@ -110,17 +110,17 @@ Add a `test-hooks` GitHub Actions job to `.github/workflows/ci.yml` that runs al
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] New `test-hooks` job inserted after the `test-cli` job (after line 129) and before `lint-workflows`
-  - [ ] Job runs on `ubuntu-latest` with `permissions: contents: read` (or inherits the workflow-level `contents: read`)
-  - [ ] Step 1: `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5` (v4.3.1, matching existing pinned SHA in the same file)
-  - [ ] Step 2: "Run hook tests" step uses `bash` shell, contained inline (not a separate script file)
-  - [ ] Step 2 logic: `find plugin/ralph-hero/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -type f -print0 | sort -z | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"; rc=$?; if [ $rc -ne 0 ]; then echo "FAIL: $0 exited $rc"; exit $rc; fi'`
+  - [x] New `test-hooks` job inserted after the `test-cli` job (after line 129) and before `lint-workflows`
+  - [x] Job runs on `ubuntu-latest` with `permissions: contents: read` (or inherits the workflow-level `contents: read`)
+  - [x] Step 1: `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5` (v4.3.1, matching existing pinned SHA in the same file)
+  - [x] Step 2: "Run hook tests" step uses `bash` shell, contained inline (not a separate script file)
+  - [x] Step 2 logic: `find plugin/ralph-hero/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -type f -print0 | sort -z | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"; rc=$?; if [ $rc -ne 0 ]; then echo "FAIL: $0 exited $rc"; exit $rc; fi'`
     - Subshell-per-file isolation prevents `set -e` in one test from aborting the suite
     - `sort -z` ensures deterministic ordering across platforms
     - First non-zero exit propagates (xargs default behavior with `-n1` + `bash -c` returning rc)
-  - [ ] Step prints `=== <path> ===` header before each file so CI logs make per-file failure attribution trivial
-  - [ ] No `cd` into a subdirectory at the job level — paths are absolute relative to repo root (matches `shellcheck-hooks` pattern)
-  - [ ] No `node-version` / `cache` setup steps — bash + jq + find are pre-installed on `ubuntu-latest`
+  - [x] Step prints `=== <path> ===` header before each file so CI logs make per-file failure attribution trivial
+  - [x] No `cd` into a subdirectory at the job level — paths are absolute relative to repo root (matches `shellcheck-hooks` pattern)
+  - [x] No `node-version` / `cache` setup steps — bash + jq + find are pre-installed on `ubuntu-latest`
 
 #### Task 1.2: Verify actionlint passes
 
@@ -129,17 +129,17 @@ Add a `test-hooks` GitHub Actions job to `.github/workflows/ci.yml` that runs al
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Running `actionlint .github/workflows/ci.yml` locally (or via the `lint-workflows` job) reports zero new errors
-  - [ ] No new `unpinned-uses` zizmor findings (confirmed by reusing the same pinned SHA already in the file)
+  - [x] Running `actionlint .github/workflows/ci.yml` locally (or via the `lint-workflows` job) reports zero new errors
+  - [x] No new `unpinned-uses` zizmor findings (confirmed by reusing the same pinned SHA already in the file)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] Open a draft PR; the `test-hooks` job appears in the CI status checks list
-- [ ] On that PR, `test-hooks` exits 0 with all 6 test files reporting their internal pass counts
-- [ ] `lint-workflows` job exits 0 (actionlint + zizmor accept the new job)
-- [ ] Locally simulate failure: temporarily change one assertion in `val-postcondition.test.sh` to `assert_eq "0" "1" "force fail"`, push, observe `test-hooks` exits non-zero with the failing file path printed. Revert before merging.
+- [x] Open a draft PR; the `test-hooks` job appears in the CI status checks list
+- [x] On that PR, `test-hooks` exits 0 with all 6 test files reporting their internal pass counts
+- [x] `lint-workflows` job exits 0 (actionlint + zizmor accept the new job)
+- [x] Locally simulate failure: temporarily change one assertion in `val-postcondition.test.sh` to `assert_eq "0" "1" "force fail"`, push, observe `test-hooks` exits non-zero with the failing file path printed. Revert before merging.
 
 #### Manual Verification:
 
