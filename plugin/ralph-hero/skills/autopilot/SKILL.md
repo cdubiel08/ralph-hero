@@ -37,7 +37,7 @@ Use these resolved values when constructing GitHub URLs or referencing the repos
 
 You are the autopilot orchestrator. One invocation = one tick. Each tick: decode-state -> pick -> check-worktrees -> dispatch -> diff -> record -> schedule-or-stop.
 
-This phase implements only the prefix of that flow: safety check, argument parsing + state decode, pick-next-actionable, and the In-Review filter. Subsequent phases (#1138, #1139, #1140) append the worktree check, hero dispatch, pre/post diff, loop scheduling, termination conditions, and audit log writes.
+This phase implements the full per-tick flow through Step 10. Subsequent phases (#1140, #1141) add the audit-log JSONL writes + `PreToolUse` hook gate, and the docs + eval scenarios respectively.
 
 ## Step 0: Safety check
 
@@ -213,5 +213,121 @@ When `outcome=escalated` (row 2 matches): also capture the most recent comment t
 
 This step replaces R1's text-grep approach with structured pre/post diffing: outcome derivation reads only typed fields from MCP responses, never strings from hero's free-form output.
 
-<!-- Steps 7+ added in subsequent phases (GH-1139, GH-1140, GH-1141) -->
+## Step 7: Update tick counters
 
+After Step 6 derives `<outcome>` from the pre/post diff (or from the dry-run short-circuit), update the cross-tick state object before Step 8 evaluates termination conditions.
+
+1. **Increment iteration**: `state.iteration += 1`. The `state` object was decoded (or initialized) in Step 1; `state.iteration` is the live counter that Step 8 row 4 (max-iterations cap) reads.
+
+2. **Apply the canonical outcome → streak mapping** (one branch per outcome — exhaustive):
+
+   - `outcome` is `completed`, `pr_landed`, `advanced`, or `other_change` -> `state.no_progress_streak = 0` (reset — work happened, even the catch-all `other_change` row counts as progress for streak-reset purposes per Step 6's table)
+   - `outcome` is `no_progress` -> `state.no_progress_streak += 1` (increment — nothing changed this tick)
+   - `outcome` is `escalated` -> irrelevant — the loop will STOP in Step 8 regardless, so the streak update has no observable effect
+   - `outcome` is `dry_run` -> do NOT increment streak (one-shot test mode; dry-run also STOPs in Step 8 row 2 so the value is moot)
+
+3. **Append to history**: push `{issue: <picked>, outcome: <derived>}` onto `state.history`. The history array is the source-of-truth read by Step 2.5's "exclude issues already PR'd this loop" filter on the next tick (cross-reference Phase 1 Step 2.5).
+
+4. **No audit-log write here** — that is Phase 4 (#1140). Phase 3 keeps `state` and `<outcome>` as in-process variables only; the JSONL append at `~/.ralph-hero/autopilot.jsonl` is added in the next phase between Step 7 and Step 8.
+
+## Step 8: Termination conditions (any one stops the loop)
+
+Check each row in priority order — earlier rows short-circuit later ones. Exactly one branch fires per tick.
+
+| # | Condition | Stop? | Reason |
+|---|---|---|---|
+| 1 | `outcome == "escalated"` | YES | escalation already moved issue to Human Needed; loop done |
+| 2 | `outcome == "dry_run"` | YES | one-shot test mode |
+| 3 | `state.no_progress_streak >= 3` | YES + escalate picked issue | "autopilot detected no-progress streak of 3" |
+| 4 | `state.iteration > MAX_ITERATIONS` | YES | hard ceiling |
+| 5 | `next_actions` (re-checked, with Step 2/2.5 filters reapplied) returns 0 issue-kind candidates | YES | backlog cleared |
+| 6 | (else) | NO | continue to Step 9 |
+
+`MAX_ITERATIONS` is the value parsed from `--max-iterations N` in Step 1 (default `${RALPH_AUTOPILOT_MAX_ITERATIONS:-20}`).
+
+**Invariant table — exactly one branch per code path:**
+
+| Step 8 evaluation | Step 9 action |
+|---|---|
+| any STOP condition matches (rows 1-5) | call `Step 10: Final report`, return; do NOT call `ScheduleWakeup` |
+| no STOP condition matches (row 6) | call `ScheduleWakeup(...)` exactly once via Step 9, then return |
+
+**Invariant**: exactly one branch per code path — there is no third option. Either Step 8 STOPs and Step 10 fires (no `ScheduleWakeup` call), OR Step 8 does not STOP and Step 9 fires (one `ScheduleWakeup` call, no Step 10). Two ScheduleWakeup calls in one tick is a bug. Zero ScheduleWakeup calls AND zero final reports is a bug.
+
+**Streak-escalation side effect (row 3)**: when `state.no_progress_streak >= 3` matches, before stopping the loop, perform two side-effects against the picked issue:
+
+1. Call `save_issue(number=<picked>, workflowState="__ESCALATE__", command="ralph_plan")` to transition `<picked>` to `Human Needed`.
+2. Post a `create_comment` on the issue with body:
+
+   > Autopilot detected a no-progress streak of 3 ticks against this issue. Escalating to Human Needed for review. Audit log: `~/.ralph-hero/autopilot.jsonl`
+
+Then proceed to Step 10 (final report) — the streak-escalation count is surfaced in Step 10's escalation totals.
+
+**Backlog re-check rule (row 5)**: this row calls `next_actions(audience="agent", limit=10)` again and re-applies Step 2/2.5 filters (kind=="issue", exclude In Review, exclude already-pr_landed in `state.history`). This catches the case where the picked issue was the last actionable item and post-tick the queue is now empty — re-checking inside Step 8 (rather than relying on the next tick to discover the empty backlog) avoids one wasted `ScheduleWakeup` round-trip and gives the user a tight terminal report.
+
+**Cross-references**: STOP -> Step 10 (final report). CONTINUE -> Step 9 (ScheduleWakeup).
+
+## Step 9: Schedule next tick
+
+This step runs only when Step 8 evaluated to CONTINUE (row 6 — no STOP condition matched). For STOP outcomes, Step 10 fires instead and `ScheduleWakeup` is not called.
+
+1. **Build the next-tick state**: construct
+
+   ```json
+   {
+     "iteration": <state.iteration>,
+     "no_progress_streak": <state.no_progress_streak>,
+     "started_at": "<state.started_at>",
+     "history": <state.history>
+   }
+   ```
+
+   then JSON-serialize and base64-encode to produce `<BASE64>`.
+
+2. **Choose `delaySeconds`** — the live set is exactly `{60, 1200}`. No other value is ever passed to `ScheduleWakeup`:
+
+   - `outcome` is `pr_landed`, `advanced`, `completed`, or `other_change` -> `delaySeconds = 60` (stay in cache; immediately pick the next issue)
+   - `outcome` is `no_progress` (with streak 1 or 2 — streak 3 was short-circuited to STOP in Step 8 row 3) -> `delaySeconds = 1200` (cache miss; longer cooldown — give the system time)
+   - All other outcomes (`escalated`, `dry_run`) already short-circuited to STOP in Step 8 — Step 9 is unreachable for them
+
+   **Forbidden values**:
+   - The value `300` for `delaySeconds` is **forbidden** — cache-window anti-pattern. Phase 4's `PreToolUse` hook gate (in #1140) will enforce this, but Phase 3 must already comply by construction. There is no code path in Step 9 that produces that value.
+   - The value `1800` for `delaySeconds` is **forbidden in branch logic**. The Configuration block at the top of this file mentions `1800` as a documentation default for genuinely idle ticks (per the parent plan's Key Discoveries), but Step 9's branch logic must NEVER select it. The live set of values that ever flow into a `ScheduleWakeup` call is exactly `{60, 1200}`.
+
+3. **`--state=BASE64` equals-form** (R3): use the equals-form (e.g., `--state=eyJpdGVy...==`), not space-separated. Base64 padding (`=` chars) and URL-safe alternates can confuse a positional parser; the equals-form makes the boundary unambiguous. The argument-parser in Step 1 already accepts `--state=...` (everything after the first `=` is the value, including any additional `=` characters from base64 padding) — Step 9's emitted prompt must be wire-compatible with that parser.
+
+4. **Build the prompt**: re-invoke `/ralph-hero:autopilot` and carry forward all original flags from Step 1 (`--max-iterations N`, `--auto-merge` if originally set, `--dry-run` if originally set — though `--dry-run` will have STOPped in Step 8 row 2 and never reaches Step 9 in practice) PLUS the new `--state=<BASE64>` argument.
+
+5. **Call `ScheduleWakeup` exactly once**:
+
+   ```
+   ScheduleWakeup(
+     delaySeconds = <chosen>,
+     reason = "autopilot tick <iteration+1>: continuing after <picked> <outcome>",
+     prompt = "/ralph-hero:autopilot --max-iterations <N> [--auto-merge] --state=<BASE64>"
+   )
+   ```
+
+   The `prompt` field is the cross-tick state channel (per the parent plan's Tick Isolation table). The audit log (Phase 4) will record `next_delay_seconds` and `next_action`, but Phase 3 only persists state via this prompt.
+
+6. **Emit a brief tick summary** to text output AFTER the `ScheduleWakeup` call: `"Tick N complete: dispatched #X, outcome=Y, next tick in Zs"` (filling in `state.iteration`, `<picked>`, `<outcome>`, and `<chosen>`). Then STOP this turn — the next invocation of the skill will be triggered by `ScheduleWakeup`'s wakeup callback.
+
+7. **Step 10 is NOT called when Step 9 fires** — the final report is reserved for terminal turns (Step 8 STOPped). Step 9's brief tick summary is the only user-visible output for non-terminal ticks.
+
+## Step 10: Final report (terminal turn only)
+
+This step runs only when Step 8 STOPped (any STOP condition matched — rows 1-5). When Step 9 schedules the next tick, Step 10 is skipped and the current turn ends after Step 9's brief tick summary. There is no overlap.
+
+Emit a markdown summary to user-visible output (not stderr) so the terminal turn surfaces the run cleanly:
+
+- **Total ticks run**: from `state.iteration`.
+- **Wall-clock elapsed time**: `now - state.started_at` (formatted as a human-readable duration).
+- **Issues processed**: from `state.history`, with each issue's outcome (e.g., `#1234 -> pr_landed`, `#1235 -> advanced`, `#1236 -> escalated`).
+- **PRs created**: count of entries in `state.history` where `outcome == "pr_landed"`.
+- **Escalations**: count + reasons. This includes both the original `outcome=escalated` ticks (hero detected an ambiguity and escalated mid-flight) AND the streak-escalation from Step 8 row 3 (autopilot detected a no-progress streak of 3 and escalated the picked issue itself).
+- **In-review PRs awaiting human merge**: any issues filtered out by Step 2.5 during the loop should be called out here — phrasing like "N issues are awaiting human merge in `In Review` — they were filtered out of autopilot picks; merge them manually or re-run with `--auto-merge`" so the user knows what's still queued for them.
+- **Audit log path**: `~/.ralph-hero/autopilot.jsonl` (informational; the file itself is created and appended in Phase 4 — Phase 3 only references the path).
+
+The report ends the autopilot run for this invocation. The user can re-run `/ralph-hero:autopilot` to start a fresh loop (which will initialize a new `state` object in Step 1).
+
+<!-- Audit log writes (between Step 7 and Step 8) and PreToolUse hook gate added in Phase 4 (GH-1140); README/CLAUDE.md/eval-scenarios in Phase 5 (GH-1141) -->
