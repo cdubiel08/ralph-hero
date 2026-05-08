@@ -493,7 +493,6 @@ export function registerIssueTools(
         });
 
         return toolSuccess({
-          totalCount: itemsResult.totalCount,
           filteredCount: formattedItems.length,
           items: formattedItems,
         });
