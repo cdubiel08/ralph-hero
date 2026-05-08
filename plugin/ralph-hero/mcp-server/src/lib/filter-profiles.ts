@@ -47,6 +47,9 @@ export const FILTER_PROFILES: Record<string, ProfileFilterParams> = {
   "integrator-merge": {
     workflowState: "In Review",
   },
+  "analyst-unblock": {
+    workflowState: "Human Needed",
+  },
 };
 
 /**

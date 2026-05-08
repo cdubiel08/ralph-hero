@@ -43,6 +43,8 @@ import {
   type Audience,
   type OpenPR,
   type RankConfig,
+  type UnblockSignal,
+  type UnblockSignalMap,
 } from "../lib/directions.js";
 import {
   toolSuccess,
@@ -56,6 +58,175 @@ import {
 // ---------------------------------------------------------------------------
 
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+// ---------------------------------------------------------------------------
+// Helpers — unblock signal extraction for `human-needed-unblock` direction.
+// Comments are fetched at the tool boundary so the pure ranker stays
+// deterministic and side-effect-free. Only Human Needed candidates are
+// queried — typical projects have 0–5 such issues so the per-issue overhead
+// is acceptable.
+// ---------------------------------------------------------------------------
+
+interface IssueCommentNode {
+  body: string;
+  createdAt: string;
+}
+
+interface FetchCommentsResult {
+  comments: IssueCommentNode[];
+}
+
+/**
+ * Fetch the most recent comments on a single issue. Returns an empty list on
+ * error (e.g. the issue is private or has been deleted) so the surrounding
+ * ranker continues to produce directions.
+ */
+async function fetchIssueCommentsForUnblock(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<IssueCommentNode[]> {
+  try {
+    const data = await client.query<{
+      repository: {
+        issue: {
+          comments: { nodes: IssueCommentNode[] };
+        } | null;
+      } | null;
+    }>(
+      `query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          issue(number: $number) {
+            comments(last: 20) {
+              nodes { body createdAt }
+            }
+          }
+        }
+      }`,
+      { owner, repo, number },
+    );
+    return data.repository?.issue?.comments?.nodes ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parse a list of comments and return the unblock signal for the issue, or
+ * `null` if the issue should NOT produce a `human-needed-unblock` direction.
+ *
+ * Rules (matching plan Phase 4.1):
+ *   1. Find the most recent comment whose body starts with `## Unblock Request`.
+ *      If none exists, return null.
+ *   2. Find the most recent comment whose body starts with `## Escalation`.
+ *      If it exists and is newer than the unblock request, return null
+ *      (the autonomous skill needs to re-run before the human is asked).
+ *   3. Compute `unblockRequestAgeDays` from the unblock request's createdAt.
+ *   4. Compute `questionCount` by counting lines matching `^\d+\.\s` in the
+ *      unblock request body.
+ */
+export function extractUnblockSignal(
+  comments: IssueCommentNode[],
+  now: Date,
+): UnblockSignal | null {
+  // Iterate to find the most recent comment of each header kind. Use
+  // string-prefix match because authors may include trailing whitespace
+  // or quote a header in a follow-up comment that we want to ignore.
+  let latestUnblock: IssueCommentNode | null = null;
+  let latestEscalation: IssueCommentNode | null = null;
+
+  for (const c of comments) {
+    if (c.body.startsWith("## Unblock Request")) {
+      if (
+        latestUnblock === null ||
+        new Date(c.createdAt).getTime() >
+          new Date(latestUnblock.createdAt).getTime()
+      ) {
+        latestUnblock = c;
+      }
+    } else if (c.body.startsWith("## Escalation")) {
+      if (
+        latestEscalation === null ||
+        new Date(c.createdAt).getTime() >
+          new Date(latestEscalation.createdAt).getTime()
+      ) {
+        latestEscalation = c;
+      }
+    }
+  }
+
+  if (latestUnblock === null) return null;
+
+  // Skip if the most recent escalation is newer than the unblock request.
+  if (latestEscalation !== null) {
+    const escTs = new Date(latestEscalation.createdAt).getTime();
+    const ubTs = new Date(latestUnblock.createdAt).getTime();
+    if (escTs > ubTs) return null;
+  }
+
+  // Age in whole days, rounded down. Floor at 0 (never negative).
+  const ts = new Date(latestUnblock.createdAt).getTime();
+  const ageMs = Number.isNaN(ts) ? 0 : Math.max(0, now.getTime() - ts);
+  const unblockRequestAgeDays = Math.floor(ageMs / DAY_MS);
+
+  // Count question lines: `^\d+\.\s` (e.g. "1. ", "2.\t")
+  const questionCount = latestUnblock.body
+    .split("\n")
+    .filter((line) => /^\d+\.\s/.test(line)).length;
+
+  return { unblockRequestAgeDays, questionCount };
+}
+
+/**
+ * Parse "owner/repo" into its parts. Returns null on malformed input.
+ */
+function splitOwnerRepo(
+  nameWithOwner: string | undefined,
+): { owner: string; repo: string } | null {
+  if (!nameWithOwner) return null;
+  const parts = nameWithOwner.split("/");
+  if (parts.length !== 2) return null;
+  if (!parts[0] || !parts[1]) return null;
+  return { owner: parts[0], repo: parts[1] };
+}
+
+/**
+ * Build the unblock signal map for all Human Needed candidates in `items`.
+ * Skips items that don't carry a parseable repository identifier (we need
+ * `owner/repo` to fetch issue comments via the GitHub repo API).
+ */
+async function buildUnblockSignalMap(
+  client: GitHubClient,
+  items: DashboardItem[],
+  now: Date,
+): Promise<UnblockSignalMap> {
+  const map: Record<number, UnblockSignal> = {};
+  const candidates = items.filter(
+    (item) => item.workflowState === "Human Needed",
+  );
+  if (candidates.length === 0) return map;
+
+  // Fetch comments per candidate. Sequential to keep rate-limit pressure low —
+  // the candidate set is typically tiny (0-5).
+  for (const item of candidates) {
+    const ownerRepo = splitOwnerRepo(item.repository);
+    if (!ownerRepo) continue;
+    const comments = await fetchIssueCommentsForUnblock(
+      client,
+      ownerRepo.owner,
+      ownerRepo.repo,
+      item.number,
+    );
+    const signal = extractUnblockSignal(comments, now);
+    if (signal !== null) {
+      map[item.number] = signal;
+    }
+  }
+
+  return map;
+}
 
 // ---------------------------------------------------------------------------
 // Shared schema fragments
@@ -152,6 +323,11 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
         allItems.push(...toDashboardItems(result.nodes, pn));
       }
 
+      // Compute unblock signals for any Human Needed candidates so the
+      // ranker can surface `human-needed-unblock` directions. Comments are
+      // fetched at the boundary; the ranker stays pure.
+      const unblockSignals = await buildUnblockSignalMap(client, allItems, now);
+
       // Build the RankConfig from args + defaults + injected `now`.
       const config: RankConfig = {
         limit: args.limit ?? DEFAULT_RANK_CONFIG.limit,
@@ -165,6 +341,7 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
           args.prStaleHours ?? DEFAULT_RANK_CONFIG.prStaleHours,
         audience: args.audience,
         now,
+        unblockSignals,
       };
 
       // Compute PR ageHours at the boundary so the lib never reads the wall clock.

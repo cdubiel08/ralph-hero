@@ -92,6 +92,16 @@ export interface DirectionSignals {
   prReviewDecision?: string | null;
   /** For `kind: "pr"`: issue number parsed from `feature/GH-NNNN` head-ref. */
   linkedIssueNumber?: number;
+  /**
+   * For `kind: "human-needed-unblock"`: age of the most recent
+   * `## Unblock Request` comment, in days, rounded down (min 0).
+   */
+  unblockRequestAgeDays?: number;
+  /**
+   * For `kind: "human-needed-unblock"`: count of numbered question lines
+   * (`^\d+\.\s`) in the most recent `## Unblock Request` comment body.
+   */
+  questionCount?: number;
 }
 
 export interface Direction {
@@ -102,7 +112,7 @@ export interface Direction {
    * orchestrators dispatch on it.
    */
   recommended: boolean;
-  kind: "issue" | "pr" | "tree-continue" | "lock-stale";
+  kind: "issue" | "pr" | "tree-continue" | "lock-stale" | "human-needed-unblock";
   issue: {
     number: number;
     title: string;
@@ -143,6 +153,30 @@ export interface Direction {
  */
 export type Audience = "human" | "agent";
 
+/**
+ * Per-issue unblock signal derived from the most recent `## Unblock Request`
+ * comment on a Human Needed issue. The tool layer (`directions-tools.ts`)
+ * fetches issue comments for Human Needed candidates and computes these
+ * signals at the boundary so the ranker stays pure.
+ *
+ * `unblockRequestAgeDays`: Days since the comment was posted, rounded down.
+ * `questionCount`: Number of lines matching `^\d+\.\s` in the comment body.
+ *
+ * Only present for issues whose most recent `## Unblock Request` is newer
+ * than their most recent `## Escalation`. The tool layer is responsible
+ * for the newness check.
+ */
+export interface UnblockSignal {
+  unblockRequestAgeDays: number;
+  questionCount: number;
+}
+
+/**
+ * Map of issue number -> unblock signal, populated for Human Needed
+ * candidates that have a fresh `## Unblock Request` comment.
+ */
+export type UnblockSignalMap = Readonly<Record<number, UnblockSignal>>;
+
 export interface RankConfig {
   /** Max directions to return. Default 3. */
   limit: number;
@@ -162,6 +196,13 @@ export interface RankConfig {
   audience: Audience;
   /** Injected for testability — never read from the wall clock inside the lib. */
   now: Date;
+  /**
+   * Optional per-issue unblock signals (number -> UnblockSignal) computed by
+   * the tool layer for Human Needed candidates. When an entry is present,
+   * the corresponding issue surfaces as a `human-needed-unblock` direction.
+   * Default: empty (no Human Needed issue produces an unblock direction).
+   */
+  unblockSignals?: UnblockSignalMap;
 }
 
 export const DEFAULT_RANK_CONFIG: Omit<RankConfig, "now"> = {
@@ -202,6 +243,13 @@ const STALE_BOOST = -50;
 const LOCK_STALE_BOOST = -100;
 const TREE_CONTINUE_BOOST = -75;
 const PR_REVIEW_REQUIRED_BOOST = -200;
+/**
+ * Boost applied to a Human Needed issue carrying a fresh `## Unblock Request`
+ * comment. Must be more negative than `LOCK_STALE_BOOST` so the unblock
+ * direction outranks any lock-stale entry — these issues are explicitly
+ * waiting for the human's attention.
+ */
+const HUMAN_NEEDED_UNBLOCK_BOOST = -150;
 
 /**
  * Per-estimate penalty applied when audience === "agent". Larger items
@@ -415,7 +463,8 @@ function buildParentChainNote(
  * Score a single dashboard item. Returns the winning kind for this candidate
  * in precedence order:
  *
- *   detectLockStale(item) -> kind: "lock-stale"
+ *   has unblock signal (Human Needed) -> kind: "human-needed-unblock"
+ *   else detectLockStale(item) -> kind: "lock-stale"
  *   else detectTreeContinue(item) -> kind: "tree-continue"
  *   else -> kind: "issue"
  *
@@ -446,6 +495,33 @@ export function scoreIssue(
   // down for "agent" so autonomous loops favor XS/S work).
   const estPenalty = audiencePenalty(item, config.audience);
   score += estPenalty;
+
+  // Human Needed + fresh `## Unblock Request` comment takes precedence over
+  // every other detection. The signal is computed at the tool boundary.
+  const unblockSignal =
+    item.workflowState === "Human Needed"
+      ? config.unblockSignals?.[item.number]
+      : undefined;
+
+  if (unblockSignal !== undefined) {
+    score += HUMAN_NEEDED_UNBLOCK_BOOST;
+    tags.push("unblock-requested");
+    if (item.priority === "P0" || item.priority === "P1") {
+      tags.push("high-priority");
+    }
+    if (hasOpenBlockers(item)) {
+      tags.push("blocked");
+    }
+    const signals: DirectionSignals = {
+      tags: [...tags],
+      unblockRequestAgeDays: unblockSignal.unblockRequestAgeDays,
+      questionCount: unblockSignal.questionCount,
+    };
+    if (estPenalty > 0) {
+      signals.estimateWeight = estPenalty;
+    }
+    return { score, kind: "human-needed-unblock", tags, signals };
+  }
 
   const lockStale = detectLockStale(item, config);
   const treeContinue = detectTreeContinue(item, allItems, config);
@@ -637,6 +713,17 @@ export function buildReason(
 
   if (!issue) return "Unknown direction";
 
+  if (kind === "human-needed-unblock") {
+    const days = signals.unblockRequestAgeDays ?? 0;
+    const dayLabel = days === 1 ? "day" : "days";
+    const qCount = signals.questionCount ?? 0;
+    const qLabel = qCount === 1 ? "question" : "questions";
+    if (days === 0) {
+      return `Human Needed — ${qCount} unblock ${qLabel} waiting (posted today)`;
+    }
+    return `Human Needed — ${qCount} unblock ${qLabel} waiting since ${days} ${dayLabel} ago`;
+  }
+
   if (kind === "lock-stale") {
     const hours = Math.round(ageHours(issue.updatedAt, config.now));
     const days = Math.max(1, Math.floor(hours / 24));
@@ -731,11 +818,18 @@ export function rankDirections(
   config: RankConfig,
 ): Direction[] {
   // 1. Score all items first so we know which ones lock-stale (those go in
-  //    the candidate set even if their phase is not actionable).
+  //    the candidate set even if their phase is not actionable). Human
+  //    Needed items also pass the filter when an unblock signal exists for
+  //    them — surfacing them as `human-needed-unblock` directions.
   const scored: ScoredCandidate[] = [];
   for (const item of items) {
     const isLockStale = detectLockStale(item, config);
-    const passesPhaseFilter = isCandidatePhase(item.workflowState) || isLockStale;
+    const hasUnblockSignal =
+      item.workflowState === "Human Needed" &&
+      config.unblockSignals !== undefined &&
+      config.unblockSignals[item.number] !== undefined;
+    const passesPhaseFilter =
+      isCandidatePhase(item.workflowState) || isLockStale || hasUnblockSignal;
     if (!passesPhaseFilter) continue;
 
     const { score, kind, tags, signals } = scoreIssue(item, items, config);

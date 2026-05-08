@@ -71,6 +71,7 @@ Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that 
 | `pr-agent` | haiku | ralph-pr | Integrator |
 | `merge-agent` | haiku | ralph-merge | Integrator |
 | `val-agent` | haiku | ralph-val | Integrator |
+| `unblock-agent` | sonnet | ralph-unblock | Async-loop |
 
 Key properties:
 - Skill content is injected into agent context with backtick preprocessing (env vars resolved at load time)
@@ -141,6 +142,8 @@ Key state categories defined in `workflow-states.ts`:
 - **Parent gate states**: Ready for Plan, Plan in Review, In Review, Done (trigger parent advancement)
 
 `save_issue` automatically syncs the Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping when setting `workflowState`. The sync is best-effort and one-way.
+
+**Async unblock loop**: Hero closes its loop at Human Needed. The `ralph-hero:ralph-unblock` skill runs as a separate async loop (scheduled via launchd, fired by external trigger, or driven by human attention) and posts `## Unblock Request` comments with specific blocking questions. The interactive `ralph-hero:unblock` skill is then invoked by the human to provide answers and route the issue back into the pipeline.
 
 ### Performance tracking over time
 

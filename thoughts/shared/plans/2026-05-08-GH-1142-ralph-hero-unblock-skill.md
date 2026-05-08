@@ -644,12 +644,12 @@ exec claude -p "Run the ralph-hero:ralph-unblock skill once. Pick the oldest Hum
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All tests still pass: `cd plugin/ralph-hero/mcp-server && npm test`
-- [ ] Type check passes: `npm run build`
-- [ ] `next_actions` test (new): a Human Needed issue with `## Unblock Request` produces a direction of `kind: "human-needed-unblock"`
-- [ ] `next_actions` test (new): a Human Needed issue without `## Unblock Request` does NOT produce a direction of that kind (it should still surface separately, but not as an unblock invitation)
-- [ ] Launchd plist parses: `plutil -lint plugin/ralph-hero/scripts/unblock/launchd/com.ralph.unblock.plist.template` returns OK
-- [ ] `run.sh` is executable: `test -x plugin/ralph-hero/scripts/unblock/run.sh`
+- [x] All tests still pass: `cd plugin/ralph-hero/mcp-server && npm test`
+- [x] Type check passes: `npm run build`
+- [x] `next_actions` test (new): a Human Needed issue with `## Unblock Request` produces a direction of `kind: "human-needed-unblock"`
+- [x] `next_actions` test (new): a Human Needed issue without `## Unblock Request` does NOT produce a direction of that kind (it should still surface separately, but not as an unblock invitation)
+- [x] Launchd plist parses: `plutil -lint plugin/ralph-hero/scripts/unblock/launchd/com.ralph.unblock.plist.template` returns OK
+- [x] `run.sh` is executable: `test -x plugin/ralph-hero/scripts/unblock/run.sh`
 
 #### Manual Verification:
 - [ ] After Phase 4 complete, run `/ralph-hero:hello` in a project with a Human Needed issue that has a `## Unblock Request` — verify the unblock direction appears in the picker
