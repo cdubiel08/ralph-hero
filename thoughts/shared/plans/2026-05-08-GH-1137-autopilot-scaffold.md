@@ -62,10 +62,10 @@ After this phase:
 
 ### Verification
 
-- [ ] Skill file exists at `plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] YAML frontmatter parses with `python -c "import yaml; yaml.safe_load(open('plugin/ralph-hero/skills/autopilot/SKILL.md').read().split('---')[1])"`
-- [ ] No new TypeScript files added
-- [ ] `npm test` (in `plugin/ralph-hero/mcp-server/`) passes (unchanged)
+- [x] Skill file exists at `plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] YAML frontmatter parses with `python -c "import yaml; yaml.safe_load(open('plugin/ralph-hero/skills/autopilot/SKILL.md').read().split('---')[1])"`
+- [x] No new TypeScript files added
+- [x] `npm test` (in `plugin/ralph-hero/mcp-server/`) passes (unchanged)
 - [ ] `/ralph-hero:autopilot` listed by `/help` after plugin reload
 - [ ] Safety check refuses cleanly without `RALPH_AUTOPILOT_ENABLE=true`
 - [ ] Empty backlog → "Backlog empty" stop message
@@ -199,10 +199,10 @@ Create `plugin/ralph-hero/skills/autopilot/SKILL.md` with frontmatter, Configura
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -f plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `python -c "import yaml; yaml.safe_load(open('plugin/ralph-hero/skills/autopilot/SKILL.md').read().split('---')[1])"` exits 0
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes (unchanged)
-- [ ] `git diff --stat` shows only the new skill file (no MCP server source touched)
+- [x] `test -f plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `python -c "import yaml; yaml.safe_load(open('plugin/ralph-hero/skills/autopilot/SKILL.md').read().split('---')[1])"` exits 0
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` passes (unchanged)
+- [x] `git diff --stat` shows only the new skill file (no MCP server source touched)
 
 #### Manual Verification:
 - [ ] `/ralph-hero:autopilot` is listed by `/help` after plugin reload

@@ -157,6 +157,10 @@ Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead 
 - **Fixture**: `src/__tests__/fixtures/snapshots.fixture.jsonl` holds 30 synthetic schema-valid rows used by `trends.test.ts` and as a documentation example of the on-disk format.
 - **Schedule**: optional launchd template at `plugin/ralph-hero/scripts/snapshot/launchd/com.ralph.snapshot.plist.template` — captures one snapshot per day so the JSONL accumulates a daily history without manual intervention.
 
+### Autopilot
+
+`/ralph-hero:autopilot` is a self-paced backlog clearer that wraps `/hero` in a `ScheduleWakeup`-based loop. Single-command shorthand for autonomous overnight runs. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`. Audit log at `~/.ralph-hero/autopilot.jsonl`. See `skills/autopilot/SKILL.md` for the tick state machine and `hooks/scripts/autopilot-wakeup-gate.sh` for the cache-window/prompt-regex safety gate. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
+
 ### Caching Strategy
 
 Two separate caches serve different purposes:

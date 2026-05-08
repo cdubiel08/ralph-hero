@@ -119,6 +119,30 @@ Under the hood:
 | `/ralph-hero:hero` | Tree-expansion orchestrator with task blocking for sequential execution |
 | `/ralph-hero:team` | Multi-agent coordinator that spawns specialists for each pipeline phase |
 
+### `/ralph-hero:autopilot` — Backlog Clearer
+
+Single-command shorthand for "clear the backlog while I'm away." Uses `ScheduleWakeup`-based self-pacing to dispatch `/ralph-hero:hero` against the next-most-important XS/S issue per tick, escalating to `Human Needed` when stuck and stopping cleanly when the queue is empty.
+
+**Opt-in (required)**: `export RALPH_AUTOPILOT_ENABLE=true` — unattended automation is opt-in by design.
+
+**Invocation**:
+- `/ralph-hero:autopilot` — default: 20 iterations max, interactive merge
+- `/ralph-hero:autopilot --max-iterations 5` — bound the loop tighter
+- `/ralph-hero:autopilot --auto-merge` — auto-merge PRs that pass code review + CI
+- `/ralph-hero:autopilot --dry-run` — one-shot dry run; no hero dispatch
+
+**Termination conditions** (any one stops the loop):
+- Backlog empty (no actionable XS/S issues remain)
+- Escalation flagged on the current tick
+- Three consecutive ticks produced no progress (issue gets escalated)
+- Iteration cap reached
+
+**Interactive-merge mode (default)**: When hero lands a PR, the issue moves to `In Review` awaiting human merge. Autopilot does NOT re-pick `In Review` issues — they're listed in the final summary as "awaiting human merge" so you know what's queued for you. Use `--auto-merge` to also drive code-review + merge through the loop.
+
+**Audit trail**: every tick appends to `~/.ralph-hero/autopilot.jsonl`. Inspect with `jq . ~/.ralph-hero/autopilot.jsonl`.
+
+**Cancel an in-flight loop**: use `/tasks` (Claude Code's scheduled-task list) to identify the autopilot wakeup and delete it via the cron tools.
+
 ### CLI (`just` recipes)
 
 Ralph also provides a `just`-based CLI for running workflows from the terminal with budget and timeout controls, plus zero-cost quick actions via [mcptools](https://github.com/f/mcptools):

@@ -256,19 +256,19 @@ Append Steps 7 through 10 to `plugin/ralph-hero/skills/autopilot/SKILL.md`. Each
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -f plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `grep -q '## Step 7: Update tick counters' plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `grep -q '## Step 8: Termination' plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `grep -q '## Step 9: Schedule next tick' plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `grep -q '## Step 10: Final report' plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `grep -q 'no_progress_streak' plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `grep -q 'exactly one branch per code path' plugin/ralph-hero/skills/autopilot/SKILL.md`
-- [ ] `grep -E "delaySeconds\s*=\s*300" plugin/ralph-hero/skills/autopilot/SKILL.md` returns no lines
-- [ ] `grep -E "delaySeconds\s*=\s*1800" plugin/ralph-hero/skills/autopilot/SKILL.md` returns no lines
-- [ ] `python -c "import yaml; yaml.safe_load(open('plugin/ralph-hero/skills/autopilot/SKILL.md').read().split('---')[1])"` exits 0
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes
-- [ ] `git diff plugin/ralph-hero/mcp-server/package.json` is empty (no dep changes)
-- [ ] `git diff --stat` shows only `plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `test -f plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `grep -q '## Step 7: Update tick counters' plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `grep -q '## Step 8: Termination' plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `grep -q '## Step 9: Schedule next tick' plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `grep -q '## Step 10: Final report' plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `grep -q 'no_progress_streak' plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `grep -q 'exactly one branch per code path' plugin/ralph-hero/skills/autopilot/SKILL.md`
+- [x] `grep -E "delaySeconds\s*=\s*300" plugin/ralph-hero/skills/autopilot/SKILL.md` returns no lines
+- [x] `grep -E "delaySeconds\s*=\s*1800" plugin/ralph-hero/skills/autopilot/SKILL.md` returns no lines
+- [x] `python -c "import yaml; yaml.safe_load(open('plugin/ralph-hero/skills/autopilot/SKILL.md').read().split('---')[1])"` exits 0
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` passes
+- [x] `git diff plugin/ralph-hero/mcp-server/package.json` is empty (no dep changes)
+- [x] `git diff --stat` shows only `plugin/ralph-hero/skills/autopilot/SKILL.md`
 
 #### Manual Verification:
 - [ ] 3-issue XS backlog → 3 ticks fire, "Backlog empty" stops cleanly
