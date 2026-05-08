@@ -513,10 +513,10 @@ esac
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Skill file is valid YAML+markdown
-- [ ] Hook script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/unblock-state-gate.sh`
-- [ ] Hook unit test (or manual): `target_state=Done` blocks with stderr; `target_state="In Progress"` allows
-- [ ] Hook unit test: with `RALPH_COMMAND=unblock` set, `human-needed-outbound-block.sh` allows transition (regression test for Phase 1)
+- [x] Skill file is valid YAML+markdown
+- [x] Hook script passes shellcheck: `shellcheck plugin/ralph-hero/hooks/scripts/unblock-state-gate.sh`
+- [x] Hook unit test (or manual): `target_state=Done` blocks with stderr; `target_state="In Progress"` allows
+- [x] Hook unit test: with `RALPH_COMMAND=unblock` set, `human-needed-outbound-block.sh` allows transition (regression test for Phase 1)
 
 #### Manual Verification:
 - [ ] End-to-end: escalate a real test issue via `ralph-impl`, run `/ralph-hero:ralph-unblock` to post questions, run `/ralph-hero:unblock 42` to walk through them, confirm the issue lands in `In Progress` and both `## Unblock Request` and `## Unblock Resolution` comments are present
