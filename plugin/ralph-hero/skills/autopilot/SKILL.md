@@ -7,6 +7,11 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=autopilot"
+  PreToolUse:
+    - matcher: "ScheduleWakeup"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/autopilot-wakeup-gate.sh"
 allowed-tools:
   - Read
   - Write
@@ -228,7 +233,7 @@ After Step 6 derives `<outcome>` from the pre/post diff (or from the dry-run sho
 
 3. **Append to history**: push `{issue: <picked>, outcome: <derived>}` onto `state.history`. The history array is the source-of-truth read by Step 2.5's "exclude issues already PR'd this loop" filter on the next tick (cross-reference Phase 1 Step 2.5).
 
-4. **No audit-log write here** — that is Phase 4 (#1140). Phase 3 keeps `state` and `<outcome>` as in-process variables only; the JSONL append at `~/.ralph-hero/autopilot.jsonl` is added in the next phase between Step 7 and Step 8.
+4. **Audit-log write deferred to Step 8.5** — see `## Audit log entry shape` below. The JSONL append happens AFTER Step 8 has resolved its STOP-or-CONTINUE branch decision (so `next_action` and `next_delay_seconds` are known), but BEFORE Step 9 calls `ScheduleWakeup` or Step 10 emits the final report. This ordering ensures the audit row is forensically captured even if the wakeup or final-report fails. Cross-reference: parent plan `2026-05-07-GH-1136-autopilot-skill.md` §Phase 4 lines 401-426 for the canonical schema.
 
 ## Step 8: Termination conditions (any one stops the loop)
 
@@ -266,6 +271,71 @@ Then proceed to Step 10 (final report) — the streak-escalation count is surfac
 **Backlog re-check rule (row 5)**: this row calls `next_actions(audience="agent", limit=10)` again and re-applies Step 2/2.5 filters (kind=="issue", exclude In Review, exclude already-pr_landed in `state.history`). This catches the case where the picked issue was the last actionable item and post-tick the queue is now empty — re-checking inside Step 8 (rather than relying on the next tick to discover the empty backlog) avoids one wasted `ScheduleWakeup` round-trip and gives the user a tight terminal report.
 
 **Cross-references**: STOP -> Step 10 (final report). CONTINUE -> Step 9 (ScheduleWakeup).
+
+## Audit log entry shape
+
+After Step 8's branch decision is made, but before Step 9's `ScheduleWakeup` call (or Step 10's final report), append a single JSON line to `~/.ralph-hero/autopilot.jsonl`. This sub-step (Step 8.5) is the forensic capture point: the row is written BEFORE the side-effecting `ScheduleWakeup` or Step 10 emission so the audit trail records the tick even if the wakeup or final-report subsequently fails.
+
+The narrative ordering in the parent plan-of-plans phrases this as "between Step 7 and Step 8". The literal placement is dictated by data-readiness: by Step 7 we know `iteration`, `state.no_progress_streak`, and `outcome`; the `next_action` and `next_delay_seconds` fields require the Step 8 branch to have resolved first. Hence the write executes here — once Step 8 has decided STOP-or-CONTINUE — and immediately precedes Step 9 / Step 10.
+
+The canonical 13-field entry shape (from parent plan-of-plans `2026-05-07-GH-1136-autopilot-skill.md` §Phase 4 lines 405-419):
+
+```json
+{
+  "ts": "2026-05-07T03:14:15Z",
+  "iteration": 3,
+  "issue_number": 1234,
+  "issue_url": "https://github.com/...",
+  "pre_state": "Ready for Plan",
+  "post_state": "In Review",
+  "outcome": "pr_landed",
+  "pr_url": "https://github.com/.../pull/5678",
+  "duration_ms": 487211,
+  "no_progress_streak": 0,
+  "next_delay_seconds": 60,
+  "next_action": "schedule",
+  "args": {"max_iterations": 20, "auto_merge": false, "dry_run": false}
+}
+```
+
+**Per-outcome variations** (parent plan lines 421-424):
+
+- escalations: `outcome="escalated"`, `escalation_reason="<from last comment>"`, `next_action="stop"`, `next_delay_seconds=null`
+- dry-run: `outcome="dry_run"`, `next_action="stop"`, `next_delay_seconds=null`
+- backlog-empty: `outcome="backlog_empty"`, `next_action="stop"`, `next_delay_seconds=null`, `issue_number=null`
+- no-progress-streak escalation, max-iterations stop, etc.: `next_action="stop"`, `next_delay_seconds=null`
+
+**STOP / null rule (canonical)**: whenever `next_action == "stop"`, `next_delay_seconds` MUST be the JSON literal `null` (not `0`, not absent, not the string `"null"`). This rule applies to every STOP cause uniformly. Downstream JSONL parsers (e.g., `jq -r '.next_delay_seconds' ~/.ralph-hero/autopilot.jsonl | sort -u`) will then yield a clean set: `{60, 1200, null}` — no other values.
+
+For continuing ticks (`next_action == "schedule"`), `next_delay_seconds` is the value Step 9 selected — exactly one of `{60, 1200}` per the live-set constraint. Cross-reference Step 9 for how that value is computed.
+
+**Append pattern** (canonical, parent plan lines 428-435): use `mkdir -p ~/.ralph-hero` to idempotently create the parent directory (no-op on subsequent ticks), then construct the JSON via `jq -nc` with `--arg` / `--argjson` flags so all field values flow through safe parameter interpolation rather than manual shell quoting. The `-n` flag means "null input" (start from nothing), `-c` means "compact output" (single-line, JSONL-shaped):
+
+```bash
+mkdir -p ~/.ralph-hero
+jq -nc \
+  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson iteration "$ITER" \
+  --argjson issue_number "$ISSUE_NUMBER" \
+  --arg issue_url "$ISSUE_URL" \
+  --arg pre_state "$PRE_STATE" \
+  --arg post_state "$POST_STATE" \
+  --arg outcome "$OUTCOME" \
+  --arg pr_url "$PR_URL" \
+  --argjson duration_ms "$DURATION_MS" \
+  --argjson no_progress_streak "$STREAK" \
+  --argjson next_delay_seconds "$NEXT_DELAY" \
+  --arg next_action "$NEXT_ACTION" \
+  --argjson args "$ARGS_JSON" \
+  '{ts:$ts, iteration:$iteration, issue_number:$issue_number, issue_url:$issue_url, pre_state:$pre_state, post_state:$post_state, outcome:$outcome, pr_url:$pr_url, duration_ms:$duration_ms, no_progress_streak:$no_progress_streak, next_delay_seconds:$next_delay_seconds, next_action:$next_action, args:$args}' \
+  >> ~/.ralph-hero/autopilot.jsonl
+```
+
+For STOP rows, pass `--argjson next_delay_seconds null` to materialize the JSON literal `null` correctly (note: `null` here is unquoted; passing `"null"` as a string would be wrong). For CONTINUE rows, pass `--argjson next_delay_seconds 60` or `--argjson next_delay_seconds 1200` per Step 9's selection.
+
+The `args` object captures the parsed Step 1 flags (`max_iterations`, `auto_merge`, `dry_run`) so a forensic reader can reconstruct the run's invocation parameters from any single tick row.
+
+**Forensic-capture invariant**: the JSONL append happens BEFORE the side-effecting `ScheduleWakeup` call (Step 9) or final-report emission (Step 10). If the wakeup or final-report subsequently fails, the audit row is still on disk. Cross-reference Step 9 (where `next_delay_seconds` is computed) and Step 10 (where `next_action="stop"` rows feed the final report's escalation totals and run summary).
 
 ## Step 9: Schedule next tick
 
@@ -330,4 +400,4 @@ Emit a markdown summary to user-visible output (not stderr) so the terminal turn
 
 The report ends the autopilot run for this invocation. The user can re-run `/ralph-hero:autopilot` to start a fresh loop (which will initialize a new `state` object in Step 1).
 
-<!-- Audit log writes (between Step 7 and Step 8) and PreToolUse hook gate added in Phase 4 (GH-1140); README/CLAUDE.md/eval-scenarios in Phase 5 (GH-1141) -->
+<!-- README/CLAUDE.md/eval-scenarios in Phase 5 (GH-1141) -->
