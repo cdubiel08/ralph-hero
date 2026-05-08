@@ -122,4 +122,96 @@ After filtering:
 
 For Phase 1 only: report the picked issue (number, title, workflow state) and STOP. Do not dispatch hero, do not call `ScheduleWakeup`, do not write to the audit log — those are Phase 2/3/4 work.
 
-<!-- Steps 3+ added in subsequent phases (GH-1138, GH-1139, GH-1140) -->
+## Step 3: Worktree liveness check
+
+Before dispatching hero, scan for a stale worktree at the canonical path for `<picked>`. A pre-existing worktree at `worktrees/GH-<picked>/` means a prior tick was interrupted mid-implement on this issue and there may be uncommitted in-progress work on disk that autopilot must not clobber.
+
+Run via Bash:
+
+```bash
+git worktree list
+```
+
+Inspect the output for any line whose path matches `worktrees/GH-<picked-number>/` (a substring match on the worktree path is sufficient — both the bare `worktrees/GH-N` form and the absolute-path form `<repo>/worktrees/GH-N` are valid hits).
+
+**On collision (a matching worktree exists)**:
+
+1. ESCALATE the picked issue: call `save_issue(number=<picked>, workflowState="__ESCALATE__", command="ralph_impl")` to transition it to `Human Needed`.
+2. Post a comment on the issue via `create_comment` with body:
+
+   > Autopilot detected a stale worktree at `<path>` from a prior tick. Autopilot will not auto-clean worktrees because doing so risks destroying in-progress work. Please review `<path>`, commit or discard any pending changes, run `./scripts/remove-worktree.sh GH-<picked>`, then re-enable autopilot.
+
+3. Stop the loop: this tick is terminal. Do NOT proceed to Step 4. Do NOT call `ScheduleWakeup` (loop scheduling is Phase 3, but even there the worktree-collision branch must terminate — record this as `outcome=escalated` for any audit-log purposes added in Phase 4).
+
+This is the safe default — auto-cleanup risks destroying in-progress work. Autopilot never deletes worktrees, never deletes files under `worktrees/`, and never force-resets a branch. Recovery requires a human to inspect and clean up. (Automatic cleanup is tracked as follow-up work in the parent plan §Follow-up Work; it is an explicit non-goal of Phase 2.)
+
+**On no collision**: proceed to Step 4.
+
+## Step 4: Capture pre-state
+
+Call `get_issue(number=<picked>, includePipeline=true)` once and capture four fields into a local `pre` object for use in Step 6's diff:
+
+- `pre.workflowState` — top-level `workflowState` field on the response (e.g., `"Backlog"`, `"In Progress"`, `"In Review"`).
+- `pre.phase` — pipeline phase name from the `pipeline` payload that `includePipeline=true` adds to the response (the high-level phase the orchestrator's pipeline detection assigned; used to spot phase advances that don't change `workflowState`).
+- `pre.subIssueCount` — read from `subIssuesSummary.total` on the `get_issue` response. The response payload already carries this, so no separate `list_sub_issues` call is needed in MVP — keep the tick lean. (If a future schema change drops `subIssuesSummary`, fall back to `list_sub_issues(number=<picked>)` and use its returned count; document the source in the audit-log entry once Phase 4 lands.)
+- `pre.linkedPRs` — collect any PR references already on the issue. Source: the `get_issue` response payload's existing PR-linkage fields (the same fields the regular `get_issue` view surfaces). No extra GitHub API calls.
+
+`pre` lives only in the current tick's local scope — it is consumed by Step 6 and discarded. State persisted across ticks (the `state` object) is unaffected by Step 4.
+
+## Step 5: Dispatch hero
+
+**Dry-run branch** (`--dry-run` flag is set):
+
+- Skip dispatch entirely. Do NOT call `Skill("ralph-hero:hero", ...)`.
+- Mark this tick's outcome as `outcome=dry_run`.
+- Emit a report to the user: `"Would dispatch hero for #<picked> (<title>) — skipped due to --dry-run"`.
+- Do NOT proceed to Step 6's pre/post diff (treat dry-run as terminal for outcome derivation — there is no post-state to compare because no work happened).
+
+**Real dispatch branch** (no `--dry-run`):
+
+Hero's review mode is controlled via the `RALPH_REVIEW_MODE` environment variable, **not** a CLI flag. Hero's `argument-hint` (see `plugin/ralph-hero/skills/hero/SKILL.md:3`) is just `<issue-number>` — there is no `--review-mode` flag. Hero reads `${RALPH_REVIEW_MODE:-interactive}` at load time (`hero/SKILL.md:50`); accepted values are `interactive` (stop at PR, default) or `auto` (auto-run code review and merge) per `hero/SKILL.md:517`.
+
+Set the env var for the dispatch shell context based on the parsed flags from Step 1:
+
+- If `--auto-merge` is set: ensure `RALPH_REVIEW_MODE=auto` is exported in the shell environment hero will inherit. In practice, run `export RALPH_REVIEW_MODE=auto` via Bash before the `Skill()` call (or use a single Bash invocation that sets the env var inline before invoking the skill, whichever the surrounding skill body convention prefers).
+- Otherwise (default): ensure `RALPH_REVIEW_MODE=interactive` is set (or simply leave the env var untouched and rely on the `:-interactive` default in hero — but explicitly setting it is safer and self-documenting).
+
+Then dispatch hero with the picked issue as a single positional argument:
+
+```
+Skill("ralph-hero:hero", args="<picked>")
+```
+
+Hero will run its full per-issue flow (research → plan → split → impl → pr → merge as appropriate) and return text output describing what happened. Capture hero's text output to a local variable `hero_output` for inclusion in the Phase 4 audit-log entry.
+
+**Critical anti-pattern** (cited from parent plan-of-plans, R1 review): do **NOT** parse `hero_output` for outcome derivation. Text-grepping hero's free-text reports (the approach used in `plugin/ralph-hero/scripts/ralph-loop.sh`'s `grep -qiE "Queue empty|Triage complete"`) is fragile and was explicitly rejected by review. Outcome derivation is the job of Step 6's structured `get_issue` diff. `hero_output` is preserved only for the audit log (forensic context for humans), never for control flow.
+
+After hero returns, proceed to Step 6.
+
+## Step 6: Capture post-state and derive outcome
+
+If `--dry-run` short-circuited Step 5, outcome is already `dry_run`; skip this step entirely.
+
+Otherwise, call `get_issue(number=<picked>, includePipeline=true)` again to capture post-state. Build a `post` object with the same four fields as `pre`: `post.workflowState`, `post.phase`, `post.subIssueCount`, `post.linkedPRs`.
+
+Compare `pre` to `post` row-by-row using the canonical 8-row diff table below. **Rows are evaluated top-to-bottom; the first matching row wins** — row order encodes precedence. No fragile string matching on hero's text output; outcome derivation is purely from `get_issue` field comparisons.
+
+| Pre-state | Post-state | Derived outcome | Made progress? |
+|---|---|---|---|
+| any | `Done` | `completed` | yes |
+| any | `Human Needed` | `escalated` (capture last comment for `escalation_reason`) | no |
+| `Backlog`/`Research Needed` | `Ready for Plan`/`Plan in Review`/`In Progress` | `advanced` | yes |
+| `Ready for Plan`/`Plan in Review` | `In Progress`/`In Review` | `advanced` | yes |
+| `In Progress` | `In Review` (PR linked) | `pr_landed` | yes |
+| any | unchanged AND `pre.subIssueCount < post.subIssueCount` | `advanced` (split happened) | yes |
+| any | unchanged | `no_progress` | no |
+| any | different from pre, not matched by rows above (catch-all) | `other_change` | yes (treat as advanced for streak-reset) |
+
+The catch-all `other_change` row (added in R3) prevents silent loss of unexpected state transitions — anything that changes the workflow state but doesn't match a documented forward path (for example, a backward transition, a regression, or any other unanticipated mutation) is recorded with `outcome=other_change` in the audit log for forensic review and treated as progress for streak-reset purposes. Without this row, an unexpected post-state would silently fall through and be misclassified as `no_progress`.
+
+When `outcome=escalated` (row 2 matches): also capture the most recent comment text on the issue into a local variable `escalation_reason` for inclusion in the Phase 4 audit-log entry. The simplest source is the last entry of the `comments` array on the post-state `get_issue` response payload (no extra API call). Hero's escalation flow posts a Human Needed comment as part of the transition, so the last comment is the escalation reason.
+
+This step replaces R1's text-grep approach with structured pre/post diffing: outcome derivation reads only typed fields from MCP responses, never strings from hero's free-form output.
+
+<!-- Steps 7+ added in subsequent phases (GH-1139, GH-1140, GH-1141) -->
+
