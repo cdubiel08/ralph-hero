@@ -685,12 +685,12 @@ du -sh ~/.ralph-hero/activity/
 
 #### Automated Verification
 
-- [ ] No file in `~/.ralph-hero/activity/` has a date encoded in its path older than 14 days from today: `find ~/.ralph-hero/activity -name '*.jsonl' | awk -F/ '{print $(NF-2)"-"$(NF-1)"-"$(NF)}' | while read d; do [[ "$(date -j -f "%Y-%m-%d.jsonl" "$d" +%s 2>/dev/null)" -lt "$(date -v-15d +%s)" ]] && echo "OLD: $d"; done` — should print nothing.
+- [x] No file in `~/.ralph-hero/activity/` has a date encoded in its path older than 14 days from today: `find ~/.ralph-hero/activity -name '*.jsonl' | awk -F/ '{print $(NF-2)"-"$(NF-1)"-"$(NF)}' | while read d; do [[ "$(date -j -f "%Y-%m-%d.jsonl" "$d" +%s 2>/dev/null)" -lt "$(date -v-15d +%s)" ]] && echo "OLD: $d"; done` — should print nothing.
 
 #### Manual Verification
 
-- [ ] Total size of `~/.ralph-hero/activity/` is bounded by the 14-day window. After this date, daily growth (~1MB/day measured today) caps total at ~14 MB.
-- [ ] The latest day file (today) is intact and growing as new tool calls fire.
+- [x] Total size of `~/.ralph-hero/activity/` is bounded by the 14-day window. After this date, daily growth (~1MB/day measured today) caps total at ~14 MB.
+- [x] The latest day file (today) is intact and growing as new tool calls fire.
 
 **Implementation Note**: This phase is a final operational step after Phases 1-4 are merged. It can run from the same PR.
 
