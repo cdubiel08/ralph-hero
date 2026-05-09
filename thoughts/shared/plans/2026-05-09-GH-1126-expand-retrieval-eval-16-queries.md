@@ -68,12 +68,12 @@ Existing queries cover 8 of 11 corpus docs. Three corpus docs are unused: `chunk
 
 ### Verification
 
-- [ ] `golden-queries.json` contains 16 queries numbered 1..16
-- [ ] `npm run eval:retrieval -- --assert` passes from `plugin/ralph-knowledge/`
-- [ ] `HIT5_THRESHOLD` set to `(observed Hit@5 − 1)` with inline date-stamped comment
-- [ ] Removing one expected doc ID from a passing query locally drops Hit@5 below threshold and exits 1
-- [ ] At least 8 of 16 queries have `type: "mixed"` (semantic) — not trivial title match
-- [ ] CI build-and-test-knowledge job passes on main
+- [x] `golden-queries.json` contains 16 queries numbered 1..16
+- [x] `npm run eval:retrieval -- --assert` passes from `plugin/ralph-knowledge/`
+- [x] `HIT5_THRESHOLD` set to `(observed Hit@5 − 1)` with inline date-stamped comment
+- [x] Removing one expected doc ID from a passing query locally drops Hit@5 below threshold and exits 1
+- [x] At least 8 of 16 queries have `type: "mixed"` (semantic) — not trivial title match
+- [x] CI build-and-test-knowledge job passes on main
 
 ## What We're NOT Doing
 
@@ -107,12 +107,12 @@ Add 8 new golden queries to the JSON, measure observed Hit@5 on the expanded sui
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] JSON has 16 entries with `n: 1..16`, monotonically increasing
-  - [ ] Each new entry has `query`, `expectedSubstrings` (1-3 items), `type` ("specific-keyword" or "mixed")
-  - [ ] At least 4 of the 8 new queries have `type: "mixed"` (so 8+ of 16 total are semantic)
-  - [ ] Every `expectedSubstrings` value matches a real basename under `plugin/ralph-knowledge/__tests__/eval-corpus/` (use the basename without `.md`)
-  - [ ] Suggested topic coverage: chunked embeddings dream-loop (GH-0761), RRF calibration (GH-0899), MMR diversity (GH-0902), backend hardening postmortem, wikilink extractor (paraphrased), softmax + rerank calibration (paraphrased), embedder tensor release (paraphrased), context handoff (paraphrased)
-  - [ ] JSON is valid (parseable by `JSON.parse`); trailing commas absent; 2-space indent matches existing style
+  - [x] JSON has 16 entries with `n: 1..16`, monotonically increasing
+  - [x] Each new entry has `query`, `expectedSubstrings` (1-3 items), `type` ("specific-keyword" or "mixed")
+  - [x] At least 4 of the 8 new queries have `type: "mixed"` (so 8+ of 16 total are semantic)
+  - [x] Every `expectedSubstrings` value matches a real basename under `plugin/ralph-knowledge/__tests__/eval-corpus/` (use the basename without `.md`)
+  - [x] Suggested topic coverage: chunked embeddings dream-loop (GH-0761), RRF calibration (GH-0899), MMR diversity (GH-0902), backend hardening postmortem, wikilink extractor (paraphrased), softmax + rerank calibration (paraphrased), embedder tensor release (paraphrased), context handoff (paraphrased)
+  - [x] JSON is valid (parseable by `JSON.parse`); trailing commas absent; 2-space indent matches existing style
 
 #### Task 1.2: Measure observed Hit@5 locally
 
@@ -121,9 +121,9 @@ Add 8 new golden queries to the JSON, measure observed Hit@5 on the expanded sui
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Run `cd plugin/ralph-knowledge && npm run eval:retrieval` (no `--assert`) and capture the printed Hit@5 line
-  - [ ] Record the observed `hit5Count` value (e.g., `14/16`); note any queries with `rank: -` for debugging
-  - [ ] If observed Hit@5 < 12/16 (75%), revise weak queries in 1.1 (prefer paraphrases that test real semantics, not adversarial mismatches) and re-run
+  - [x] Run `cd plugin/ralph-knowledge && npm run eval:retrieval` (no `--assert`) and capture the printed Hit@5 line
+  - [x] Record the observed `hit5Count` value (e.g., `14/16`); note any queries with `rank: -` for debugging
+  - [x] If observed Hit@5 < 12/16 (75%), revise weak queries in 1.1 (prefer paraphrases that test real semantics, not adversarial mismatches) and re-run
 
 #### Task 1.3: Update HIT5_THRESHOLD with date-stamped comment
 
@@ -132,10 +132,10 @@ Add 8 new golden queries to the JSON, measure observed Hit@5 on the expanded sui
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `HIT5_THRESHOLD` constant updated to `observed_hit5 - 1` (e.g., observed 14/16 → threshold 13)
-  - [ ] Inline comment updated: includes date `2026-05-09`, the observed Hit@5 value, and the slack rationale (`one-query slack`)
-  - [ ] JSDoc block comment at top of file updated: `8` → `16` and `5/8 (62.5%)` → new ratio
-  - [ ] `loadGoldenQueries` and runner code unchanged (no architectural changes)
+  - [x] `HIT5_THRESHOLD` constant updated to `observed_hit5 - 1` (e.g., observed 14/16 → threshold 13)
+  - [x] Inline comment updated: includes date `2026-05-09`, the observed Hit@5 value, and the slack rationale (`one-query slack`)
+  - [x] JSDoc block comment at top of file updated: `8` → `16` and `5/8 (62.5%)` → new ratio
+  - [x] `loadGoldenQueries` and runner code unchanged (no architectural changes)
 
 #### Task 1.4: Mutation-test the threshold (negative test)
 
@@ -144,22 +144,22 @@ Add 8 new golden queries to the JSON, measure observed Hit@5 on the expanded sui
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] Temporarily mutate one passing query's `expectedSubstrings` to a non-matching string in a local copy, run `npm run eval:retrieval -- --assert`, confirm `process.exitCode === 1` and `ASSERT FAIL` printed
-  - [ ] Revert the mutation; confirm `npm run eval:retrieval -- --assert` prints `PASS` and exit code is 0
-  - [ ] No file under version control is left mutated after this task
+  - [x] Temporarily mutate one passing query's `expectedSubstrings` to a non-matching string in a local copy, run `npm run eval:retrieval -- --assert`, confirm `process.exitCode === 1` and `ASSERT FAIL` printed
+  - [x] Revert the mutation; confirm `npm run eval:retrieval -- --assert` prints `PASS` and exit code is 0
+  - [x] No file under version control is left mutated after this task
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `cd plugin/ralph-knowledge && npm run build` — no errors
-- [ ] `cd plugin/ralph-knowledge && npm run eval:retrieval -- --assert` — exits 0 with `PASS` log line
-- [ ] `cd plugin/ralph-knowledge && npm test` — all tests passing (no test files touched, but coverage thresholds from Phase 2 still met)
+- [x] `cd plugin/ralph-knowledge && npm run build` — no errors
+- [x] `cd plugin/ralph-knowledge && npm run eval:retrieval -- --assert` — exits 0 with `PASS` log line
+- [x] `cd plugin/ralph-knowledge && npm test` — all tests passing (no test files touched, but coverage thresholds from Phase 2 still met)
 
 #### Manual Verification:
 
-- [ ] Threshold comment in `eval-retrieval.ts` reads naturally and includes the 2026-05-09 date
-- [ ] Per-query log lines show plausible top-rank results across both keyword and mixed queries
+- [x] Threshold comment in `eval-retrieval.ts` reads naturally and includes the 2026-05-09 date
+- [x] Per-query log lines show plausible top-rank results across both keyword and mixed queries
 
 **Creates for next phase**: N/A (final phase of parent epic #1118)
 

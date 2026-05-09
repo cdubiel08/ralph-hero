@@ -1,7 +1,7 @@
 /**
  * GH-920 — knowledge_search retrieval-quality CI guard.
  *
- * Loads the 8 hand-curated golden queries from `evals/golden-queries.json`,
+ * Loads the 16 hand-curated golden queries from `evals/golden-queries.json`,
  * reindexes the pinned `__tests__/eval-corpus/` fixture into a tmp-dir SQLite
  * DB, runs each query through `HybridSearch.search()` with `rerank: false`
  * (the default RRF-only path), and computes Hit@1, Hit@5, MRR.
@@ -15,7 +15,7 @@
  *   # Always exits 0; just prints the summary:
  *   npx tsx plugin/ralph-knowledge/scripts/eval-retrieval.ts
  *
- *   # Exits 1 if Hit@5 < 5/8 (62.5%):
+ *   # Exits 1 if Hit@5 < 15/16 (93.75%):
  *   npx tsx plugin/ralph-knowledge/scripts/eval-retrieval.ts --assert
  */
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -30,15 +30,16 @@ import { embed } from "../src/embedder.js";
 import { reindex } from "../src/reindex.js";
 
 /**
- * Hit@5 floor — raise to 6/8 (75%) once stable.
+ * Hit@5 floor — set with one-query slack below the observed baseline.
  *
- * Set conservatively below the verified 87.5% (7/8) post-reranker baseline so
- * a slightly noisy CI run does not flake on the threshold even though the
- * default RRF-only path consistently exceeds it. The threshold is in
- * absolute query-count units (not a percentage) to match the `${n}/8`
- * formatting convention from `benchmark/eval-rerank.mjs`.
+ * 2026-05-09 (GH-1126): Suite expanded 8 → 16 queries. Locally observed
+ * Hit@5 = 16/16 (100%) on the default RRF-only path. Threshold set to
+ * `observed − 1 = 15/16` for one-query slack so a single noisy/flaky CI
+ * run does not trip the gate even though steady-state retrieval is perfect.
+ * Threshold is in absolute query-count units (not a percentage) to match
+ * the `${n}/16` formatting convention from `benchmark/eval-rerank.mjs`.
  */
-const HIT5_THRESHOLD = 5; // 5/8 = 62.5% — raise to 6/8 (75%) once stable
+const HIT5_THRESHOLD = 15; // 2026-05-09: observed 16/16 → threshold 15/16 (one-query slack)
 
 interface GoldenQuery {
   n: number;

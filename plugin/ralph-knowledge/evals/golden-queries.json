@@ -50,6 +50,54 @@
       "query": "landcrawler permit raw data migration hardening",
       "expectedSubstrings": ["2026-04-24-landcrawler-backend-hardening-postmortem"],
       "type": "specific-keyword"
+    },
+    {
+      "n": 9,
+      "query": "chunked embeddings for the nightly dream loop ingestion",
+      "expectedSubstrings": ["2026-04-16-GH-0761-ralph-knowledge-chunked-embeddings-dream-loop"],
+      "type": "mixed"
+    },
+    {
+      "n": 10,
+      "query": "reciprocal rank fusion calibration and observability",
+      "expectedSubstrings": ["2026-04-26-GH-0899-rrf-calibration-observability"],
+      "type": "specific-keyword"
+    },
+    {
+      "n": 11,
+      "query": "MMR diversity reranking to reduce duplicate results",
+      "expectedSubstrings": ["2026-04-26-GH-0902-mmr-diversity-reranking-ralph-knowledge"],
+      "type": "specific-keyword"
+    },
+    {
+      "n": 12,
+      "query": "how to avoid leaking GPU memory when running embeddings repeatedly",
+      "expectedSubstrings": ["2026-04-29-GH-911-release-embedder-tensors"],
+      "type": "mixed"
+    },
+    {
+      "n": 13,
+      "query": "softmax temperature and score normalization for hybrid retrieval",
+      "expectedSubstrings": ["2026-04-26-softmax-and-rerank-calibration"],
+      "type": "mixed"
+    },
+    {
+      "n": 14,
+      "query": "passing state between subagents during a long running plan",
+      "expectedSubstrings": ["2026-04-22-context-handoff-topology"],
+      "type": "mixed"
+    },
+    {
+      "n": 15,
+      "query": "extracting Obsidian-style double bracket links from notes",
+      "expectedSubstrings": ["2026-04-26-ralph-knowledge-wikilink-extractor"],
+      "type": "mixed"
+    },
+    {
+      "n": 16,
+      "query": "postmortem on database migration failures in scraper backend",
+      "expectedSubstrings": ["2026-04-24-landcrawler-backend-hardening-postmortem"],
+      "type": "mixed"
     }
   ]
 }
