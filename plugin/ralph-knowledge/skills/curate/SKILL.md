@@ -95,16 +95,16 @@ Run the candidate through these gates in order. Stop at the first failure and mo
 1. **Outside-code-surface gate**: Apply the `grep` test. If our code is the truth → reject as code-shadow.
 2. **Atomicity**: One concept, one sentence. No "and also". No compound clauses.
 3. **Lede-writable**: Can you write a single first sentence that fully answers the entry's title question and stands alone without context? If not → reject.
-4. **MUSTIE in reverse**: Not Misleading (factually wrong/dated), Ugly (malformed), Superseded (newer source covers it better), Trivial (not consequential), Irrelevant (out of wiki scope), or already-Elsewhere in the wiki (orthogonality — read the existing entries' bodies and `## Implications` sections, not just titles).
+4. **MUSTIE in reverse**: Not Misleading (factually wrong/dated), Ugly (malformed), Superseded (newer source covers it better), Trivial (not consequential), Irrelevant (out of wiki scope), or Elsewhere-obtained (the classic CREW criterion — knowledge already adequately answered by an external authoritative source the user can reach in one hop, OR reachable by `grep` in our own repos; this is the same test as the outside-code-surface gate but applied symmetrically to external sources too). Orthogonality within the wiki itself (no near-duplicate of an existing entry) is enforced separately at the candidate-hunt step (Step 2) — read existing entries' bodies and `## Implications` sections, not just titles.
 5. **Domain freshness**: Don't promote a candidate from the same conceptual domain as the previous 2 entries. The wiki should have a varied diet; three+ similar entries in a row dilute it. (Inspect the most recent entries in `~/projects/thoughts/wiki/` by date to apply this gate.)
 
 Surviving candidates proceed to presentation. If no candidates survive, tell the user and ask whether to re-hunt with a different domain or stop.
 
 ### Step 6: Present to the user
 
-Show the candidate with all the work visible. Use this exact structure:
+Show the candidate with all the work visible. Use this exact structure (the outer fence is four backticks so the inner three-backtick fence around the proposed entry renders correctly):
 
-```markdown
+````markdown
 ## Candidate axiom #N
 
 **Proposed claim**: [single declarative sentence]
@@ -150,7 +150,7 @@ Show the candidate with all the work visible. Use this exact structure:
 ---
 
 **Promote #N to wiki?** `y` / `n` / `edit`
-```
+````
 
 Show every check, every source. The user's gate decision should be informed by all the evidence, not a summary.
 
@@ -181,7 +181,7 @@ memory_tier: wiki
 date: YYYY-MM-DD
 valid_from: YYYY-MM-DD
 invalid_at: null
-review_cadence: quarterly | yearly | monthly
+review_cadence: quarterly | monthly | weekly
 scope: universal | personal | project/<name>
 tags: [comma, separated, kebab-case]
 related:                    # optional
@@ -198,7 +198,7 @@ supersedes:                 # optional, when entry corrects a stored belief
 Notes:
 - `valid_from` is when the supporting evidence first accumulated, not when you wrote the entry. Often same as `date` for new entries; can be earlier if backfilling.
 - `invalid_at` stays `null` until the entry is retired. **Never delete entries** — close them by stamping `invalid_at` with the date.
-- `review_cadence` choices: `quarterly` for stable platform/library facts, `yearly` for info-science / cognitive principles, `monthly` for fast-moving areas.
+- `review_cadence` choices: `quarterly` for stable platform/library facts and info-science / cognitive principles, `monthly` for practices that evolve, `weekly` for fast-moving areas (e.g., model performance, library betas).
 - `scope`: `universal` (true for anyone), `personal` (the user's stated heuristic), `project/<name>` (true within a specific project's context).
 
 ## Wiki entry body structure

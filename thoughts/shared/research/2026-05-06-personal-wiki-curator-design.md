@@ -64,6 +64,8 @@ This keeps entries short (three to eight bullet points plus backlinks) and resil
 
 ## Promotion Criteria Menu
 
+> **Note (2026-05-08, post-design):** The criteria below were the *brainstorm* considered during design. The shipped skill (`/ralph-knowledge:curate`) takes a stricter line: it runs a smaller set of all-must-pass gates (outside-code-surface → atomicity → lede-writability → MUSTIE → domain-freshness) in fail-fast order. The "3-of-8 yes answers" model below is preserved as the original research input, not the operational rule. If you want to know what gates the skill actually applies, read SKILL.md Step 5; if you want the menu of considerations we evaluated, read on.
+
 Concrete signals for "this reflection should become a wiki entry." Apply as a checklist; require a minimum of three "yes" answers:
 
 - **Recurrence signal**: The same concept appears in three or more separate reflection clusters over different time windows. One-time insights are ephemeral; recurring ones are structural.
@@ -94,7 +96,7 @@ Concrete signals for "this reflection should become a wiki entry." Apply as a ch
 ### Medium effort, high payoff
 
 - **Gemma-powered contradiction scan**: Once a week, pass each wiki entry plus topically-related raw memories from the past seven days (via vector search) to Gemma with the prompt: "Does any of this new evidence contradict or update the claim: [entry lede]? Answer yes/no and quote the contradicting passage if yes." Flag entries that get a "yes." One extra step in `reflect.py` or a new `audit.py`.
-- **`review_cadence` field per entry**: Assign each entry to one of three cadences: `quarterly` (stable facts), `monthly` (practices that evolve), `weekly` (fast-moving areas like model performance). Nightly pipeline checks if overdue and surfaces. Modeled loosely on Wikipedia's [article assessment cycles](https://en.wikipedia.org/wiki/Wikipedia:Verifiability).
+- **`review_cadence` field per entry**: Assign each entry to one of three cadences: `quarterly` (stable facts; also covers info-science / cognitive principles), `monthly` (practices that evolve), `weekly` (fast-moving areas like model performance). Nightly pipeline checks if overdue and surfaces. Modeled loosely on Wikipedia's [article assessment cycles](https://en.wikipedia.org/wiki/Wikipedia:Verifiability). The shipped skill's frontmatter spec (`SKILL.md` § wiki entry frontmatter spec) uses the same three values verbatim.
 - **"Assertion inventory" per entry**: Enumerate the explicit factual claims in an entry (numbered sentences). Each claim gets its own `last_verified` date. Wikipedia's verifiability discipline applied at granularity of the claim, not the page.
 
 ### Higher effort, conditional payoff

@@ -103,10 +103,10 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
       includeSuperseded: z.boolean().optional().describe("Include superseded documents (default: false)"),
       brief: z.boolean().optional().describe("Return minimal metadata only (default: false)"),
       memory_tier: z
-        .enum(["doc", "raw", "reflection", "any"])
+        .enum(["doc", "raw", "reflection", "wiki", "any"])
         .optional()
         .default("any")
-        .describe("Filter by memory tier: 'doc' (curated), 'raw' (dream-loop ingest), 'reflection' (synthesized), 'any' (default)"),
+        .describe("Filter by memory tier: 'doc' (curated), 'raw' (dream-loop ingest), 'reflection' (synthesized), 'wiki' (personal wiki entries), 'any' (default)"),
       return_chunk_meta: z
         .boolean()
         .optional()
@@ -206,7 +206,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
       direction: z.enum(["outgoing", "incoming"]).optional().describe("Edge direction (default: outgoing)"),
       brief: z.boolean().optional().describe("Return minimal metadata only (default: false)"),
       memory_tier: z
-        .enum(["doc", "raw", "reflection", "any"])
+        .enum(["doc", "raw", "reflection", "wiki", "any"])
         .optional()
         .default("any")
         .describe("Filter traversed nodes by memory tier (default: 'any')"),
@@ -253,15 +253,17 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           .get() as { c: number };
         const totalDocuments = totalRow.c;
 
-        const byTier: Record<"doc" | "raw" | "reflection", number> = {
+        const byTier: Record<"doc" | "raw" | "reflection" | "wiki", number> = {
           doc: 0,
           raw: 0,
           reflection: 0,
+          wiki: 0,
         };
-        const newSince: Record<"doc" | "raw" | "reflection", number> = {
+        const newSince: Record<"doc" | "raw" | "reflection" | "wiki", number> = {
           doc: 0,
           raw: 0,
           reflection: 0,
+          wiki: 0,
         };
 
         if (hasTier) {
@@ -274,7 +276,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
             )
             .all() as Array<{ tier: string; c: number }>;
           for (const r of rows) {
-            if (r.tier === "doc" || r.tier === "raw" || r.tier === "reflection") {
+            if (r.tier === "doc" || r.tier === "raw" || r.tier === "reflection" || r.tier === "wiki") {
               byTier[r.tier] = r.c;
             }
           }
@@ -287,7 +289,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
             )
             .all({ since }) as Array<{ tier: string; c: number }>;
           for (const r of newRows) {
-            if (r.tier === "doc" || r.tier === "raw" || r.tier === "reflection") {
+            if (r.tier === "doc" || r.tier === "raw" || r.tier === "reflection" || r.tier === "wiki") {
               newSince[r.tier] = r.c;
             }
           }

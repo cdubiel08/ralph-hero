@@ -633,6 +633,16 @@ describe("schema v3: memory_tier column", () => {
     expect(row.memory_tier).toBe("reflection");
   });
 
+  it("accepts 'wiki' memory_tier values (schema v4)", () => {
+    expect(() => {
+      db.db.prepare(
+        "INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'wiki')"
+      ).run("wiki-doc", "wiki/path.md", "Wiki Entry", null, null, null, null, "");
+    }).not.toThrow();
+    const row = db.db.prepare("SELECT memory_tier FROM documents WHERE id = ?").get("wiki-doc") as { memory_tier: string };
+    expect(row.memory_tier).toBe("wiki");
+  });
+
   it("rejects invalid memory_tier values via CHECK constraint", () => {
     expect(() => {
       db.db.prepare(
@@ -685,6 +695,66 @@ describe("schema v3: memory_tier column", () => {
       .prepare("SELECT memory_tier FROM documents WHERE id = ?")
       .get("existing") as { memory_tier: string };
     expect(row.memory_tier).toBe("doc");
+    migrated.close();
+  });
+
+  it("rebuilds documents table to accept 'wiki' tier when migrating from old v3 CHECK (schema v4)", () => {
+    // Simulate a database that ran the original v3 migration, where the CHECK
+    // constraint allowed only ('doc','raw','reflection'). The new code should
+    // detect this and rebuild the table with the v4 CHECK that includes 'wiki'.
+    const dir = mkdtempSync(join(tmpdir(), "knowledge-v4-migration-"));
+    const dbPath = join(dir, "legacy-v3.db");
+
+    const rawDb = new Database(dbPath);
+    rawDb.exec(`
+      CREATE TABLE documents (
+        id TEXT PRIMARY KEY, path TEXT, title TEXT, date TEXT, type TEXT,
+        status TEXT, github_issue INTEGER, content TEXT, is_stub INTEGER DEFAULT 0,
+        memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))
+      );
+      CREATE TABLE tags (doc_id TEXT REFERENCES documents(id) ON DELETE CASCADE, tag TEXT, PRIMARY KEY (doc_id, tag));
+      CREATE TABLE relationships (
+        source_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        target_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+        type TEXT CHECK(type IN ('builds_on', 'tensions', 'superseded_by', 'post_mortem', 'untyped')),
+        context TEXT,
+        PRIMARY KEY (source_id, target_id, type)
+      );
+      CREATE TABLE outcome_events (
+        id TEXT PRIMARY KEY, event_type TEXT NOT NULL, issue_number INTEGER NOT NULL,
+        session_id TEXT, timestamp TEXT NOT NULL, duration_ms INTEGER, verdict TEXT,
+        component_area TEXT, estimate TEXT, drift_count INTEGER, model TEXT,
+        agent_type TEXT, iteration_count INTEGER, payload TEXT DEFAULT '{}'
+      );
+      CREATE TABLE sync (path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, indexed_at INTEGER NOT NULL);
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+      INSERT INTO documents (id, path, title, content, memory_tier)
+        VALUES ('reflection-doc', 'reflections/r.md', 'Old Reflection', 'old', 'reflection');
+    `);
+    rawDb.close();
+
+    const migrated = new KnowledgeDB(dbPath);
+
+    // Existing data is preserved across the rebuild.
+    const preserved = migrated.db
+      .prepare("SELECT memory_tier FROM documents WHERE id = ?")
+      .get("reflection-doc") as { memory_tier: string };
+    expect(preserved.memory_tier).toBe("reflection");
+
+    // 'wiki' tier is now accepted after the v4 migration.
+    expect(() => {
+      migrated.db.prepare(
+        "INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'wiki')"
+      ).run("wiki-after-migration", "wiki/x.md", "Wiki Entry", null, null, null, null, "");
+    }).not.toThrow();
+
+    // Garbage values still rejected.
+    expect(() => {
+      migrated.db.prepare(
+        "INSERT INTO documents (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'garbage')"
+      ).run("bad", "bad.md", "Bad", null, null, null, null, "");
+    }).toThrow();
+
     migrated.close();
   });
 });

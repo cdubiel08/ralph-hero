@@ -99,8 +99,8 @@ describe("knowledge_memory_stats", () => {
 
     const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
     expect(out.total_documents).toBe(6);
-    expect(out.by_tier).toEqual({ doc: 2, raw: 3, reflection: 1 });
-    expect(out.new_since).toEqual({ doc: 2, raw: 3, reflection: 1 });
+    expect(out.by_tier).toEqual({ doc: 2, raw: 3, reflection: 1, wiki: 0 });
+    expect(out.new_since).toEqual({ doc: 2, raw: 3, reflection: 1, wiki: 0 });
   });
 
   it("computes chunks_per_doc_p50 and _p90 correctly on [1,2,3,4,5]", async () => {
@@ -157,8 +157,8 @@ describe("knowledge_memory_stats", () => {
 
     const out = await callStats(server, { since: "2026-04-01T00:00:00Z" });
     expect(out.total_documents).toBe(4);
-    expect(out.by_tier).toEqual({ doc: 2, raw: 2, reflection: 0 });
-    expect(out.new_since).toEqual({ doc: 1, raw: 1, reflection: 0 });
+    expect(out.by_tier).toEqual({ doc: 2, raw: 2, reflection: 0, wiki: 0 });
+    expect(out.new_since).toEqual({ doc: 1, raw: 1, reflection: 0, wiki: 0 });
   });
 
   it("defaults `since` to ~24h ago when not provided", async () => {
@@ -196,7 +196,7 @@ describe("knowledge_memory_stats", () => {
 
     const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
     expect(out.total_documents).toBe(1);
-    expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0 });
+    expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0, wiki: 0 });
     expect(out.chunks_per_doc_p50).toBe(0);
     expect(out.chunks_per_doc_p90).toBe(0);
     expect(out.last_reflection_at).toBeNull();
@@ -219,9 +219,9 @@ describe("knowledge_memory_stats", () => {
 
       const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
       expect(out.total_documents).toBe(2);
-      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 1 });
+      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 1, wiki: 0 });
       // new_since unaffected — stubs have date = NULL and never count regardless.
-      expect(out.new_since).toEqual({ doc: 1, raw: 0, reflection: 1 });
+      expect(out.new_since).toEqual({ doc: 1, raw: 0, reflection: 1, wiki: 0 });
     });
 
     it("excludes stubs from total on a v2 schema (column absent)", async () => {
@@ -244,7 +244,7 @@ describe("knowledge_memory_stats", () => {
 
       const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
       expect(out.total_documents).toBe(1);
-      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0 });
+      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0, wiki: 0 });
     });
 
     it("typed-relationship stubs are filtered identically to untyped wikilink stubs", async () => {
@@ -259,7 +259,7 @@ describe("knowledge_memory_stats", () => {
 
       const out = await callStats(server, { since: "1970-01-01T00:00:00Z" });
       expect(out.total_documents).toBe(1);
-      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0 });
+      expect(out.by_tier).toEqual({ doc: 1, raw: 0, reflection: 0, wiki: 0 });
     });
 
     it("last_reflection_at ignores stubs even if a stub somehow had a date and reflection tier", async () => {
