@@ -279,7 +279,7 @@ export async function fetchDashboardItems(
       DASHBOARD_ITEMS_QUERY,
       { projectId, first: 100 },
       "node.items",
-      { maxItems: 500 },
+      { scanUntilExhausted: true },
     );
 
     items.push(...toDashboardItems(result.nodes, pn, projectTitle));

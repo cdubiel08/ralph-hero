@@ -50,7 +50,7 @@ export function registerDashboardTools(
 ): void {
   server.tool(
     "ralph_hero__pipeline_dashboard",
-    "Generate pipeline status dashboard with issue counts per workflow phase, health indicators, and formatted output. Returns structured data with optional markdown or ASCII rendering. Top-level `boardItems` is the raw count of all project items including PRs (uniform across discovery tools — next_actions, pipeline_dashboard, project_hygiene). Per-phase `count` values reflect that phase's bucket; for `Done` and `Canceled`, the count is bounded by `doneWindowDays` (default 7) and may be smaller than the actual phase membership. Per-iteration `totalIssues` is a distinct concept (iteration-scoped count).",
+    "Generate pipeline status dashboard with issue counts per workflow phase, health indicators, and formatted output. Fetches all project items (full project scan, no silent 500-cap) so phase counts reflect every item regardless of board position. Returns structured data with optional markdown or ASCII rendering. Top-level `boardItems` is the raw count of all project items including PRs (uniform across discovery tools — next_actions, pipeline_dashboard, project_hygiene). Per-phase `count` values reflect that phase's bucket; for `Done` and `Canceled`, the count is bounded by `doneWindowDays` (default 7) and may be smaller than the actual phase membership. Per-iteration `totalIssues` is a distinct concept (iteration-scoped count).",
     {
       owner: z
         .string()

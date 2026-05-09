@@ -39,7 +39,7 @@ export function registerTrendsTools(
 ): void {
   server.tool(
     "ralph_hero__capture_snapshot",
-    "Capture a single point-in-time snapshot of the project dashboard + metrics and append it to the partitioned JSONL file at ~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl. Append-only, schema-versioned. Returns the snapshot row that was written.",
+    "Capture a single point-in-time snapshot of the project dashboard + metrics and append it to the partitioned JSONL file at ~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl. Fetches all project items (full project scan, no silent 500-cap) so per-phase WIP and totals reflect every item regardless of board position. Append-only, schema-versioned. Returns the snapshot row that was written.",
     {
       projectNumber: z
         .number()
