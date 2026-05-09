@@ -1,13 +1,10 @@
 /**
  * MCP tools wrapping the pure ranker at `lib/directions.ts`.
  *
- * Exposes two tools that share a single implementation:
- *   - `ralph_hero__next_actions` (current name; accepts `audience` param)
- *   - `ralph_hero__hello_directions` (DEPRECATED alias; fixed at audience="human")
- *
- * Both return a fixed-shape JSON payload with up to N ranked "directions"
- * for the `hello` skill's session briefing. Open PRs are fetched internally
- * via the configured GitHub token's `repo` scope; callers no longer pass an
+ * Exposes `ralph_hero__next_actions` — accepts `audience` param and returns
+ * a fixed-shape JSON payload with up to N ranked "directions" for the
+ * `hello` skill's session briefing. Open PRs are fetched internally via the
+ * configured GitHub token's `repo` scope; callers no longer pass an
  * `openPRs` argument.
  *
  * Behaviour:
@@ -353,11 +350,8 @@ export interface RunDirectionsArgs {
 }
 
 // ---------------------------------------------------------------------------
-// Shared implementation — extracted so both `hello_directions` (deprecated)
-// and `next_actions` (current) can route through the same code path. Also
-// exported so the deprecated `pick_actionable_issue` wrapper in
-// `issue-tools.ts` can delegate without duplicating the data-fetch +
-// scoring pipeline.
+// Shared implementation — extracted so the `next_actions` tool can route
+// through a single code path.
 // ---------------------------------------------------------------------------
 
 export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionCache) {
@@ -477,65 +471,6 @@ export function registerDirectionsTools(
   fieldCache: FieldOptionCache,
 ): void {
   const runDirections = makeRunDirections(client, fieldCache);
-
-  server.tool(
-    "ralph_hero__hello_directions",
-    "[DEPRECATED — use ralph_hero__next_actions instead. Removed in 2.7.0.] Compute up to N deterministic 'directions' for the hello skill's session briefing. Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items). Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0. Returns `{ directions, fetchedAt, boardItems }` where `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools); the returned `directions` array is bounded by `limit`.",
-    {
-      owner: z
-        .string()
-        .optional()
-        .describe("GitHub owner. Defaults to RALPH_GH_OWNER env var."),
-      projectNumbers: z
-        .array(z.coerce.number())
-        .optional()
-        .describe(
-          "Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.",
-        ),
-      limit: z
-        .number()
-        .int()
-        .nonnegative()
-        .optional()
-        .default(3)
-        .describe("Max directions to return (default: 3)."),
-      stuckThresholdHours: z
-        .number()
-        .nonnegative()
-        .optional()
-        .default(48)
-        .describe(
-          "Hours before a non-lock issue is considered stale (default: 48, unit: hours). Pulls from STUCK_THRESHOLD_HOURS in src/lib/thresholds.ts.",
-        ),
-      lockStaleHours: z
-        .number()
-        .nonnegative()
-        .optional()
-        .default(24)
-        .describe(
-          "Hours before a lock-state issue is considered stalled (default: 24, unit: hours). Pulls from LOCK_STALE_HOURS in src/lib/thresholds.ts.",
-        ),
-      treeRecentDoneDays: z
-        .number()
-        .nonnegative()
-        .optional()
-        .default(7)
-        .describe(
-          "Days within which a sibling Done event still pulls a tree forward (default: 7, unit: days). Pulls from RECENT_WINDOW_DAYS in src/lib/thresholds.ts.",
-        ),
-      prStaleHours: z
-        .number()
-        .nonnegative()
-        .optional()
-        .default(24)
-        .describe(
-          "Hours before an open PR is considered stale (default: 24, unit: hours). Pulls from PR_STALE_HOURS in src/lib/thresholds.ts.",
-        ),
-    },
-    async (args) => {
-      return await runDirections({ ...args, audience: "human" });
-    },
-  );
 
   server.tool(
     "ralph_hero__next_actions",

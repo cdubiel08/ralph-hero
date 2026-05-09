@@ -20,7 +20,6 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__detect_stream_positions
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__next_actions
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pick_actionable_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
 hooks:
   SessionStart:
