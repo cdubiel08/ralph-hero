@@ -128,10 +128,10 @@ Extend `PaginateOptions` and `paginateConnection<T>` with a `scanUntilExhausted`
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `PaginateOptions` extended with `scanUntilExhausted?: boolean` (default `false`) and `until?: (node: T, pageNodes: readonly T[], allNodes: readonly T[]) => boolean`
-  - [ ] `PaginateOptions` becomes `PaginateOptions<T>` (generic) so `until` is typed against the node type — confirm callers compile after this signature change
-  - [ ] `PaginatedResponse<T>` extended with `truncated: boolean` (always present on return; `false` when caller passed only `pageSize` or `scanUntilExhausted: true` with full exhaustion)
-  - [ ] JSDoc updated to describe the new options and the `truncated` semantics (cap-without-exhaustion warning)
+  - [x] `PaginateOptions` extended with `scanUntilExhausted?: boolean` (default `false`) and `until?: (node: T, pageNodes: readonly T[], allNodes: readonly T[]) => boolean`
+  - [x] `PaginateOptions` becomes `PaginateOptions<T>` (generic) so `until` is typed against the node type — confirm callers compile after this signature change
+  - [x] `PaginatedResponse<T>` extended with `truncated: boolean` (always present on return; `false` when caller passed only `pageSize` or `scanUntilExhausted: true` with full exhaustion)
+  - [x] JSDoc updated to describe the new options and the `truncated` semantics (cap-without-exhaustion warning)
 
 #### Task 1.2: Implement scan-until-full and predicate-based pagination in paginateConnection
 
@@ -140,13 +140,13 @@ Extend `PaginateOptions` and `paginateConnection<T>` with a `scanUntilExhausted`
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] When `scanUntilExhausted: true`, `maxItems` is effectively ignored — the loop runs until `connection.pageInfo.hasNextPage === false`. If the caller passes both `scanUntilExhausted: true` and `maxItems: N`, `scanUntilExhausted` wins (loop exhausts, `maxItems` is treated as advisory; no error)
-  - [ ] When `until` is provided, after each page is fetched the loop iterates through `connection.nodes` and calls `until(node, pageNodes, allNodes)` for each node; the first node where `until` returns `false` triggers the loop to stop AFTER that page completes (not mid-page). Subsequent nodes from the same page are still appended to `allNodes`. Document this batching behavior in JSDoc.
-  - [ ] Truncation detection: when `maxItems !== Infinity` AND `!options.scanUntilExhausted` AND `allNodes.length === maxItems` AND the just-fetched page had `pageInfo.hasNextPage === true`, the return shape sets `truncated: true` and the helper calls `console.warn` with a message that includes the connection path, `maxItems`, and the `totalCount` if available
-  - [ ] When `scanUntilExhausted` is false and the connection exhausts naturally before hitting `maxItems`, `truncated: false` and no warning fires
-  - [ ] When `scanUntilExhausted: true`, `truncated` is always `false` on return (full exhaustion is the contract)
-  - [ ] When the `until` predicate returns `false` early, `truncated: false` (early-stop-by-predicate is not truncation, it's caller intent)
-  - [ ] All existing call-site behavior preserved when callers pass only `{ first, maxItems: N }` without the new options — pages stop at `maxItems` exactly as today, but now with `truncated: true` if the connection had more
+  - [x] When `scanUntilExhausted: true`, `maxItems` is effectively ignored — the loop runs until `connection.pageInfo.hasNextPage === false`. If the caller passes both `scanUntilExhausted: true` and `maxItems: N`, `scanUntilExhausted` wins (loop exhausts, `maxItems` is treated as advisory; no error)
+  - [x] When `until` is provided, after each page is fetched the loop iterates through `connection.nodes` and calls `until(node, pageNodes, allNodes)` for each node; the first node where `until` returns `false` triggers the loop to stop AFTER that page completes (not mid-page). Subsequent nodes from the same page are still appended to `allNodes`. Document this batching behavior in JSDoc.
+  - [x] Truncation detection: when `maxItems !== Infinity` AND `!options.scanUntilExhausted` AND `allNodes.length === maxItems` AND the just-fetched page had `pageInfo.hasNextPage === true`, the return shape sets `truncated: true` and the helper calls `console.warn` with a message that includes the connection path, `maxItems`, and the `totalCount` if available
+  - [x] When `scanUntilExhausted` is false and the connection exhausts naturally before hitting `maxItems`, `truncated: false` and no warning fires
+  - [x] When `scanUntilExhausted: true`, `truncated` is always `false` on return (full exhaustion is the contract)
+  - [x] When the `until` predicate returns `false` early, `truncated: false` (early-stop-by-predicate is not truncation, it's caller intent)
+  - [x] All existing call-site behavior preserved when callers pass only `{ first, maxItems: N }` without the new options — pages stop at `maxItems` exactly as today, but now with `truncated: true` if the connection had more
 
 #### Task 1.3: Create pagination.test.ts with comprehensive coverage
 
@@ -155,18 +155,18 @@ Extend `PaginateOptions` and `paginateConnection<T>` with a `scanUntilExhausted`
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Test file imports `paginateConnection` and `PaginateOptions` from `../lib/pagination.js`
-  - [ ] Helper `makeMockConnectionResponse(pages)` builds a vi.fn that returns successive pages, each shaped as `{ node: { items: { totalCount, pageInfo: { hasNextPage, endCursor }, nodes } } }`
-  - [ ] Test "default behavior: paginates until exhaustion when no maxItems" — 3 pages of 100 + 1 page of 50, returns all 350 nodes, `truncated: false`, no `console.warn`
-  - [ ] Test "respects pageSize" — caller passes `{ pageSize: 50 }`, helper requests `first: 50` per page (assert via `vi.fn().mock.calls[i][1].first === 50`)
-  - [ ] Test "stops at maxItems and sets truncated: true when more pages exist" — pages = [100, 100, 100], call with `{ maxItems: 200 }`, asserts `nodes.length === 200`, `truncated: true`, `console.warn` was called once with a message containing the connection path
-  - [ ] Test "stops at maxItems and sets truncated: false when connection exhausts at the cap" — pages = [100, 100], `hasNextPage: false` on the second page, call with `{ maxItems: 200 }`, asserts `nodes.length === 200`, `truncated: false`, no `console.warn`
-  - [ ] Test "scanUntilExhausted: true ignores maxItems" — pages = [100, 100, 100, 100, 50], call with `{ maxItems: 200, scanUntilExhausted: true }`, asserts `nodes.length === 450`, `truncated: false`
-  - [ ] Test "until predicate stops early after the page that triggered it" — pages = [{nodes: 1..100}, {nodes: 101..200}, {nodes: 201..300}], `until = (node) => node < 150`, asserts `nodes.length === 200` (page 1 + page 2 fully appended; page 3 not fetched), `truncated: false`
-  - [ ] Test "until predicate that never returns false runs to exhaustion" — pages = [{nodes: 1..50}], `hasNextPage: false`, `until = () => true`, asserts `nodes.length === 50`, `truncated: false`
-  - [ ] Test "totalCount is captured from first page and preserved" — page 1 returns `totalCount: 734`, subsequent pages omit `totalCount`, asserts response `totalCount === 734`
-  - [ ] Test "throws when connectionPath is missing in response" — query returns `{}`, asserts thrown error message contains the path
-  - [ ] Uses `vi.spyOn(console, 'warn').mockImplementation(() => {})` in `beforeEach` and restores in `afterEach` so the warning assertion is clean and doesn't pollute test output
+  - [x] Test file imports `paginateConnection` and `PaginateOptions` from `../lib/pagination.js`
+  - [x] Helper `makeMockConnectionResponse(pages)` builds a vi.fn that returns successive pages, each shaped as `{ node: { items: { totalCount, pageInfo: { hasNextPage, endCursor }, nodes } } }`
+  - [x] Test "default behavior: paginates until exhaustion when no maxItems" — 3 pages of 100 + 1 page of 50, returns all 350 nodes, `truncated: false`, no `console.warn`
+  - [x] Test "respects pageSize" — caller passes `{ pageSize: 50 }`, helper requests `first: 50` per page (assert via `vi.fn().mock.calls[i][1].first === 50`)
+  - [x] Test "stops at maxItems and sets truncated: true when more pages exist" — pages = [100, 100, 100], call with `{ maxItems: 200 }`, asserts `nodes.length === 200`, `truncated: true`, `console.warn` was called once with a message containing the connection path
+  - [x] Test "stops at maxItems and sets truncated: false when connection exhausts at the cap" — pages = [100, 100], `hasNextPage: false` on the second page, call with `{ maxItems: 200 }`, asserts `nodes.length === 200`, `truncated: false`, no `console.warn`
+  - [x] Test "scanUntilExhausted: true ignores maxItems" — pages = [100, 100, 100, 100, 50], call with `{ maxItems: 200, scanUntilExhausted: true }`, asserts `nodes.length === 450`, `truncated: false`
+  - [x] Test "until predicate stops early after the page that triggered it" — pages = [{nodes: 1..100}, {nodes: 101..200}, {nodes: 201..300}], `until = (node) => node < 150`, asserts `nodes.length === 200` (page 1 + page 2 fully appended; page 3 not fetched), `truncated: false`
+  - [x] Test "until predicate that never returns false runs to exhaustion" — pages = [{nodes: 1..50}], `hasNextPage: false`, `until = () => true`, asserts `nodes.length === 50`, `truncated: false`
+  - [x] Test "totalCount is captured from first page and preserved" — page 1 returns `totalCount: 734`, subsequent pages omit `totalCount`, asserts response `totalCount === 734`
+  - [x] Test "throws when connectionPath is missing in response" — query returns `{}`, asserts thrown error message contains the path
+  - [x] Uses `vi.spyOn(console, 'warn').mockImplementation(() => {})` in `beforeEach` and restores in `afterEach` so the warning assertion is clean and doesn't pollute test output
 
 #### Task 1.4: Update bulk-archive test assertion to remain valid
 
@@ -175,17 +175,17 @@ Extend `PaginateOptions` and `paginateConnection<T>` with a `scanUntilExhausted`
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Confirm the existing assertion at `bulk-archive.test.ts:333-334` (`expect(pmToolsSrc).not.toContain("paginateConnection")`) remains true after Phase 1 — Phase 1 only modifies `pagination.ts`, not `project-management-tools.ts`
-  - [ ] No code change required; this is a verification-only task to ensure the precedent assertion survives
+  - [x] Confirm the existing assertion at `bulk-archive.test.ts:333-334` (`expect(pmToolsSrc).not.toContain("paginateConnection")`) remains true after Phase 1 — Phase 1 only modifies `pagination.ts`, not `project-management-tools.ts`
+  - [x] No code change required; this is a verification-only task to ensure the precedent assertion survives
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/pagination.test.ts` — all new tests pass
-- [ ] `npx vitest run src/__tests__/bulk-archive.test.ts` — existing precedent assertions still pass
-- [ ] `npm test` — full suite passes
+- [x] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no TypeScript errors
+- [x] `npx vitest run src/__tests__/pagination.test.ts` — all new tests pass (13/13)
+- [x] `npx vitest run src/__tests__/bulk-archive.test.ts` — existing precedent assertions still pass
+- [x] `npm test` — full suite passes (1259/1259 across 57 files)
 
 #### Manual Verification:
 
