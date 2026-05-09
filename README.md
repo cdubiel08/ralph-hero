@@ -146,7 +146,6 @@ The plugin bundles an MCP server ([`ralph-hero-mcp-server`](https://www.npmjs.co
 | `pipeline_dashboard` | Aggregated pipeline view with counts per workflow state, WIP violations, and velocity metrics |
 | `detect_stream_positions` | Detect issue positions in the workflow stream |
 | `project_hygiene` | Board health report -- stale items, orphans, field gaps |
-| `pick_actionable_issue` | Find the highest-priority actionable issue for a given workflow phase |
 | `decompose_feature` | Cross-repo feature decomposition using `.ralph-repos.yml` registry |
 
 ### Architecture
