@@ -73,7 +73,7 @@ _Generated: {generatedAt}_
 |-------|------:|-------:|
 | {state} | {count} | {estimatePoints} |
 
-**Total**: {totalIssues} issues
+**Board items**: {boardItems}
 
 ## Velocity
 

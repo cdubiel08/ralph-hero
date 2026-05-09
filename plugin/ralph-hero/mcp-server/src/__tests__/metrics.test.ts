@@ -226,7 +226,7 @@ describe("extractHighlights", () => {
   it("recentlyCompleted returns Done phase issues", () => {
     const data: DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 2,
+      boardItems: 2,
       phases: [
         {
           state: "Done",
@@ -268,7 +268,7 @@ describe("extractHighlights", () => {
   it("newlyAdded returns recent Backlog items", () => {
     const data: DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 2,
+      boardItems: 2,
       phases: [
         {
           state: "Backlog",
@@ -309,7 +309,7 @@ describe("extractHighlights", () => {
   it("excludes old Backlog items", () => {
     const data: DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 1,
+      boardItems: 1,
       phases: [
         {
           state: "Backlog",
@@ -338,7 +338,7 @@ describe("extractHighlights", () => {
   it("handles missing Done/Backlog phases gracefully", () => {
     const data: DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 1,
+      boardItems: 1,
       phases: [
         { state: "In Progress", count: 1, issues: [] },
       ],
@@ -397,7 +397,7 @@ describe("calculateMetrics", () => {
     // Manually construct dashboard without pipeline_gap warnings
     const data: DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 1,
+      boardItems: 1,
       phases: [
         {
           state: "Done",
@@ -432,7 +432,7 @@ describe("calculateMetrics", () => {
 
     const data: DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 1,
+      boardItems: 1,
       phases: [],
       health: {
         ok: false,

@@ -175,7 +175,7 @@ describe("toSnapshot", () => {
   function makeData(): DashboardData {
     return {
       generatedAt: "2026-05-05T12:00:00.000Z",
-      totalIssues: 5,
+      boardItems: 5,
       phases: [
         {
           state: "Backlog",
@@ -276,7 +276,7 @@ describe("toSnapshot", () => {
       projectNumber: 7,
       data: {
         generatedAt: "2026-05-05T12:00:00.000Z",
-        totalIssues: 0,
+        boardItems: 0,
         phases: [],
         health: { ok: true, warnings: [] },
         archive: {
