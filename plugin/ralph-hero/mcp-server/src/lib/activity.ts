@@ -24,6 +24,14 @@ export interface ActivityEvent {
   session_id?: string;
 }
 
+/** Compact projection used by narrative consumers (e.g. catch-up). */
+export interface CompactActivityEvent {
+  ts: string;
+  kind: string;
+  tool?: string;
+  project?: string;
+}
+
 export interface ActivityReadConfig {
   rootDir: string;
   since: string | null;
@@ -32,11 +40,13 @@ export interface ActivityReadConfig {
   category: Category;
   project: string | null;
   limit: number;
+  /** When true, return CompactActivityEvent[] instead of ActivityEvent[]. */
+  compact: boolean;
   now: Date;
 }
 
 export interface ActivityReadResult {
-  events: ActivityEvent[];
+  events: ActivityEvent[] | CompactActivityEvent[];
   cursor_advanced_to: string | null;
   skipped_lines: number;
 }
@@ -99,7 +109,20 @@ export function readActivity(config: ActivityReadConfig): ActivityReadResult {
   const limited = events.slice(0, config.limit);
   const cursor = limited.length > 0 ? limited[limited.length - 1].ts : null;
 
-  return { events: limited, cursor_advanced_to: cursor, skipped_lines: skipped };
+  const out: ActivityEvent[] | CompactActivityEvent[] = config.compact
+    ? limited.map((e) => {
+        const projected: CompactActivityEvent = { ts: e.ts, kind: e.kind };
+        const toolName =
+          e.target && typeof e.target === "object" && "tool" in e.target
+            ? (e.target as { tool?: unknown }).tool
+            : undefined;
+        if (typeof toolName === "string") projected.tool = toolName;
+        if (e.project) projected.project = e.project;
+        return projected;
+      })
+    : limited;
+
+  return { events: out, cursor_advanced_to: cursor, skipped_lines: skipped };
 }
 
 function safeReadDir(dir: string): string[] {

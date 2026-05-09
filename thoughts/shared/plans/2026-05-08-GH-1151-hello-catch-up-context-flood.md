@@ -405,11 +405,11 @@ At line 58 (the limit-cap prefix sentence), no change is needed — the "lot has
 
 #### Automated Verification
 
-- [ ] `compact` field is in the Zod schema: `grep -q 'compact: z.boolean()' plugin/ralph-hero/mcp-server/src/tools/activity-tools.ts`.
-- [ ] Default limit is 50: `grep -q 'limit.*default(50)' plugin/ralph-hero/mcp-server/src/tools/activity-tools.ts`.
-- [ ] catch-up skill calls with compact + limit 50: `grep -q '\`compact\` = \`true\`' plugin/ralph-hero/skills/catch-up/SKILL.md && grep -q '\`limit\` = \`50\`' plugin/ralph-hero/skills/catch-up/SKILL.md`.
-- [ ] All MCP tests pass including new compact tests: `cd plugin/ralph-hero/mcp-server && npm test`.
-- [ ] Build still clean: `cd plugin/ralph-hero/mcp-server && npm run build`.
+- [x] `compact` field is in the Zod schema: `grep -q 'compact: z.boolean()' plugin/ralph-hero/mcp-server/src/tools/activity-tools.ts`.
+- [x] Default limit is 50: `grep -q 'limit.*default(50)' plugin/ralph-hero/mcp-server/src/tools/activity-tools.ts`.
+- [x] catch-up skill calls with compact + limit 50: `grep -q '\`compact\` = \`true\`' plugin/ralph-hero/skills/catch-up/SKILL.md && grep -q '\`limit\` = \`50\`' plugin/ralph-hero/skills/catch-up/SKILL.md`.
+- [x] All MCP tests pass including new compact tests: `cd plugin/ralph-hero/mcp-server && npm test`.
+- [x] Build still clean: `cd plugin/ralph-hero/mcp-server && npm run build`.
 
 #### Manual Verification
 

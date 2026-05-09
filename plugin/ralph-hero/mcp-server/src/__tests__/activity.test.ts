@@ -28,6 +28,7 @@ function makeConfig(overrides: Partial<ActivityReadConfig> = {}): ActivityReadCo
     category: "work",
     project: null,
     limit: 100,
+    compact: false,
     now: new Date("2026-05-02T12:00:00Z"),
     ...overrides,
   };
@@ -84,6 +85,103 @@ describe("readActivity — populated log", () => {
     }));
     expect(result.events).toHaveLength(2);
     expect(result.events[0].ts).toBe("2026-05-01T12:00:00Z");
+  });
+});
+
+describe("readActivity — compact projection", () => {
+  it("projects events to {ts, kind, tool, project} when compact: true", () => {
+    writeEvents(tmpDir, "2026-05-02", [
+      {
+        ts: "2026-05-02T12:00:00.000Z",
+        kind: "tool_called",
+        category: "work",
+        actor: "claude",
+        target: { tool: "Write" },
+        project: "ralph-hero",
+        session_id: "abc-123",
+      },
+    ]);
+
+    const result = readActivity(makeConfig({ compact: true, since: "2026-05-01T00:00:00Z" }));
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toEqual({
+      ts: "2026-05-02T12:00:00.000Z",
+      kind: "tool_called",
+      tool: "Write",
+      project: "ralph-hero",
+    });
+    // Verbose fields are absent
+    expect("actor" in result.events[0]).toBe(false);
+    expect("session_id" in result.events[0]).toBe(false);
+    expect("category" in result.events[0]).toBe(false);
+    expect("target" in result.events[0]).toBe(false);
+  });
+
+  it("compact mode handles missing tool field gracefully", () => {
+    writeEvents(tmpDir, "2026-05-02", [
+      {
+        ts: "2026-05-02T12:00:00.000Z",
+        kind: "session_start",
+        category: "work",
+        target: {},
+        project: "ralph-hero",
+      },
+    ]);
+
+    const result = readActivity(makeConfig({ compact: true, since: "2026-05-01T00:00:00Z" }));
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toEqual({
+      ts: "2026-05-02T12:00:00.000Z",
+      kind: "session_start",
+      project: "ralph-hero",
+    });
+    expect("tool" in result.events[0]).toBe(false);
+  });
+
+  it("compact mode omits project when event lacks one", () => {
+    writeEvents(tmpDir, "2026-05-02", [
+      {
+        ts: "2026-05-02T12:00:00.000Z",
+        kind: "tool_called",
+        category: "work",
+        target: { tool: "Read" },
+      },
+    ]);
+
+    const result = readActivity(makeConfig({ compact: true, since: "2026-05-01T00:00:00Z" }));
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toEqual({
+      ts: "2026-05-02T12:00:00.000Z",
+      kind: "tool_called",
+      tool: "Read",
+    });
+    expect("project" in result.events[0]).toBe(false);
+  });
+
+  it("compact: false preserves the full event shape (default behavior)", () => {
+    writeEvents(tmpDir, "2026-05-02", [
+      {
+        ts: "2026-05-02T12:00:00.000Z",
+        kind: "tool_called",
+        category: "work",
+        actor: "claude",
+        target: { tool: "Write" },
+        project: "ralph-hero",
+        session_id: "abc-123",
+      },
+    ]);
+
+    const result = readActivity(makeConfig({ compact: false, since: "2026-05-01T00:00:00Z" }));
+
+    expect(result.events).toHaveLength(1);
+    const ev = result.events[0] as Record<string, unknown>;
+    expect(ev.actor).toBe("claude");
+    expect(ev.session_id).toBe("abc-123");
+    expect(ev.category).toBe("work");
+    expect(ev.target).toEqual({ tool: "Write" });
   });
 });
 
