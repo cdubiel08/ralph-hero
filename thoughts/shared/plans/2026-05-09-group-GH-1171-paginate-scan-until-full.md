@@ -1,6 +1,6 @@
 ---
 date: 2026-05-09
-status: draft
+status: complete
 type: plan
 github_issue: 1171
 github_issues: [1171, 1172, 1173, 1174, 1175]
@@ -69,14 +69,14 @@ After all 5 phases land:
 
 ### Verification
 
-- [ ] `paginateConnection` exposes a new option (predicate or `scanUntilExhausted: true` flag) that fetches every node in the connection without a silent cap.
-- [ ] When `maxItems` is hit AND `hasNextPage` is true, the helper surfaces a truncation signal (return-shape flag and/or `console.warn`) so silent data loss becomes visible.
-- [ ] `list_issues(workflowState="Plan in Review")` on project #3 returns issue #1102 (positioned at #640 in the 734-item connection).
-- [ ] `pipeline_dashboard()` on project #3 returns a non-zero `Plan in Review` count when #1102 (or any item beyond position 500) is in that state.
-- [ ] All 6 dashboard consumers (`pipeline_dashboard`, `project_hygiene`, `next_actions`, `pick_actionable_issue`, `hello_directions`, `capture_snapshot`) surface items beyond position 500.
-- [ ] `list_groups()` returns parent issues that sit beyond position 500 in default ordering.
-- [ ] The cross-tool consistency test asserts `list_issues(workflowState=X, state="OPEN")` and `pipeline_dashboard()` (filtered to the X bucket, OPEN-only) return the same set of issue numbers when run against a mocked > 500-item project.
-- [ ] All existing tests in `plugin/ralph-hero/mcp-server/src/__tests__/` still pass.
+- [x] `paginateConnection` exposes a new option (predicate or `scanUntilExhausted: true` flag) that fetches every node in the connection without a silent cap.
+- [x] When `maxItems` is hit AND `hasNextPage` is true, the helper surfaces a truncation signal (return-shape flag and/or `console.warn`) so silent data loss becomes visible.
+- [x] `list_issues(workflowState="Plan in Review")` on project #3 returns issue #1102 (positioned at #640 in the 734-item connection).
+- [x] `pipeline_dashboard()` on project #3 returns a non-zero `Plan in Review` count when #1102 (or any item beyond position 500) is in that state.
+- [x] All 6 dashboard consumers (`pipeline_dashboard`, `project_hygiene`, `next_actions`, `pick_actionable_issue`, `hello_directions`, `capture_snapshot`) surface items beyond position 500.
+- [x] `list_groups()` returns parent issues that sit beyond position 500 in default ordering.
+- [x] The cross-tool consistency test asserts `list_issues(workflowState=X, state="OPEN")` and `pipeline_dashboard()` (filtered to the X bucket, OPEN-only) return the same set of issue numbers when run against a mocked > 500-item project.
+- [x] All existing tests in `plugin/ralph-hero/mcp-server/src/__tests__/` still pass.
 
 ## What We're NOT Doing
 
@@ -411,10 +411,10 @@ Add a regression test that asserts `list_issues` and `pipeline_dashboard` return
 - **complexity**: medium
 - **depends_on**: [2.1, 3.1]
 - **acceptance**:
-  - [ ] New test file imports test fixtures it needs — including the `list_issues` tool registration helper and the `fetchDashboardItems`/`pipeline_dashboard` registration helper used by sibling tests
-  - [ ] Defines a shared `MOCK_PROJECT_FIXTURE` constant: a 7-page response set (6 × 100 + 1 × 34 = 734 items) with items deliberately placed at positions 1, 100, 499, 500, 501, 600, 640, 700, 733 — with `Workflow State` values distributed across "Backlog", "Plan in Review", "In Progress", "Done", and a few items with no Workflow State (`null`/missing) to exercise the asymmetry
-  - [ ] All fixture items have `state: "OPEN"` to sidestep the Path A vs Path B closed-issue asymmetry (per shared constraint #3 and #1175 research notes); the asymmetry is documented via a comment in the fixture but not asserted in this PR
-  - [ ] At least one item with `Workflow State = "Plan in Review"` placed at position 640 (matches research evidence for #1102)
+  - [x] New test file imports test fixtures it needs — including the `list_issues` tool registration helper and the `fetchDashboardItems`/`pipeline_dashboard` registration helper used by sibling tests
+  - [x] Defines a shared `MOCK_PROJECT_FIXTURE` constant: a 7-page response set (6 × 100 + 1 × 34 = 734 items) with items deliberately placed at positions 1, 100, 499, 500, 501, 600, 640, 700, 733 — with `Workflow State` values distributed across "Backlog", "Plan in Review", "In Progress", "Done", and a few items with no Workflow State (`null`/missing) to exercise the asymmetry
+  - [x] All fixture items have `state: "OPEN"` to sidestep the Path A vs Path B closed-issue asymmetry (per shared constraint #3 and #1175 research notes); the asymmetry is documented via a comment in the fixture but not asserted in this PR
+  - [x] At least one item with `Workflow State = "Plan in Review"` placed at position 640 (matches research evidence for #1102)
 
 #### Task 5.2: Implement same-set assertion test
 
@@ -423,10 +423,10 @@ Add a regression test that asserts `list_issues` and `pipeline_dashboard` return
 - **complexity**: medium
 - **depends_on**: [5.1]
 - **acceptance**:
-  - [ ] Test "list_issues and pipeline_dashboard return the same OPEN-issue set per workflow state (post GH-1171/1172/1173)" iterates through the workflow states present in the fixture
-  - [ ] For each workflow state X, gathers `setA = numbers from list_issues(workflowState=X, state="OPEN")` and `setB = numbers from pipeline_dashboard()` filtered to bucket X (and OPEN-only — skip items where `state !== "OPEN"`)
-  - [ ] Asserts `setA` and `setB` are equal as Sets (using `expect(new Set(setA)).toEqual(new Set(setB))` or sorted-array comparison)
-  - [ ] Boundary assertion: explicitly asserts that the position-640 item with `Workflow State = "Plan in Review"` is present in BOTH sets (this is the smoke signal that the truncation fix is wired end-to-end)
+  - [x] Test "list_issues and pipeline_dashboard return the same OPEN-issue set per workflow state (post GH-1171/1172/1173)" iterates through the workflow states present in the fixture
+  - [x] For each workflow state X, gathers `setA = numbers from list_issues(workflowState=X, state="OPEN")` and `setB = numbers from pipeline_dashboard()` filtered to bucket X (and OPEN-only — skip items where `state !== "OPEN"`)
+  - [x] Asserts `setA` and `setB` are equal as Sets (using `expect(new Set(setA)).toEqual(new Set(setB))` or sorted-array comparison)
+  - [x] Boundary assertion: explicitly asserts that the position-640 item with `Workflow State = "Plan in Review"` is present in BOTH sets (this is the smoke signal that the truncation fix is wired end-to-end)
 
 #### Task 5.3: Document the test's role in the test file header
 
@@ -435,16 +435,16 @@ Add a regression test that asserts `list_issues` and `pipeline_dashboard` return
 - **complexity**: low
 - **depends_on**: [5.2]
 - **acceptance**:
-  - [ ] Top-of-file JSDoc block explains: the test is the regression guard for GH-1168/1171–1175; it would have failed before the fix; future drift between Path A and Path B will fail this test
-  - [ ] Block notes the explicit out-of-scope items: `list_groups` consistency and closed-issue asymmetry
+  - [x] Top-of-file JSDoc block explains: the test is the regression guard for GH-1168/1171–1175; it would have failed before the fix; future drift between Path A and Path B will fail this test
+  - [x] Block notes the explicit out-of-scope items: `list_groups` consistency and closed-issue asymmetry
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `npm run build` — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/cross-tool-consistency.test.ts` — all tests pass
-- [ ] `npm test` — full suite passes
+- [x] `npm run build` — no TypeScript errors
+- [x] `npx vitest run src/__tests__/cross-tool-consistency.test.ts` — all tests pass
+- [x] `npm test` — full suite passes
 - [ ] Manual sanity: temporarily revert Phase 2 and Phase 3 changes locally and rerun this test — it should fail (the position-640 item disappears from one or both sets), confirming the test is a meaningful regression guard. Restore the Phase 2/3 changes before committing.
 
 #### Manual Verification:
