@@ -19,7 +19,8 @@ export function registerActivityTools(server: McpServer): void {
       kinds: z.array(z.string()).nullable().default(null).describe("Filter by event kind (e.g., ['pr_opened','issue_advanced'])"),
       category: z.enum(["work", "meta", "all"]).default("work").describe("Filter by category; default 'work' excludes meta noise"),
       project: z.string().nullable().default(null).describe("Filter by project name"),
-      limit: z.number().int().min(1).default(100).describe("Max events to return"),
+      limit: z.number().int().min(1).default(50).describe("Max events to return (default 50; was 100 before 2.5.x)"),
+      compact: z.boolean().default(false).describe("When true, project each event to {ts, kind, tool, project}; drops actor/session_id/category/wrapper-target. Use for narrative synthesis."),
     },
     async (params) => {
       try {
@@ -30,7 +31,8 @@ export function registerActivityTools(server: McpServer): void {
           kinds: params.kinds ?? null,
           category: (params.category ?? "work") as Category,
           project: params.project ?? null,
-          limit: params.limit ?? 100,
+          limit: params.limit ?? 50,
+          compact: params.compact ?? false,
           now: new Date(),
         });
         return toolSuccess(result);

@@ -33,7 +33,8 @@ If memory is missing or empty, proceed without it.
 Invoke `ralph_hero__recent_activity` with:
 - `since` = the cursor timestamp from step 1
 - `category` = `"work"`
-- `limit` = `200` (long-absence cap)
+- `limit` = `50` (long-absence cap; was 200 before context-flood fix)
+- `compact` = `true` (drops `actor`, `session_id`, `category`, wrapper `target` — narrative synthesis only needs `ts`, `kind`, `tool`, `project`)
 
 Capture the response: `events[]` and `cursor_advanced_to`.
 

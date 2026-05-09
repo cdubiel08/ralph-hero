@@ -28,7 +28,7 @@ You compose three primitives:
 
 Run these in parallel in a single turn:
 
-1. **Catch-up narrative**: Invoke `Skill("ralph-hero:catch-up")`. Capture the returned text.
+1. **Catch-up narrative**: Dispatch `Agent(subagent_type="ralph-hero:catch-up-agent", description="Catch-up narrative", prompt="Synthesize the catch-up narrative for this session.")`. Capture the returned text — it is the only output you need from this sub-agent. The 200-event activity payload stays in the sub-agent's context, not yours.
 
 2. **Open PRs**:
 ```bash
@@ -139,4 +139,4 @@ Session complete.
 - ≤ 40 lines for the briefing
 - Never echo tool JSON, gh pr list output, or skill return strings verbatim
 - Never render `direction.reason` verbatim — it exists only for back-compat and is `@deprecated`. Always synthesize prose from `signals + title + memory`
-- Skill invocation cost: catch-up runs in its own context (Skill() is fork-safe)
+- Catch-up runs as a sub-agent (`Agent(subagent_type="ralph-hero:catch-up-agent")`), so its activity-log payload stays in the sub-agent's context. Only the synthesized 2-4 sentence narrative returns to /hello.
