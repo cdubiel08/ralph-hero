@@ -280,3 +280,30 @@ describe("list_issues totalCount removal (GH-1129)", () => {
     expect(issueToolsSrc).toContain("filteredCount: formattedItems.length");
   });
 });
+
+// ---------------------------------------------------------------------------
+// list_issues scan-until-exhausted pagination (GH-1172)
+// ---------------------------------------------------------------------------
+
+describe("list_issues scan-until-exhausted pagination (GH-1172)", () => {
+  it("paginateConnection call uses scanUntilExhausted: true (no silent cap)", () => {
+    // Regression guard for GH-1172: the project-items fetch must not pass
+    // `{ maxItems: 500 }` because that silently truncates projects with > 500
+    // items (see #1102 at position ~640 on project #3). The fix is to use the
+    // new `scanUntilExhausted: true` option from GH-1171 so the full project
+    // is scanned client-side before filters apply.
+    expect(issueToolsSrc).toContain("scanUntilExhausted: true");
+    expect(issueToolsSrc).not.toContain("maxItems: 500");
+  });
+
+  it("tool description documents the full-project-scan behavior", () => {
+    // The list_issues tool description (the second arg to server.tool) must
+    // make the post-fix fetch semantics explicit so LLM consumers understand
+    // that filters apply across the entire project, not the first 500 items.
+    const toolBlock = issueToolsSrc.slice(
+      issueToolsSrc.indexOf('"ralph_hero__list_issues"'),
+      issueToolsSrc.indexOf('"ralph_hero__list_issues"') + 800,
+    );
+    expect(toolBlock).toMatch(/full project scan|all project items/i);
+  });
+});

@@ -60,7 +60,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_issues",
-    "List issues from a GitHub repository with optional filters. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters or check that issues exist in the project.",
+    "List issues from a GitHub repository with optional filters. Fetches all project items (full project scan, no silent 500-cap) and applies filters client-side, so items at any board position are visible regardless of default ordering. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters or check that issues exist in the project.",
     {
       owner: z
         .string()
@@ -262,7 +262,7 @@ export function registerIssueTools(
           }`,
           { projectId, first: 100 },
           "node.items",
-          { maxItems: 500 }, // Fetch up to 500 then filter client-side
+          { scanUntilExhausted: true }, // Fetch all project items then filter client-side; full project scan
         );
 
         // Filter items
