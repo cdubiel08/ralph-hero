@@ -1,6 +1,6 @@
 ---
 date: 2026-05-09
-status: draft
+status: complete
 type: plan
 github_issue: 1160
 github_issues: [1160]
@@ -73,10 +73,10 @@ What exists for the test infrastructure:
 
 ### Verification
 
-- [ ] `npm test src/__tests__/cross-tool-consistency.test.ts` — all `it(...)` blocks pass
-- [ ] `npm run build` — no TypeScript errors
-- [ ] No live API calls (the test runs offline; no `gh auth token` env var required)
-- [ ] Test names match the audit matrix entries from `2026-05-08-shorthand-tools-counts-and-filters.md`
+- [x] `npm test src/__tests__/cross-tool-consistency.test.ts` — all `it(...)` blocks pass
+- [x] `npm run build` — no TypeScript errors
+- [x] No live API calls (the test runs offline; no `gh auth token` env var required)
+- [x] Test names match the audit matrix entries from `2026-05-08-shorthand-tools-counts-and-filters.md`
 
 ### Key Discoveries
 
@@ -116,9 +116,9 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File `src/__tests__/cross-tool-consistency.test.ts` exists
-  - [ ] Defines `FIXTURE_NOW` as a fixed ISO timestamp constant (e.g., `"2026-05-09T12:00:00Z"`) so test re-runs are deterministic
-  - [ ] Defines a `FIXTURE_ITEMS` array containing exactly 12 raw-issue entries via the local `rawIssue()` helper, covering one item per row of the audit's Matrix 2:
+  - [x] File `src/__tests__/cross-tool-consistency.test.ts` exists
+  - [x] Defines `FIXTURE_NOW` as a fixed ISO timestamp constant (e.g., `"2026-05-09T12:00:00Z"`) so test re-runs are deterministic
+  - [x] Defines a `FIXTURE_ITEMS` array containing exactly 12 raw-issue entries via the local `rawIssue()` helper, covering one item per row of the audit's Matrix 2:
     - `Backlog` (assignees=[], updatedAt 30 days before NOW so it qualifies for `orphanedItems`)
     - `Research Needed`
     - `Research in Progress` (updatedAt 1h before NOW — NOT lock-stale)
@@ -131,8 +131,8 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
     - `Canceled` (closedAt 2 days before NOW — within `doneWindowDays=7`)
     - `Human Needed`
     - `null` workflow state (no Workflow State field-value, updatedAt 30 days before NOW so it qualifies for `staleItems`)
-  - [ ] Each fixture entry has a unique issue number (e.g., 1001-1012) and a stable title containing its workflow state for debuggability
-  - [ ] All non-Done/Canceled items have `assignees: []` to keep the fixture's `orphanedItems` shape predictable
+  - [x] Each fixture entry has a unique issue number (e.g., 1001-1012) and a stable title containing its workflow state for debuggability
+  - [x] All non-Done/Canceled items have `assignees: []` to keep the fixture's `orphanedItems` shape predictable
 
 #### Task 1.2: Replicate the mock-client harness
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/cross-tool-consistency.test.ts` (modify)
@@ -140,10 +140,10 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Test file defines local `rawIssue(fix)`, `itemsResponse(nodes)`, `fieldCacheResponse(projectId)`, `isFieldCacheQuery(q)`, `isDashboardItemsQuery(q)`, `isOpenPRsSearchQuery(q)` helpers — same shape as `directions-tools.test.ts:48-183`
-  - [ ] `fieldCacheResponse` Workflow State options include all 11 named states the fixture references plus the implicit null path (no field-value entry for null items)
-  - [ ] `createMockClient(...)` returns a `GitHubClient`-shaped object with `projectQuery` routed by query-shape detection, `query` routed to return an empty `search.nodes` array for the open-PR fetch (no PR directions in this fixture)
-  - [ ] `getTool(server, name)` and `parsePayload(result)` helpers are present (copy from `directions-tools.test.ts:283-306`)
+  - [x] Test file defines local `rawIssue(fix)`, `itemsResponse(nodes)`, `fieldCacheResponse(projectId)`, `isFieldCacheQuery(q)`, `isDashboardItemsQuery(q)`, `isOpenPRsSearchQuery(q)` helpers — same shape as `directions-tools.test.ts:48-183`
+  - [x] `fieldCacheResponse` Workflow State options include all 11 named states the fixture references plus the implicit null path (no field-value entry for null items)
+  - [x] `createMockClient(...)` returns a `GitHubClient`-shaped object with `projectQuery` routed by query-shape detection, `query` routed to return an empty `search.nodes` array for the open-PR fetch (no PR directions in this fixture)
+  - [x] `getTool(server, name)` and `parsePayload(result)` helpers are present (copy from `directions-tools.test.ts:283-306`)
 
 #### Task 1.3: Assert all four tools agree on `boardItems`
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/cross-tool-consistency.test.ts` (modify)
@@ -151,13 +151,13 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `it("all four tools report boardItems = 12 against the same fixture")` block
-  - [ ] Test registers `registerDirectionsTools`, `registerDashboardTools`, `registerIssueTools`, `registerHygieneTools` against a single `McpServer` + shared mock client + shared `FieldOptionCache`
-  - [ ] Calls each tool's handler with default args (`{}` for `next_actions`, `{ format: "json" }` for `pipeline_dashboard`, `{}` for `list_issues`, `{}` for `project_hygiene`)
-  - [ ] Asserts `nextActions.boardItems === 12`
-  - [ ] Asserts `dashboard.boardItems === 12`
-  - [ ] Asserts `hygiene.boardItems === 12`
-  - [ ] `list_issues` does not return `boardItems` (only `filteredCount`); the test asserts `listIssues.filteredCount <= 12` to document the per-tool count contract
+  - [x] `it("all four tools report boardItems = 12 against the same fixture")` block
+  - [x] Test registers `registerDirectionsTools`, `registerDashboardTools`, `registerIssueTools`, `registerHygieneTools` against a single `McpServer` + shared mock client + shared `FieldOptionCache`
+  - [x] Calls each tool's handler with default args (`{}` for `next_actions`, `{ format: "json" }` for `pipeline_dashboard`, `{}` for `list_issues`, `{}` for `project_hygiene`)
+  - [x] Asserts `nextActions.boardItems === 12`
+  - [x] Asserts `dashboard.boardItems === 12`
+  - [x] Asserts `hygiene.boardItems === 12`
+  - [x] `list_issues` does not return `boardItems` (only `filteredCount`); the test asserts `listIssues.filteredCount <= 12` to document the per-tool count contract
 
 #### Task 1.4: Assert per-tool filtered counts are bounded by `boardItems`
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/cross-tool-consistency.test.ts` (modify)
@@ -165,11 +165,11 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
 - **complexity**: medium
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] `it("per-tool filtered counts are <= boardItems")` block
-  - [ ] Asserts `nextActions.directions.length <= 12` AND `<= 3` (default `limit=3`)
-  - [ ] Asserts `dashboard.phases.reduce((s, p) => s + p.count, 0) <= 12` (sum of phase counts <= boardItems; equality holds in this fixture because `doneWindowDays=7` includes the 2-day-old Done/Canceled items)
-  - [ ] Asserts `listIssues.filteredCount <= 12`
-  - [ ] Asserts `hygiene.summary.staleCount + hygiene.summary.orphanCount + hygiene.summary.archiveCandidateCount <= 12 + 12 + 12` (each category bounded by `boardItems`; categories overlap so summing is loose)
+  - [x] `it("per-tool filtered counts are <= boardItems")` block
+  - [x] Asserts `nextActions.directions.length <= 12` AND `<= 3` (default `limit=3`)
+  - [x] Asserts `dashboard.phases.reduce((s, p) => s + p.count, 0) <= 12` (sum of phase counts <= boardItems; equality holds in this fixture because `doneWindowDays=7` includes the 2-day-old Done/Canceled items)
+  - [x] Asserts `listIssues.filteredCount <= 12`
+  - [x] Asserts `hygiene.summary.staleCount + hygiene.summary.orphanCount + hygiene.summary.archiveCandidateCount <= 12 + 12 + 12` (each category bounded by `boardItems`; categories overlap so summing is loose)
 
 #### Task 1.5: Assert sum of `pipeline_dashboard.phases[].count` equals `boardItems` when window is wide
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/cross-tool-consistency.test.ts` (modify)
@@ -177,11 +177,11 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
 - **complexity**: medium
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] `it("sum of phase counts equals boardItems when doneWindowDays covers all Done/Canceled items")` block
-  - [ ] Calls `pipeline_dashboard` with `doneWindowDays: 365` (deliberately large) so the Done/Canceled bucket is not window-clamped
-  - [ ] Sums `phase.count` across all returned phases (named phases + the `Unknown` bucket)
-  - [ ] Asserts the sum equals `boardItems` (12)
-  - [ ] Includes a comment in the test explaining that `boardItems` is the invariant target — the sum-of-counts identity holds only when the window is wide enough
+  - [x] `it("sum of phase counts equals boardItems when doneWindowDays covers all Done/Canceled items")` block
+  - [x] Calls `pipeline_dashboard` with `doneWindowDays: 365` (deliberately large) so the Done/Canceled bucket is not window-clamped
+  - [x] Sums `phase.count` across all returned phases (named phases + the `Unknown` bucket)
+  - [x] Asserts the sum equals `boardItems` (12)
+  - [x] Includes a comment in the test explaining that `boardItems` is the invariant target — the sum-of-counts identity holds only when the window is wide enough
 
 #### Task 1.6: Assert Backlog visibility — `next_actions` audience asymmetry
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/cross-tool-consistency.test.ts` (modify)
@@ -189,12 +189,12 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `it("Backlog items are visible to pipeline_dashboard, list_issues, and next_actions(audience=agent), but NOT next_actions(audience=human)")` block
-  - [ ] Uses a reduced fixture: only Backlog items present (or filters to a Backlog-only subset by reusing `createMockClient` with a single-item `itemsByProject`) so the agent fallback fires
-  - [ ] Asserts `next_actions(audience="agent")` returns at least 1 direction whose `issue.number` matches the Backlog fixture item
-  - [ ] Asserts `next_actions(audience="human")` returns 0 directions for the same fixture
-  - [ ] Asserts `pipeline_dashboard` reports the Backlog item in `phases[].issues[]`
-  - [ ] Asserts `list_issues` returns the Backlog item in its `items[]`
+  - [x] `it("Backlog items are visible to pipeline_dashboard, list_issues, and next_actions(audience=agent), but NOT next_actions(audience=human)")` block
+  - [x] Uses a reduced fixture: only Backlog items present (or filters to a Backlog-only subset by reusing `createMockClient` with a single-item `itemsByProject`) so the agent fallback fires
+  - [x] Asserts `next_actions(audience="agent")` returns at least 1 direction whose `issue.number` matches the Backlog fixture item
+  - [x] Asserts `next_actions(audience="human")` returns 0 directions for the same fixture
+  - [x] Asserts `pipeline_dashboard` reports the Backlog item in `phases[].issues[]`
+  - [x] Asserts `list_issues` returns the Backlog item in its `items[]`
 
 #### Task 1.7: Assert null-workflow-state visibility across tools
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/cross-tool-consistency.test.ts` (modify)
@@ -202,19 +202,19 @@ Add `cross-tool-consistency.test.ts` that exercises `next_actions`, `pipeline_da
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `it("workflowState=null items are visible to pipeline_dashboard (Unknown bucket), list_issues, and project_hygiene.staleItems, but NOT next_actions(audience=human)")` block
-  - [ ] Reuses the 12-item fixture
-  - [ ] Asserts `pipeline_dashboard` includes a phase with state `"Unknown"` whose `issues[]` contains the null item
-  - [ ] Asserts `list_issues` returns the null item in its `items[]`
-  - [ ] Asserts `project_hygiene.staleItems` (when called with default `staleDays=7` and the null item's `updatedAt` is >7d old) contains the null item by issue number
-  - [ ] Asserts `next_actions(audience="human")` does NOT return any direction whose `issue.number` matches the null item
+  - [x] `it("workflowState=null items are visible to pipeline_dashboard (Unknown bucket), list_issues, and project_hygiene.staleItems, but NOT next_actions(audience=human)")` block
+  - [x] Reuses the 12-item fixture
+  - [x] Asserts `pipeline_dashboard` includes a phase with state `"Unknown"` whose `issues[]` contains the null item
+  - [x] Asserts `list_issues` returns the null item in its `items[]`
+  - [x] Asserts `project_hygiene.staleItems` (when called with default `staleDays=7` and the null item's `updatedAt` is >7d old) contains the null item by issue number
+  - [x] Asserts `next_actions(audience="human")` does NOT return any direction whose `issue.number` matches the null item
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm test src/__tests__/cross-tool-consistency.test.ts` — all 5 `it(...)` blocks pass
-- [ ] `npm run build` — no errors
-- [ ] `npm test` — full suite still passes (no regression in any existing test file)
+- [x] `npm test src/__tests__/cross-tool-consistency.test.ts` — all 5 `it(...)` blocks pass
+- [x] `npm run build` — no errors
+- [x] `npm test` — full suite still passes (no regression in any existing test file)
 
 #### Manual Verification:
 - [ ] Read each `it(...)` name aloud — they map 1:1 to acceptance-criteria entries from issue #1160's "Cross-tool Invariants" section
