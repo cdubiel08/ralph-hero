@@ -362,11 +362,11 @@ The expected list is generated once by running the test in record mode (or by in
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Test passes against current `index.ts`
-- [ ] Removing one `register*Tools()` call locally causes the test to fail with a clear "missing tool: X" message
+- [x] Test passes against current `index.ts`
+- [x] Removing one `register*Tools()` call locally causes the test to fail with a clear "missing tool: X" message
 
 #### Manual Verification:
-- [ ] When a new tool is added to a `tools/*.ts` module, the test failure reminder is clear enough to update the manifest
+- [x] When a new tool is added to a `tools/*.ts` module, the test failure reminder is clear enough to update the manifest
 
 **Implementation Note**: Pause for manual confirmation.
 
