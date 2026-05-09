@@ -25,7 +25,7 @@ The project board contains a mix of items including 3 archive candidates (Done i
 ### Expected Behavior
 
 1. Skill reads resolved configuration: dry_run=true, threshold=10, no wipLimits.
-2. Skill calls `project_hygiene` with `format: "markdown"`, `archiveDays: 14`, `staleDays: 7`, `orphanDays: 14`, no `wipLimits`.
+2. Skill calls `project_hygiene` with `format: "markdown"`, `archiveAgeDays: 14`, `staleDays: 7`, `orphanDays: 14`, no `wipLimits`.
 3. Skill reports the seven hygiene categories from the response. WIP category is reported as empty (or "skipped — RALPH_HYGIENE_WIP_LIMITS not set").
 4. Skill calls `pipeline_dashboard` with `includeHealth: true`, finds no warnings, and omits the Health Warnings section.
 5. Skill takes the dry-run branch in Step 4: does NOT call `archive_items`, reports "0 - dry run mode" in the archived count.

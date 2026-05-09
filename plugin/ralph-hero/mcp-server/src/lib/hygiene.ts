@@ -8,13 +8,19 @@
 import { TERMINAL_STATES } from "./workflow-states.js";
 import { groupDashboardItemsByRepo } from "./dashboard.js";
 import type { DashboardItem } from "./dashboard.js";
+import {
+  ARCHIVE_AGE_DAYS,
+  ORPHAN_AGE_DAYS,
+  RECENT_WINDOW_DAYS,
+  SIMILARITY_THRESHOLD,
+} from "./thresholds.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface HygieneConfig {
-  archiveDays: number; // default: 14
+  archiveAgeDays: number; // default: 14
   staleDays: number; // default: 7
   orphanDays: number; // default: 14
   wipLimits: Record<string, number>; // default: {}
@@ -22,11 +28,11 @@ export interface HygieneConfig {
 }
 
 export const DEFAULT_HYGIENE_CONFIG: HygieneConfig = {
-  archiveDays: 14,
-  staleDays: 7,
-  orphanDays: 14,
+  archiveAgeDays: ARCHIVE_AGE_DAYS,
+  staleDays: RECENT_WINDOW_DAYS,
+  orphanDays: ORPHAN_AGE_DAYS,
   wipLimits: {},
-  similarityThreshold: 0.8,
+  similarityThreshold: SIMILARITY_THRESHOLD,
 };
 
 export interface HygieneItem {
@@ -116,12 +122,12 @@ function toHygieneItem(item: DashboardItem, now: number): HygieneItem {
 // ---------------------------------------------------------------------------
 
 /**
- * Items in terminal states (Done/Canceled) older than archiveDays.
+ * Items in terminal states (Done/Canceled) older than archiveAgeDays.
  */
 export function findArchiveCandidates(
   items: DashboardItem[],
   now: number,
-  archiveDays: number,
+  archiveAgeDays: number,
 ): HygieneItem[] {
   return items
     .filter((item) => {
@@ -129,7 +135,7 @@ export function findArchiveCandidates(
       const ws = item.workflowState;
       if (!ws || !TERMINAL_STATES.includes(ws)) return false;
       const ts = item.closedAt ?? item.updatedAt;
-      return ageDays(ts, now) > archiveDays;
+      return ageDays(ts, now) > archiveAgeDays;
     })
     .map((item) => toHygieneItem(item, now));
 }
@@ -340,7 +346,7 @@ function buildRepoBreakdown(
   const archiveCandidates = findArchiveCandidates(
     items,
     now,
-    config.archiveDays,
+    config.archiveAgeDays,
   );
   const staleItems = findStaleItems(items, now, config.staleDays);
   const orphanedItems = findOrphanedItems(items, now, config.orphanDays);
@@ -394,7 +400,7 @@ export function buildHygieneReport(
   const archiveCandidates = findArchiveCandidates(
     items,
     now,
-    config.archiveDays,
+    config.archiveAgeDays,
   );
   const staleItems = findStaleItems(items, now, config.staleDays);
   const orphanedItems = findOrphanedItems(items, now, config.orphanDays);

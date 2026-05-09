@@ -76,7 +76,9 @@ export function registerDashboardTools(
         .number()
         .optional()
         .default(48)
-        .describe("Hours before flagging stuck issues (default: 48)"),
+        .describe(
+          "Hours before flagging stuck issues (default: 48, unit: hours). Shared with next_actions.stuckThresholdHours — both pull from STUCK_THRESHOLD_HOURS in src/lib/thresholds.ts.",
+        ),
       wipLimits: z
         .record(z.coerce.number())
         .optional()
@@ -87,7 +89,9 @@ export function registerDashboardTools(
         .number()
         .optional()
         .default(7)
-        .describe("Only show Done issues from last N days (default: 7)"),
+        .describe(
+          "Only show Done issues from last N days (default: 7, unit: days). Shares the RECENT_WINDOW_DAYS value with hygiene.staleDays, next_actions.treeRecentDoneDays, and metrics.velocityWindowDays.",
+        ),
       issuesPerPhase: z
         .number()
         .optional()
@@ -105,28 +109,28 @@ export function registerDashboardTools(
         .optional()
         .default(7)
         .describe(
-          "Days to look back for velocity calculation (default: 7)",
+          "Days to look back for velocity calculation (default: 7, unit: days). Shares the RECENT_WINDOW_DAYS value with hygiene.staleDays, dashboard.doneWindowDays, and next_actions.treeRecentDoneDays.",
         ),
       atRiskThreshold: z
         .number()
         .optional()
         .default(2)
         .describe(
-          "Risk score threshold for AT_RISK status (default: 2)",
+          "Risk score threshold for AT_RISK status (default: 2, unit: count). Pulls from AT_RISK_THRESHOLD in src/lib/thresholds.ts.",
         ),
       offTrackThreshold: z
         .number()
         .optional()
         .default(6)
         .describe(
-          "Risk score threshold for OFF_TRACK status (default: 6)",
+          "Risk score threshold for OFF_TRACK status (default: 6, unit: count). Pulls from OFF_TRACK_THRESHOLD in src/lib/thresholds.ts.",
         ),
-      archiveThresholdDays: z
+      archiveAgeDays: z
         .number()
         .optional()
         .default(14)
         .describe(
-          "Days in Done/Canceled before eligible for archive (default: 14)",
+          "Days in Done/Canceled before eligible for archive (default: 14, unit: days). Same concept as project_hygiene.archiveAgeDays — both renamed from the legacy archiveThresholdDays/archiveDays pair so the value is shared across discovery tools.",
         ),
       streams: z
         .array(
@@ -199,7 +203,7 @@ export function registerDashboardTools(
           criticalStuckHours: (args.stuckThresholdHours ?? 48) * 2,
           wipLimits: args.wipLimits ?? {},
           doneWindowDays: args.doneWindowDays ?? 7,
-          archiveThresholdDays: args.archiveThresholdDays ?? 14,
+          archiveAgeDays: args.archiveAgeDays ?? 14,
         };
 
         // Build dashboard from merged items

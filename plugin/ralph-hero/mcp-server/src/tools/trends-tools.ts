@@ -53,7 +53,7 @@ export function registerTrendsTools(
         .positive()
         .default(7)
         .describe(
-          "Velocity / highlights window in days (default: 7).",
+          "Velocity / highlights window in days (default: 7, unit: days). Shares the RECENT_WINDOW_DAYS value with hygiene.staleDays, dashboard.doneWindowDays, next_actions.treeRecentDoneDays, and metrics.velocityWindowDays.",
         ),
     },
     async (args) => {
