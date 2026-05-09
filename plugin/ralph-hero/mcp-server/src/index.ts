@@ -18,6 +18,7 @@ import { FieldOptionCache } from "./lib/cache.js";
 import { createDebugLogger, wrapServerToolWithLogging, type DebugLogger } from "./lib/debug-logger.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "./types.js";
 import { resolveRepoFromProject } from "./lib/helpers.js";
+import { detectOrphanRepoIssues, type OrphanRepoIssuesResult } from "./lib/health.js";
 import { registerProjectTools } from "./tools/project-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
@@ -213,7 +214,7 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
   // Health check tool - comprehensive validation of auth, repo, project, and fields
   server.tool(
     "ralph_hero__health_check",
-    "Validate GitHub API connectivity, token permissions, repo access, project access, and required fields",
+    "Validate GitHub API connectivity, token permissions, repo access, project access, and required fields. Also surfaces repo-scope mismatch via the `orphanRepoIssues` field when OPEN issues exist in the repo but are NOT on the configured project board (such issues are invisible to discovery tools like next_actions, list_issues, pipeline_dashboard, project_hygiene). The field is omitted entirely when the board contains every OPEN repo issue. Shape when present: `{ count, repoOpen, boardItems, sample: number[], note }` — `sample` is up to 10 orphan issue numbers (ascending) for diagnostic display.",
     {},
     async () => {
       const checks: Record<string, { status: string; detail?: string }> = {};
@@ -343,6 +344,36 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
         };
       }
 
+      // 5. Orphan repo issues check — only runs when both repo and project
+      // access succeeded above. Failures here are non-fatal: orphan detection
+      // is informational and shouldn't downgrade the overall health status,
+      // because the underlying access checks already capture the real failure
+      // mode (broken token, missing project, etc.).
+      let orphanRepoIssues: OrphanRepoIssuesResult | null = null;
+      if (
+        checks.repoAccess?.status === "ok" &&
+        checks.projectAccess?.status === "ok" &&
+        client.config.owner &&
+        client.config.repo &&
+        projOwner &&
+        projNum
+      ) {
+        try {
+          orphanRepoIssues = await detectOrphanRepoIssues(
+            client,
+            client.config.owner,
+            client.config.repo,
+            projOwner,
+            projNum,
+          );
+        } catch (e) {
+          // Non-fatal — log via stderr but don't fail health_check.
+          console.error(
+            `[ralph-hero] Orphan repo issues check failed: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+
       // Token source detection — re-derive which env vars resolved
       const repoTokenSource = resolveEnv("RALPH_GH_REPO_TOKEN")
         ? "RALPH_GH_REPO_TOKEN"
@@ -379,6 +410,9 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
               ? `Repo operations use ${repoTokenSource}, project operations use ${projectTokenSource}`
               : `Both repo and project operations use ${repoTokenSource}`,
         },
+        // Omit the field entirely when there are no orphans, per the field's
+        // contract (`null` from `detectOrphanRepoIssues` means "clean board").
+        ...(orphanRepoIssues ? { orphanRepoIssues } : {}),
       });
     },
   );
