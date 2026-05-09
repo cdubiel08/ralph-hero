@@ -236,3 +236,31 @@ describe("list_groups structural", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// list_groups scan-until-exhausted pagination (GH-1174)
+// ---------------------------------------------------------------------------
+
+describe("list_groups scan-until-exhausted pagination (GH-1174)", () => {
+  it("paginateConnection call uses scanUntilExhausted: true (no silent cap)", () => {
+    // Regression guard for GH-1174: the project-items fetch in list_groups
+    // must not pass `{ maxItems: 500 }` because that silently truncates
+    // projects with > 500 items, hiding parent issues at board positions
+    // beyond 500. The fix uses `scanUntilExhausted: true` from GH-1171 so
+    // every parent is visible and the internal lookupMap naturally covers
+    // all items for child workflow-state resolution.
+    expect(relationshipToolsSrc).toContain("scanUntilExhausted: true");
+    expect(relationshipToolsSrc).not.toContain("maxItems: 500");
+  });
+
+  it("tool description documents the full-project-scan behavior", () => {
+    // The list_groups tool description (the second arg to server.tool) must
+    // make the post-fix fetch semantics explicit so LLM consumers understand
+    // that parents at any board position are returned, not just the first 500.
+    const toolBlock = relationshipToolsSrc.slice(
+      relationshipToolsSrc.indexOf('"ralph_hero__list_groups"'),
+      relationshipToolsSrc.indexOf('"ralph_hero__list_groups"') + 800,
+    );
+    expect(toolBlock).toMatch(/full project scan|all project items/i);
+  });
+});

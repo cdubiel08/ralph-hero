@@ -1061,7 +1061,7 @@ export function registerRelationshipTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_groups",
-    "Discover all parent issues (groups) with sub-issues in a project. Returns parent info with child counts and optional child expansion. " +
+    "Discover all parent issues (groups) with sub-issues in a project. Fetches all project items (full project scan, no silent 500-cap) so parents at any board position are visible regardless of default ordering; the internal lookupMap covers all items for child workflow-state resolution. Returns parent info with child counts and optional child expansion. " +
       "Single paginated pass over project items — no per-group API calls needed.",
     {
       owner: z
@@ -1167,7 +1167,7 @@ export function registerRelationshipTools(
           }`,
           { projectId, first: 100 },
           "node.items",
-          { maxItems: 500 },
+          { scanUntilExhausted: true }, // Fetch all project items; lookupMap below naturally covers every parent
         );
 
         // Build lookup map: number -> { workflowState, estimate, priority }
