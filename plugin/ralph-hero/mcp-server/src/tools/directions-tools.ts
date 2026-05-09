@@ -6,19 +6,21 @@
  *   - `ralph_hero__hello_directions` (DEPRECATED alias; fixed at audience="human")
  *
  * Both return a fixed-shape JSON payload with up to N ranked "directions"
- * for the `hello` skill's session briefing. The skill is responsible for
- * fetching open PRs (via `gh pr list`) and passing them in as a parameter
- * — the MCP server does not itself open an Octokit-style PR API surface.
+ * for the `hello` skill's session briefing. Open PRs are fetched internally
+ * via the configured GitHub token's `repo` scope; callers no longer pass an
+ * `openPRs` argument.
  *
  * Behaviour:
  *   1. Resolve owner + project numbers from args or client config.
  *   2. For each project, ensure the field cache is populated, then
  *      paginate `DASHBOARD_ITEMS_QUERY` to gather up to 500 items.
  *   3. Convert raw items to `DashboardItem[]` via `toDashboardItems`.
- *   4. Build a `RankConfig` from the args + defaults (with injected `now`).
- *   5. Compute each PR's `ageHours` at the boundary and call
+ *   4. Derive the unique `repo:owner/name` set from items and run the
+ *      internal `fetchOpenPRs` helper to gather open PRs.
+ *   5. Build a `RankConfig` from the args + defaults (with injected `now`).
+ *   6. Compute each PR's `ageHours` at the boundary and call
  *      `rankDirections(allItems, enrichedPRs, config)`.
- *   6. Return `{ directions, fetchedAt, totalCandidates }`.
+ *   7. Return `{ directions, fetchedAt, totalCandidates }`.
  *
  * Determinism: `fetchedAt` is the only time-varying field. Two consecutive
  * calls on the same board state produce byte-identical `directions[]`
@@ -229,28 +231,13 @@ async function buildUnblockSignalMap(
 }
 
 // ---------------------------------------------------------------------------
-// Shared schema fragments
+// Internal PR fetch — runs `is:pr is:open repo:owner/name` GraphQL search per
+// unique repo represented in the project items. Replaces the caller-supplied
+// `openPRs` parameter (removed in 2.6.0). Failures (e.g. token without repo
+// scope) yield an empty list rather than blocking direction computation.
 // ---------------------------------------------------------------------------
 
-const openPRSchema = z.object({
-  number: z.number(),
-  title: z.string(),
-  url: z.string(),
-  isDraft: z.boolean(),
-  reviewDecision: z
-    .string()
-    .nullable()
-    .describe("REVIEW_REQUIRED | APPROVED | CHANGES_REQUESTED | null"),
-  headRefName: z.string(),
-  createdAt: z.string().describe("ISO timestamp from gh pr list"),
-});
-
-// ---------------------------------------------------------------------------
-// Shared params type — both tools accept (almost) the same shape.
-// `audience` is internal; callers only pass it via the `next_actions` tool.
-// ---------------------------------------------------------------------------
-
-export interface OpenPRArg {
+interface RawOpenPR {
   number: number;
   title: string;
   url: string;
@@ -260,6 +247,100 @@ export interface OpenPRArg {
   createdAt: string;
 }
 
+/**
+ * Derive the unique `owner/repo` set from the project items so the PR search
+ * mirrors the project's repo scope. Items lacking a `repository` field (e.g.
+ * draft items) are skipped. Returns deterministic order (sorted) so the
+ * downstream search query is stable.
+ */
+function uniqueRepos(items: DashboardItem[]): string[] {
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.repository) seen.add(item.repository);
+  }
+  return Array.from(seen).sort();
+}
+
+/**
+ * Fetch open PRs via GraphQL `search(type: ISSUE)` filtered to
+ * `is:pr is:open repo:<nameWithOwner>`. One query per repo — the project's
+ * repo set is typically tiny (1–3 repos) and most boards are single-repo so
+ * the call shape matches the previous `gh pr list` cost.
+ *
+ * Returns the raw shape consumed by `runDirections`'s age-enrichment pass.
+ * Errors are swallowed and logged via `console.error` so a token without
+ * `repo` scope cannot block direction computation — PR-kind directions
+ * simply don't surface.
+ */
+export async function fetchOpenPRs(
+  client: GitHubClient,
+  repos: string[],
+): Promise<RawOpenPR[]> {
+  if (repos.length === 0) return [];
+
+  const out: RawOpenPR[] = [];
+  for (const nameWithOwner of repos) {
+    const q = `is:pr is:open repo:${nameWithOwner}`;
+    try {
+      const data = await client.query<{
+        search: {
+          nodes: Array<{
+            number: number;
+            title: string;
+            url: string;
+            isDraft: boolean;
+            reviewDecision: string | null;
+            headRefName: string;
+            createdAt: string;
+          }>;
+        };
+      }>(
+        `query OpenPRs($q: String!) {
+          search(query: $q, type: ISSUE, first: 100) {
+            nodes {
+              ... on PullRequest {
+                number
+                title
+                url
+                isDraft
+                reviewDecision
+                headRefName
+                createdAt
+              }
+            }
+          }
+        }`,
+        { q },
+      );
+      for (const pr of data.search.nodes) {
+        // Defensive: search responses can include empty fragments when the
+        // node is not a PullRequest. Skip rows missing required fields.
+        if (typeof pr.number !== "number" || !pr.url) continue;
+        out.push({
+          number: pr.number,
+          title: pr.title,
+          url: pr.url,
+          isDraft: pr.isDraft,
+          reviewDecision: pr.reviewDecision,
+          headRefName: pr.headRefName,
+          createdAt: pr.createdAt,
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[ralph-hero] fetchOpenPRs failed for repo ${nameWithOwner}: ${msg}`,
+      );
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Shared params type — both tools accept (almost) the same shape.
+// `audience` is internal; callers only pass it via the `next_actions` tool.
+// ---------------------------------------------------------------------------
+
 export interface RunDirectionsArgs {
   owner?: string;
   projectNumbers?: number[];
@@ -268,7 +349,6 @@ export interface RunDirectionsArgs {
   lockStaleHours?: number;
   treeRecentDoneDays?: number;
   prStaleHours?: number;
-  openPRs?: OpenPRArg[];
   audience: Audience;
 }
 
@@ -344,8 +424,15 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
         unblockSignals,
       };
 
+      // Fetch open PRs internally for the unique repo set covered by the
+      // project items. Replaces the caller-supplied `openPRs` parameter
+      // (removed in 2.6.0). One search query per repo; failures yield an
+      // empty list so the rest of the ranking still runs.
+      const repos = uniqueRepos(allItems);
+      const rawOpenPRs = await fetchOpenPRs(client, repos);
+
       // Compute PR ageHours at the boundary so the lib never reads the wall clock.
-      const enrichedPRs: OpenPR[] = (args.openPRs ?? []).map((pr) => {
+      const enrichedPRs: OpenPR[] = rawOpenPRs.map((pr) => {
         const t = new Date(pr.createdAt).getTime();
         const ageHours = Number.isNaN(t)
           ? 0
@@ -389,7 +476,7 @@ export function registerDirectionsTools(
 
   server.tool(
     "ralph_hero__hello_directions",
-    "[DEPRECATED — use ralph_hero__next_actions instead. Removed in 2.7.0.] Compute up to N deterministic 'directions' for the hello skill's session briefing. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0.",
+    "[DEPRECATED — use ralph_hero__next_actions instead. Removed in 2.7.0.] Compute up to N deterministic 'directions' for the hello skill's session briefing. Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items). Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0.",
     {
       owner: z
         .string()
@@ -440,13 +527,6 @@ export function registerDirectionsTools(
         .describe(
           "Hours before an open PR is considered stale (default: 24).",
         ),
-      openPRs: z
-        .array(openPRSchema)
-        .optional()
-        .default([])
-        .describe(
-          "Open PRs gathered by the caller (e.g. via `gh pr list`). Drafts and APPROVED PRs are filtered internally.",
-        ),
     },
     async (args) => {
       return await runDirections({ ...args, audience: "human" });
@@ -455,7 +535,7 @@ export function registerDirectionsTools(
 
   server.tool(
     "ralph_hero__next_actions",
-    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs must be passed in as a parameter. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the fallback never fires for `audience='human'`.",
+    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items) — callers no longer pass an `openPRs` argument. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the fallback never fires for `audience='human'`.",
     {
       owner: z
         .string()
@@ -512,13 +592,6 @@ export function registerDirectionsTools(
         .default(24)
         .describe(
           "Hours before an open PR is considered stale (default: 24).",
-        ),
-      openPRs: z
-        .array(openPRSchema)
-        .optional()
-        .default([])
-        .describe(
-          "Open PRs gathered by the caller (e.g. via `gh pr list`). Drafts and APPROVED PRs are filtered internally.",
         ),
     },
     async (args) => {
