@@ -9,7 +9,6 @@ argument-hint: ""
 context: inline
 allowed-tools:
   - Read
-  - Bash
   - Skill
   - Agent
   - AskUserQuestion
@@ -21,26 +20,20 @@ allowed-tools:
 You compose three primitives:
 
 1. `catch-up` skill — narrates what's changed since last time
-2. `ralph_hero__next_actions` MCP tool — ranks work, marks one `recommended: true`
+2. `ralph_hero__next_actions` MCP tool — ranks work, marks one `recommended: true`. Open PRs are fetched internally; callers do not pass `openPRs`.
 3. `AskUserQuestion` picker — defaults to the recommended direction
 
-## Step 1: Gather (parallel)
+## Step 1: Catch-up narrative
 
-Run these in parallel in a single turn:
-
-1. **Catch-up narrative**: Dispatch `Agent(subagent_type="ralph-hero:catch-up-agent", description="Catch-up narrative", prompt="Synthesize the catch-up narrative for this session.")`. Capture the returned text — it is the only output you need from this sub-agent. The 200-event activity payload stays in the sub-agent's context, not yours.
-
-2. **Open PRs**:
-```bash
-gh pr list --state open --json number,title,url,isDraft,reviewDecision,headRefName,createdAt --limit 10 2>/dev/null || echo '[]'
-```
+Dispatch `Agent(subagent_type="ralph-hero:catch-up-agent", description="Catch-up narrative", prompt="Synthesize the catch-up narrative for this session.")`. Capture the returned text — it is the only output you need from this sub-agent. The 200-event activity payload stays in the sub-agent's context, not yours.
 
 ## Step 2: Compute directions
 
 Call `ralph_hero__next_actions` with:
 - `limit` = `3`
 - `audience` = `"human"`
-- `openPRs` = the parsed PR array from Step 1
+
+The tool fetches open PRs internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` search per unique repo on the project board) — no `openPRs` argument is passed.
 
 Capture `directions[]`.
 
@@ -135,8 +128,8 @@ Session complete.
 ## Constraints
 
 - Read-only at this layer (skills/tools handle their own writes)
-- Catch-up, gh pr list, and next_actions all run in the initial gather; do not refetch
+- Catch-up runs first; next_actions runs second and fetches open PRs internally — do not refetch either
 - ≤ 40 lines for the briefing
-- Never echo tool JSON, gh pr list output, or skill return strings verbatim
+- Never echo tool JSON or skill return strings verbatim
 - Never render `direction.reason` verbatim — it exists only for back-compat and is `@deprecated`. Always synthesize prose from `signals + title + memory`
 - Catch-up runs as a sub-agent (`Agent(subagent_type="ralph-hero:catch-up-agent")`), so its activity-log payload stays in the sub-agent's context. Only the synthesized 2-4 sentence narrative returns to /hello.

@@ -1739,7 +1739,6 @@ export function registerIssueTools(
           owner,
           projectNumbers: args.projectNumber !== undefined ? [args.projectNumber] : undefined,
           limit: 50,
-          openPRs: [],
           audience: "agent",
         });
 

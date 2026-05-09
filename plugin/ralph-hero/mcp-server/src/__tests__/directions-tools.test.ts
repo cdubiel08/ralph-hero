@@ -12,6 +12,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve as resolvePath } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   registerDirectionsTools,
@@ -175,17 +178,41 @@ function isDashboardItemsQuery(q: string): boolean {
   return q.includes("node(id: $projectId)") && q.includes("items(first:");
 }
 
+function isOpenPRsSearchQuery(q: string): boolean {
+  return q.includes("search(query:") && q.includes("... on PullRequest");
+}
+
+interface OpenPRFixture {
+  number: number;
+  title: string;
+  url: string;
+  isDraft: boolean;
+  reviewDecision: string | null;
+  headRefName: string;
+  createdAt: string;
+}
+
 interface MockClientOptions {
   /** Items response per project (keyed by project number). */
   itemsByProject?: Record<number, unknown[]>;
   /** Make ensureFieldCache fail (returns null project everywhere). */
   failFieldCache?: boolean;
+  /**
+   * PR fixtures returned by the internal `fetchOpenPRs` helper. Single
+   * shared bucket — the helper queries one repo at a time but tests rarely
+   * need per-repo routing, so a flat array keeps the mock simple.
+   */
+  openPRs?: OpenPRFixture[];
 }
 
 function createMockClient(
   config: Partial<GitHubClientConfig>,
   options: MockClientOptions = {},
-): { client: GitHubClient; projectQuery: ReturnType<typeof vi.fn> } {
+): {
+  client: GitHubClient;
+  projectQuery: ReturnType<typeof vi.fn>;
+  query: ReturnType<typeof vi.fn>;
+} {
   const fullConfig: GitHubClientConfig = {
     token: "tok",
     owner: "test-owner",
@@ -213,9 +240,19 @@ function createMockClient(
     throw new Error(`Unmocked projectQuery: ${q.slice(0, 80)}`);
   });
 
+  // `client.query` is the repo-scoped surface. The tool calls it for the
+  // internal PR search (`fetchOpenPRs`). Route by the query body so
+  // unrelated repo queries fall through to a clear error.
+  const query = vi.fn(async (q: string) => {
+    if (isOpenPRsSearchQuery(q)) {
+      return { search: { nodes: options.openPRs ?? [] } };
+    }
+    throw new Error(`Unmocked query: ${q.slice(0, 80)}`);
+  });
+
   const client = {
     config: fullConfig,
-    query: vi.fn(),
+    query,
     projectQuery,
     projectMutate: vi.fn(),
     mutate: vi.fn(),
@@ -227,7 +264,7 @@ function createMockClient(
     getAuthenticatedUser: vi.fn(),
   } as unknown as GitHubClient;
 
-  return { client, projectQuery };
+  return { client, projectQuery, query };
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +297,6 @@ function buildArgs(overrides: Record<string, unknown> = {}): Record<string, unkn
     lockStaleHours: 24,
     treeRecentDoneDays: 7,
     prStaleHours: 24,
-    openPRs: [],
     ...overrides,
   };
 }
@@ -528,7 +564,7 @@ describe("ralph_hero__hello_directions", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 5. PR injection
+  // 5. PR injection — internal fetch via mocked GraphQL search
   // -------------------------------------------------------------------------
   it("surfaces a REVIEW_REQUIRED PR (age 30h) as direction 1", async () => {
     const now = Date.now();
@@ -547,14 +583,10 @@ describe("ralph_hero__hello_directions", () => {
 
     const { client } = createMockClient(
       { projectNumber: 3 },
-      { itemsByProject: { 3: fixtures } },
-    );
-
-    registerDirectionsTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__hello_directions");
-
-    const result = await tool.handler(
-      buildArgs({
+      {
+        itemsByProject: { 3: fixtures },
+        // Internal fetchOpenPRs runs `is:pr is:open repo:owner/repo` via
+        // client.query — the mock client routes that to this fixture.
         openPRs: [
           {
             number: 999,
@@ -566,9 +598,13 @@ describe("ralph_hero__hello_directions", () => {
             createdAt: thirtyHoursAgo,
           },
         ],
-      }),
-      {},
+      },
     );
+
+    registerDirectionsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__hello_directions");
+
+    const result = await tool.handler(buildArgs(), {});
 
     const payload = parsePayload(result) as {
       directions: Array<{
@@ -638,9 +674,9 @@ describe("ralph_hero__hello_directions", () => {
     registerDirectionsTools(server, client, fieldCache);
     const tool = getTool(server, "ralph_hero__hello_directions");
 
-    // Build args WITHOUT defaults — only required fields. The handler must
-    // fall back to DEFAULT_RANK_CONFIG values (limit: 3, etc.).
-    const result = await tool.handler({ openPRs: [] }, {});
+    // Build args WITHOUT defaults — empty object. The handler must fall
+    // back to DEFAULT_RANK_CONFIG values (limit: 3, etc.).
+    const result = await tool.handler({}, {});
     const payload = parsePayload(result) as {
       directions: Array<{ issue: { number: number } | null }>;
       totalCandidates: number;
@@ -757,11 +793,11 @@ describe("hello_directions backwards-compat", () => {
     const newTool = getTool(server, "ralph_hero__next_actions");
 
     const oldResult = await oldTool.handler(
-      buildArgs({ limit: 3, openPRs: [] }),
+      buildArgs({ limit: 3 }),
       {},
     );
     const newResult = await newTool.handler(
-      buildArgs({ limit: 3, audience: "human", openPRs: [] }),
+      buildArgs({ limit: 3, audience: "human" }),
       {},
     );
 
@@ -878,5 +914,25 @@ describe("extractUnblockSignal", () => {
     const signal = extractUnblockSignal(comments, NOW);
     expect(signal).not.toBeNull();
     expect(signal?.questionCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structural assertion — `openPRs` parameter removed in 2.6.0 (GH-1155).
+//
+// Reads the source verbatim to guard against future regressions that would
+// re-introduce the field. The check looks for `openPRs:` followed by a Zod
+// expression in the registration block — comment / docstring mentions are
+// allowed (they document the removal).
+// ---------------------------------------------------------------------------
+
+describe("openPRs parameter removed from Zod schema", () => {
+  it("source contains no `openPRs: z.` registration", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(
+      resolvePath(here, "../tools/directions-tools.ts"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/openPRs:\s*z\./);
   });
 });

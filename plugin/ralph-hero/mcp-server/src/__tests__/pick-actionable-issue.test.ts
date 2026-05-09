@@ -167,6 +167,10 @@ function isGroupDetectionQuery(q: string): boolean {
   return q.includes("repository(owner:") && q.includes("issue(number:");
 }
 
+function isOpenPRsSearchQuery(q: string): boolean {
+  return q.includes("search(query:") && q.includes("... on PullRequest");
+}
+
 function createMockClient(
   config: Partial<GitHubClientConfig>,
   itemsByProject: Record<number, unknown[]>,
@@ -195,7 +199,9 @@ function createMockClient(
 
   // detectGroup uses client.query() (issue-level GraphQL). Return a benign
   // shape so the wrapper's best-effort group lookup just yields a non-group
-  // result without throwing.
+  // result without throwing. The internal `fetchOpenPRs` helper also runs
+  // through client.query (PR search); return an empty result so the
+  // delegated runDirections call never sees a PR direction.
   const query = vi.fn(async (q: string, _vars: Record<string, unknown>) => {
     if (isGroupDetectionQuery(q)) {
       return {
@@ -209,6 +215,9 @@ function createMockClient(
           },
         },
       };
+    }
+    if (isOpenPRsSearchQuery(q)) {
+      return { search: { nodes: [] } };
     }
     throw new Error(`Unmocked query: ${q.slice(0, 80)}`);
   });
@@ -255,7 +264,6 @@ function buildNextActionsArgs(
     lockStaleHours: 24,
     treeRecentDoneDays: 7,
     prStaleHours: 24,
-    openPRs: [],
     ...overrides,
   };
 }
