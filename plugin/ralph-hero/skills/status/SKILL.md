@@ -36,7 +36,7 @@ Fetch the pipeline dashboard with the requested format:
 2. Fetch the pipeline dashboard with:
    - `format`: parsed format or `"markdown"`
    - `includeHealth`: true
-   - `issuesPerPhase`: 5 (cap per-phase issue lists for readable output on large boards)
+   - `issuesPerPhase`: 5
 3. Display the `formatted` field (for markdown/ascii) or the structured data (for json).
 4. If health warnings exist with severity `critical`, highlight them prominently.
 

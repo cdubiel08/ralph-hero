@@ -31,9 +31,9 @@ All arguments are optional. Default behavior: capture a fresh snapshot, then tre
 
 ### Step 2: Capture Fresh Snapshot
 
-Call `ralph_hero__capture_snapshot` with no arguments — it picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window.
+Call `ralph_hero__capture_snapshot` with no arguments. <!-- internal: the tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window. -->
 
-This appends one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. The capture is non-fatal: if the project has zero history, the row written by this call will be the first.
+This appends one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. <!-- internal: capture is non-fatal — if the project has zero history, the row written by this call will be the first. -->
 
 ### Step 3: Query Trends
 
@@ -48,8 +48,8 @@ The tool reads the local JSONL file, computes 1d/7d/30d deltas, and renders spar
 
 Print the returned `markdown` field directly to stdout. Do not post, do not summarize, do not edit.
 
-If `metrics_trends` returns an "insufficient history" payload (fewer than 2 snapshots in the window), print the markdown as-is — it will already convey that to the user. Do not error.
+If `metrics_trends` returns an "insufficient history" payload (fewer than 2 snapshots in the window), print the markdown as-is. Do not error.
 
 ## Output
 
-Print the markdown report exactly as returned. Keep additional commentary minimal.
+Print the markdown report exactly as returned. No additional commentary.

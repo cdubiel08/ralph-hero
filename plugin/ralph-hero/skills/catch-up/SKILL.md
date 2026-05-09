@@ -33,8 +33,12 @@ If memory is missing or empty, proceed without it.
 Invoke `ralph_hero__recent_activity` with:
 - `since` = the cursor timestamp from step 1
 - `category` = `"work"`
-- `limit` = `50` (long-absence cap; was 200 before context-flood fix)
-- `compact` = `true` (drops `actor`, `session_id`, `category`, wrapper `target` — narrative synthesis only needs `ts`, `kind`, `tool`, `project`)
+- `limit` = `50`
+- `compact` = `true`
+
+<!-- internal: limit=50 is the long-absence cap (was 200 before context-flood fix).
+compact=true drops `actor`, `session_id`, `category`, wrapper `target` — narrative synthesis only needs
+`ts`, `kind`, `tool`, `project`. -->
 
 Capture the response: `events[]` and `cursor_advanced_to`.
 
@@ -60,7 +64,9 @@ If `events.length` was at the `limit` cap, prefix with: *"A lot has happened sin
 
 ## Step 5: Output
 
-Return only the narrative text. No frontmatter, no headers, no metadata. The caller (interactive /hello, or a programmatic invoker) takes the text as-is.
+Return only the narrative text. No frontmatter, no headers, no metadata.
+
+<!-- internal: the caller (interactive /hello, or a programmatic invoker) takes the text as-is. -->
 
 ## Constraints
 

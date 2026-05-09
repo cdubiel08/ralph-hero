@@ -33,7 +33,8 @@ Call `ralph_hero__next_actions` with:
 - `limit` = `3`
 - `audience` = `"human"`
 
-The tool fetches open PRs internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` search per unique repo on the project board) — no `openPRs` argument is passed.
+<!-- internal: the tool fetches open PRs internally via the configured GitHub token's `repo` scope
+(one `is:pr is:open repo:owner/name` search per unique repo on the project board). Do not pass `openPRs`. -->
 
 Capture `directions[]`.
 
@@ -50,7 +51,10 @@ Output ≤ 40 lines total. Structure:
 
 ### Synthesizing per-direction prose
 
-For each direction's description (used in Step 4) and for the introductory sentence above, **compose** the prose from `direction.signals + direction.issue.title (or direction.pr.title) + memory context (catch-up output and MEMORY.md)`. **Never render `direction.reason` verbatim** — it exists only as a back-compat field for non-skill callers and is `@deprecated`. Always reach for `signals` first, then bring in the title for human-meaningful context.
+For each direction's description (used in Step 4) and for the introductory sentence above, **compose** the prose from `direction.signals + direction.issue.title (or direction.pr.title) + memory context (catch-up output and MEMORY.md)`. Never render `direction.reason` verbatim. Reach for `signals` first, then bring in the title for human-meaningful context.
+
+<!-- internal: `direction.reason` exists only as a back-compat field for non-skill callers and is `@deprecated`. -->
+
 
 Per-kind synthesis guidance:
 
@@ -131,5 +135,5 @@ Session complete.
 - Catch-up runs first; next_actions runs second and fetches open PRs internally — do not refetch either
 - ≤ 40 lines for the briefing
 - Never echo tool JSON or skill return strings verbatim
-- Never render `direction.reason` verbatim — it exists only for back-compat and is `@deprecated`. Always synthesize prose from `signals + title + memory`
-- Catch-up runs as a sub-agent (`Agent(subagent_type="ralph-hero:catch-up-agent")`), so its activity-log payload stays in the sub-agent's context. Only the synthesized 2-4 sentence narrative returns to /hello.
+- Never render `direction.reason` verbatim — synthesize from `signals + title + memory`
+- Catch-up runs as a sub-agent (`Agent(subagent_type="ralph-hero:catch-up-agent")`); only the synthesized 2-4 sentence narrative returns to /hello.
