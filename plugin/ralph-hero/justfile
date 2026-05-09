@@ -52,13 +52,11 @@ assign number user:
     @just _mcp_call "ralph_hero__save_issue" \
         '{"number":{{number}},"assignees":["{{user}}"]}'
 
-# Find next actionable issue
-# NOTE: intentional deprecated-alias caller — pick_actionable_issue removed in 2.7.0.
-# Migrate to: ralph_hero__next_actions(limit=1, audience="agent")
+# Find next actionable issue (rank-1 from next_actions, audience=agent)
 [group('commands')]
-pick state="Research Needed" max-estimate="S":
-    @just _mcp_call "ralph_hero__pick_actionable_issue" \
-        '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
+pick:
+    @just _mcp_call "ralph_hero__next_actions" \
+        '{"limit":1,"audience":"agent"}'
 
 # Create a draft card on the board
 [group('commands')]
@@ -629,13 +627,11 @@ quick-move issue state:
     @just _mcp_call "ralph_hero__save_issue" \
         '{"number":{{issue}},"workflowState":"{{state}}","command":"ralph_cli"}'
 
-# Find next actionable issue by workflow state - instant, no API cost
-# NOTE: intentional deprecated-alias caller — pick_actionable_issue removed in 2.7.0.
-# Migrate to: ralph_hero__next_actions(limit=1, audience="agent")
+# Find next actionable issue (rank-1 from next_actions, audience=agent) - instant, no API cost
 [private]
-quick-pick state="Research Needed" max-estimate="S":
-    @just _mcp_call "ralph_hero__pick_actionable_issue" \
-        '{"workflowState":"{{state}}","maxEstimate":"{{max-estimate}}"}'
+quick-pick:
+    @just _mcp_call "ralph_hero__next_actions" \
+        '{"limit":1,"audience":"agent"}'
 
 # Assign issue to a GitHub user - instant, no API cost
 [private]

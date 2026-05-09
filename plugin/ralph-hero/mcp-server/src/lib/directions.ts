@@ -1,5 +1,5 @@
 /**
- * Pure ranker library for the `ralph_hero__hello_directions` MCP tool.
+ * Pure ranker library for the `ralph_hero__next_actions` MCP tool.
  *
  * Computes up to N deterministic directions for a session-briefing
  * companion. All functions are side-effect free: time is injected via

@@ -229,12 +229,12 @@ Delete the two deprecated server.tool registrations, migrate the two skill allow
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no errors
-- [ ] `npm test` — all passing, no orphan-test errors, no missing-import errors
-- [ ] `grep -rn "pick_actionable_issue\|hello_directions" plugin/ralph-hero/mcp-server/src/` returns 0 hits
-- [ ] `grep -rn "pick_actionable_issue\|hello_directions" plugin/ralph-hero/skills/` returns 0 hits
-- [ ] `grep -rn "pick_actionable_issue\|hello_directions" plugin/ralph-hero/justfile` returns 0 hits
-- [ ] `grep -n "pick_actionable_issue" CLAUDE.md` returns 0 hits
+- [x] `npm run build` — no errors
+- [x] `npm test` — all passing, no orphan-test errors, no missing-import errors
+- [x] `grep -rn "pick_actionable_issue\|hello_directions" plugin/ralph-hero/mcp-server/src/` returns 0 hits
+- [x] `grep -rn "pick_actionable_issue\|hello_directions" plugin/ralph-hero/skills/` returns 0 hits
+- [x] `grep -rn "pick_actionable_issue\|hello_directions" plugin/ralph-hero/justfile` returns 0 hits
+- [x] `grep -n "pick_actionable_issue" CLAUDE.md` returns 0 hits
 
 #### Manual Verification:
 - [ ] After publishing the change, `mcp list-tools` does not include `ralph_hero__hello_directions` or `ralph_hero__pick_actionable_issue`
