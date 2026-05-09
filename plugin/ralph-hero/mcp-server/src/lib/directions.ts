@@ -252,6 +252,14 @@ const PR_REVIEW_REQUIRED_BOOST = -200;
 const HUMAN_NEEDED_UNBLOCK_BOOST = -150;
 
 /**
+ * Penalty applied to Backlog / null-state items that surface only via the
+ * `audience === "agent"` fallback. Large positive value ensures Backlog
+ * fallback items always rank below any actionable-phase item — Backlog
+ * surfaces only when the actionable pool is empty.
+ */
+const AGENT_BACKLOG_FALLBACK_PENALTY = 100;
+
+/**
  * Per-estimate penalty applied when audience === "agent". Larger items
  * cost more (positive score), pushing them down the ranking so agent
  * loops dispatch on XS/S items first.
@@ -834,6 +842,29 @@ export function rankDirections(
 
     const { score, kind, tags, signals } = scoreIssue(item, items, config);
     scored.push({ item, score, kind, tags, signals });
+  }
+
+  // 1b. Phase fallback for autonomous audience: when no items passed the
+  //     standard phase filter, widen the candidate set to include items in
+  //     `Backlog` and items with a null `workflowState`. This restores
+  //     autopilot's ability to clear a Backlog-heavy board. Fallback items
+  //     get +AGENT_BACKLOG_FALLBACK_PENALTY so they always rank below any
+  //     actionable-phase item — they surface only when the actionable pool
+  //     is empty. Mirrors the blocker fallback in step 2.
+  if (config.audience === "agent" && scored.length === 0) {
+    for (const item of items) {
+      if (item.workflowState !== "Backlog" && item.workflowState !== null) {
+        continue;
+      }
+      const { score, kind, tags, signals } = scoreIssue(item, items, config);
+      scored.push({
+        item,
+        score: score + AGENT_BACKLOG_FALLBACK_PENALTY,
+        kind,
+        tags,
+        signals,
+      });
+    }
   }
 
   // 2. Drop blocked items unless that would empty the candidate set.

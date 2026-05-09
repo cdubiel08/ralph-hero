@@ -142,6 +142,74 @@ describe("audience param", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 0b2. audience=agent Backlog fallback (GH-1154)
+// ---------------------------------------------------------------------------
+
+describe("audience=agent Backlog fallback", () => {
+  it("agent audience: Backlog-only board returns the Backlog item as a direction", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        priority: "P2",
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "agent" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].issue?.number).toBe(1);
+    expect(result[0].issue?.workflowState).toBe("Backlog");
+    expect(result[0].kind).toBe("issue");
+  });
+
+  it("agent audience: null-state items also surface via the fallback", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: null,
+        priority: "P2",
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "agent" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].issue?.number).toBe(1);
+    expect(result[0].issue?.workflowState).toBeNull();
+  });
+
+  it("agent audience: mixed Backlog + actionable returns the actionable item (fallback does NOT fire)", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        priority: "P0", // even high priority Backlog must lose to any actionable item
+      }),
+      makeItem({
+        number: 2,
+        workflowState: "Ready for Plan",
+        priority: "P2",
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "agent" }));
+    // Fallback only fires when the post-phase scored set is empty.
+    // With #2 in Ready for Plan, scored has one entry, so #1 is filtered out.
+    expect(result).toHaveLength(1);
+    expect(result[0].issue?.number).toBe(2);
+    expect(result[0].issue?.workflowState).toBe("Ready for Plan");
+  });
+
+  it("human audience: Backlog-only board returns no directions (fallback is agent-only)", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: "Backlog",
+        priority: "P0",
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "human" }));
+    expect(result).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 0c. Differentiated stale reasons (Phase 2.3)
 // ---------------------------------------------------------------------------
 
