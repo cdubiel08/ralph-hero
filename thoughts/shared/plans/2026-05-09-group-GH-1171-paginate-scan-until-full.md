@@ -273,9 +273,9 @@ Switch `fetchDashboardItems` from `{ maxItems: 500 }` to `{ scanUntilExhausted: 
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] At `dashboard-fetch.ts:280-282`, replace `{ maxItems: 500 }` with `{ scanUntilExhausted: true }`
-  - [ ] No other lines in `fetchDashboardItems` change — multi-project loop at line 245, type filter at line 88, `toDashboardItems` at lines 79-126 all untouched
-  - [ ] `aggregateByPhase` time-window filter at `dashboard.ts:250-263` is NOT touched (per shared constraint #5)
+  - [x] At `dashboard-fetch.ts:280-282`, replace `{ maxItems: 500 }` with `{ scanUntilExhausted: true }`
+  - [x] No other lines in `fetchDashboardItems` change — multi-project loop at line 245, type filter at line 88, `toDashboardItems` at lines 79-126 all untouched
+  - [x] `aggregateByPhase` time-window filter at `dashboard.ts:250-263` is NOT touched (per shared constraint #5)
 
 #### Task 3.2: Patch directions-tools.ts inline paginateConnection call
 
@@ -284,8 +284,8 @@ Switch `fetchDashboardItems` from `{ maxItems: 500 }` to `{ scanUntilExhausted: 
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] At `directions-tools.ts:389-395`, replace `{ maxItems: 500 }` with `{ scanUntilExhausted: true }` (this is a second project-wide pagination call that uses the dashboard query directly without going through `fetchDashboardItems` — captured here to keep the dashboard-family fix complete)
-  - [ ] Confirm that the only `paginateConnection` calls in the codebase that still pass `{ maxItems: 500 }` are in `relationship-tools.ts:1170` (handled in Phase 4)
+  - [x] At `directions-tools.ts:389-395`, replace `{ maxItems: 500 }` with `{ scanUntilExhausted: true }` (this is a second project-wide pagination call that uses the dashboard query directly without going through `fetchDashboardItems` — captured here to keep the dashboard-family fix complete)
+  - [x] Confirm that the only `paginateConnection` calls in the codebase that still pass `{ maxItems: 500 }` are in `relationship-tools.ts:1170` (handled in Phase 4)
 
 #### Task 3.3: Update tool descriptions on all 6 dashboard consumers
 
@@ -298,9 +298,9 @@ Switch `fetchDashboardItems` from `{ maxItems: 500 }` to `{ scanUntilExhausted: 
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] Each `server.tool(...)` description for the 6 consumers includes a sentence stating that all project items are fetched (no silent cap)
-  - [ ] Deprecated tools (`pick_actionable_issue`, `hello_directions`) keep their existing deprecation language and add the fetch-behavior note
-  - [ ] Description bodies remain reasonably short (≤ 5 lines of prose each)
+  - [x] Each `server.tool(...)` description for the 4 still-registered consumers (`pipeline_dashboard`, `project_hygiene`, `next_actions`, `capture_snapshot`) includes a sentence stating that all project items are fetched (no silent cap). NOTE: `pick_actionable_issue` and `hello_directions` were already removed from the codebase before Phase 3 — only 4 of the originally enumerated 6 consumers exist as registered tools today.
+  - [x] Deprecated tools (`pick_actionable_issue`, `hello_directions`) — N/A (no longer registered).
+  - [x] Description bodies remain reasonably short (≤ 5 lines of prose each)
 
 #### Task 3.4: Add regression test for dashboard items beyond position 500
 
@@ -318,12 +318,12 @@ Switch `fetchDashboardItems` from `{ maxItems: 500 }` to `{ scanUntilExhausted: 
 
 #### Automated Verification:
 
-- [ ] `npm run build` — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/dashboard.test.ts` — passes
-- [ ] `npx vitest run src/__tests__/hygiene.test.ts` — passes (uses `fetchDashboardItems` indirectly)
-- [ ] `npx vitest run src/__tests__/directions-tools.test.ts` — passes
-- [ ] `npx vitest run src/__tests__/snapshots.test.ts` — passes (`capture_snapshot` consumer)
-- [ ] `npm test` — full suite passes
+- [x] `npm run build` — no TypeScript errors
+- [x] `npx vitest run src/__tests__/dashboard.test.ts` — passes
+- [x] `npx vitest run src/__tests__/hygiene.test.ts` — passes (uses `fetchDashboardItems` indirectly)
+- [x] `npx vitest run src/__tests__/directions-tools.test.ts` — passes
+- [x] `npx vitest run src/__tests__/snapshots.test.ts` — passes (`capture_snapshot` consumer; via `trends-tools.test.ts` + `trends.test.ts`)
+- [x] `npm test` — full suite passes (1261 tests passing in 57 files)
 
 #### Manual Verification:
 
