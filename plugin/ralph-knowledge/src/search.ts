@@ -1,6 +1,6 @@
 import type { KnowledgeDB } from "./db.js";
 
-export type MemoryTier = "doc" | "raw" | "reflection" | "any";
+export type MemoryTier = "doc" | "raw" | "reflection" | "wiki" | "any";
 
 export interface SearchOptions {
   type?: string;

@@ -457,6 +457,12 @@ describe("parseDocument memory_tier", () => {
     expect(doc.memoryTier).toBe("doc");
   });
 
+  it("extracts memory_tier: wiki from frontmatter", () => {
+    const raw = makeDoc("date: 2026-05-08\ntype: wiki\nmemory_tier: wiki");
+    const doc = parseDocument("test-wiki", "thoughts/wiki/test-wiki.md", raw);
+    expect(doc.memoryTier).toBe("wiki");
+  });
+
   it("defaults memory_tier to 'doc' when frontmatter omits the key", () => {
     const raw = makeDoc("date: 2026-04-29\ntype: research");
     const doc = parseDocument("test-default", "thoughts/shared/research/test-default.md", raw);

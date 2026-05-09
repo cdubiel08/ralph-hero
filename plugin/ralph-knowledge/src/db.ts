@@ -183,12 +183,13 @@ export class KnowledgeDB {
       // Column already exists — expected for new databases
     }
 
-    // Migration: add memory_tier column (schema v3) for databases created before it existed.
+    // Migration: add memory_tier column (schema v3+) for databases created before it existed.
     // Uses the same try/catch pattern as is_stub. CHECK constraint restricts values to
-    // 'doc' (existing documents), 'raw' (dream-loop raw memories), 'reflection' (synthesized).
+    // 'doc' (existing documents), 'raw' (dream-loop raw memories), 'reflection' (synthesized),
+    // 'wiki' (curated personal wiki tier — schema v4).
     try {
       this.db.exec(
-        "ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection'))"
+        "ALTER TABLE documents ADD COLUMN memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection','wiki'))"
       );
     } catch {
       // Column already exists — expected for new databases
@@ -196,6 +197,40 @@ export class KnowledgeDB {
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS idx_documents_memory_tier ON documents(memory_tier)"
     );
+
+    // Migration v4: expand memory_tier CHECK constraint to allow 'wiki' tier.
+    // SQLite cannot ALTER an existing CHECK constraint; on databases that ran the
+    // earlier v3 migration (CHECK with only 'doc','raw','reflection') the ALTER above
+    // throws "duplicate column" and the old CHECK stays in place. Detect that via
+    // sqlite_master and rebuild the table when 'wiki' is missing from the schema text.
+    try {
+      const tableSchema = this.db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='documents'")
+        .get() as { sql: string } | undefined;
+      if (tableSchema && !tableSchema.sql.includes("'wiki'")) {
+        this.db.exec(`
+          CREATE TABLE documents_v4 (
+            id TEXT PRIMARY KEY,
+            path TEXT,
+            title TEXT,
+            date TEXT,
+            type TEXT,
+            status TEXT,
+            github_issue INTEGER,
+            content TEXT,
+            is_stub INTEGER DEFAULT 0,
+            memory_tier TEXT NOT NULL DEFAULT 'doc' CHECK(memory_tier IN ('doc','raw','reflection','wiki'))
+          );
+          INSERT INTO documents_v4 (id, path, title, date, type, status, github_issue, content, is_stub, memory_tier)
+            SELECT id, path, title, date, type, status, github_issue, content, is_stub, memory_tier FROM documents;
+          DROP TABLE documents;
+          ALTER TABLE documents_v4 RENAME TO documents;
+          CREATE INDEX IF NOT EXISTS idx_documents_memory_tier ON documents(memory_tier);
+        `);
+      }
+    } catch {
+      // Schema introspection failed or table layout already compliant — no-op.
+    }
 
     // Migration: rebuild relationships table for databases created before the
     // context column, post_mortem/untyped CHECK types, and target_id FK were added.
