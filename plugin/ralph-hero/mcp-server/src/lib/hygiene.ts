@@ -69,7 +69,12 @@ export interface HygieneRepoBreakdown {
 
 export interface HygieneReport {
   generatedAt: string;
-  totalItems: number;
+  // `boardItems` is the raw count of items on the project board pre-filter.
+  // Uniform across discovery tools (next_actions, pipeline_dashboard,
+  // project_hygiene). Per-category counts (`summary.archiveCandidateCount`,
+  // `summary.staleCount`, etc.) are post-filter and may sum to less than
+  // `boardItems`.
+  boardItems: number;
   archiveCandidates: HygieneItem[];
   staleItems: HygieneItem[];
   orphanedItems: HygieneItem[];
@@ -432,7 +437,7 @@ export function buildHygieneReport(
 
   return {
     generatedAt: new Date(now).toISOString(),
-    totalItems: items.length,
+    boardItems: items.length,
     archiveCandidates,
     staleItems,
     orphanedItems,
@@ -468,7 +473,7 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
   lines.push("# Project Hygiene Report");
   lines.push(`_Generated: ${report.generatedAt}_`);
   lines.push("");
-  lines.push(`**Total items**: ${report.totalItems}`);
+  lines.push(`**Board items**: ${report.boardItems}`);
   lines.push("");
 
   // Summary

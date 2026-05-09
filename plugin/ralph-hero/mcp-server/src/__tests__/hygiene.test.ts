@@ -325,7 +325,7 @@ describe("buildHygieneReport", () => {
     );
     expect(report.summary.staleCount).toBe(report.staleItems.length);
     expect(report.summary.orphanCount).toBe(report.orphanedItems.length);
-    expect(report.totalItems).toBe(3);
+    expect(report.boardItems).toBe(3);
   });
 
   it("computes field coverage percentage", () => {
@@ -459,8 +459,8 @@ describe("buildHygieneReport", () => {
       NOW,
     );
 
-    // totalItems sums across both projects
-    expect(report.totalItems).toBe(10);
+    // boardItems sums across both projects
+    expect(report.boardItems).toBe(10);
 
     // Archive candidates: from both projects (#1 from proj 3, #102 from proj 5)
     expect(report.archiveCandidates.length).toBe(2);
@@ -528,7 +528,7 @@ describe("buildHygieneReport", () => {
 
     const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
 
-    expect(report.totalItems).toBe(2);
+    expect(report.boardItems).toBe(2);
     expect(report.duplicateCandidates).toHaveLength(1);
     const pair = report.duplicateCandidates[0].items;
     const pairNums = [pair[0].number, pair[1].number].sort((a, b) => a - b);
@@ -1257,8 +1257,8 @@ describe("groupBy=repo composition (Phase 4)", () => {
       "owner/repo-a",
       "owner/repo-b",
     ]);
-    expect(repoResults["owner/repo-a"].totalItems).toBe(1);
-    expect(repoResults["owner/repo-b"].totalItems).toBe(1);
+    expect(repoResults["owner/repo-a"].boardItems).toBe(1);
+    expect(repoResults["owner/repo-b"].boardItems).toBe(1);
   });
 
   it("buckets items with no repository under '(unknown)'", () => {
@@ -1290,8 +1290,8 @@ describe("groupBy=repo composition (Phase 4)", () => {
       );
     }
     expect(repoResults["(unknown)"]).toBeDefined();
-    expect(repoResults["(unknown)"].totalItems).toBe(1);
-    expect(repoResults["owner/repo-a"].totalItems).toBe(1);
+    expect(repoResults["(unknown)"].boardItems).toBe(1);
+    expect(repoResults["owner/repo-a"].boardItems).toBe(1);
   });
 
   it("each per-repo HygieneReport contains only that repo's items in every section", () => {
@@ -1483,8 +1483,8 @@ describe("groupBy=repo composition (Phase 4)", () => {
       );
     }
 
-    expect(repoResults["owner/repo-a"].totalItems).toBe(2);
-    expect(repoResults["owner/repo-b"].totalItems).toBe(1);
+    expect(repoResults["owner/repo-a"].boardItems).toBe(2);
+    expect(repoResults["owner/repo-b"].boardItems).toBe(1);
 
     // repo-a's stale items should include both #1 (project 3) and #2 (project 5)
     const repoAStaleNums = repoResults["owner/repo-a"].staleItems
@@ -1515,7 +1515,7 @@ describe("groupBy=repo composition (Phase 4)", () => {
     const merged = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
 
     // Standard fields present
-    expect(merged.totalItems).toBe(2);
+    expect(merged.boardItems).toBe(2);
     expect(merged.staleItems).toBeDefined();
     expect(merged.summary).toBeDefined();
     // Phase 3 emits repoBreakdowns when items span >=2 repos; this is the

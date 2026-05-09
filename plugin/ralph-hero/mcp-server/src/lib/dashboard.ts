@@ -138,7 +138,14 @@ export interface StreamDashboardSection {
 
 export interface DashboardData {
   generatedAt: string; // ISO timestamp
-  totalIssues: number;
+  // `boardItems` is the raw count of items on the project board pre-filter,
+  // including PRs (carryover behavior — `DashboardItem[]` includes any non-DRAFT
+  // project item with a `content` node). Uniform across discovery tools
+  // (next_actions, pipeline_dashboard, project_hygiene). Per-phase `count`
+  // values reflect that phase's bucket; for `Done` and `Canceled`, the count
+  // is bounded by `doneWindowDays` (default 7) and may be smaller than the
+  // actual phase membership.
+  boardItems: number;
   phases: PhaseSnapshot[];
   health: {
     ok: boolean;
@@ -802,7 +809,7 @@ export function buildDashboard(
 
   return {
     generatedAt: new Date(now).toISOString(),
-    totalIssues: items.length,
+    boardItems: items.length,
     phases,
     health: {
       ok: warnings.length === 0,
@@ -832,7 +839,7 @@ export function formatMarkdown(
   lines.push(`# Pipeline Status`);
   lines.push(`_Generated: ${data.generatedAt}_`);
   lines.push("");
-  lines.push(`**Total issues**: ${data.totalIssues}`);
+  lines.push(`**Board items**: ${data.boardItems}`);
   lines.push("");
 
   // Phase table

@@ -843,7 +843,7 @@ describe("formatMarkdown", () => {
     // Use manually constructed data to avoid pipeline_gap warnings from empty phases
     const healthy: import("../lib/dashboard.js").DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 1,
+      boardItems: 1,
       phases: [{ state: "Backlog", count: 1, estimatePoints: 0, issues: [] }],
       health: { ok: true, warnings: [] },
       archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
@@ -935,7 +935,7 @@ describe("formatAscii", () => {
     // Use manually constructed data to avoid pipeline_gap warnings from empty phases
     const healthy: import("../lib/dashboard.js").DashboardData = {
       generatedAt: new Date(NOW).toISOString(),
-      totalIssues: 1,
+      boardItems: 1,
       phases: [{ state: "Backlog", count: 1, estimatePoints: 0, issues: [] }],
       health: { ok: true, warnings: [] },
       archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
@@ -980,7 +980,7 @@ describe("buildDashboard", () => {
     const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
 
     expect(data.generatedAt).toBeTruthy();
-    expect(data.totalIssues).toBe(3);
+    expect(data.boardItems).toBe(3);
     expect(data.phases.length).toBeGreaterThan(0);
     expect(data.health).toBeDefined();
     expect(typeof data.health.ok).toBe("boolean");
@@ -990,7 +990,7 @@ describe("buildDashboard", () => {
   it("with default config produces expected structure", () => {
     const data = buildDashboard([], DEFAULT_HEALTH_CONFIG, NOW);
 
-    expect(data.totalIssues).toBe(0);
+    expect(data.boardItems).toBe(0);
     expect(data.health.ok).toBe(false); // pipeline gaps generate info warnings
     // All phases should be present
     for (const state of STATE_ORDER) {
@@ -1449,7 +1449,7 @@ describe("multi-project dashboard", () => {
     ];
 
     const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
-    expect(data.totalIssues).toBe(3);
+    expect(data.boardItems).toBe(3);
     expect(findPhase(data.phases, "Backlog").count).toBe(2);
     expect(findPhase(data.phases, "In Progress").count).toBe(1);
   });
@@ -1461,7 +1461,7 @@ describe("multi-project dashboard", () => {
     ];
 
     const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
-    expect(data.totalIssues).toBe(2);
+    expect(data.boardItems).toBe(2);
     expect(findPhase(data.phases, "Backlog").count).toBe(1);
     expect(findPhase(data.phases, "In Progress").count).toBe(1);
   });

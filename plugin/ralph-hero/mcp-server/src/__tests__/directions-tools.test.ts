@@ -386,11 +386,11 @@ describe("ralph_hero__hello_directions", () => {
         score: number;
       }>;
       fetchedAt: string;
-      totalCandidates: number;
+      boardItems: number;
     };
 
     expect(result.isError).toBeUndefined();
-    expect(payload.totalCandidates).toBe(5);
+    expect(payload.boardItems).toBe(5);
     expect(payload.fetchedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(payload.directions).toHaveLength(3);
 
@@ -475,12 +475,12 @@ describe("ralph_hero__hello_directions", () => {
     const result = await tool.handler(buildArgs(), {});
     const payload = parsePayload(result) as {
       directions: unknown[];
-      totalCandidates: number;
+      boardItems: number;
     };
 
     expect(result.isError).toBeUndefined();
     expect(payload.directions).toEqual([]);
-    expect(payload.totalCandidates).toBe(0);
+    expect(payload.boardItems).toBe(0);
   });
 
   // -------------------------------------------------------------------------
@@ -526,11 +526,11 @@ describe("ralph_hero__hello_directions", () => {
     const result = await tool.handler(buildArgs(), {});
     const payload = parsePayload(result) as {
       directions: Array<{ issue: { number: number } | null }>;
-      totalCandidates: number;
+      boardItems: number;
     };
 
     expect(result.isError).toBeUndefined();
-    expect(payload.totalCandidates).toBe(3);
+    expect(payload.boardItems).toBe(3);
 
     // Both projects were queried (2 field-cache + 2 items = 4 calls).
     expect(projectQuery.mock.calls.length).toBeGreaterThanOrEqual(4);
@@ -679,11 +679,11 @@ describe("ralph_hero__hello_directions", () => {
     const result = await tool.handler({}, {});
     const payload = parsePayload(result) as {
       directions: Array<{ issue: { number: number } | null }>;
-      totalCandidates: number;
+      boardItems: number;
     };
 
     expect(result.isError).toBeUndefined();
-    expect(payload.totalCandidates).toBe(5);
+    expect(payload.boardItems).toBe(5);
     // Default limit of 3 was honored.
     expect(payload.directions).toHaveLength(3);
     // Top three by priority.

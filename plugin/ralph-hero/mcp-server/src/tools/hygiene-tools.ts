@@ -40,7 +40,7 @@ export function registerHygieneTools(
 ): void {
   server.tool(
     "ralph_hero__project_hygiene",
-    "Generate a project board hygiene report. Identifies archive candidates, stale items, orphaned backlog entries, missing fields, WIP violations, and duplicate candidates. Returns: report with 7 sections + summary stats.",
+    "Generate a project board hygiene report. Identifies archive candidates, stale items, orphaned backlog entries, missing fields, WIP violations, and duplicate candidates. Returns: report with 7 sections + summary stats. Top-level `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools — next_actions, pipeline_dashboard, project_hygiene). Per-category counts in `summary` (archiveCandidateCount, staleCount, orphanCount, fieldCoveragePercent, wipViolationCount, duplicateCandidateCount) are post-filter and represent distinct buckets.",
     {
       owner: z
         .string()

@@ -99,7 +99,7 @@ issue):
     }
   ],
   "fetchedAt": "2026-05-03T14:25:00.000Z",
-  "totalCandidates": 47
+  "boardItems": 47
 }
 ```
 
@@ -146,7 +146,7 @@ Expected behaviour (the skill synthesizes prose):
     }
   ],
   "fetchedAt": "2026-05-03T14:25:00.000Z",
-  "totalCandidates": 1
+  "boardItems": 1
 }
 ```
 

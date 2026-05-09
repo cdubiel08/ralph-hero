@@ -20,7 +20,7 @@
  *   5. Build a `RankConfig` from the args + defaults (with injected `now`).
  *   6. Compute each PR's `ageHours` at the boundary and call
  *      `rankDirections(allItems, enrichedPRs, config)`.
- *   7. Return `{ directions, fetchedAt, totalCandidates }`.
+ *   7. Return `{ directions, fetchedAt, boardItems }`.
  *
  * Determinism: `fetchedAt` is the only time-varying field. Two consecutive
  * calls on the same board state produce byte-identical `directions[]`
@@ -454,7 +454,11 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
       return toolSuccess({
         directions,
         fetchedAt: now.toISOString(),
-        totalCandidates: allItems.length,
+        // `boardItems` is the raw count of items on the project board pre-filter
+        // (sum across all configured project numbers). Uniform across discovery
+        // tools (next_actions, pipeline_dashboard, project_hygiene). The number
+        // of returned `directions` is bounded by `limit` and may be much smaller.
+        boardItems: allItems.length,
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -476,7 +480,7 @@ export function registerDirectionsTools(
 
   server.tool(
     "ralph_hero__hello_directions",
-    "[DEPRECATED — use ralph_hero__next_actions instead. Removed in 2.7.0.] Compute up to N deterministic 'directions' for the hello skill's session briefing. Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items). Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0.",
+    "[DEPRECATED — use ralph_hero__next_actions instead. Removed in 2.7.0.] Compute up to N deterministic 'directions' for the hello skill's session briefing. Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items). Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0. Returns `{ directions, fetchedAt, boardItems }` where `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools); the returned `directions` array is bounded by `limit`.",
     {
       owner: z
         .string()
@@ -535,7 +539,7 @@ export function registerDirectionsTools(
 
   server.tool(
     "ralph_hero__next_actions",
-    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items) — callers no longer pass an `openPRs` argument. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the fallback never fires for `audience='human'`.",
+    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items) — callers no longer pass an `openPRs` argument. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the fallback never fires for `audience='human'`. Returns `{ directions, fetchedAt, boardItems }` where `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools); the returned `directions` array is bounded by `limit`.",
     {
       owner: z
         .string()
