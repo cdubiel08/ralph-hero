@@ -64,9 +64,9 @@ A new vitest file that, on every `npm test` run, parses the YAML frontmatter of 
 
 ### Verification
 
-- [ ] `npm test` passes from `plugin/ralph-hero/mcp-server/` with the new file present.
-- [ ] Locally deleting `tools:` from `agents/impl-agent.md` causes the suite to fail with a message naming `impl-agent` and `tools`.
-- [ ] Locally deleting `model:` from `skills/ralph-plan/SKILL.md` causes the suite to fail with a message naming `ralph-plan` and `model`.
+- [x] `npm test` passes from `plugin/ralph-hero/mcp-server/` with the new file present.
+- [x] Locally deleting `tools:` from `agents/impl-agent.md` causes the suite to fail with a message naming `impl-agent` and `tools`.
+- [x] Locally deleting `model:` from `skills/ralph-plan/SKILL.md` causes the suite to fail with a message naming `ralph-plan` and `model`.
 
 ## What We're NOT Doing
 
@@ -129,9 +129,9 @@ Create one vitest file under `plugin/ralph-hero/mcp-server/src/__tests__/` that 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` from `plugin/ralph-hero/mcp-server/` — no errors.
-- [ ] `npm test` from `plugin/ralph-hero/mcp-server/` — all passing, including the 10 new test cases (5 skills × 1 group + 5 agents × 1 group, give or take per-`it` granularity).
-- [ ] `npx vitest run src/__tests__/skill-frontmatter.test.ts` — the new file alone passes.
+- [x] `npm run build` from `plugin/ralph-hero/mcp-server/` — no errors.
+- [x] `npm test` from `plugin/ralph-hero/mcp-server/` — all passing, including the 10 new test cases (5 skills × 1 group + 5 agents × 1 group, give or take per-`it` granularity).
+- [x] `npx vitest run src/__tests__/skill-frontmatter.test.ts` — the new file alone passes.
 
 #### Manual Verification:
 - [ ] Test failure output, when a field is removed, clearly identifies which skill/agent and which field. (Confirmed via Task 1.2.)
