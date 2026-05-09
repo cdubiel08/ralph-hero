@@ -584,10 +584,10 @@ This is a `.template` file — the consumer copies it, hand-edits the absolute p
 
 #### Automated Verification
 
-- [ ] Script exists and is executable: `test -x plugin/ralph-hero/scripts/activity/logrotate.sh`.
-- [ ] Test suite passes: `bash plugin/ralph-hero/scripts/activity/__tests__/logrotate.test.sh`.
-- [ ] Dry-run on empty dir succeeds: `RALPH_ACTIVITY_DIR=/tmp/nope plugin/ralph-hero/scripts/activity/logrotate.sh --dry-run`.
-- [ ] Launchd template exists: `test -f plugin/ralph-hero/scripts/activity/launchd/com.ralph.activity-rotate.plist.template`.
+- [x] Script exists and is executable: `test -x plugin/ralph-hero/scripts/activity/logrotate.sh`.
+- [x] Test suite passes: `bash plugin/ralph-hero/scripts/activity/__tests__/logrotate.test.sh`.
+- [x] Dry-run on empty dir succeeds: `RALPH_ACTIVITY_DIR=/tmp/nope plugin/ralph-hero/scripts/activity/logrotate.sh --dry-run`.
+- [x] Launchd template exists: `test -f plugin/ralph-hero/scripts/activity/launchd/com.ralph.activity-rotate.plist.template`.
 
 #### Manual Verification
 
