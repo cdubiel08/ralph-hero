@@ -161,6 +161,16 @@ Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead 
 
 `/ralph-hero:autopilot` is a self-paced backlog clearer that wraps `/hero` in a `ScheduleWakeup`-based loop. Single-command shorthand for autonomous overnight runs. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`. Audit log at `~/.ralph-hero/autopilot.jsonl`. See `skills/autopilot/SKILL.md` for the tick state machine and `hooks/scripts/autopilot-wakeup-gate.sh` for the cache-window/prompt-regex safety gate. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
 
+### Activity log + retention
+
+Hooks write per-session activity into `~/.ralph-hero/activity/YYYY/MM/DD.jsonl` (path overridable via `RALPH_ACTIVITY_DIR`). One JSON object per line. Events are categorized as `work` (state-mutating tool calls, agent dispatches, skill invocations) or `meta` (read-only tool calls — Bash, Read, Edit, etc.) by `record-activity.sh`. The `recent_activity` MCP tool reads this log; /hello's catch-up agent filters by `category: "work"` for narrative synthesis.
+
+- **Writer**: `plugin/ralph-hero/hooks/scripts/record-activity.sh` (PostToolUse, matcher-less; also wired to SessionStart).
+- **Reader**: `plugin/ralph-hero/mcp-server/src/lib/activity.ts` + `tools/activity-tools.ts`. Pure functions; no cursor state inside the server.
+- **Cursor advance**: `plugin/ralph-hero/hooks/scripts/cursor-advance-catch-up.sh` (PostToolUse(`ralph_hero__recent_activity`)) writes `~/.ralph-hero/cursors/catch-up.json` from `tool_response.cursor_advanced_to`.
+- **Retention**: `plugin/ralph-hero/scripts/activity/logrotate.sh` prunes day files older than `RALPH_ACTIVITY_RETENTION_DAYS` (default 14). Optional launchd template at `scripts/activity/launchd/com.ralph.activity-rotate.plist.template`.
+- **Compact mode**: `recent_activity({ compact: true, limit: 50 })` projects events to `{ts, kind, tool, project}` for narrative consumers; ~50% byte reduction vs the full shape.
+
 ### Caching Strategy
 
 Two separate caches serve different purposes:

@@ -6,6 +6,9 @@
 # Usage: record-activity.sh <kind>
 #   kind: tool_called | skill_invoked | agent_spawned | agent_completed | session_start | session_stop
 #
+# Retention: see plugin/ralph-hero/scripts/activity/logrotate.sh for the
+# matched pruning script. Default retention window: 14 days.
+#
 # Stdin JSON field map (extracted via jq):
 #   tool_name   -> target.tool (for kind=tool_called); also drives categorization
 #   skill_name  -> target.skill (for kind=skill_invoked; not surfaced by harness in production)

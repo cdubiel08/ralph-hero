@@ -639,9 +639,9 @@ After line 6 (`# Usage: record-activity.sh <kind>`), insert:
 
 #### Automated Verification
 
-- [ ] CLAUDE.md has the new section: `grep -q 'Activity log + retention' plugin/ralph-hero/CLAUDE.md`.
-- [ ] CLAUDE.md references the new script path: `grep -q 'scripts/activity/logrotate.sh' plugin/ralph-hero/CLAUDE.md`.
-- [ ] record-activity.sh has the retention pointer: `grep -q 'logrotate.sh' plugin/ralph-hero/hooks/scripts/record-activity.sh`.
+- [x] CLAUDE.md has the new section: `grep -q 'Activity log + retention' plugin/ralph-hero/CLAUDE.md`.
+- [x] CLAUDE.md references the new script path: `grep -q 'scripts/activity/logrotate.sh' plugin/ralph-hero/CLAUDE.md`.
+- [x] record-activity.sh has the retention pointer: `grep -q 'logrotate.sh' plugin/ralph-hero/hooks/scripts/record-activity.sh`.
 
 #### Manual Verification
 
