@@ -140,9 +140,9 @@ Author three new vitest files under `plugin/ralph-hero/mcp-server/src/__tests__/
 
 #### Automated Verification:
 
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` passes with three new files included.
-- [ ] `npm run build` (tsc) — no errors.
-- [ ] Per-file coverage on `lib/rate-limiter.ts`, `lib/group-detection.ts`, `lib/dashboard-fetch.ts` each ≥ 80% lines as reported by `@vitest/coverage-v8`.
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` passes with three new files included.
+- [x] `npm run build` (tsc) — no errors.
+- [x] Per-file coverage on `lib/rate-limiter.ts`, `lib/group-detection.ts`, `lib/dashboard-fetch.ts` each ≥ 80% lines as reported by `@vitest/coverage-v8`. (Achieved: 100% / 85.22% / 100% lines.)
 
 #### Manual Verification:
 
