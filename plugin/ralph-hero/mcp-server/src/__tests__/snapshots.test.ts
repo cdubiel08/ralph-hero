@@ -209,7 +209,7 @@ describe("toSnapshot", () => {
         eligibleForArchive: 0,
         eligibleItems: [],
         recentlyCompleted: 0,
-        archiveThresholdDays: 14,
+        archiveAgeDays: 14,
       },
     };
   }
@@ -283,7 +283,7 @@ describe("toSnapshot", () => {
           eligibleForArchive: 0,
           eligibleItems: [],
           recentlyCompleted: 0,
-          archiveThresholdDays: 14,
+          archiveAgeDays: 14,
         },
       },
       metrics: {

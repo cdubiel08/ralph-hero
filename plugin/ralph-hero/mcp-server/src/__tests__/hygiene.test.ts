@@ -50,7 +50,7 @@ function makeItem(overrides: Partial<DashboardItem> = {}): DashboardItem {
 // ---------------------------------------------------------------------------
 
 describe("findArchiveCandidates", () => {
-  it("includes Done items older than archiveDays", () => {
+  it("includes Done items older than archiveAgeDays", () => {
     const items = [
       makeItem({
         number: 1,
@@ -63,7 +63,7 @@ describe("findArchiveCandidates", () => {
     expect(result[0].number).toBe(1);
   });
 
-  it("excludes Done items younger than archiveDays", () => {
+  it("excludes Done items younger than archiveAgeDays", () => {
     const items = [
       makeItem({
         number: 1,
@@ -74,7 +74,7 @@ describe("findArchiveCandidates", () => {
     expect(findArchiveCandidates(items, NOW, 14)).toHaveLength(0);
   });
 
-  it("includes Canceled items older than archiveDays", () => {
+  it("includes Canceled items older than archiveAgeDays", () => {
     const items = [
       makeItem({
         number: 2,
@@ -105,7 +105,7 @@ describe("findArchiveCandidates", () => {
         closedAt: new Date(NOW - 3 * DAY_MS).toISOString(), // recent
       }),
     ];
-    // closedAt is 3 days, archiveDays is 14 — should NOT be candidate
+    // closedAt is 3 days, archiveAgeDays is 14 — should NOT be candidate
     expect(findArchiveCandidates(items, NOW, 14)).toHaveLength(0);
   });
 

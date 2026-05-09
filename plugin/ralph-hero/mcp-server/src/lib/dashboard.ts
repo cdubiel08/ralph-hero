@@ -11,6 +11,12 @@ import {
   TERMINAL_STATES,
   HUMAN_STATES,
 } from "./workflow-states.js";
+import {
+  ARCHIVE_AGE_DAYS,
+  CRITICAL_STUCK_HOURS,
+  RECENT_WINDOW_DAYS,
+  STUCK_THRESHOLD_HOURS,
+} from "./thresholds.js";
 /**
  * WorkStream type matching the shape from work-stream-detection.ts.
  * Defined here to avoid import dependency until GH-323 merges.
@@ -91,7 +97,7 @@ export interface ArchiveStats {
     staleDays: number;
   }>;
   recentlyCompleted: number;
-  archiveThresholdDays: number;
+  archiveAgeDays: number;
 }
 
 export interface ProjectBreakdown {
@@ -163,15 +169,15 @@ export interface HealthConfig {
   criticalStuckHours: number; // default: 96
   wipLimits: Record<string, number>; // default: {}
   doneWindowDays: number; // default: 7
-  archiveThresholdDays: number; // default: 14
+  archiveAgeDays: number; // default: 14
 }
 
 export const DEFAULT_HEALTH_CONFIG: HealthConfig = {
-  stuckThresholdHours: 48,
-  criticalStuckHours: 96,
+  stuckThresholdHours: STUCK_THRESHOLD_HOURS,
+  criticalStuckHours: CRITICAL_STUCK_HOURS,
   wipLimits: {},
-  doneWindowDays: 7,
-  archiveThresholdDays: 14,
+  doneWindowDays: RECENT_WINDOW_DAYS,
+  archiveAgeDays: ARCHIVE_AGE_DAYS,
 };
 
 // ---------------------------------------------------------------------------
@@ -519,7 +525,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Compute archive eligibility stats from project items.
  *
- * - "Eligible for archive": Done/Canceled items stale beyond archiveThresholdDays
+ * - "Eligible for archive": Done/Canceled items stale beyond archiveAgeDays
  * - "Recently completed": Done/Canceled items within doneWindowDays
  * - Staleness computed from closedAt (preferred) or updatedAt (fallback)
  * - Zero additional API calls — works on already-fetched items.
@@ -527,10 +533,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export function computeArchiveStats(
   items: DashboardItem[],
   now: number,
-  archiveThresholdDays: number,
+  archiveAgeDays: number,
   doneWindowDays: number,
 ): ArchiveStats {
-  const thresholdMs = archiveThresholdDays * DAY_MS;
+  const thresholdMs = archiveAgeDays * DAY_MS;
   const recentMs = doneWindowDays * DAY_MS;
 
   const eligible: ArchiveStats["eligibleItems"] = [];
@@ -566,7 +572,7 @@ export function computeArchiveStats(
     eligibleForArchive: eligible.length,
     eligibleItems: eligible,
     recentlyCompleted,
-    archiveThresholdDays,
+    archiveAgeDays,
   };
 }
 
@@ -721,7 +727,7 @@ export function buildDashboard(
   const archive = computeArchiveStats(
     items,
     now,
-    config.archiveThresholdDays,
+    config.archiveAgeDays,
     config.doneWindowDays,
   );
 
@@ -889,7 +895,7 @@ export function formatMarkdown(
     lines.push("## Archive Eligibility");
     lines.push("");
     lines.push(
-      `**Eligible for archive**: ${data.archive.eligibleForArchive} items (stale > ${data.archive.archiveThresholdDays} days in Done/Canceled)`,
+      `**Eligible for archive**: ${data.archive.eligibleForArchive} items (stale > ${data.archive.archiveAgeDays} days in Done/Canceled)`,
     );
     lines.push(
       `**Recently completed**: ${data.archive.recentlyCompleted} items`,
@@ -1103,7 +1109,7 @@ export function formatAscii(data: DashboardData): string {
   // Archive summary
   if (data.archive) {
     lines.push(
-      `Archive: ${data.archive.eligibleForArchive} eligible (threshold: ${data.archive.archiveThresholdDays}d), ${data.archive.recentlyCompleted} recent`,
+      `Archive: ${data.archive.eligibleForArchive} eligible (threshold: ${data.archive.archiveAgeDays}d), ${data.archive.recentlyCompleted} recent`,
     );
   }
 

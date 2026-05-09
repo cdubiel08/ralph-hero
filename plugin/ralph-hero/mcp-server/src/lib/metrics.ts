@@ -6,6 +6,11 @@
  */
 
 import type { DashboardItem, DashboardData, HealthWarning } from "./dashboard.js";
+import {
+  AT_RISK_THRESHOLD,
+  OFF_TRACK_THRESHOLD,
+  RECENT_WINDOW_DAYS,
+} from "./thresholds.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,9 +38,9 @@ export interface MetricsResult {
 }
 
 export const DEFAULT_METRICS_CONFIG: MetricsConfig = {
-  velocityWindowDays: 7,
-  atRiskThreshold: 2,
-  offTrackThreshold: 6,
+  velocityWindowDays: RECENT_WINDOW_DAYS,
+  atRiskThreshold: AT_RISK_THRESHOLD,
+  offTrackThreshold: OFF_TRACK_THRESHOLD,
   severityWeights: { critical: 3, warning: 1, info: 0 },
 };
 

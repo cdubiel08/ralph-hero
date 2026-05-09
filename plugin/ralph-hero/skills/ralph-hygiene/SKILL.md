@@ -36,13 +36,13 @@ You are a hygiene specialist. You scan the project board for archive-eligible it
 
 Call `project_hygiene` with:
 - `format`: `"markdown"`
-- `archiveDays`: `14`
+- `archiveAgeDays`: `14`
 - `staleDays`: `7`
 - `orphanDays`: `14`
 - `wipLimits`: parsed JSON from `RALPH_HYGIENE_WIP_LIMITS` if set, otherwise omit
 
 This returns the seven hygiene categories in one call:
-- **Archive candidates**: Done/Canceled items stale beyond `archiveDays`
+- **Archive candidates**: Done/Canceled items stale beyond `archiveAgeDays`
 - **Stale items**: Non-terminal items not updated within `staleDays`
 - **Orphaned items**: Backlog-only, no assignees, older than `orphanDays`
 - **Field gaps**: Non-terminal items missing `estimate` or `priority`
@@ -87,7 +87,7 @@ Summary:
 `project_hygiene` does not generate the pipeline health warnings (lock collisions, oversized issues, etc). For those, call `pipeline_dashboard` with:
 - `format`: `"markdown"`
 - `includeHealth`: `true`
-- `archiveThresholdDays`: `14`
+- `archiveAgeDays`: `14`
 
 Append the dashboard's `health` section warnings to the report:
 

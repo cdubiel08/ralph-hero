@@ -52,26 +52,26 @@ export function registerHygieneTools(
         .describe(
           "Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.",
         ),
-      archiveDays: z
+      archiveAgeDays: z
         .number()
         .optional()
         .default(14)
         .describe(
-          "Days before Done/Canceled items become archive candidates (default: 14)",
+          "Days before Done/Canceled items become archive candidates (default: 14, unit: days). Same concept as pipeline_dashboard.archiveAgeDays — both renamed from the legacy archiveDays/archiveThresholdDays pair so the value is shared across discovery tools.",
         ),
       staleDays: z
         .number()
         .optional()
         .default(7)
         .describe(
-          "Days before non-terminal items are flagged as stale (default: 7)",
+          "Days before non-terminal items are flagged as stale (default: 7, unit: days). Shares the RECENT_WINDOW_DAYS value with dashboard.doneWindowDays, next_actions.treeRecentDoneDays, and metrics.velocityWindowDays.",
         ),
       orphanDays: z
         .number()
         .optional()
         .default(14)
         .describe(
-          "Days before unassigned Backlog items are flagged as orphaned (default: 14)",
+          "Days before unassigned Backlog items are flagged as orphaned (default: 14, unit: days). Pulls from ORPHAN_AGE_DAYS in src/lib/thresholds.ts (separate concept from archiveAgeDays).",
         ),
       wipLimits: z
         .record(z.coerce.number())
@@ -82,7 +82,7 @@ export function registerHygieneTools(
         .optional()
         .default(0.8)
         .describe(
-          "Similarity threshold for duplicate detection (0.5-1.0, default: 0.8)",
+          "Similarity threshold for duplicate detection (0.5-1.0, default: 0.8, unit: ratio). Pulls from SIMILARITY_THRESHOLD in src/lib/thresholds.ts.",
         ),
       format: z
         .enum(["json", "markdown"])
@@ -143,7 +143,7 @@ export function registerHygieneTools(
         // Build hygiene config
         const hygieneConfig: HygieneConfig = {
           ...DEFAULT_HYGIENE_CONFIG,
-          archiveDays: args.archiveDays ?? 14,
+          archiveAgeDays: args.archiveAgeDays ?? 14,
           staleDays: args.staleDays ?? 7,
           orphanDays: args.orphanDays ?? 14,
           wipLimits: args.wipLimits ?? {},

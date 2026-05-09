@@ -505,7 +505,7 @@ export function registerDirectionsTools(
         .optional()
         .default(48)
         .describe(
-          "Hours before a non-lock issue is considered stale (default: 48).",
+          "Hours before a non-lock issue is considered stale (default: 48, unit: hours). Pulls from STUCK_THRESHOLD_HOURS in src/lib/thresholds.ts.",
         ),
       lockStaleHours: z
         .number()
@@ -513,7 +513,7 @@ export function registerDirectionsTools(
         .optional()
         .default(24)
         .describe(
-          "Hours before a lock-state issue is considered stalled (default: 24).",
+          "Hours before a lock-state issue is considered stalled (default: 24, unit: hours). Pulls from LOCK_STALE_HOURS in src/lib/thresholds.ts.",
         ),
       treeRecentDoneDays: z
         .number()
@@ -521,7 +521,7 @@ export function registerDirectionsTools(
         .optional()
         .default(7)
         .describe(
-          "Days within which a sibling Done event still pulls a tree forward (default: 7).",
+          "Days within which a sibling Done event still pulls a tree forward (default: 7, unit: days). Pulls from RECENT_WINDOW_DAYS in src/lib/thresholds.ts.",
         ),
       prStaleHours: z
         .number()
@@ -529,7 +529,7 @@ export function registerDirectionsTools(
         .optional()
         .default(24)
         .describe(
-          "Hours before an open PR is considered stale (default: 24).",
+          "Hours before an open PR is considered stale (default: 24, unit: hours). Pulls from PR_STALE_HOURS in src/lib/thresholds.ts.",
         ),
     },
     async (args) => {
@@ -571,7 +571,7 @@ export function registerDirectionsTools(
         .optional()
         .default(48)
         .describe(
-          "Hours before a non-lock issue is considered stale (default: 48).",
+          "Hours before a non-lock issue is considered stale (default: 48, unit: hours). Shared with pipeline_dashboard.stuckThresholdHours — both pull from STUCK_THRESHOLD_HOURS in src/lib/thresholds.ts.",
         ),
       lockStaleHours: z
         .number()
@@ -579,7 +579,7 @@ export function registerDirectionsTools(
         .optional()
         .default(24)
         .describe(
-          "Hours before a lock-state issue is considered stalled (default: 24).",
+          "Hours before a lock-state issue is considered stalled (default: 24, unit: hours). Pulls from LOCK_STALE_HOURS in src/lib/thresholds.ts.",
         ),
       treeRecentDoneDays: z
         .number()
@@ -587,7 +587,7 @@ export function registerDirectionsTools(
         .optional()
         .default(7)
         .describe(
-          "Days within which a sibling Done event still pulls a tree forward (default: 7).",
+          "Days within which a sibling Done event still pulls a tree forward (default: 7, unit: days). Shares the RECENT_WINDOW_DAYS value with hygiene.staleDays, dashboard.doneWindowDays, and metrics.velocityWindowDays.",
         ),
       prStaleHours: z
         .number()
@@ -595,7 +595,7 @@ export function registerDirectionsTools(
         .optional()
         .default(24)
         .describe(
-          "Hours before an open PR is considered stale (default: 24).",
+          "Hours before an open PR is considered stale (default: 24, unit: hours). Pulls from PR_STALE_HOURS in src/lib/thresholds.ts.",
         ),
     },
     async (args) => {

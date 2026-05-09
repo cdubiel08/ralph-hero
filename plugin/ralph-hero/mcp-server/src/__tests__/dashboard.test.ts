@@ -846,7 +846,7 @@ describe("formatMarkdown", () => {
       boardItems: 1,
       phases: [{ state: "Backlog", count: 1, estimatePoints: 0, issues: [] }],
       health: { ok: true, warnings: [] },
-      archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
+      archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveAgeDays: 14 },
     };
     const md = formatMarkdown(healthy);
     expect(md).toContain("**Health**: All clear");
@@ -938,7 +938,7 @@ describe("formatAscii", () => {
       boardItems: 1,
       phases: [{ state: "Backlog", count: 1, estimatePoints: 0, issues: [] }],
       health: { ok: true, warnings: [] },
-      archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveThresholdDays: 14 },
+      archive: { eligibleForArchive: 0, eligibleItems: [], recentlyCompleted: 0, archiveAgeDays: 14 },
     };
     const ascii = formatAscii(healthy);
     expect(ascii).toContain("Health: OK");
@@ -1037,7 +1037,7 @@ describe("buildDashboard", () => {
 
     const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG, NOW);
     expect(data.archive).toBeDefined();
-    expect(data.archive.archiveThresholdDays).toBe(14);
+    expect(data.archive.archiveAgeDays).toBe(14);
     expect(data.archive.eligibleForArchive).toBe(1);
     expect(data.archive.eligibleItems[0].number).toBe(1);
     expect(data.archive.recentlyCompleted).toBe(1);
@@ -1223,7 +1223,7 @@ describe("computeArchiveStats", () => {
     expect(stats.eligibleForArchive).toBe(0);
     expect(stats.eligibleItems).toEqual([]);
     expect(stats.recentlyCompleted).toBe(0);
-    expect(stats.archiveThresholdDays).toBe(14);
+    expect(stats.archiveAgeDays).toBe(14);
   });
 });
 

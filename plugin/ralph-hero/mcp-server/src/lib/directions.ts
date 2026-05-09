@@ -30,6 +30,13 @@
 
 import type { DashboardItem } from "./dashboard.js";
 import { LOCK_STATES, STATE_ORDER } from "./workflow-states.js";
+import {
+  AGENT_BACKLOG_FALLBACK_PENALTY,
+  LOCK_STALE_HOURS,
+  PR_STALE_HOURS,
+  RECENT_WINDOW_DAYS,
+  STUCK_THRESHOLD_HOURS,
+} from "./thresholds.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -207,10 +214,10 @@ export interface RankConfig {
 
 export const DEFAULT_RANK_CONFIG: Omit<RankConfig, "now"> = {
   limit: 3,
-  stuckThresholdHours: 48,
-  lockStaleHours: 24,
-  treeRecentDoneDays: 7,
-  prStaleHours: 24,
+  stuckThresholdHours: STUCK_THRESHOLD_HOURS,
+  lockStaleHours: LOCK_STALE_HOURS,
+  treeRecentDoneDays: RECENT_WINDOW_DAYS,
+  prStaleHours: PR_STALE_HOURS,
   audience: "human",
 };
 
@@ -250,14 +257,6 @@ const PR_REVIEW_REQUIRED_BOOST = -200;
  * waiting for the human's attention.
  */
 const HUMAN_NEEDED_UNBLOCK_BOOST = -150;
-
-/**
- * Penalty applied to Backlog / null-state items that surface only via the
- * `audience === "agent"` fallback. Large positive value ensures Backlog
- * fallback items always rank below any actionable-phase item — Backlog
- * surfaces only when the actionable pool is empty.
- */
-const AGENT_BACKLOG_FALLBACK_PENALTY = 100;
 
 /**
  * Per-estimate penalty applied when audience === "agent". Larger items
