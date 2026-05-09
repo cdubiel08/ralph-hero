@@ -42,7 +42,9 @@ Use these resolved values when constructing GitHub URLs or referencing the repos
 
 You are the autopilot orchestrator. One invocation = one tick. Each tick: decode-state -> pick -> check-worktrees -> dispatch -> diff -> record -> schedule-or-stop.
 
-This phase implements the full per-tick flow through Step 10. Subsequent phases (#1140, #1141) add the audit-log JSONL writes + `PreToolUse` hook gate, and the docs + eval scenarios respectively.
+<!-- internal: this phase implements the full per-tick flow through Step 10. Subsequent phases
+(#1140, #1141) add the audit-log JSONL writes + `PreToolUse` hook gate, and the docs + eval scenarios
+respectively. -->
 
 ## Step 0: Safety check
 
@@ -50,7 +52,8 @@ If `RALPH_AUTOPILOT_ENABLE` is not exactly the string `"true"`, STOP immediately
 
 > Autopilot is opt-in. To enable: `export RALPH_AUTOPILOT_ENABLE=true`
 
-(Hard opt-in for unattended automation. Refuse cleanly so the user can re-invoke with the env var set. No fallthrough — terminate the skill body here.)
+<!-- internal: hard opt-in for unattended automation. Refuse cleanly so the user can re-invoke
+with the env var set. No fallthrough — terminate the skill body here. -->
 
 ## Step 1: Argument parsing + state decode
 
@@ -87,45 +90,60 @@ If `--state` is **absent** (first tick): initialize state to:
 }
 ```
 
-The `state` object is referenced in Step 2.5 (history filter) and will be re-encoded into the next tick's `--state` argument by Phase 3's loop machinery (not in this phase).
+<!-- internal: the `state` object is referenced in Step 2.5 (history filter) and will be re-encoded into the next tick's `--state` argument by Phase 3's loop machinery. -->
 
 ## Step 2: Pick the next actionable issue
 
-Call `next_actions(audience="agent", limit=10)`. The limit is raised from the default 5 to give Step 2.5's filter enough headroom to skip past human-gated candidates without exhausting the list.
+Call `next_actions(audience="agent", limit=10)`. <!-- internal: the limit is raised from the default 5 to give Step 2.5's filter enough headroom to skip past human-gated candidates without exhausting the list. -->
 
 Inspect the result:
 
-- If `items` is empty -> backlog clear -> STOP. Report "Backlog empty" with a brief final summary. Do NOT call `ScheduleWakeup` (loop scheduling is added in Phase 3, but even there the empty-backlog branch terminates cleanly without rescheduling).
-- Filter to `kind == "issue"` only. Skip PR-kind, lock-stale, and tree-continue directions — those are handled by other skills, not autopilot's per-issue dispatch.
+- If `items` is empty -> backlog clear -> STOP. Report "Backlog empty" with a brief final summary. Do NOT call `ScheduleWakeup`.
+- Filter to `kind == "issue"` only. Skip PR-kind, lock-stale, and tree-continue directions. <!-- internal: those are handled by other skills, not autopilot's per-issue dispatch. -->
 - If no `kind == "issue"` candidate remains after the filter -> STOP, same as empty backlog.
 - Otherwise: the top issue-kind direction is the candidate `<picked>`. Pass it to Step 2.5.
 
 ## Step 2.5: Skip "human-gated" candidates (In-Review filter)
 
-This filter prevents a false-positive escalation loop. **Background**: in `RALPH_REVIEW_MODE=interactive` (the default), hero lands a PR and stops; the issue's workflow state becomes `"In Review"`. But `"In Review"` is in `ACTIONABLE_PHASES` (verified at `plugin/ralph-hero/mcp-server/src/lib/directions.ts:180-185`), so `next_actions` will keep returning the just-PR'd issue. Without this filter, autopilot would re-pick the same issue, hero would detect "phase=INTEGRATE, interactive mode, stop", outcome would be `no_progress`, and after 3 ticks autopilot would *escalate a perfectly healthy in-review PR to Human Needed*.
+<!-- internal: rationale (do not surface to user)
+This filter prevents a false-positive escalation loop. In `RALPH_REVIEW_MODE=interactive` (the default),
+hero lands a PR and stops; the issue's workflow state becomes `"In Review"`. But `"In Review"` is in
+`ACTIONABLE_PHASES` (verified at `plugin/ralph-hero/mcp-server/src/lib/directions.ts:180-185`), so
+`next_actions` will keep returning the just-PR'd issue. Without this filter, autopilot would re-pick
+the same issue, hero would detect "phase=INTEGRATE, interactive mode, stop", outcome would be
+`no_progress`, and after 3 ticks autopilot would escalate a perfectly healthy in-review PR to Human Needed.
+-->
 
 Apply both filter rules to the candidate list returned by Step 2:
 
-1. **Exclude `In Review` outright** — these are human-gated by design in interactive mode. Skip without dispatching:
+1. Drop `In Review` candidates:
 
    ```
    candidates = candidates.filter(c => c.workflowState !== "In Review")
    ```
 
-2. **Exclude issues already PR'd this loop** — even if their state somehow regressed, don't re-pick what we already shipped this run:
+2. Drop issues already PR'd this loop:
 
    ```
    candidates = candidates.filter(c => !state.history.some(h => h.issue === c.issue && h.outcome === "pr_landed"))
    ```
 
-**`--auto-merge` carve-out**: For MVP, the In-Review filter remains **ON regardless** of `--auto-merge`. Users who want autopilot to push past code review can re-invoke after merge. Auto-merge In-Review handling (running code-review + merge against in-review PRs without re-escalation) is tracked as follow-up work.
+<!-- internal: `--auto-merge` carve-out
+For MVP, the In-Review filter remains ON regardless of `--auto-merge`. Users who want autopilot
+to push past code review can re-invoke after merge. Auto-merge In-Review handling
+(running code-review + merge against in-review PRs without re-escalation) is tracked as follow-up work.
+-->
 
 After filtering:
 
-- If no candidates remain -> STOP with `outcome=backlog_empty`. The human-gated PRs and shipped issues count as "done from autopilot's perspective". The final report should mention any in-review PRs awaiting human merge so the user knows what's still queued for them.
-- Otherwise: the top remaining candidate is the picked issue `<picked>`. Subsequent steps (worktree liveness check, pre-state capture, hero dispatch, post-state diff, audit log, loop scheduling) are added in later phases — the skill body ends here for Phase 1.
+- If no candidates remain -> STOP with `outcome=backlog_empty`. Surface any in-review PRs in the final report so the user knows what is queued for them.
+- Otherwise: the top remaining candidate is the picked issue `<picked>`. Continue to Step 3.
 
-For Phase 1 only: report the picked issue (number, title, workflow state) and STOP. Do not dispatch hero, do not call `ScheduleWakeup`, do not write to the audit log — those are Phase 2/3/4 work.
+<!-- internal: Phase 1 contract (kept here for the LLM, not user output)
+For Phase 1 only: report the picked issue (number, title, workflow state) and STOP.
+Do not dispatch hero, do not call `ScheduleWakeup`, do not write to the audit log —
+those are Phase 2/3/4 work.
+-->
 
 ## Step 3: Worktree liveness check
 
@@ -146,9 +164,12 @@ Inspect the output for any line whose path matches `worktrees/GH-<picked-number>
 
    > Autopilot detected a stale worktree at `<path>` from a prior tick. Autopilot will not auto-clean worktrees because doing so risks destroying in-progress work. Please review `<path>`, commit or discard any pending changes, run `./scripts/remove-worktree.sh GH-<picked>`, then re-enable autopilot.
 
-3. Stop the loop: this tick is terminal. Do NOT proceed to Step 4. Do NOT call `ScheduleWakeup` (loop scheduling is Phase 3, but even there the worktree-collision branch must terminate — record this as `outcome=escalated` for any audit-log purposes added in Phase 4).
+3. Stop the loop: this tick is terminal. Do NOT proceed to Step 4. Do NOT call `ScheduleWakeup`. Record this as `outcome=escalated` in the audit log.
 
-This is the safe default — auto-cleanup risks destroying in-progress work. Autopilot never deletes worktrees, never deletes files under `worktrees/`, and never force-resets a branch. Recovery requires a human to inspect and clean up. (Automatic cleanup is tracked as follow-up work in the parent plan §Follow-up Work; it is an explicit non-goal of Phase 2.)
+<!-- internal: auto-cleanup risks destroying in-progress work. Autopilot never deletes worktrees,
+never deletes files under `worktrees/`, and never force-resets a branch. Recovery requires a human
+to inspect and clean up. Automatic cleanup is tracked as follow-up work in the parent plan §Follow-up Work;
+it is an explicit non-goal of Phase 2. -->
 
 **On no collision**: proceed to Step 4.
 
@@ -158,10 +179,11 @@ Call `get_issue(number=<picked>, includePipeline=true)` once and capture four fi
 
 - `pre.workflowState` — top-level `workflowState` field on the response (e.g., `"Backlog"`, `"In Progress"`, `"In Review"`).
 - `pre.phase` — pipeline phase name from the `pipeline` payload that `includePipeline=true` adds to the response (the high-level phase the orchestrator's pipeline detection assigned; used to spot phase advances that don't change `workflowState`).
-- `pre.subIssueCount` — read from `subIssuesSummary.total` on the `get_issue` response. The response payload already carries this, so no separate `list_sub_issues` call is needed in MVP — keep the tick lean. (If a future schema change drops `subIssuesSummary`, fall back to `list_sub_issues(number=<picked>)` and use its returned count; document the source in the audit-log entry once Phase 4 lands.)
-- `pre.linkedPRs` — collect any PR references already on the issue. Source: the `get_issue` response payload's existing PR-linkage fields (the same fields the regular `get_issue` view surfaces). No extra GitHub API calls.
+- `pre.subIssueCount` — read from `subIssuesSummary.total` on the `get_issue` response. <!-- internal: the response payload already carries this, so no separate `list_sub_issues` call is needed. If a future schema change drops `subIssuesSummary`, fall back to `list_sub_issues(number=<picked>)` and use its returned count. -->
+- `pre.linkedPRs` — collect any PR references already on the issue. Source: PR-linkage fields on the `get_issue` response payload. No extra GitHub API calls.
 
-`pre` lives only in the current tick's local scope — it is consumed by Step 6 and discarded. State persisted across ticks (the `state` object) is unaffected by Step 4.
+<!-- internal: `pre` lives only in the current tick's local scope — it is consumed by Step 6 and discarded.
+State persisted across ticks (the `state` object) is unaffected by Step 4. -->
 
 ## Step 5: Dispatch hero
 
@@ -169,17 +191,20 @@ Call `get_issue(number=<picked>, includePipeline=true)` once and capture four fi
 
 - Skip dispatch entirely. Do NOT call `Skill("ralph-hero:hero", ...)`.
 - Mark this tick's outcome as `outcome=dry_run`.
-- Emit a report to the user: `"Would dispatch hero for #<picked> (<title>) — skipped due to --dry-run"`.
-- Do NOT proceed to Step 6's pre/post diff (treat dry-run as terminal for outcome derivation — there is no post-state to compare because no work happened).
+- Emit to user: `"Would dispatch hero for #<picked> (<title>) — skipped due to --dry-run"`.
+- Do NOT proceed to Step 6's pre/post diff. <!-- internal: dry-run is terminal for outcome derivation; no post-state exists. -->
 
 **Real dispatch branch** (no `--dry-run`):
 
-Hero's review mode is controlled via the `RALPH_REVIEW_MODE` environment variable, **not** a CLI flag. Hero's `argument-hint` (see `plugin/ralph-hero/skills/hero/SKILL.md:3`) is just `<issue-number>` — there is no `--review-mode` flag. Hero reads `${RALPH_REVIEW_MODE:-interactive}` at load time (`hero/SKILL.md:50`); accepted values are `interactive` (stop at PR, default) or `auto` (auto-run code review and merge) per `hero/SKILL.md:517`.
+<!-- internal: hero's review mode is controlled via `RALPH_REVIEW_MODE`, not a CLI flag.
+Hero's `argument-hint` (see `plugin/ralph-hero/skills/hero/SKILL.md:3`) is just `<issue-number>`.
+Hero reads `${RALPH_REVIEW_MODE:-interactive}` at load time (`hero/SKILL.md:50`); accepted values
+are `interactive` (stop at PR, default) or `auto` (auto-run code review and merge) per `hero/SKILL.md:517`. -->
 
 Set the env var for the dispatch shell context based on the parsed flags from Step 1:
 
-- If `--auto-merge` is set: ensure `RALPH_REVIEW_MODE=auto` is exported in the shell environment hero will inherit. In practice, run `export RALPH_REVIEW_MODE=auto` via Bash before the `Skill()` call (or use a single Bash invocation that sets the env var inline before invoking the skill, whichever the surrounding skill body convention prefers).
-- Otherwise (default): ensure `RALPH_REVIEW_MODE=interactive` is set (or simply leave the env var untouched and rely on the `:-interactive` default in hero — but explicitly setting it is safer and self-documenting).
+- If `--auto-merge` is set: `export RALPH_REVIEW_MODE=auto` via Bash before the `Skill()` call.
+- Otherwise: `export RALPH_REVIEW_MODE=interactive` (explicit beats relying on the `:-interactive` default).
 
 Then dispatch hero with the picked issue as a single positional argument:
 
@@ -187,9 +212,13 @@ Then dispatch hero with the picked issue as a single positional argument:
 Skill("ralph-hero:hero", args="<picked>")
 ```
 
-Hero will run its full per-issue flow (research → plan → split → impl → pr → merge as appropriate) and return text output describing what happened. Capture hero's text output to a local variable `hero_output` for inclusion in the Phase 4 audit-log entry.
+Capture hero's text output to a local variable `hero_output` for inclusion in the Phase 4 audit-log entry.
 
-**Critical anti-pattern** (cited from parent plan-of-plans, R1 review): do **NOT** parse `hero_output` for outcome derivation. Text-grepping hero's free-text reports (the approach used in `plugin/ralph-hero/scripts/ralph-loop.sh`'s `grep -qiE "Queue empty|Triage complete"`) is fragile and was explicitly rejected by review. Outcome derivation is the job of Step 6's structured `get_issue` diff. `hero_output` is preserved only for the audit log (forensic context for humans), never for control flow.
+<!-- internal: do NOT parse `hero_output` for outcome derivation. Text-grepping hero's
+free-text reports (the approach used in `plugin/ralph-hero/scripts/ralph-loop.sh`'s
+`grep -qiE "Queue empty|Triage complete"`) is fragile and was explicitly rejected by review.
+Outcome derivation is the job of Step 6's structured `get_issue` diff.
+`hero_output` is preserved only for the audit log (forensic context for humans), never for control flow. -->
 
 After hero returns, proceed to Step 6.
 
@@ -212,11 +241,16 @@ Compare `pre` to `post` row-by-row using the canonical 8-row diff table below. *
 | any | unchanged | `no_progress` | no |
 | any | different from pre, not matched by rows above (catch-all) | `other_change` | yes (treat as advanced for streak-reset) |
 
-The catch-all `other_change` row (added in R3) prevents silent loss of unexpected state transitions — anything that changes the workflow state but doesn't match a documented forward path (for example, a backward transition, a regression, or any other unanticipated mutation) is recorded with `outcome=other_change` in the audit log for forensic review and treated as progress for streak-reset purposes. Without this row, an unexpected post-state would silently fall through and be misclassified as `no_progress`.
+<!-- internal: the catch-all `other_change` row prevents silent loss of unexpected state transitions —
+anything that changes the workflow state but doesn't match a documented forward path
+(backward transition, regression, or any unanticipated mutation) is recorded with
+`outcome=other_change` and treated as progress for streak-reset. Without this row,
+an unexpected post-state would silently fall through and be misclassified as `no_progress`. -->
 
-When `outcome=escalated` (row 2 matches): also capture the most recent comment text on the issue into a local variable `escalation_reason` for inclusion in the Phase 4 audit-log entry. The simplest source is the last entry of the `comments` array on the post-state `get_issue` response payload (no extra API call). Hero's escalation flow posts a Human Needed comment as part of the transition, so the last comment is the escalation reason.
+When `outcome=escalated` (row 2 matches): capture the most recent comment text on the issue into a local variable `escalation_reason` for inclusion in the Phase 4 audit-log entry. Source: the last entry of the `comments` array on the post-state `get_issue` response payload (no extra API call).
 
-This step replaces R1's text-grep approach with structured pre/post diffing: outcome derivation reads only typed fields from MCP responses, never strings from hero's free-form output.
+<!-- internal: this step replaces the earlier text-grep approach with structured pre/post diffing.
+Outcome derivation reads only typed fields from MCP responses, never strings from hero's free-form output. -->
 
 ## Step 7: Update tick counters
 
@@ -226,14 +260,20 @@ After Step 6 derives `<outcome>` from the pre/post diff (or from the dry-run sho
 
 2. **Apply the canonical outcome → streak mapping** (one branch per outcome — exhaustive):
 
-   - `outcome` is `completed`, `pr_landed`, `advanced`, or `other_change` -> `state.no_progress_streak = 0` (reset — work happened, even the catch-all `other_change` row counts as progress for streak-reset purposes per Step 6's table)
-   - `outcome` is `no_progress` -> `state.no_progress_streak += 1` (increment — nothing changed this tick)
-   - `outcome` is `escalated` -> irrelevant — the loop will STOP in Step 8 regardless, so the streak update has no observable effect
-   - `outcome` is `dry_run` -> do NOT increment streak (one-shot test mode; dry-run also STOPs in Step 8 row 2 so the value is moot)
+   - `outcome` is `completed`, `pr_landed`, `advanced`, or `other_change` -> `state.no_progress_streak = 0`
+   - `outcome` is `no_progress` -> `state.no_progress_streak += 1`
+   - `outcome` is `escalated` -> no-op <!-- internal: loop STOPs in Step 8 regardless -->
+   - `outcome` is `dry_run` -> no-op <!-- internal: dry-run STOPs in Step 8 row 2 -->
 
-3. **Append to history**: push `{issue: <picked>, outcome: <derived>}` onto `state.history`. The history array is the source-of-truth read by Step 2.5's "exclude issues already PR'd this loop" filter on the next tick (cross-reference Phase 1 Step 2.5).
+3. **Append to history**: push `{issue: <picked>, outcome: <derived>}` onto `state.history`. <!-- internal: history is the source-of-truth for Step 2.5's "exclude issues already PR'd this loop" filter on the next tick. -->
 
-4. **Audit-log write deferred to Step 8.5** — see `## Audit log entry shape` below. The JSONL append happens AFTER Step 8 has resolved its STOP-or-CONTINUE branch decision (so `next_action` and `next_delay_seconds` are known), but BEFORE Step 9 calls `ScheduleWakeup` or Step 10 emits the final report. This ordering ensures the audit row is forensically captured even if the wakeup or final-report fails. Cross-reference: parent plan `2026-05-07-GH-1136-autopilot-skill.md` §Phase 4 lines 401-426 for the canonical schema.
+4. **Audit-log write deferred to Step 8.5** — see `## Audit log entry shape` below.
+
+<!-- internal: the JSONL append happens AFTER Step 8 has resolved STOP-or-CONTINUE
+(so `next_action` and `next_delay_seconds` are known), but BEFORE Step 9 calls `ScheduleWakeup`
+or Step 10 emits the final report. This ensures the audit row is forensically captured
+even if the wakeup or final-report fails.
+Cross-reference: parent plan `2026-05-07-GH-1136-autopilot-skill.md` §Phase 4 lines 401-426. -->
 
 ## Step 8: Termination conditions (any one stops the loop)
 
@@ -257,26 +297,38 @@ Check each row in priority order — earlier rows short-circuit later ones. Exac
 | any STOP condition matches (rows 1-5) | call `Step 10: Final report`, return; do NOT call `ScheduleWakeup` |
 | no STOP condition matches (row 6) | call `ScheduleWakeup(...)` exactly once via Step 9, then return |
 
-**Invariant**: exactly one branch per code path — there is no third option. Either Step 8 STOPs and Step 10 fires (no `ScheduleWakeup` call), OR Step 8 does not STOP and Step 9 fires (one `ScheduleWakeup` call, no Step 10). Two ScheduleWakeup calls in one tick is a bug. Zero ScheduleWakeup calls AND zero final reports is a bug.
+<!-- internal invariant: exactly one branch per code path. Either Step 8 STOPs and Step 10 fires
+(no `ScheduleWakeup` call), OR Step 8 does not STOP and Step 9 fires (one `ScheduleWakeup` call,
+no Step 10). Two ScheduleWakeup calls in one tick is a bug. Zero ScheduleWakeup calls AND zero
+final reports is a bug. -->
 
-**Streak-escalation side effect (row 3)**: when `state.no_progress_streak >= 3` matches, before stopping the loop, perform two side-effects against the picked issue:
+**Streak-escalation side effect (row 3)**: when `state.no_progress_streak >= 3` matches, perform two side-effects against the picked issue before stopping:
 
 1. Call `save_issue(number=<picked>, workflowState="__ESCALATE__", command="ralph_plan")` to transition `<picked>` to `Human Needed`.
 2. Post a `create_comment` on the issue with body:
 
    > Autopilot detected a no-progress streak of 3 ticks against this issue. Escalating to Human Needed for review. Audit log: `~/.ralph-hero/autopilot.jsonl`
 
-Then proceed to Step 10 (final report) — the streak-escalation count is surfaced in Step 10's escalation totals.
+Then proceed to Step 10 — the streak-escalation count is surfaced in the final report's escalation totals.
 
-**Backlog re-check rule (row 5)**: this row calls `next_actions(audience="agent", limit=10)` again and re-applies Step 2/2.5 filters (kind=="issue", exclude In Review, exclude already-pr_landed in `state.history`). This catches the case where the picked issue was the last actionable item and post-tick the queue is now empty — re-checking inside Step 8 (rather than relying on the next tick to discover the empty backlog) avoids one wasted `ScheduleWakeup` round-trip and gives the user a tight terminal report.
+**Backlog re-check rule (row 5)**: call `next_actions(audience="agent", limit=10)` again and re-apply Step 2/2.5 filters (kind=="issue", exclude In Review, exclude already-pr_landed in `state.history`).
+
+<!-- internal: re-checking inside Step 8 (rather than relying on the next tick to discover
+the empty backlog) avoids one wasted `ScheduleWakeup` round-trip and gives the user a tight terminal report. -->
 
 **Cross-references**: STOP -> Step 10 (final report). CONTINUE -> Step 9 (ScheduleWakeup).
 
 ## Audit log entry shape
 
-After Step 8's branch decision is made, but before Step 9's `ScheduleWakeup` call (or Step 10's final report), append a single JSON line to `~/.ralph-hero/autopilot.jsonl`. This sub-step (Step 8.5) is the forensic capture point: the row is written BEFORE the side-effecting `ScheduleWakeup` or Step 10 emission so the audit trail records the tick even if the wakeup or final-report subsequently fails.
+After Step 8's branch decision is made, but before Step 9's `ScheduleWakeup` call (or Step 10's final report), append a single JSON line to `~/.ralph-hero/autopilot.jsonl`.
 
-The narrative ordering in the parent plan-of-plans phrases this as "between Step 7 and Step 8". The literal placement is dictated by data-readiness: by Step 7 we know `iteration`, `state.no_progress_streak`, and `outcome`; the `next_action` and `next_delay_seconds` fields require the Step 8 branch to have resolved first. Hence the write executes here — once Step 8 has decided STOP-or-CONTINUE — and immediately precedes Step 9 / Step 10.
+<!-- internal: this sub-step (Step 8.5) is the forensic capture point. The row is written
+BEFORE the side-effecting `ScheduleWakeup` or Step 10 emission so the audit trail records the tick
+even if the wakeup or final-report subsequently fails.
+
+Placement is dictated by data-readiness: by Step 7 we know `iteration`, `state.no_progress_streak`,
+and `outcome`; the `next_action` and `next_delay_seconds` fields require the Step 8 branch to have resolved first.
+Hence the write executes here — once Step 8 has decided STOP-or-CONTINUE — and immediately precedes Step 9 / Step 10. -->
 
 The canonical 13-field entry shape (from parent plan-of-plans `2026-05-07-GH-1136-autopilot-skill.md` §Phase 4 lines 405-419):
 
@@ -356,17 +408,24 @@ This step runs only when Step 8 evaluated to CONTINUE (row 6 — no STOP conditi
 
 2. **Choose `delaySeconds`** — the live set is exactly `{60, 1200}`. No other value is ever passed to `ScheduleWakeup`:
 
-   - `outcome` is `pr_landed`, `advanced`, `completed`, or `other_change` -> `delaySeconds = 60` (stay in cache; immediately pick the next issue)
-   - `outcome` is `no_progress` (with streak 1 or 2 — streak 3 was short-circuited to STOP in Step 8 row 3) -> `delaySeconds = 1200` (cache miss; longer cooldown — give the system time)
-   - All other outcomes (`escalated`, `dry_run`) already short-circuited to STOP in Step 8 — Step 9 is unreachable for them
+   - `outcome` is `pr_landed`, `advanced`, `completed`, or `other_change` -> `delaySeconds = 60`
+   - `outcome` is `no_progress` (streak 1 or 2; streak 3 STOPped in Step 8 row 3) -> `delaySeconds = 1200`
+   - `escalated` and `dry_run` already STOPped in Step 8 — Step 9 is unreachable for them
+
+   <!-- internal rationale:
+   60s = stay inside Claude Code's prompt cache window for fast continuation.
+   1200s = cache-miss cooldown that gives the system time when nothing changed. -->
 
    **Forbidden values**:
-   - The value `300` for `delaySeconds` is **forbidden** — cache-window anti-pattern. Phase 4's `PreToolUse` hook gate (in #1140) will enforce this, but Phase 3 must already comply by construction. There is no code path in Step 9 that produces that value.
-   - The value `1800` for `delaySeconds` is **forbidden in branch logic**. The Configuration block at the top of this file mentions `1800` as a documentation default for genuinely idle ticks (per the parent plan's Key Discoveries), but Step 9's branch logic must NEVER select it. The live set of values that ever flow into a `ScheduleWakeup` call is exactly `{60, 1200}`.
+   - `300` is forbidden (cache-window anti-pattern). Phase 4's `PreToolUse` hook gate (in #1140) enforces this; Phase 3 already complies by construction.
+   - `1800` is forbidden in branch logic. <!-- internal: the Configuration block mentions 1800 as a documentation default for idle ticks, but Step 9's branch logic must NEVER select it. -->
 
-3. **`--state=BASE64` equals-form** (R3): use the equals-form (e.g., `--state=eyJpdGVy...==`), not space-separated. Base64 padding (`=` chars) and URL-safe alternates can confuse a positional parser; the equals-form makes the boundary unambiguous. The argument-parser in Step 1 already accepts `--state=...` (everything after the first `=` is the value, including any additional `=` characters from base64 padding) — Step 9's emitted prompt must be wire-compatible with that parser.
+3. **`--state=BASE64` equals-form**: use the equals-form (e.g., `--state=eyJpdGVy...==`), not space-separated. The argument-parser in Step 1 accepts `--state=...` (everything after the first `=` is the value, including any base64 padding `=` chars).
 
-4. **Build the prompt**: re-invoke `/ralph-hero:autopilot` and carry forward all original flags from Step 1 (`--max-iterations N`, `--auto-merge` if originally set, `--dry-run` if originally set — though `--dry-run` will have STOPped in Step 8 row 2 and never reaches Step 9 in practice) PLUS the new `--state=<BASE64>` argument.
+<!-- internal: base64 padding (`=` chars) and URL-safe alternates can confuse a positional parser;
+the equals-form makes the boundary unambiguous. Step 9's emitted prompt must be wire-compatible with Step 1's parser. -->
+
+4. **Build the prompt**: re-invoke `/ralph-hero:autopilot` and carry forward all original flags from Step 1 (`--max-iterations N`, `--auto-merge` if originally set, `--dry-run` if originally set) PLUS the new `--state=<BASE64>` argument. <!-- internal: `--dry-run` STOPs in Step 8 row 2 and never reaches Step 9 in practice; carrying it forward is defensive. -->
 
 5. **Call `ScheduleWakeup` exactly once**:
 
@@ -378,26 +437,28 @@ This step runs only when Step 8 evaluated to CONTINUE (row 6 — no STOP conditi
    )
    ```
 
-   The `prompt` field is the cross-tick state channel (per the parent plan's Tick Isolation table). The audit log (Phase 4) will record `next_delay_seconds` and `next_action`, but Phase 3 only persists state via this prompt.
+   <!-- internal: the `prompt` field is the cross-tick state channel (per the parent plan's Tick Isolation table).
+   The audit log (Phase 4) records `next_delay_seconds` and `next_action`; Phase 3 persists state only via this prompt. -->
 
-6. **Emit a brief tick summary** to text output AFTER the `ScheduleWakeup` call: `"Tick N complete: dispatched #X, outcome=Y, next tick in Zs"` (filling in `state.iteration`, `<picked>`, `<outcome>`, and `<chosen>`). Then STOP this turn — the next invocation of the skill will be triggered by `ScheduleWakeup`'s wakeup callback.
+6. **Emit a brief tick summary** AFTER the `ScheduleWakeup` call: `"Tick N complete: dispatched #X, outcome=Y, next tick in Zs"` (filling in `state.iteration`, `<picked>`, `<outcome>`, and `<chosen>`). Then STOP this turn.
 
-7. **Step 10 is NOT called when Step 9 fires** — the final report is reserved for terminal turns (Step 8 STOPped). Step 9's brief tick summary is the only user-visible output for non-terminal ticks.
+<!-- internal: Step 10 is NOT called when Step 9 fires. The final report is reserved for terminal turns
+(Step 8 STOPped). Step 9's brief tick summary is the only user-visible output for non-terminal ticks. -->
 
 ## Step 10: Final report (terminal turn only)
 
-This step runs only when Step 8 STOPped (any STOP condition matched — rows 1-5). When Step 9 schedules the next tick, Step 10 is skipped and the current turn ends after Step 9's brief tick summary. There is no overlap.
+This step runs only when Step 8 STOPped (rows 1-5). When Step 9 schedules the next tick, Step 10 is skipped.
 
-Emit a markdown summary to user-visible output (not stderr) so the terminal turn surfaces the run cleanly:
+Emit a markdown summary with these sections:
 
 - **Total ticks run**: from `state.iteration`.
-- **Wall-clock elapsed time**: `now - state.started_at` (formatted as a human-readable duration).
+- **Wall-clock elapsed time**: `now - state.started_at` (human-readable duration).
 - **Issues processed**: from `state.history`, with each issue's outcome (e.g., `#1234 -> pr_landed`, `#1235 -> advanced`, `#1236 -> escalated`).
 - **PRs created**: count of entries in `state.history` where `outcome == "pr_landed"`.
-- **Escalations**: count + reasons. This includes both the original `outcome=escalated` ticks (hero detected an ambiguity and escalated mid-flight) AND the streak-escalation from Step 8 row 3 (autopilot detected a no-progress streak of 3 and escalated the picked issue itself).
-- **In-review PRs awaiting human merge**: any issues filtered out by Step 2.5 during the loop should be called out here — phrasing like "N issues are awaiting human merge in `In Review` — they were filtered out of autopilot picks; merge them manually or re-run with `--auto-merge`" so the user knows what's still queued for them.
-- **Audit log path**: `~/.ralph-hero/autopilot.jsonl` (informational; the file itself is created and appended in Phase 4 — Phase 3 only references the path).
+- **Escalations**: count + reasons. <!-- internal: includes both the original `outcome=escalated` ticks (hero detected ambiguity mid-flight) AND the streak-escalation from Step 8 row 3 (autopilot detected a no-progress streak of 3). -->
+- **In-review PRs awaiting human merge**: any issues filtered out by Step 2.5. Phrasing: "N issues are awaiting human merge in `In Review` — re-run with `--auto-merge` to merge automatically."
+- **Audit log path**: `~/.ralph-hero/autopilot.jsonl`. <!-- internal: file is created and appended in Phase 4; Phase 3 only references the path. -->
 
-The report ends the autopilot run for this invocation. The user can re-run `/ralph-hero:autopilot` to start a fresh loop (which will initialize a new `state` object in Step 1).
+The report ends the autopilot run for this invocation.
 
 <!-- README/CLAUDE.md/eval-scenarios in Phase 5 (GH-1141) -->

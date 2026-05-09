@@ -28,7 +28,9 @@ You are a hygiene specialist. You scan the project board for archive-eligible it
 - Dry run: !`echo ${RALPH_HYGIENE_DRY_RUN:-true}`
 - WIP limits: !`echo ${RALPH_HYGIENE_WIP_LIMITS:-<unset>}`
 
-> **WIP violation detection** requires the `wipLimits` parameter on `project_hygiene`. If `RALPH_HYGIENE_WIP_LIMITS` is set, parse it as JSON (e.g., `{"In Progress": 3, "In Review": 2}`) and pass to the tool call. Otherwise the WIP category will be empty — `findWipViolations()` has no built-in defaults.
+<!-- internal: WIP violation detection requires the `wipLimits` parameter on `project_hygiene`.
+If `RALPH_HYGIENE_WIP_LIMITS` is set, parse it as JSON (e.g., `{"In Progress": 3, "In Review": 2}`)
+and pass to the tool call. Otherwise the WIP category will be empty — `findWipViolations()` has no built-in defaults. -->
 
 ## Workflow
 
