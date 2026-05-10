@@ -121,27 +121,23 @@ Under the hood:
 
 ### `/ralph-hero:autopilot` — Backlog Clearer
 
-Single-command shorthand for "clear the backlog while I'm away." Uses `ScheduleWakeup`-based self-pacing to dispatch `/ralph-hero:hero` against the next-most-important XS/S issue per tick, escalating to `Human Needed` when stuck and stopping cleanly when the queue is empty.
+Approximation of `/loop /hero`: dispatches `/ralph-hero:hero` against the next non-terminal, non-`Human Needed` issue per tick until the queue drains. Self-paces via `ScheduleWakeup`. Trusts hero to escalate operational ambiguity to `Human Needed` — autopilot never escalates an issue itself except for the worktree-collision safety case.
 
 **Opt-in (required)**: `export RALPH_AUTOPILOT_ENABLE=true` — unattended automation is opt-in by design.
 
 **Invocation**:
-- `/ralph-hero:autopilot` — default: 20 iterations max, interactive merge
-- `/ralph-hero:autopilot --max-iterations 5` — bound the loop tighter
-- `/ralph-hero:autopilot --auto-merge` — auto-merge PRs that pass code review + CI
+- `/ralph-hero:autopilot` — drain the queue end-to-end
 - `/ralph-hero:autopilot --dry-run` — one-shot dry run; no hero dispatch
 
-**Termination conditions** (any one stops the loop):
-- Backlog empty (no actionable XS/S issues remain)
-- Escalation flagged on the current tick
-- Three consecutive ticks produced no progress (issue gets escalated)
-- Iteration cap reached
+**Termination** (only one condition): the filtered queue is empty. The filter excludes `Done`, `Canceled`, `Human Needed`, and any issue currently in cooldown (cooldown = 3 ticks after a `no_progress` outcome, to avoid tight loops on a stuck issue without escalating it).
 
-**Interactive-merge mode (default)**: When hero lands a PR, the issue moves to `In Review` awaiting human merge. Autopilot does NOT re-pick `In Review` issues — they're listed in the final summary as "awaiting human merge" so you know what's queued for you. Use `--auto-merge` to also drive code-review + merge through the loop.
+**Review mode is inherited, not overridden**: autopilot does NOT set `RALPH_REVIEW_MODE` itself. For end-to-end runs (ticket → RPI → review → merge), set `RALPH_REVIEW_MODE=auto` and any other env hero/finish/merge need for unattended completion before invoking autopilot. With the default interactive mode, hero lands PRs and stops; autopilot will cool down those `In Review` issues and exit when no fresh work remains.
+
+**Run unblock alongside, in a separate loop**: autopilot drains forward-progress work; `/ralph-hero:ralph-unblock` (autonomous) or `/ralph-hero:unblock` (interactive) drains `Human Needed` work. They are designed to run concurrently — autopilot never picks a `Human Needed` issue, and unblock only picks `Human Needed` issues.
 
 **Audit trail**: every tick appends to `~/.ralph-hero/autopilot.jsonl`. Inspect with `jq . ~/.ralph-hero/autopilot.jsonl`.
 
-**Cancel an in-flight loop**: use `/tasks` (Claude Code's scheduled-task list) to identify the autopilot wakeup and delete it via the cron tools.
+**Cancel an in-flight loop**: use `/tasks` to identify the autopilot wakeup and delete it via the cron tools.
 
 ### CLI (`just` recipes)
 
