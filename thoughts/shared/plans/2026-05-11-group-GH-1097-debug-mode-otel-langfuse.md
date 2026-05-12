@@ -114,11 +114,11 @@ Document the four `OTEL_*` env vars and the `RALPH_DEBUG` activation pattern in 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] "Environment Variables" section in `CLAUDE.md` documents `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
-  - [ ] Each env var has: required/optional flag, default value, one-sentence description
-  - [ ] Note that `RALPH_DEBUG=true` is the activation switch for OTel — the four `OTEL_*` vars are no-ops when `RALPH_DEBUG` is unset
-  - [ ] Basic-auth header construction documented: `Authorization=Basic $(printf '%s' "pk-lf-local-dev:sk-lf-local-dev" | base64)`
-  - [ ] Cross-link to `~/projects/CLAUDE.md` Langfuse harness section for stack setup
+  - [x] "Environment Variables" section in `CLAUDE.md` documents `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`
+  - [x] Each env var has: required/optional flag, default value, one-sentence description
+  - [x] Note that `RALPH_DEBUG=true` is the activation switch for OTel — the four `OTEL_*` vars are no-ops when `RALPH_DEBUG` is unset
+  - [x] Basic-auth header construction documented: `Authorization=Basic $(printf '%s' "pk-lf-local-dev:sk-lf-local-dev" | base64)`
+  - [x] Cross-link to `~/projects/CLAUDE.md` Langfuse harness section for stack setup
 
 #### Task 1.2: Add settings.local.json sample to docs
 - **files**: `CLAUDE.md` (modify)
@@ -126,9 +126,9 @@ Document the four `OTEL_*` env vars and the `RALPH_DEBUG` activation pattern in 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] A code-fenced JSON block showing the full `env` block with all five vars (`RALPH_DEBUG`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`)
-  - [ ] Snippet uses `http://localhost:3100/api/public/otel/v1/traces` as the endpoint
-  - [ ] Snippet is copy-pasteable into `~/.claude/settings.json` or a per-repo `.claude/settings.local.json`
+  - [x] A code-fenced JSON block showing the full `env` block with all five vars (`RALPH_DEBUG`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`)
+  - [x] Snippet uses `http://localhost:3100/api/public/otel/v1/traces` as the endpoint
+  - [x] Snippet is copy-pasteable into `~/.claude/settings.json` or a per-repo `.claude/settings.local.json`
 
 #### Task 1.3: Manual verification + hook propagation check
 - **files**: `CLAUDE.md` (modify — append verification commands), `thoughts/shared/research/2026-05-11-otel-claude-code-langfuse-verification.md` (create)
