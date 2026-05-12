@@ -159,7 +159,7 @@ Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead 
 
 ### Autopilot
 
-`/ralph-hero:autopilot` is a self-paced backlog clearer that wraps `/hero` in a `ScheduleWakeup`-based loop. Single-command shorthand for autonomous overnight runs. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`. Audit log at `~/.ralph-hero/autopilot.jsonl`. See `skills/autopilot/SKILL.md` for the tick state machine and `hooks/scripts/autopilot-wakeup-gate.sh` for the cache-window/prompt-regex safety gate. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
+`/ralph-hero:autopilot` is a thin wrapper around `/loop /ralph-hero:hero`. The skill body delegates to the built-in `/loop` skill in dynamic mode (model self-paces wakeup cadence via `ScheduleWakeup`) and trusts hero for every per-issue decision including escalation. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`, enforced deterministically by `hooks/scripts/autopilot-enable-gate.sh` (PreToolUse:Skill matcher) — the gate exits 2 with a fixed message if the env var is missing. No state machine, no audit log, no hardcoded delays in autopilot itself; `/loop` and hero own that machinery. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
 
 ### Activity log + retention
 
