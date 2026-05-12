@@ -1,10 +1,15 @@
 /**
  * MCP tools for debug log collation and statistics.
  *
- * Provides `ralph_hero__collate_debug` (error grouping + GitHub issue creation)
- * and `ralph_hero__debug_stats` (tool call aggregation metrics).
+ * Provides:
+ *   - `ralph_hero__collate_debug` (v2 — queries Langfuse for error spans,
+ *     groups by normalized signature, returns the grouped report; GitHub
+ *     issue creation lands in Phase 3b / GH-1100)
+ *   - `ralph_hero__debug_stats` (v1 — aggregates JSONL logs; preserved for
+ *     backward compat, not extended)
  *
- * Only registered when RALPH_DEBUG=true. Reads JSONL logs written by DebugLogger.
+ * Only registered when `RALPH_DEBUG=true`. JSONL helpers below still back
+ * `debug_stats`; the new Langfuse path is fully separate.
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -16,6 +21,14 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { toolSuccess, toolError } from "../types.js";
 import { zBoolish } from "../lib/zod-helpers.js";
+import {
+  createLangfuseClient,
+  type LangfuseClient,
+} from "../lib/langfuse-client.js";
+import {
+  groupSpansBySignature,
+  observationToSpan,
+} from "../lib/error-signature.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -247,146 +260,129 @@ export function aggregateStats(
 // Register Debug Tools
 // ---------------------------------------------------------------------------
 
+/**
+ * Factory hook for the Langfuse client. Exported (and overridable) so unit
+ * tests can stub the client without touching env vars or `fetch`.
+ */
+export type LangfuseClientFactory = () => LangfuseClient;
+
+let langfuseClientFactory: LangfuseClientFactory = () =>
+  createLangfuseClient();
+
+/**
+ * Override the Langfuse client factory. Returns a disposer that restores the
+ * previous factory (used by tests).
+ */
+export function setLangfuseClientFactory(
+  factory: LangfuseClientFactory,
+): () => void {
+  const prev = langfuseClientFactory;
+  langfuseClientFactory = factory;
+  return () => {
+    langfuseClientFactory = prev;
+  };
+}
+
 export function registerDebugTools(
   server: McpServer,
   client: GitHubClient,
 ): void {
   const logDir = join(homedir(), ".ralph-hero", "logs");
+  // `client` is referenced by `debug_stats` (legacy) and reserved for Phase 3b
+  // (GH-1100), which will use it for GitHub dedup + issue creation.
+  void client;
 
   // -------------------------------------------------------------------------
-  // ralph_hero__collate_debug
+  // ralph_hero__collate_debug (v2 — Langfuse path)
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__collate_debug",
-    "Collate debug log errors into GitHub issues. Reads JSONL logs, groups errors by normalized signature, deduplicates against existing `debug-auto` labeled issues, and creates/updates issues. Returns: summary of issues created, updated, and total occurrences.",
+    "Query Langfuse for error spans in a time window, normalize messages, and group by signature. Phase 3a returns the grouped report only (dryRun forced true); Phase 3b (GH-1100) adds GitHub issue dedup + create/comment. Returns: { since, errorGroups, totalOccurrences, dryRun, groups[] }.",
     {
       since: z
         .string()
         .optional()
-        .describe("ISO date string. Only process events after this time (default: 24h ago)"),
+        .describe(
+          "ISO date string. Only spans whose startTime >= this value are considered (default: 24h ago).",
+        ),
       dryRun: zBoolish()
         .optional()
-        .default(false)
-        .describe("If true, report what would be created/updated without making changes"),
+        .default(true)
+        .describe(
+          "Phase 3a only honors dryRun=true; passing false returns a stub error until Phase 3b lands.",
+        ),
+      minOccurrences: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .default(3)
+        .describe("Filter out signatures with fewer occurrences (default: 3)."),
       projectNumber: z
         .number()
         .optional()
-        .describe("Project number override (defaults to configured project)"),
+        .describe("Project number override (reserved for Phase 3b)."),
     },
     async (args) => {
       try {
+        const dryRun = args.dryRun ?? true;
+        if (!dryRun) {
+          return toolError(
+            "dryRun=false requires GH-1100 (Phase 3b) — not yet implemented",
+          );
+        }
+
+        const minOccurrences = args.minOccurrences ?? 3;
         const sinceDate = args.since
           ? new Date(args.since)
           : new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-        const { events, sessionsAnalyzed } = await readLogEvents(logDir, sinceDate);
-        const errorGroups = groupErrors(events);
-
-        if (errorGroups.length === 0) {
-          return toolSuccess({
-            message: "No errors found in the specified time window.",
-            sessionsAnalyzed,
-            since: sinceDate.toISOString(),
-          });
+        if (Number.isNaN(sinceDate.getTime())) {
+          return toolError(`Invalid 'since' value: ${args.since}`);
         }
 
-        let issuesCreated = 0;
-        let issuesUpdated = 0;
-        let totalOccurrences = 0;
-
-        const owner = client.config.owner;
-        const repo = client.config.repo;
-
-        for (const group of errorGroups) {
-          totalOccurrences += group.count;
-
-          if (args.dryRun) continue;
-
-          if (!owner || !repo) {
-            return toolError("RALPH_GH_OWNER and RALPH_GH_REPO must be set for issue creation");
-          }
-
-          // Search for existing issue with this hash
-          const searchQuery = `repo:${owner}/${repo} is:issue is:open label:debug-auto "${group.hash}" in:body`;
-          let existingIssueNumber: number | undefined;
-
-          try {
-            const searchResult = await client.query<{
-              search: { nodes: Array<{ number: number }> };
-            }>(
-              `query SearchDebugIssues($q: String!) {
-                search(query: $q, type: ISSUE, first: 1) {
-                  nodes {
-                    ... on Issue { number }
-                  }
-                }
-              }`,
-              { q: searchQuery },
-            );
-            existingIssueNumber = searchResult.search.nodes[0]?.number;
-          } catch {
-            // Search failed, treat as no existing issue
-          }
-
-          if (existingIssueNumber) {
-            // Add occurrence comment
-            await client.mutate(
-              `mutation AddComment($subjectId: ID!, $body: String!) {
-                addComment(input: { subjectId: $subjectId, body: $body }) {
-                  commentEdge { node { id } }
-                }
-              }`,
-              {
-                subjectId: `issue:${existingIssueNumber}`,
-                body: `## Occurrence Report\n\n- Count: ${group.count}\n- Period: ${group.firstSeen} — ${group.lastSeen}\n- Signature: \`${group.signature}\``,
-              },
-            ).catch(() => {
-              // Best-effort comment
-            });
-            issuesUpdated++;
-          } else {
-            // Create new issue
-            try {
-              await client.mutate(
-                `mutation CreateIssue($repoId: ID!, $title: String!, $body: String!) {
-                  createIssue(input: { repositoryId: $repoId, title: $title, body: $body }) {
-                    issue { number }
-                  }
-                }`,
-                {
-                  repoId: `placeholder`, // Would need actual repo ID
-                  title: `[debug-auto] ${getEventName(group.sample)} ${getErrorType(group.sample)}`,
-                  body: `## Debug Auto-Report\n\n**Hash**: \`${group.hash}\`\n**Signature**: \`${group.signature}\`\n**Occurrences**: ${group.count}\n**First seen**: ${group.firstSeen}\n**Last seen**: ${group.lastSeen}\n\n### Sample Error\n\n\`\`\`json\n${JSON.stringify(group.sample, null, 2)}\n\`\`\`\n\n---\n_Auto-generated by ralph_hero__collate_debug_`,
-                },
-              ).catch(() => {
-                // Best-effort issue creation
-              });
-              issuesCreated++;
-            } catch {
-              // Skip failed creations
-            }
-          }
+        let langfuse: LangfuseClient;
+        try {
+          langfuse = langfuseClientFactory();
+        } catch (error) {
+          return toolError(
+            `Langfuse client unavailable: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
+
+        const fromStartTime = sinceDate.toISOString();
+        const observations = await langfuse.queryAllObservations({
+          type: "SPAN",
+          level: "ERROR",
+          fromStartTime,
+          limit: 100,
+        });
+
+        const spans = observations.map(observationToSpan);
+        const groups = groupSpansBySignature(spans, {
+          minOccurrences,
+          langfuseHost: langfuse.host,
+        });
+
+        const totalOccurrences = groups.reduce((sum, g) => sum + g.count, 0);
 
         return toolSuccess({
-          since: sinceDate.toISOString(),
-          sessionsAnalyzed,
-          errorGroups: errorGroups.length,
+          since: fromStartTime,
+          errorGroups: groups.length,
           totalOccurrences,
-          issuesCreated: args.dryRun ? 0 : issuesCreated,
-          issuesUpdated: args.dryRun ? 0 : issuesUpdated,
-          dryRun: args.dryRun,
-          groups: errorGroups.map((g) => ({
-            hash: g.hash,
+          dryRun: true,
+          groups: groups.map((g) => ({
             signature: g.signature,
+            hash: g.hash,
             count: g.count,
             firstSeen: g.firstSeen,
             lastSeen: g.lastSeen,
+            exampleTraceUrl: g.exampleTraceUrl,
+            sampleSpans: g.sampleSpans.slice(0, 3),
           })),
         });
       } catch (error) {
         return toolError(
-          `Failed to collate debug logs: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to collate debug spans: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     },

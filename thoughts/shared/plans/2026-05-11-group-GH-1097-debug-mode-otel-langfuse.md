@@ -289,12 +289,12 @@ Add a minimal Langfuse HTTP client and a signature-grouping module. Wire the exi
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Exports `createLangfuseClient({ host, publicKey, secretKey })` returning an object with `queryTraces(params)` and `queryObservations(params)` methods
-  - [ ] Constructor reads defaults from env: `LANGFUSE_HOST` (default `http://localhost:3100`), `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
-  - [ ] Uses Node `fetch` (native in Node 20+) with basic-auth header: `Authorization: Basic ${base64(publicKey + ":" + secretKey)}`
-  - [ ] `queryObservations` filters: `type=SPAN`, `level=ERROR` OR contains `ralph_hero.error_type` attribute, `fromStartTime` (ISO), pagination via `page` + `limit` query params
-  - [ ] Throws a descriptive error if `publicKey`/`secretKey` missing or HTTP status is non-2xx
-  - [ ] Unit tests stub `fetch` and assert: correct URL, correct auth header, correct query params, error on 4xx/5xx, correct pagination loop
+  - [x] Exports `createLangfuseClient({ host, publicKey, secretKey })` returning an object with `queryTraces(params)` and `queryObservations(params)` methods
+  - [x] Constructor reads defaults from env: `LANGFUSE_HOST` (default `http://localhost:3100`), `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
+  - [x] Uses Node `fetch` (native in Node 20+) with basic-auth header: `Authorization: Basic ${base64(publicKey + ":" + secretKey)}`
+  - [x] `queryObservations` filters: `type=SPAN`, `level=ERROR` OR contains `ralph_hero.error_type` attribute, `fromStartTime` (ISO), pagination via `page` + `limit` query params
+  - [x] Throws a descriptive error if `publicKey`/`secretKey` missing or HTTP status is non-2xx
+  - [x] Unit tests stub `fetch` and assert: correct URL, correct auth header, correct query params, error on 4xx/5xx, correct pagination loop
 
 #### Task 3a.2: Create error-signature.ts (normalization + grouping)
 - **files**: `plugin/ralph-hero/mcp-server/src/lib/error-signature.ts` (create)
@@ -302,13 +302,13 @@ Add a minimal Langfuse HTTP client and a signature-grouping module. Wire the exi
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Exports `normalizeErrorMessage(msg: string): string` — replaces `#?\d+` with `#N`, ISO timestamps with `<TS>`, UUIDs (8-4-4-4-12 hex) with `<ID>`, hex strings ≥8 chars with `<HASH>`, double-quoted dynamic strings with `<STR>`, collapses whitespace, truncates to 200 chars
-  - [ ] Exports `buildSignatureKey(spanName, errorType, normalizedMsg): string` — returns `${spanName}:${errorType}:${normalizedMsg}`
-  - [ ] Exports `hashSignature(key: string): string` — returns SHA256 truncated to 8 hex chars
-  - [ ] Exports `groupSpansBySignature(spans, opts): SignatureGroup[]` — input span shape `{ name, attributes, status, startTime, endTime, traceId }`; output `{ signature, hash, count, firstSeen, lastSeen, exampleTraceUrl, sampleSpans[] }` (sorted by count desc)
-  - [ ] `exampleTraceUrl` built as `${langfuseHost}/project/<defaultProjectId>/traces/${traceId}` — keep `<defaultProjectId>` as a literal placeholder if no project ID is configurable; document the limitation
-  - [ ] `groupSpansBySignature` honors `minOccurrences` option (default 3); signatures below threshold are dropped
-  - [ ] Unit tests cover: multi-issue-number messages (`Issue #123 and #456` → `Issue #N and #N`), mixed timestamps + UUIDs, nested quotes (`"path/to/file"` + `"name"`), `minOccurrences` boundary
+  - [x] Exports `normalizeErrorMessage(msg: string): string` — replaces `#?\d+` with `#N`, ISO timestamps with `<TS>`, UUIDs (8-4-4-4-12 hex) with `<ID>`, hex strings ≥8 chars with `<HASH>`, double-quoted dynamic strings with `<STR>`, collapses whitespace, truncates to 200 chars
+  - [x] Exports `buildSignatureKey(spanName, errorType, normalizedMsg): string` — returns `${spanName}:${errorType}:${normalizedMsg}`
+  - [x] Exports `hashSignature(key: string): string` — returns SHA256 truncated to 8 hex chars
+  - [x] Exports `groupSpansBySignature(spans, opts): SignatureGroup[]` — input span shape `{ name, attributes, status, startTime, endTime, traceId }`; output `{ signature, hash, count, firstSeen, lastSeen, exampleTraceUrl, sampleSpans[] }` (sorted by count desc)
+  - [x] `exampleTraceUrl` built as `${langfuseHost}/project/<defaultProjectId>/traces/${traceId}` — keep `<defaultProjectId>` as a literal placeholder if no project ID is configurable; document the limitation
+  - [x] `groupSpansBySignature` honors `minOccurrences` option (default 3); signatures below threshold are dropped
+  - [x] Unit tests cover: multi-issue-number messages (`Issue #123 and #456` → `Issue #N and #N`), mixed timestamps + UUIDs, nested quotes (`"path/to/file"` + `"name"`), `minOccurrences` boundary
 
 #### Task 3a.3: Add `ralph_hero__collate_debug` v2 signature (Langfuse path, dryRun only)
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/debug-tools.ts` (modify)
@@ -316,13 +316,13 @@ Add a minimal Langfuse HTTP client and a signature-grouping module. Wire the exi
 - **complexity**: medium
 - **depends_on**: [3a.1, 3a.2]
 - **acceptance**:
-  - [ ] Replace the existing JSONL-reading body of `ralph_hero__collate_debug` with a Langfuse-querying body. Tool registration name and prefix unchanged.
-  - [ ] Tool signature: `{ since?: string, dryRun?: boolean (default true in this phase), minOccurrences?: number (default 3), projectNumber?: number }`
-  - [ ] When `dryRun` is missing OR `true`: query Langfuse for spans in the window, group by signature with `minOccurrences` filter, return `{ since, errorGroups: count, totalOccurrences, dryRun: true, groups: [{ signature, hash, count, firstSeen, lastSeen, exampleTraceUrl, sampleSpans[0..2] }] }`
-  - [ ] When `dryRun: false`: return `toolError("dryRun=false requires GH-1100 (Phase 3b) — not yet implemented")` — Phase 3b removes this stub
-  - [ ] Tool remains gated by the `RALPH_DEBUG=true` check in `src/index.ts:527`
-  - [ ] Existing `ralph_hero__debug_stats` tool registration untouched (v1 surface preserved per "What We're NOT Doing")
-  - [ ] Unit tests use fixture span data (no live network) — see Task 3a.4
+  - [x] Replace the existing JSONL-reading body of `ralph_hero__collate_debug` with a Langfuse-querying body. Tool registration name and prefix unchanged.
+  - [x] Tool signature: `{ since?: string, dryRun?: boolean (default true in this phase), minOccurrences?: number (default 3), projectNumber?: number }`
+  - [x] When `dryRun` is missing OR `true`: query Langfuse for spans in the window, group by signature with `minOccurrences` filter, return `{ since, errorGroups: count, totalOccurrences, dryRun: true, groups: [{ signature, hash, count, firstSeen, lastSeen, exampleTraceUrl, sampleSpans[0..2] }] }`
+  - [x] When `dryRun: false`: return `toolError("dryRun=false requires GH-1100 (Phase 3b) — not yet implemented")` — Phase 3b removes this stub
+  - [x] Tool remains gated by the `RALPH_DEBUG=true` check in `src/index.ts:527`
+  - [x] Existing `ralph_hero__debug_stats` tool registration untouched (v1 surface preserved per "What We're NOT Doing")
+  - [x] Unit tests use fixture span data (no live network) — see Task 3a.4
 
 #### Task 3a.4: Integration test against recorded Langfuse trace fixture
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/fixtures/langfuse-spans.fixture.json` (create), `plugin/ralph-hero/mcp-server/src/__tests__/error-signature.test.ts` (create), `plugin/ralph-hero/mcp-server/src/__tests__/collate-debug-langfuse.test.ts` (create)
@@ -330,18 +330,18 @@ Add a minimal Langfuse HTTP client and a signature-grouping module. Wire the exi
 - **complexity**: medium
 - **depends_on**: [3a.1, 3a.2, 3a.3]
 - **acceptance**:
-  - [ ] Fixture file contains ≥10 synthetic spans with ≥2 distinct signatures, ≥3 occurrences each
-  - [ ] `error-signature.test.ts` exercises all normalization edge cases listed in Task 3a.2
-  - [ ] `collate-debug-langfuse.test.ts` stubs `fetch` to return the fixture, invokes the tool with `dryRun=true`, asserts grouped report shape + counts
-  - [ ] Stubbed fetch validates request URL contains `/api/public/observations` and auth header
+  - [x] Fixture file contains ≥10 synthetic spans with ≥2 distinct signatures, ≥3 occurrences each
+  - [x] `error-signature.test.ts` exercises all normalization edge cases listed in Task 3a.2
+  - [x] `collate-debug-langfuse.test.ts` stubs `fetch` to return the fixture, invokes the tool with `dryRun=true`, asserts grouped report shape + counts
+  - [x] Stubbed fetch validates request URL contains `/api/public/observations` and auth header
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/error-signature.test.ts` — all normalization tests pass
-- [ ] `npx vitest run src/__tests__/collate-debug-langfuse.test.ts` — fixture-driven integration test passes
-- [ ] `npm test` — full suite still green
+- [x] `npm run build` — no TypeScript errors
+- [x] `npx vitest run src/__tests__/error-signature.test.ts` — all normalization tests pass
+- [x] `npx vitest run src/__tests__/collate-debug-langfuse.test.ts` — fixture-driven integration test passes
+- [x] `npm test` — full suite still green
 
 #### Manual Verification:
 - [ ] With Langfuse running and at least one captured error trace, invoking `ralph_hero__collate_debug({ dryRun: true })` returns a non-empty grouped report referencing real trace URLs
