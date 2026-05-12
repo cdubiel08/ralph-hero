@@ -219,10 +219,14 @@ describe("ralph_hero__collate_debug — Langfuse path (Phase 3a)", () => {
     expect(payload.totalOccurrences).toBe(10);
   });
 
+<<<<<<< HEAD
   // Phase 3b: dryRun=false now invokes GitHub dedup + create/comment.
   // Detailed coverage lives in `collate-debug-phase3b.test.ts`; here we
   // only assert it no longer returns the Phase 3a "not implemented" stub.
   it("dryRun=false no longer returns the Phase 3a stub error", async () => {
+=======
+  it("returns toolError when dryRun=false (Phase 3b stub)", async () => {
+>>>>>>> 581742fd (feat(mcp-server): add collate_debug Langfuse path + signature grouping (Phase 3a))
     const fixture = await loadFixture();
     restoreFactory = setLangfuseClientFactory(() => {
       return createLangfuseClient({
@@ -238,6 +242,7 @@ describe("ralph_hero__collate_debug — Langfuse path (Phase 3a)", () => {
 
     const tool = getTool(server, "ralph_hero__collate_debug");
     const result = await tool.handler({ dryRun: false }, {});
+<<<<<<< HEAD
     // Either succeeds (groups empty / dedup loop ran) or fails for a
     // different reason — but NEVER the Phase 3a stub message.
     if (result.isError) {
@@ -246,6 +251,11 @@ describe("ralph_hero__collate_debug — Langfuse path (Phase 3a)", () => {
         "Phase 3b) — not yet implemented",
       );
     }
+=======
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    expect(payload.error).toContain("Phase 3b");
+>>>>>>> 581742fd (feat(mcp-server): add collate_debug Langfuse path + signature grouping (Phase 3a))
   });
 
   it("returns toolError when Langfuse credentials missing", async () => {
