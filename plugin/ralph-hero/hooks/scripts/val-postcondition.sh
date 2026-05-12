@@ -31,5 +31,5 @@ if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
   fi
 fi
 
-echo "Ensure you have produced a VALIDATION PASS, VALIDATION FAIL, or Queue empty verdict with specific check results before stopping." >&2
+echo "Ensure you have produced a VALIDATION PASS, VALIDATION FIX, VALIDATION FAIL, or Queue empty verdict with specific check results before stopping." >&2
 exit 2
