@@ -158,7 +158,7 @@ Document the four `OTEL_*` env vars and the `RALPH_DEBUG` activation pattern in 
 
 ## Phase 2: MCP-server OTel SDK + GraphQL child spans (GH-1098 — S)
 
-- **depends_on**: [phase-1]
+- **depends_on**: [GH-1097]
 
 ### Overview
 
@@ -243,7 +243,7 @@ Add `@opentelemetry/sdk-node` to the MCP server, lazy-init guarded by `RALPH_DEB
 
 ## Phase 3a: collate_debug — Langfuse query + signature grouping (GH-1099 — S)
 
-- **depends_on**: [phase-2]
+- **depends_on**: [GH-1098]
 
 ### Overview
 
@@ -320,7 +320,7 @@ Add a minimal Langfuse HTTP client and a signature-grouping module. Wire the exi
 
 ## Phase 3b: collate_debug — GitHub dedup + issue create/comment (GH-1100 — S)
 
-- **depends_on**: [phase-3a]
+- **depends_on**: [GH-1099]
 
 ### Overview
 
@@ -395,7 +395,7 @@ Extend `ralph_hero__collate_debug` to honor `dryRun=false`: dedupe each signatur
 
 ## Phase 4: ralph-debug-collate skill wrapper (GH-1101 — XS)
 
-- **depends_on**: [phase-3b]
+- **depends_on**: [GH-1100]
 
 ### Overview
 
