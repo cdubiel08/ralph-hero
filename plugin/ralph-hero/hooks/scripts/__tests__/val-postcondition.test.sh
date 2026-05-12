@@ -64,6 +64,15 @@ EXIT_CODE=$?
 assert_eq "0" "$EXIT_CODE" "VALIDATION FAIL in transcript: exit 0"
 
 echo
+echo "Test case 3b: VALIDATION FIX verdict in transcript -> exit 0"
+TRANSCRIPT="$TEST_DIR/transcript-fix.jsonl"
+make_transcript "VALIDATION FIX — only mechanical failures" "$TRANSCRIPT"
+INPUT="$(jq -nc --arg p "$TRANSCRIPT" '{transcript_path:$p,stop_hook_active:false}')"
+echo "$INPUT" | "$SCRIPT" >/dev/null 2>&1
+EXIT_CODE=$?
+assert_eq "0" "$EXIT_CODE" "VALIDATION FIX in transcript: exit 0"
+
+echo
 echo "Test case 4: Queue empty in transcript -> exit 0"
 TRANSCRIPT="$TEST_DIR/transcript-empty.jsonl"
 make_transcript "No In Progress issues found. Queue empty." "$TRANSCRIPT"
