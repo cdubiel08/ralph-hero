@@ -137,6 +137,14 @@ PR_COMMENT_COUNT=$(gh pr view PR_NUMBER --json comments --jq '.comments | length
 ```
 
 - If the issue's estimate is `XS` AND `PR_COMMENT_COUNT == 0`: small unreviewed changes are permitted. Proceed to Step 4a (the autonomous merge gate also re-checks this exception when `RALPH_AUTO_MERGE=true`).
+- Otherwise check self-authorship:
+
+```bash
+PR_AUTHOR=$(gh pr view PR_NUMBER --json author --jq '.author.login')
+CURRENT_USER=$(gh api user --jq '.login')
+```
+
+- If `PR_AUTHOR == CURRENT_USER`: the PR is self-authored on a single-contributor repo. GitHub blocks self-approval (`Can not approve your own pull request`), so a formal `APPROVED` review is unattainable. Treat as APPROVED-equivalent and proceed to Step 4a. The orchestrating caller (finish) is responsible for ensuring code review passed before invoking ralph-merge — `finish` dispatches `impl-agent` on MUST_FIX feedback and only invokes ralph-merge once code review resolves clean. See [GH-932](https://github.com/cdubiel08/ralph-hero/issues/932) for the bootstrap rationale.
 - Otherwise: output and stop:
 
 ```
@@ -164,7 +172,8 @@ When `RALPH_AUTO_MERGE=true`, evaluate **all** of the following criteria. If any
 ### Criteria (ALL must hold)
 
 1. **Review approved**: `gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'` returns `APPROVED`.
-   - Exception: an XS-estimated issue with zero review comments is treated as approved (small changes do not require explicit review approval). Use `gh pr view PR_NUMBER --json comments --jq '.comments | length'` and the issue's `estimate` field to detect this case.
+   - **Exception (XS small changes)**: an XS-estimated issue with zero review comments is treated as approved (small changes do not require explicit review approval). Use `gh pr view PR_NUMBER --json comments --jq '.comments | length'` and the issue's `estimate` field to detect this case.
+   - **Exception (self-authored single-contributor repo)**: if `gh pr view PR_NUMBER --json author --jq '.author.login'` equals `gh api user --jq '.login'`, the PR was authored by the orchestrator user. GitHub blocks self-approval, so a formal `APPROVED` review is unattainable. Treat as APPROVED-equivalent. The caller (finish) is responsible for ensuring code review passed before invoking ralph-merge.
 2. **CI green**: `gh pr checks PR_NUMBER --json name,state,conclusion` returns checks where every entry has `state: completed` AND `conclusion: success`. Pending or failing checks block the merge.
 3. **PR open and mergeable**: `gh pr view PR_NUMBER --json state,mergeable --jq '{state,mergeable}'` shows `state: OPEN` and `mergeable: MERGEABLE`. A `CONFLICTING` or `UNKNOWN` mergeable status blocks.
 

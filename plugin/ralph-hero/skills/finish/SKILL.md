@@ -149,6 +149,17 @@ gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'
 
 - If `APPROVED`: continue to Step 5.
 - If `CHANGES_REQUESTED`: proceed to Step 4a (Code Review Fix Cycle).
+- If still null/empty: the code-review skill posts a comment but never creates a formal review (so `reviewDecision` never changes from null). Branch on self-authorship:
+
+  ```bash
+  PR_AUTHOR=$(gh pr view PR_NUMBER --json author --jq '.author.login')
+  CURRENT_USER=$(gh api user --jq '.login')
+  LAST_COMMENT=$(gh pr view PR_NUMBER --json comments --jq '.comments | map(select(.body | startswith("### Code review"))) | last | .body')
+  ```
+
+  - If `PR_AUTHOR == CURRENT_USER` AND `LAST_COMMENT` contains the literal string `No issues found`: code review passed clean on a self-authored single-contributor repo (GitHub blocks self-approval, so a formal `APPROVED` is unattainable). Treat as APPROVED-equivalent and continue to Step 5.
+  - If `PR_AUTHOR == CURRENT_USER` AND `LAST_COMMENT` contains `Found ` (i.e., the "Found N issues" variant): code review flagged issues. Proceed to Step 4a (Code Review Fix Cycle).
+  - Otherwise (multi-author repo with null `reviewDecision`, or no code-review comment found): output `FINISH BLOCKED` with `Reason: Code review did not produce a reviewDecision and no self-authored fallback applies` and stop.
 
 ### Interactive mode (`RALPH_REVIEW_MODE=interactive`, default)
 
@@ -218,7 +229,7 @@ After impl-agent completes, re-run code review once:
 Skill("code-review:code-review", "PR_NUMBER")
 ```
 
-Then re-check `reviewDecision`:
+Then re-check `reviewDecision` (same self-authored fallback as Step 4):
 
 - If `APPROVED`: continue to Step 5.
 - If `CHANGES_REQUESTED` again: stop. Max 1 fix cycle. Output:
@@ -229,6 +240,17 @@ Issue: #NNN
 PR: #PR_NUMBER
 Reason: Code review feedback unresolved after 1 fix cycle.
 ```
+
+- If still null/empty: branch on self-authorship + last code-review comment content:
+
+  ```bash
+  PR_AUTHOR=$(gh pr view PR_NUMBER --json author --jq '.author.login')
+  CURRENT_USER=$(gh api user --jq '.login')
+  LAST_COMMENT=$(gh pr view PR_NUMBER --json comments --jq '.comments | map(select(.body | startswith("### Code review"))) | last | .body')
+  ```
+
+  - If `PR_AUTHOR == CURRENT_USER` AND `LAST_COMMENT` contains `No issues found`: the fix cycle resolved the feedback. Continue to Step 5.
+  - Otherwise: stop with `FINISH BLOCKED` and `Reason: Code review feedback unresolved after 1 fix cycle`.
 
 ## Step 5: Merge (dispatch ralph-merge)
 
