@@ -441,10 +441,10 @@ Thin skill at `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` that wraps
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Frontmatter follows existing `ralph-*` skill conventions (e.g., compare to `ralph-hygiene`, `ralph-triage` SKILL.md frontmatter shapes)
-  - [ ] `description:` field is one sentence, includes trigger phrases like "collate debug errors", "file debug-auto issues", "self-healing observability"
-  - [ ] `model:` set to `sonnet` (matches other analyst-tier skills)
-  - [ ] `allowed-tools:` lists at minimum the `ralph_hero__collate_debug` MCP tool and Bash (for the `curl` health check)
+  - [x] Frontmatter follows existing `ralph-*` skill conventions (e.g., compare to `ralph-hygiene`, `ralph-triage` SKILL.md frontmatter shapes)
+  - [x] `description:` field is one sentence, includes trigger phrases like "collate debug errors", "file debug-auto issues", "self-healing observability"
+  - [x] `model:` set to `sonnet` (matches other analyst-tier skills)
+  - [x] `allowed-tools:` lists at minimum the `ralph_hero__collate_debug` MCP tool and Bash (for the `curl` health check)
 
 #### Task 4.2: Implement skill body (preflight → dry-run → confirm → file → summarize)
 - **files**: `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` (modify)
@@ -452,12 +452,12 @@ Thin skill at `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` that wraps
 - **complexity**: low
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] Step 1: Preflight — verify `RALPH_DEBUG=true` in active env (instruct skill to inspect a settings file or fail with a copy-pasteable fix). Check Langfuse health via `curl -fsS http://localhost:3100/api/public/health || exit 2`
-  - [ ] Step 2: Call `ralph_hero__collate_debug({ dryRun: true })` and pretty-print the grouped report (top 5 by count, with hash, count, signature snippet, example trace URL)
-  - [ ] Step 3: If `errorGroups === 0`: exit with "No errors in window — nothing to file." If `errorGroups > 0`: ask the user to confirm filing (skill is interactive; not part of autopilot)
-  - [ ] Step 4: On confirm, call `ralph_hero__collate_debug({ dryRun: false })`. On decline, exit cleanly.
-  - [ ] Step 5: Summarize results: `N new issues created, M existing issues commented, top 3 by occurrence: <list>`
-  - [ ] Step 6: Suggest next step: `/ralph-hero:ralph-triage` to prioritize the freshly-filed `debug-auto` issues
+  - [x] Step 1: Preflight — verify `RALPH_DEBUG=true` in active env (instruct skill to inspect a settings file or fail with a copy-pasteable fix). Check Langfuse health via `curl -fsS http://localhost:3100/api/public/health || exit 2`
+  - [x] Step 2: Call `ralph_hero__collate_debug({ dryRun: true })` and pretty-print the grouped report (top 5 by count, with hash, count, signature snippet, example trace URL)
+  - [x] Step 3: If `errorGroups === 0`: exit with "No errors in window — nothing to file." If `errorGroups > 0`: ask the user to confirm filing (skill is interactive; not part of autopilot)
+  - [x] Step 4: On confirm, call `ralph_hero__collate_debug({ dryRun: false })`. On decline, exit cleanly.
+  - [x] Step 5: Summarize results: `N new issues created, M existing issues commented, top 3 by occurrence: <list>`
+  - [x] Step 6: Suggest next step: `/ralph-hero:ralph-triage` to prioritize the freshly-filed `debug-auto` issues
 
 #### Task 4.3: Document skill in README
 - **files**: `plugin/ralph-hero/README.md` (modify — only if a skills table already exists; otherwise skip per "Acceptance criteria" of GH-1101)
@@ -465,13 +465,13 @@ Thin skill at `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` that wraps
 - **complexity**: low
 - **depends_on**: [4.2]
 - **acceptance**:
-  - [ ] Inspect `plugin/ralph-hero/README.md` for an existing skills table. If present, add a new row for `ralph-debug-collate` matching the column layout (name, description, model, etc.)
-  - [ ] If no such table exists, document this finding in the PR description and skip — the GH-1101 acceptance criterion is conditional
+  - [x] Inspect `plugin/ralph-hero/README.md` for an existing skills table. If present, add a new row for `ralph-debug-collate` matching the column layout (name, description, model, etc.)
+  - [x] If no such table exists, document this finding in the PR description and skip — the GH-1101 acceptance criterion is conditional
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Skill file parses correctly: `cat plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md | head -20` shows valid YAML frontmatter
+- [x] Skill file parses correctly: `cat plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md | head -20` shows valid YAML frontmatter
 - [ ] `/ralph-hero:ralph-debug-collate` appears in `/help` output after plugin reload (manual check)
 
 #### Manual Verification:
