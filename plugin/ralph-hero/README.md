@@ -121,27 +121,20 @@ Under the hood:
 
 ### `/ralph-hero:autopilot` — Backlog Clearer
 
-Single-command shorthand for "clear the backlog while I'm away." Uses `ScheduleWakeup`-based self-pacing to dispatch `/ralph-hero:hero` against the next-most-important XS/S issue per tick, escalating to `Human Needed` when stuck and stopping cleanly when the queue is empty.
+Thin wrapper around `/loop /ralph-hero:hero`. Delegates wakeup cadence to `/loop`'s dynamic mode (model self-paces) and trusts hero for every per-issue decision, including escalation to `Human Needed`. Drains the queue end-to-end.
 
-**Opt-in (required)**: `export RALPH_AUTOPILOT_ENABLE=true` — unattended automation is opt-in by design.
+**Opt-in (enforced by hook)**: `export RALPH_AUTOPILOT_ENABLE=true` before invoking. The skill is gated by `autopilot-enable-gate.sh` — if the env var is not `true`, the inner `/loop` dispatch is blocked with a deterministic message. No LLM in the loop.
 
 **Invocation**:
-- `/ralph-hero:autopilot` — default: 20 iterations max, interactive merge
-- `/ralph-hero:autopilot --max-iterations 5` — bound the loop tighter
-- `/ralph-hero:autopilot --auto-merge` — auto-merge PRs that pass code review + CI
-- `/ralph-hero:autopilot --dry-run` — one-shot dry run; no hero dispatch
+- `/ralph-hero:autopilot` — drain the queue
 
-**Termination conditions** (any one stops the loop):
-- Backlog empty (no actionable XS/S issues remain)
-- Escalation flagged on the current tick
-- Three consecutive ticks produced no progress (issue gets escalated)
-- Iteration cap reached
+**How it terminates**: `/loop` in dynamic mode keeps re-firing until the model decides to stop calling `ScheduleWakeup`. The skill prompt instructs the model to stop when the filtered queue (excludes `Done`, `Canceled`, `Human Needed`) is empty. Hero's escalation decisions move issues to `Human Needed` automatically, which removes them from the next pick.
 
-**Interactive-merge mode (default)**: When hero lands a PR, the issue moves to `In Review` awaiting human merge. Autopilot does NOT re-pick `In Review` issues — they're listed in the final summary as "awaiting human merge" so you know what's queued for you. Use `--auto-merge` to also drive code-review + merge through the loop.
+**Review mode is inherited, not overridden**: autopilot does NOT set `RALPH_REVIEW_MODE` itself. For end-to-end runs (ticket → RPI → review → merge), set `RALPH_REVIEW_MODE=auto` (and any other env hero/finish/merge need) before invoking. With interactive mode, hero lands PRs and stops; autopilot drains forward-progress work but in-review PRs await human merge.
 
-**Audit trail**: every tick appends to `~/.ralph-hero/autopilot.jsonl`. Inspect with `jq . ~/.ralph-hero/autopilot.jsonl`.
+**Run unblock alongside**: `/ralph-hero:ralph-unblock` (autonomous) or `/ralph-hero:unblock` (interactive) drains `Human Needed` work. Autopilot and unblock are designed to run concurrently — autopilot never picks `Human Needed` issues, unblock only picks them.
 
-**Cancel an in-flight loop**: use `/tasks` (Claude Code's scheduled-task list) to identify the autopilot wakeup and delete it via the cron tools.
+**Cancel an in-flight loop**: use `/tasks` to find the pending wakeup and delete it via the cron tools — same as any `/loop` dynamic-mode run.
 
 ### CLI (`just` recipes)
 
