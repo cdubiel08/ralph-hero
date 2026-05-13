@@ -14,9 +14,10 @@ tags: [mcp-server, zod, type-coercion, bug-fix]
 
 ## Prior Work
 
-- builds_on:: [[2026-05-12-GH-1130]] (issue body + triage comment on cdubiel08/ralph-hero#1130 — full reproduction, root-cause analysis, and recommended fix)
+- builds_on:: [[2026-03-01-GH-0478-empty-params-fix]]
+- builds_on:: [[2026-03-01-GH-0478-empty-params-optional-schema]]
 
-None of the existing research/plan corpus addresses Zod tool-input coercion in the ralph-hero MCP server.
+GH-478 landed the existing `validateToolInput` patch in `src/index.ts` that normalizes `undefined → {}` for mcptools 0.7.1 compatibility. That work established the precedent for the harness-quirk patch site referenced in Approach below. GH-1130 is the same class of bug (harness wire-format quirk on tool input) but solved at the Zod schema layer rather than the `validateToolInput` layer — see "What We're NOT Doing" for the rationale.
 
 ## Overview
 
@@ -176,7 +177,8 @@ Introduce a shared Zod helper and migrate all 15 `z.boolean()` occurrences in `m
 - [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors.
 - [ ] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes including the new regression test.
 - [ ] `grep -rn "z\.boolean\|\.boolean()" plugin/ralph-hero/mcp-server/src/tools/` — zero results (full migration confirmed).
-- [ ] `grep -rn "zBoolish" plugin/ralph-hero/mcp-server/src/tools/` — 15 matches (one per migrated declaration) plus 9 import lines (one per modified file).
+- [ ] `grep -rn "zBoolish" plugin/ralph-hero/mcp-server/src/tools/` — at least 25 matches: 15 call-site replacements + 10 import-line occurrences (one `import { zBoolish }` per modified file across issue-tools, activity-tools, project-management-tools, debug-tools, decompose-tools, relationship-tools, plan-graph-tools, batch-tools, dashboard-tools, project-tools).
+- [ ] `grep -rn "z\.coerce\.boolean" plugin/ralph-hero/mcp-server/src/` — zero matches (the unsafe primitive must not be introduced — the `Boolean("false") === true` trap is the whole reason we chose `z.preprocess` over `z.coerce.boolean()`).
 
 #### Manual Verification:
 - [ ] From a fresh agent session (one that has not run `ToolSearch` on any ralph-hero MCP tool), invoke `mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue({ number: 1, includePipeline: true })`. The call succeeds without an `Input validation error`.
