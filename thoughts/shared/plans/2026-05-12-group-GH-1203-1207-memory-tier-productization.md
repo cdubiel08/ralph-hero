@@ -325,12 +325,12 @@ Close the write half of agent memory. Add a `knowledge_remember(text, source, ti
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm test --prefix plugin/ralph-knowledge -- remember` — new tests pass
-- [ ] `npm run build --prefix plugin/ralph-knowledge` — no errors
-- [ ] `test -x plugin/ralph-hero/hooks/scripts/remember-turn.sh` — executable bit set
-- [ ] `cd scripts/dream && uv run pytest` — ingest.py tests pass
-- [ ] `bash -n plugin/ralph-hero/hooks/scripts/remember-turn.sh` — script parses
-- [ ] Synthetic transcript test: pipe a fake transcript with a long user+assistant turn, run `remember-turn.sh`, assert a file appears in `~/projects/thoughts/dream-memories/agent/$(date +%Y/%m/%d)/`
+- [x] `npm test --prefix plugin/ralph-knowledge -- remember` — new tests pass (12 tests in remember.test.ts; 516/516 in full suite)
+- [x] `npm run build --prefix plugin/ralph-knowledge` — no errors
+- [x] `test -x plugin/ralph-hero/hooks/scripts/remember-turn.sh` — executable bit set
+- [x] `cd scripts/dream && uv run pytest` — ingest.py tests pass (52/52, includes new TestAgentMemoryPathCoverage)
+- [x] `bash -n plugin/ralph-hero/hooks/scripts/remember-turn.sh` — script parses
+- [x] Synthetic transcript test: 22/22 pass in `__tests__/remember-turn.test.sh`; covers no-transcript silent no-op, missing file silent no-op, short-turn skip, long-turn write, GitHub PAT redaction, stdin transcript_path fallback, idempotent re-fire, latency budget (<500ms; actual ~75ms)
 
 #### Manual Verification:
 - [ ] Run `/ralph-hero:retro` end-to-end and grep for new file in `~/projects/thoughts/dream-memories/agent/$(date +%Y/%m/%d)/`

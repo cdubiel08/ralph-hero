@@ -16,6 +16,24 @@ content and the downstream ralph-knowledge reindexer will skip them via
 its mtime check.
 
 Run via ``uv run ingest.py --since 24h`` (see ``--help`` for options).
+
+GH-1205 note on agent memories
+------------------------------
+
+The ``knowledge_remember`` MCP tool and the ``remember-turn.sh`` Stop
+hook (both shipped in ralph-hero) write per-turn agent memories under::
+
+    <base_dir>/agent/YYYY/MM/DD/<source>-<hash12>.md
+
+with ``memory_tier: raw`` frontmatter — the same shape this ingester
+produces for gemma-lab / llm-cli / git sources. The dream-loop's
+reflection synthesis pass treats all raw memories uniformly, so agent
+memories automatically participate in next-pass clustering without any
+extra code path here.
+
+No scan-side changes are required: the reindexer walks ``base_dir``
+recursively, so the ``agent/`` subtree is covered by the existing
+``roots`` configuration in ``~/.ralph/knowledge.config.json``.
 """
 from __future__ import annotations
 

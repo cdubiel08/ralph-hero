@@ -3,7 +3,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
@@ -13,6 +15,7 @@ import { embed } from "./embedder.js";
 import { Reranker } from "./reranker.js";
 import { formatSearchResults, formatTraverseResults } from "./format.js";
 import { registerGraphTools } from "./graph-tools.js";
+import { reindexPath } from "./reindex.js";
 
 const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
 
@@ -62,6 +65,69 @@ function percentile(sortedValues: number[], p: number): number {
 }
 
 /**
+ * GH-1205: Compute the 12-char SHA-1 digest used as the filename suffix
+ * for an agent memory. Deterministic so re-running the tool with the
+ * same `(source, text)` pair lands on byte-identical content.
+ */
+export function memoryHash(source: string, text: string): string {
+  return createHash("sha1")
+    .update(`${source}:${text}`)
+    .digest("hex")
+    .slice(0, 12);
+}
+
+/**
+ * GH-1205: Compute the on-disk path for a `knowledge_remember` write
+ * without any side effects. Mirrors the path layout that
+ * `scripts/dream/ingest.py:_memory_path` produces, but under the
+ * `agent/` subdirectory so the dream-loop reflection pass can include
+ * agent memories alongside gemma-lab + llm-cli sources.
+ */
+export function rememberPath(
+  baseDir: string,
+  source: string,
+  text: string,
+  now: Date,
+): string {
+  const digest = memoryHash(source, text);
+  const yyyy = now.getUTCFullYear().toString().padStart(4, "0");
+  const mm = (now.getUTCMonth() + 1).toString().padStart(2, "0");
+  const dd = now.getUTCDate().toString().padStart(2, "0");
+  return join(baseDir, "agent", yyyy, mm, dd, `${source}-${digest}.md`);
+}
+
+/**
+ * GH-1205: Render the markdown body written by `knowledge_remember`.
+ * Frontmatter keys are emitted in a fixed order so re-running the tool
+ * with identical inputs produces byte-stable content (and the same
+ * sha-256 content hash) — this is the same idempotence contract as
+ * `scripts/dream/ingest.py:_format_frontmatter`.
+ */
+export function renderRememberMarkdown(args: {
+  text: string;
+  source: string;
+  tier: "raw" | "doc";
+  tags?: string[];
+  githubIssue?: number;
+  now: Date;
+}): string {
+  const tagsStr = args.tags && args.tags.length > 0 ? args.tags.join(", ") : "";
+  const lines = [
+    "---",
+    `date: ${args.now.toISOString()}`,
+    `memory_tier: ${args.tier}`,
+    `source: ${args.source}`,
+  ];
+  if (typeof args.githubIssue === "number") {
+    lines.push(`github_issue: ${args.githubIssue}`);
+  }
+  lines.push(`tags: [${tagsStr}]`);
+  lines.push("---");
+  const frontmatter = lines.join("\n") + "\n";
+  return frontmatter + "\n" + args.text.replace(/\n+$/, "") + "\n";
+}
+
+/**
  * Options for `createServer`. When `embedFn` is provided it replaces the
  * production `embed` import, allowing tests to bypass the HuggingFace model
  * download.
@@ -72,10 +138,23 @@ function percentile(sortedValues: number[], p: number): number {
  * model download. Production callers omit this field; the default `Reranker`
  * is lazy-loaded and pays no cold-start cost until `rerank: true` is set on
  * a `knowledge_search` call.
+ *
+ * `rememberFs` + `rememberReindex` + `rememberNow` + `rememberBaseDir` are
+ * test-only injection points for the GH-1205 `knowledge_remember` tool. They
+ * stub the on-disk write, the single-path reindex, the wall-clock, and the
+ * base directory so tests can assert path shape + frontmatter shape without
+ * touching the real `~/projects/thoughts/dream-memories/agent/` tree.
  */
 export interface CreateServerOptions {
   embedFn?: (text: string) => Promise<Float32Array>;
   rerankerFactory?: () => Reranker;
+  rememberFs?: {
+    mkdir: (dir: string) => void;
+    write: (path: string, body: string) => void;
+  };
+  rememberReindex?: (path: string, dbPath: string) => Promise<{ indexed: boolean }>;
+  rememberNow?: () => Date;
+  rememberBaseDir?: string;
 }
 
 export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
@@ -91,6 +170,20 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
   const reranker = opts.rerankerFactory ? opts.rerankerFactory() : new Reranker();
   const hybrid = new HybridSearch(db, fts, vec, embedImpl, reranker);
   const traverser = new Traverser(db);
+
+  // GH-1205: production defaults for the `knowledge_remember` filesystem +
+  // reindex side effects. Tests inject `rememberFs` / `rememberReindex` to
+  // avoid touching the real dream-memories tree or paying the ONNX model
+  // download in unit tests.
+  const rememberFs = opts.rememberFs ?? {
+    mkdir: (dir: string) => mkdirSync(dir, { recursive: true }),
+    write: (path: string, body: string) => writeFileSync(path, body, "utf-8"),
+  };
+  const rememberReindexImpl = opts.rememberReindex ?? reindexPath;
+  const rememberNow = opts.rememberNow ?? (() => new Date());
+  const rememberBaseDir = opts.rememberBaseDir
+    ?? resolveEnv("RALPH_DREAM_MEMORIES_DIR")
+    ?? join(homedir(), "projects", "thoughts", "dream-memories");
 
   server.tool(
     "knowledge_search",
@@ -335,6 +428,65 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
         return { content: [{ type: "text" as const, text: JSON.stringify(formatted, null, 2) }] };
       } catch (e) {
         return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    },
+  );
+
+  server.tool(
+    "knowledge_remember",
+    "Persist a piece of text as a raw memory under ~/projects/thoughts/dream-memories/agent/YYYY/MM/DD/<source>-<hash12>.md and incrementally reindex it. Use this to record agent observations, decisions, or context worth recalling in a future session. Tier defaults to 'raw' so the dream-loop's next reflection pass can synthesize it; 'reflection' and 'wiki' are NOT writable here to preserve manual-curation invariants.",
+    {
+      text: z.string().min(1).describe("The memory body. Plain markdown is fine. Frontmatter is added automatically."),
+      source: z.string().min(1).describe("Stable source identifier (e.g., 'agent:impl', 'agent:research'). Used in the filename + frontmatter so reflections can cite origin."),
+      tags: z.array(z.string()).optional().describe("Optional tags for retrieval filtering. Empty list is fine."),
+      github_issue: z.number().int().optional().describe("Optional GitHub issue number to associate with this memory."),
+      tier: z
+        .enum(["raw", "doc"])
+        .optional()
+        .default("raw")
+        .describe("Memory tier. 'raw' (default) flows into the next reflection-synthesis pass. 'doc' marks it as curated. 'reflection'/'wiki' are intentionally not writable via this tool."),
+    },
+    async (args) => {
+      try {
+        const tier = args.tier ?? "raw";
+        const now = rememberNow();
+        const path = rememberPath(rememberBaseDir, args.source, args.text, now);
+        const body = renderRememberMarkdown({
+          text: args.text,
+          source: args.source,
+          tier,
+          tags: args.tags,
+          githubIssue: args.github_issue,
+          now,
+        });
+        rememberFs.mkdir(dirname(path));
+        rememberFs.write(path, body);
+
+        let indexed = false;
+        try {
+          const result = await rememberReindexImpl(path, dbPath);
+          indexed = result.indexed;
+        } catch (e) {
+          // Reindex failure must not lose the file-write success. The next
+          // full reindex will pick it up; surface the warning so the agent
+          // knows the search index isn't fresh yet.
+          console.warn(`knowledge_remember: reindex failed (${(e as Error).message}); file written but not yet searchable`);
+        }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ path, indexed }, null, 2),
+            },
+          ],
+        };
+      } catch (e) {
+        return {
+          content: [
+            { type: "text" as const, text: `Error: ${(e as Error).message}` },
+          ],
+          isError: true,
+        };
       }
     },
   );
