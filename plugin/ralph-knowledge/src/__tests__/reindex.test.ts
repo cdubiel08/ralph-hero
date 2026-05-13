@@ -934,7 +934,7 @@ describe("incremental reindex", () => {
 
   it("scenario 31: pipeline invoked ceil(N_chunks/EMBED_BATCH_SIZE) times for many short docs", async () => {
     // 50 short docs, each producing exactly 1 chunk = 50 total chunks.
-    // With EMBED_BATCH_SIZE=16 (default), expect ceil(50/16) = 4 flushes.
+    // With EMBED_BATCH_SIZE=4 (default), expect ceil(50/4) = 13 flushes.
     delete process.env.EMBED_BATCH_SIZE;
     for (let i = 0; i < 50; i++) {
       writeFileSync(join(dir, `doc-${i}.md`), makeDoc(`Doc ${i}`));
@@ -944,8 +944,8 @@ describe("incremental reindex", () => {
 
     // 50 distinct documents observed (titles unique).
     expect(countEmbedChunkDocs()).toBe(50);
-    // Exactly ceil(50/16) = 4 pipeline invocations (vs 50 in the legacy path).
-    expect(mockedEmbedChunks).toHaveBeenCalledTimes(4);
+    // Exactly ceil(50/4) = 13 pipeline invocations (vs 50 in the legacy path).
+    expect(mockedEmbedChunks).toHaveBeenCalledTimes(13);
   });
 
   it("scenario 32: EMBED_BATCH_SIZE env override changes flush cardinality", async () => {
@@ -964,7 +964,7 @@ describe("incremental reindex", () => {
     }
   });
 
-  it("scenario 33: EMBED_BATCH_SIZE invalid value falls back to default 16", async () => {
+  it("scenario 33: EMBED_BATCH_SIZE invalid value falls back to default 4", async () => {
     process.env.EMBED_BATCH_SIZE = "not-a-number";
     try {
       for (let i = 0; i < 50; i++) {
@@ -973,8 +973,8 @@ describe("incremental reindex", () => {
 
       await reindex([dir], dbPath);
 
-      // ceil(50/16) = 4 — same as default behavior.
-      expect(mockedEmbedChunks).toHaveBeenCalledTimes(4);
+      // ceil(50/4) = 13 — same as default behavior.
+      expect(mockedEmbedChunks).toHaveBeenCalledTimes(13);
     } finally {
       delete process.env.EMBED_BATCH_SIZE;
     }

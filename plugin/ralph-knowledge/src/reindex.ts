@@ -17,22 +17,26 @@ import { createLlmClient, type LlmClient } from "./llm-client.js";
 /**
  * GH-1203: how many chunk texts to buffer across documents before flushing
  * a single batched `embedChunks()` call. Tunable via the `EMBED_BATCH_SIZE`
- * env var; defaults to 16 (chosen empirically as the knee where per-batch
- * ONNX overhead is amortized without spiking RSS on the live corpus). A
- * value of 1 effectively reverts to per-chunk behavior.
+ * env var; defaults to 4 (lowered from 16 after the GH-913 heap regression
+ * bench showed batch-of-16 peaked at ~1078 MB RSS — well over the 800 MB
+ * threshold — because the transformer pipeline holds intermediate
+ * activations for the entire batch in memory). Batch-of-4 keeps the
+ * per-batch transient ~4× the per-chunk baseline while still amortizing
+ * ONNX pipeline overhead 4×. A value of 1 effectively reverts to
+ * per-chunk behavior.
  */
 function getEmbedBatchSize(): number {
   const raw = process.env.EMBED_BATCH_SIZE;
-  if (!raw) return 16;
+  if (!raw) return 4;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return 16;
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return 4;
   return n;
 }
 
 /**
  * GH-1203: how many flush cycles between `global.gc()` hints. Multiplied by
  * `EMBED_BATCH_SIZE` to compute total chunks processed per GC hint
- * (default: 8 * 16 = 128 chunks). The hint is guarded behind a typeof
+ * (default: 8 * 4 = 32 chunks). The hint is guarded behind a typeof
  * check so it's a no-op in environments that didn't start Node with
  * `--expose-gc` (see the `package.json` reindex script).
  */
