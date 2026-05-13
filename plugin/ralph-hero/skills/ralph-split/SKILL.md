@@ -178,9 +178,20 @@ Produce a split plan summary:
 
 2. **Link as sub-issue** under the original issue. If linking fails, retry once; if still failing, document the orphan issue in a comment on the parent.
 
-3. **Set estimate** to "XS".
+3. **Set estimate** based on the child's actual scope. Do NOT default every child to XS — the split-size-gate accepts XS **or** S, and reflexively picking XS is a frequent under-sizing failure mode (e.g., per-skill audit children that require multi-file edits are S, not XS):
 
-4. **Set initial workflow state**: advance the issue to the next appropriate state (command: "ralph_split"). If an error is returned, read the message — it contains valid states/intents and a Recovery action. Retry with corrected parameters.
+   | Child scope signal | Estimate |
+   |--------------------|----------|
+   | Single file, < 2 hours, trivial multi-file edit | XS |
+   | Multi-file content work (e.g., SKILL.md + eval-scenarios.md + hooks), 2-4 hours | S |
+   | Service / repository / router layer with tests | S |
+   | One-pattern audit or refactor with no new files | XS |
+   | One-skill audit pass (read SKILL.md + author eval-scenarios.md + grade outputs + apply fixes) | S |
+   | Fragment extraction with consumer-skill rewrites in 3+ files | S |
+
+   When the split strategy table row maps to a per-artifact decomposition where each child owns multiple authored files (skill audits, fragment extractions with multi-skill rewrites, multi-file content updates), pick **S**. Reserve **XS** for genuinely single-file or one-edit children.
+
+4. **Set initial workflow state**: advance the issue to "Ready for Plan" (command: "ralph_split"), unless Step 10's gating conditions apply. This applies **uniformly** to every child — including children that are blocked by a sibling via the dependency-chain pattern (Step 7). A blocking dependency is a `blockedBy` relationship; it does NOT replace the workflow state. Set the workflow state on every child regardless of where it sits in a dependency chain. If an error is returned, read the message — it contains valid states/intents and a Recovery action. Retry with corrected parameters.
 
 **Sub-issue description template**:
 ```markdown
@@ -263,11 +274,13 @@ If such a note exists, append it to the child's body under a `## Research Notes`
 
 ### Step 10: Move Sub-Issues to Appropriate State
 
-Based on research done during splitting:
+Based on research done during splitting, set the workflow state for **every** child (including children with sibling `blockedBy` dependencies — Step 7 dependencies are orthogonal to workflow state):
 
 - **If scope is clear** -> Update workflow state to "Ready for Plan" (command: "ralph_split")
 - **If scope needs more research** -> Keep in "Research Needed"
-- **If blocked by external issue** -> Keep in "Backlog" with blocker set
+- **If blocked by an issue OUTSIDE this split** -> Keep in "Backlog" with the external blocker set
+
+> **Uniformity check**: After this step, run `list_sub_issues` on the parent and verify every child has a non-null `workflowState`. The dependency-chain pattern (repo -> service -> router) is a common pitfall: agents sometimes advance only the unblocked head of the chain and leave the rest with no workflow state, which strands them outside any pipeline query. Set the state on every child — `blockedBy` is what enforces ordering, not workflow state.
 
 ### Step 11: Team Result Reporting
 
