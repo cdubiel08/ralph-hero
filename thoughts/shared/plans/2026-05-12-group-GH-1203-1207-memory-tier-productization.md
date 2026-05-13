@@ -248,10 +248,10 @@ Wrap `knowledge_search` in a policy layer keyed by agent role. Add `knowledge_re
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build --prefix plugin/ralph-knowledge` — no errors (new tool registration type-checks)
-- [ ] `npm test --prefix plugin/ralph-knowledge -- recall` — new policy-fanout tests pass
-- [ ] `grep -r "knowledge_recall" plugin/ralph-knowledge/src/index.ts` returns a match
-- [ ] `grep -l "knowledge_recall" plugin/ralph-hero/skills/{research,ralph-research,plan,ralph-plan,ralph-impl,retro}/SKILL.md | wc -l` returns 6
+- [x] `npm run build --prefix plugin/ralph-knowledge` — no errors (new tool registration type-checks)
+- [x] `npm test --prefix plugin/ralph-knowledge -- recall` — new policy-fanout tests pass (12/12)
+- [x] `grep -r "knowledge_recall" plugin/ralph-knowledge/src/index.ts` returns a match
+- [x] `grep -l "knowledge_recall" plugin/ralph-hero/skills/{research,ralph-research,plan,ralph-plan,ralph-impl,retro}/SKILL.md | wc -l` returns 6
 
 #### Manual Verification:
 - [ ] `/ralph-hero:research` on a topic with known raw/reflection memory returns results from `raw` and `reflection` tiers

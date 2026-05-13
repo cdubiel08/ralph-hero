@@ -55,6 +55,8 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
 ---
 
 ## Configuration (resolved at load time)
@@ -100,9 +102,12 @@ After fetching the issue, check its current state:
 
 1. **Read issue and all comments**: Fetch the full issue details for the issue number.
 
+1a. **Pre-implementation context (implementer-tier memory)**: If `knowledge_recall` is available, call `knowledge_recall(query="[issue title + key file paths/component names]", role="implementer", brief=true, limit=5)` BEFORE reading the plan. The implementer tier policy `[wiki, doc]` returns ONLY canonical references — never raw memory or speculative reflections — keeping the implementation grounded in agreed-upon truth. Read the top matches for context, then continue.
+   If `knowledge_recall` is unavailable or returns nothing, skip this step and proceed directly to step 2.
+
 2. **Find linked plan document**:
 
-   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "implementation plan GH-${number} [issue title keywords]", type "plan", limit 3.
+   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "implementation plan GH-${number} [issue title keywords]", type "plan", limit 3. Prefer `knowledge_recall(role="implementer", type="plan", ...)` for the role-aware default, or `knowledge_search(type="plan", ...)` for explicit-tier control.
    If a high-relevance result is returned, read that file directly and skip steps 1-8 below. If not available or no results, continue with standard Artifact Comment Protocol discovery below.
 
    **Artifact shortcut**: If `--plan-doc` flag was provided in args and the file exists on disk, read it directly and skip the discovery sequence below. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery.

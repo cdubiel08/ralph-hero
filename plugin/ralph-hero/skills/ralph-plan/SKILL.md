@@ -52,6 +52,8 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__sync_plan_graph
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
 ---
 
 ## Configuration (resolved at load time)
@@ -158,8 +160,9 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
 
 1. **For each issue** (dependency order):
 
-   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first: search for "research GH-${number} [issue title keywords]", type "research", limit 3.
+   **Knowledge graph shortcut**: If `knowledge_recall` is available, call `knowledge_recall(query="research GH-${number} [issue title keywords]", role="planner", type="research", limit=3, brief=true)`. The planner tier policy `[reflection, wiki, doc]` surfaces synthesized insights and curated knowledge for the planning frame.
    If a high-relevance result is returned, read that file directly and skip steps 1-7 below. If not available or no results, continue with standard Artifact Comment Protocol discovery below.
+   For explicit-tier lookup (e.g., `memory_tier="wiki"` only), call `knowledge_search(query="...", type="research", limit=3)` directly — both tools remain available.
 
    **Artifact shortcut**: If `--research-doc` flag was provided in args and the file exists on disk, read it directly and skip the discovery sequence below for that issue. If the file does not exist, log `"Artifact flag path not found, falling back to discovery: [path]"` and continue with standard discovery. For groups, the flag covers the primary issue only; other members use standard discovery.
 
