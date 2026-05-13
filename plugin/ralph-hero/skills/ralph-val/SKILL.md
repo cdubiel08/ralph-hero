@@ -101,6 +101,18 @@ Reason: No worktree found at worktrees/GH-NNN — cannot validate without implem
 ```
 And stop.
 
+**Do NOT fall back to validating against main.** Do NOT substitute any other path. The "no worktree" condition is a hard stop with VALIDATION FAIL. The following is a forbidden anti-pattern:
+
+```
+VALIDATION PASS
+
+Issue: #NNN
+Plan: thoughts/shared/plans/...
+Implementation: Merged to main
+```
+
+Two signals identify this anti-pattern: (1) no `worktrees/GH-NNN` path is printed in the report, and (2) the verdict is `VALIDATION PASS` despite the absence of a worktree. If the worktree directory is missing for any reason (pruned post-merge, accidentally deleted, never created), the only correct verdict is `VALIDATION FAIL` with `Reason: No worktree found at worktrees/GH-NNN`. The caller will route to impl, human attention, or re-create the worktree as appropriate.
+
 **Worktree freshness check**: Once the worktree is located, compare its branch against `origin/main` before running validation so checks don't pass against a stale base. We compare against `origin/main` explicitly because `git pull --ff-only` without a refspec pulls from the branch's tracked upstream, not from main — so it only proves the feature branch matches its own remote, not that the implementation is current with main.
 
 ```bash

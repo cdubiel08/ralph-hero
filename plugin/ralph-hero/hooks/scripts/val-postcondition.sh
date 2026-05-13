@@ -28,6 +28,19 @@ TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
 
 if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
   if grep -qE 'VALIDATION PASS|VALIDATION FIX|VALIDATION FAIL|Queue empty' "$TRANSCRIPT_PATH"; then
+    # Silent-fallback detection (Step 4 contract violation):
+    # If the transcript contains VALIDATION PASS AND "Merged to main" AND does NOT
+    # contain a worktrees/GH- path token, the agent fabricated a "validate against
+    # main" fallback when the worktree was missing. Per ralph-val SKILL.md Step 4,
+    # the only correct verdict in that case is VALIDATION FAIL with
+    # "No worktree found at worktrees/GH-NNN". Block stop so the agent re-emits
+    # the correct verdict.
+    if grep -q 'VALIDATION PASS' "$TRANSCRIPT_PATH" \
+       && grep -q 'Merged to main' "$TRANSCRIPT_PATH" \
+       && ! grep -q 'worktrees/GH-' "$TRANSCRIPT_PATH"; then
+      echo 'Detected silent main fallback: VALIDATION PASS emitted with "Merged to main" and no worktree path. This is a Step 4 contract violation. Emit VALIDATION FAIL with "No worktree found at worktrees/GH-NNN".' >&2
+      exit 2
+    fi
     exit 0
   fi
 fi
