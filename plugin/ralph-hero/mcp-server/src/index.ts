@@ -33,6 +33,7 @@ import { registerDecomposeTools } from "./tools/decompose-tools.js";
 import { registerViewTools } from "./tools/view-tools.js";
 import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
 import { registerActivityTools } from "./tools/activity-tools.js";
+import { registerDelegationTools } from "./tools/delegation-tools.js";
 import { registerTrendsTools } from "./tools/trends-tools.js";
 
 /**
@@ -538,6 +539,9 @@ async function main(): Promise<void> {
 
   // Activity log reader (recent_activity tool — pure filesystem, no GitHub client)
   registerActivityTools(server);
+
+  // Delegation telemetry reader (delegation_stats tool — pure filesystem, no GitHub client)
+  registerDelegationTools(server);
 
   // Trends tools (capture_snapshot — JSONL persistence under ~/.ralph-hero/snapshots/)
   registerTrendsTools(server, client, fieldCache);
