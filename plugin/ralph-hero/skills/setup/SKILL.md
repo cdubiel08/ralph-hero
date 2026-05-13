@@ -634,6 +634,85 @@ Sync workflows (auto-activate when ROUTING_PAT is set):
 For cross-repo routing setup, see: docs/cross-repo-routing.md
 ```
 
+### Step 6c: Delegation Onboarding (Optional)
+
+ralph-hero ships an opt-in delegation wrapper (`plugin/ralph-hero/scripts/ralph-delegate.sh`) that lets four skills (codebase-locator, pr-agent, val-agent, delegate-test) offload narrow text-in/text-out sub-tasks to a local Gemma server or other OpenAI-compatible endpoint. The feature is fully gated on `RALPH_DELEGATE_ENABLED=true`; with the variable unset, ralph-hero behaves bit-identically to today.
+
+This step probes the configured endpoint (default `http://localhost:8000`), and **if and only if** a local LLM server is already reachable, offers the operator a one-question opt-in. Endpoint probe failure is silent — no error, no prompt, no settings-file write.
+
+#### Idempotency Guard
+
+Before probing, check whether delegation is already enabled in the resolved environment:
+
+```bash
+if [[ "${RALPH_DELEGATE_ENABLED:-}" == "true" || "${RALPH_DELEGATE_ENABLED:-}" == "1" ]]; then
+  echo "Delegation already enabled — skipping onboarding."
+  # Record state for Final Report
+  delegationProbed=false
+  delegationEnabled=true   # already on; nothing for this step to do
+  # Skip to Step 7
+fi
+```
+
+If the guard fires, set `delegationAlreadyEnabled=true` and skip the remaining sub-steps of 6c.
+
+#### Probe the Endpoint
+
+Run the F1 health-check wrapper (`ralph-delegate.sh --health-check`) with stderr suppressed — the wrapper writes a JSONL audit-log line on every call, so this is the canonical probe; do not re-implement in raw curl:
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh" --health-check 2>/dev/null
+rc=$?
+```
+
+The wrapper hard-caps the probe at 2 seconds and returns:
+- `0` — endpoint reachable
+- `127` — endpoint unreachable
+- anything else — treat as unreachable
+
+Branch on `$rc`:
+
+- **`rc != 0`** (any non-zero) — record `delegationProbed=false`, `delegationEnabled=false`, and silently skip to Step 7. Do NOT show a prompt, do NOT write settings, do NOT print an error.
+- **`rc == 0`** — set `delegationProbed=true` and continue to the AskUserQuestion below.
+
+#### AskUserQuestion (Confirmation Gate)
+
+Even with a reachable endpoint, the skill MUST get explicit confirmation before writing `RALPH_DELEGATE_ENABLED=true`. Default to "No" on any ambiguity.
+
+**Question**: "A local LLM endpoint is reachable at `${RALPH_LLM_URL:-http://localhost:8000}`. Enable opt-in delegation for ralph-hero skills?"
+
+**Options**:
+- **"Yes, enable delegation (writes `RALPH_DELEGATE_ENABLED=true` to settings)"** — Continue to settings-file write below.
+- **"No, skip for now"** — Record `delegationEnabled=false`, no settings-file write, continue to Step 7.
+
+#### Settings-File Write (on "Yes" only)
+
+Append `"RALPH_DELEGATE_ENABLED": "true"` to the existing `"env"` block in the **same** scope-appropriate settings file Step 1b/Step 5 chose for the other env vars. **Never split delegation env vars across files** — they must live alongside `RALPH_GH_OWNER`, `RALPH_GH_PROJECT_NUMBER`, etc.
+
+- **User-scoped install**: `~/.claude/settings.json`
+- **Project-scoped install**: `<project>/.claude/settings.local.json`
+
+Reuse the settings-write pattern from Step 5 (read existing JSON, merge a new key under `"env"`, write back with the same indentation). Do NOT use `jq -i` if the file may contain comments — fall back to a careful read/parse/write cycle.
+
+Record `delegationEnabled=true`.
+
+#### Confirmation Output
+
+Display:
+
+```
+Delegation enabled. Run 'gemma-up' to start the local server before invoking ralph-hero skills.
+See README.md § Delegation for details.
+```
+
+#### Record Delegation State
+
+Set the following variables for use by Step 7 Final Report:
+
+- `delegationProbed`: true|false (true if endpoint reachable, false if probe failed or already-enabled guard fired)
+- `delegationEnabled`: true|false (true only after explicit "Yes" answer, or if already-enabled guard fired)
+- `delegationAlreadyEnabled`: true|false (true only if the idempotency guard fired)
+
 ### Step 7: Final Report
 
 **For simple setup (same owner):**
@@ -672,6 +751,12 @@ Routing & Sync: Skipped (run /ralph-hero:setup again to enable later)
   See docs/cross-repo-routing.md for manual setup
 ```
 
+**Delegation** — append one line based on Step 6c outcome:
+- If `delegationEnabled=true` (operator answered "Yes"): `Delegation: Enabled (RALPH_DELEGATE_ENABLED=true written to settings)`
+- If `delegationProbed=true` and `delegationEnabled=false` (probe succeeded, operator declined): `Delegation: Skipped (operator declined)`
+- If `delegationAlreadyEnabled=true`: `Delegation: Already enabled — skipped onboarding`
+- Otherwise (probe failed, the default path): `Delegation: Endpoint not detected — skipped`
+
 Then display next steps. **If routing was enabled**, use:
 ```
 Next steps:
@@ -679,18 +764,22 @@ Next steps:
 2. Restart Claude Code if you changed any env vars
 3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
 4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
-5. Run /ralph-triage to start processing issues
+5. [If delegationEnabled is true] Restart Claude Code, then run /ralph-hero:delegate-test "hello world" to confirm delegation is wired end-to-end.
+6. Run /ralph-triage to start processing issues
 Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
-Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped**, use the original 3-item list:
+Items 3, 4, and 5 are conditional — only include them if the corresponding state is pending/not created/enabled. **If routing was skipped**, use the shorter list:
 ```
 Next steps:
 1. Verify your config file (see scope detection above for location)
 2. Restart Claude Code if you changed any env vars
-3. Run /ralph-triage to start processing issues
+3. [If delegationEnabled is true] Restart Claude Code, then run /ralph-hero:delegate-test "hello world" to confirm delegation is wired end-to-end.
+4. Run /ralph-triage to start processing issues
 Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
+
+Item 3 is conditional — only include if `delegationEnabled=true`.
 
 **For split-owner setup:**
 ```
@@ -730,6 +819,12 @@ Routing & Sync: Skipped (run /ralph-hero:setup again to enable later)
   See docs/cross-repo-routing.md for manual setup
 ```
 
+**Delegation** — append one line based on Step 6c outcome:
+- If `delegationEnabled=true` (operator answered "Yes"): `Delegation: Enabled (RALPH_DELEGATE_ENABLED=true written to settings)`
+- If `delegationProbed=true` and `delegationEnabled=false` (probe succeeded, operator declined): `Delegation: Skipped (operator declined)`
+- If `delegationAlreadyEnabled=true`: `Delegation: Already enabled — skipped onboarding`
+- Otherwise (probe failed, the default path): `Delegation: Endpoint not detected — skipped`
+
 Then display:
 ```
 IMPORTANT: Verify your config file (see scope detection above for location) has:
@@ -749,18 +844,22 @@ Next steps:
 2. Restart Claude Code if you changed any env vars
 3. [If ROUTING_PAT pending] Add ROUTING_PAT secret: https://github.com/[owner]/[repo]/settings/secrets/actions
 4. [If routing config not created] Create .ralph-routing.yml (see docs/cross-repo-routing.md)
-5. Run /ralph-triage to start processing issues
+5. [If delegationEnabled is true] Restart Claude Code, then run /ralph-hero:delegate-test "hello world" to confirm delegation is wired end-to-end.
+6. Run /ralph-triage to start processing issues
 Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
 
-Items 3 and 4 are conditional — only include them if the corresponding state is pending/not created. **If routing was skipped:**
+Items 3, 4, and 5 are conditional — only include them if the corresponding state is pending/not created/enabled. **If routing was skipped:**
 ```
 Next steps:
 1. Verify your config file (see scope detection above for location)
 2. Restart Claude Code if you changed any env vars
-3. Run /ralph-triage to start processing issues
+3. [If delegationEnabled is true] Restart Claude Code, then run /ralph-hero:delegate-test "hello world" to confirm delegation is wired end-to-end.
+4. Run /ralph-triage to start processing issues
 Tip: To use Ralph from your terminal, run /ralph-hero:setup-cli to install the global `ralph` command.
 ```
+
+Item 3 is conditional — only include if `delegationEnabled=true`.
 
 ## Error Handling
 

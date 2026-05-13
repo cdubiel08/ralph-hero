@@ -177,6 +177,18 @@ Two separate caches serve different purposes:
 - **`SessionCache`**: API response cache keyed with `query:` prefix + stable node ID lookups (`issue-node-id:*`, `project-item-id:*`). Mutations invalidate `query:` entries only — node ID lookups are stable.
 - **`FieldOptionCache`**: In-memory project field option IDs, populated by `fetchProjectForCache()`. Multi-project aware (keyed by project number).
 
+### Delegation
+
+Optional, off-by-default LLM delegation wrapper at `plugin/ralph-hero/scripts/ralph-delegate.sh`. Skills with narrow text-in/text-out sub-tasks (summarize, classify, rerank) can offload work to a local Gemma server or cheaper OpenRouter model via the `Bash` tool.
+
+Master toggle is `RALPH_DELEGATE_ENABLED` — unset (the default) means exit 126 immediately and bit-identical no-op behavior. The wrapper never throws on disabled state; callers gate on `$?` and fall back natively.
+
+Currently wired: `codebase-locator` (F4a), `pr-agent` (F4b), `val-agent` (F4c), and the reference skill `delegate-test` (F3).
+
+Telemetry: `ralph_hero__delegation_stats` MCP tool + `ralph status --delegation` CLI read the JSONL audit log at `~/.ralph-hero/delegate.log`. See `plugin/ralph-hero/README.md` § Delegation (optional).
+
+When to add delegation to a new skill: read `plugin/ralph-hero/docs/delegation-authoring.md` and check the eligible/ineligible matrix in `plugin/ralph-hero/skills/shared/delegation-conventions.md` first.
+
 ### Hook Patterns
 
 Hook scripts in `plugin/ralph-hero/hooks/scripts/` are bash gates registered in skill frontmatter under `PreToolUse`, `PostToolUse`, or `Stop`. The default pattern is a single-event gate; this section documents the less-obvious **PostToolUse-for-response-inspection** pattern.
