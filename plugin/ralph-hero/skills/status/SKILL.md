@@ -51,6 +51,51 @@ Fetch the pipeline dashboard with the requested format:
 
 5. If health warnings exist with severity `critical`, highlight them prominently. In JSON mode, the warnings are already in the JSON payload — do not re-surface them in prose.
 
-## Output
+## Output Scope
 
-Display the dashboard output directly. Do not add additional commentary unless there are critical health warnings.
+Display the dashboard output directly. Do not add additional commentary unless there are critical health warnings, in which case the **only** acceptable addition is surfacing the raw warning list verbatim from the dashboard payload.
+
+This skill is a **read-only, passive render of pipeline state plus raw warnings**. It is NOT a triage tool, NOT an analyst, NOT a recommender.
+
+**NEVER:**
+- Prescribe actions, fixes, or remediation steps ("should be split", "needs closure", "ought to be archived", "Here's what you should do").
+- Add diagnostic framing or interpretive commentary ("Pipeline gaps indicate no active work", "Backlog congestion suggests stale work", "This indicates...").
+- Synthesize "Key Findings", "Recommendations", "Next Steps", "Suggested Actions", or any analyst-style summary section.
+- Group, rank, editorialize, or contextualize warnings beyond what the dashboard payload already encodes.
+- Cross-reference issues to call out which "should" be split, closed, or archived.
+
+Remediation, triage, and follow-up analysis belong to `/ralph-hero:hygiene`, `/ralph-hero:triage`, or `/ralph-hero:hello` — NOT to `/ralph-hero:status`. After surfacing the raw warning list, STOP.
+
+**Negative example (do NOT produce output like this):**
+
+```
+### Critical Issues
+
+**48 CRITICAL health warnings** — issues stuck beyond 96-hour threshold:
+- **Backlog**: 23 issues stuck (oldest: #362, #503 at 1490h)
+
+### Key Findings
+
+1. **Pipeline gaps**: All active phases are empty — work flows straight
+   from Ready for Plan to Done with no intermediate stops.
+2. **Backlog congestion**: 22 issues waiting; #503 and #505-#507 are
+   62+ days old.
+3. **#731 should be split** — it's a P1, L item blocking the loop.
+4. **Archive eligible**: 135 items in Done/Canceled can be archived.
+```
+
+The "Key Findings" block, the "should be split" recommendation, the "can be archived" suggestion, and the "Pipeline gaps indicate..." diagnostic framing are all out of scope. Surface the raw warning list and stop.
+
+**Correct shape:**
+
+```
+[dashboard.formatted verbatim]
+
+### Critical Health Warnings (N)
+
+- #362 — stuck 1490h in Backlog
+- #503 — stuck 1488h in Backlog
+- ...
+```
+
+No analysis, no recommendations, no framing — just the raw list.
