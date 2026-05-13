@@ -146,10 +146,125 @@ If push fails, report the error and stop.
 
 Build the PR body using the enriched template below. The template reads the plan document (located via Artifact Comment Protocol — see Step 2 issue comments for `## Implementation Plan` link) so reviewers (human and the `code-review` skill) have full context.
 
+### Step 5.0: Compose `## Summary` (optional delegation)
+
+When delegation is enabled (`RALPH_DELEGATE_ENABLED=true`), the diff's stat-line view + the issue title + the plan's `## Overview` snippet are sent to a local LLM via the wrapper at `$CLAUDE_PLUGIN_ROOT/scripts/` (task name `pr_description`), which returns a 1-3-sentence summary. The skill substitutes the result into the `## Summary` section of the PR body heredoc below; everything else (`## Plan`, `## Test plan`, `Closes #NNN`, the `gh pr create` call) is composed natively. Delegation is opt-in (operator sets the env var); when off, the skill composes the summary natively as today.
+
+**Delegation is for summary text only.** The `gh pr create` call in this step is composed and invoked natively in all cases — the delegate's output is text-in for the `## Summary` block and nothing else. Never let delegated text reach the `gh pr create` arguments outside the body heredoc. (See `skills/shared/delegation-conventions.md` for the eligibility matrix and the no-mutation rule.)
+
+Operators may pin a different model for this task via `RALPH_DELEGATE_PR_DESCRIPTION_URL` / `RALPH_DELEGATE_PR_DESCRIPTION_MODEL`. The wrapper resolves per-task overrides without code changes here.
+
+Run the following bash block. The control flow (`set +e`, `if OUTPUT=$(...)`, `case "$rc"`, unconditional `rm -f`) mirrors the reference pattern in `skills/delegate-test/SKILL.md` and F4a's `agents/codebase-locator.md` § "Candidate Ranking". The intentional deviations are (a) a **threshold-gate prelude** before the wrapper call (delegation fires only when ≥2 files OR ≥20 lines), (b) **byte-length + leading-character bash guards** on the wrapper output instead of `jq -e .ranked` (the response is plain prose, not JSON), and (c) `--max-tokens 256 --temperature 0.2` instead of `512 / 0.0` (matches the smaller summarize-task output budget).
+
 ```bash
-gh pr create \
-  --title "GH-NNN: [issue title]" \
-  --body "$(cat <<'PREOF'
+# --- Inputs (set from the prior steps' context) ---
+#   ISSUE_TITLE             — the fetched issue's title (from Step 2)
+#   PLAN_OVERVIEW_SNIPPET   — first paragraph of the plan's ## Overview section
+#                             (resolved via Artifact Comment Protocol; "" if no plan)
+#   RECENT_COMMITS          — output of `git log --oneline -60 origin/main..HEAD`
+#
+# Output: SUMMARY_TEXT — a 1-3-sentence prose summary suitable for the
+# ## Summary section of the PR body heredoc below.
+
+# --- Threshold gate (Shared Constraint #10: >=2 files OR >=20 lines) ---
+DIFF_STAT=$(git diff --stat origin/main..HEAD 2>/dev/null || echo "")
+FILES_CHANGED=$(printf '%s\n' "$DIFF_STAT" | grep -cE '^ [^|]+ \|' || echo 0)
+LINES_CHANGED=$(printf '%s\n' "$DIFF_STAT" \
+    | grep -oE '[0-9]+ insertion|[0-9]+ deletion' \
+    | grep -oE '^[0-9]+' \
+    | awk '{s+=$1} END {print s+0}')
+
+if [ "$FILES_CHANGED" -lt 2 ] && [ "$LINES_CHANGED" -lt 20 ]; then
+    # Below threshold — compose natively, skip delegation entirely. No
+    # tempfile is created and no wrapper is invoked, so no audit-log line is
+    # written. SUMMARY_TEXT is a one-liner derived from the issue title.
+    SUMMARY_TEXT="GH-NNN: ${ISSUE_TITLE}"
+else
+    # --- Threshold met — build prompt and try delegation ---
+    PROMPT_FILE=$(mktemp -t pr-description-XXXXXX)
+    cat > "$PROMPT_FILE" <<EOF
+Summarize the following changes into 1-3 plain prose sentences.
+No Markdown headings. No bullet lists. No code fences.
+
+Issue: ${ISSUE_TITLE}
+Plan overview: ${PLAN_OVERVIEW_SNIPPET}
+Diff stat:
+${DIFF_STAT}
+
+Recent commits:
+${RECENT_COMMITS}
+EOF
+
+    # 8 KB prompt size cap (Shared Constraint #9). If over, truncate the
+    # Recent commits: block (least informative for summarization) first.
+    # If still over after truncation, fall back to native.
+    PROMPT_BYTES=$(wc -c < "$PROMPT_FILE" | tr -d ' ')
+    if [ "$PROMPT_BYTES" -gt 8192 ]; then
+        # Re-render with truncated commits block.
+        TRUNCATED_COMMITS=$(printf '%s' "$RECENT_COMMITS" | head -c 4096)
+        cat > "$PROMPT_FILE" <<EOF
+Summarize the following changes into 1-3 plain prose sentences.
+No Markdown headings. No bullet lists. No code fences.
+
+Issue: ${ISSUE_TITLE}
+Plan overview: ${PLAN_OVERVIEW_SNIPPET}
+Diff stat:
+${DIFF_STAT}
+
+Recent commits:
+${TRUNCATED_COMMITS}
+EOF
+        PROMPT_BYTES=$(wc -c < "$PROMPT_FILE" | tr -d ' ')
+    fi
+
+    if [ "$PROMPT_BYTES" -gt 8192 ]; then
+        # Still oversized — fall back to native without invoking the wrapper.
+        SUMMARY_TEXT="GH-NNN: ${ISSUE_TITLE}"
+        rm -f "$PROMPT_FILE"
+    else
+        # Default native value — overwritten only if the delegate path
+        # returns a shape-valid summary below.
+        SUMMARY_TEXT="GH-NNN: ${ISSUE_TITLE}"
+
+        set +e
+        if OUTPUT=$("$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh" \
+                      --task pr_description \
+                      --prompt-file "$PROMPT_FILE" \
+                      --max-tokens 256 \
+                      --temperature 0.2 2>/dev/null); then
+            # Wrapper succeeded at HTTP. Validate shape with two bash guards:
+            #   (1) byte length > 0 && < 1024 (1-3 sentences fit comfortably;
+            #       larger means the model went off-script)
+            #   (2) first character is NOT '#' (the delegate must not nest a
+            #       Markdown heading inside the section the skill wraps)
+            bytes=$(printf '%s' "$OUTPUT" | wc -c | tr -d ' ')
+            first=$(printf '%s' "$OUTPUT" | head -c 1)
+            if [ "$bytes" -gt 0 ] && [ "$bytes" -lt 1024 ] && [ "$first" != "#" ]; then
+                SUMMARY_TEXT="$OUTPUT"
+            else
+                echo "delegation: fell back to native (rc=0, bad-shape)"
+            fi
+        else
+            rc=$?
+            case "$rc" in
+                126) ;; # disabled — compose natively, no note printed
+                127|124|1) echo "delegation: fell back to native (rc=$rc)" ;;
+            esac
+        fi
+        set -e
+
+        rm -f "$PROMPT_FILE"
+    fi
+fi
+```
+
+After this block, `SUMMARY_TEXT` holds either the delegate's 1-3-sentence prose (delegation path, shape-valid) or a native one-liner from the issue title (every other path: below-threshold, disabled, unreachable, timeout, bad-shape, oversized prompt). The substitution into the PR body heredoc below uses `--body-file` + `sed -i` to preserve the existing `<<'PREOF'` quoted-heredoc semantics.
+
+### Step 5.1: Invoke `gh pr create`
+
+```bash
+BODY_FILE=$(mktemp -t pr-body-XXXXXX)
+cat > "$BODY_FILE" <<'PREOF'
 ## Summary
 
 [1-3 sentences describing what this PR does, sourced from the issue body or plan Overview.]
@@ -173,9 +288,21 @@ Closes #NNN
 [Closes #NNN_child1]
 [Closes #NNN_child2]
 PREOF
-)" \
+
+# Substitute the ## Summary placeholder with the composed SUMMARY_TEXT. The
+# heredoc above uses <<'PREOF' (quoted) so shell vars do NOT expand inside it;
+# we use sed -i on the rendered file to inject the value without changing the
+# quoted-heredoc semantics for the rest of the body.
+sed -i.bak "s|\[1-3 sentences describing what this PR does, sourced from the issue body or plan Overview\.\]|${SUMMARY_TEXT}|" "$BODY_FILE"
+rm -f "$BODY_FILE.bak"
+
+gh pr create \
+  --title "GH-NNN: [issue title]" \
+  --body-file "$BODY_FILE" \
   --head feature/GH-NNN \
   --base main
+
+rm -f "$BODY_FILE"
 ```
 
 For group issues, include `Closes #NNN` for each sub-issue in the body. Determine sub-issues via `list_sub_issues` (see Step 6).

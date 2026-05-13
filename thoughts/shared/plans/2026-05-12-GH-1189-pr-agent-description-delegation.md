@@ -323,21 +323,21 @@ Wire the `ralph-pr` skill's Step 5 `## Summary`-composition step to optionally d
 
 #### Automated Verification:
 
-- [ ] `bats plugin/ralph-hero/scripts/__tests__` — all tests pass (16 pre-F4a baseline + 5 F4a if merged + 7 new F4b = 28 total; or 23 if F4a not yet merged). No regression in F1's 8 ralph-delegate tests, F2's 8 openai-compat tests, or F4a's 5 codebase-locator tests.
-- [ ] `npm run build` in `plugin/ralph-hero/mcp-server/` — green (TS source unchanged but matrix runs).
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` — green (no TS source touched).
+- [x] `bats plugin/ralph-hero/scripts/__tests__` — all tests pass (16 pre-F4a baseline + 5 F4a if merged + 7 new F4b = 28 total; or 23 if F4a not yet merged). No regression in F1's 8 ralph-delegate tests, F2's 8 openai-compat tests, or F4a's 5 codebase-locator tests. (Local run: 77/78 pass; the 1 failure is a pre-existing `ralph-cli.bats` env issue unrelated to F4b — `/usr/bin/rm` not found in macOS test harness — and also fails on main.)
+- [x] `npm run build` in `plugin/ralph-hero/mcp-server/` — green (TS source unchanged but matrix runs).
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` — green (1479 passed, 1 skipped).
 - [ ] CI `test-cli` job — green on the PR.
 - [ ] CI `test-hooks` job — green on the PR.
 - [ ] CI matrix builds (Node 18, 20, 22) — green.
-- [ ] `find plugin/ralph-hero/agents -name 'pr-agent-eval.md' | wc -l` returns `1` (eval file exists).
-- [ ] `find plugin/ralph-hero/scripts/__tests__ -name 'pr-agent-delegation.bats' | wc -l` returns `1` (bats file exists).
-- [ ] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns `1` (single wrapper invocation in skill body).
-- [ ] `grep -c 'openai-compat.sh' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns `0` (no direct adapter call from the skill).
-- [ ] `grep -c '\-\-task pr_description' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns `1` (task name hardcoded once for audit log).
-- [ ] `grep -c 'gh pr create' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥2 (Step 3a multi-repo + Step 5 single-repo; both mutations preserved; F4b does NOT remove either).
-- [ ] `grep -cE 'Step 5\.0|## Compose .Summary' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥1 (the new sub-step is present and headed correctly).
-- [ ] `git diff plugin/ralph-hero/agents/pr-agent.md` is empty (agent file unchanged; all delegation lives in the skill).
-- [ ] `wc -l plugin/ralph-hero/skills/ralph-pr/SKILL.md` shows total ≤ `218 + 150` (the skill grew by no more than 150 lines; if it grew more, the new sub-step is too verbose and needs trimming).
+- [x] `find plugin/ralph-hero/agents -name 'pr-agent-eval.md' | wc -l` returns `1` (eval file exists).
+- [x] `find plugin/ralph-hero/scripts/__tests__ -name 'pr-agent-delegation.bats' | wc -l` returns `1` (bats file exists).
+- [x] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns `1` (single wrapper invocation in skill body).
+- [x] `grep -c 'openai-compat.sh' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns `0` (no direct adapter call from the skill).
+- [x] `grep -c '\-\-task pr_description' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns `1` (task name hardcoded once for audit log).
+- [x] `grep -c 'gh pr create' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥2 (returns 6: Step 3a invocation + Step 5.1 invocation + 4 prose mentions reinforcing the no-delegation-of-mutation rule and the malformed-output warning; both mutations preserved).
+- [x] `grep -cE 'Step 5\.0|## Compose .Summary' plugin/ralph-hero/skills/ralph-pr/SKILL.md` returns ≥1 (the new sub-step is present and headed correctly).
+- [x] `git diff plugin/ralph-hero/agents/pr-agent.md` is empty (agent file unchanged; all delegation lives in the skill).
+- [x] `wc -l plugin/ralph-hero/skills/ralph-pr/SKILL.md` shows total ≤ `218 + 150` (the skill grew by 127 lines: 218 -> 345; well within the 150-line budget).
 
 #### Manual Verification:
 
