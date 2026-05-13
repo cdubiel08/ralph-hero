@@ -1,6 +1,7 @@
 ---
 date: 2026-05-11
-status: draft
+last_updated: 2026-05-13
+status: in-progress
 type: plan
 github_issue: 1097
 github_issues: [1097, 1098, 1099, 1100, 1101]
@@ -35,6 +36,22 @@ tags: [observability, otel, langfuse, debug, mcp-server]
 | 5 | GH-1101 | Phase 4: ralph-debug-collate skill wrapper | XS |
 
 **Why grouped**: All 5 issues are children of parent epic #1096 ("Debug Mode & Self-Healing Observability"), share a single spec at `thoughts/shared/plans/2026-05-05-debug-mode-observability-spec-v2.md`, and form a strict linear dependency chain: each phase builds on the artifacts produced by the previous one (env vars → SDK → grouping logic → issue dedup → user-facing skill). They cannot be implemented out of order.
+
+## Execution Status (rebased 2026-05-13)
+
+All five phases were implemented and pushed to feature branches, but **none of the PRs have merged**. An escalation flow on `/ralph-hero:finish` for PR #1197 closed issues #1097–#1101 as completed and reopened-then-reclosed parent #1096 prematurely; the underlying merges never happened. Parent #1096 has been reopened.
+
+| Phase | Issue | Branch | PR | Tip commit | PR base | Status |
+|-------|-------|--------|----|-----------|---------|--------|
+| 1 | GH-1097 | `feature/GH-1097` | #1196 | `5ca72003` (CLAUDE.md OTel docs) | `main` | OPEN — independent of code phases (doc-only) |
+| 2 | GH-1098 | `feature/GH-1098` | #1197 | `b02a1859` (review-feedback fix on top of `f3d129d7`) | `main` | OPEN — code-review iteration #1 left a tautological regression test (Task 2.6 below) |
+| 3a | GH-1099 | `feature/GH-1099` | #1198 | `581742fd` (collate_debug Langfuse path) | `main` | OPEN — branch carries `f3d129d7` but **not** `b02a1859`; merging before #1197 lands re-introduces the missing-`await` and outer-span-ERROR bugs |
+| 3b | GH-1100 | `feature/GH-1100` | #1199 | `f1500413` (collate_debug GitHub dedup + create/comment) | `main` | OPEN — same stacked-on-`f3d129d7` problem as 3a |
+| 4 | GH-1101 | `feature/GH-1101` | #1200 | `977712fe` (ralph-debug-collate skill wrapper) | `main` | OPEN — same stacked-on-`f3d129d7` problem as 3a |
+
+The four code branches (1098, 1099, 1100, 1101) form a linear chain in commit order — each was created on top of the previous tip rather than off `main` — but every PR points its base at `main`. Phase 1 (1097) is independent because it only touches `CLAUDE.md`.
+
+The remaining work to land #1096 is captured below as Task 2.6 plus a new "Merge Sequence" section. No code reimplementation is needed for phases 2–4; the remaining surface is a one-line test fix, four rebases, and four merges in the right order.
 
 ## Shared Constraints
 
@@ -226,12 +243,27 @@ Add `@opentelemetry/sdk-node` to the MCP server, lazy-init guarded by `RALPH_DEB
   - [ ] Exports the span, asserts `RALPH_HERO_GITHUB_TOKEN` and `Authorization` are `[REDACTED]`, `harmless` is preserved
   - [ ] Test for verifying no-op behavior: with `RALPH_DEBUG` unset, `initTelemetry()` returns null and no exporter is registered
 
+#### Task 2.6: Replace tautological retry-order regression test (REBASE 2026-05-13)
+- **files**: `plugin/ralph-hero/mcp-server/src/__tests__/github-client-tracing.test.ts` (modify on `feature/GH-1098`)
+- **tdd**: true
+- **complexity**: low
+- **depends_on**: [2.5]
+- **context**: The test added in commit `b02a1859` to guard against the missing-`await` regression in `executeGraphQL`'s recursive retry path is tautological. It maps two span end-times to nanoseconds, sorts them ascending, then asserts `sortedNs[last] >= sortedNs[0]` — which is true by definition for any sorted array of length ≥1. A future change that drops the `await` on the retry call would still pass this test. PR #1197 review comment: https://github.com/cdubiel08/ralph-hero/pull/1197#issuecomment-4435819106
+- **acceptance**:
+  - [ ] In `github-client-tracing.test.ts` around lines 165–173, drop the `sort` step entirely and assert directly on `spans[0].endTime` vs `spans[1].endTime` — `SimpleSpanProcessor` exports in finish order, so `spans[0]` is the inner (retry) span and `spans[1]` is the outer (initial) span. Assertion: `expect(toNs(spans[0].endTime)).toBeLessThanOrEqual(toNs(spans[1].endTime))` (the inner retry must finish before the outer span ends — this fails if the recursive retry call is not awaited).
+  - [ ] Add an explicit assertion that there are exactly 2 spans (`expect(spans).toHaveLength(2)`) so an off-by-one regression in the retry path can't silently turn the comparison into a no-op against a single-span array.
+  - [ ] Add a one-sentence inline comment naming the specific regression the assertion guards: "Inner retry span must end before the outer span ends — guards against a missing `await` on the recursive retry call."
+  - [ ] Verify the test fails when the `await` is removed from the retry call (manual sanity check: temporarily delete the `await`, run `npx vitest run src/__tests__/github-client-tracing.test.ts`, confirm failure, restore the `await`).
+  - [ ] Commit on `feature/GH-1098`; PR #1197 picks it up automatically. Re-run `/ralph-hero:finish` (or invoke `code-review:code-review` directly) to confirm the original review finding is now resolved.
+
 ### Phase Success Criteria
 
 #### Automated Verification:
 - [ ] `npm run build` — no TypeScript errors
 - [ ] `npm test` — all existing tests pass plus new `telemetry.test.ts`
 - [ ] `npx vitest run src/__tests__/telemetry.test.ts` — telemetry-specific tests pass
+- [ ] `npx vitest run src/__tests__/github-client-tracing.test.ts` — retry-order regression test (Task 2.6) passes and fails when the retry `await` is removed
+- [ ] `code-review:code-review` against PR #1197 returns no remaining findings (post-Task-2.6)
 
 #### Manual Verification:
 - [ ] With `RALPH_DEBUG=true` and Langfuse up, invoke any `ralph_hero__*` tool; confirm `ralph_hero.graphql` span appears in Langfuse UI under the Claude Code parent span
@@ -449,6 +481,37 @@ Thin skill at `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` that wraps
 **Creates for next phase**: N/A — final phase.
 
 ---
+
+## Merge Sequence (added 2026-05-13)
+
+The branches were stacked in commit order (`feature/GH-1099` was created on top of `feature/GH-1098`'s tip, etc.) but every PR points its base at `main`. Because the children carry the original Phase 2 commit `f3d129d7` but **not** the review-feedback fix `b02a1859`, merging them out of order would re-introduce the missing-`await` and outer-span-ERROR bugs. Land in this order:
+
+1. **Fix the tautology test** on `feature/GH-1098` — execute Task 2.6 above. Push to PR #1197.
+2. **Re-run code review on PR #1197** via `code-review:code-review` (or `/ralph-hero:finish` from a fresh state). Confirm zero blocking findings.
+3. **Merge PR #1197** to `main`. After merge, advance #1098 to Done (the issue was prematurely closed earlier — just verify state matches reality; the merge hook should handle it).
+4. **Rebase `feature/GH-1099` onto the new `main`**. Expected outcome: the original `f3d129d7` commit drops out (it's identical to what just landed via `b02a1859`'s parent), leaving only `581742fd` (Phase 3a). Resolve any conflicts in `github-client.ts` and `__tests__/github-client-tracing.test.ts` by taking the `main` version (it has the test fix). Force-push to PR #1198.
+5. **Merge PR #1198** to `main`. Reopen #1099 if needed, then advance to Done after merge.
+6. **Rebase `feature/GH-1100` onto the new `main`**. Drops `f3d129d7` and `581742fd` (both now in `main`), leaving `f1500413` (Phase 3b). Force-push to PR #1199.
+7. **Merge PR #1199** to `main`. Reopen #1100 if needed, then advance to Done after merge.
+8. **Rebase `feature/GH-1101` onto the new `main`**. Drops `f3d129d7`, `581742fd`, and `f1500413`, leaving `977712fe` (Phase 4 skill). Force-push to PR #1200.
+9. **Merge PR #1200** to `main`. Reopen #1101 if needed, then advance to Done after merge.
+10. **Merge PR #1196 (Phase 1)** any time — it's purely doc-only (`CLAUDE.md` OTel env var documentation) and has no code dependency on phases 2–4. Doing it last avoids documenting endpoints that aren't yet wired up.
+11. **Advance parent #1096 to Done** once all 5 children are Done. Verify the Status field auto-syncs via the `advance-parent.yml` workflow.
+
+### Recovery checks at each step
+
+- **After step 3**: `ls plugin/ralph-hero/mcp-server/src/lib/telemetry.ts` succeeds on `main`, and `git log --oneline main -- plugin/ralph-hero/mcp-server/src/lib/telemetry.ts` shows `b02a1859` (or its squashed equivalent).
+- **After step 5**: `grep -r "groupSpansBySignature" plugin/ralph-hero/mcp-server/src` returns matches in `lib/error-signature.ts`.
+- **After step 7**: `grep -r "findExistingDebugIssue" plugin/ralph-hero/mcp-server/src` returns matches in `tools/debug-tools.ts`.
+- **After step 9**: `ls plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` succeeds on `main`.
+
+### What if a rebase has non-trivial conflicts
+
+If a rebase produces conflicts beyond the test-file fix from Task 2.6 — i.e., conflicts in `github-client.ts` proper, `index.ts`, or `package.json` — STOP and escalate to Human Needed with a comment listing the conflicting files and a one-line description of each conflict. Do not auto-resolve substantive code conflicts in this rebase; the original implementation commits are reviewed code and merging the wrong half could re-introduce the bugs that Task 2.6 guards against.
+
+### Issue state hygiene
+
+Issues #1097–#1101 were marked `state: CLOSED, stateReason: COMPLETED` and `workflowState: Done` before their PRs merged. Reopen them before merging their PRs (the merge hook expects an open issue). Parent #1096 was reopened on 2026-05-13 as part of this rebase.
 
 ## Integration Testing
 
