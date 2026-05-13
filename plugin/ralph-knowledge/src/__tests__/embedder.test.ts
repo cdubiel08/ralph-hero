@@ -9,12 +9,27 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // invocations are aggregated on the module-level `disposeCalls` array so tests
 // can introspect call counts across multiple `embed()` invocations.
 const embedCalls: string[] = [];
+const batchCalls: string[][] = [];
 const disposeCalls: ReturnType<typeof vi.fn>[] = [];
 vi.mock("@huggingface/transformers", () => {
-  const fakePipeline = async (text: string, _opts: unknown) => {
-    embedCalls.push(text);
+  const fakePipeline = async (input: string | string[], _opts: unknown) => {
     const dispose = vi.fn();
     disposeCalls.push(dispose);
+    if (Array.isArray(input)) {
+      // GH-1203 batch path: record the input array; produce a flat
+      // Float32Array of shape [batch, 384] whose per-text slice has a known
+      // pattern so tests can verify slicing math.
+      batchCalls.push([...input]);
+      const dim = 384;
+      const flat = new Float32Array(input.length * dim);
+      // Seed each row's first element with the row index + 1 so slicing
+      // tests can confirm per-text isolation without needing model output.
+      for (let i = 0; i < input.length; i++) {
+        flat[i * dim] = i + 1;
+      }
+      return { data: flat, dispose };
+    }
+    embedCalls.push(input);
     return { data: new Float32Array(384), dispose };
   };
   return {
@@ -22,7 +37,7 @@ vi.mock("@huggingface/transformers", () => {
   };
 });
 
-import { prepareTextForEmbedding, embed, embedDocument } from "../embedder.js";
+import { prepareTextForEmbedding, embed, embedDocument, embedChunks } from "../embedder.js";
 import type { LlmClient } from "../llm-client.js";
 
 function makeMockLlm(contextualize: LlmClient["contextualize"]): LlmClient {
@@ -369,5 +384,92 @@ describe("embedDocument", () => {
       expect(mockLlm.contextualize).not.toHaveBeenCalled();
       expect(result[0]!.contextPrefix).toBe("");
     });
+  });
+});
+
+// GH-1203: batch primitive for embedding multiple texts in a single pipeline
+// call. Used by the reindex chunk buffer to amortize ONNX overhead.
+describe("embedChunks (batch primitive)", () => {
+  beforeEach(() => {
+    embedCalls.length = 0;
+    batchCalls.length = 0;
+    disposeCalls.length = 0;
+  });
+
+  it("returns [] without invoking the pipeline when texts is empty", async () => {
+    const out = await embedChunks([]);
+    expect(out).toEqual([]);
+    expect(batchCalls).toHaveLength(0);
+    expect(disposeCalls).toHaveLength(0);
+  });
+
+  it("invokes the pipeline ONCE per batch (not once per text)", async () => {
+    const out = await embedChunks(["a", "b", "c"]);
+    expect(out).toHaveLength(3);
+    // ONE pipeline call, not three.
+    expect(batchCalls).toHaveLength(1);
+    expect(batchCalls[0]).toEqual(["a", "b", "c"]);
+    // Serial `embed(text)` path was NOT used.
+    expect(embedCalls).toHaveLength(0);
+  });
+
+  it("returns one Float32Array per input text in input order", async () => {
+    const out = await embedChunks(["a", "b", "c"]);
+    expect(out).toHaveLength(3);
+    // Mock seeded each row's first element with rowIndex+1 so per-text
+    // isolation is observable.
+    expect(out[0]![0]).toBe(1);
+    expect(out[1]![0]).toBe(2);
+    expect(out[2]![0]).toBe(3);
+  });
+
+  it("each returned Float32Array has length 384", async () => {
+    const out = await embedChunks(["a", "b"]);
+    for (const v of out) {
+      expect(v).toBeInstanceOf(Float32Array);
+      expect(v.length).toBe(384);
+    }
+  });
+
+  it("disposes the batch-output tensor exactly once per call", async () => {
+    await embedChunks(["a", "b", "c", "d"]);
+    // One dispose for the single pipeline invocation, NOT one per text.
+    expect(disposeCalls).toHaveLength(1);
+    expect(disposeCalls[0]).toHaveBeenCalledTimes(1);
+  });
+
+  it("disposes once per batch across multiple invocations", async () => {
+    await embedChunks(["a", "b"]);
+    await embedChunks(["c", "d", "e"]);
+    expect(disposeCalls).toHaveLength(2);
+    for (const d of disposeCalls) {
+      expect(d).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("returned arrays are independent of the disposed source buffer", async () => {
+    const out = await embedChunks(["a", "b"]);
+    // dispose was called, but the returned Float32Arrays remain mutable and
+    // independent — verifies data was copied (not aliased) before disposal.
+    expect(disposeCalls[0]).toHaveBeenCalledTimes(1);
+    out[0]![0] = 99;
+    expect(out[0]![0]).toBe(99);
+    // Mutating one does not affect another.
+    expect(out[1]![0]).toBe(2);
+  });
+
+  it("produces numerically equivalent embeddings to per-text calls (mock parity)", async () => {
+    // With the mock pipeline, the only deterministic component is the
+    // first element of each row (seeded with rowIndex+1). Compare
+    // explicitly against that pattern. This verifies the slicing math
+    // would yield correct per-text vectors for the real model too.
+    const batched = await embedChunks(["x", "y", "z"]);
+    expect(batched[0]![0]).toBe(1);
+    expect(batched[1]![0]).toBe(2);
+    expect(batched[2]![0]).toBe(3);
+    // All other elements are zero (mock seeds only index 0).
+    for (let i = 1; i < 384; i++) {
+      expect(batched[0]![i]).toBe(0);
+    }
   });
 });

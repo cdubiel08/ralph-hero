@@ -391,3 +391,101 @@ class TestMain:
         assert files2 == files
         for p in files2:
             assert p.read_bytes() == before[p], f"{p} diverged on re-run"
+
+
+# ---------------------------------------------------------------------------
+# GH-1203: _run_reindex stderr capture + tail printing on non-zero exit
+# ---------------------------------------------------------------------------
+
+
+class TestRunReindexStderrCapture:
+    """Verify that a failing reindex surfaces (up to) the last 50 stderr
+    lines so OOM stacks and other failure signals aren't silently lost.
+
+    Pre-GH-1203, ``_run_reindex`` shelled out without ``capture_output``
+    and only logged the return code on failure — making it impossible to
+    distinguish an OOM from a config error from the parent script's
+    perspective.
+    """
+
+    def test_captures_and_tails_stderr_on_failure(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Build a fake stderr with >50 lines so we can verify the tail.
+        fake_stderr = "\n".join(f"line{i}" for i in range(1, 101)) + "\n"
+
+        def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            # Confirm capture flags were threaded in.
+            assert kwargs.get("capture_output") is True
+            assert kwargs.get("text") is True
+            return subprocess.CompletedProcess(
+                args=args[0] if args else "",
+                returncode=1,
+                stdout="",
+                stderr=fake_stderr,
+            )
+
+        monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+        rc = ingest._run_reindex("fake-reindex")
+
+        assert rc == 1
+        captured = capsys.readouterr()
+        # Only the LAST 50 lines should appear in the surfaced output.
+        assert "line51" in captured.err
+        assert "line100" in captured.err
+        # Lines from the first 50 are NOT surfaced (proves tail behavior).
+        assert "line1\n" not in captured.err
+        assert "line50\n" not in captured.err
+        # And the human-readable preamble is present.
+        assert "reindex exited non-zero" in captured.err
+
+    def test_empty_stderr_on_failure_prints_signal_message(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=args[0] if args else "",
+                returncode=137,  # SIGKILL = 128 + 9 — typical OOM-killer signal.
+                stdout="",
+                stderr="",
+            )
+
+        monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+        rc = ingest._run_reindex("fake-reindex")
+        assert rc == 137
+        captured = capsys.readouterr()
+        # Indicates no stderr was available (OOM kill / signal kill).
+        assert "no stderr" in captured.err
+        assert "137" in captured.err
+
+    def test_success_returns_zero_silently(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=args[0] if args else "",
+                returncode=0,
+                stdout="indexed 10 docs",
+                stderr="",
+            )
+
+        monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+        rc = ingest._run_reindex("fake-reindex")
+        assert rc == 0
+        captured = capsys.readouterr()
+        # On success, no "non-zero" message is printed.
+        assert "non-zero" not in captured.err
+
+    def test_oserror_falls_back_to_rc_1(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+            raise OSError("simulated launch failure")
+
+        monkeypatch.setattr(ingest.subprocess, "run", fake_run)
+
+        rc = ingest._run_reindex("fake-reindex")
+        assert rc == 1

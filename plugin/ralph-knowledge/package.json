@@ -14,10 +14,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "reindex": "node dist/reindex.js",
+    "reindex": "NODE_OPTIONS=\"--max-old-space-size=4096 --expose-gc\" node dist/reindex.js",
     "test": "vitest run --coverage",
     "bench:heap": "tsx benchmark/reindex-heap-bench.ts",
     "eval:retrieval": "tsx scripts/eval-retrieval.ts",
+    "verify:tiers": "node dist/scripts/verify-tiers.js",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

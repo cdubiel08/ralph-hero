@@ -43,6 +43,78 @@ export async function embed(text: string): Promise<Float32Array> {
 }
 
 /**
+ * GH-1203: Batch primitive for embedding multiple texts in a single pipeline
+ * call. Returns one `Float32Array` per input text in input order. The
+ * underlying transformer pipeline accepts `string[]` and returns a single
+ * Tensor whose `.data` is a flat `Float32Array` containing all embeddings
+ * concatenated (length === texts.length * EMBEDDING_DIM).
+ *
+ * Compared to a serial `for ... await embed(text)` loop, this:
+ *   - Invokes the ONNX pipeline once per batch instead of once per text,
+ *     amortizing fixed overhead per call.
+ *   - Disposes exactly one batch-output tensor (frees one big native buffer)
+ *     instead of N small ones, simplifying the disposal-frequency math.
+ *   - Buffers the eventual per-text `Float32Array`s only after data is
+ *     copied out of the native tensor, so the returned arrays are safe to
+ *     use after the tensor is disposed.
+ *
+ * Note on intermediate tensors: transformers.js v3 returns a single pooled
+ * output tensor here (no `last_hidden_state` accessible on the output object
+ * for `feature-extraction` pooled mode). If a future version attaches one,
+ * extend the disposal guard below.
+ */
+export async function embedChunks(texts: string[]): Promise<Float32Array[]> {
+  if (texts.length === 0) {
+    return [];
+  }
+  const embedder = await getEmbedder();
+  const output = await embedder(texts, {
+    pooling: "mean",
+    normalize: true,
+  });
+  // For an array input, transformers.js returns a Tensor with shape
+  // [batch, dim] and a flat `data` of length batch*dim. We compute the
+  // per-text slice width from the data length, NOT from a hardcoded
+  // constant, so the function survives a future model swap.
+  const flat = output.data as Float32Array | ArrayLike<number>;
+  const totalLen = (flat as ArrayLike<number>).length;
+  const dim = totalLen / texts.length;
+  if (!Number.isInteger(dim) || dim <= 0) {
+    // Guard against an unexpected shape; surface a clear error rather than
+    // silently producing zero-length arrays.
+    if (output && typeof (output as { dispose?: unknown }).dispose === "function") {
+      (output as { dispose: () => void }).dispose();
+    }
+    throw new Error(
+      `embedChunks: unexpected output shape (data length=${totalLen}, texts=${texts.length})`,
+    );
+  }
+  const results: Float32Array[] = new Array(texts.length);
+  for (let i = 0; i < texts.length; i++) {
+    // Float32Array(ArrayLike) iterates+assigns, producing a fresh copy that
+    // outlives the source tensor (which we dispose below).
+    const start = i * dim;
+    const end = start + dim;
+    // Build an ArrayLike view of just this text's slice without holding a
+    // reference to the underlying tensor buffer past the copy.
+    const slice: number[] = new Array(dim);
+    for (let j = 0; j < dim; j++) {
+      slice[j] = (flat as ArrayLike<number>)[start + j] as number;
+    }
+    results[i] = new Float32Array(slice);
+    // Suppress unused-variable warnings for `end` (used implicitly above).
+    void end;
+  }
+  // GH-1203: dispose the batch-output tensor exactly once. We've already
+  // copied each text's embedding into a fresh `Float32Array` above, so the
+  // returned arrays are independent of the disposed buffer.
+  if (output && typeof (output as { dispose?: unknown }).dispose === "function") {
+    (output as { dispose: () => void }).dispose();
+  }
+  return results;
+}
+
+/**
  * A chunk paired with the embedding of its (contextualized) content.
  * Extends the base Chunk from the chunker module with an embedding vector
  * and an optional contextPrefix (populated by Phase 6 — contextual retrieval).
