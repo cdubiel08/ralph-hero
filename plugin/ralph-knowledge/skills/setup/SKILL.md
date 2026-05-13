@@ -100,7 +100,36 @@ Display the output as it runs. The script will:
 
 The first run downloads the embedding model (~80MB) which takes a minute. Subsequent runs are faster.
 
-### Step 4: Verify
+### Step 4: Run end-to-end bootstrap (dream-loop wiring)
+
+This step is OPTIONAL — if the user only wanted to reindex, they can stop after Step 3. If they want the full dream-loop wiring (memory config, launchd nightly schedule, smoke ingest), continue here.
+
+Ask the user:
+
+```
+Reindex complete. Would you also like to run the dream-loop bootstrap?
+This writes ~/.ralph/knowledge.config.json, renders + loads the launchd
+nightly plist, probes Gemma, and runs a smoke ingest.
+
+(yes/no, default yes)
+```
+
+If yes (or no answer), invoke the bootstrap script. It is the single source of truth for setup logic — when something changes about dream-loop wiring, edit `bootstrap.sh`, not this skill:
+
+```bash
+bash "$CLAUDE_PLUGIN_ROOT/../../scripts/dream/bootstrap.sh"
+```
+
+(If `$CLAUDE_PLUGIN_ROOT` resolution to the repo root is unclear, fall back to discovering the repo: `git -C $(pwd) rev-parse --show-toplevel` then `bash <repo-root>/scripts/dream/bootstrap.sh`.)
+
+The bootstrap script is idempotent:
+- Each step prints `OK <step>` or `SKIP <step> (already configured)`
+- Re-running yields all SKIP for file-creation steps and exits 0
+- Gemma probe failures are non-blocking (prints `gemma-up` hint to stderr but continues)
+
+Display the bootstrap output as it runs. The script prints a tier-count summary and a next-steps banner on completion.
+
+### Step 5: Verify
 
 After indexing completes, verify the tools work by running a test search:
 
@@ -114,7 +143,9 @@ Display the results. If results come back, setup is complete. If results are emp
 - **Empty results but no error**: The MCP server may need restarting to pick up the new DB. Run `/reload-plugins` or restart Claude Code.
 - **Connection error**: The MCP server isn't running. Run `/reload-plugins` or restart Claude Code.
 
-### Step 5: Summary
+### Step 6: Summary
+
+Print a final summary that includes the tier-count rollup from the bootstrap step (if it was run):
 
 ```
 Knowledge Index Ready
@@ -125,18 +156,22 @@ Directories indexed:
   - thoughts/
   - docs/plans/
 
+Tier counts (from `sqlite3 [db] "SELECT memory_tier, COUNT(*) FROM documents GROUP BY memory_tier"`):
+  doc=[N]
+  raw=[N]
+  reflection=[N]
+  wiki=[N]
+
 Tools available:
   - knowledge_search: Keyword + semantic search across documents
+  - knowledge_recall: Role-aware retrieval (researcher/planner/implementer/...)
   - knowledge_traverse: Walk relationship edges between documents
 
 To reindex after adding new documents:
   /ralph-knowledge:setup
-```
 
-Then suggest:
-```
-Want to browse your knowledge documents in Obsidian?
-Run /ralph-knowledge:setup-obsidian to set up navigational indexes and vault config.
+To re-run dream-loop bootstrap (idempotent):
+  bash scripts/dream/bootstrap.sh
 ```
 
 Then suggest:

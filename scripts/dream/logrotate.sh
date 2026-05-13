@@ -3,8 +3,10 @@
 #
 # Invoked at the end of the launchd-scheduled dream-loop pipeline
 # (see scripts/dream/launchd/com.dubiel.dream-loop.plist.template).
-# Atomically truncates /tmp/dream-loop.out and /tmp/dream-loop.err
-# to their last 1000 lines via tail + tmp file + mv.
+# Atomically truncates ~/Library/Logs/ralph-dream-loop.{out,err}
+# to their last 1000 lines via tail + tmp file + mv. For backward
+# compatibility, also rotates legacy /tmp/dream-loop.{out,err} if they
+# still exist on this machine.
 
 set -euo pipefail
 
@@ -24,5 +26,11 @@ rotate_one() {
     mv "$tmp_path" "$log_path"
 }
 
+# Current paths (per templated plist) — under ~/Library/Logs/.
+rotate_one "${HOME}/Library/Logs/ralph-dream-loop.out"
+rotate_one "${HOME}/Library/Logs/ralph-dream-loop.err"
+
+# Legacy paths under /tmp/ — rotate if any pre-templated installs still
+# point there. No-op when the files don't exist.
 rotate_one "/tmp/dream-loop.out"
 rotate_one "/tmp/dream-loop.err"

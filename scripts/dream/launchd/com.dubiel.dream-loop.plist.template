@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.dubiel.dream-loop</string>
+	<string>com.__USER__.dream-loop</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
 		<string>-lc</string>
-		<string>cd /Users/dubiel/projects/ralph-hero/scripts/dream &amp;&amp; uv run ingest.py --since 24h &amp;&amp; uv run reflect.py --since 24h &amp;&amp; /Users/dubiel/projects/ralph-hero/scripts/dream/logrotate.sh</string>
+		<string>cd __PROJECTS_DIR__/ralph-hero/scripts/dream &amp;&amp; uv run ingest.py --since 24h &amp;&amp; uv run reflect.py --since 24h &amp;&amp; __PROJECTS_DIR__/ralph-hero/scripts/dream/logrotate.sh</string>
 	</array>
 	<key>StartCalendarInterval</key>
 	<dict>
@@ -18,15 +18,15 @@
 		<integer>0</integer>
 	</dict>
 	<key>StandardOutPath</key>
-	<string>/tmp/dream-loop.out</string>
+	<string>__HOME__/Library/Logs/ralph-dream-loop.out</string>
 	<key>StandardErrorPath</key>
-	<string>/tmp/dream-loop.err</string>
+	<string>__HOME__/Library/Logs/ralph-dream-loop.err</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
 		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
 		<key>RALPH_KNOWLEDGE_CONFIG</key>
-		<string>/Users/dubiel/.ralph/knowledge.config.json</string>
+		<string>__HOME__/.ralph/knowledge.config.json</string>
 		<key>RALPH_LLM_URL</key>
 		<string>http://localhost:8000</string>
 	</dict>

@@ -28,18 +28,26 @@ uv run reflect.py --since 24h
 
 ## Install (launchd)
 
-Copy the template into the user LaunchAgents directory and load it:
+**Recommended:** run `/ralph-knowledge:setup` (or `bash scripts/dream/bootstrap.sh`
+directly). The bootstrap script renders the templated plist with your
+actual `$HOME` / `$USER`, writes it to `~/Library/LaunchAgents/`, and
+loads it via `launchctl` — idempotent on re-run.
+
+**Manual (deprecated; left for reference):** copy the template into the
+user LaunchAgents directory and hand-edit the `__HOME__` /
+`__PROJECTS_DIR__` / `__USER__` placeholders before loading it:
 
 ```bash
 cp scripts/dream/launchd/com.dubiel.dream-loop.plist.template \
-   ~/Library/LaunchAgents/com.dubiel.dream-loop.plist
-launchctl load ~/Library/LaunchAgents/com.dubiel.dream-loop.plist
+   ~/Library/LaunchAgents/com.$(whoami).dream-loop.plist
+# Hand-edit __HOME__ → $HOME, __PROJECTS_DIR__ → $HOME/projects, __USER__ → $(whoami)
+launchctl load ~/Library/LaunchAgents/com.$(whoami).dream-loop.plist
 ```
 
 To trigger an immediate run (without waiting for 03:00):
 
 ```bash
-launchctl start com.dubiel.dream-loop
+launchctl start com.$(whoami).dream-loop
 ```
 
 ## Verify
@@ -63,13 +71,15 @@ running. The last-exit-status is `0` after a successful run.
 
 ## Logs
 
-- `/tmp/dream-loop.out` — `ingest.py` + `reflect.py` stdout.
-- `/tmp/dream-loop.err` — stderr (errors, warnings, Gemma fallbacks).
+- `~/Library/Logs/ralph-dream-loop.out` — `ingest.py` + `reflect.py` stdout.
+- `~/Library/Logs/ralph-dream-loop.err` — stderr (errors, warnings, Gemma fallbacks).
 
-`logrotate.sh` runs at the end of every launchd-invoked pipeline and
-caps each file at the last 1000 lines via `tail -n 1000` + atomic
-rename. A single night's run typically produces well under that; the
-cap guards against unbounded growth over weeks of scheduling.
+Logs live under `~/Library/Logs/` (persistent across reboots, more
+discoverable than `/tmp/`). `logrotate.sh` runs at the end of every
+launchd-invoked pipeline and caps each file at the last 1000 lines via
+`tail -n 1000` + atomic rename. A single night's run typically produces
+well under that; the cap guards against unbounded growth over weeks of
+scheduling.
 
 ## Uninstall
 
