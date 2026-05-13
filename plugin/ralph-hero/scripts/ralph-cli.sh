@@ -50,7 +50,7 @@ Workflow commands (AI-powered):
   report              Post status report
 
 Quick commands (instant, no AI cost):
-  status              Pipeline dashboard
+  status              Pipeline dashboard (use --delegation for telemetry)
   issue <title>       Create a new issue
   move <num> <state>  Change workflow state
   info <num>          Get issue details

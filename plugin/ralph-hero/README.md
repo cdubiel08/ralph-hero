@@ -294,7 +294,10 @@ Every invocation (except the disabled-126 short-circuit) appends one JSONL line 
 {"ts":"2026-05-12T02:38:34Z","task":"locator","model":"...","url":"...","ms":284,"status":"ok","bytes_in":1340,"bytes_out":612,"caller":"<skill-name>"}
 ```
 
-The `status` field is one of `ok` | `timeout` | `unreachable` | `parse_error` | `http_<code>` | `dry_run`. This log is consumed by upcoming telemetry tooling (see epic [#965](https://github.com/cdubiel08/ralph-hero/issues/965), Feature F5).
+The `status` field is one of `ok` | `timeout` | `unreachable` | `parse_error` | `http_<code>` | `dry_run`. This log is consumed by the delegation-telemetry surface (Feature F5 of epic [#965](https://github.com/cdubiel08/ralph-hero/issues/965)):
+
+- **Stats dashboard**: `ralph status --delegation` runs the `ralph_hero__delegation_stats` MCP tool and prints per-task call counts, fallback counts, p50/p99 latency, and `bytes_in`/`bytes_out` sums. Missing log file → zero-state dashboard, no error.
+- **Rotation**: `plugin/ralph-hero/scripts/delegate/logrotate.sh` rotates `delegate.log` when it exceeds `RALPH_DELEGATE_LOG_ROTATE_BYTES` (default 5 MB), retaining `RALPH_DELEGATE_LOG_KEEP` archives (default 3). Run manually or install the daily launchd template at `plugin/ralph-hero/scripts/delegate/launchd/com.ralph.delegate-rotate.plist.template` (hand-edit the `/Users/...` paths first).
 
 ### Authoring a delegating skill
 
