@@ -261,15 +261,15 @@ Document the canonical delegation+fallback pattern, ship a minimal reference ski
 
 #### Automated Verification:
 
-- [ ] `bats plugin/ralph-hero/scripts/__tests__` — all 16 tests pass (no regression in F1's `ralph-delegate.bats` or F2's `openai-compat.bats`).
-- [ ] `npm run build` in `plugin/ralph-hero/mcp-server/` — green (TS unchanged but the matrix runs).
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` — green (no TS source touched).
+- [x] `bats plugin/ralph-hero/scripts/__tests__` — all 16 tests pass (no regression in F1's `ralph-delegate.bats` or F2's `openai-compat.bats`).
+- [x] `npm run build` in `plugin/ralph-hero/mcp-server/` — green (TS unchanged but the matrix runs).
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` — green (no TS source touched).
 - [ ] CI `test-cli` job — green on the PR.
 - [ ] CI `test-hooks` job — green on the PR.
 - [ ] CI matrix builds (Node 18, 20, 22) — green.
-- [ ] `find plugin/ralph-hero/skills/delegate-test -name SKILL.md | wc -l` returns `1` (the file exists in the expected location).
-- [ ] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/skills/delegate-test/SKILL.md` returns `1` (skill calls the wrapper exactly once — no accidental loops or recursive invocations).
-- [ ] `grep -c 'openai-compat.sh' plugin/ralph-hero/skills/delegate-test/SKILL.md` returns `0` (skill does NOT call the adapter directly — must go through the wrapper).
+- [x] `find plugin/ralph-hero/skills/delegate-test -name SKILL.md | wc -l` returns `1` (the file exists in the expected location).
+- [x] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/skills/delegate-test/SKILL.md` returns `1` (skill calls the wrapper exactly once — no accidental loops or recursive invocations).
+- [x] `grep -c 'openai-compat.sh' plugin/ralph-hero/skills/delegate-test/SKILL.md` returns `0` (skill does NOT call the adapter directly — must go through the wrapper).
 
 #### Manual Verification:
 

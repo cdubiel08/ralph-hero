@@ -296,6 +296,13 @@ Every invocation (except the disabled-126 short-circuit) appends one JSONL line 
 
 The `status` field is one of `ok` | `timeout` | `unreachable` | `parse_error` | `http_<code>` | `dry_run`. This log is consumed by upcoming telemetry tooling (see epic [#965](https://github.com/cdubiel08/ralph-hero/issues/965), Feature F5).
 
+### Authoring a delegating skill
+
+Skills can call `ralph-delegate.sh` from a `Bash` tool block to offload narrow sub-tasks. The pattern is documented end-to-end in [`docs/delegation-authoring.md`](docs/delegation-authoring.md), with the eligible/ineligible matrix in [`skills/shared/delegation-conventions.md`](skills/shared/delegation-conventions.md). The reference implementation is [`skills/delegate-test/SKILL.md`](skills/delegate-test/SKILL.md) — invoke it as `/ralph-hero:delegate-test "<input>"` to confirm the delegation toolchain is working.
+
+- Authoring guide: [`docs/delegation-authoring.md`](docs/delegation-authoring.md)
+- Conventions (what's delegate-eligible): [`skills/shared/delegation-conventions.md`](skills/shared/delegation-conventions.md)
+
 ## Architecture
 
 ```
