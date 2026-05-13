@@ -141,5 +141,5 @@ export const WORKFLOW_STATE_TO_STATUS: Record<string, string> = {
   "In Review": "In Progress",
   "Done": "Done",
   "Canceled": "Done",
-  "Human Needed": "Done",
+  "Human Needed": "Todo",
 };
