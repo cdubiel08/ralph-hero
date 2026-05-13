@@ -23,9 +23,9 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
-    "@modelcontextprotocol/sdk": "^1.26.0",
-    "better-sqlite3": "^12.6.0",
-    "graphology": "^0.25.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.10.0",
+    "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
     "graphology-components": "^1.5.4",
     "graphology-metrics": "^2.4.0",
@@ -35,14 +35,14 @@
     "graphology-traversal": "^0.3.1",
     "graphology-types": "^0.24.8",
     "ignore": "^7.0.5",
-    "sqlite-vec": "^0.1.7-alpha.10",
-    "yaml": "^2.8.4",
+    "sqlite-vec": "^0.1.9",
+    "yaml": "^2.9.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
-    "@vitest/coverage-v8": "^4.1.5",
+    "@vitest/coverage-v8": "^4.1.6",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^4.0.0"
