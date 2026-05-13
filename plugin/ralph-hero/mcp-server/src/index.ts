@@ -16,6 +16,7 @@ import { z } from "zod";
 import { createGitHubClient, type GitHubClient } from "./github-client.js";
 import { FieldOptionCache } from "./lib/cache.js";
 import { createDebugLogger, wrapServerToolWithLogging, type DebugLogger } from "./lib/debug-logger.js";
+import { initTelemetry } from "./lib/telemetry.js";
 import { toolSuccess, toolError, resolveProjectOwner } from "./types.js";
 import { resolveRepoFromProject } from "./lib/helpers.js";
 import { detectOrphanRepoIssues, type OrphanRepoIssuesResult } from "./lib/health.js";
@@ -424,6 +425,24 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
  */
 async function main(): Promise<void> {
   console.error("[ralph-hero] Starting MCP server...");
+
+  // OTel SDK init MUST happen before initGitHubClient so the first GraphQL
+  // call from the client (repo inference) is captured as a span. initTelemetry
+  // returns null when RALPH_DEBUG !== "true" — no SDK objects allocated and
+  // no exporter threads in that path.
+  const sdk = (await initTelemetry()) as
+    | { shutdown: () => Promise<void> }
+    | null;
+  if (sdk) {
+    console.error("[ralph-hero] OTel telemetry enabled");
+    // Best-effort flush on graceful shutdown. Errors swallowed because by the
+    // time SIGTERM fires we're already on the way out — partial trace loss is
+    // acceptable. SIGINT is not wired because Claude Code's stdio transport
+    // already cleans up on EOF.
+    process.on("SIGTERM", () => {
+      void sdk.shutdown().catch(() => undefined);
+    });
+  }
 
   const debugLogger = createDebugLogger();
   if (debugLogger) {
