@@ -245,6 +245,56 @@ Create tokens at: https://github.com/settings/tokens/new
 
 **Important**: After changing environment variables, restart Claude Code for the MCP server to pick up the new values.
 
+## Delegation (optional)
+
+ralph-hero ships with an opt-in delegation wrapper, `plugin/ralph-hero/scripts/ralph-delegate.sh`, that lets skills offload narrow sub-tasks (locator ranking, PR-description drafting, pass/fail classification, etc.) to a local or cheaper OpenAI-compatible endpoint instead of the primary Claude session. **The feature is fully gated on `RALPH_DELEGATE_ENABLED=true`** — with the variable unset (the default), ralph-hero behavior is bit-identical to today: no extra HTTP calls, no audit-log writes, no behavioral drift.
+
+It reuses the existing `RALPH_LLM_URL` (default `http://localhost:8000`) and `RALPH_LLM_MODEL` (default `mlx-community/gemma-4-26b-a4b-it-mxfp8`) values that the ralph-knowledge plugin and the dream-loop already honor, so a single endpoint configuration works across all ralph features.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `RALPH_DELEGATE_ENABLED` | unset (treated as `false`) | Master opt-in toggle. Anything other than `true`/`1`/`yes`/`on` exits 126 immediately. |
+| `RALPH_DELEGATE_TIMEOUT_SECONDS` | `60` | Per-call timeout, enforced via `portable_timeout`. |
+| `RALPH_DELEGATE_LOG_PATH` | `~/.ralph-hero/delegate.log` | JSONL audit log path. One line per attempt (except 126). |
+| `RALPH_DELEGATE_<TASK_UPPER>_URL` | falls back to `RALPH_LLM_URL` | Per-task endpoint override (e.g. `RALPH_DELEGATE_LOCATOR_URL`). |
+| `RALPH_DELEGATE_<TASK_UPPER>_MODEL` | falls back to `RALPH_LLM_MODEL` | Per-task model override (e.g. `RALPH_DELEGATE_LOCATOR_MODEL`). |
+
+### Exit codes
+
+The wrapper obeys a fixed 5-value contract so callers can switch on `$?` without parsing stderr:
+
+| Code | Meaning | Caller behavior |
+|------|---------|-----------------|
+| 0 | Success | Use stdout as the model's completion |
+| 1 | Hard error (parse failure, HTTP 4xx/5xx) | Caller falls back; log records `parse_error` or `http_<code>` |
+| 124 | Timeout (GNU timeout convention) | Caller falls back; log records `timeout` |
+| 126 | Delegation disabled | Caller does work natively, **no** audit-log noise |
+| 127 | Endpoint unreachable | Caller falls back; log records `unreachable` |
+
+The 126 vs 127 split is intentional: 126 means "operator chose not to delegate" (silent skip); 127 means "operator opted in but the endpoint is down" (visible degradation worth noticing).
+
+### Quick check
+
+```bash
+gemma-up   # start the local Gemma server on :8000 (see ../../CLAUDE.md)
+export RALPH_DELEGATE_ENABLED=true
+bash plugin/ralph-hero/scripts/ralph-delegate.sh --health-check
+```
+
+`--health-check` issues a `GET ${RALPH_LLM_URL}/v1/models` with a hard 2s timeout and returns 0 if the endpoint replies 200, 127 otherwise. The JSONL audit log records every attempt as a `status=ok` or `status=unreachable` line.
+
+### Audit log
+
+Every invocation (except the disabled-126 short-circuit) appends one JSONL line to `~/.ralph-hero/delegate.log`:
+
+```json
+{"ts":"2026-05-12T02:38:34Z","task":"locator","model":"...","url":"...","ms":284,"status":"ok","bytes_in":1340,"bytes_out":612,"caller":"<skill-name>"}
+```
+
+The `status` field is one of `ok` | `timeout` | `unreachable` | `parse_error` | `http_<code>` | `dry_run`. This log is consumed by upcoming telemetry tooling (see epic [#965](https://github.com/cdubiel08/ralph-hero/issues/965), Feature F5).
+
 ## Architecture
 
 ```
