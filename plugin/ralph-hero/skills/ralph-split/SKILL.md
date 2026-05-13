@@ -235,13 +235,15 @@ Set up blocking relationships between sub-issues. For each dependency pair, add 
    *Split by `/ralph-split`*
    ```
 
-2. **Keep parent in Backlog** (do NOT mark as Done or Canceled):
+2. **Keep parent in Backlog** (do NOT change its workflow state at all):
 
    The parent issue stays in its current state (typically Backlog). It only reaches Done when all children are Done, which happens naturally through the pipeline.
 
    Update the original issue body to prepend "## Split into Sub-Issues\nThis issue has been decomposed. See children and comments for details.\n\n" to the existing body.
 
-   **Do NOT** set workflow state to Done or Canceled. The parent remains active as an epic/umbrella.
+   **Do NOT** call `save_issue` on the parent with a `workflowState` argument. In particular, do not advance the parent to "Ready for Plan", "Plan in Progress", "Done", or "Canceled" as part of this skill. The parent remains active as an epic/umbrella in whatever state it was already in (typically Backlog).
+
+   > **Why this matters**: `save_issue` includes an `autoAdvanceParent` helper that fires when a child reaches a parent-gate state (e.g., "Ready for Plan"). That helper only advances the parent when **all** children are at the gate; it is the intended path for parent-state progression and runs independently of this skill. The split skill itself must never set the parent's workflow state — the auto-advance helper owns parent transitions, and any manual advance in this skill races or duplicates that contract. If the parent appears to have advanced after split, that is the helper firing (because every child reached the gate); it is not this skill's responsibility to mirror that behavior.
 
 ### Step 9: Research Notes to Affected Children
 
@@ -279,7 +281,7 @@ Split complete for #NNN: [Original Title]
 Original: [M/L/XL] estimate
 Result: [N] sub-issues totaling [sum] points
 
-Original issue: Preserved in Backlog (epic/umbrella)
+Original issue: Preserved in [its prior state] (epic/umbrella) — split skill did NOT touch parent workflow state
 
 Sub-issues:
 1. #AA: [title] (XS) -> [state] [REUSED]
@@ -288,6 +290,8 @@ Sub-issues:
 
 Dependency chain: #AA -> #BB -> #CC
 ```
+
+> Reminder: the "Original issue" line above must report the parent's pre-split workflow state. If you find yourself writing "auto-advanced to Ready for Plan" or "moved to ..." for the parent in your report, you violated Step 8.2 — go back and do not call `save_issue(workflowState=...)` on the parent.
 
 ## Escalation Protocol
 

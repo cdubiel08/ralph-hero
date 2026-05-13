@@ -11,6 +11,8 @@ Three scenarios used to grade the ralph-split skill on its primary decomposition
 
 > **Execution note**: These scenarios are written but **not executed** by this audit. Manual eval runs are tracked outside the audit plan (see #566). When grading, dispatch the `split-agent` against a test issue matching the Input column and compare actual output to the Assertions.
 
+> **Parent workflow-state contract**: All scenarios assert "parent remains Backlog" after split. The contract being graded is **"the split skill itself MUST NOT call `save_issue(workflowState=...)` on the parent"** — not "the parent will still read Backlog at end-of-run regardless of side effects." `save_issue` contains an `autoAdvanceParent` helper (see `mcp-server/src/lib/helpers.ts`) that may fire as children reach parent-gate states; that helper is system-owned, not skill-owned. To grade this assertion deterministically, inspect the agent's tool-call transcript and confirm no `save_issue` mutation on the parent issue number changed `workflowState`. The parent body MAY be updated via `save_issue` (Step 8.2 prepends a notice) — only `workflowState` is forbidden.
+
 ---
 
 ## Scenario A: Code split — M API endpoint into 3 children
@@ -43,7 +45,7 @@ A Backlog issue with the following shape:
 - [ ] Exactly 3 sub-issues created and linked under the parent (verify via `list_sub_issues`)
 - [ ] Each sub-issue has estimate XS or S (split-size-gate enforced)
 - [ ] Dependency chain matches: repository blocks service, service blocks router
-- [ ] Parent's `workflowState` remains "Backlog"
+- [ ] Skill did NOT issue a `save_issue` call on the parent with a `workflowState` argument (parent stays in Backlog from the skill's perspective; see top-of-file contract note)
 - [ ] Parent has split summary comment listing the 3 children with dependency chain
 - [ ] Sub-issues land in "Ready for Plan" workflowState
 - [ ] No `Research Notes` section appears on children (no codebase research surprises in this scenario)
@@ -85,7 +87,7 @@ A Backlog issue with the following shape (pattern derived from #566):
 - [ ] Each sub-issue body references the parent and names a specific SKILL.md path
 - [ ] Each sub-issue has estimate S (audits typically require eval-scenarios.md + content edits)
 - [ ] No blocking dependencies set between the 4 children
-- [ ] Parent's `workflowState` remains "Backlog"
+- [ ] Skill did NOT issue a `save_issue` call on the parent with a `workflowState` argument (parent stays in Backlog from the skill's perspective; see top-of-file contract note)
 - [ ] Parent has split summary comment with all 4 children and "parallel" annotation
 - [ ] Skill did NOT fail or escalate on count >5 — Phase 2 audit removed the numeric cap
 - [ ] Stop hook does NOT block
@@ -128,7 +130,7 @@ A Backlog issue with the following shape (pattern derived from #576 -> #840-843)
 - [ ] Other 3 children have NO `## Research Notes` section (no child-specific notes apply)
 - [ ] Each child has estimate XS or S
 - [ ] No blocking dependencies set between the 4 children
-- [ ] Parent's `workflowState` remains "Backlog"
+- [ ] Skill did NOT issue a `save_issue` call on the parent with a `workflowState` argument (parent stays in Backlog from the skill's perspective; see top-of-file contract note)
 - [ ] Parent has split summary comment listing all 4 children
 - [ ] Stop hook does NOT block
 
