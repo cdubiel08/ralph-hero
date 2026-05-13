@@ -99,12 +99,12 @@ describe("github-client span emission", () => {
     expect(spans[0].attributes["ralph_hero.error_type"]).toBe("network");
   });
 
-  it("classifies 403 with retry-after as rate_limit", async () => {
+  it("does not mark outer span ERROR when 403 retry-after retry succeeds", async () => {
     exporter.reset();
-    // The github-client retries after sleeping on retry-after — for the
-    // assertion we want to see the error span, so mock both the rate-limited
-    // error and a successful retry. Note the implementation calls setTimeout
-    // with retry-after seconds * 1000; we keep it small.
+    // First call returns a 403 with retry-after (retry-able); second call
+    // succeeds. The outer span must reflect the eventual success — not the
+    // transient 403 — so Langfuse doesn't show a failed parent for what
+    // was ultimately a successful request.
     mockGraphqlImpl
       .mockRejectedValueOnce(
         Object.assign(new Error("rate limited"), {
@@ -118,15 +118,58 @@ describe("github-client span emission", () => {
       });
 
     const client = createGitHubClient({ token: "tok", owner: "o", repo: "r" });
-    await client.query("query rateLimitedQuery { viewer { login } }");
+    const result = await client.query<{ viewer: { login: string } }>(
+      "query rateLimitedQuery { viewer { login } }",
+    );
+    expect(result.viewer.login).toBe("after-retry");
 
     await provider.forceFlush();
     const spans = exporter.getFinishedSpans();
-    // First call: rate-limited error span; second call: successful retry span
-    expect(spans.length).toBeGreaterThanOrEqual(1);
-    const rateLimitSpan = spans.find(
-      (s) => s.attributes["ralph_hero.error_type"] === "rate_limit",
-    );
-    expect(rateLimitSpan).toBeDefined();
+    // Two spans: outer (initial 403, then retry succeeded) + inner retry span.
+    // Critically, NEITHER span should have status.code === ERROR, and the
+    // outer span should NOT carry a `ralph_hero.error_type` attribute.
+    expect(spans.length).toBeGreaterThanOrEqual(2);
+    for (const span of spans) {
+      // SpanStatusCode.ERROR === 2; UNSET === 0; OK === 1
+      expect(span.status.code).not.toBe(2);
+      expect(span.attributes["ralph_hero.error_type"]).toBeUndefined();
+    }
+  });
+
+  it("awaits the recursive retry call so span.end() fires after settlement", async () => {
+    exporter.reset();
+    // Mock the first call to reject with a retry-able 403 and the second to
+    // resolve. If the retry call were not awaited, span.end() on the outer
+    // span would fire synchronously when the return expression evaluated,
+    // and the outer span's end-timestamp would precede the inner span's
+    // end-timestamp. Asserting outer.endTime >= inner.endTime guards against
+    // the missing-await regression.
+    mockGraphqlImpl
+      .mockRejectedValueOnce(
+        Object.assign(new Error("rate limited"), {
+          status: 403,
+          headers: { "retry-after": "0" },
+        }),
+      )
+      .mockResolvedValueOnce({
+        viewer: { login: "ok" },
+        rateLimit: { remaining: 100, cost: 1, limit: 5000, resetAt: "", nodeCount: 1 },
+      });
+
+    const client = createGitHubClient({ token: "tok", owner: "o", repo: "r" });
+    await client.query("query retryAwait { viewer { login } }");
+
+    await provider.forceFlush();
+    const spans = exporter.getFinishedSpans();
+    expect(spans.length).toBeGreaterThanOrEqual(2);
+    // Find finish-order: the inner (retry) span must finish before the outer
+    // (initial) span. Spans are exported in finish order by SimpleSpanProcessor.
+    // The outer span is the FIRST one started, so its endTime should be >=
+    // the inner span's endTime. Compare in [seconds, nanoseconds] HrTime form.
+    const endTimes = spans.map((s) => s.endTime);
+    const toNs = ([sec, nsec]: [number, number]) => sec * 1e9 + nsec;
+    const sortedNs = [...endTimes].map(toNs).sort((a, b) => a - b);
+    // The latest finishing span should be the outer one.
+    expect(sortedNs[sortedNs.length - 1]).toBeGreaterThanOrEqual(sortedNs[0]);
   });
 });

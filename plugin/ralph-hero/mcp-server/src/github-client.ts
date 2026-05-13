@@ -207,6 +207,37 @@ export function createGitHubClient(
 
           return response as T;
         } catch (error: unknown) {
+          // Detect rate-limit retry-able case FIRST. On the retry path we
+          // intentionally do NOT mark this span ERROR (or log a 500-shaped
+          // entry) — the retry may succeed and we don't want Langfuse to
+          // show a permanently-failed parent for a request that eventually
+          // returned 200. Only the non-retry path mutates span status.
+          const is403 =
+            error &&
+            typeof error === "object" &&
+            "status" in error &&
+            (error as { status: number }).status === 403;
+          const retryAfter =
+            is403 && error && typeof error === "object" && "headers" in error
+              ? (error as { headers?: Record<string, string> }).headers?.[
+                  "retry-after"
+                ]
+              : undefined;
+
+          if (retryAfter) {
+            const waitMs = parseInt(retryAfter, 10) * 1000;
+            console.error(
+              `[github-client] Rate limited. Waiting ${retryAfter}s before retry.`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+            // `await` is critical: in an async fn, `finally { span.end() }`
+            // runs as soon as the return expression evaluates. Without
+            // `await`, the inner Promise would still be pending while
+            // `span.end()` fires, exporting a half-finished outer span.
+            return await executeGraphQL<T>(queryString, variables, graphqlFn);
+          }
+
+          // Non-retry error path: mark span ERROR, log, rethrow.
           const errorType = classifyGraphQLError(error);
           span.setAttribute("ralph_hero.error_type", errorType);
           span.setStatus({
@@ -227,30 +258,6 @@ export function createGitHubClient(
                 : 500,
             error: error instanceof Error ? error.message : String(error),
           });
-
-          // Handle rate limit errors (403 with retry-after header)
-          if (
-            error &&
-            typeof error === "object" &&
-            "status" in error &&
-            (error as { status: number }).status === 403
-          ) {
-            const retryAfter =
-              error && typeof error === "object" && "headers" in error
-                ? (error as { headers?: Record<string, string> }).headers?.[
-                    "retry-after"
-                  ]
-                : undefined;
-
-            if (retryAfter) {
-              const waitMs = parseInt(retryAfter, 10) * 1000;
-              console.error(
-                `[github-client] Rate limited. Waiting ${retryAfter}s before retry.`,
-              );
-              await new Promise((resolve) => setTimeout(resolve, waitMs));
-              return executeGraphQL<T>(queryString, variables, graphqlFn);
-            }
-          }
 
           throw error;
         } finally {
