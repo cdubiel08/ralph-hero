@@ -296,7 +296,7 @@ while true; do
     printf "%s\n" "$summary"
     last_status="$summary"
   fi
-  if printf "%s" "$current" | jq -e "length > 0 and all(.conclusion != null)" >/dev/null 2>&1; then
+  if printf "%s" "$current" | jq -e "length > 0 and all(.status == \"completed\")" >/dev/null 2>&1; then
     if printf "%s" "$current" | jq -e "all(.conclusion == \"success\")" >/dev/null 2>&1; then
       printf "%s\n" "CI PASSED: all runs succeeded"
     else
@@ -320,7 +320,7 @@ The script's contract:
 4. **Empty array** (`length == 0`): print `CI SKIPPED: no runs found for $MERGE_SHA` and `exit 0` immediately — no looping forever when no CI is configured.
 5. Compute a one-line `summary` via `jq -r` of `name: status/conclusion` per run, joined with `, `.
 6. Print `summary` via `printf '%s\n'` only when it differs from `last_status` (then update `last_status`).
-7. Check terminal state: `length > 0 and all(.conclusion != null)`.
+7. Check terminal state: `length > 0 and all(.status == "completed")`. (Using `status == "completed"` rather than `.conclusion != null` is intentional — `gh run list --json status,conclusion` returns `conclusion: ""` (empty string) for in-progress runs, not `null`, so a `.conclusion != null` predicate falsely matches in-flight runs.)
 8. Terminal: print `CI PASSED: all runs succeeded` (all `conclusion == "success"`) **or** `CI FAILED: <failed run names with conclusions>` (any non-success). The terminal verdict line is the LAST line emitted before `exit 0`.
 9. Otherwise, `sleep 30` and re-loop.
 
