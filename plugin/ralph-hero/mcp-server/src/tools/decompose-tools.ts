@@ -24,6 +24,7 @@ import {
   mergeDefaults,
   type RepoRegistry,
 } from "../lib/repo-registry.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -193,8 +194,7 @@ export function registerDecomposeTools(
           "Decomposition pattern name from .ralph-repos.yml. " +
             "Omit to list available patterns and repos.",
         ),
-      dryRun: z
-        .boolean()
+      dryRun: zBoolish()
         .optional()
         .default(true)
         .describe(

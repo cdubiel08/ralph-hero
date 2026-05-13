@@ -33,6 +33,7 @@ import {
   DEFAULT_METRICS_CONFIG,
   type MetricsConfig,
 } from "../lib/metrics.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 
 // Re-export for backwards compatibility — tests + downstream tools used to
 // pull these symbols straight out of dashboard-tools.ts before they were
@@ -67,8 +68,7 @@ export function registerDashboardTools(
         .optional()
         .default("json")
         .describe("Output format (default: json)"),
-      includeHealth: z
-        .boolean()
+      includeHealth: zBoolish()
         .optional()
         .default(true)
         .describe("Include health indicators (default: true)"),
@@ -97,8 +97,7 @@ export function registerDashboardTools(
         .optional()
         .default(10)
         .describe("Max issues to list per phase (default: 10)"),
-      includeMetrics: z
-        .boolean()
+      includeMetrics: zBoolish()
         .optional()
         .default(false)
         .describe(

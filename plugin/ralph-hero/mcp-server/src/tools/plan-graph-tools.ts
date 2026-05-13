@@ -14,6 +14,7 @@ import { parsePlanGraph } from "../lib/plan-graph.js";
 import type { DependencyEdge } from "../lib/plan-graph.js";
 import { toolSuccess, toolError } from "../types.js";
 import { resolveIssueNodeId, resolveConfig } from "../lib/helpers.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -87,8 +88,7 @@ export function registerPlanGraphTools(
       planPath: z
         .string()
         .describe("Absolute path to the plan markdown document"),
-      dryRun: z
-        .boolean()
+      dryRun: zBoolish()
         .optional()
         .default(false)
         .describe(

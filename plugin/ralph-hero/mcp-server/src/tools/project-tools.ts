@@ -21,6 +21,7 @@ import type {
 } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
 import { queryProjectRepositories } from "../lib/helpers.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -182,8 +183,7 @@ export function registerProjectTools(
           "Template project number to copy from. Overrides RALPH_GH_TEMPLATE_PROJECT env var. " +
             "When set, copies the template project (views, fields, automations) instead of creating blank.",
         ),
-      createIterationField: z
-        .boolean()
+      createIterationField: zBoolish()
         .optional()
         .default(false)
         .describe(
