@@ -110,5 +110,47 @@ EXIT_CODE=$?
 assert_eq "2" "$EXIT_CODE" "nonexistent transcript file: exit 2"
 
 echo
+echo "Test case 9: silent main fallback (PASS + Merged to main + no worktree path) -> exit 2"
+TRANSCRIPT="$TEST_DIR/transcript-silent-fallback.jsonl"
+make_transcript "VALIDATION PASS
+
+Issue: #820
+Plan: thoughts/shared/plans/2026-04-20-GH-0820-document-visual-diff-split-noise-floor-pilot.md
+Implementation: Merged to main
+
+All checks passed." "$TRANSCRIPT"
+INPUT="$(jq -nc --arg p "$TRANSCRIPT" '{transcript_path:$p,stop_hook_active:false}')"
+echo "$INPUT" | "$SCRIPT" >/dev/null 2>&1
+EXIT_CODE=$?
+assert_eq "2" "$EXIT_CODE" "silent main fallback (PASS + Merged to main + no worktree): exit 2"
+
+echo
+echo "Test case 10: legitimate PASS with worktree path -> exit 0"
+TRANSCRIPT="$TEST_DIR/transcript-pass-with-worktree.jsonl"
+make_transcript "VALIDATION PASS
+
+Issue: #820
+Plan: thoughts/shared/plans/2026-04-20-GH-0820-document-visual-diff-split-noise-floor-pilot.md
+Worktree: worktrees/GH-820
+
+All checks passed." "$TRANSCRIPT"
+INPUT="$(jq -nc --arg p "$TRANSCRIPT" '{transcript_path:$p,stop_hook_active:false}')"
+echo "$INPUT" | "$SCRIPT" >/dev/null 2>&1
+EXIT_CODE=$?
+assert_eq "0" "$EXIT_CODE" "legitimate PASS with worktree path: exit 0"
+
+echo
+echo "Test case 11: correct VALIDATION FAIL with 'No worktree found' -> exit 0"
+TRANSCRIPT="$TEST_DIR/transcript-no-worktree-fail.jsonl"
+make_transcript "VALIDATION FAIL
+
+Issue: #820
+Reason: No worktree found at worktrees/GH-820 — cannot validate without implementation" "$TRANSCRIPT"
+INPUT="$(jq -nc --arg p "$TRANSCRIPT" '{transcript_path:$p,stop_hook_active:false}')"
+echo "$INPUT" | "$SCRIPT" >/dev/null 2>&1
+EXIT_CODE=$?
+assert_eq "0" "$EXIT_CODE" "VALIDATION FAIL with 'No worktree found': exit 0"
+
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -206,10 +206,10 @@ Strengthen SKILL.md Step 4's "no worktree" path with a negative example and expl
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] The existing "If no worktree found, output: VALIDATION FAIL ..." block (lines 96-102) is preserved verbatim
-  - [ ] A new paragraph is inserted immediately after that block (before the freshness check paragraph) reading: `**Do NOT fall back to validating against main.** Do NOT substitute any other path. The "no worktree" condition is a hard stop with VALIDATION FAIL. The following is a forbidden anti-pattern:` followed by a markdown code fence containing the negative example (`Implementation: Merged to main` shown as the kind of substitution that must NOT happen)
-  - [ ] The negative example specifically calls out: "no `worktrees/GH-NNN` path printed" + "verdict is `VALIDATION PASS`" as the two signals of the anti-pattern
-  - [ ] Step numbering is unchanged
+  - [x] The existing "If no worktree found, output: VALIDATION FAIL ..." block (lines 96-102) is preserved verbatim
+  - [x] A new paragraph is inserted immediately after that block (before the freshness check paragraph) reading: `**Do NOT fall back to validating against main.** Do NOT substitute any other path. The "no worktree" condition is a hard stop with VALIDATION FAIL. The following is a forbidden anti-pattern:` followed by a markdown code fence containing the negative example (`Implementation: Merged to main` shown as the kind of substitution that must NOT happen)
+  - [x] The negative example specifically calls out: "no `worktrees/GH-NNN` path printed" + "verdict is `VALIDATION PASS`" as the two signals of the anti-pattern
+  - [x] Step numbering is unchanged
 
 #### Task 3.2: Add silent-fallback detection to val-postcondition.sh
 - **files**: `plugin/ralph-hero/hooks/scripts/val-postcondition.sh` (modify)
@@ -217,11 +217,11 @@ Strengthen SKILL.md Step 4's "no worktree" path with a negative example and expl
 - **complexity**: medium
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] When the transcript contains `VALIDATION PASS` AND `Merged to main` AND does NOT contain a `worktrees/GH-` path token, the script exits 2 with a stderr message: `Detected silent main fallback: VALIDATION PASS emitted with "Merged to main" and no worktree path. This is a Step 4 contract violation. Emit VALIDATION FAIL with "No worktree found at worktrees/GH-NNN".`
-  - [ ] When the transcript contains `VALIDATION PASS` AND `worktrees/GH-` (legitimate validation path), the script still exits 0
-  - [ ] When the transcript contains `VALIDATION FAIL` AND `No worktree found` (correct Step 4 path), the script still exits 0
-  - [ ] Implementation uses additional `grep -q` invocations layered AFTER the existing terminal-verdict accept and BEFORE the existing exit 0 — the detection is a *conditional rejection* of an otherwise-accepted PASS
-  - [ ] `bash -n plugin/ralph-hero/hooks/scripts/val-postcondition.sh` exits 0
+  - [x] When the transcript contains `VALIDATION PASS` AND `Merged to main` AND does NOT contain a `worktrees/GH-` path token, the script exits 2 with a stderr message: `Detected silent main fallback: VALIDATION PASS emitted with "Merged to main" and no worktree path. This is a Step 4 contract violation. Emit VALIDATION FAIL with "No worktree found at worktrees/GH-NNN".`
+  - [x] When the transcript contains `VALIDATION PASS` AND `worktrees/GH-` (legitimate validation path), the script still exits 0
+  - [x] When the transcript contains `VALIDATION FAIL` AND `No worktree found` (correct Step 4 path), the script still exits 0
+  - [x] Implementation uses additional `grep -q` invocations layered AFTER the existing terminal-verdict accept and BEFORE the existing exit 0 — the detection is a *conditional rejection* of an otherwise-accepted PASS
+  - [x] `bash -n plugin/ralph-hero/hooks/scripts/val-postcondition.sh` exits 0
 
 #### Task 3.3: Add silent-fallback regression test
 - **files**: `plugin/ralph-hero/hooks/scripts/__tests__/val-postcondition.test.sh` (modify)
@@ -229,17 +229,17 @@ Strengthen SKILL.md Step 4's "no worktree" path with a negative example and expl
 - **complexity**: medium
 - **depends_on**: [3.2]
 - **acceptance**:
-  - [ ] New test case (suggested name: "Test case 9: silent main fallback (PASS + Merged to main + no worktree path) -> exit 2") added after current case 8
-  - [ ] Test makes a transcript whose verdict text contains both `VALIDATION PASS` and `Implementation: Merged to main` with no `worktrees/GH-` token
-  - [ ] Test asserts exit code 2
-  - [ ] Second new test case (suggested name: "Test case 10: legitimate PASS with worktree path -> exit 0") with `VALIDATION PASS` and a `worktrees/GH-820` token; asserts exit 0
-  - [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/val-postcondition.test.sh` exits 0 with PASS count >= 11
+  - [x] New test case (suggested name: "Test case 9: silent main fallback (PASS + Merged to main + no worktree path) -> exit 2") added after current case 8
+  - [x] Test makes a transcript whose verdict text contains both `VALIDATION PASS` and `Implementation: Merged to main` with no `worktrees/GH-` token
+  - [x] Test asserts exit code 2
+  - [x] Second new test case (suggested name: "Test case 10: legitimate PASS with worktree path -> exit 0") with `VALIDATION PASS` and a `worktrees/GH-820` token; asserts exit 0
+  - [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/val-postcondition.test.sh` exits 0 with PASS count >= 11
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/hooks/scripts/val-postcondition.sh` — no syntax errors
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/val-postcondition.test.sh` — all ≥11 cases pass
+- [x] `bash -n plugin/ralph-hero/hooks/scripts/val-postcondition.sh` — no syntax errors
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/val-postcondition.test.sh` — all ≥11 cases pass
 
 #### Manual Verification:
 - [ ] Read SKILL.md Step 4 end-to-end and confirm the "no worktree" prose now reads as a hard contract with the negative example clearly marked as forbidden
