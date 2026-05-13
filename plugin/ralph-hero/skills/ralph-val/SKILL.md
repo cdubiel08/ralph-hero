@@ -143,6 +143,47 @@ From the worktree directory, execute each automated verification criterion:
 
 Record each check as PASS or FAIL with details.
 
+**Citation Gate (required for every file-content check):**
+
+Before claiming any file fails a content check, you MUST:
+
+1. Run `cat <file>` or the equivalent read command from the worktree
+2. Quote the relevant lines verbatim in the verdict (use a fenced code block)
+3. State explicitly why the quoted content does or does not satisfy the plan criterion
+
+You may NOT report a file-content failure based on inference from the plan text alone.
+If you cannot read the file (missing, permission error), record that as the failure reason — not an inferred content assertion.
+
+**Example — correct citation chain for a failing file-content check:**
+
+````
+- [ ] plugin/ralph-playwright/.claude-plugin/plugin.json — FAIL (missing `skills` array)
+
+  Read from worktree:
+  ```json
+  {
+    "name": "ralph-playwright",
+    "version": "0.1.0",
+    "description": "..."
+  }
+  ```
+
+  Plan requires a `skills` array with 7 entries. The quoted content has no `skills` key,
+  so the criterion is not satisfied.
+````
+
+**Example — what NOT to do (fabricated assertion, no citation):**
+
+```
+- [ ] plugin.json — FAIL (4 substantive failures)
+  1. Missing `skills` array
+  2. Missing `agents` array
+  3. Prohibited fields present
+  4. Wrong version (0.2.0 instead of 0.1.0)
+```
+
+This form is prohibited because none of the four claims is backed by quoted file content. The model is inferring from the plan body rather than reading the file. If the file genuinely has these problems, the verdict must quote the actual offending lines.
+
 ## Step 6.5: Drift Log Verification
 
 Search the issue comments (from the fetched issue response) for `## Drift Log — Phase N` headers.
