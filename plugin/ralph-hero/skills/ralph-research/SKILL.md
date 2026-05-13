@@ -44,6 +44,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_query_outcomes
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
@@ -149,12 +150,12 @@ This information is consumed by the hero skill during tree expansion to override
 
 ### Step 3c: Knowledge Graph Prior Art Discovery
 
-If `knowledge_search`, `knowledge_traverse`, or `knowledge_query_outcomes` MCP tools are available (from the ralph-knowledge plugin), perform prior-art discovery directly before dispatching sub-agents. If unavailable, skip to Step 4.
+If `knowledge_recall`, `knowledge_search`, `knowledge_traverse`, or `knowledge_query_outcomes` MCP tools are available (from the ralph-knowledge plugin), perform prior-art discovery directly before dispatching sub-agents. If unavailable, skip to Step 4.
 
 This step runs autonomously — no user questions, just detect-and-act. Run the following calls in order:
 
-1. `knowledge_search(query="[issue topic]", type="research", brief=true)` — find prior research documents on this topic.
-2. `knowledge_search(query="[issue topic]", type="plan", brief=true)` — find existing plans that may overlap with the issue.
+1. `knowledge_recall(query="[issue topic]", role="researcher", type="research", brief=true)` — role-aware tier policy `[raw, reflection, doc]` surfaces both raw observations and synthesized insights for the researcher frame.
+2. `knowledge_recall(query="[issue topic]", role="researcher", type="plan", brief=true)` — same tier policy, scoped to plan-type documents for overlap detection.
 3. `knowledge_query_outcomes(component_area="[area inferred from issue]", aggregate=true)` — if a component area is identifiable from the issue body, files referenced, or the registry lookup in Step 3a, retrieve aggregate pipeline history (pass/fail trends, drift counts, common blockers).
 
 **How to use the results:**
@@ -164,6 +165,8 @@ This step runs autonomously — no user questions, just detect-and-act. Run the 
 
 **Brief-first pattern:**
 - Use `brief: true` for discovery (returns titles + snippets without full content). Only `Read` documents you select for deep analysis. This saves context window.
+
+**Power-user note:** `knowledge_recall` wraps `knowledge_search` with the researcher tier policy. If you need an explicit tier (e.g., `memory_tier="wiki"` only), call `knowledge_search` directly — both tools remain available.
 
 If the searches return nothing relevant, proceed to Step 4 with full sub-agent dispatch — the knowledge graph may be stale or sparse on this topic. Do NOT skip sub-agent dispatch on the basis of an empty knowledge result alone.
 
@@ -225,7 +228,7 @@ The document must begin with a `## Prior Work` section immediately after the tit
 
 - `builds_on::` for documents this research extends or was informed by
 - `tensions::` for documents whose conclusions conflict with findings here
-- Populate from thoughts-locator and thoughts-analyzer results gathered during the research phase, plus any prior-art discovered in Step 3c via `knowledge_search`
+- Populate from thoughts-locator and thoughts-analyzer results gathered during the research phase, plus any prior-art discovered in Step 3c via `knowledge_recall` / `knowledge_search`
 - If no relevant prior work exists, include the section with "None identified."
 - Use filenames without extension as wikilink targets
 
@@ -429,7 +432,7 @@ The Step 3c prior-art discovery, evidence weighting, Pipeline History section, a
 
 1. **Tools unavailable** (MCP server not running, plugin not installed, or tools not in the runtime allowlist): skip Step 3c entirely and rely on the `thoughts-locator` sub-agent in Step 4 — it always works via grep/glob and will populate Prior Work via filesystem scan. Add a footnote to the research document under Prior Work: `Knowledge graph unavailable — prior work discovery via file scan only`. Do not block the research workflow on missing knowledge tools.
 
-2. **Tools available but `knowledge_search` returns zero results**: try broader search terms first (remove specific qualifiers, drop component prefixes), then fall back to grep-based search of the `thoughts/` directory. Do NOT skip sub-agent dispatch — an empty knowledge result may indicate a stale or sparsely-indexed graph rather than a true absence of prior art. Continue with full Step 4 sub-agent dispatch and let `thoughts-locator` cross-check the filesystem.
+2. **Tools available but `knowledge_recall` (or `knowledge_search`) returns zero results**: try broader search terms first (remove specific qualifiers, drop component prefixes), then fall back to grep-based search of the `thoughts/` directory. Do NOT skip sub-agent dispatch — an empty knowledge result may indicate a stale or sparsely-indexed graph rather than a true absence of prior art. Continue with full Step 4 sub-agent dispatch and let `thoughts-locator` cross-check the filesystem.
 
 The Step 8 outcome recording (`knowledge_record_outcome`) is also subject to graceful degradation — silently skip the call if the tool is unavailable. The workflow advancement to "Ready for Plan" must still complete even when the outcome ledger cannot be written.
 

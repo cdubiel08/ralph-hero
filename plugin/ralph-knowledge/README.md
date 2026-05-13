@@ -100,6 +100,48 @@ Patterns behave exactly like `.gitignore`:
 Directories whose names start with `.` or `_` are also always skipped, as a
 fast-path before any matcher is consulted.
 
+## Choosing between `knowledge_search` and `knowledge_recall`
+
+ralph-knowledge exposes two retrieval MCP tools that wrap the same underlying
+hybrid search. They differ on **who decides the tier policy**:
+
+| Tool | When to use | Tier handling |
+|------|-------------|---------------|
+| `knowledge_search` | Power-user / explicit path. You know the tier and want full control over `rerank`, `lambda`, `return_diagnostics`, chunk metadata, etc. | You pass `memory_tier` explicitly (`doc`, `raw`, `reflection`, `wiki`, or `any` — default `any`). |
+| `knowledge_recall` | Default for agents and skills. You declare your role and the tool picks the right tiers. | A role-keyed policy fans out one rerank-enabled `hybrid.search()` per tier in the role's list, then merges and re-ranks. |
+
+### Role -> tier policy
+
+`knowledge_recall(query, role, ...)` follows this fixed policy map:
+
+| Role | Tiers (priority order) | Intent |
+|------|------------------------|--------|
+| `researcher` | `raw`, `reflection`, `doc` | Recovery of unfiltered observations + synthesized insights + curated research. Excludes wiki (we are looking for things the wiki does not already cover). |
+| `planner` | `reflection`, `wiki`, `doc` | Bias toward synthesized insights + canonical curated knowledge; excludes raw observations to keep the planning frame stable. |
+| `implementer` | `wiki`, `doc` | Only canonical references — never raw memory or speculative reflections. Keeps implementations grounded in agreed-upon truth. |
+| `reviewer` | `wiki`, `doc` | Same constraints as implementer — review against the canonical surface, not the raw or speculative tiers. |
+| `triager` | `doc`, `wiki` | Doc-first for issue context, wiki as fallback. |
+
+### Cost notes
+
+- `knowledge_recall` always runs the cross-encoder reranker (`rerank=true`)
+  because role-aware retrieval is the most context-sensitive call path in the
+  surface. Expect a one-time ~0.5-1 s cold-start (ONNX model load on the first
+  call after process boot) and ~25-45 ms per (query, doc) pair on warm calls.
+- Each tier sub-query targets <50 ms; a 3-tier fanout totals <150 ms before
+  reranking.
+- If a tier sub-query throws (e.g., transient DB lock), `knowledge_recall`
+  logs the error to stderr and continues with the remaining tiers — degraded
+  results rather than a hard failure.
+
+### Power-user override
+
+Skills can mix both tools. For example, `/ralph-hero:plan` calls
+`knowledge_recall(role="planner", ...)` for the default tier-balanced context
+gather, and ALSO calls `knowledge_search(type="research", ...)` for an explicit
+artifact lookup where it needs a precise type filter. Keeping both tools in a
+skill's allowlist is the recommended pattern.
+
 ## Environment variables
 
 | Variable | Purpose |

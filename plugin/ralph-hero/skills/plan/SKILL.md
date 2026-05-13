@@ -24,6 +24,8 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - AskUserQuestion
 ---
 
@@ -79,8 +81,9 @@ Then wait for the user's input.
    - **CRITICAL**: DO NOT spawn sub-tasks before reading these files yourself in the main context
    - **NEVER** read files partially - if a file is mentioned, read it completely
 
-   **Knowledge graph shortcut**: If a knowledge search tool is available, try it first to find related research documents on the topic keywords, type "research", limit 5.
+   **Knowledge graph shortcut**: If `knowledge_recall` is available, call `knowledge_recall(query="[topic keywords]", role="planner", brief=true, limit=5)` first. The planner tier policy `[reflection, wiki, doc]` surfaces synthesized insights + curated knowledge for the planning frame while excluding raw observations.
    If results are returned, read the top matches for context. This supplements (not replaces) the issue comment check and thoughts-locator search below.
+   For explicit-tier control (e.g., looking up a specific artifact by type), call `knowledge_search(query="...", type="research", brief=true)` directly — `knowledge_search` remains available alongside `knowledge_recall`.
 
 2. **If a `#NNN` issue was provided**, fetch it directly: fetch the full issue details for issue NNN (title, body, comments, workflow state, relationships).
    Read the full response including comments. Check comments for linked research documents (look for `## Research Document` header per Artifact Comment Protocol).

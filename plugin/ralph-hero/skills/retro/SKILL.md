@@ -12,6 +12,7 @@ allowed-tools:
   - Agent
   - AskUserQuestion
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 
@@ -137,13 +138,13 @@ After all sub-agents return, fold their findings into the relevant pain-point se
 
 ### Optional Knowledge Graph Dedup
 
-If `mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search` is available, run a brief dedup check for each high-severity pain point:
+If `mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall` is available, run a brief dedup check for each high-severity pain point using the researcher tier policy `[raw, reflection, doc]` — this surfaces both raw observations of similar friction AND synthesized insights from prior reflections, which is exactly what a retro dedup wants:
 
 ```
-knowledge_search(query="[pain point summary]", type="research", brief=true, limit=3)
+knowledge_recall(query="[pain point summary]", role="researcher", type="research", brief=true, limit=3)
 ```
 
-If a close match is found, mention it in the eventual research doc (`Prior Work` section). If the tool is unavailable, skip this — degrade gracefully.
+If a close match is found, mention it in the eventual research doc (`Prior Work` section). If `knowledge_recall` is unavailable, fall back to `knowledge_search(query="...", type="research", brief=true, limit=3)`. If neither tool is available, skip this — degrade gracefully.
 
 ## Step 4: Present Findings for Review
 
@@ -209,7 +210,7 @@ tags: [retro, session-friction, [+ relevant component tags]]
 
 ## Prior Work
 
-- builds_on:: [[any-related-research-doc]] (research — primary evidence, if found via knowledge_search)
+- builds_on:: [[any-related-research-doc]] (research — primary evidence, if found via knowledge_recall / knowledge_search)
 - builds_on:: [[any-related-postmortem]] (report — if a recent team session covered overlapping ground)
 
 (If no prior work found, leave a single line: `_No prior work found via knowledge graph or thoughts scan._`)

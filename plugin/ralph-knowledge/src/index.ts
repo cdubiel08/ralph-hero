@@ -196,6 +196,149 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
     },
   );
 
+  // ---------------------------------------------------------------------
+  // knowledge_recall — Phase 2 (GH-1204) role-aware retrieval wrapper.
+  //
+  // A policy layer on top of `knowledge_search`. Agents declare their *role*
+  // and the tool fans out one rerank-enabled `hybrid.search()` per tier in
+  // the role's policy, then merges and re-ranks by rerank score (falling back
+  // to RRF `score` when rerank is unavailable).
+  //
+  // Role -> tier policy (immutable map; see plan thoughts/shared/plans/
+  // 2026-05-12-group-GH-1203-1207-memory-tier-productization.md, Phase 2):
+  //   researcher  -> [raw, reflection, doc]
+  //   planner     -> [reflection, wiki, doc]
+  //   implementer -> [wiki, doc]
+  //   reviewer    -> [wiki, doc]
+  //   triager     -> [doc, wiki]
+  //
+  // Returns the same payload shape as `knowledge_search`. Power users keep
+  // direct `knowledge_search` access for explicit tier control.
+  // ---------------------------------------------------------------------
+  const ROLE_TIER_POLICY: Record<
+    "researcher" | "planner" | "implementer" | "reviewer" | "triager",
+    Array<"doc" | "raw" | "reflection" | "wiki">
+  > = {
+    researcher: ["raw", "reflection", "doc"],
+    planner: ["reflection", "wiki", "doc"],
+    implementer: ["wiki", "doc"],
+    reviewer: ["wiki", "doc"],
+    triager: ["doc", "wiki"],
+  };
+
+  server.tool(
+    "knowledge_recall",
+    "Role-aware retrieval over the knowledge base. Fans out one rerank-enabled hybrid.search() per memory tier in the role's policy and merges results. Use when you want tier-appropriate memory automatically; use knowledge_search when you need explicit tier control.",
+    {
+      query: z.string().describe("Search query (keywords or natural language)"),
+      role: z
+        .enum(["researcher", "planner", "implementer", "reviewer", "triager"])
+        .describe(
+          "Agent role driving tier policy. researcher=[raw,reflection,doc]; planner=[reflection,wiki,doc]; implementer=[wiki,doc]; reviewer=[wiki,doc]; triager=[doc,wiki]",
+        ),
+      limit: z.number().optional().describe("Max results (default: 10)"),
+      type: z.string().optional().describe("Filter by document type (research, plan, review, idea, report)"),
+      tags: z.array(z.string()).optional().describe("Filter by tags"),
+      includeSuperseded: z.boolean().optional().describe("Include superseded documents (default: false)"),
+      brief: z.boolean().optional().describe("Return minimal metadata only (default: false)"),
+    },
+    async (args) => {
+      try {
+        const tiers = ROLE_TIER_POLICY[args.role];
+        const limit = args.limit ?? 10;
+        // Fan out per-tier search. Run sequentially to keep behavior
+        // deterministic in tests; the cost dominated by the embed call is
+        // amortized across tiers because hybrid.search caches the query
+        // embedding inside its loop body (one embed per search() invocation,
+        // but the SQL is cheap on a warm DB).
+        type Hit = Awaited<ReturnType<typeof hybrid.search>>[number];
+        const byId = new Map<string, Hit>();
+        for (const tier of tiers) {
+          try {
+            const tierResults = await hybrid.search(args.query, {
+              tags: args.tags,
+              type: args.type,
+              limit,
+              includeSuperseded: args.includeSuperseded,
+              memoryTier: tier,
+              rerank: true,
+            });
+            for (const r of tierResults) {
+              // Dedup by document id; first occurrence wins. Because tiers
+              // are listed in priority order in the policy, the higher-priority
+              // tier's score is preserved on tie.
+              const existing = byId.get(r.id);
+              if (!existing) {
+                byId.set(r.id, r);
+                continue;
+              }
+              // Keep the entry with the higher rerank score (fall back to
+              // RRF score). This lets a doc that appears in multiple tiers
+              // (legitimately rare since tiers partition documents) ride the
+              // best signal.
+              const existingScore = existing.rerankScore ?? existing.score;
+              const candidateScore = r.rerankScore ?? r.score;
+              if (candidateScore > existingScore) {
+                byId.set(r.id, r);
+              }
+            }
+          } catch (e) {
+            // Degraded but not failed — log to stderr and continue with the
+            // remaining tiers. A single tier sub-query failure must not
+            // poison the entire recall call.
+            console.error(
+              `knowledge_recall: tier=${tier} sub-query failed: ${(e as Error).message}`,
+            );
+          }
+        }
+
+        // Merge and re-rank globally by rerank score (descending) with RRF
+        // score as the tie-breaker. Then truncate to the requested limit.
+        const merged = Array.from(byId.values()).sort((a, b) => {
+          const aScore = a.rerankScore ?? a.score;
+          const bScore = b.rerankScore ?? b.score;
+          if (bScore !== aScore) return bScore - aScore;
+          return b.score - a.score;
+        });
+        const top = merged.slice(0, limit);
+
+        const enriched = top.map((r) => {
+          // Mirror knowledge_search enrichment: strip internal-only fields,
+          // attach tags + outcome summary. We do NOT surface chunk_meta /
+          // diagnostic fields here because the recall API is intentionally
+          // minimal — power users who need that detail call knowledge_search.
+          const {
+            chunkIndex: _chunkIndex,
+            charStart: _charStart,
+            charEnd: _charEnd,
+            contextPrefix: _contextPrefix,
+            bestChunkId: _bestChunkId,
+            ftsScore: _ftsScore,
+            vecDistance: _vecDistance,
+            hitSources: _hitSources,
+            rerankScore: _rerankScore,
+            ...rest
+          } = r;
+          const base: Record<string, unknown> = { ...rest, tags: db.getTags(r.id) };
+          const doc = db.getDocument(r.id);
+          if (doc?.githubIssue) {
+            const outcomes = db.getOutcomeSummary(doc.githubIssue);
+            if (outcomes) base.outcomes_summary = outcomes;
+          }
+          return base;
+        });
+
+        const formatted = formatSearchResults(
+          enriched as unknown as Parameters<typeof formatSearchResults>[0],
+          args.brief ?? false,
+        );
+        return { content: [{ type: "text" as const, text: JSON.stringify(formatted, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    },
+  );
+
   server.tool(
     "knowledge_traverse",
     "Walk typed and untyped relationship edges from a document.",
