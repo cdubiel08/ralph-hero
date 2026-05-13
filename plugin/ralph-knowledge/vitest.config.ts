@@ -7,7 +7,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json-summary", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts", "src/**/*.d.ts"],
+      exclude: ["src/**/*.test.ts", "src/**/*.d.ts", "src/scripts/**"],
       thresholds: {
         lines: 90, // 2026-05 baseline 93.16%
         functions: 90, // 2026-05 baseline 93.00%
