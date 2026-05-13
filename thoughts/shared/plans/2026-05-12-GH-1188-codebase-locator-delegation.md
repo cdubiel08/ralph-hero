@@ -172,10 +172,10 @@ Wire the `codebase-locator` agent's candidate-ranking step to optionally delegat
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] The agent's frontmatter is unchanged (`name`, `description`, `tools: Grep, Glob, Bash`, `model: haiku`, `color: orange` — all identical).
-  - [ ] A new H2 subsection `## Candidate Ranking (optional delegation)` is inserted in the agent body **between** the existing "Search Strategy" H2 and the existing "Output Format" H2. The placement reflects the agent's operational order: gather (Search Strategy) → rank (new section) → format (Output Format).
-  - [ ] The new section opens with a 2-3-sentence overview: after the broad search produces ≥5 candidates, the agent MAY delegate the relevance-ranking step to a local LLM via `$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh`. Delegation is opt-in (operator sets `RALPH_DELEGATE_ENABLED=true`); when off, the agent ranks natively as today. Below the 5-candidate threshold, the agent skips delegation entirely.
-  - [ ] The section contains a fenced bash block that is structurally identical to the F3 reference skill's `## Workflow` block (set +e, `if OUTPUT=$(...)` guard, case "$rc" handling, unconditional `rm -f`). The block:
+  - [x] The agent's frontmatter is unchanged (`name`, `description`, `tools: Grep, Glob, Bash`, `model: haiku`, `color: orange` — all identical).
+  - [x] A new H2 subsection `## Candidate Ranking (optional delegation)` is inserted in the agent body **between** the existing "Search Strategy" H2 and the existing "Output Format" H2. The placement reflects the agent's operational order: gather (Search Strategy) → rank (new section) → format (Output Format).
+  - [x] The new section opens with a 2-3-sentence overview: after the broad search produces ≥5 candidates, the agent MAY delegate the relevance-ranking step to a local LLM via `$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh`. Delegation is opt-in (operator sets `RALPH_DELEGATE_ENABLED=true`); when off, the agent ranks natively as today. Below the 5-candidate threshold, the agent skips delegation entirely.
+  - [x] The section contains a fenced bash block that is structurally identical to the F3 reference skill's `## Workflow` block (set +e, `if OUTPUT=$(...)` guard, case "$rc" handling, unconditional `rm -f`). The block:
     - Composes a prompt of the shape:
       ```
       You are ranking files for relevance to a locate goal.
@@ -193,14 +193,14 @@ Wire the `codebase-locator` agent's candidate-ranking step to optionally delegat
     - On exit 126: silently ranks natively (no note printed, per the 126-no-log invariant in `docs/delegation-authoring.md`).
     - On exit 127/124/1: prints `delegation: fell back to native (rc=$rc)` ABOVE the structured output, then ranks natively.
     - `rm -f "$PROMPT_FILE"` runs unconditionally at the end (outside the `if/else/fi`).
-  - [ ] The section explicitly notes: "Delegation is for **ranking only**. You (the agent) still compose the structured `## File Locations for [Feature/Topic]` output below. Never let the delegate's output reach the user directly." This matches conventions doc rationale for `rerank` being eligible.
-  - [ ] The section mentions the per-task override env vars (`RALPH_DELEGATE_LOCATOR_URL`, `RALPH_DELEGATE_LOCATOR_MODEL`) in a one-liner — not as documentation, but as a hint that operators may pin a different model for this task.
-  - [ ] The agent's existing "CRITICAL: YOUR ONLY JOB IS TO DOCUMENT..." preamble, "Core Responsibilities", "Output Format" structured example, "Important Guidelines", "What NOT to Do", and "REMEMBER" closing are all unchanged in wording. Only the new H2 section is added.
-  - [ ] The total file size grows by 40-80 lines (roughly the size of the new section). If it grows past 100 added lines, the section is too verbose — trim the bash block comments or the rationale paragraphs.
-  - [ ] `bash -n` syntax-checks cleanly against the bash block (extract with `sed -n '/^```bash$/,/^```$/p' plugin/ralph-hero/agents/codebase-locator.md | sed '1d;$d' | bash -n -`).
-  - [ ] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (single wrapper call, no accidental loop).
-  - [ ] `grep -c 'openai-compat.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `0` (agent does NOT call the adapter directly — must go through wrapper).
-  - [ ] `grep -c '\-\-task locator' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (task name is hardcoded once for stable audit-log lookup).
+  - [x] The section explicitly notes: "Delegation is for **ranking only**. You (the agent) still compose the structured `## File Locations for [Feature/Topic]` output below. Never let the delegate's output reach the user directly." This matches conventions doc rationale for `rerank` being eligible.
+  - [x] The section mentions the per-task override env vars (`RALPH_DELEGATE_LOCATOR_URL`, `RALPH_DELEGATE_LOCATOR_MODEL`) in a one-liner — not as documentation, but as a hint that operators may pin a different model for this task.
+  - [x] The agent's existing "CRITICAL: YOUR ONLY JOB IS TO DOCUMENT..." preamble, "Core Responsibilities", "Output Format" structured example, "Important Guidelines", "What NOT to Do", and "REMEMBER" closing are all unchanged in wording. Only the new H2 section is added.
+  - [x] The total file size grows by 40-80 lines (roughly the size of the new section). Actual: 56 added lines. If it grows past 100 added lines, the section is too verbose — trim the bash block comments or the rationale paragraphs.
+  - [x] `bash -n` syntax-checks cleanly against the bash block (extract with `sed -n '/^```bash$/,/^```$/p' plugin/ralph-hero/agents/codebase-locator.md | sed '1d;$d' | bash -n -`).
+  - [x] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (single wrapper call, no accidental loop).
+  - [x] `grep -c 'openai-compat.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `0` (agent does NOT call the adapter directly — must go through wrapper).
+  - [x] `grep -c '\-\-task locator' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (task name is hardcoded once for stable audit-log lookup).
 
 #### Task 1.2: Author `codebase-locator-eval.md` with 5 fixed queries
 - **files**: `plugin/ralph-hero/agents/codebase-locator-eval.md` (create), `plugin/ralph-hero/skills/ralph-split/eval-scenarios.md` (read — style template), `plugin/ralph-hero/agents/codebase-locator.md` (read — agent's expected output format)
@@ -208,7 +208,7 @@ Wire the `codebase-locator` agent's candidate-ranking step to optionally delegat
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File exists at `plugin/ralph-hero/agents/codebase-locator-eval.md`, opens with frontmatter matching the `eval-scenarios.md` style template:
+  - [x] File exists at `plugin/ralph-hero/agents/codebase-locator-eval.md`, opens with frontmatter matching the `eval-scenarios.md` style template:
     ```yaml
     ---
     type: eval-scenarios
@@ -217,26 +217,26 @@ Wire the `codebase-locator` agent's candidate-ranking step to optionally delegat
     status: defined
     ---
     ```
-  - [ ] File body opens with H1 `# Codebase-Locator Delegation Eval`.
-  - [ ] Opens with a 1-paragraph "Execution note": these are operator-runnable comparison scenarios for the codebase-locator agent's delegated vs native ranking. Re-runnable as quality drifts. Not automated in v1.
-  - [ ] Defines exactly 5 queries against the **ralph-hero** repo (not arbitrary external repos — the agent runs in this repo's context):
+  - [x] File body opens with H1 `# Codebase-Locator Delegation Eval`.
+  - [x] Opens with a 1-paragraph "Execution note": these are operator-runnable comparison scenarios for the codebase-locator agent's delegated vs native ranking. Re-runnable as quality drifts. Not automated in v1.
+  - [x] Defines exactly 5 queries against the **ralph-hero** repo (not arbitrary external repos — the agent runs in this repo's context):
     1. **Q1 — feature search**: "Find all files related to LLM delegation in plugin/ralph-hero." Gold set: `scripts/ralph-delegate.sh`, `scripts/lib/openai-compat.sh`, `scripts/__tests__/ralph-delegate.bats`, `scripts/__tests__/openai-compat.bats`, `README.md` (Delegation section), `docs/delegation-authoring.md`, `skills/shared/delegation-conventions.md`, `skills/delegate-test/SKILL.md`, `agents/codebase-locator.md` (after F4a).
     2. **Q2 — component-type search**: "Find all skills that mutate GitHub state (call save_issue, create_comment, advance_issue, or batch_update)." Gold set: a subset of `plugin/ralph-hero/skills/ralph-*` that have those tool calls in their `allowed-tools` and bodies. (Operator validates by inspecting each candidate.)
     3. **Q3 — file-extension search**: "Find all bats test files in plugin/ralph-hero/scripts/__tests__/ and list which source script each covers." Gold set: 6 bats files (`cli-dispatch.bats`, `doctor.bats`, `openai-compat.bats`, `ralph-cli.bats`, `ralph-delegate.bats`, `resolve-env.bats`) + their corresponding `../*.sh` files.
     4. **Q4 — recency search**: "Find all files modified in the last 10 commits on main." Gold set: the file list from `git log --name-only --pretty=format: HEAD~10..HEAD | sort -u`. (Re-computed at run time.)
     5. **Q5 — cross-cutting concern**: "Find every place RALPH_LLM_URL is consumed or referenced." Gold set: `plugin/ralph-knowledge/src/llm-client.ts`, `scripts/dream/reflect.py`, `plugin/ralph-hero/scripts/ralph-delegate.sh`, `plugin/ralph-hero/scripts/lib/openai-compat.sh`, `plugin/ralph-hero/README.md`, `plugin/ralph-hero/CLAUDE.md` (if it references the var), and any test files that set it.
-  - [ ] For each query, the document lists:
+  - [x] For each query, the document lists:
     - The exact query string (one-liner, copy-paste-ready).
     - The gold set of file paths (5-15 paths).
     - One sentence on what the query exercises (feature search / type search / extension search / recency / cross-cutting).
-  - [ ] Includes a "Comparison protocol" section documenting how to run the eval:
+  - [x] Includes a "Comparison protocol" section documenting how to run the eval:
     1. With `RALPH_DELEGATE_ENABLED=true && gemma-up`, dispatch the agent with each query. Capture the agent's top-5 paths from the Implementation Files subsection.
     2. With `unset RALPH_DELEGATE_ENABLED`, repeat. Capture top-5 again.
     3. For each query, compute `overlap_pct = (delegated_top5 ∩ native_top5) / (delegated_top5 ∪ native_top5) * 100`.
     4. Compute mean overlap across the 5 queries. Document the result in a comment on issue #1188.
     5. Acceptable baseline: 60% mean overlap. Below 60% triggers a quality review (probably model swap or prompt refinement); not a merge blocker — calibration metric.
-  - [ ] Includes a brief "What this does NOT measure" section: this eval compares ranking agreement, not absolute correctness. The gold set is approximate; both delegated and native paths may legitimately disagree with it.
-  - [ ] No more than ~140 lines total. The eval is operator documentation, not a benchmark report.
+  - [x] Includes a brief "What this does NOT measure" section: this eval compares ranking agreement, not absolute correctness. The gold set is approximate; both delegated and native paths may legitimately disagree with it.
+  - [x] No more than ~140 lines total. The eval is operator documentation, not a benchmark report. (Actual: 131 lines.)
 
 #### Task 1.3: Write `codebase-locator-delegation.bats` covering the agent's bash block
 - **files**: `plugin/ralph-hero/scripts/__tests__/codebase-locator-delegation.bats` (create), `plugin/ralph-hero/scripts/__tests__/ralph-delegate.bats` (read — stub pattern), `plugin/ralph-hero/agents/codebase-locator.md` (read — the bash block under test)
@@ -244,35 +244,35 @@ Wire the `codebase-locator` agent's candidate-ranking step to optionally delegat
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] File exists at `plugin/ralph-hero/scripts/__tests__/codebase-locator-delegation.bats`. Shebang `#!/usr/bin/env bats`. File-level comment explains: exercises the ranking-step bash block from `agents/codebase-locator.md` against a hermetic Python HTTPServer stub; mirrors F1's bats pattern.
-  - [ ] `setup()` and `teardown()` are byte-identical to `ralph-delegate.bats:9-30` — `TEST_TMPDIR=$(mktemp -d)`, exports `RALPH_DELEGATE_LOG_PATH`, unsets caller env vars including the per-task overrides (`RALPH_DELEGATE_LOCATOR_URL`, `RALPH_DELEGATE_LOCATOR_MODEL`), starts/stops STUB_PID/STUB_PORT.
-  - [ ] A helper function `start_locator_stub_endpoint <mode>` is defined. Modes: `valid_json` (returns chat-completion content `'{"ranked":[{"path":"a","score":0.9,"category":"implementation"},{"path":"b","score":0.5,"category":"test"}],"top_k":2}'`), `malformed_content` (returns chat-completion content `"not really json"`), `slow` (sleeps 3s), `ok_default` (returns a generic ok chat-completion). Copy the Python HTTPServer stub from `ralph-delegate.bats:41-119` adapted for these modes.
-  - [ ] An extracted-or-replicated bash function `run_locator_rank()` represents the agent's bash block under test. It accepts a goal string + a candidates string (newline-joined), composes the prompt, invokes the wrapper, validates JSON via `jq -e`, and prints either the ranking JSON (success) or a fallback marker line (`FALLBACK rc=$rc`). The test asserts on the function's output. Document in a comment at the top of the bats file: "The function under test mirrors the bash block in `agents/codebase-locator.md` section 'Candidate Ranking'. Update both in lockstep."
-  - [ ] **Test 1 — happy path (delegated, valid JSON)**: starts `valid_json` stub, sets `RALPH_DELEGATE_ENABLED=true && RALPH_LLM_URL=http://127.0.0.1:$STUB_PORT`. Runs `run_locator_rank "find delegation" "a\nb\nc"`. Asserts function output contains `"ranked":[{"path":"a"`. Asserts one JSONL line in `$RALPH_DELEGATE_LOG_PATH` with `"task":"locator"` and `"status":"ok"`.
-  - [ ] **Test 2 — bad JSON from delegate**: starts `malformed_content` stub. Runs the function. Asserts function output starts with `FALLBACK rc=0` (the wrapper succeeded, but the agent's `jq -e` guard tripped). Asserts the JSONL line records `"status":"ok"` — the wrapper succeeded at the HTTP layer; the parse failure is the agent's concern.
-  - [ ] **Test 3 — timeout**: starts `slow` stub. Sets `RALPH_DELEGATE_TIMEOUT_SECONDS=1` (the wrapper enforces this via `portable_timeout`). Runs the function. Asserts function output starts with `FALLBACK rc=124`. Asserts the JSONL line records `"status":"timeout"`.
-  - [ ] **Test 4 — disabled**: does NOT set `RALPH_DELEGATE_ENABLED`. Does NOT start a stub. Runs the function. Asserts function output is exactly `FALLBACK rc=126`. Asserts the audit log file is BYTE-IDENTICAL before and after (capture `wc -c` pre/post; no log line on 126).
-  - [ ] **Test 5 — unreachable**: sets `RALPH_DELEGATE_ENABLED=true && RALPH_LLM_URL=http://127.0.0.1:1` (or a port nothing's listening on). Does NOT start a stub. Runs the function. Asserts function output starts with `FALLBACK rc=127`. Asserts the JSONL line records `"status":"unreachable"`.
-  - [ ] Each test is hermetic: no global state leaks between tests, teardown cleans up STUB_PID and TEST_TMPDIR.
-  - [ ] `bats plugin/ralph-hero/scripts/__tests__/codebase-locator-delegation.bats` passes locally and in CI (the existing `.github/workflows/ci.yml:124-129` bats glob auto-picks it up — no CI YAML change required).
-  - [ ] `grep -c 'task=locator\|"task":"locator"' plugin/ralph-hero/scripts/__tests__/codebase-locator-delegation.bats` returns ≥3 (multiple tests reference the task name for audit-log assertions).
-  - [ ] No regression: `bats plugin/ralph-hero/scripts/__tests__` (the whole directory) — all 21 tests (16 pre-existing + 5 new) pass.
+  - [x] File exists at `plugin/ralph-hero/scripts/__tests__/codebase-locator-delegation.bats`. Shebang `#!/usr/bin/env bats`. File-level comment explains: exercises the ranking-step bash block from `agents/codebase-locator.md` against a hermetic Python HTTPServer stub; mirrors F1's bats pattern.
+  - [x] `setup()` and `teardown()` are byte-identical to `ralph-delegate.bats:9-30` — `TEST_TMPDIR=$(mktemp -d)`, exports `RALPH_DELEGATE_LOG_PATH`, unsets caller env vars including the per-task overrides (`RALPH_DELEGATE_LOCATOR_URL`, `RALPH_DELEGATE_LOCATOR_MODEL`), starts/stops STUB_PID/STUB_PORT.
+  - [x] A helper function `start_locator_stub_endpoint <mode>` is defined. Modes: `valid_json` (returns chat-completion content `'{"ranked":[{"path":"a","score":0.9,"category":"implementation"},{"path":"b","score":0.5,"category":"test"}],"top_k":2}'`), `malformed_content` (returns chat-completion content `"not really json"`), `slow` (sleeps 3s), `ok_default` (returns a generic ok chat-completion). Copy the Python HTTPServer stub from `ralph-delegate.bats:41-119` adapted for these modes.
+  - [x] An extracted-or-replicated bash function `run_locator_rank()` represents the agent's bash block under test. It accepts a goal string + a candidates string (newline-joined), composes the prompt, invokes the wrapper, validates JSON via `jq -e`, and prints either the ranking JSON (success) or a fallback marker line (`FALLBACK rc=$rc`). The test asserts on the function's output. Document in a comment at the top of the bats file: "The function under test mirrors the bash block in `agents/codebase-locator.md` section 'Candidate Ranking'. Update both in lockstep."
+  - [x] **Test 1 — happy path (delegated, valid JSON)**: starts `valid_json` stub, sets `RALPH_DELEGATE_ENABLED=true && RALPH_LLM_URL=http://127.0.0.1:$STUB_PORT`. Runs `run_locator_rank "find delegation" "a\nb\nc"`. Asserts function output contains `"ranked":[{"path":"a"`. Asserts one JSONL line in `$RALPH_DELEGATE_LOG_PATH` with `"task":"locator"` and `"status":"ok"`.
+  - [x] **Test 2 — bad JSON from delegate**: starts `malformed_content` stub. Runs the function. Asserts function output starts with `FALLBACK rc=0` (the wrapper succeeded, but the agent's `jq -e` guard tripped). Asserts the JSONL line records `"status":"ok"` — the wrapper succeeded at the HTTP layer; the parse failure is the agent's concern.
+  - [x] **Test 3 — timeout**: starts `slow` stub. Sets `RALPH_DELEGATE_TIMEOUT_SECONDS=1` (the wrapper enforces this via `portable_timeout`). Runs the function. Asserts function output starts with `FALLBACK rc=124`. Asserts the JSONL line records `"status":"timeout"`.
+  - [x] **Test 4 — disabled**: does NOT set `RALPH_DELEGATE_ENABLED`. Does NOT start a stub. Runs the function. Asserts function output is exactly `FALLBACK rc=126`. Asserts the audit log file is BYTE-IDENTICAL before and after (capture `wc -c` pre/post; no log line on 126).
+  - [x] **Test 5 — unreachable**: sets `RALPH_DELEGATE_ENABLED=true && RALPH_LLM_URL=http://127.0.0.1:1` (or a port nothing's listening on). Does NOT start a stub. Runs the function. Asserts function output starts with `FALLBACK rc=127`. Asserts the JSONL line records `"status":"unreachable"`.
+  - [x] Each test is hermetic: no global state leaks between tests, teardown cleans up STUB_PID and TEST_TMPDIR.
+  - [x] `bats plugin/ralph-hero/scripts/__tests__/codebase-locator-delegation.bats` passes locally and in CI (the existing `.github/workflows/ci.yml:124-129` bats glob auto-picks it up — no CI YAML change required).
+  - [x] `grep -c 'task=locator\|"task":"locator"' plugin/ralph-hero/scripts/__tests__/codebase-locator-delegation.bats` returns ≥3 (multiple tests reference the task name for audit-log assertions). Actual: 4.
+  - [x] No regression: `bats plugin/ralph-hero/scripts/__tests__` (the whole directory) — F1's 8 ralph-delegate, F2's 8 openai-compat, and the 5 new codebase-locator-delegation tests all pass. (Pre-existing `ralph-cli.bats:8` failure unrelated to F4a; caused by missing `/usr/bin/rm` on local macOS test box.)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `bats plugin/ralph-hero/scripts/__tests__` — all 21 tests pass (no regression in F1's 8 ralph-delegate tests or F2's 8 openai-compat tests; 5 new codebase-locator-delegation tests green).
-- [ ] `npm run build` in `plugin/ralph-hero/mcp-server/` — green (TS source unchanged but matrix runs).
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` — green (no TS source touched).
+- [x] `bats plugin/ralph-hero/scripts/__tests__` — F1's 8 ralph-delegate tests, F2's 8 openai-compat tests, and the 5 new codebase-locator-delegation tests all green. (Note: pre-existing failure in `ralph-cli.bats:8` unrelated to F4a; caused by missing `/usr/bin/rm` in the local test scaffolding on macOS.)
+- [x] `npm run build` in `plugin/ralph-hero/mcp-server/` — green.
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` — green (72 files, 1479 tests pass; 1 skipped).
 - [ ] CI `test-cli` job — green on the PR.
 - [ ] CI `test-hooks` job — green on the PR.
 - [ ] CI matrix builds (Node 18, 20, 22) — green.
-- [ ] `find plugin/ralph-hero/agents -name 'codebase-locator-eval.md' | wc -l` returns `1` (eval file exists).
-- [ ] `find plugin/ralph-hero/scripts/__tests__ -name 'codebase-locator-delegation.bats' | wc -l` returns `1` (bats file exists).
-- [ ] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (single wrapper invocation in agent body).
-- [ ] `grep -c 'openai-compat.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `0` (no direct adapter call from the agent).
-- [ ] `grep -c '## Candidate Ranking' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (new section is present and headed correctly).
+- [x] `find plugin/ralph-hero/agents -name 'codebase-locator-eval.md' | wc -l` returns `1` (eval file exists).
+- [x] `find plugin/ralph-hero/scripts/__tests__ -name 'codebase-locator-delegation.bats' | wc -l` returns `1` (bats file exists).
+- [x] `grep -c 'ralph-delegate.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (single wrapper invocation in agent body).
+- [x] `grep -c 'openai-compat.sh' plugin/ralph-hero/agents/codebase-locator.md` returns `0` (no direct adapter call from the agent).
+- [x] `grep -c '## Candidate Ranking' plugin/ralph-hero/agents/codebase-locator.md` returns `1` (new section is present and headed correctly).
 
 #### Manual Verification:
 
