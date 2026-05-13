@@ -75,12 +75,12 @@ A fresh agent session can invoke any ralph-hero MCP tool with boolean params on 
 
 ### Verification
 
-- [ ] Calling any tool with `param: "true"` (string) succeeds and the handler receives `true` (boolean).
-- [ ] Calling any tool with `param: "false"` (string) succeeds and the handler receives `false` (boolean).
-- [ ] Calling any tool with `param: true` (native boolean) still succeeds unchanged.
-- [ ] Calling any tool with `param: false` (native boolean) still succeeds unchanged.
-- [ ] `npm run build` produces no TypeScript errors.
-- [ ] `npm test` passes the full vitest suite including a new regression test for boolean coercion.
+- [x] Calling any tool with `param: "true"` (string) succeeds and the handler receives `true` (boolean).
+- [x] Calling any tool with `param: "false"` (string) succeeds and the handler receives `false` (boolean).
+- [x] Calling any tool with `param: true` (native boolean) still succeeds unchanged.
+- [x] Calling any tool with `param: false` (native boolean) still succeeds unchanged.
+- [x] `npm run build` produces no TypeScript errors.
+- [x] `npm test` passes the full vitest suite including a new regression test for boolean coercion.
 
 ## What We're NOT Doing
 
