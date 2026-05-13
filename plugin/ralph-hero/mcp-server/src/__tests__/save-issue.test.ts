@@ -422,7 +422,7 @@ describe("save_issue lock guard integration", () => {
   });
 
   it("includes force parameter in save_issue schema", () => {
-    expect(issueToolsSrc).toContain("force: z.boolean()");
+    expect(issueToolsSrc).toContain("force: zBoolish()");
   });
 
   it("guard is bypassed when args.force is true", () => {

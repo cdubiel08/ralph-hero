@@ -13,6 +13,7 @@ import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { toolSuccess, toolError } from "../types.js";
 import { buildBatchArchiveMutation } from "./batch-tools.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 import {
   ensureFieldCache,
   resolveIssueNodeId,
@@ -574,7 +575,7 @@ export function registerProjectManagementTools(
         .describe("Archive a single issue by number. Mutually exclusive with workflowStates filter."),
       projectItemId: z.string().optional()
         .describe("Archive by project item ID (for draft issues). Mutually exclusive with number and workflowStates."),
-      unarchive: z.boolean().optional().default(false)
+      unarchive: zBoolish().optional().default(false)
         .describe("Unarchive instead of archive. Only works with number or projectItemId (single-item mode)."),
       workflowStates: z
         .array(z.string())
@@ -587,8 +588,7 @@ export function registerProjectManagementTools(
         .optional()
         .default(50)
         .describe("Max items to archive per invocation (default 50, cap 200). Bulk mode only."),
-      dryRun: z
-        .boolean()
+      dryRun: zBoolish()
         .optional()
         .default(false)
         .describe(

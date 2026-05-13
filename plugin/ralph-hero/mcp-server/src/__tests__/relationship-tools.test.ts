@@ -199,7 +199,7 @@ describe("list_groups structural", () => {
   });
 
   it("has showChildren parameter in Zod schema", () => {
-    expect(relationshipToolsSrc).toMatch(/showChildren:\s*z\s*\n?\s*\.boolean\(\)/);
+    expect(relationshipToolsSrc).toMatch(/showChildren:\s*zBoolish\(\)/);
   });
 
   it("has state parameter with OPEN default", () => {

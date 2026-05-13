@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { readActivity, type Category } from "../lib/activity.js";
 import { toolSuccess, toolError } from "../types.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 
 function defaultActivityRoot(): string {
   return process.env.RALPH_ACTIVITY_DIR ?? path.join(os.homedir(), ".ralph-hero", "activity");
@@ -20,7 +21,7 @@ export function registerActivityTools(server: McpServer): void {
       category: z.enum(["work", "meta", "all"]).default("work").describe("Filter by category; default 'work' excludes meta noise"),
       project: z.string().nullable().default(null).describe("Filter by project name"),
       limit: z.number().int().min(1).default(50).describe("Max events to return (default 50; was 100 before 2.5.x)"),
-      compact: z.boolean().default(false).describe("When true, project each event to {ts, kind, tool, project}; drops actor/session_id/category/wrapper-target. Use for narrative synthesis."),
+      compact: zBoolish().default(false).describe("When true, project each event to {ts, kind, tool, project}; drops actor/session_id/category/wrapper-target. Use for narrative synthesis."),
     },
     async (params) => {
       try {

@@ -33,6 +33,7 @@ import {
   syncStatusField,
 } from "../lib/helpers.js";
 import { paginateConnection } from "../lib/pagination.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Sub-issue tree helpers (exported for testing)
@@ -171,8 +172,7 @@ export function registerRelationshipTools(
       childNumber: z
         .coerce.number()
         .describe("Child issue number (will become sub-issue of parent)"),
-      replaceParent: z
-        .boolean()
+      replaceParent: zBoolish()
         .optional()
         .default(false)
         .describe("If true, move child even if it already has a parent"),
@@ -1081,8 +1081,7 @@ export function registerRelationshipTools(
         .optional()
         .default("OPEN")
         .describe("Filter parent issues by state (default: OPEN)"),
-      showChildren: z
-        .boolean()
+      showChildren: zBoolish()
         .optional()
         .default(false)
         .describe(

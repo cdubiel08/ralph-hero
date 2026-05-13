@@ -15,6 +15,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { toolSuccess, toolError } from "../types.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -263,8 +264,7 @@ export function registerDebugTools(
         .string()
         .optional()
         .describe("ISO date string. Only process events after this time (default: 24h ago)"),
-      dryRun: z
-        .boolean()
+      dryRun: zBoolish()
         .optional()
         .default(false)
         .describe("If true, report what would be created/updated without making changes"),

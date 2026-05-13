@@ -1,6 +1,6 @@
 ---
 date: 2026-05-12
-status: draft
+status: complete
 type: plan
 github_issue: 1130
 github_issues: [1130]
@@ -115,15 +115,15 @@ Introduce a shared Zod helper and migrate all 15 `z.boolean()` occurrences in `m
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Exports a `zBoolish()` function returning a Zod schema (`ZodEffects<ZodBoolean>` or compatible) that accepts `boolean | "true" | "false"`.
-  - [ ] `zBoolish().parse(true)` → `true`.
-  - [ ] `zBoolish().parse(false)` → `false`.
-  - [ ] `zBoolish().parse("true")` → `true`.
-  - [ ] `zBoolish().parse("false")` → `false`.
-  - [ ] `zBoolish().parse("yes")` throws (does NOT silently coerce — only the two literal harness shapes are accepted).
-  - [ ] `zBoolish().parse(1)` throws.
-  - [ ] The schema chains cleanly with `.optional()`, `.default(false)`, and `.describe(...)` (verified by TypeScript compilation).
-  - [ ] JSDoc comment explains the harness/ToolSearch interaction and references GH-1130.
+  - [x] Exports a `zBoolish()` function returning a Zod schema (`ZodEffects<ZodBoolean>` or compatible) that accepts `boolean | "true" | "false"`.
+  - [x] `zBoolish().parse(true)` → `true`.
+  - [x] `zBoolish().parse(false)` → `false`.
+  - [x] `zBoolish().parse("true")` → `true`.
+  - [x] `zBoolish().parse("false")` → `false`.
+  - [x] `zBoolish().parse("yes")` throws (does NOT silently coerce — only the two literal harness shapes are accepted).
+  - [x] `zBoolish().parse(1)` throws.
+  - [x] The schema chains cleanly with `.optional()`, `.default(false)`, and `.describe(...)` (verified by TypeScript compilation).
+  - [x] JSDoc comment explains the harness/ToolSearch interaction and references GH-1130.
 
 #### Task 1.2: Add regression test for `zBoolish` and harness wire-shape
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/boolean-coercion.test.ts` (create), `plugin/ralph-hero/mcp-server/src/lib/zod-helpers.ts` (read)
@@ -131,12 +131,12 @@ Introduce a shared Zod helper and migrate all 15 `z.boolean()` occurrences in `m
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Test file follows the pattern of `__tests__/empty-params.test.ts` (uses `createPatchedServer()`-equivalent helper to register a tool with `zBoolish()` params).
-  - [ ] At least one test registers a tool with `{ flag: zBoolish().optional().default(false) }` and asserts `parse({ flag: "true" })` resolves to `flag === true`.
-  - [ ] At least one test asserts `parse({ flag: "false" })` resolves to `flag === false`.
-  - [ ] At least one test asserts `parse({ flag: true })` still works unchanged.
-  - [ ] At least one test asserts `parse({ flag: "garbage" })` throws a Zod validation error.
-  - [ ] Tests pass with `npx vitest run src/__tests__/boolean-coercion.test.ts`.
+  - [x] Test file follows the pattern of `__tests__/empty-params.test.ts` (uses `createPatchedServer()`-equivalent helper to register a tool with `zBoolish()` params).
+  - [x] At least one test registers a tool with `{ flag: zBoolish().optional().default(false) }` and asserts `parse({ flag: "true" })` resolves to `flag === true`.
+  - [x] At least one test asserts `parse({ flag: "false" })` resolves to `flag === false`.
+  - [x] At least one test asserts `parse({ flag: true })` still works unchanged.
+  - [x] At least one test asserts `parse({ flag: "garbage" })` throws a Zod validation error.
+  - [x] Tests pass with `npx vitest run src/__tests__/boolean-coercion.test.ts`.
 
 #### Task 1.3: Migrate `tools/issue-tools.ts`
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` (modify)
@@ -144,12 +144,12 @@ Introduce a shared Zod helper and migrate all 15 `z.boolean()` occurrences in `m
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Import `zBoolish` from `../lib/zod-helpers.js` (note `.js` extension — ESM `NodeNext`).
-  - [ ] Line 524 `z.boolean()` for `includeGroup` → `zBoolish()`.
-  - [ ] Line 531 `z.boolean()` for `includePipeline` → `zBoolish()`.
-  - [ ] Line 1215 `z.boolean()` for `force` → `zBoolish()`.
-  - [ ] All chained methods (`.optional()`, `.default(...)`, `.describe(...)`) preserved verbatim.
-  - [ ] `grep -n "z\.boolean()" tools/issue-tools.ts` returns zero results.
+  - [x] Import `zBoolish` from `../lib/zod-helpers.js` (note `.js` extension — ESM `NodeNext`).
+  - [x] Line 524 `z.boolean()` for `includeGroup` → `zBoolish()`.
+  - [x] Line 531 `z.boolean()` for `includePipeline` → `zBoolish()`.
+  - [x] Line 1215 `z.boolean()` for `force` → `zBoolish()`.
+  - [x] All chained methods (`.optional()`, `.default(...)`, `.describe(...)`) preserved verbatim.
+  - [x] `grep -n "z\.boolean()" tools/issue-tools.ts` returns zero results.
 
 #### Task 1.4: Migrate remaining tool files
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/activity-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/project-management-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/debug-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/decompose-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/relationship-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/plan-graph-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/batch-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/dashboard-tools.ts` (modify), `plugin/ralph-hero/mcp-server/src/tools/project-tools.ts` (modify)
@@ -157,10 +157,10 @@ Introduce a shared Zod helper and migrate all 15 `z.boolean()` occurrences in `m
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Each file imports `zBoolish` from `../lib/zod-helpers.js`.
-  - [ ] Every occurrence of `z.boolean()` and `.boolean()` (as a Zod method) in tool input schemas is replaced with `zBoolish()`. The replacement preserves the surrounding chain (`.optional()`, `.default(...)`, `.describe(...)`) verbatim.
-  - [ ] After the migration, `grep -rn "\.boolean()" plugin/ralph-hero/mcp-server/src/tools/` returns zero results.
-  - [ ] `npm run build` from `plugin/ralph-hero/mcp-server/` succeeds with no TypeScript errors.
+  - [x] Each file imports `zBoolish` from `../lib/zod-helpers.js`.
+  - [x] Every occurrence of `z.boolean()` and `.boolean()` (as a Zod method) in tool input schemas is replaced with `zBoolish()`. The replacement preserves the surrounding chain (`.optional()`, `.default(...)`, `.describe(...)`) verbatim.
+  - [x] After the migration, `grep -rn "\.boolean()" plugin/ralph-hero/mcp-server/src/tools/` returns zero results.
+  - [x] `npm run build` from `plugin/ralph-hero/mcp-server/` succeeds with no TypeScript errors.
 
 #### Task 1.5: Verify full test suite still passes
 - **files**: (none — verification only)
@@ -168,17 +168,17 @@ Introduce a shared Zod helper and migrate all 15 `z.boolean()` occurrences in `m
 - **complexity**: low
 - **depends_on**: [1.2, 1.3, 1.4]
 - **acceptance**:
-  - [ ] `npm test` from `plugin/ralph-hero/mcp-server/` passes all existing tests plus the new `boolean-coercion.test.ts`.
-  - [ ] No vitest snapshots updated (the change is type-coercion only; no test fixtures should drift).
+  - [x] `npm test` from `plugin/ralph-hero/mcp-server/` passes all existing tests plus the new `boolean-coercion.test.ts`.
+  - [x] No vitest snapshots updated (the change is type-coercion only; no test fixtures should drift).
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors.
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes including the new regression test.
-- [ ] `grep -rn "z\.boolean\|\.boolean()" plugin/ralph-hero/mcp-server/src/tools/` — zero results (full migration confirmed).
-- [ ] `grep -rn "zBoolish" plugin/ralph-hero/mcp-server/src/tools/` — at least 25 matches: 15 call-site replacements + 10 import-line occurrences (one `import { zBoolish }` per modified file across issue-tools, activity-tools, project-management-tools, debug-tools, decompose-tools, relationship-tools, plan-graph-tools, batch-tools, dashboard-tools, project-tools).
-- [ ] `grep -rn "z\.coerce\.boolean" plugin/ralph-hero/mcp-server/src/` — zero matches (the unsafe primitive must not be introduced — the `Boolean("false") === true` trap is the whole reason we chose `z.preprocess` over `z.coerce.boolean()`).
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors.
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes including the new regression test (1293 tests pass).
+- [x] `grep -rn "z\.boolean\|\.boolean()" plugin/ralph-hero/mcp-server/src/tools/` — zero results (full migration confirmed).
+- [x] `grep -rn "zBoolish" plugin/ralph-hero/mcp-server/src/tools/` — 25 matches: 15 call-site replacements + 10 import-line occurrences.
+- [x] `grep -rn "z\.coerce\.boolean" plugin/ralph-hero/mcp-server/src/` — zero functional matches (the sole textual match is the JSDoc comment in `lib/zod-helpers.ts` explaining why we deliberately did NOT use `z.coerce.boolean()`; it is not a call site).
 
 #### Manual Verification:
 - [ ] From a fresh agent session (one that has not run `ToolSearch` on any ralph-hero MCP tool), invoke `mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue({ number: 1, includePipeline: true })`. The call succeeds without an `Input validation error`.

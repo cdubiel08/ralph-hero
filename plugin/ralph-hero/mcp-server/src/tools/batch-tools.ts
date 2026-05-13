@@ -12,6 +12,7 @@ import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { isEarlierState, WORKFLOW_STATE_TO_STATUS } from "../lib/workflow-states.js";
 import { toolSuccess, toolError } from "../types.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 import {
   ensureFieldCache,
   resolveConfig,
@@ -258,8 +259,7 @@ export function registerBatchTools(
         .min(1)
         .max(MAX_OPERATIONS)
         .describe("Field updates to apply to all issues (1-3)"),
-      skipIfAtOrPast: z
-        .boolean()
+      skipIfAtOrPast: zBoolish()
         .optional()
         .default(false)
         .describe(

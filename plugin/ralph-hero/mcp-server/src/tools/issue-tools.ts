@@ -30,6 +30,7 @@ import { resolveState } from "../lib/state-resolution.js";
 import { parseDateMath } from "../lib/date-math.js";
 import { expandProfile } from "../lib/filter-profiles.js";
 import { toolSuccess, toolError } from "../types.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 import {
   ensureFieldCache,
   resolveIssueNodeId,
@@ -520,15 +521,13 @@ export function registerIssueTools(
       projectNumber: z.coerce.number().optional()
         .describe("Project number override (defaults to configured project)"),
       number: z.coerce.number().describe("Issue number"),
-      includeGroup: z
-        .boolean()
+      includeGroup: zBoolish()
         .optional()
         .default(true)
         .describe(
           "Include group detection results (default: true). Set to false to skip group detection and save API calls when group context is not needed.",
         ),
-      includePipeline: z
-        .boolean()
+      includePipeline: zBoolish()
         .optional()
         .default(false)
         .describe(
@@ -1212,7 +1211,7 @@ export function registerIssueTools(
         .describe("Iteration/sprint title (e.g., 'Sprint 1'), @current, @next, or null to clear."),
       command: z.string().optional()
         .describe("Ralph command for semantic intent resolution (e.g., 'ralph_impl'). Required when workflowState is a semantic intent."),
-      force: z.boolean().optional()
+      force: zBoolish().optional()
         .describe("Bypass lock guard. Use only for recovery when an agent crash left an issue stuck in a lock state."),
     },
     async (args) => {
