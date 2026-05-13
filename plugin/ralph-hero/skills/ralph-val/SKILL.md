@@ -194,6 +194,18 @@ Classify each failure, then choose the verdict:
 - Only mechanical failures → `FIX` (list the fix commands)
 - Any substantive failure → `FAIL`
 
+**Verdict format (strict):**
+
+The verdict line MUST begin with exactly one of:
+
+```
+VALIDATION PASS
+VALIDATION FIX
+VALIDATION FAIL
+```
+
+Do NOT substitute other status words (e.g. `BLOCKED`, `COMPLETE`, `Phase Assessment`, `Status: ❌`). These are not recognized by `val-postcondition.sh` and will cause the Stop hook to block. Use the literal `VALIDATION PASS|FIX|FAIL` prefix verbatim — no emoji, no bold, no alternate vocabulary.
+
 Output the validation report:
 
 ```
@@ -219,6 +231,28 @@ Verdict: [PASS/FIX/FAIL]
 [If FIX: list each mechanical fix command]
 [If FAIL: list each substantive failure with specific details]
 ```
+
+**Negative example — DO NOT emit verdicts like this:**
+
+```
+### Phase Assessment
+
+**Status**: ❌ **BLOCKED** — Does not meet acceptance criteria
+```
+
+The string `BLOCKED` is borrowed from issue-workflow vocabulary and is NOT a valid val verdict. Replace with:
+
+```
+VALIDATION FAIL
+Issue: #NNN
+Plan: [plan path]
+Worktree: [worktree path]
+
+### Substantive Failures:
+- [ ] [specific failing check with details]
+```
+
+Similarly invalid: `Status: ❌`, `COMPLETE`, `Phase Assessment` as the verdict prefix. Only `VALIDATION PASS`, `VALIDATION FIX`, or `VALIDATION FAIL` (followed by the report body) is accepted.
 
 ## Step 8: Post GitHub Comment
 
