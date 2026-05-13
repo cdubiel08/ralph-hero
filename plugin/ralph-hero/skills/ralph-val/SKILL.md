@@ -237,15 +237,204 @@ Cross-Phase Integration:
 
 If the plan has only one phase, report: `Cross-Phase Integration: Single-phase plan — skipped`
 
+## Step 7.0: Classify Verdict (optional delegation)
+
+When delegation is enabled (`RALPH_DELEGATE_ENABLED=true`), the plan's `## Desired End State` snippet + the per-check summary (from Step 6) + the drift analysis summary (from Step 6.5) + the cross-phase integration result (from Step 6.6) are sent to a local LLM via the wrapper at `$CLAUDE_PLUGIN_ROOT/scripts/` (task name `val_classify`), which returns a strict 3-value enum (`pass`|`fail`|`needs-review`). The skill **cross-checks** the enum against the automated-check results — the delegate is advisory, not authoritative — and uses the result to inform the verdict-prefix selection in Step 7 below. Everything else (the `### Automated Checks` per-check list, the `### Drift Analysis`, the `### Cross-Phase Integration`, the `Verdict:` line, the failure-detail sections, the `create_comment` MCP call) is composed and invoked natively. Delegation is opt-in (operator sets the env var); when off, the skill classifies natively as today.
+
+**Delegation is for classification only.** The verdict body (per-check list, drift analysis, cross-phase integration, fix-command list, substantive-failure detail list) is composed natively in Step 7. The `create_comment` MCP call in Step 8 is invoked natively in all cases — the delegate's output is text-in for the verdict-prefix selection and nothing else. Never let delegated text reach the comment body or any GitHub mutation. (See `skills/shared/delegation-conventions.md` for the eligibility matrix and the no-mutation rule.)
+
+The `VERDICT_PREFIX` set here MUST be exactly one of `VALIDATION PASS`, `VALIDATION FIX`, or `VALIDATION FAIL` (the literal tokens the `val-postcondition.sh` Stop hook accepts). The skill MUST NOT substitute alternate vocabulary — see Step 7's "Verdict format (strict)" section. This guards against the delegate's `rationale` field leaking into the verdict prefix.
+
+Operators may pin a different model for this task via `RALPH_DELEGATE_VAL_CLASSIFY_URL` / `RALPH_DELEGATE_VAL_CLASSIFY_MODEL`. The wrapper resolves per-task overrides without code changes here (F1's `_resolve_task_var` upper-cases `val_classify` → `VAL_CLASSIFY`).
+
+Run the following bash block. The control flow (`set +e`, `if OUTPUT=$(...)`, `case "$rc"`, unconditional `rm -f`) mirrors the reference pattern in `skills/delegate-test/SKILL.md`, F4a's `agents/codebase-locator.md` § "Candidate Ranking", and F4b's `skills/ralph-pr/SKILL.md` § "Step 5.0". Task-specific deviations: (a) **threshold gate** counts checks (`total_checks >= 2 AND failed_checks >= 1`), (b) **strict 3-value enum JSON guard** via `jq -er .classification` + bash `case` statement instead of `jq -e .ranked` or byte-length prose guards, (c) **cross-check rule** — delegate is advisory; inconsistency with automated checks triggers native fallback, (d) `--max-tokens 128 --temperature 0.0` (small budget for the enum response).
+
+```bash
+# --- Inputs (set from the prior steps' context) ---
+#   TOTAL_CHECKS              — total automated checks run (Step 6)
+#   FAILED_CHECKS             — number of failed checks (Step 6)
+#   SUBSTANTIVE_FAILURES      — number of substantive failures (Step 7's
+#                               in-context mechanical/substantive classification,
+#                               which runs regardless of delegation)
+#   DESIRED_END_STATE_SNIPPET — first paragraph of the plan's ## Desired End State
+#   PER_CHECK_SUMMARY         — compact per-check summary, one line per check,
+#                               max 30 lines: "- <name>: PASS|FAIL [<reason>]"
+#   DRIFT_SUMMARY             — one line per phase from Step 6.5, max 10 lines
+#   CROSS_PHASE_RESULT        — one line summary from Step 6.6
+#
+# Output: VERDICT_PREFIX — exactly one of:
+#   VALIDATION PASS | VALIDATION FIX | VALIDATION FAIL
+
+TOTAL_CHECKS=${TOTAL_CHECKS:-0}
+FAILED_CHECKS=${FAILED_CHECKS:-0}
+SUBSTANTIVE_FAILURES=${SUBSTANTIVE_FAILURES:-0}
+
+# --- Threshold gate (Constraint #10: >=2 checks AND >=1 failure) ---
+if [ "$TOTAL_CHECKS" -lt 2 ] || [ "$FAILED_CHECKS" -eq 0 ]; then
+    # Below threshold — compose natively, skip delegation entirely. All-pass
+    # case is deterministic: VALIDATION PASS. No wrapper call, no tempfile,
+    # no audit-log line.
+    VERDICT_PREFIX="VALIDATION PASS"
+else
+    # --- Threshold met — build prompt and try delegation ---
+    PROMPT_FILE=$(mktemp -t val-classify-XXXXXX)
+    cat > "$PROMPT_FILE" <<EOF
+You are classifying the outcome of an automated validation run.
+
+Desired end state (from the plan):
+${DESIRED_END_STATE_SNIPPET}
+
+Per-check results (PASS|FAIL [reason]):
+${PER_CHECK_SUMMARY}
+
+Drift analysis summary:
+${DRIFT_SUMMARY}
+
+Cross-phase integration:
+${CROSS_PHASE_RESULT}
+
+Return a JSON object with this exact shape — no prose before or after:
+{"classification": "pass" | "fail" | "needs-review", "rationale": "<one-sentence>"}
+
+Rules:
+- "pass" when every check is PASS and the desired end state is satisfied.
+- "fail" when at least one check FAILed.
+- "needs-review" only if the result is genuinely ambiguous (e.g., a check
+  could not run or the desired end state is unclear).
+EOF
+
+    # 8 KB prompt size cap (Constraint #11). If over, truncate the per-check
+    # summary block (the longest typically) first. If still over after
+    # truncation, fall back to native.
+    PROMPT_BYTES=$(wc -c < "$PROMPT_FILE" | tr -d ' ')
+    if [ "$PROMPT_BYTES" -gt 8192 ]; then
+        TRUNCATED_PER_CHECK=$(printf '%s' "$PER_CHECK_SUMMARY" | head -c 4096)
+        cat > "$PROMPT_FILE" <<EOF
+You are classifying the outcome of an automated validation run.
+
+Desired end state (from the plan):
+${DESIRED_END_STATE_SNIPPET}
+
+Per-check results (PASS|FAIL [reason]):
+${TRUNCATED_PER_CHECK}
+
+Drift analysis summary:
+${DRIFT_SUMMARY}
+
+Cross-phase integration:
+${CROSS_PHASE_RESULT}
+
+Return a JSON object with this exact shape — no prose before or after:
+{"classification": "pass" | "fail" | "needs-review", "rationale": "<one-sentence>"}
+
+Rules:
+- "pass" when every check is PASS and the desired end state is satisfied.
+- "fail" when at least one check FAILed.
+- "needs-review" only if the result is genuinely ambiguous (e.g., a check
+  could not run or the desired end state is unclear).
+EOF
+        PROMPT_BYTES=$(wc -c < "$PROMPT_FILE" | tr -d ' ')
+    fi
+
+    if [ "$PROMPT_BYTES" -gt 8192 ]; then
+        # Still oversized — fall back to native without invoking the wrapper.
+        # Native classification: any substantive failure → FAIL; only
+        # mechanical failures → FIX; all pass → PASS (the existing Step 7
+        # logic).
+        if [ "$SUBSTANTIVE_FAILURES" -gt 0 ]; then
+            VERDICT_PREFIX="VALIDATION FAIL"
+        else
+            VERDICT_PREFIX="VALIDATION FIX"
+        fi
+        rm -f "$PROMPT_FILE"
+    else
+        # Default native value — overwritten only if the delegate path returns
+        # a shape-valid + cross-check-passing classification below.
+        if [ "$SUBSTANTIVE_FAILURES" -gt 0 ]; then
+            VERDICT_PREFIX="VALIDATION FAIL"
+        else
+            VERDICT_PREFIX="VALIDATION FIX"
+        fi
+
+        set +e
+        if OUTPUT=$("$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh" \
+                      --task val_classify \
+                      --prompt-file "$PROMPT_FILE" \
+                      --max-tokens 128 \
+                      --temperature 0.0 2>/dev/null); then
+            # Wrapper succeeded at HTTP. Validate the response shape in two
+            # stages: (1) jq -er .classification extracts the field; (2) a
+            # bash case statement restricts the value to exactly the three
+            # accepted tokens (pass|fail|needs-review). Any other value is
+            # treated as bad-shape and falls back.
+            CLASSIFICATION=$(printf '%s' "$OUTPUT" | jq -er .classification 2>/dev/null)
+            jq_rc=$?
+            if [ "$jq_rc" -ne 0 ]; then
+                echo "delegation: fell back to native (rc=0, bad-shape)"
+            else
+                case "$CLASSIFICATION" in
+                    pass)
+                        # Cross-check (Constraint #9): delegate=pass is only
+                        # consistent when SUBSTANTIVE_FAILURES==0. If a
+                        # substantive failure was recorded, fall back.
+                        if [ "$SUBSTANTIVE_FAILURES" -gt 0 ]; then
+                            echo "delegation: cross-check failed (delegate=pass, substantive_failures=$SUBSTANTIVE_FAILURES) — falling back to native"
+                        else
+                            VERDICT_PREFIX="VALIDATION PASS"
+                        fi
+                        ;;
+                    fail)
+                        # Cross-check (Constraint #9): delegate=fail is only
+                        # consistent when FAILED_CHECKS>0 (which the threshold
+                        # gate already enforces). If somehow no checks failed,
+                        # fall back.
+                        if [ "$FAILED_CHECKS" -eq 0 ]; then
+                            echo "delegation: cross-check failed (delegate=fail, failed_checks=0) — falling back to native"
+                        else
+                            # Map gross fail to FIX vs FAIL via the native
+                            # mechanical/substantive routing (Constraint #13).
+                            if [ "$SUBSTANTIVE_FAILURES" -gt 0 ]; then
+                                VERDICT_PREFIX="VALIDATION FAIL"
+                            else
+                                VERDICT_PREFIX="VALIDATION FIX"
+                            fi
+                        fi
+                        ;;
+                    needs-review)
+                        # Delegate explicitly admitted uncertainty — fall back.
+                        echo "delegation: needs-review — falling back to native"
+                        ;;
+                    *)
+                        # Enum guard tripped — fall back.
+                        echo "delegation: fell back to native (rc=0, bad-shape)"
+                        ;;
+                esac
+            fi
+        else
+            rc=$?
+            case "$rc" in
+                126) ;; # disabled — compose natively, no note printed
+                127|124|1) echo "delegation: fell back to native (rc=$rc)" ;;
+            esac
+        fi
+        set -e
+
+        rm -f "$PROMPT_FILE"
+    fi
+fi
+```
+
+After this block, `VERDICT_PREFIX` holds exactly one of `VALIDATION PASS`, `VALIDATION FIX`, or `VALIDATION FAIL`. Step 7 below uses `${VERDICT_PREFIX}` as the first line of the verdict block; every other line of the verdict body is composed natively per the existing Step 7 templates.
+
 ## Step 7: Produce Verdict
 
-Classify each failure, then choose the verdict:
+Classify each failure (mechanical-vs-substantive) and use the `${VERDICT_PREFIX}` set by Step 7.0 as the first line of the verdict block. The mechanical-vs-substantive classification feeds the in-context routing that Step 7.0's bash block consumes via `SUBSTANTIVE_FAILURES`; the `${VERDICT_PREFIX}` value is what the verdict line starts with.
 
 **Failure classification:**
 - **Mechanical**: has a deterministic auto-fix — formatter (`prettier --write`), linter (`eslint --fix`), missing trailing newline, import sorting. No judgment needed.
 - **Substantive**: tests fail, missing functionality, wrong behavior, missing files the plan requires. Requires implementation work.
 
-**Verdict rules:**
+**Verdict rules** (these are the same rules Step 7.0's native fallback applies; Step 7.0's delegated path produces a `${VERDICT_PREFIX}` that is consistent with these rules after the cross-check guard):
 - All checks pass → `PASS`
 - Only mechanical failures → `FIX` (list the fix commands)
 - Any substantive failure → `FAIL`
@@ -260,12 +449,12 @@ VALIDATION FIX
 VALIDATION FAIL
 ```
 
-Do NOT substitute other status words (e.g. `BLOCKED`, `COMPLETE`, `Phase Assessment`, `Status: ❌`). These are not recognized by `val-postcondition.sh` and will cause the Stop hook to block. Use the literal `VALIDATION PASS|FIX|FAIL` prefix verbatim — no emoji, no bold, no alternate vocabulary.
+Do NOT substitute other status words (e.g. `BLOCKED`, `COMPLETE`, `Phase Assessment`, `Status: ❌`). These are not recognized by `val-postcondition.sh` and will cause the Stop hook to block. Use the literal `VALIDATION PASS|FIX|FAIL` prefix verbatim — no emoji, no bold, no alternate vocabulary. The first line of the verdict report MUST be `${VERDICT_PREFIX}` (set by Step 7.0); the skill MUST NOT recompute the prefix in-context.
 
 Output the validation report:
 
 ```
-VALIDATION [PASS/FIX/FAIL]
+${VERDICT_PREFIX}
 Issue: #NNN
 Plan: [plan path]
 Worktree: [worktree path]
