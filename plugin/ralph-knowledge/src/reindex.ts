@@ -522,6 +522,131 @@ export function resolveDirs(): ResolvedDirs {
   };
 }
 
+/**
+ * GH-1205: Incrementally reindex a single markdown file. Used by
+ * `knowledge_remember` after writing a new raw memory so the file becomes
+ * searchable without paying the cost of a full corpus walk.
+ *
+ * Behavior:
+ *   - Reads the file, parses frontmatter via `parseDocument`, upserts the
+ *     document row, replaces tags + relationships, then re-embeds + writes
+ *     chunk rows + vec0 rows.
+ *   - Reuses the same DB/parser/embedder code paths as `reindex()` so the
+ *     resulting row shape is byte-identical to what a full reindex would
+ *     produce. Does NOT run FTS rebuild (per-row FTS is updated inline) and
+ *     does NOT run `generateIndexes`.
+ *   - On any failure (parse, embed, write) returns `{ indexed: false }`.
+ *     The caller can decide whether to surface the error. We never throw —
+ *     a single broken file should not block the MCP tool's response to the
+ *     agent.
+ *   - `RALPH_CONTEXTUAL_RETRIEVAL` is intentionally NOT consulted here:
+ *     contextual prefixes need a live LLM round-trip per chunk and would
+ *     blow the latency budget of a single-file index. The chunks land
+ *     without `context_prefix` populated; the next full reindex will fill
+ *     them in if the feature is enabled.
+ */
+export async function reindexPath(
+  filePath: string,
+  dbPath: string,
+): Promise<{ indexed: boolean }> {
+  let db: KnowledgeDB | undefined;
+  try {
+    const absPath = resolve(filePath);
+    const raw = readFileSync(absPath, "utf-8");
+    const id = basename(absPath, ".md");
+    const relPath = absPath; // single-path mode — use absolute path verbatim
+
+    db = new KnowledgeDB(dbPath);
+    const fts = new FtsSearch(db);
+    fts.ensureTable();
+    const vec = new VectorSearch(db);
+    vec.createIndex();
+
+    const parsed = parseDocument(id, relPath, raw);
+
+    if (db.documentExists(parsed.id)) {
+      fts.deleteFtsEntry(parsed.id);
+    }
+    db.upsertDocument({
+      id: parsed.id,
+      path: parsed.path,
+      title: parsed.title,
+      date: parsed.date,
+      type: parsed.type,
+      status: parsed.status,
+      githubIssue: parsed.githubIssue,
+      content: parsed.content,
+      memoryTier: parsed.memoryTier,
+    });
+    fts.upsertFtsEntry(parsed.id);
+
+    if (parsed.tags.length > 0) {
+      db.setTags(parsed.id, parsed.tags);
+    }
+
+    // Replace relationships with the freshly-parsed set.
+    db.db.prepare("DELETE FROM relationships WHERE source_id = ?").run(parsed.id);
+    for (const rel of parsed.relationships) {
+      db.upsertStubDocument(rel.targetId);
+      db.addRelationship(rel.sourceId, rel.targetId, rel.type);
+    }
+    for (const edge of parsed.untypedEdges) {
+      db.upsertStubDocument(edge.targetId);
+      db.addRelationship(edge.sourceId, edge.targetId, "untyped", edge.context);
+    }
+
+    // Clear stale chunk rows + chunk vecs (chunks don't cascade for vec0).
+    db.db.prepare("DELETE FROM chunks WHERE document_id = ?").run(parsed.id);
+    vec.deleteChunkVecsByDoc(parsed.id);
+    vec.deleteEmbedding(parsed.id);
+
+    const tagLine = parsed.tags.length > 0 ? parsed.tags.join(", ") : "";
+    const chunks: Chunk[] = parsed.content.length === 0
+      ? [{ index: 0, content: "", charStart: 0, charEnd: 0 }]
+      : chunkText(parsed.content);
+
+    const texts = chunks.map((c) => {
+      const parts = [parsed.title, tagLine, c.content];
+      return parts.filter((p) => p.length > 0).join("\n");
+    });
+    const embeddings = await embedChunks(texts);
+    const insertChunk = db.db.prepare(
+      "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end, context_prefix) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    for (let i = 0; i < chunks.length; i++) {
+      const c = chunks[i]!;
+      const emb = embeddings[i]!;
+      const chunkId = `${parsed.id}#c${c.index}`;
+      insertChunk.run(
+        chunkId,
+        parsed.id,
+        c.index,
+        c.content,
+        c.charStart,
+        c.charEnd,
+        "",
+      );
+      vec.upsertEmbedding(chunkId, emb);
+    }
+
+    // Record sync entry so the next full reindex can skip this file.
+    db.upsertSyncRecord(absPath, Math.trunc(statSync(absPath).mtimeMs));
+
+    return { indexed: true };
+  } catch (e) {
+    console.warn(`reindexPath(${filePath}) failed: ${(e as Error).message}`);
+    return { indexed: false };
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        // ignore — close failures shouldn't mask the original outcome.
+      }
+    }
+  }
+}
+
 const isMain = process.argv[1]?.endsWith("reindex.js");
 if (isMain) {
   const { dirs, dbPath, generate, config } = resolveDirs();

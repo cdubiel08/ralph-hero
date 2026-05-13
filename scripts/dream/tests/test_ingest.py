@@ -121,6 +121,47 @@ class TestWriteMemory:
         assert p1 != p2
 
 
+class TestAgentMemoryPathCoverage:
+    """GH-1205: agent memories live under ``<base_dir>/agent/YYYY/MM/DD/``.
+
+    The reindexer scans ``base_dir`` recursively (the ralph-knowledge
+    ``roots`` config already points at ``~/projects/thoughts/dream-memories``),
+    so the ``agent/`` subtree is reachable without any code change in
+    ``ingest.py``. This test pins that invariant: an agent-memory markdown
+    file dropped into the conventional path layout MUST be discoverable
+    via a simple recursive walk of ``base_dir`` (mirroring what the
+    TypeScript ``findMarkdownFiles`` does).
+    """
+
+    def test_agent_subdir_is_under_base_dir(self, tmp_path: Path) -> None:
+        # Simulate the on-disk layout that ``remember-turn.sh`` and
+        # ``knowledge_remember`` produce.
+        base_dir = tmp_path
+        agent_dir = base_dir / "agent" / "2026" / "05" / "12"
+        agent_dir.mkdir(parents=True)
+        agent_file = agent_dir / "agent:impl-abcdef012345.md"
+        agent_file.write_text(
+            "---\n"
+            "date: 2026-05-12T12:00:00+00:00\n"
+            "memory_tier: raw\n"
+            "source: agent:impl\n"
+            "tags: []\n"
+            "---\n\n"
+            "## User\n\nA real turn.\n\n## Assistant\n\nA real reply.\n",
+            encoding="utf-8",
+        )
+
+        # Walk base_dir like the reindexer would; agent file must appear.
+        found = sorted(p for p in base_dir.rglob("*.md"))
+        assert agent_file in found
+        # The agent/ segment must show up in the discovered path so the
+        # parser-level memory_tier extraction trips on the frontmatter
+        # (not the directory name) — but the file itself is reachable.
+        rel = agent_file.relative_to(base_dir)
+        assert rel.parts[0] == "agent"
+        assert rel.parts[1] == "2026"
+
+
 # ---------------------------------------------------------------------------
 # ingest_gemma_lab_sessions
 # ---------------------------------------------------------------------------
