@@ -3,6 +3,7 @@ import {
   STATE_ORDER,
   VALID_STATES,
   PARENT_GATE_STATES,
+  HUMAN_STATES,
   WORKFLOW_STATE_TO_STATUS,
   SKIP_ENTRY_STATES,
   stateIndex,
@@ -162,6 +163,12 @@ describe("WORKFLOW_STATE_TO_STATUS", () => {
   it("maps terminal states to Done", () => {
     expect(WORKFLOW_STATE_TO_STATUS["Done"]).toBe("Done");
     expect(WORKFLOW_STATE_TO_STATUS["Canceled"]).toBe("Done");
+  });
+
+  it("never maps a HUMAN_STATES member to Done (would trigger auto-close)", () => {
+    for (const state of HUMAN_STATES) {
+      expect(WORKFLOW_STATE_TO_STATUS[state]).not.toBe("Done");
+    }
   });
 });
 
