@@ -182,12 +182,12 @@ The GH-911 fix landed `output.dispose()` and the `parsedDocs[]` accumulator gate
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build --prefix plugin/ralph-knowledge` — no TS errors
-- [ ] `npm test --prefix plugin/ralph-knowledge -- embedder` — embedder tests pass including new `embedChunks` cases
-- [ ] `npm test --prefix plugin/ralph-knowledge -- reindex` — reindex tests pass
-- [ ] `cd scripts/dream && uv run pytest` — ingest.py tests pass including new stderr-capture case
-- [ ] `npm --prefix plugin/ralph-knowledge run reindex` on live corpus completes at default heap (no `NODE_OPTIONS` override needed beyond what package.json sets); peak RSS under 4 GB per `/usr/bin/time -l`
-- [ ] `npm --prefix plugin/ralph-knowledge run verify:tiers` exits 0
+- [x] `npm run build --prefix plugin/ralph-knowledge` — no TS errors
+- [x] `npm test --prefix plugin/ralph-knowledge -- embedder` — embedder tests pass including new `embedChunks` cases (38/38 pass)
+- [x] `npm test --prefix plugin/ralph-knowledge -- reindex` — reindex tests pass (38/38 pass, includes 5 new GH-1203 scenarios)
+- [x] `cd scripts/dream && uv run pytest` — ingest.py tests pass including new stderr-capture case (26/26 ingest, 51/51 total)
+- [ ] `npm --prefix plugin/ralph-knowledge run reindex` on live corpus completes at default heap (no `NODE_OPTIONS` override needed beyond what package.json sets); peak RSS under 4 GB per `/usr/bin/time -l` (deferred — live-corpus run is manual verification)
+- [ ] `npm --prefix plugin/ralph-knowledge run verify:tiers` exits 0 (deferred — depends on live reindex + reflection synthesis pass)
 
 #### Manual Verification:
 - [ ] `sqlite3 ~/.ralph-hero/knowledge.db "SELECT memory_tier, COUNT(*) FROM documents GROUP BY memory_tier"` shows `reflection` count > 0 (≥ 4 given the 4 known reflection files on disk)

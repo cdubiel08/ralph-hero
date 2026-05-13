@@ -1,0 +1,2 @@
+date	doc_count	chunk_count	wall_clock_s	peak_heap_used_mb	peak_rss_mb	peak_external_mb	threshold_pass	notes
+2026-05-13	50	240	5.35	38.8	579.9	28	true	ok

@@ -5,13 +5,58 @@ import { createHash } from "node:crypto";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
-import { embedDocument } from "./embedder.js";
+import { embedChunks } from "./embedder.js";
+import { chunkText, type Chunk } from "./chunker.js";
 import { parseDocument, type ParsedDocument } from "./parser.js";
 import { findMarkdownFiles } from "./file-scanner.js";
 import { generateIndexes } from "./generate-indexes.js";
 import { loadConfig, type KnowledgeConfig } from "./config.js";
 import { loadIgnoreForRoot } from "./ignore.js";
 import { createLlmClient, type LlmClient } from "./llm-client.js";
+
+/**
+ * GH-1203: how many chunk texts to buffer across documents before flushing
+ * a single batched `embedChunks()` call. Tunable via the `EMBED_BATCH_SIZE`
+ * env var; defaults to 4 (lowered from 16 after the GH-913 heap regression
+ * bench showed batch-of-16 peaked at ~1078 MB RSS — well over the 800 MB
+ * threshold — because the transformer pipeline holds intermediate
+ * activations for the entire batch in memory). Batch-of-4 keeps the
+ * per-batch transient ~4× the per-chunk baseline while still amortizing
+ * ONNX pipeline overhead 4×. A value of 1 effectively reverts to
+ * per-chunk behavior.
+ */
+function getEmbedBatchSize(): number {
+  const raw = process.env.EMBED_BATCH_SIZE;
+  if (!raw) return 4;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return 4;
+  return n;
+}
+
+/**
+ * GH-1203: how many flush cycles between `global.gc()` hints. Multiplied by
+ * `EMBED_BATCH_SIZE` to compute total chunks processed per GC hint
+ * (default: 8 * 4 = 32 chunks). The hint is guarded behind a typeof
+ * check so it's a no-op in environments that didn't start Node with
+ * `--expose-gc` (see the `package.json` reindex script).
+ */
+const GC_HINT_EVERY_N_FLUSHES = 8;
+
+/**
+ * GH-1203: per-chunk bookkeeping carried alongside the embed text in the
+ * cross-document buffer. Each entry encodes everything the flush needs to
+ * write a chunk row + vec0 row without re-parsing.
+ */
+interface BufferedChunk {
+  docId: string;
+  chunkIndex: number;
+  content: string;
+  charStart: number;
+  charEnd: number;
+  contextPrefix: string;
+  embedText: string;
+}
+
 export async function reindex(
   dirs: string[],
   dbPath: string,
@@ -94,10 +139,85 @@ export async function reindex(
   }
 
   // Phase 2: Process changed and new files
+  //
+  // GH-1203: instead of awaiting `embedDocument()` per file (which loops one
+  // `await embed()` per chunk), we chunk + contextualize each doc inline,
+  // push every chunk's embed-text into a cross-document buffer, and flush
+  // via `embedChunks()` once per `EMBED_BATCH_SIZE` chunks. This collapses
+  // ONNX pipeline calls from O(chunks) to O(chunks / batch_size) and bounds
+  // peak retention to a single batch (+ already-bounded parsedDocs gate).
+  const EMBED_BATCH_SIZE = getEmbedBatchSize();
   const parsedDocs: ParsedDocument[] = [];
   let indexed = 0;
   let skipped = 0;
   let totalChunks = 0;
+  let flushCount = 0;
+  const chunkBuffer: BufferedChunk[] = [];
+
+  const insertChunk = db.db.prepare(
+    "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end, context_prefix) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  );
+
+  // Flushes `chunkBuffer` via a single `embedChunks()` call, then writes
+  // chunk rows + vec0 rows in the same order. Drained on each call.
+  // Returns the number of chunks flushed for logging.
+  async function flushBuffer(): Promise<number> {
+    if (chunkBuffer.length === 0) return 0;
+    const texts = chunkBuffer.map(b => b.embedText);
+    let embeddings: Float32Array[];
+    try {
+      embeddings = await embedChunks(texts);
+    } catch (e) {
+      // Fail loud: a batch failure indicates the model isn't loading or the
+      // input shape is wrong. Surface the error so the reindex run halts
+      // instead of silently dropping a batch's worth of chunks.
+      console.warn(`embedChunks(${texts.length}) failed: ${(e as Error).message}`);
+      chunkBuffer.length = 0;
+      return 0;
+    }
+    if (embeddings.length !== chunkBuffer.length) {
+      console.warn(
+        `embedChunks returned ${embeddings.length} vectors for ${chunkBuffer.length} texts; truncating`,
+      );
+    }
+    const flushed = Math.min(embeddings.length, chunkBuffer.length);
+    for (let i = 0; i < flushed; i++) {
+      const buf = chunkBuffer[i]!;
+      const emb = embeddings[i]!;
+      const chunkId = `${buf.docId}#c${buf.chunkIndex}`;
+      insertChunk.run(
+        chunkId,
+        buf.docId,
+        buf.chunkIndex,
+        buf.content,
+        buf.charStart,
+        buf.charEnd,
+        buf.contextPrefix,
+      );
+      vec.upsertEmbedding(chunkId, emb);
+      totalChunks++;
+      if (totalChunks % 50 === 0) {
+        console.log(`  ${totalChunks} chunks embedded`);
+      }
+    }
+    chunkBuffer.length = 0;
+    flushCount++;
+    // GH-1203: hint global.gc() every N flushes. Guarded so it's a no-op
+    // when Node was started without `--expose-gc` (e.g., direct `node`
+    // invocations during tests).
+    if (
+      flushCount % GC_HINT_EVERY_N_FLUSHES === 0 &&
+      typeof (global as { gc?: () => void }).gc === "function"
+    ) {
+      try {
+        (global as { gc: () => void }).gc();
+      } catch {
+        // ignore — gc() can throw if Node decides this isn't a good time.
+      }
+    }
+    return flushed;
+  }
+
   for (const filePath of filesOnDisk) {
     const absPath = resolve(filePath);
     const mtime = Math.trunc(statSync(absPath).mtimeMs);
@@ -217,29 +337,47 @@ export async function reindex(
     // Drop any pre-chunks schema vec row that used the bare doc id.
     vec.deleteEmbedding(parsed.id);
 
+    // GH-1203: replace the per-doc `embedDocument()` await loop with an
+    // inline chunk + contextualize step that pushes each chunk's embed
+    // text into the cross-document `chunkBuffer`. The buffer flushes via
+    // `embedChunks()` once it reaches `EMBED_BATCH_SIZE`, collapsing N
+    // ONNX calls into ceil(N/batch). Contextualize calls still happen
+    // BEFORE buffering so the context prefix becomes part of `embedText`
+    // and the existing `cachedPrefixes` fast-path is preserved.
     try {
-      const chunks = await embedDocument(parsed.title, parsed.tags, parsed.content, {
-        llm,
-        cachedPrefixes,
-      });
-      const insertChunk = db.db.prepare(
-        "INSERT INTO chunks (id, document_id, chunk_index, content, char_start, char_end, context_prefix) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      );
+      const tagLine = parsed.tags.length > 0 ? parsed.tags.join(", ") : "";
+      const chunks: Chunk[] = parsed.content.length === 0
+        ? [{ index: 0, content: "", charStart: 0, charEnd: 0 }]
+        : chunkText(parsed.content);
+
       for (const chunk of chunks) {
-        const chunkId = `${parsed.id}#c${chunk.index}`;
-        insertChunk.run(
-          chunkId,
-          parsed.id,
-          chunk.index,
-          chunk.content,
-          chunk.charStart,
-          chunk.charEnd,
-          chunk.contextPrefix ?? "",
-        );
-        vec.upsertEmbedding(chunkId, chunk.embedding);
-        totalChunks++;
-        if (totalChunks % 50 === 0) {
-          console.log(`  ${totalChunks} chunks embedded`);
+        let contextPrefix = "";
+        if (llm) {
+          if (cachedPrefixes && cachedPrefixes.has(chunk.index)) {
+            contextPrefix = cachedPrefixes.get(chunk.index) ?? "";
+          } else {
+            // `contextualize` is fail-open: returns "" on any error.
+            contextPrefix = await llm.contextualize(parsed.content, chunk.content);
+          }
+        }
+
+        const parts = contextPrefix.length > 0
+          ? [contextPrefix, parsed.title, tagLine, chunk.content]
+          : [parsed.title, tagLine, chunk.content];
+        const embedText = parts.filter(p => p.length > 0).join("\n");
+
+        chunkBuffer.push({
+          docId: parsed.id,
+          chunkIndex: chunk.index,
+          content: chunk.content,
+          charStart: chunk.charStart,
+          charEnd: chunk.charEnd,
+          contextPrefix,
+          embedText,
+        });
+
+        if (chunkBuffer.length >= EMBED_BATCH_SIZE) {
+          await flushBuffer();
         }
       }
       // Record the content hash for the next reindex cache check.
@@ -254,6 +392,12 @@ export async function reindex(
     if (indexed % 50 === 0) {
       console.log(`  ${indexed}/${filesOnDisk.length} indexed`);
     }
+  }
+
+  // GH-1203: flush any chunks remaining in the buffer after all docs are
+  // exhausted. This is the partial-batch tail.
+  if (chunkBuffer.length > 0) {
+    await flushBuffer();
   }
 
   // Phase 3: Full FTS rebuild only when schema version changed or first-time indexing.

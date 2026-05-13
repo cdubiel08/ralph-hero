@@ -469,14 +469,56 @@ def _summarize(
 
 
 def _run_reindex(cmd: str) -> int:
-    """Shell out to the reindex command. Returns the exit code."""
+    """Shell out to the reindex command. Returns the exit code.
+
+    GH-1203: on non-zero exit, capture and surface the last 50 lines of
+    the reindex subprocess's stderr. Previously this function only logged
+    a generic WARNING with the return code, hiding OOM stacks and other
+    failure signals from the operator. We now capture stderr (via
+    ``capture_output=True``), and on failure print the tail to ``sys.stderr``
+    plus log it at ERROR so it's visible in both interactive runs and
+    launchd's logfile.
+
+    Stderr is still streamed when the command succeeds (we never block on
+    a stderr-less success path), so a clean reindex is unchanged in shape.
+    """
     log.info("Running reindex: %s", cmd)
     try:
-        result = subprocess.run(cmd, shell=True, check=False)
-        return result.returncode
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
     except OSError as exc:  # pragma: no cover
         log.error("Reindex command failed to launch: %s", exc)
         return 1
+
+    if result.returncode != 0:
+        stderr_text = result.stderr or ""
+        if stderr_text.strip():
+            tail = stderr_text.splitlines()[-50:]
+            tail_block = "\n".join(tail)
+            print(
+                f"reindex exited non-zero (rc={result.returncode}); "
+                f"last {len(tail)} stderr lines:\n{tail_block}",
+                file=sys.stderr,
+            )
+            log.error(
+                "reindex exited non-zero (rc=%d); last %d stderr lines:\n%s",
+                result.returncode,
+                len(tail),
+                tail_block,
+            )
+        else:
+            msg = (
+                f"reindex exited non-zero (rc={result.returncode}) "
+                "with no stderr (likely OOM-kill or signal)"
+            )
+            print(msg, file=sys.stderr)
+            log.error(msg)
+    return result.returncode
 
 
 def _iter_collected(
