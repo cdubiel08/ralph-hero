@@ -138,10 +138,10 @@ Make `list_issues`'s `state` parameter genuinely optional (no Zod default), upda
 
 #### Automated Verification:
 
-- [ ] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no errors
-- [ ] `npm test` (from `plugin/ralph-hero/mcp-server/`) — all suites pass including new regression tests
-- [ ] `npx vitest run src/__tests__/issue-tools.test.ts` — the three new state-arg tests pass
-- [ ] `npx vitest run src/__tests__/cross-tool-consistency.test.ts` — the new cross-tool consistency test passes
+- [x] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no errors
+- [x] `npm test` (from `plugin/ralph-hero/mcp-server/`) — all suites pass including new regression tests
+- [x] `npx vitest run src/__tests__/issue-tools.test.ts` — the three new state-arg tests pass
+- [x] `npx vitest run src/__tests__/cross-tool-consistency.test.ts` — the new cross-tool consistency test passes
 
 #### Manual Verification:
 

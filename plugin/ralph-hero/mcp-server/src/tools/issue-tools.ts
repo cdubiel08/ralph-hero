@@ -61,7 +61,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_issues",
-    "List issues from a GitHub repository with optional filters. Fetches all project items (full project scan, no silent 500-cap) and applies filters client-side, so items at any board position are visible regardless of default ordering. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters or check that issues exist in the project.",
+    "List issues from a GitHub repository with optional filters. Fetches all project items (full project scan, no silent 500-cap) and applies filters client-side, so items at any board position are visible regardless of default ordering. By default returns issues in any state (both OPEN and CLOSED) so visibility matches the dashboard family (pipeline_dashboard, next_actions, project_hygiene); pass the `state` parameter (\"OPEN\" or \"CLOSED\") to narrow. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters or check that issues exist in the project.",
     {
       owner: z
         .string()
@@ -113,8 +113,10 @@ export function registerIssueTools(
       state: z
         .enum(["OPEN", "CLOSED"])
         .optional()
-        .default("OPEN")
-        .describe("Issue state filter (default: OPEN)"),
+        .describe(
+          "Issue state filter. When omitted, returns issues in any state " +
+          "(matches dashboard-family behavior). Pass 'OPEN' or 'CLOSED' to narrow.",
+        ),
       reason: z
         .enum(["completed", "not_planned", "reopened"])
         .optional()
