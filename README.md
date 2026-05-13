@@ -248,6 +248,32 @@ Ralph enforces workflow integrity through lifecycle hooks:
 
 Set all variables in `.claude/settings.local.json` under the `"env"` key. Do not put tokens in `.mcp.json`.
 
+## Delegation (optional)
+
+ralph-hero ships an opt-in delegation wrapper that lets skills offload narrow sub-tasks (locator ranking, PR-description drafting, pass/fail classification) to a local or cheaper OpenAI-compatible endpoint. Default: off (bit-identical to no-delegation behavior).
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `RALPH_DELEGATE_ENABLED` | unset (treated as `false`) | Master opt-in toggle. Anything other than `true`/`1`/`yes`/`on` exits 126 immediately. |
+| `RALPH_DELEGATE_TIMEOUT_SECONDS` | `60` | Per-call timeout, enforced via `portable_timeout`. |
+| `RALPH_DELEGATE_LOG_PATH` | `~/.ralph-hero/delegate.log` | JSONL audit log path. One line per attempt (except 126). |
+| `RALPH_DELEGATE_<TASK_UPPER>_URL` | falls back to `RALPH_LLM_URL` | Per-task endpoint override (e.g. `RALPH_DELEGATE_LOCATOR_URL`). |
+| `RALPH_DELEGATE_<TASK_UPPER>_MODEL` | falls back to `RALPH_LLM_MODEL` | Per-task model override (e.g. `RALPH_DELEGATE_LOCATOR_MODEL`). |
+
+Quick start:
+
+```bash
+gemma-up                                  # start the local Gemma server on :8000
+export RALPH_DELEGATE_ENABLED=true        # opt in for this shell
+/ralph-hero:delegate-test "hello world"   # smoke-test the wrapper end-to-end
+```
+
+Post-setup verification: `ralph status --delegation` prints per-task call counts, fallback counts, and p50/p99 latency from the JSONL audit log.
+
+- Full reference: [`plugin/ralph-hero/README.md` § Delegation (optional)](plugin/ralph-hero/README.md#delegation-optional)
+- Authoring guide: [`plugin/ralph-hero/docs/delegation-authoring.md`](plugin/ralph-hero/docs/delegation-authoring.md)
+- Conventions matrix (delegate-eligible vs ineligible): [`plugin/ralph-hero/skills/shared/delegation-conventions.md`](plugin/ralph-hero/skills/shared/delegation-conventions.md)
+
 ## Development
 
 ```bash

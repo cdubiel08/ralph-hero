@@ -30,7 +30,7 @@ Anti-pattern: a bare `OUTPUT=$(ralph-delegate.sh ...)` under `set -e`, which kil
 
 The wrapper writes one JSONL line per attempt to `~/.ralph-hero/delegate.log` (configurable via `RALPH_DELEGATE_LOG_PATH`). Exception: exit 126 (delegation disabled) writes nothing — the silent skip preserves the bit-identical no-op invariant. The README's [Delegation (optional)](../../README.md#delegation-optional) section documents the JSONL shape.
 
-The skill author does NOT need to log themselves. Skills MAY echo a one-line summary of the most recent log entry to user output (e.g., `delegation: yes (gemma-26b, 284ms)`) as user-visible signal, but MUST NOT duplicate or rewrite the log file. The single-writer invariant keeps the log analyzable by upcoming telemetry tooling (Feature F5 of [#965](https://github.com/cdubiel08/ralph-hero/issues/965)).
+The skill author does NOT need to log themselves. Skills MAY echo a one-line summary of the most recent log entry to user output (e.g., `delegation: yes (gemma-26b, 284ms)`) as user-visible signal, but MUST NOT duplicate or rewrite the log file. The single-writer invariant keeps the log analyzable by the delegation-stats telemetry surface (Feature F5 of [#965](https://github.com/cdubiel08/ralph-hero/issues/965), merged) — see [`README.md` § Audit log](../../README.md#audit-log).
 
 ## See also
 
