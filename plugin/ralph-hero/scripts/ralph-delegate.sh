@@ -30,9 +30,10 @@
 #    "bytes_in":N,"bytes_out":N,"caller":"<skill>"}
 #
 # References:
-#   plugin/ralph-hero/scripts/resolve-env.sh:32 — ralph_resolve_env
-#   plugin/ralph-hero/scripts/cli-dispatch.sh:21 — portable_timeout
-#   plugin/ralph-knowledge/src/llm-client.ts     — TS reference client
+#   plugin/ralph-hero/scripts/resolve-env.sh:32     — ralph_resolve_env
+#   plugin/ralph-hero/scripts/cli-dispatch.sh:21    — portable_timeout
+#   plugin/ralph-hero/scripts/lib/openai-compat.sh  — F2 HTTP+JSON adapter (#1186)
+#   plugin/ralph-knowledge/src/llm-client.ts        — TS reference client
 
 set -euo pipefail
 
@@ -43,6 +44,10 @@ source "$SCRIPT_DIR/resolve-env.sh"
 # cli-dispatch.sh defines portable_timeout at the top; sourcing is safe
 # because no top-level code runs (it only defines functions).
 source "$SCRIPT_DIR/cli-dispatch.sh"
+# shellcheck source=./lib/openai-compat.sh
+# F2 (#1186): the HTTP+JSON adapter lives here. Sourcing it defines
+# openai_compat_post and runs no top-level code.
+source "$SCRIPT_DIR/lib/openai-compat.sh"
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -238,88 +243,65 @@ if [ "$DRY_RUN" = "true" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Main path — single OpenAI-compat POST
+# Main path — delegate to the F2 OpenAI-compat adapter (#1186).
+#
+# The adapter (plugin/ralph-hero/scripts/lib/openai-compat.sh) owns the HTTP
+# call, body construction, jq parsing, and exit-code mapping. The wrapper
+# retains: opt-in gate, env resolution, audit log, and the --task /
+# --health-check / --dry-run flags.
+#
+# Note on bytes_out fidelity:
+#   F1 used `wc -c` on the raw response body. The adapter prints the parsed
+#   content (not the raw response). To preserve the audit-log shape without
+#   over-coupling the adapter, we use `wc -c` of the captured content for
+#   status=ok and log 0 for non-ok cases. This is a small fidelity loss vs
+#   F1 (non-ok bytes_out is now 0 rather than the raw HTTP body byte count).
+#   Deliberate, called out in the F2 plan; revisit if telemetry needs it.
 # ---------------------------------------------------------------------------
 if [ -z "$PROMPT_FILE" ] || [ ! -f "$PROMPT_FILE" ]; then
     echo "ralph-delegate: --prompt-file is required and must exist" >&2
     exit 1
 fi
 
-# Build request body via jq -n. The system message is included only when
-# --system-file was provided.
-prompt_content=$(cat "$PROMPT_FILE")
 prompt_bytes=$(wc -c < "$PROMPT_FILE" | tr -d ' ')
-
-if [ -n "$SYSTEM_FILE" ] && [ -f "$SYSTEM_FILE" ]; then
-    system_content=$(cat "$SYSTEM_FILE")
-    body=$(jq -nc \
-        --arg model "$MODEL" \
-        --arg sys "$system_content" \
-        --arg user "$prompt_content" \
-        --argjson max_tokens "$MAX_TOKENS" \
-        --argjson temperature "$TEMPERATURE" \
-        '{model:$model, messages:[{role:"system",content:$sys},{role:"user",content:$user}], max_tokens:$max_tokens, temperature:$temperature}')
-else
-    body=$(jq -nc \
-        --arg model "$MODEL" \
-        --arg user "$prompt_content" \
-        --argjson max_tokens "$MAX_TOKENS" \
-        --argjson temperature "$TEMPERATURE" \
-        '{model:$model, messages:[{role:"user",content:$user}], max_tokens:$max_tokens, temperature:$temperature}')
-fi
-
-# tmpfiles for curl output + http_code capture
-resp_body=$(mktemp)
-http_code_file=$(mktemp)
-trap 'rm -f "$resp_body" "$http_code_file"' EXIT
 
 t0=$(_now_ms)
 set +e
-portable_timeout "${TIMEOUT_SECONDS}s" \
-    curl -sS -X POST \
-        -H "Content-Type: application/json" \
-        -d "$body" \
-        -o "$resp_body" \
-        -w "%{http_code}" \
-        "${URL%/}/v1/chat/completions" > "$http_code_file" 2>/dev/null
+content=$(openai_compat_post \
+    "$URL" \
+    "$MODEL" \
+    "$PROMPT_FILE" \
+    "${SYSTEM_FILE:-}" \
+    "$MAX_TOKENS" \
+    "$TEMPERATURE" \
+    "$TIMEOUT_SECONDS" \
+    "false" 2>/dev/null)
 rc=$?
 set -e
 t1=$(_now_ms)
 ms=$(( t1 - t0 ))
 
-http_code=$(cat "$http_code_file" 2>/dev/null || echo "000")
-bytes_out=$(wc -c < "$resp_body" 2>/dev/null | tr -d ' ' || echo 0)
-
-# Timeout
-if [ "$rc" -eq 124 ]; then
-    _audit_log "timeout" "$ms" "$prompt_bytes" "$bytes_out"
-    exit 124
-fi
-
-# Network failure (curl couldn't connect at all)
-if [ "$rc" -ne 0 ]; then
-    _audit_log "unreachable" "$ms" "$prompt_bytes" "$bytes_out"
-    exit 127
-fi
-
-# HTTP 4xx/5xx
-if [ -z "$http_code" ] || [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-    _audit_log "http_${http_code}" "$ms" "$prompt_bytes" "$bytes_out"
-    exit 1
-fi
-
-# Parse the OpenAI-compat response. `set -e` would normally abort the script
-# the moment `jq -er` exits non-zero inside $(); we wrap with `set +e` so we
-# can audit-log the parse error and exit 1 cleanly.
-set +e
-content=$(jq -er '.choices[0].message.content' < "$resp_body" 2>/dev/null)
-parse_rc=$?
-set -e
-if [ "$parse_rc" -ne 0 ]; then
-    _audit_log "parse_error" "$ms" "$prompt_bytes" "$bytes_out"
-    exit 1
-fi
-
-_audit_log "ok" "$ms" "$prompt_bytes" "$bytes_out"
-printf '%s\n' "$content"
-exit 0
+# Translate adapter exit code -> F1 contract + audit-log status string.
+case "$rc" in
+    0)
+        # bytes_out = byte count of the extracted content (see note above).
+        bytes_out=$(printf '%s' "$content" | wc -c | tr -d ' ')
+        _audit_log "ok" "$ms" "$prompt_bytes" "$bytes_out"
+        printf '%s\n' "$content"
+        exit 0
+        ;;
+    124)
+        _audit_log "timeout" "$ms" "$prompt_bytes" 0
+        exit 124
+        ;;
+    127)
+        _audit_log "unreachable" "$ms" "$prompt_bytes" 0
+        exit 127
+        ;;
+    *)
+        # Adapter returned 1 (HTTP 4xx/5xx or jq parse error). Map to
+        # parse_error to match F1's audit-log shape for malformed responses.
+        _audit_log "parse_error" "$ms" "$prompt_bytes" 0
+        exit 1
+        ;;
+esac
