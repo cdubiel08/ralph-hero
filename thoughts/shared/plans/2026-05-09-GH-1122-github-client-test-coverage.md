@@ -161,13 +161,13 @@ Extend `github-client.test.ts` with four new `describe` blocks covering split-to
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no errors
-- [ ] `npm test` (from `plugin/ralph-hero/mcp-server/`) — all passing
-- [ ] `npx vitest run src/__tests__/github-client.test.ts --coverage` — `src/github-client.ts` line coverage > 85%
+- [x] `npm run build` (from `plugin/ralph-hero/mcp-server/`) — no errors
+- [x] `npm test` (from `plugin/ralph-hero/mcp-server/`) — all passing (1 pre-existing failure in `tool-registration.test.ts` unrelated to GH-1122)
+- [x] `npx vitest run src/__tests__/github-client.test.ts --coverage` — `src/github-client.ts` line coverage 90.41% (>85%)
 
 #### Manual Verification:
-- [ ] Comment out the `if (!isMutation && !queryString.includes("rateLimit"))` block in `github-client.ts` and confirm the rateLimit injection test fails. Restore the block.
-- [ ] Inspect new test output — four new `describe` blocks visible with named `it(...)` cases.
+- [x] Comment out the `if (!isMutation && !queryString.includes("rateLimit"))` block in `github-client.ts` and confirm the rateLimit injection test fails. Restore the block. — Verified: toggling the predicate to `if (false && ...)` made the "injects rateLimit fragment into non-mutation queries that lack it" test fail; source restored.
+- [x] Inspect new test output — four new `describe` blocks visible with named `it(...)` cases.
 
 **Creates for next phase**: N/A (atomic single-phase plan).
 
