@@ -37,9 +37,65 @@ Fetch the pipeline dashboard with the requested format:
    - `format`: parsed format or `"markdown"`
    - `includeHealth`: true
    - `issuesPerPhase`: 5
-3. Display the `formatted` field (for markdown/ascii) or the structured data (for json).
-4. If health warnings exist with severity `critical`, highlight them prominently.
+3. Route the display rendering by format (see Step 4 below for exact rules).
+4. **Display rendering — route by format:**
 
-## Output
+   **If `format == "json"`:**
+   - Emit the dashboard object literally inside a fenced ```json``` code block, using `JSON.stringify(dashboard, null, 2)` (pretty-printed, 2-space indent).
+   - **DO NOT narrate or summarize the JSON.** Do not add a preamble like "Here's the pipeline status..." or a postamble like "The pipeline has N critical warnings." Emit the fenced JSON block and stop.
+   - Do not re-render the JSON as markdown bullet lists, headings, tables, or prose. The agent's response in JSON mode is the fenced JSON code block — nothing else.
 
-Display the dashboard output directly. Do not add additional commentary unless there are critical health warnings.
+   **If `format == "markdown"` or `format == "ascii"`:**
+   - Emit the dashboard's `formatted` field verbatim.
+   - Do not re-render or restructure the content.
+
+5. If health warnings exist with severity `critical`, highlight them prominently. In JSON mode, the warnings are already in the JSON payload — do not re-surface them in prose.
+
+## Output Scope
+
+Display the dashboard output directly. Do not add additional commentary unless there are critical health warnings, in which case the **only** acceptable addition is surfacing the raw warning list verbatim from the dashboard payload.
+
+This skill is a **read-only, passive render of pipeline state plus raw warnings**. It is NOT a triage tool, NOT an analyst, NOT a recommender.
+
+**NEVER:**
+- Prescribe actions, fixes, or remediation steps ("should be split", "needs closure", "ought to be archived", "Here's what you should do").
+- Add diagnostic framing or interpretive commentary ("Pipeline gaps indicate no active work", "Backlog congestion suggests stale work", "This indicates...").
+- Synthesize "Key Findings", "Recommendations", "Next Steps", "Suggested Actions", or any analyst-style summary section.
+- Group, rank, editorialize, or contextualize warnings beyond what the dashboard payload already encodes.
+- Cross-reference issues to call out which "should" be split, closed, or archived.
+
+Remediation, triage, and follow-up analysis belong to `/ralph-hero:hygiene`, `/ralph-hero:triage`, or `/ralph-hero:hello` — NOT to `/ralph-hero:status`. After surfacing the raw warning list, STOP.
+
+**Negative example (do NOT produce output like this):**
+
+```
+### Critical Issues
+
+**48 CRITICAL health warnings** — issues stuck beyond 96-hour threshold:
+- **Backlog**: 23 issues stuck (oldest: #362, #503 at 1490h)
+
+### Key Findings
+
+1. **Pipeline gaps**: All active phases are empty — work flows straight
+   from Ready for Plan to Done with no intermediate stops.
+2. **Backlog congestion**: 22 issues waiting; #503 and #505-#507 are
+   62+ days old.
+3. **#731 should be split** — it's a P1, L item blocking the loop.
+4. **Archive eligible**: 135 items in Done/Canceled can be archived.
+```
+
+The "Key Findings" block, the "should be split" recommendation, the "can be archived" suggestion, and the "Pipeline gaps indicate..." diagnostic framing are all out of scope. Surface the raw warning list and stop.
+
+**Correct shape:**
+
+```
+[dashboard.formatted verbatim]
+
+### Critical Health Warnings (N)
+
+- #362 — stuck 1490h in Backlog
+- #503 — stuck 1488h in Backlog
+- ...
+```
+
+No analysis, no recommendations, no framing — just the raw list.
