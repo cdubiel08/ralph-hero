@@ -204,6 +204,7 @@ hygiene *args:
     dispatch "ralph-hygiene" "$@"
 
 # Display pipeline status dashboard with health indicators
+# Use --delegation to view ralph-delegate telemetry instead of the pipeline dashboard.
 [group('workflow')]
 status *args:
     #!/usr/bin/env bash
@@ -213,6 +214,18 @@ status *args:
     QUICK_TOOL="ralph_hero__pipeline_dashboard" QUICK_PARAMS='{"format":"markdown","includeHealth":true}'
     _args={{quote(args)}}
     set -- $_args
+    # --delegation switches to the delegation-telemetry tool (GH-1191 / F5).
+    # Strip the flag from the forwarded args; the rest pass through unchanged.
+    _forward=()
+    for _a in "$@"; do
+        if [ "$_a" = "--delegation" ]; then
+            QUICK_TOOL="ralph_hero__delegation_stats"
+            QUICK_PARAMS='{}'
+        else
+            _forward+=("$_a")
+        fi
+    done
+    set -- "${_forward[@]:-}"
     dispatch "status" "$@"
 
 # Generate and post a project status report
