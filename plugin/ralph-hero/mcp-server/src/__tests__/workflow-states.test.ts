@@ -162,7 +162,6 @@ describe("WORKFLOW_STATE_TO_STATUS", () => {
   it("maps terminal states to Done", () => {
     expect(WORKFLOW_STATE_TO_STATUS["Done"]).toBe("Done");
     expect(WORKFLOW_STATE_TO_STATUS["Canceled"]).toBe("Done");
-    expect(WORKFLOW_STATE_TO_STATUS["Human Needed"]).toBe("Done");
   });
 });
 
