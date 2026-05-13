@@ -83,9 +83,9 @@ After this phase lands:
 
 ### Verification
 
-- [ ] `npm test` passes in `plugin/ralph-hero/mcp-server/` (vitest + coverage).
-- [ ] `npm run build` succeeds (tsc).
-- [ ] `bats plugin/ralph-hero/scripts/__tests__` passes (bats suite remains green).
+- [x] `npm test` passes in `plugin/ralph-hero/mcp-server/` (vitest + coverage).
+- [x] `npm run build` succeeds (tsc).
+- [x] `bats plugin/ralph-hero/scripts/__tests__` passes (bats suite remains green).
 - [ ] Manual: `ralph status --delegation` prints a zero-state dashboard on a fresh machine (no log file).
 - [ ] Manual: After seeding a fixture log, `ralph status --delegation` shows non-zero counts and a sensible p50.
 
@@ -199,17 +199,17 @@ Adds the delegation-stats MCP tool, the `ralph status --delegation` CLI surface,
 - **complexity**: low
 - **depends_on**: [1.4]
 - **acceptance**:
-  - [ ] launchd plist template under `scripts/delegate/launchd/com.ralph.delegate-rotate.plist.template` — daily rotation. Copy structure from `scripts/activity/launchd/com.ralph.activity-rotate.plist.template` if present; else write a minimal `StartCalendarInterval` plist that invokes `logrotate.sh`. Path is `/Users/$USER/...` template placeholders (operator hand-edits before `cp`).
-  - [ ] If a bats test runner exists at `plugin/ralph-hero/scripts/__tests__/run-all.sh` or equivalent, ensure the new `scripts/delegate/__tests__/logrotate.test.sh` is picked up by it (either via glob or explicit listing). If no top-level runner exists, the file is run by `bats scripts/delegate/__tests__/`.
-  - [ ] README touch (`plugin/ralph-hero/README.md`): one new sub-bullet under the "Delegation (optional)" section pointing operators at `ralph status --delegation` and the rotation script. Two-line addition, do NOT rewrite the section.
+  - [x] launchd plist template under `scripts/delegate/launchd/com.ralph.delegate-rotate.plist.template` — daily rotation. Copy structure from `scripts/activity/launchd/com.ralph.activity-rotate.plist.template` if present; else write a minimal `StartCalendarInterval` plist that invokes `logrotate.sh`. Path is `/Users/$USER/...` template placeholders (operator hand-edits before `cp`).
+  - [x] If a bats test runner exists at `plugin/ralph-hero/scripts/__tests__/run-all.sh` or equivalent, ensure the new `scripts/delegate/__tests__/logrotate.test.sh` is picked up by it (either via glob or explicit listing). If no top-level runner exists, the file is run by `bats scripts/delegate/__tests__/`.
+  - [x] README touch (`plugin/ralph-hero/README.md`): one new sub-bullet under the "Delegation (optional)" section pointing operators at `ralph status --delegation` and the rotation script. Two-line addition, do NOT rewrite the section.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` in `plugin/ralph-hero/mcp-server/` — no TypeScript errors
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` — all vitest passing, new files covered
-- [ ] `bats plugin/ralph-hero/scripts/delegate/__tests__` — rotation suite green
-- [ ] `bats plugin/ralph-hero/scripts/__tests__` — existing F1 suite still green (no regression)
+- [x] `npm run build` in `plugin/ralph-hero/mcp-server/` — no TypeScript errors
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` — all vitest passing, new files covered
+- [x] `bats plugin/ralph-hero/scripts/delegate/__tests__` — rotation suite green
+- [x] `bats plugin/ralph-hero/scripts/__tests__` — existing F1 suite still green (no regression)
 
 #### Manual Verification:
 - [ ] On a machine with no `delegate.log`: `ralph status --delegation` prints zero-state dashboard, no error.
