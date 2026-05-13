@@ -162,11 +162,11 @@ Replace the ambiguous `git pull --ff-only` in SKILL.md Step 4 with an explicit `
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Lines 104-112 (the `**Worktree freshness check**:` paragraph and its bash block) are rewritten to use explicit `origin/main` comparison
-  - [ ] The new bash block uses `git fetch origin main` followed by `behind=$(git rev-list --count HEAD..origin/main)` and emits a substantive-failure note when `behind > 0`
-  - [ ] The replacement paragraph includes a one-sentence rationale: "We compare against `origin/main` explicitly because `git pull --ff-only` without a refspec pulls from the branch's tracked upstream, not from main."
-  - [ ] The "Skip the pull if the worktree branch is detached or if there is no upstream tracking branch" sentence is preserved or adapted
-  - [ ] No other steps are renumbered
+  - [x] Lines 104-112 (the `**Worktree freshness check**:` paragraph and its bash block) are rewritten to use explicit `origin/main` comparison
+  - [x] The new bash block uses `git fetch origin main` followed by `behind=$(git rev-list --count HEAD..origin/main)` and emits a substantive-failure note when `behind > 0`
+  - [x] The replacement paragraph includes a one-sentence rationale: "We compare against `origin/main` explicitly because `git pull --ff-only` without a refspec pulls from the branch's tracked upstream, not from main."
+  - [x] The "Skip the pull if the worktree branch is detached or if there is no upstream tracking branch" sentence is preserved or adapted
+  - [x] No other steps are renumbered
 
 #### Task 2.2: Verify SKILL.md frontmatter still parses
 - **files**: `plugin/ralph-hero/skills/ralph-val/SKILL.md` (read)
@@ -174,14 +174,14 @@ Replace the ambiguous `git pull --ff-only` in SKILL.md Step 4 with an explicit `
 - **complexity**: low
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] `head -25 plugin/ralph-hero/skills/ralph-val/SKILL.md` shows valid YAML frontmatter (description, user-invocable, allowed-tools, etc. unchanged)
-  - [ ] `awk '/^---$/{n++} n==2{exit} {print}' plugin/ralph-hero/skills/ralph-val/SKILL.md | tail -n +2 | head -n -1` returns the same key set as before the edit
+  - [x] `head -25 plugin/ralph-hero/skills/ralph-val/SKILL.md` shows valid YAML frontmatter (description, user-invocable, allowed-tools, etc. unchanged)
+  - [x] `awk '/^---$/{n++} n==2{exit} {print}' plugin/ralph-hero/skills/ralph-val/SKILL.md | tail -n +2 | head -n -1` returns the same key set as before the edit
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n` — N/A (markdown-only change in this phase)
-- [ ] `bash plugin/ralph-hero/hooks/scripts/__tests__/val-postcondition.test.sh` — still passes (no hook change in this phase, but regression-check the trio)
+- [x] `bash -n` — N/A (markdown-only change in this phase)
+- [x] `bash plugin/ralph-hero/hooks/scripts/__tests__/val-postcondition.test.sh` — still passes (no hook change in this phase, but regression-check the trio)
 
 #### Manual Verification:
 - [ ] In a stale worktree (`git rev-list --count HEAD..origin/main > 0`) the documented command emits the staleness note

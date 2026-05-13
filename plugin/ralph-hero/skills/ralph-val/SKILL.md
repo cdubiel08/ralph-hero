@@ -101,15 +101,18 @@ Reason: No worktree found at worktrees/GH-NNN — cannot validate without implem
 ```
 And stop.
 
-**Worktree freshness check**: Once the worktree is located, refresh it before running validation so checks don't pass against a stale base:
+**Worktree freshness check**: Once the worktree is located, compare its branch against `origin/main` before running validation so checks don't pass against a stale base. We compare against `origin/main` explicitly because `git pull --ff-only` without a refspec pulls from the branch's tracked upstream, not from main — so it only proves the feature branch matches its own remote, not that the implementation is current with main.
 
 ```bash
 cd worktrees/GH-NNN
 git fetch origin main
-git pull --ff-only
+behind=$(git rev-list --count HEAD..origin/main)
+if [ "$behind" -gt 0 ]; then
+  echo "STALENESS: worktree is $behind commits behind origin/main — record as substantive failure note"
+fi
 ```
 
-If `git pull --ff-only` fails (non-fast-forward), record the staleness as a substantive failure note but continue validation. Do NOT auto-merge or rebase — surface it in the verdict so the caller can route to impl/human resolution. Skip the pull if the worktree branch is detached or if there is no upstream tracking branch.
+If `behind > 0`, record the staleness as a substantive failure note (e.g. `- [!] worktree is N commits behind origin/main — rebase before re-validating`) but continue validation. Do NOT auto-merge or rebase — surface it in the verdict so the caller can route to impl/human resolution. Skip the comparison if the worktree branch is detached or if `git rev-list` errors (no upstream/main reference resolvable).
 
 ## Step 5: Extract Verification Criteria
 
