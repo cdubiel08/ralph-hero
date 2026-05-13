@@ -390,12 +390,12 @@ Replace the 10-step manual onboarding in `CLAUDE.md` with a single `/ralph-knowl
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n scripts/dream/bootstrap.sh` — script parses
-- [ ] `test -x scripts/dream/bootstrap.sh` — executable
-- [ ] `grep -c "__HOME__\|__PROJECTS_DIR__\|__USER__" scripts/dream/launchd/com.dubiel.dream-loop.plist.template` returns ≥ 4
-- [ ] `grep -c "/Users/dubiel" scripts/dream/launchd/com.dubiel.dream-loop.plist.template` returns 0
-- [ ] Fresh-machine simulation: `rm ~/.ralph/knowledge.config.json && rm ~/Library/LaunchAgents/com.$(whoami).dream-loop.plist && bash scripts/dream/bootstrap.sh` exits 0 and recreates both files
-- [ ] Idempotence: run bootstrap.sh twice — second run prints SKIP for each file-creation step and exits 0
+- [x] `bash -n scripts/dream/bootstrap.sh` — script parses
+- [x] `test -x scripts/dream/bootstrap.sh` — executable
+- [x] `grep -c "__HOME__\|__PROJECTS_DIR__\|__USER__" scripts/dream/launchd/com.dubiel.dream-loop.plist.template` returns ≥ 4 (returns 5)
+- [x] `grep -c "/Users/dubiel" scripts/dream/launchd/com.dubiel.dream-loop.plist.template` returns 0
+- [x] Fresh-machine simulation: `rm ~/.ralph/knowledge.config.json && rm ~/Library/LaunchAgents/com.$(whoami).dream-loop.plist && bash scripts/dream/bootstrap.sh` exits 0 and recreates both files (verified via `RALPH_BOOTSTRAP_HOME` override + `RALPH_BOOTSTRAP_DRY_RUN=1`)
+- [x] Idempotence: run bootstrap.sh twice — second run prints SKIP for each file-creation step and exits 0
 
 #### Manual Verification:
 - [ ] `launchctl list | grep dream-loop` shows the agent after setup
