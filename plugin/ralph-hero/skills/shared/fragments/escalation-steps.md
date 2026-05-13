@@ -26,9 +26,27 @@ When encountering complexity, uncertainty, or states that don't align with proto
    ```
    For group plans, move ALL group issues to "Human Needed".
 
-2. **Add comment with @mention**:
+2. **Post a `## Escalation` comment**. The `## Escalation` markdown header is **required** — `ralph-unblock`, `/ralph-hero:unblock`, and the MCP `human-needed-unblock` direction signal all discover this comment by header prefix (`body.startsWith("## Escalation")`). The body must also carry an `Escalation:` reason line (consumers extract the reason text) and an `Originating command: ralph_<cmd>` line (the interactive unblock skill uses this to route the issue back into the pipeline).
+
+   Call shape:
    ```
-   ralph_hero__create_comment(number, body="@$RALPH_GH_OWNER Escalation: [issue description]")
+   ralph_hero__create_comment(
+     number,
+     body=<<the markdown below>>
+   )
    ```
+
+   Comment body:
+   ```markdown
+   ## Escalation
+
+   @$RALPH_GH_OWNER
+
+   Escalation: [specific blocking question or constraint]
+
+   Originating command: ralph_<current-command>
+   ```
+
+   Substitute `<current-command>` with the snake_case command name (e.g., `ralph_impl`, `ralph_plan`, `ralph_research`, `ralph_triage`, `ralph_review`, `ralph_split`).
 
 3. **STOP and report**: Issue URL, status "Human Needed", brief reason.
