@@ -155,6 +155,10 @@ describe("WORKFLOW_STATE_TO_STATUS", () => {
     expect(WORKFLOW_STATE_TO_STATUS["In Review"]).toBe("In Progress");
   });
 
+  it("maps Human Needed to Todo (not Done — would trigger auto-close)", () => {
+    expect(WORKFLOW_STATE_TO_STATUS["Human Needed"]).toBe("Todo");
+  });
+
   it("maps terminal states to Done", () => {
     expect(WORKFLOW_STATE_TO_STATUS["Done"]).toBe("Done");
     expect(WORKFLOW_STATE_TO_STATUS["Canceled"]).toBe("Done");
