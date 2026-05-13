@@ -195,15 +195,15 @@ handle_write() {
     case "$file_path" in
       */plans/*)
         local phase_count file_count
-        phase_count=$(grep -c '^## Phase ' "$file_path" 2>/dev/null || echo 0)
-        file_count=$(grep -c '^\s*- ' "$file_path" 2>/dev/null || echo 0)
+        phase_count=$(grep -c '^## Phase ' "$file_path" 2>/dev/null) || phase_count=0
+        file_count=$(grep -c '^\s*- ' "$file_path" 2>/dev/null) || file_count=0
         payload=$(jq -nc --argjson pc "$phase_count" --argjson fc "$file_count" \
           '{phase_count: $pc, file_references: $fc}')
         ;;
       */research/*)
         local will_modify will_read
-        will_modify=$(sed -n '/### Will Modify/,/###/{/###/!p}' "$file_path" 2>/dev/null | grep -c '`' || echo 0)
-        will_read=$(sed -n '/### Will Read/,/###/{/###/!p}' "$file_path" 2>/dev/null | grep -c '`' || echo 0)
+        will_modify=$(sed -n '/### Will Modify/,/###/{/###/!p}' "$file_path" 2>/dev/null | grep -c '`') || will_modify=0
+        will_read=$(sed -n '/### Will Read/,/###/{/###/!p}' "$file_path" 2>/dev/null | grep -c '`') || will_read=0
         payload=$(jq -nc --argjson wm "$will_modify" --argjson wr "$will_read" \
           '{files_will_modify_count: $wm, files_will_read_count: $wr}')
         ;;
