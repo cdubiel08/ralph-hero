@@ -243,18 +243,24 @@ Add `@opentelemetry/sdk-node` to the MCP server, lazy-init guarded by `RALPH_DEB
   - [ ] Exports the span, asserts `RALPH_HERO_GITHUB_TOKEN` and `Authorization` are `[REDACTED]`, `harmless` is preserved
   - [ ] Test for verifying no-op behavior: with `RALPH_DEBUG` unset, `initTelemetry()` returns null and no exporter is registered
 
-#### Task 2.6: Replace tautological retry-order regression test (REBASE 2026-05-13)
+#### Task 2.6: Replace tautological retry-order regression test (REBASE 2026-05-13; SHIPPED 2026-05-13 with deviation, see below)
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/github-client-tracing.test.ts` (modify on `feature/GH-1098`)
 - **tdd**: true
 - **complexity**: low
 - **depends_on**: [2.5]
+- **shipped_as**: commit `57cd1dfd` on `feature/GH-1098` (PR #1197)
 - **context**: The test added in commit `b02a1859` to guard against the missing-`await` regression in `executeGraphQL`'s recursive retry path is tautological. It maps two span end-times to nanoseconds, sorts them ascending, then asserts `sortedNs[last] >= sortedNs[0]` — which is true by definition for any sorted array of length ≥1. A future change that drops the `await` on the retry call would still pass this test. PR #1197 review comment: https://github.com/cdubiel08/ralph-hero/pull/1197#issuecomment-4435819106
+- **deviation from prescribed code**: The originally-prescribed replacement (`expect(toNs(spans[0].endTime)).toBeLessThanOrEqual(toNs(spans[1].endTime))`) turned out to be tautological for the same structural reason as the original sort: `SimpleSpanProcessor` exports in finish order, so `spans[0]` is by definition the first-finished and has the lowest captured endTime regardless of whether the retry was awaited. Empirically verified: with `await` removed, that prescribed assertion passes ~40% of the time (flaky pass) rather than failing consistently. Additionally, raw HrTime samples taken inside `Span.end()` are not reliably monotonic across rapid consecutive calls in this SDK build — calling `outer.end()` strictly before `inner.end()` can still record `outer.endTime > inner.endTime` ~60% of the time. So endTime comparison is both tautological AND flaky.
+
+  **What shipped instead**: A custom `SpanProcessor` that tracks `onStart` order (deterministic — `onStart` fires synchronously inside `tracer.startActiveSpan`) is added alongside the existing `SimpleSpanProcessor`. The new assertion cross-references start order against finish order: `expect(spans[1].spanContext().spanId).toBe(outerSpanId)`, where `outerSpanId = spanStartOrder[0]`. This says: the LAST-to-finish span (`spans[1]` per `SimpleSpanProcessor`'s deterministic insertion order via `onEnd`) must be the FIRST-to-start span (i.e., the outer/initial span). With `await` in place, outer waits for inner before its `finally` fires → outer is `spans[1]`. Without `await`, outer's `finally` fires synchronously after the catch-block return → outer becomes `spans[0]` and the assertion fails.
+
+  **Why context propagation isn't used as the discriminator**: The two emitted spans are siblings (parent=ROOT), not parent/child, because OTel context doesn't propagate across the recursive `executeGraphQL` call in this codebase (no `AsyncHooksContextManager` is registered). So `parentSpanId` can't be used as a discriminator. Fixing context propagation is a separate concern out of scope for Task 2.6.
 - **acceptance**:
-  - [ ] In `github-client-tracing.test.ts` around lines 165–173, drop the `sort` step entirely and assert directly on `spans[0].endTime` vs `spans[1].endTime` — `SimpleSpanProcessor` exports in finish order, so `spans[0]` is the inner (retry) span and `spans[1]` is the outer (initial) span. Assertion: `expect(toNs(spans[0].endTime)).toBeLessThanOrEqual(toNs(spans[1].endTime))` (the inner retry must finish before the outer span ends — this fails if the recursive retry call is not awaited).
-  - [ ] Add an explicit assertion that there are exactly 2 spans (`expect(spans).toHaveLength(2)`) so an off-by-one regression in the retry path can't silently turn the comparison into a no-op against a single-span array.
-  - [ ] Add a one-sentence inline comment naming the specific regression the assertion guards: "Inner retry span must end before the outer span ends — guards against a missing `await` on the recursive retry call."
-  - [ ] Verify the test fails when the `await` is removed from the retry call (manual sanity check: temporarily delete the `await`, run `npx vitest run src/__tests__/github-client-tracing.test.ts`, confirm failure, restore the `await`).
-  - [ ] Commit on `feature/GH-1098`; PR #1197 picks it up automatically. Re-run `/ralph-hero:finish` (or invoke `code-review:code-review` directly) to confirm the original review finding is now resolved.
+  - [x] Drop the tautological `sort` block entirely.
+  - [x] Add `expect(spans).toHaveLength(2)` and `expect(spanStartOrder).toHaveLength(2)` so an off-by-one regression can't silently turn the comparison into a no-op.
+  - [x] Inline comments name the regression the assertion guards and explain why raw endTime comparison is unreliable.
+  - [x] Verified empirically: 10/10 PASS with `await` in place, 10/10 FAIL with `await` removed.
+  - [ ] Re-run `code-review:code-review` against PR #1197 to confirm the original review finding is now resolved.
 
 ### Phase Success Criteria
 
