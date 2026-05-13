@@ -37,8 +37,19 @@ Fetch the pipeline dashboard with the requested format:
    - `format`: parsed format or `"markdown"`
    - `includeHealth`: true
    - `issuesPerPhase`: 5
-3. Display the `formatted` field (for markdown/ascii) or the structured data (for json).
-4. If health warnings exist with severity `critical`, highlight them prominently.
+3. Route the display rendering by format (see Step 4 below for exact rules).
+4. **Display rendering — route by format:**
+
+   **If `format == "json"`:**
+   - Emit the dashboard object literally inside a fenced ```json``` code block, using `JSON.stringify(dashboard, null, 2)` (pretty-printed, 2-space indent).
+   - **DO NOT narrate or summarize the JSON.** Do not add a preamble like "Here's the pipeline status..." or a postamble like "The pipeline has N critical warnings." Emit the fenced JSON block and stop.
+   - Do not re-render the JSON as markdown bullet lists, headings, tables, or prose. The agent's response in JSON mode is the fenced JSON code block — nothing else.
+
+   **If `format == "markdown"` or `format == "ascii"`:**
+   - Emit the dashboard's `formatted` field verbatim.
+   - Do not re-render or restructure the content.
+
+5. If health warnings exist with severity `critical`, highlight them prominently. In JSON mode, the warnings are already in the JSON payload — do not re-surface them in prose.
 
 ## Output
 
