@@ -82,6 +82,7 @@ Each skill handles one phase of the workflow:
 | `/ralph-hero:ralph-plan` | Create implementation plan from researched issue |
 | `/ralph-hero:ralph-review` | Review implementation plan for quality |
 | `/ralph-hero:ralph-impl` | Implement one planned issue in isolated worktree |
+| `/ralph-hero:ralph-debug-collate` | Collate Langfuse error spans, file `debug-auto` issues for self-healing observability (interactive dry-run → confirm → file) |
 
 ### Trends
 
