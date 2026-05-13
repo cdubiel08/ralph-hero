@@ -10,6 +10,9 @@ import {
   BasicTracerProvider,
   InMemorySpanExporter,
   SimpleSpanProcessor,
+  type ReadableSpan,
+  type Span as SdkSpan,
+  type SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { trace } from "@opentelemetry/api";
 
@@ -29,8 +32,28 @@ vi.mock("@octokit/graphql", () => {
 let createGitHubClient: typeof import("../github-client.js").createGitHubClient;
 
 const exporter = new InMemorySpanExporter();
+
+// Track the order in which spans are STARTED (synchronously via `onStart`).
+// The recursive-retry test below uses this to identify which of the two
+// emitted root spans is the outer (initial) span vs. the inner (retry)
+// span, since they share name+attributes and OTel context isn't propagated
+// across the recursive call in this codebase.
+const spanStartOrder: string[] = [];
+const startOrderTracker: SpanProcessor = {
+  onStart(span: SdkSpan) {
+    spanStartOrder.push(span.spanContext().spanId);
+  },
+  onEnd(_span: ReadableSpan) {},
+  forceFlush() {
+    return Promise.resolve();
+  },
+  shutdown() {
+    return Promise.resolve();
+  },
+};
+
 const provider = new BasicTracerProvider({
-  spanProcessors: [new SimpleSpanProcessor(exporter)],
+  spanProcessors: [startOrderTracker, new SimpleSpanProcessor(exporter)],
 });
 
 beforeAll(async () => {
@@ -136,14 +159,18 @@ describe("github-client span emission", () => {
     }
   });
 
-  it("awaits the recursive retry call so span.end() fires after settlement", async () => {
+  it("awaits the recursive retry call so the outer span ends after the inner", async () => {
     exporter.reset();
-    // Mock the first call to reject with a retry-able 403 and the second to
-    // resolve. If the retry call were not awaited, span.end() on the outer
-    // span would fire synchronously when the return expression evaluated,
-    // and the outer span's end-timestamp would precede the inner span's
-    // end-timestamp. Asserting outer.endTime >= inner.endTime guards against
-    // the missing-await regression.
+    spanStartOrder.length = 0;
+    // First call returns 403 with retry-after (triggers the recursive retry
+    // path); second call resolves. The outer span must remain open until the
+    // inner retry settles — guarded here by start-order vs. finish-order, not
+    // by comparing raw endTime values. (Raw HrTime samples taken inside
+    // Span.end() are NOT monotonic across rapid consecutive calls in this
+    // SDK build: empirically, outer.end() called strictly before inner.end()
+    // can still record outer.endTime > inner.endTime due to the clock-sample
+    // path. Insertion order into the SimpleSpanProcessor exporter, however,
+    // is deterministic because onEnd fires synchronously inside span.end().)
     mockGraphqlImpl
       .mockRejectedValueOnce(
         Object.assign(new Error("rate limited"), {
@@ -161,15 +188,23 @@ describe("github-client span emission", () => {
 
     await provider.forceFlush();
     const spans = exporter.getFinishedSpans();
-    expect(spans.length).toBeGreaterThanOrEqual(2);
-    // Find finish-order: the inner (retry) span must finish before the outer
-    // (initial) span. Spans are exported in finish order by SimpleSpanProcessor.
-    // The outer span is the FIRST one started, so its endTime should be >=
-    // the inner span's endTime. Compare in [seconds, nanoseconds] HrTime form.
-    const endTimes = spans.map((s) => s.endTime);
-    const toNs = ([sec, nsec]: [number, number]) => sec * 1e9 + nsec;
-    const sortedNs = [...endTimes].map(toNs).sort((a, b) => a - b);
-    // The latest finishing span should be the outer one.
-    expect(sortedNs[sortedNs.length - 1]).toBeGreaterThanOrEqual(sortedNs[0]);
+    // Pin the count so an off-by-one regression in the retry path can't
+    // silently turn the assertion below into a no-op against a single-span
+    // array.
+    expect(spans).toHaveLength(2);
+    expect(spanStartOrder).toHaveLength(2);
+
+    // `spanStartOrder[0]` is the outer (initial) span — `onStart` fires
+    // synchronously inside `tracer.startActiveSpan`, and the outer
+    // `executeGraphQL` call creates its span before the recursive retry call
+    // creates the inner span. `SimpleSpanProcessor` exports spans in finish
+    // order. With a proper `await` on the recursive retry call, the outer
+    // span's `finally { span.end() }` runs only after the inner span has
+    // fully resolved — so the outer span is the LAST to finish (spans[1]).
+    // Drop the `await` and the outer's `finally` fires synchronously when
+    // the catch-block return expression evaluates, making the outer span
+    // the FIRST to finish (spans[0]) — this assertion then fails.
+    const outerSpanId = spanStartOrder[0];
+    expect(spans[1].spanContext().spanId).toBe(outerSpanId);
   });
 });
