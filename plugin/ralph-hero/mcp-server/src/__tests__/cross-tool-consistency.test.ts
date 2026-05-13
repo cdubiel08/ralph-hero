@@ -26,6 +26,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import * as fs from "fs";
+import * as path from "path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerDirectionsTools } from "../tools/directions-tools.js";
 import { registerDashboardTools } from "../tools/dashboard-tools.js";
@@ -825,5 +827,122 @@ describe("cross-tool count consistency", () => {
       humanNumbers,
       "next_actions(audience=human) does NOT surface the null-state item",
     ).not.toContain(1012);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// list_issues / pipeline_dashboard agreement on closed-non-terminal issues
+// (GH-1169)
+//
+// Before GH-1169, `list_issues` defaulted `state: "OPEN"` and excluded
+// closed-but-non-terminal-workflow issues from no-state-arg callers. The
+// dashboard family had no equivalent filter, so the two tools disagreed on
+// visibility for an issue whose Workflow State was advanced to a
+// non-terminal value (e.g., "Plan in Review") while the underlying GitHub
+// issue happened to be CLOSED. This regression test pins the post-fix
+// agreement so a future re-introduction of an implicit OPEN default would
+// fail loudly.
+// ---------------------------------------------------------------------------
+
+describe("list_issues / pipeline_dashboard closed-non-terminal agreement (GH-1169)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("list_issues (no state arg) and pipeline_dashboard agree on closed-non-terminal issues", async () => {
+    // Fixture with one CLOSED issue whose Workflow State is non-terminal —
+    // the exact shape produced by sync-pr-merge.yml advancing a linked
+    // issue's workflow state to "Done" without closing the GitHub issue
+    // (research §Path B). We use "Plan in Review" because it is a
+    // non-terminal phase the dashboard surfaces.
+    const fixture = [
+      rawIssue({
+        number: 7001,
+        title: "7001 OPEN Plan in Review",
+        workflowState: "Plan in Review",
+        state: "OPEN",
+        updatedAt: offsetIso(1 * HOUR_MS),
+      }),
+      rawIssue({
+        number: 7002,
+        title: "7002 CLOSED Plan in Review (divergent state)",
+        workflowState: "Plan in Review",
+        state: "CLOSED",
+        closedAt: offsetIso(2 * HOUR_MS),
+        updatedAt: offsetIso(1 * HOUR_MS),
+      }),
+    ];
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixture } },
+    );
+    const tools = registerAll(server, client, fieldCache);
+
+    // list_issues with NO state arg — relies on the GH-1169 default removal.
+    const listResult = await tools.listIssues.handler(
+      { workflowState: "Plan in Review", limit: 50, orderBy: "CREATED_AT" },
+      {},
+    );
+    const listIssues = parsePayload(listResult) as {
+      items: Array<{ number: number; state: string }>;
+    };
+    const listNumbers = listIssues.items.map((i) => i.number).sort();
+
+    // pipeline_dashboard — no state filter exists; both items appear in the
+    // Plan in Review phase bucket.
+    const dashboardResult = await tools.dashboard.handler(
+      { format: "json", includeHealth: true, doneWindowDays: 7, archiveAgeDays: 14, issuesPerPhase: 10 },
+      {},
+    );
+    const dashboard = parsePayload(dashboardResult) as {
+      phases: Array<{ state: string; issues: Array<{ number: number }> }>;
+    };
+    const pirPhase = dashboard.phases.find((p) => p.state === "Plan in Review");
+    expect(pirPhase, "pipeline_dashboard exposes Plan in Review phase").toBeDefined();
+    const dashboardNumbers = (pirPhase?.issues ?? []).map((i) => i.number).sort();
+
+    // Cross-tool agreement: same set of issue numbers in both tools.
+    expect(
+      listNumbers,
+      "list_issues (no state) surfaces both OPEN and CLOSED Plan-in-Review items",
+    ).toEqual([7001, 7002]);
+    expect(
+      dashboardNumbers,
+      "pipeline_dashboard surfaces both OPEN and CLOSED Plan-in-Review items",
+    ).toEqual([7001, 7002]);
+    expect(
+      listNumbers,
+      "list_issues and pipeline_dashboard agree on closed-non-terminal visibility",
+    ).toEqual(dashboardNumbers);
+  });
+
+  it("list_groups still defaults state=OPEN (regression pin)", async () => {
+    // GH-1169 deliberately left `list_groups`'s OPEN default in place — the
+    // acceptance criteria named `list_issues`, `next_actions`, and
+    // `pipeline_dashboard` but not `list_groups`. This regression pin
+    // documents the current behavior so a future change to `list_groups`
+    // has to update this test deliberately.
+    //
+    // Read the source string directly (no runtime call needed — the
+    // Zod-default change is a source-level invariant) and assert the
+    // `.default("OPEN")` is still present on the `state` field in
+    // relationship-tools.ts. The plan document references
+    // relationship-tools.ts:1204-1208 as the parallel default site.
+    const relationshipToolsSrc = fs.readFileSync(
+      path.resolve(__dirname, "../tools/relationship-tools.ts"),
+      "utf-8",
+    );
+    // Match the state-on-list_groups schema block: an `.enum(["OPEN", "CLOSED"])`
+    // followed by `.optional().default("OPEN")`. The match is loose enough
+    // to survive whitespace/comment changes but strict enough to catch a
+    // default removal.
+    expect(
+      relationshipToolsSrc,
+      "list_groups still has .default(\"OPEN\") on state (regression pin from GH-1169)",
+    ).toMatch(/state:\s*z\s*\.enum\(\["OPEN",\s*"CLOSED"\]\)\s*\.optional\(\)\s*\.default\("OPEN"\)/);
   });
 });

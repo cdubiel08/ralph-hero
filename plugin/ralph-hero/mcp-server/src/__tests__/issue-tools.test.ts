@@ -3,9 +3,14 @@
  * structure, and filter chain completeness without making API calls.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerIssueTools } from "../tools/issue-tools.js";
+import type { GitHubClient } from "../github-client.js";
+import type { GitHubClientConfig } from "../types.js";
+import { FieldOptionCache } from "../lib/cache.js";
 
 const issueToolsSrc = fs.readFileSync(
   path.resolve(__dirname, "../tools/issue-tools.ts"),
@@ -237,7 +242,7 @@ describe("list_issues iteration filter structural", () => {
     // list_issues tool description should mention iteration in returned fields
     const toolDesc = issueToolsSrc.slice(
       issueToolsSrc.indexOf("ralph_hero__list_issues"),
-      issueToolsSrc.indexOf("ralph_hero__list_issues") + 500,
+      issueToolsSrc.indexOf("ralph_hero__list_issues") + 1000,
     );
     expect(toolDesc).toContain("iteration");
   });
@@ -305,5 +310,264 @@ describe("list_issues scan-until-exhausted pagination (GH-1172)", () => {
       issueToolsSrc.indexOf('"ralph_hero__list_issues"') + 800,
     );
     expect(toolBlock).toMatch(/full project scan|all project items/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// list_issues state default removal (GH-1169)
+//
+// Before GH-1169, `state` had `.default("OPEN")` in the Zod schema, so
+// callers that did not pass `state` were silently restricted to OPEN issues.
+// This diverged from the dashboard family (pipeline_dashboard, next_actions,
+// project_hygiene, capture_snapshot), which has no equivalent state filter
+// — closed issues with non-terminal workflow states appeared in dashboards
+// but were invisible to list_issues.
+//
+// The fix is to drop the Zod default so `state` is genuinely optional. The
+// existing `if (args.state)` guard at the filter site already does the right
+// thing when `state` is undefined (skip the filter entirely). These runtime
+// tests pin the new behavior end-to-end through the registered handler.
+// ---------------------------------------------------------------------------
+
+interface RawIssueFixture {
+  number: number;
+  title: string;
+  workflowState?: string | null;
+  state?: string;
+}
+
+/** Build a node.items.nodes[] entry shaped like the list_issues GraphQL response. */
+function rawIssueForStateTest(fix: RawIssueFixture): unknown {
+  const fieldValues: Array<Record<string, unknown>> = [];
+  if (fix.workflowState !== undefined && fix.workflowState !== null) {
+    fieldValues.push({
+      __typename: "ProjectV2ItemFieldSingleSelectValue",
+      name: fix.workflowState,
+      field: { name: "Workflow State" },
+    });
+  }
+
+  return {
+    id: `item-${fix.number}`,
+    type: "ISSUE",
+    content: {
+      __typename: "Issue",
+      number: fix.number,
+      title: fix.title,
+      state: fix.state ?? "OPEN",
+      stateReason: null,
+      url: `https://github.com/test-owner/test-repo/issues/${fix.number}`,
+      createdAt: "2026-05-01T00:00:00Z",
+      updatedAt: "2026-05-12T00:00:00Z",
+      closedAt: fix.state === "CLOSED" ? "2026-05-11T00:00:00Z" : null,
+      labels: { nodes: [] },
+      assignees: { nodes: [] },
+      repository: { nameWithOwner: "test-owner/test-repo", name: "test-repo" },
+      subIssues: { totalCount: 0 },
+      trackedIssues: { nodes: [] },
+      trackedInIssues: { nodes: [] },
+    },
+    fieldValues: { nodes: fieldValues },
+  };
+}
+
+function itemsResponseForStateTest(nodes: unknown[]): unknown {
+  return {
+    node: {
+      items: {
+        totalCount: nodes.length,
+        pageInfo: { hasNextPage: false, endCursor: null },
+        nodes,
+      },
+    },
+  };
+}
+
+function fieldCacheResponseForStateTest(projectId = "project-id-3"): unknown {
+  return {
+    user: {
+      projectV2: {
+        id: projectId,
+        fields: {
+          nodes: [
+            {
+              id: "field-ws-id",
+              name: "Workflow State",
+              dataType: "SINGLE_SELECT",
+              options: [
+                { id: "opt-pir", name: "Plan in Review" },
+                { id: "opt-ip", name: "In Progress" },
+                { id: "opt-done", name: "Done" },
+              ],
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+function isFieldCacheQuery(q: string): boolean {
+  return q.includes("projectV2(number:") && q.includes("fields(first:");
+}
+
+function isItemsQuery(q: string): boolean {
+  return q.includes("node(id: $projectId)") && q.includes("items(first:");
+}
+
+function createMockClientForStateTest(fixture: unknown[]): GitHubClient {
+  const fullConfig: GitHubClientConfig = {
+    token: "tok",
+    owner: "test-owner",
+    repo: "test-repo",
+    projectNumber: 3,
+    projectOwner: "test-owner",
+  };
+
+  const projectQuery = vi.fn(async (q: string, vars: Record<string, unknown>) => {
+    if (isFieldCacheQuery(q)) {
+      return fieldCacheResponseForStateTest(`project-id-${vars.number}`);
+    }
+    if (isItemsQuery(q)) {
+      return itemsResponseForStateTest(fixture);
+    }
+    throw new Error(`Unmocked projectQuery: ${q.slice(0, 80)}`);
+  });
+
+  const query = vi.fn(async (q: string) => {
+    throw new Error(`Unmocked query: ${q.slice(0, 80)}`);
+  });
+
+  return {
+    config: fullConfig,
+    query,
+    projectQuery,
+    projectMutate: vi.fn(),
+    mutate: vi.fn(),
+    getCache: vi.fn(() => ({
+      get: vi.fn(),
+      set: vi.fn(),
+      invalidateQueries: vi.fn(),
+    })),
+    getAuthenticatedUser: vi.fn(),
+  } as unknown as GitHubClient;
+}
+
+interface HandlerResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+interface RegisteredTool {
+  handler: (args: unknown, extra: unknown) => Promise<HandlerResult>;
+}
+
+function getListIssuesHandler(server: McpServer): RegisteredTool {
+  const tools = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })
+    ._registeredTools;
+  const tool = tools?.["ralph_hero__list_issues"];
+  if (!tool) throw new Error("ralph_hero__list_issues not registered");
+  return tool;
+}
+
+function parsePayload(result: HandlerResult): unknown {
+  expect(result.content).toHaveLength(1);
+  return JSON.parse(result.content[0].text);
+}
+
+describe("list_issues state arg behavior (GH-1169)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  // Two-item fixture: one OPEN + one CLOSED, both with the same non-terminal
+  // workflow state ("Plan in Review"). This mirrors the exact divergence the
+  // research doc identified — sync-pr-merge.yml advancing workflow state to
+  // a non-terminal value without closing the GitHub issue. With the OPEN
+  // default removed, both items must surface to a no-state-arg caller.
+  const fixture = [
+    rawIssueForStateTest({
+      number: 5001,
+      title: "5001 OPEN Plan in Review",
+      workflowState: "Plan in Review",
+      state: "OPEN",
+    }),
+    rawIssueForStateTest({
+      number: 5002,
+      title: "5002 CLOSED Plan in Review",
+      workflowState: "Plan in Review",
+      state: "CLOSED",
+    }),
+  ];
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("list_issues with no state arg returns both OPEN and CLOSED issues", async () => {
+    const client = createMockClientForStateTest(fixture);
+    registerIssueTools(server, client, fieldCache);
+    const handler = getListIssuesHandler(server);
+
+    // No `state` arg — relies on the new default (undefined = no state filter).
+    const result = await handler.handler(
+      { workflowState: "Plan in Review", limit: 50, orderBy: "CREATED_AT" },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      filteredCount: number;
+      items: Array<{ number: number; state: string }>;
+    };
+    const numbers = payload.items.map((i) => i.number).sort();
+    expect(
+      numbers,
+      "no-state-arg call should return BOTH the OPEN and the CLOSED issue",
+    ).toEqual([5001, 5002]);
+    expect(payload.filteredCount, "filteredCount matches items.length").toBe(2);
+  });
+
+  it("list_issues with state=OPEN still excludes CLOSED issues", async () => {
+    const client = createMockClientForStateTest(fixture);
+    registerIssueTools(server, client, fieldCache);
+    const handler = getListIssuesHandler(server);
+
+    const result = await handler.handler(
+      { state: "OPEN", workflowState: "Plan in Review", limit: 50, orderBy: "CREATED_AT" },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      filteredCount: number;
+      items: Array<{ number: number; state: string }>;
+    };
+    const numbers = payload.items.map((i) => i.number);
+    expect(
+      numbers,
+      "explicit state=OPEN preserves pre-GH-1169 narrowing behavior",
+    ).toEqual([5001]);
+    expect(payload.items[0].state).toBe("OPEN");
+  });
+
+  it("list_issues with state=CLOSED still excludes OPEN issues", async () => {
+    const client = createMockClientForStateTest(fixture);
+    registerIssueTools(server, client, fieldCache);
+    const handler = getListIssuesHandler(server);
+
+    const result = await handler.handler(
+      { state: "CLOSED", workflowState: "Plan in Review", limit: 50, orderBy: "CREATED_AT" },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      filteredCount: number;
+      items: Array<{ number: number; state: string }>;
+    };
+    const numbers = payload.items.map((i) => i.number);
+    expect(
+      numbers,
+      "explicit state=CLOSED returns only the closed issue",
+    ).toEqual([5002]);
+    expect(payload.items[0].state).toBe("CLOSED");
   });
 });
