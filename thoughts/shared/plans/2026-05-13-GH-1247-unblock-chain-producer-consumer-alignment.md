@@ -176,10 +176,13 @@ Use a sacrificial issue (not a real ticket) or a draft issue created for this pu
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Eval scenarios markdown lint clean (no broken cross-references)
+- [x] Eval scenarios markdown lint clean (no broken cross-references)
+- [x] `plugin/ralph-hero/skills/ralph-unblock/eval-scenarios.md` contains a `no-escalation-body-only` scenario with `context_source: "issue_body"` in the expected payload
+- [x] `plugin/ralph-hero/skills/unblock/eval-scenarios.md` contains a `no-escalation-request-only` scenario asserting `In Progress` default + null `originating_command`
+- [x] Manual acceptance runbook exists at `thoughts/shared/runbooks/2026-05-13-GH-1247-unblock-chain-no-escalation-acceptance.md`
 
 #### Manual Verification:
-- [ ] Acceptance test passes end-to-end on a real (sacrificial) issue
+- [ ] Acceptance test passes end-to-end on a real (sacrificial) issue (run the runbook)
 - [ ] `## Unblock Request` is posted with grounded questions even without `## Escalation`
 - [ ] `## Unblock Resolution` correctly captures Q&A pairs and routes to In Progress
 

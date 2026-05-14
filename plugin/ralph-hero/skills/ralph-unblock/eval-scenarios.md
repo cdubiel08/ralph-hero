@@ -29,7 +29,7 @@ harness) against a test repo configured with the ralph-hero plugin.
 
 ---
 
-## 2. `escalation-comment-absent`
+## 2. `escalation-comment-absent` (linked artifact present)
 
 **Setup**:
 - Issue #N is in `Human Needed` (e.g., a human moved it manually).
@@ -42,12 +42,59 @@ harness) against a test repo configured with the ralph-hero plugin.
 - Falls back to issue body + linked research doc for context.
 - Synthesizes questions grounded in the research doc / issue body.
 - Posts `## Unblock Request` with `Originating skill: (unknown)`.
-- Records outcome event with `escalation_comment_present: false, originating_command: null`.
+- Records outcome event with
+  `{ escalation_comment_present: false, context_source: "linked_artifact" (or "mixed" if the issue body also contributed), originating_command: null }`.
 
 **Pass criteria**:
 - Comment is posted with `Originating skill: (unknown)` rendered literally.
 - Questions reference real material from the issue body or linked doc (not invented).
 - Outcome event payload reflects the missing escalation correctly.
+
+---
+
+## 2b. `no-escalation-body-only` (Human Needed issue, no `## Escalation` comment)
+
+**Setup**:
+- Issue #N is in `Human Needed`.
+- Issue body describes a real-ish decision the human needs to make (e.g., "Choose between
+  option A and option B for the new index schema").
+- **No `## Escalation` comment** exists on the issue.
+- **No** `## Unblock Request` comment exists on the issue.
+- No linked `## Research Document` or `## Implementation Plan` comments — the issue body
+  is the only grounding source.
+
+**Why this scenario matters**: this is the most common real-world case for the producer
+flow (humans manually move issues into Human Needed without writing a canonical
+`## Escalation` comment first). The producer must reliably create state from body
+context alone, with no degraded behavior.
+
+**Expected behavior**:
+- Skill picks issue #N (oldest eligible Human Needed without a fresh `## Unblock Request`).
+- Skill reads the issue body, notes absence of `## Escalation`, and proceeds without
+  falling back to any linked artifact (none exist).
+- Skill synthesizes 1–5 specific, body-grounded questions (not "what should we do?").
+- Posts `## Unblock Request` with:
+  - 1–5 numbered questions
+  - `Originating skill: (unknown)` rendered literally
+- Records `unblock_requested` outcome event with payload
+  `{ question_count: <n>, escalation_comment_present: false, context_source: "issue_body", originating_command: null }`.
+- Sets `RALPH_UNBLOCK_REQUEST_POSTED=1` and exits cleanly via the Stop hook.
+
+**Pass criteria**:
+- `## Unblock Request` comment is posted with `Originating skill: (unknown)` rendered
+  literally.
+- Questions reference concrete material from the issue body (file names, options,
+  decision points named in the body) — not invented from whole cloth.
+- Outcome event payload has all four fields set to the expected values above. In
+  particular `context_source` MUST be `"issue_body"` (not `"escalation"`, not
+  `"linked_artifact"`, not `"mixed"`).
+- Issue remains in `Human Needed` (no `save_issue` call).
+- The Stop hook allows clean exit (postcondition flag was set).
+
+**Regression coverage**: this scenario verifies that the producer flow is
+escalation-agnostic. If a future change accidentally re-introduces a hard
+dependency on `## Escalation` (e.g., aborting when absent, or skipping question
+synthesis), this scenario fails immediately.
 
 ---
 
