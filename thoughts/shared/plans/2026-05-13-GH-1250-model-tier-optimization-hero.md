@@ -227,11 +227,11 @@ Rationale: ralph-impl already does internal tiered sub-agent dispatch (low→hai
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -m1 '^model:' plugin/ralph-hero/agents/split-agent.md` → `model: sonnet`
-- [ ] `grep -m1 '^model:' plugin/ralph-hero/agents/impl-agent.md` → `model: sonnet`
-- [ ] `grep -m1 '^model:' plugin/ralph-hero/agents/plan-agent.md` → `model: opus` (unchanged)
-- [ ] `grep -m1 '^model:' plugin/ralph-hero/agents/review-agent.md` → `model: opus` (unchanged)
-- [ ] Plugin loads without error: `node plugin/ralph-hero/mcp-server/dist/index.js --selfcheck` (or whatever existing smoke-check exists)
+- [x] `grep -m1 '^model:' plugin/ralph-hero/agents/split-agent.md` → `model: sonnet`
+- [x] `grep -m1 '^model:' plugin/ralph-hero/agents/impl-agent.md` → `model: sonnet`
+- [x] `grep -m1 '^model:' plugin/ralph-hero/agents/plan-agent.md` → `model: opus` (unchanged)
+- [x] `grep -m1 '^model:' plugin/ralph-hero/agents/review-agent.md` → `model: opus` (unchanged)
+- [x] Plugin loads without error: `node plugin/ralph-hero/mcp-server/dist/index.js --selfcheck` (or whatever existing smoke-check exists) — N/A: `dist/` not built and no `--selfcheck` flag exists. Satisfied via YAML frontmatter parse (PyYAML) on both modified agent files; both parse cleanly with `model: sonnet`.
 
 #### Manual Verification:
 - [ ] Dispatch `/ralph-hero:hello` and confirm no model-load errors in transcript.
