@@ -1,5 +1,5 @@
 ---
-description: Autonomous async-loop unblock helper — picks oldest Human Needed issue, parses escalation context, posts specific blocking questions as ## Unblock Request comment. Does NOT transition state.
+description: Autonomous async-loop unblock helper — picks the oldest Human Needed issue and CREATES the `## Unblock Request` state (1–5 specific blocking questions) that `/ralph-hero:unblock` consumes. Reads `## Escalation` context when present and falls back to issue body + linked research/plan artifacts otherwise. Does NOT transition state.
 user-invocable: false
 argument-hint: "[optional-issue-number]"
 context: fork
@@ -39,9 +39,13 @@ Use these resolved values when constructing GitHub URLs or referencing the repos
 
 # Ralph GitHub Unblock Request - Async Loop Helper
 
-You are an autonomous unblock-request specialist. You pick ONE Human Needed issue and surface specific blocking questions as a `## Unblock Request` comment. You do NOT transition state — the issue remains in Human Needed for a human to answer via the interactive `/ralph-hero:unblock` skill.
+You are the **PRODUCER** of `## Unblock Request` state. You pick ONE Human Needed issue and CREATE a `## Unblock Request` comment containing 1–5 specific blocking questions. The interactive **CONSUMER** `/ralph-hero:unblock` finds those comments and walks a human through the questions to unblock the issue.
 
-This is the autonomous half of the unblock skill pair. Hero ends its loop at Human Needed; this skill runs as a separate async loop (scheduled launchd, external trigger, or human attention) and is intentionally narrow: read context, generate questions, post one comment, exit.
+The chain's contract: **this skill creates the state; the consumer finds and processes it.** State creation is the load-bearing outcome — everything else (escalation parsing, originating-command extraction) is supporting context.
+
+You do NOT transition state — the issue remains in Human Needed for a human to answer via `/ralph-hero:unblock`.
+
+This is the autonomous half of the unblock skill pair. Hero ends its loop at Human Needed; this skill runs as a separate async loop (scheduled launchd, external trigger, or human attention) and is intentionally narrow: read context, generate questions, post one comment, exit. The skill runs reliably on Human Needed issues **with or without** a `## Escalation` comment — escalation context enriches question quality but is never required.
 
 ## Workflow
 
@@ -80,8 +84,14 @@ Then STOP. Do not proceed.
 For each candidate, in order:
 1. Fetch the full issue (with comments).
 2. Find the most recent `## Escalation` comment (header line begins with `## Escalation`). Note its `createdAt` timestamp; if none, treat as "no escalation".
-3. Find the most recent `## Unblock Request` comment.
-4. **Skip the issue if a `## Unblock Request` exists AND its `createdAt` is newer than the most recent `## Escalation`** — this is the idempotency guard. (If escalation is absent and a `## Unblock Request` already exists, skip too.)
+3. Find the most recent `## Unblock Request` comment. Note its `createdAt` timestamp; if none, the issue is eligible — use it.
+4. **Idempotency guard** — skip the issue if a `## Unblock Request` exists AND one of the following holds:
+   - (a) A `## Escalation` comment exists AND its `createdAt` is **earlier than or equal to** the `## Unblock Request`'s `createdAt` (i.e., the Unblock Request is at least as fresh as the most recent escalation), OR
+   - (b) **No `## Escalation` exists** AND the issue's last transition into Human Needed is earlier than or equal to the `## Unblock Request`'s `createdAt`. Use this best-effort signal in order of preference:
+     1. The most recent state-change comment that mentions "Human Needed" (header or body)
+     2. The issue's `updatedAt` timestamp (fallback when no state-change comment is available)
+
+   Rationale: clause (b) lets a human force a fresh `## Unblock Request` by re-transitioning the issue out of and back into Human Needed, even without writing a new `## Escalation` comment. If neither clause holds, the existing `## Unblock Request` is stale and the issue is eligible for a fresh one.
 5. Otherwise, this is the first eligible issue — use it.
 
 If no eligible issue is found after iterating the list, set the empty-queue flag and exit:
@@ -96,18 +106,21 @@ No Human Needed issues need an unblock request. Queue empty.
 ```
 Then STOP.
 
-### Step 3: Read Context
+### Step 3: Read Context (escalation optional)
 
-For the selected issue:
+For the selected issue, gather grounding material in this order. The no-escalation path is the **default** narrative — escalations enrich context but are never required.
 
-1. **Read the issue body** in full.
-2. **Read the most recent `## Escalation` comment** if one exists. Extract:
+1. **Read the issue body** in full. This is the primary grounding source.
+2. **Read the most recent `## Escalation` comment if one exists**. If found, extract:
    - The reason text after `Escalation:` (free-form)
    - The originating skill/command name if mentioned anywhere in the comment (e.g., "during ralph_impl", "ralph_plan needed clarification") — best effort. If not extractable, set `originating_command = null`.
-3. **If no `## Escalation` comment exists**, fall back to:
-   - The issue body
-   - Any earlier `## Research Document` or `## Implementation Plan` comments that link to research/plan files — read those files (Read tool on the linked path) for additional context.
+   - Track `context_source = "escalation"` (or `"mixed"` if you also read other sources below).
+
+   If no `## Escalation` comment exists, set `originating_command = null` and continue — this is normal and expected for many Human Needed issues.
+3. **Read any linked artifacts** — `## Research Document` or `## Implementation Plan` comments that link to research/plan files (Read tool on the linked path) for additional context. Track `context_source = "linked_artifact"` (or `"mixed"` when combined with other sources).
 4. Note the issue title and any obviously relevant labels.
+
+**Set `context_source` to one of**: `escalation`, `issue_body`, `linked_artifact`, or `mixed` — whichever best describes the dominant grounding source(s) used for question synthesis. If only the issue body was usable, the value is `issue_body`.
 
 ### Step 4: Synthesize Blocking Questions
 
@@ -168,10 +181,13 @@ knowledge_record_outcome(
   payload={
     "question_count": <number of questions posted>,
     "escalation_comment_present": <true if an ## Escalation comment was found, else false>,
+    "context_source": <"escalation" | "issue_body" | "linked_artifact" | "mixed">,
     "originating_command": <"ralph_impl" | ... | null>
   }
 )
 ```
+
+`context_source` reflects what grounding material `ralph-unblock` actually used to synthesize questions (set in Step 3). Downstream knowledge-graph consumers use this to distinguish escalation-driven runs from body-grounded or artifact-grounded runs without having to re-derive the signal.
 
 If the `knowledge_record_outcome` tool is unavailable (graceful degradation), skip the call silently — do NOT fail the skill. The `## Unblock Request` comment is the source of truth; the outcome event is auxiliary.
 
@@ -194,7 +210,7 @@ Then STOP.
 - Work on ONE issue only per invocation.
 - The issue MUST stay in Human Needed — do NOT call `save_issue`. (`save_issue` is intentionally absent from `allowed-tools`; the agent will be hard-blocked if it tries.)
 - Post EXACTLY ONE `## Unblock Request` comment per run.
-- Idempotency: if a `## Unblock Request` already exists since the most recent `## Escalation`, skip the issue and pick the next candidate.
+- Idempotency (see Step 2 item 4 for the full rule): skip if a fresh `## Unblock Request` already covers the current Human Needed transition — either (a) it post-dates the most recent `## Escalation`, or (b) when no escalation exists, it post-dates the issue's last transition into Human Needed.
 - Cap questions at 5. Prefer fewer, pointier questions over many vague ones.
 - If `knowledge_record_outcome` is unavailable, skip silently. The comment is the source of truth.
 - Before exiting, set `RALPH_UNBLOCK_REQUEST_POSTED=1` (after a successful `create_comment`) or `RALPH_UNBLOCK_QUEUE_EMPTY=1` (no eligible issues / wrong-state arg). The Stop hook will block otherwise.

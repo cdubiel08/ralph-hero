@@ -179,7 +179,16 @@ ROUND=$((ROUND + 1))
 
 **If `ROUND <= MAX_ROUNDS`**: return to Step 4 to re-run code review on the updated PR. The new round will use a fresh `BEFORE_COUNT` snapshot (taken at the top of Step 4) so we only count NEW comments from the current review pass.
 
-**If `ROUND > MAX_ROUNDS`** (3 rounds exhausted): escalate. Post a `## Code Review` comment on the issue summarizing the rounds:
+**If `ROUND > MAX_ROUNDS`** (3 rounds exhausted): escalate. Post **two** comments on the issue — the existing `## Code Review` round-by-round summary AND a canonical `## Escalation` comment that the unblock chain consumes.
+
+**First**, post the `## Code Review` summary via `create_comment`:
+
+```
+create_comment(
+  number=NNN,
+  body=<<the markdown below>>
+)
+```
 
 ```markdown
 ## Code Review
@@ -194,6 +203,27 @@ PR: PR_URL
 
 Escalating to Human Needed for manual review and resolution.
 ```
+
+**Second**, post the canonical `## Escalation` comment so `ralph-unblock` and `/ralph-hero:unblock` can discover the escalation by header prefix and extract `originating_command`:
+
+```
+create_comment(
+  number=NNN,
+  body=<<the markdown below>>
+)
+```
+
+```markdown
+## Escalation
+
+@$RALPH_GH_OWNER
+
+Escalation: Code review loop exhausted after 3 rounds on PR_URL — manual review required.
+
+Originating command: ralph_code_review
+```
+
+Keep both comments — the `## Code Review` summary preserves the round-by-round detail; the `## Escalation` comment is the canonical state the unblock chain finds.
 
 Then move the issue to "Human Needed" via:
 
@@ -246,7 +276,7 @@ Use `command="ralph_code_review"` in state transitions.
 
 | Situation | Action |
 |-----------|--------|
-| 3 review rounds exhausted | Escalate via `__ESCALATE__` → "Human Needed", post `## Code Review` summary comment |
+| 3 review rounds exhausted | Escalate via `__ESCALATE__` → "Human Needed", post `## Code Review` summary comment AND canonical `## Escalation` comment (for unblock-chain discovery) |
 | Human reviewer requested changes (Step 3) | Stop with `CODE REVIEW BLOCKED`, do NOT escalate (human is already aware) |
 | `impl-agent` reports BLOCKED | Treat round as failed, continue to Step 6 to check counter |
 | No open PR found (Step 2) | Stop with `CODE REVIEW BLOCKED`; the orchestrator's queue-picker should not have selected this issue |

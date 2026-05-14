@@ -167,6 +167,56 @@ behavior around those interactive moments.
 
 ---
 
+## 7b. `no-escalation-request-only` (No `## Escalation` exists, only `## Unblock Request`)
+
+**Setup**:
+- Issue #N is in `Human Needed`.
+- Issue has a `## Unblock Request` comment posted by `ralph-unblock` with 1–5
+  numbered questions.
+- The `## Unblock Request` ends with `Originating skill: (unknown)` (because no
+  `## Escalation` was present when the producer ran).
+- **No `## Escalation` comment exists** on the issue.
+- Skill is invoked as `/ralph-hero:unblock N` (or with no arg if #N is the only
+  candidate).
+
+**Why this scenario matters**: this is the consumer half of the no-escalation
+flow. It verifies that `/ralph-hero:unblock` does not require `## Escalation` to
+function — it finds the `## Unblock Request` produced by `ralph-unblock`, walks
+the human, and routes back into the pipeline using the default heuristic.
+
+**Expected behavior**:
+- Skill fetches the issue and reads the `## Unblock Request` comment.
+- Skill parses the numbered questions verbatim.
+- Skill extracts `originating_command = null` (no `## Escalation` to parse).
+- Heuristic default with null `originating_command` maps to `In Progress`
+  (the documented fallback in the consumer SKILL.md).
+- Skill walks the human through each question via `AskUserQuestion`.
+- Skill presents the routing confirmation picker with `In Progress` listed FIRST
+  (default).
+- Human accepts the default (or overrides — see scenario 5 for override behavior).
+- Skill posts `## Unblock Resolution` with all Q&A pairs in order and
+  `Routing to: \`In Progress\``.
+- Skill calls `save_issue(workflowState="In Progress", command="ralph_unblock")`.
+- Skill records `unblock_resolved` outcome event with
+  `{ question_count: <n>, originating_command: null, return_state: "In Progress" }`.
+
+**Pass criteria**:
+- The interactive flow proceeds without error despite the missing `## Escalation`.
+- The routing picker presents `In Progress` as the first option.
+- The resolution comment quotes each question and answer verbatim.
+- Issue ends in `In Progress` (assuming the human accepts the default).
+- Outcome event payload has `originating_command: null` and the chosen
+  return state.
+
+**Regression coverage**: this scenario verifies the consumer flow is
+escalation-agnostic. If a future change accidentally requires `## Escalation`
+(e.g., aborting when absent, or refusing to compute a default return state
+without `originating_command`), this scenario fails immediately. Pair with
+ralph-unblock eval scenario `no-escalation-body-only` for end-to-end coverage
+of the no-escalation chain.
+
+---
+
 ## 8. `transition-blocked-by-gate`
 
 **Setup**:
