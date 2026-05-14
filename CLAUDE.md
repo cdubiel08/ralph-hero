@@ -76,6 +76,12 @@ Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that 
 > **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
 > the complexity-driven tier rules and `RALPH_<AGENT>_MODEL` override pattern.
 
+> `ralph-plan` skips writing a child plan file when invoked with `--parent-plan`
+> and the parent plan contains a phase matching the child by issue number or
+> title. The child receives a `## Plan Reference` comment and advances to
+> "In Progress" directly. See `docs/model-tier-policy.md` for the rationale and
+> `skills/ralph-plan/SKILL.md` Step 3.5 for the mapping rules.
+
 Key properties:
 - Skill content is injected into agent context with backtick preprocessing (env vars resolved at load time)
 - The agent's `tools:` field is a hard allowlist -- the runtime enforcement boundary
