@@ -212,8 +212,8 @@ When producers (ralph-impl, ralph-plan, etc.) escalate, they should post a prope
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `npm test` passes
-- [ ] No existing tests assume the old single-comment escalation pattern
+- [x] `npm test` passes
+- [x] No existing tests assume the old single-comment escalation pattern
 
 #### Manual Verification:
 - [ ] When ralph-impl or ralph-plan escalates an issue, the resulting Human Needed issue carries a `## Escalation` comment with the canonical body
