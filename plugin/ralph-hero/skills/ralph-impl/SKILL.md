@@ -306,6 +306,28 @@ For independent tasks: dispatch multiple `Agent()` calls in one turn.
 - `BLOCKED` → assess drift (minor: adapt+log, major: pause+escalate, weak model: upgrade once)
 - Max 3 retries per task. After 3: escalate to Human Needed.
 
+**Tier-escalation path (model-driven BLOCKED):**
+
+If the BLOCKED reason is "weak model" — i.e. the internal sub-agent retry budget
+has been exhausted at the highest internal tier (low → med → high already tried
+within ralph-impl) AND the dispatching session's model is NOT opus — emit a
+structured terminal line BEFORE stopping:
+
+```
+IMPL BLOCKED model=<current> needs=opus reason=<short-reason>
+```
+
+Do NOT call `save_issue(workflowState="__ESCALATE__")` in this path — leave the
+issue in "In Progress" so hero can re-dispatch with `model="opus"` once. The
+verdict-prefix protocol mirrors val-agent's `VALIDATION PASS|FIX|FAIL` contract
+(see `skills/ralph-val/SKILL.md:442-452`). The `impl-postcondition.sh` Stop hook
+inspects the transcript for the `^IMPL BLOCKED ` prefix and accepts it as a
+non-error terminal state.
+
+If the current dispatching model IS already opus, fall through to the existing
+escalate-to-Human-Needed path (`save_issue(workflowState="__ESCALATE__")`). A
+double-BLOCKED at opus is a real escalation, not a tier issue.
+
 **7d. Dispatch task reviewer** — Read `task-reviewer-prompt.md`, substitute task spec + report + tdd flag.
 ```
 Agent(subagent_type="general-purpose", model="haiku", prompt=rendered, description="Review task N.M")

@@ -332,11 +332,11 @@ Apply the same pattern to `split-agent` and `pr-agent`? **No** — split is hook
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Hero SKILL.md references RALPH_IMPL_MODEL: `grep -q 'RALPH_IMPL_MODEL' plugin/ralph-hero/skills/hero/SKILL.md`
-- [ ] ralph-impl SKILL.md documents the BLOCKED prefix: `grep -q '^IMPL BLOCKED ' plugin/ralph-hero/skills/ralph-impl/SKILL.md`
-- [ ] impl-postcondition.sh accepts the prefix: `grep -q 'IMPL BLOCKED' plugin/ralph-hero/hooks/scripts/impl-postcondition.sh`
-- [ ] Markdown lints: `npx markdownlint plugin/ralph-hero/skills/hero/SKILL.md plugin/ralph-hero/skills/ralph-impl/SKILL.md`
-- [ ] Hook syntax valid: `bash -n plugin/ralph-hero/hooks/scripts/impl-postcondition.sh`
+- [x] Hero SKILL.md references RALPH_IMPL_MODEL: `grep -q 'RALPH_IMPL_MODEL' plugin/ralph-hero/skills/hero/SKILL.md`
+- [x] ralph-impl SKILL.md documents the BLOCKED prefix: `grep -q '^IMPL BLOCKED ' plugin/ralph-hero/skills/ralph-impl/SKILL.md`
+- [x] impl-postcondition.sh accepts the prefix: `grep -q 'IMPL BLOCKED' plugin/ralph-hero/hooks/scripts/impl-postcondition.sh`
+- [x] Markdown lints: `npx markdownlint plugin/ralph-hero/skills/hero/SKILL.md plugin/ralph-hero/skills/ralph-impl/SKILL.md` (advisory; pre-existing violations unchanged by this phase)
+- [x] Hook syntax valid: `bash -n plugin/ralph-hero/hooks/scripts/impl-postcondition.sh`
 
 #### Manual Verification:
 - [ ] On a real moderately-complex issue, dispatch hero. Confirm impl-agent runs on sonnet (check the dispatch description includes "(sonnet)").
@@ -344,6 +344,8 @@ Apply the same pattern to `split-agent` and `pr-agent`? **No** — split is hook
 - [ ] Revert the synthetic edit.
 
 **Implementation Note**: This phase is the riskiest. After completing it, pause and run the synthetic BLOCKED test before proceeding to Phase 4. If the escalation loop misbehaves (infinite retry, missed escalate), do not proceed.
+
+**Implementation deviation (2026-05-14)**: The plan specified `grep -qE '^IMPL BLOCKED '` (with `^` anchor) inside `impl-postcondition.sh`. Synthetic-transcript testing revealed the marker appears inside a JSON `"text":"..."` content field in the JSONL transcript stream, never at column 0 — so the anchor would never match. Changed to `grep -qE 'IMPL BLOCKED '` (no anchor) to match `val-postcondition.sh:30`'s actual production pattern. Verified with a synthetic transcript: BLOCKED-prefix transcripts now exit 0; clean transcripts with missing worktree still exit 2 (no regression).
 
 ---
 

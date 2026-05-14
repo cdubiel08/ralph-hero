@@ -9,7 +9,32 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
-read_input > /dev/null
+# Capture the input JSON (rather than discarding) so we can inspect the
+# transcript for an "IMPL BLOCKED" verdict prefix below. read_input caches
+# its result via RALPH_HOOK_INPUT, so subsequent get_field calls (if any are
+# added later) still work.
+INPUT=$(read_input)
+
+# Accept IMPL BLOCKED as a non-error terminal state so hero can re-dispatch
+# the same issue at a higher model tier without the Stop hook treating the
+# tier-escalation handoff as a failure. Mirrors val-postcondition.sh:28-37 —
+# read transcript_path from stdin JSON, grep the raw transcript for the
+# marker. Runs BEFORE the worktree check so a BLOCKED early-exit (which can
+# happen before the worktree is fully populated) does not trip the
+# missing-worktree block.
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
+  # Match the marker anywhere in the transcript file (mirrors
+  # val-postcondition.sh:30 which also greps the JSONL transcript without
+  # anchoring — the marker appears inside a JSON "text":"..." content field,
+  # never at column 0, so a "^IMPL BLOCKED " anchor would never fire).
+  # The "IMPL " prefix and "BLOCKED " token together are unique enough that
+  # collision risk is negligible.
+  if grep -qE 'IMPL BLOCKED ' "$TRANSCRIPT_PATH"; then
+    echo "impl-postcondition: IMPL BLOCKED terminal accepted (hero will retry with higher tier)"
+    exit 0
+  fi
+fi
 
 # Only enforce for impl command
 if [[ "${RALPH_COMMAND:-}" != "impl" ]]; then
