@@ -59,19 +59,19 @@ plugin/
 
 Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that preloads the skill via the `skills:` field. The hero orchestrator dispatches these agents via `Agent()` calls with natural language prompts.
 
-| Agent | Model | Preloaded Skill | Tier |
-|-------|-------|-----------------|------|
-| `research-agent` | sonnet | ralph-research | Analyst |
-| `plan-agent` | opus | ralph-plan | Analyst |
-| `plan-epic-agent` | opus | ralph-plan-epic | Analyst |
-| `split-agent` | opus | ralph-split | Analyst |
-| `triage-agent` | sonnet | ralph-triage | Analyst |
-| `review-agent` | opus | ralph-review | Builder |
-| `impl-agent` | opus | ralph-impl | Builder |
-| `pr-agent` | haiku | ralph-pr | Integrator |
-| `merge-agent` | haiku | ralph-merge | Integrator |
-| `val-agent` | haiku | ralph-val | Integrator |
-| `unblock-agent` | sonnet | ralph-unblock | Async-loop |
+| Agent | Model | Preloaded Skill | Tier | Notes |
+|-------|-------|-----------------|------|-------|
+| `research-agent` | sonnet | ralph-research | Analyst | |
+| `plan-agent` | opus | ralph-plan | Analyst | |
+| `plan-epic-agent` | opus | ralph-plan-epic | Analyst | |
+| `split-agent` | sonnet | ralph-split | Analyst | Downgraded 2026-05-13; hook-gated decomposition. Override with `RALPH_SPLIT_MODEL=opus`. |
+| `triage-agent` | sonnet | ralph-triage | Analyst | |
+| `review-agent` | opus | ralph-review | Builder | |
+| `impl-agent` | sonnet | ralph-impl | Builder | Downgraded 2026-05-13. On `IMPL BLOCKED needs=opus` verdict, hero re-dispatches once with `model="opus"`. Override with `RALPH_IMPL_MODEL=opus`. |
+| `pr-agent` | haiku | ralph-pr | Integrator | |
+| `merge-agent` | haiku | ralph-merge | Integrator | |
+| `val-agent` | haiku | ralph-val | Integrator | |
+| `unblock-agent` | sonnet | ralph-unblock | Async-loop | |
 
 > **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
 > the complexity-driven tier rules and `RALPH_<AGENT>_MODEL` override pattern.

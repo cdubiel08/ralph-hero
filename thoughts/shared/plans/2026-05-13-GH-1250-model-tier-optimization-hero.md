@@ -520,10 +520,10 @@ The ASCII diagram to include:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] README contains the diagram: `grep -q 'PLAN REVIEW' plugin/ralph-hero/README.md` (or whichever unique token from the diagram)
-- [ ] README references the policy doc: `grep -q 'model-tier-policy' plugin/ralph-hero/README.md`
-- [ ] CLAUDE.md table updated: `awk '/split-agent/{print}/impl-agent/{print}' CLAUDE.md | grep -q sonnet`
-- [ ] Markdown lints across all touched docs.
+- [x] README contains the diagram: `grep -q 'PLAN REVIEW' plugin/ralph-hero/README.md` (or whichever unique token from the diagram)
+- [x] README references the policy doc: `grep -q 'model-tier-policy' plugin/ralph-hero/README.md`
+- [x] CLAUDE.md table updated: `awk '/split-agent/{print}/impl-agent/{print}' CLAUDE.md | grep -q sonnet`
+- [x] Markdown lints across all touched docs.
 
 #### Manual Verification:
 - [ ] Render the README in a markdown viewer; the ASCII diagram displays correctly in monospace.
