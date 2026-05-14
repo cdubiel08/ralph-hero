@@ -28,6 +28,7 @@ Standard comment headers used to link documents to GitHub issues. All document-p
 | `## Plan Revision Request` | Sibling or parent issue | What's needed, why current plan doesn't provide it | `ralph-impl` or `ralph-plan-feature` |
 | `## Unblock Request` | Issue (Human Needed) | 1–5 specific blocking questions extracted from `## Escalation` or LLM-reasoned | `ralph-unblock` |
 | `## Unblock Resolution` | Issue (Human Needed) | Question/answer pairs + chosen return state | `unblock` |
+| `## Escalation` | Issue (Human Needed) | `Escalation: <reason>` + `Originating command: ralph_<cmd>`. **Optional context** consumed by `ralph-unblock` (richer questions) and `/ralph-hero:unblock` (return-state heuristic). | Any skill that escalates to Human Needed via the shared `escalation-steps.md` fragment |
 
 ## Comment Format Examples
 

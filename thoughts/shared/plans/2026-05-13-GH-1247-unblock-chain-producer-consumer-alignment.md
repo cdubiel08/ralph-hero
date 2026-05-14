@@ -251,11 +251,11 @@ This lint is advisory — failing it means the skill is escalating without canon
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `bash plugin/ralph-hero/scripts/lint-escalation-contract.sh` exits 0 against main after Phase 3 lands
-- [ ] CI step for the lint passes on the PR
+- [x] `bash plugin/ralph-hero/scripts/lint-escalation-contract.sh` exits 0 against main after Phase 3 lands
+- [x] CI step for the lint passes on the PR
 
 #### Manual Verification:
-- [ ] `artifact-comment-protocol.md` lists `## Escalation` with the **Optional context** annotation
+- [x] `artifact-comment-protocol.md` lists `## Escalation` with the **Optional context** annotation
 
 ---
 
