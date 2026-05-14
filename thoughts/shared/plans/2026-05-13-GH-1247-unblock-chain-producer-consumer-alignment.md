@@ -125,8 +125,8 @@ Rationale: this lets the human force a fresh `## Unblock Request` by re-transiti
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` passes (no consumer code changes; this is a SKILL.md doc edit)
-- [ ] Hook tests still pass: `plugin/ralph-hero/hooks/scripts/unblock-request-postcondition.sh` still allows exit on either `RALPH_UNBLOCK_REQUEST_POSTED=1` or `RALPH_UNBLOCK_QUEUE_EMPTY=1`
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` passes (no consumer code changes; this is a SKILL.md doc edit)
+- [x] Hook tests still pass: `plugin/ralph-hero/hooks/scripts/unblock-request-postcondition.sh` still allows exit on either `RALPH_UNBLOCK_REQUEST_POSTED=1` or `RALPH_UNBLOCK_QUEUE_EMPTY=1`
 
 #### Manual Verification:
 - [ ] Skill description now leads with state-creation, not escalation-parsing
