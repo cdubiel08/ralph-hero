@@ -73,6 +73,9 @@ Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that 
 | `val-agent` | haiku | ralph-val | Integrator |
 | `unblock-agent` | sonnet | ralph-unblock | Async-loop |
 
+> **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
+> the complexity-driven tier rules and `RALPH_<AGENT>_MODEL` override pattern.
+
 Key properties:
 - Skill content is injected into agent context with backtick preprocessing (env vars resolved at load time)
 - The agent's `tools:` field is a hard allowlist -- the runtime enforcement boundary

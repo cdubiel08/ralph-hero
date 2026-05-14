@@ -171,9 +171,9 @@ Two reasons from the landcrawler-ai 30-day audit:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Policy doc exists: `test -f plugin/ralph-hero/docs/model-tier-policy.md`
-- [ ] CLAUDE.md references it: `grep -q "model-tier-policy" CLAUDE.md`
-- [ ] Markdown lints: `npx markdownlint plugin/ralph-hero/docs/model-tier-policy.md`
+- [x] Policy doc exists: `test -f plugin/ralph-hero/docs/model-tier-policy.md`
+- [x] CLAUDE.md references it: `grep -q "model-tier-policy" CLAUDE.md`
+- [x] Markdown lints: `npx markdownlint plugin/ralph-hero/docs/model-tier-policy.md`
 
 #### Manual Verification:
 - [ ] Read the policy doc end-to-end; the env-var pattern + escalation contract is unambiguous.
