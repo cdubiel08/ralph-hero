@@ -254,15 +254,15 @@ Author the skill, agent, and system prompt; ship `cos-remote.sh` as the first co
 
 #### Automated Verification
 
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos-remote.sh` exits 0
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos-desk.sh` exits 0
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos-unattended.sh` exits 0
-- [ ] `just --summary` includes `cos`
-- [ ] `head -1 plugin/ralph-hero/skills/cos/SKILL.md` matches `^---$` (valid frontmatter)
-- [ ] `head -1 plugin/ralph-hero/agents/cos-agent.md` matches `^---$` (valid frontmatter)
-- [ ] `wc -l plugin/ralph-hero/skills/cos/system-prompt.md` returns ≤ 80
-- [ ] `grep -rE '(^|\s)claude(\s|$)' plugin/ralph-hero/scripts/cos/cos-remote.sh` returns nothing (zero Claude Code on remote path)
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` still passes (no MCP-server changes in this phase, but the CI gate stays green)
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos-remote.sh` exits 0
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos-desk.sh` exits 0
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos-unattended.sh` exits 0
+- [x] `just --summary` includes `cos`
+- [x] `head -1 plugin/ralph-hero/skills/cos/SKILL.md` matches `^---$` (valid frontmatter)
+- [x] `head -1 plugin/ralph-hero/agents/cos-agent.md` matches `^---$` (valid frontmatter)
+- [x] `wc -l plugin/ralph-hero/skills/cos/system-prompt.md` returns ≤ 80 (35 lines)
+- [x] `grep -rE '(^|\s)claude(\s|$)' plugin/ralph-hero/scripts/cos/cos-remote.sh` returns nothing (zero Claude Code on remote path)
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` still passes (1505 passed, 3 skipped)
 
 #### Manual Verification
 
