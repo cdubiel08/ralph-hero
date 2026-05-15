@@ -181,17 +181,127 @@ jq -c . ~/.ralph-hero/cos/runs/$(date +%Y-%m-%d).jsonl | head -5
 
 ---
 
+## Unattended morning brief (Phase 3)
+
+Phase 3 ([GH-1255](https://github.com/cdubiel08/ralph-hero/issues/1255)) ships the first scheduled
+unattended cos job: a weekday 06:30 morning brief that synthesizes the project board and local knowledge
+corpus into `thoughts/shared/research/YYYY-MM-DD-cos-morning-brief.md`, then pushes a one-line summary
+via ntfy.
+
+### One-time setup: install ntfy
+
+```bash
+brew install ntfy
+```
+
+Configure a private topic in `~/.config/ntfy/client.yml` (create if it doesn't exist):
+
+```yaml
+default-host: https://ntfy.sh
+```
+
+Then subscribe to your private topic on your phone via the ntfy app. Pick a topic name that is
+hard to guess (treat it like a private channel):
+
+```
+cos-briefs-<user>-<random16hex>
+```
+
+Example: `cos-briefs-cdubiel08-a3f8c2d1e5b7`
+
+Protect the config file:
+
+```bash
+chmod 600 ~/.config/ntfy/client.yml
+```
+
+### Set the ntfy topic env var
+
+The script reads `RALPH_COS_NTFY_TOPIC` at runtime. If unset, the brief is still written to disk
+but the push is skipped (script exits 0 with a warning).
+
+```bash
+export RALPH_COS_NTFY_TOPIC=cos-briefs-cdubiel08-a3f8c2d1e5b7
+```
+
+Add this to your `~/.zshrc` (or equivalent) to make it permanent.
+
+### Manual trigger
+
+```bash
+ralph cos unattended --morning-brief
+```
+
+This calls `morning-brief.sh` synchronously and exits with its exit code. Use this to test without
+waiting for the 06:30 launchd fire.
+
+### Brief output path
+
+Every run writes to:
+
+```
+thoughts/shared/research/YYYY-MM-DD-cos-morning-brief.md
+```
+
+The file is auto-classified as `type: research` by ralph-knowledge's path-based detector
+(`/research/` segment in the path). No registry update needed — the next reindex pass ingests it.
+
+### Install the launchd plist (optional — fires at 06:30 Mon–Fri)
+
+```bash
+cp plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-morning-brief.plist.template \
+   ~/Library/LaunchAgents/com.ralph.cos-morning-brief.plist
+
+# Hand-edit the plist if your checkout lives at a different path:
+# nano ~/Library/LaunchAgents/com.ralph.cos-morning-brief.plist
+# Replace /Users/dubiel/... with your actual path.
+
+# Set your ntfy topic in the plist's EnvironmentVariables block:
+# <key>RALPH_COS_NTFY_TOPIC</key>
+# <string>cos-briefs-<user>-<random16hex></string>
+
+launchctl load ~/Library/LaunchAgents/com.ralph.cos-morning-brief.plist
+launchctl list | grep cos-morning-brief
+# PID column shows "-" when idle; exit code "0" after a successful run.
+```
+
+To unload:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.ralph.cos-morning-brief.plist
+```
+
+Logs:
+- stdout: `/tmp/ralph-cos-morning-brief.out`
+- stderr: `/tmp/ralph-cos-morning-brief.err`
+
+### Environment variables (Phase 3 additions)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RALPH_COS_NTFY_TOPIC` | (unset) | ntfy topic name. Unset = push skipped, script exits 0. |
+| `RALPH_COS_THOUGHTS_DIR` | `~/projects/thoughts` | Override for the thoughts/ corpus root directory. |
+
+These are additive — the Phase 1 variables (`RALPH_COS_ROLE`, `RALPH_COS_MODEL_*`, `RALPH_COS_DEBUG`, etc.)
+remain unchanged.
+
+---
+
 ## Directory layout
 
 ```
 plugin/ralph-hero/scripts/cos/
-├── README.md              # This file — operator setup guide
-├── PREFLIGHT.md           # Pre-flight install verification outputs (Task 1.0)
-├── model-roles.sh         # Sourced helper — resolves RALPH_COS_ROLE → COS_MODEL
-├── cos.sh                 # Entrypoint — invoke pi with model-role + JSONL logging
-├── mcp.json.example       # Template MCP config (placeholders substituted on install)
-├── install-mcp-config.sh  # Idempotent installer for mcp.json.example
-└── smoke.sh               # End-to-end smoke test (manual; requires pi + MLX server)
+├── README.md                     # This file — operator setup guide
+├── PREFLIGHT.md                  # Pre-flight install verification outputs (Task 1.0)
+├── model-roles.sh                # Sourced helper — resolves RALPH_COS_ROLE → COS_MODEL
+├── cos.sh                        # Entrypoint — invoke pi with model-role + JSONL logging
+├── cos-unattended.sh             # Dispatcher for scheduled unattended jobs (Phase 3)
+├── morning-brief.sh              # Weekday 06:30 morning brief + ntfy push (Phase 3)
+├── mcp.json.example              # Template MCP config (placeholders substituted on install)
+├── install-mcp-config.sh         # Idempotent installer for mcp.json.example
+├── smoke.sh                      # End-to-end smoke test (manual; requires pi + MLX server)
+└── launchd/
+    └── com.ralph.cos-morning-brief.plist.template   # launchd schedule template (Phase 3)
 ```
 
 ---
