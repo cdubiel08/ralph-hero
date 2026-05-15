@@ -98,23 +98,28 @@ if [[ -f "$TARGET_FILE" ]]; then
     # Extract incoming mcpServers from substituted example (strip _comment)
     INCOMING_SERVERS="$(echo "$SUBSTITUTED" | jq '.mcpServers')"
 
-    # For each incoming server key, add/replace if not already present
+    # Build the merged result entirely in memory across all keys, then write once.
+    # This avoids leaving TARGET_FILE in a partially-merged state if any jq call
+    # fails mid-loop under set -euo pipefail.
     ADDED_KEYS=""
     SKIPPED_KEYS=""
+    MERGED_IN_PROGRESS="$(jq '.' "$TARGET_FILE")"
 
     while IFS= read -r key; do
-        # Check if this server key already exists in target
-        if jq -e ".mcpServers | has(\"${key}\")" "$TARGET_FILE" >/dev/null 2>&1; then
+        # Check if this server key already exists in the in-memory accumulated result
+        if echo "$MERGED_IN_PROGRESS" | jq -e ".mcpServers | has(\"${key}\")" >/dev/null 2>&1; then
             SKIPPED_KEYS="${SKIPPED_KEYS} ${key}"
         else
-            # Add this server to the target file (idempotent)
+            # Accumulate new server into in-memory result — no file write yet
             SERVER_DEF="$(echo "$INCOMING_SERVERS" | jq --arg k "$key" '.[$k]')"
-            MERGED="$(jq --arg k "$key" --argjson v "$SERVER_DEF" \
-                '.mcpServers[$k] = $v' "$TARGET_FILE")"
-            echo "$MERGED" > "$TARGET_FILE"
+            MERGED_IN_PROGRESS="$(echo "$MERGED_IN_PROGRESS" | jq --arg k "$key" --argjson v "$SERVER_DEF" \
+                '.mcpServers[$k] = $v')"
             ADDED_KEYS="${ADDED_KEYS} ${key}"
         fi
     done < <(echo "$INCOMING_SERVERS" | jq -r 'keys[]')
+
+    # Single atomic write — only reached if all jq calls above succeeded
+    echo "$MERGED_IN_PROGRESS" > "$TARGET_FILE"
 
     echo "[install-mcp-config] Servers added:  ${ADDED_KEYS:-none}"
     echo "[install-mcp-config] Servers skipped (already present): ${SKIPPED_KEYS:-none}"
