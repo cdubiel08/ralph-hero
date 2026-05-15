@@ -1,0 +1,54 @@
+{
+  "_comment": [
+    "COS mode MCP config — mounts ralph-knowledge + ralph-github with read-only tool allowlists.",
+    "",
+    "WRITE GATE: Write tools (save_issue, create_issue, batch_update, etc.) are deliberately",
+    "omitted from the directTools allowlists below. To enable write tools for a session:",
+    "  1. Add the desired write tools to the directTools array for 'ralph-github'.",
+    "  2. Set RALPH_COS_ALLOW_WRITES=1 in the environment that invokes cos.sh.",
+    "Unattended COS jobs must NOT have write tools enabled without both gates in place.",
+    "",
+    "INSTALL: Run 'bash plugin/ralph-hero/scripts/cos/install-mcp-config.sh' to install.",
+    "The installer substitutes __PLUGIN_ROOT__, __GH_OWNER__, and __GH_PROJECT_NUMBER__",
+    "with resolved values and merges into ~/.config/mcp/mcp.json.",
+    "",
+    "Key reference (pi-mcp-adapter README):",
+    "  lifecycle    'lazy' | 'eager' | 'keep-alive'  (default: lazy)",
+    "  directTools  true | string[] | false  — register tools as direct Pi tools",
+    "               string[] = allowlist of specific tool names (original MCP names)"
+  ],
+  "mcpServers": {
+    "ralph-knowledge": {
+      "command": "npx",
+      "args": ["-y", "ralph-hero-knowledge-index@latest"],
+      "lifecycle": "lazy",
+      "directTools": [
+        "knowledge_search",
+        "knowledge_recall",
+        "knowledge_communities",
+        "knowledge_central",
+        "knowledge_memory_stats"
+      ]
+    },
+    "ralph-github": {
+      "command": "node",
+      "args": ["__PLUGIN_ROOT__/mcp-server/dist/index.js"],
+      "lifecycle": "lazy",
+      "env": {
+        "RALPH_GH_OWNER": "__GH_OWNER__",
+        "RALPH_GH_PROJECT_NUMBER": "__GH_PROJECT_NUMBER__"
+      },
+      "directTools": [
+        "ralph_hero__pipeline_dashboard",
+        "ralph_hero__next_actions",
+        "ralph_hero__project_hygiene",
+        "ralph_hero__metrics_trends",
+        "ralph_hero__recent_activity",
+        "ralph_hero__list_issues",
+        "ralph_hero__get_issue",
+        "ralph_hero__list_sub_issues",
+        "ralph_hero__list_dependencies"
+      ]
+    }
+  }
+}

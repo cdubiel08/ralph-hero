@@ -246,14 +246,14 @@ Install pi extensions, mount MCP servers into pi's global config, ship the `cos.
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `jq . plugin/ralph-hero/scripts/cos/mcp.json.example` exits 0 (valid JSON)
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos.sh` exits 0 (no syntax errors)
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/model-roles.sh` exits 0
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/install-mcp-config.sh` exits 0
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/smoke.sh` exits 0
-- [ ] `bash plugin/ralph-hero/scripts/cos/cos.sh --help` exits 0 and prints usage including `--role`
-- [ ] Sourcing test: `bash -c 'source plugin/ralph-hero/scripts/cos/model-roles.sh; RALPH_COS_ROLE=smol cos_resolve_model; echo "$COS_MODEL"'` prints `qwen3.5-7b`
-- [ ] Unknown role test: `bash -c 'source plugin/ralph-hero/scripts/cos/model-roles.sh; RALPH_COS_ROLE=bogus cos_resolve_model 2>/dev/null; echo "$COS_MODEL"'` prints `qwen3.5-27b` (default fallback)
+- [x] `jq . plugin/ralph-hero/scripts/cos/mcp.json.example` exits 0 (valid JSON)
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos.sh` exits 0 (no syntax errors)
+- [x] `bash -n plugin/ralph-hero/scripts/cos/model-roles.sh` exits 0
+- [x] `bash -n plugin/ralph-hero/scripts/cos/install-mcp-config.sh` exits 0
+- [x] `bash -n plugin/ralph-hero/scripts/cos/smoke.sh` exits 0
+- [x] `bash plugin/ralph-hero/scripts/cos/cos.sh --help` exits 0 and prints usage including `--role`
+- [x] Sourcing test: `bash -c 'source plugin/ralph-hero/scripts/cos/model-roles.sh; RALPH_COS_ROLE=smol cos_resolve_model; echo "$COS_MODEL"'` prints `qwen3.5-7b`
+- [x] Unknown role test: `bash -c 'source plugin/ralph-hero/scripts/cos/model-roles.sh; RALPH_COS_ROLE=bogus cos_resolve_model 2>/dev/null; echo "$COS_MODEL"'` prints `qwen3.5-27b` (default fallback)
 
 #### Manual Verification:
 - [ ] On a machine with `pi` + `mlx-openai-server` running, `bash plugin/ralph-hero/scripts/cos/smoke.sh` exits 0 within 30s
