@@ -206,6 +206,76 @@ GitHub Projects V2 is the source of truth for state — the board updates in rea
 - `7:00` — PR opens, CI runs — standard GitHub flow, nothing proprietary
 - `9:00` — PR merged, board shows Done; end-to-end traceability complete
 
+## Pipeline Overview
+
+The hero orchestrator dispatches per-phase agents based on the issue's workflow
+state and estimate. Each agent runs at a model tier matched to the complexity of
+its work — see [Model Tier Policy](#model-tier-policy) below for the rules and
+overrides.
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────┐
+│ /ralph-hero:hero NNN  →  get_issue(includePipeline=true) → phase = ?           │
+└────────────────────────────────────────────────────────────────────────────────┘
+                                       │
+        ┌──────────────────────────────┼──────────────────────────────┐
+        ▼                              ▼                              ▼
+   ┌──────────┐                ┌────────────┐                  ┌────────────┐
+   │  SPLIT   │  Skill         │  RESEARCH  │  Skill           │  COMPLETE  │
+   │  (M+L+XL)│  sonnet*       │  (per leaf)│  sonnet          │  no-op     │
+   └────┬─────┘                └──────┬─────┘                  └────────────┘
+                                      │  parallel sub-agents (haiku/sonnet)
+        ▼                             ▼
+                                  ┌─────────────────┐
+                                  │  PLAN           │
+                                  │  L/XL: epic     │  opus  → plan-of-plans
+                                  │  M/S/XS: plan   │  opus  → phased plan
+                                  │  (atomic w/parent│       → SKIPPED, posts
+                                  │   plan: REUSED)  │         Plan Reference
+                                  └────────┬────────┘
+                                           ▼
+                                  ┌─────────────────┐
+                                  │  PLAN REVIEW    │  opus
+                                  │  ralph-review   │
+                                  └────────┬────────┘
+                                           ▼
+                                  ┌─────────────────┐
+                                  │  IMPLEMENT      │
+                                  │  impl-agent     │  sonnet*
+                                  │  (BLOCKED →     │  → opus retry once
+                                  │   re-dispatch)  │
+                                  └────────┬────────┘
+                                           ▼
+                                  ┌─────────────────┐
+                                  │  PR             │  haiku
+                                  └────────┬────────┘
+                                           ▼
+                      ┌─────────── FINISH (sonnet) ───────────┐
+                      │ val(haiku) → code-review(sonnet)      │
+                      │   → impl-agent address mode (sonnet*) │
+                      │   → ralph-merge(haiku) → CI watch     │
+                      └───────────────────────────────────────┘
+
+* = downgraded from opus in 2026-05-13 model-tier optimization.
+  Override per-session with RALPH_<AGENT>_MODEL env var.
+  See docs/model-tier-policy.md.
+```
+
+### Model Tier Policy
+
+Ralph applies a complexity-driven model tier policy adapted from superpowers'
+subagent-driven-development skill: 1-2 files with a complete spec runs on
+`haiku`, multi-file integration / pattern matching / debugging runs on `sonnet`,
+and architecture / design / broad-codebase review runs on `opus`. Escalation is
+on BLOCKED, never preemptive.
+
+The current per-agent default tier and the per-session override pattern
+(`RALPH_<AGENT>_MODEL=opus|sonnet|haiku`) are documented in
+[`docs/model-tier-policy.md`](docs/model-tier-policy.md). The hero orchestrator
+honors `RALPH_IMPL_MODEL` when dispatching `impl-agent`, and re-dispatches once
+with `model="opus"` if the agent emits an `IMPL BLOCKED needs=opus` verdict
+prefix. A second BLOCKED escalates to Human Needed.
+
 ## Configuration
 
 ### Environment Variables

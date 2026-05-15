@@ -69,6 +69,18 @@ allow() {
   exit 0
 }
 
+# Short-circuit a Stop hook when the harness is already inside a stop_hook_active
+# pass. Requires read_input to have been called first (so RALPH_HOOK_INPUT is set).
+# Mirrors the inline guard at val-postcondition.sh:19-22 — promoted here so every
+# Stop hook can opt in with a single call instead of copy-pasting the four-liner.
+check_stop_hook_active() {
+  local stop_active
+  stop_active=$(get_field '.stop_hook_active')
+  if [[ "$stop_active" == "true" ]]; then
+    exit 0
+  fi
+}
+
 # Check if on required branch
 check_branch() {
   local required="${RALPH_REQUIRED_BRANCH:-main}"

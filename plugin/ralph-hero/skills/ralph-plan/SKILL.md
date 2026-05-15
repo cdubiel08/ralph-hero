@@ -191,6 +191,58 @@ The parent plan's shared constraints are inherited verbatim into this plan's `##
 
 5. **Wait for sub-tasks** before proceeding
 
+### Step 3.5 — Parent Plan Reuse Check
+
+If `--parent-plan PATH` was provided:
+
+1. Read the parent plan. Search for a phase heading whose name maps to this
+   child issue. Mapping rules (in priority order):
+
+   1.1. Frontmatter `child_plans:` mapping if present.
+   1.2. Phase heading containing `GH-NNN` (the child issue number).
+   1.3. Phase heading whose title closely matches the child issue title
+        (>=70% token overlap, case-insensitive).
+
+2. If a matching phase is found AND the phase block contains:
+
+   2.1. At least one `**File**: <path>` line, AND
+   2.2. A `### Success Criteria:` subsection with at least one
+        `Automated Verification` item.
+
+   Then the parent plan covers this child. Take the SHORT path:
+
+   2.3. Post a `## Plan Reference` artifact comment on the child issue using
+        the protocol from `skills/shared/artifact-comment-protocol.md`. The
+        comment body MUST include a fragment anchor matching the phase heading
+        slug (e.g. `#phase-2-impl-agent-emits-blocked-verdict-prefix`) so
+        impl-agent's reader (ralph-impl/SKILL.md:125) can extract it. Format:
+
+        ```
+        ## Plan Reference
+
+        https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/<parent-plan-path>#<phase-anchor>
+
+        Parent plan: <parent-plan-path>
+        Phase: <phase-heading>
+        Shared constraints inherited from parent plan.
+        ```
+
+   2.4. Advance the child issue workflow state directly to "In Progress" via
+        `save_issue(number=NNN, workflowState="In Progress", command="ralph_plan")`.
+        Skip "Plan in Review" entirely.
+   2.5. Do NOT write a new plan file.
+   2.6. Emit a terminal line (substitute parent plan path, phase heading,
+        and child issue number):
+
+        ```
+        PLAN REUSED parent=PATH phase=HEADING child=GH-NNN
+        ```
+
+   2.7. Stop. The phase task is complete.
+
+3. If the parent plan does NOT cover this child (heading not found, or phase
+   block too thin), fall through to normal plan generation per Step 4.
+
 ### Sibling Context (if --sibling-context provided)
 
 When planning a Wave 2+ feature, the epic planner provides concrete interface definitions from completed sibling plans:

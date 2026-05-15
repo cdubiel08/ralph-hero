@@ -408,15 +408,48 @@ AskUserQuestion(
 
 #### IMPLEMENT tasks
 
-Before dispatching, check the completed plan task's metadata for `artifact_path`. If present, include the plan doc path in the prompt:
+Before dispatching, check the completed plan task's metadata for `artifact_path`. If present, include the plan doc path in the prompt.
+
+**Model selection** — read `${RALPH_IMPL_MODEL:-sonnet}` and pass it explicitly so the dispatch tier is controllable per-session via env without editing frontmatter (see `plugin/ralph-hero/docs/model-tier-policy.md`):
 
 ```
-Agent(subagent_type="ralph-hero:impl-agent", prompt="Implement GH-NNN. Plan doc: thoughts/shared/plans/...")
+impl_model = os.environ.get("RALPH_IMPL_MODEL", "sonnet")
+Agent(subagent_type="ralph-hero:impl-agent",
+      model=impl_model,
+      prompt="Implement GH-NNN. Plan doc: thoughts/shared/plans/...",
+      description=f"Implement GH-NNN ({impl_model})")
 ```
+
 If no `artifact_path` available:
 ```
-Agent(subagent_type="ralph-hero:impl-agent", prompt="Implement GH-NNN")
+Agent(subagent_type="ralph-hero:impl-agent",
+      model=impl_model,
+      prompt="Implement GH-NNN",
+      description=f"Implement GH-NNN ({impl_model})")
 ```
+
+(Hero's SKILL.md is markdown prose with Python-style examples; the env-var read + explicit `model=` is the dispatch contract Hero performs.)
+
+**Parallel impl dispatch** (multiple unblocked impl tasks, see Step 3 of the Execution Loop): apply the SAME `RALPH_IMPL_MODEL`-derived model to every parallel `Agent()` call. They all dispatch as a single message at the same tier.
+
+**BLOCKED escalation — re-dispatch once with opus:**
+
+After impl-agent returns, inspect its final terminal output. If it contains the verdict line `IMPL BLOCKED ` (the full format is `IMPL BLOCKED model=<x> needs=opus reason=<short>` — match on the `IMPL BLOCKED ` prefix only, not the full string, so detection cannot drift from the emitted format):
+
+- If this dispatch's model was NOT opus AND no prior opus retry has occurred for this issue:
+  re-dispatch the SAME issue with `model="opus"`:
+  ```
+  Agent(subagent_type="ralph-hero:impl-agent",
+        model="opus",
+        prompt="Implement GH-NNN. Plan doc: ... (retry after BLOCKED at lower tier)",
+        description="Retry GH-NNN with opus after BLOCKED")
+  ```
+  Mark a per-issue retry counter in TaskList metadata so a second BLOCKED at opus does not loop.
+- If this dispatch's model WAS opus, OR the retry counter is already 1 (one prior opus retry):
+  escalate via `save_issue(workflowState="__ESCALATE__", command="ralph_impl")` to Human Needed.
+  STOP the hero loop and report the BLOCKED reason.
+
+The contract is: at most ONE re-dispatch at the higher tier. A double-BLOCKED is a real escalation, not a model-tier issue.
 
 ### Dispatch Architecture
 
@@ -425,7 +458,7 @@ Hero uses **two distinct dispatch modes** depending on session type:
 **Single-session mode (default)**: Hero mixes `Skill()` and `Agent()` dispatch by phase:
 
 - **Analyst phases (research, plan, review)**: `Skill()` inline — opus/sonnet models that benefit from context sharing in hero's window.
-- **Implementation**: `Agent(impl-agent)` — runs in isolated worktree, opus model.
+- **Implementation**: `Agent(impl-agent)` — runs in isolated worktree. Default model is sonnet (driven by `${RALPH_IMPL_MODEL:-sonnet}`); on an `IMPL BLOCKED ` verdict line Hero re-dispatches once with `model="opus"`. See `plugin/ralph-hero/docs/model-tier-policy.md`.
 - **PR phase**: `Agent(pr-agent)` — haiku model in isolated context (haiku in Opus 1M envelope is wasteful, and pr-agent has no nested fan-out so it's depth-2 safe).
 - **Validate phase**: `Agent(val-agent)` — haiku model in isolated context.
 - **Merge phase**: `Skill(ralph-merge)` inline (called from `finish`) — preserves the `code-review:code-review` parallel-agent fan-out at depth 0. Hoisting code review into `finish` (per Path B in GH-895) means `ralph-merge` is now a leaf merge-mechanics skill; running it inline keeps the merge chain depth-2 safe.

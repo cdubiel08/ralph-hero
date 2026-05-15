@@ -1,7 +1,7 @@
 ---
 name: impl-agent
-description: Implement issues - executes one phase per invocation in an isolated worktree, handles PR review feedback
-model: opus
+description: Implement issues - executes one phase per invocation in an isolated worktree, handles PR review feedback. Default sonnet per docs/model-tier-policy.md. Hero dispatches with explicit model= (RALPH_IMPL_MODEL or "sonnet"), escalating to opus on BLOCKED. See ralph-impl/SKILL.md verdict-prefix contract.
+model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash, Agent, mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues, mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment, mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
 skills:
   - ralph-hero:ralph-impl

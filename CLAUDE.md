@@ -59,19 +59,28 @@ plugin/
 
 Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that preloads the skill via the `skills:` field. The hero orchestrator dispatches these agents via `Agent()` calls with natural language prompts.
 
-| Agent | Model | Preloaded Skill | Tier |
-|-------|-------|-----------------|------|
-| `research-agent` | sonnet | ralph-research | Analyst |
-| `plan-agent` | opus | ralph-plan | Analyst |
-| `plan-epic-agent` | opus | ralph-plan-epic | Analyst |
-| `split-agent` | opus | ralph-split | Analyst |
-| `triage-agent` | sonnet | ralph-triage | Analyst |
-| `review-agent` | opus | ralph-review | Builder |
-| `impl-agent` | opus | ralph-impl | Builder |
-| `pr-agent` | haiku | ralph-pr | Integrator |
-| `merge-agent` | haiku | ralph-merge | Integrator |
-| `val-agent` | haiku | ralph-val | Integrator |
-| `unblock-agent` | sonnet | ralph-unblock | Async-loop |
+| Agent | Model | Preloaded Skill | Tier | Notes |
+|-------|-------|-----------------|------|-------|
+| `research-agent` | sonnet | ralph-research | Analyst | |
+| `plan-agent` | opus | ralph-plan | Analyst | |
+| `plan-epic-agent` | opus | ralph-plan-epic | Analyst | |
+| `split-agent` | sonnet | ralph-split | Analyst | Downgraded 2026-05-13; hook-gated decomposition. Override with `RALPH_SPLIT_MODEL=opus`. |
+| `triage-agent` | sonnet | ralph-triage | Analyst | |
+| `review-agent` | opus | ralph-review | Builder | |
+| `impl-agent` | sonnet | ralph-impl | Builder | Downgraded 2026-05-13. On `IMPL BLOCKED needs=opus` verdict, hero re-dispatches once with `model="opus"`. Override with `RALPH_IMPL_MODEL=opus`. |
+| `pr-agent` | haiku | ralph-pr | Integrator | |
+| `merge-agent` | haiku | ralph-merge | Integrator | |
+| `val-agent` | haiku | ralph-val | Integrator | |
+| `unblock-agent` | sonnet | ralph-unblock | Async-loop | |
+
+> **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
+> the complexity-driven tier rules and `RALPH_<AGENT>_MODEL` override pattern.
+
+> `ralph-plan` skips writing a child plan file when invoked with `--parent-plan`
+> and the parent plan contains a phase matching the child by issue number or
+> title. The child receives a `## Plan Reference` comment and advances to
+> "In Progress" directly. See `docs/model-tier-policy.md` for the rationale and
+> `skills/ralph-plan/SKILL.md` Step 3.5 for the mapping rules.
 
 Key properties:
 - Skill content is injected into agent context with backtick preprocessing (env vars resolved at load time)
@@ -269,6 +278,8 @@ The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token, then to `gh auth token`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
+| `RALPH_IMPL_MODEL` | No | Override the model hero passes to `impl-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`; the BLOCKED-escalation path re-dispatches once at `opus` regardless. See `plugin/ralph-hero/docs/model-tier-policy.md`. |
+| `RALPH_SPLIT_MODEL` | No | Override the model hero passes to `split-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`. See `plugin/ralph-hero/docs/model-tier-policy.md`. |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging, register debug tools, and activate OpenTelemetry export (when `OTEL_*` vars are also set). Acts as the master switch for all debug surfaces. |
 
 **Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.

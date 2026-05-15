@@ -163,6 +163,12 @@ This section is inherited verbatim by every feature plan.]
 
 ## Feature Decomposition
 
+> **Tip**: When child issues are already created, name phases like
+> `### Feature A: [name] (GH-NNN)` so that `ralph-plan` Step 3.5 can detect
+> parent-plan reuse via mapping rule 1.2 (heading contains `GH-NNN`) and
+> skip child plan generation. Without `GH-NNN` in the heading, the title-
+> token-overlap fallback (mapping rule 1.3, >=70% overlap) still works.
+
 ### Feature A: [name] (GH-NNN)
 - **depends_on**: null
 - **produces**: [interfaces, files, capabilities other features depend on]
@@ -251,6 +257,13 @@ While unplanned is not empty:
       # Extract: ## Overview section, interface contracts (type names, function sigs, file paths)
 
     # Invoke ralph-plan for this feature
+    # NOTE: The "GH-{feature_number}" prefix is load-bearing — ralph-plan's
+    # Step 3.5 (Parent Plan Reuse Check) uses mapping rule 1.2 to find a
+    # phase heading in the parent plan containing this exact "GH-NNN" token.
+    # When a match is found AND the phase has File ownership + Automated
+    # Verification entries, ralph-plan SKIPS writing a child plan file and
+    # posts a `## Plan Reference` comment instead, advancing the child
+    # directly to "In Progress". See ralph-plan/SKILL.md Step 3.5.
     Skill("ralph-hero:ralph-plan",
       "GH-{feature_number} --parent-plan {plan_of_plans_path} --sibling-context {sibling_context}")
 
