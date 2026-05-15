@@ -5,12 +5,15 @@
 # against the local mlx-openai-server, and appends a JSONL run-log row.
 #
 # Usage:
-#   cos.sh [--role <role>] [--help|-h] <prompt>
+#   cos.sh [--role <role>] [--append-system-prompt <file>] [--help|-h] <prompt>
 #
 # Options:
-#   --role <name>   Model role to use. One of: default, smol, slow, plan.
-#                   Overrides RALPH_COS_ROLE env var.
-#   --help, -h      Print this usage and exit 0.
+#   --role <name>              Model role to use. One of: default, smol, slow, plan.
+#                              Overrides RALPH_COS_ROLE env var.
+#   --append-system-prompt <f> Append the contents of <file> to pi's system prompt.
+#                              Passed through to pi as --append-system-prompt.
+#                              May be specified multiple times.
+#   --help, -h                 Print this usage and exit 0.
 #
 # Environment:
 #   RALPH_COS_ROLE              Role (default: "default")
@@ -43,12 +46,13 @@ _usage() {
 cos.sh — chief-of-staff wrapper for pi (local MLX model)
 
 Usage:
-  cos.sh [--role <role>] <prompt>
+  cos.sh [--role <role>] [--append-system-prompt <file>] <prompt>
   cos.sh --help
 
 Options:
-  --role <name>   Model role: default | smol | slow | plan  (default: default)
-  --help, -h      Show this help and exit 0
+  --role <name>              Model role: default | smol | slow | plan  (default: default)
+  --append-system-prompt <f> Append file contents to the system prompt (repeatable)
+  --help, -h                 Show this help and exit 0
 
 Model roles (env-overridable defaults):
   default   qwen3.5-27b  (RALPH_COS_MODEL_DEFAULT)
@@ -77,6 +81,7 @@ fi
 # Argument parsing
 # ---------------------------------------------------------------------------
 ROLE_OVERRIDE=""
+APPEND_SYSTEM_PROMPT_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -90,6 +95,18 @@ while [[ $# -gt 0 ]]; do
                 exit 2
             fi
             ROLE_OVERRIDE="$2"
+            shift 2
+            ;;
+        --append-system-prompt)
+            if [[ -z "${2:-}" ]]; then
+                echo "[cos] ERROR: --append-system-prompt requires a file path" >&2
+                exit 2
+            fi
+            if [[ ! -f "$2" ]]; then
+                echo "[cos] ERROR: --append-system-prompt file not found: $2" >&2
+                exit 2
+            fi
+            APPEND_SYSTEM_PROMPT_ARGS+=("--append-system-prompt" "$2")
             shift 2
             ;;
         --)
@@ -138,7 +155,7 @@ COS_TOOLS="${RALPH_COS_TOOLS:-read,write,grep,find}"
 # Debug output
 # ---------------------------------------------------------------------------
 if [[ "${RALPH_COS_DEBUG:-}" == "1" ]]; then
-    echo "[cos] role=${RESOLVED_ROLE} model=${COS_MODEL} tools=${COS_TOOLS}" >&2
+    echo "[cos] role=${RESOLVED_ROLE} model=${COS_MODEL} tools=${COS_TOOLS} append_system_prompt_files=${#APPEND_SYSTEM_PROMPT_ARGS[@]}" >&2
 fi
 
 # ---------------------------------------------------------------------------
@@ -183,6 +200,7 @@ pi \
     --provider mlx-local \
     --model "$COS_MODEL" \
     --tools "$COS_TOOLS" \
+    "${APPEND_SYSTEM_PROMPT_ARGS[@]+"${APPEND_SYSTEM_PROMPT_ARGS[@]}"}" \
     -p "$PROMPT" \
     || EXIT_CODE=$?
 

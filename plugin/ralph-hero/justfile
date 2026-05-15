@@ -277,6 +277,58 @@ setup *args:
     set -- $_args
     dispatch "setup" "$@"
 
+# Chief-of-staff: phone-friendly status (remote), desktop dashboard (desk), or scheduled brief (unattended)
+# Usage: just cos [desk|remote|unattended] [args...]
+#   ralph cos remote       - 2-3 sentence status summary via local LLM (30-min cache)
+#   ralph cos desk         - Streamlit desktop dashboard (Phase 5, GH-1257)
+#   ralph cos unattended   - Scheduled morning brief + ntfy (Phase 3, GH-1255)
+#   ralph cos --help       - Show this help
+[group('cos')]
+cos mode='--help' *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PLUGIN_DIR="{{justfile_directory()}}"
+    case "{{mode}}" in
+        --help|-h|'')
+            printf '%s\n' \
+                "ralph cos - chief-of-staff operating modes" \
+                "" \
+                "Usage:" \
+                "  ralph cos <mode> [args...]" \
+                "" \
+                "Modes:" \
+                "  remote       Phone-friendly 2-3 sentence status summary via local LLM." \
+                "               Cached 30 min at ~/.ralph-hero/cos/cache/remote-status.json." \
+                "               Zero Claude Code - routes through cos.sh -> mlx-openai-server." \
+                "  desk         Interactive Streamlit dashboard. (Phase 5 - GH-1257)" \
+                "  unattended   Scheduled morning brief + ntfy push. (Phase 3 - GH-1255)" \
+                "" \
+                "Options:" \
+                "  --help, -h   Show this help and exit 0" \
+                "" \
+                "Examples:" \
+                "  ralph cos remote" \
+                "  ralph cos remote --no-cache" \
+                "  ralph cos desk" \
+                "  ralph cos unattended"
+            exit 0
+            ;;
+        desk)
+            exec "${PLUGIN_DIR}/scripts/cos/cos-desk.sh" {{args}}
+            ;;
+        remote)
+            exec "${PLUGIN_DIR}/scripts/cos/cos-remote.sh" {{args}}
+            ;;
+        unattended)
+            exec "${PLUGIN_DIR}/scripts/cos/cos-unattended.sh" {{args}}
+            ;;
+        *)
+            echo "unknown cos mode: {{mode}}" >&2
+            echo "Run 'ralph cos --help' for usage." >&2
+            exit 2
+            ;;
+    esac
+
 # Diagnose setup issues - checks env, deps, plugin manifest, and API connectivity
 [group('setup')]
 doctor:
