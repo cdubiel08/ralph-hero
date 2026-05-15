@@ -9,11 +9,11 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
-# Capture the input JSON (rather than discarding) so we can inspect the
-# transcript for an "IMPL BLOCKED" verdict prefix below. read_input caches
-# its result via RALPH_HOOK_INPUT, so subsequent get_field calls (and the
-# check_stop_hook_active helper) still work.
-INPUT=$(read_input)
+# Cache stdin into RALPH_HOOK_INPUT so check_stop_hook_active and get_field
+# below can read it. Must NOT use command substitution (`INPUT=$(read_input)`)
+# because read_input's `export` would run in a subshell and not persist —
+# every other hook in this directory uses the `read_input > /dev/null` form.
+read_input > /dev/null
 check_stop_hook_active
 
 # Accept IMPL BLOCKED as a non-error terminal state so hero can re-dispatch
