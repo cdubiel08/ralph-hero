@@ -288,6 +288,8 @@ cos mode='--help' *args:
     #!/usr/bin/env bash
     set -euo pipefail
     PLUGIN_DIR="{{justfile_directory()}}"
+    _args={{quote(args)}}
+    set -- $_args
     case "{{mode}}" in
         --help|-h|'')
             printf '%s\n' \
@@ -314,13 +316,13 @@ cos mode='--help' *args:
             exit 0
             ;;
         desk)
-            exec "${PLUGIN_DIR}/scripts/cos/cos-desk.sh" {{args}}
+            exec "${PLUGIN_DIR}/scripts/cos/cos-desk.sh" "$@"
             ;;
         remote)
-            exec "${PLUGIN_DIR}/scripts/cos/cos-remote.sh" {{args}}
+            exec "${PLUGIN_DIR}/scripts/cos/cos-remote.sh" "$@"
             ;;
         unattended)
-            exec "${PLUGIN_DIR}/scripts/cos/cos-unattended.sh" {{args}}
+            exec "${PLUGIN_DIR}/scripts/cos/cos-unattended.sh" "$@"
             ;;
         *)
             echo "unknown cos mode: {{mode}}" >&2
