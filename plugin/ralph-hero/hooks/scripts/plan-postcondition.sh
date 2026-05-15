@@ -11,9 +11,10 @@ source "$(dirname "$0")/hook-utils.sh"
 
 # Capture the input JSON (rather than discarding) so we can inspect the
 # transcript for a "PLAN REUSED" verdict prefix below. read_input caches
-# its result via RALPH_HOOK_INPUT, so subsequent get_field calls (if any are
-# added later) still work.
+# its result via RALPH_HOOK_INPUT, so subsequent get_field calls (and the
+# check_stop_hook_active helper) still work.
 INPUT=$(read_input)
+check_stop_hook_active
 
 # Accept PLAN REUSED as a non-error terminal state so ralph-plan can short-
 # circuit child plan generation when the parent plan already covers the
@@ -22,7 +23,7 @@ INPUT=$(read_input)
 # the raw transcript for the marker. Runs BEFORE the ticket/plan-doc check
 # so a REUSED early-exit (which does NOT write a plan file) does not trip the
 # missing-plan-doc block.
-TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+TRANSCRIPT_PATH=$(get_field '.transcript_path')
 if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
   # Match the marker anywhere in the transcript file (mirrors
   # impl-postcondition.sh:33 which also greps the JSONL transcript without

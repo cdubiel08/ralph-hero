@@ -434,7 +434,7 @@ Agent(subagent_type="ralph-hero:impl-agent",
 
 **BLOCKED escalation — re-dispatch once with opus:**
 
-After impl-agent returns, inspect its final terminal output. If it begins with `IMPL BLOCKED needs=opus`:
+After impl-agent returns, inspect its final terminal output. If it contains the verdict line `IMPL BLOCKED ` (the full format is `IMPL BLOCKED model=<x> needs=opus reason=<short>` — match on the `IMPL BLOCKED ` prefix only, not the full string, so detection cannot drift from the emitted format):
 
 - If this dispatch's model was NOT opus AND no prior opus retry has occurred for this issue:
   re-dispatch the SAME issue with `model="opus"`:
@@ -458,7 +458,7 @@ Hero uses **two distinct dispatch modes** depending on session type:
 **Single-session mode (default)**: Hero mixes `Skill()` and `Agent()` dispatch by phase:
 
 - **Analyst phases (research, plan, review)**: `Skill()` inline — opus/sonnet models that benefit from context sharing in hero's window.
-- **Implementation**: `Agent(impl-agent)` — runs in isolated worktree. Default model is sonnet (driven by `${RALPH_IMPL_MODEL:-sonnet}`); on `IMPL BLOCKED needs=opus` Hero re-dispatches once with `model="opus"`. See `plugin/ralph-hero/docs/model-tier-policy.md`.
+- **Implementation**: `Agent(impl-agent)` — runs in isolated worktree. Default model is sonnet (driven by `${RALPH_IMPL_MODEL:-sonnet}`); on an `IMPL BLOCKED ` verdict line Hero re-dispatches once with `model="opus"`. See `plugin/ralph-hero/docs/model-tier-policy.md`.
 - **PR phase**: `Agent(pr-agent)` — haiku model in isolated context (haiku in Opus 1M envelope is wasteful, and pr-agent has no nested fan-out so it's depth-2 safe).
 - **Validate phase**: `Agent(val-agent)` — haiku model in isolated context.
 - **Merge phase**: `Skill(ralph-merge)` inline (called from `finish`) — preserves the `code-review:code-review` parallel-agent fan-out at depth 0. Hoisting code review into `finish` (per Path B in GH-895) means `ralph-merge` is now a leaf merge-mechanics skill; running it inline keeps the merge chain depth-2 safe.

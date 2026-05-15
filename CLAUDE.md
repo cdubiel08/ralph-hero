@@ -278,6 +278,8 @@ The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token, then to `gh auth token`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
+| `RALPH_IMPL_MODEL` | No | Override the model hero passes to `impl-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`; the BLOCKED-escalation path re-dispatches once at `opus` regardless. See `plugin/ralph-hero/docs/model-tier-policy.md`. |
+| `RALPH_SPLIT_MODEL` | No | Override the model hero passes to `split-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`. See `plugin/ralph-hero/docs/model-tier-policy.md`. |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging, register debug tools, and activate OpenTelemetry export (when `OTEL_*` vars are also set). Acts as the master switch for all debug surfaces. |
 
 **Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.

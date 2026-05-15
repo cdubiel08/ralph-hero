@@ -11,9 +11,10 @@ source "$(dirname "$0")/hook-utils.sh"
 
 # Capture the input JSON (rather than discarding) so we can inspect the
 # transcript for an "IMPL BLOCKED" verdict prefix below. read_input caches
-# its result via RALPH_HOOK_INPUT, so subsequent get_field calls (if any are
-# added later) still work.
+# its result via RALPH_HOOK_INPUT, so subsequent get_field calls (and the
+# check_stop_hook_active helper) still work.
 INPUT=$(read_input)
+check_stop_hook_active
 
 # Accept IMPL BLOCKED as a non-error terminal state so hero can re-dispatch
 # the same issue at a higher model tier without the Stop hook treating the
@@ -22,7 +23,7 @@ INPUT=$(read_input)
 # marker. Runs BEFORE the worktree check so a BLOCKED early-exit (which can
 # happen before the worktree is fully populated) does not trip the
 # missing-worktree block.
-TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+TRANSCRIPT_PATH=$(get_field '.transcript_path')
 if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
   # Match the marker anywhere in the transcript file (mirrors
   # val-postcondition.sh:30 which also greps the JSONL transcript without

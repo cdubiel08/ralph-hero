@@ -321,7 +321,9 @@ Do NOT call `save_issue(workflowState="__ESCALATE__")` in this path — leave th
 issue in "In Progress" so hero can re-dispatch with `model="opus"` once. The
 verdict-prefix protocol mirrors val-agent's `VALIDATION PASS|FIX|FAIL` contract
 (see `skills/ralph-val/SKILL.md:442-452`). The `impl-postcondition.sh` Stop hook
-inspects the transcript for the `^IMPL BLOCKED ` prefix and accepts it as a
+greps the transcript for the unanchored `IMPL BLOCKED ` token (the marker is
+embedded inside a JSON `"text":"..."` field in the JSONL transcript and never
+appears at column 0, so the pattern is not caret-anchored) and accepts it as a
 non-error terminal state.
 
 If the current dispatching model IS already opus, fall through to the existing
