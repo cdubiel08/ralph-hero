@@ -20,15 +20,16 @@ knowledge_recall(role="researcher", query="recent reflections {{DATE}}", limit=3
 This returns the top 3 recent reflections from the dream-loop tier. Note any themes or
 recurring blockers.
 
-### Step 2 — Pull project board activity (last 24 hours)
+### Step 2 — Pull project board activity (today)
 
 Call:
 ```
-ralph_hero__recent_activity(since="24h", compact=true, limit=20)
+ralph_hero__recent_activity(since=null, compact=true, limit=20)
 ```
 
-Summarise what moved on the board: which issues advanced states, which were commented on,
-which were closed or opened.
+`since=null` returns all activity logged today (the documented default). Summarise what
+moved on the board: which issues advanced states, which were commented on, which were
+closed or opened.
 
 ### Step 3 — Pull next actionable items
 
