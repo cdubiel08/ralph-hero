@@ -413,6 +413,91 @@ remain unchanged.
 
 ---
 
+## Self-improvement loop (Phase 6)
+
+Phase 6 ([GH-1258](https://github.com/cdubiel08/ralph-hero/issues/1258)) ships a nightly launchd job that grades the last 7 morning briefs against a 5-dimension rubric (specificity, actionability, signal-vs-noise, novelty, brevity — each scored 1–5) and, when the mean score falls below 3.5, drafts a revised `system-prompt.md` via `cos.sh --role slow` and opens a GitHub PR labeled `cos-self-improvement` for human review. The script **never auto-merges** — the human is the gate, always.
+
+### Environment flags
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RALPH_COS_SELF_IMPROVE` | (unset) | **Safety gate.** Must be exactly `"1"` to enable. Unset or any other value → exits 0 immediately with a "quarantined" log line. |
+| `RALPH_COS_SELF_IMPROVE_DRY_RUN` | (unset) | Set to `"1"` to run the full grading + draft pipeline but skip `git push` and `gh pr create`. The branch and commit are created locally for inspection. Used by the smoke test and for first-time manual verification. |
+
+### Two-manual-verification policy
+
+**Do NOT set `RALPH_COS_SELF_IMPROVE=1` in the plist's EnvironmentVariables until you have manually invoked `self-improve.sh` twice with the env var set in your shell and confirmed both PRs are sensible.**
+
+Manual verification workflow:
+
+```bash
+# First manual run (dry-run — no push, no PR)
+RALPH_COS_SELF_IMPROVE=1 RALPH_COS_SELF_IMPROVE_DRY_RUN=1 \
+    plugin/ralph-hero/scripts/cos/self-improve.sh
+
+# Inspect the score table (stdout) and mean line (stderr)
+# If mean < 3.5: inspect the locally-created branch's system-prompt.md diff
+# git diff main plugin/ralph-hero/skills/cos/system-prompt.md
+
+# If the draft looks sensible, run without dry-run for real verification run #1:
+RALPH_COS_SELF_IMPROVE=1 plugin/ralph-hero/scripts/cos/self-improve.sh
+# → Opens a real PR. Review it on GitHub. If it looks good, close (do not merge yet).
+
+# Repeat for verification run #2. After two sensible PRs, set RALPH_COS_SELF_IMPROVE=1
+# in the launchd plist's EnvironmentVariables and reload:
+launchctl unload ~/Library/LaunchAgents/com.ralph.cos-self-improve.plist
+launchctl load   ~/Library/LaunchAgents/com.ralph.cos-self-improve.plist
+```
+
+The `cos-self-improvement` GitHub label is created idempotently by the script on first run. A future auto-merge integration (if ever introduced) would key off this label — but v1 intentionally has no such automation.
+
+### Smoke test
+
+```bash
+plugin/ralph-hero/scripts/cos/self-improve-smoke.sh
+```
+
+Creates a tmpdir with 7 synthetic low-quality briefs, runs `self-improve.sh` in dry-run mode, and asserts the expected score table and mean log line. Requires `pi` on PATH and `mlx-openai-server` running on `:8000`.
+
+### Install the launchd plist (optional — fires at 02:30 daily)
+
+```bash
+cp plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-self-improve.plist.template \
+   ~/Library/LaunchAgents/com.ralph.cos-self-improve.plist
+
+# Hand-edit the plist if your checkout lives at a different path:
+# nano ~/Library/LaunchAgents/com.ralph.cos-self-improve.plist
+# Replace /Users/dubiel/... with your actual path.
+
+# Do NOT set RALPH_COS_SELF_IMPROVE=1 yet — see two-manual-verification policy above.
+
+launchctl load ~/Library/LaunchAgents/com.ralph.cos-self-improve.plist
+launchctl list | grep cos-self-improve
+# PID column shows "-" when idle; exit code "0" after a run (even when quarantined).
+```
+
+To unload:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.ralph.cos-self-improve.plist
+```
+
+Logs:
+- stdout: `/tmp/ralph-cos-self-improve.out`
+- stderr: `/tmp/ralph-cos-self-improve.err`
+
+### State directory
+
+Phase 6 writes transient grading artifacts (per-brief score files, draft system prompts) to:
+
+```
+~/.ralph-hero/cos/self-improve/run-YYYY-MM-DD/
+```
+
+Created automatically via `mkdir -p` on first run. The directory is safe to delete between runs — it is used only for intermediate files during a single grading session.
+
+---
+
 ## Directory layout
 
 ```
@@ -425,6 +510,8 @@ plugin/ralph-hero/scripts/cos/
 ├── cos-loop-smoke.sh             # End-to-end smoke for cos-loop.sh (manual; Phase 4)
 ├── cos-unattended.sh             # Dispatcher for scheduled unattended jobs (Phase 3)
 ├── morning-brief.sh              # Weekday 06:30 morning brief + ntfy push (Phase 3)
+├── self-improve.sh               # Nightly self-improvement loop (Phase 6)
+├── self-improve-smoke.sh         # Smoke test for self-improve.sh (manual; Phase 6)
 ├── mcp.json.example              # Template MCP config (placeholders substituted on install)
 ├── install-mcp-config.sh         # Idempotent installer for mcp.json.example
 ├── smoke.sh                      # End-to-end smoke test (manual; requires pi + MLX server)
@@ -436,7 +523,8 @@ plugin/ralph-hero/scripts/cos/
 │   ├── launch.sh                 # uv run streamlit run app.py ...
 │   └── pyproject.toml            # uv-managed deps (streamlit, pandas)
 └── launchd/
-    └── com.ralph.cos-morning-brief.plist.template   # launchd schedule template (Phase 3)
+    ├── com.ralph.cos-morning-brief.plist.template   # launchd schedule template (Phase 3)
+    └── com.ralph.cos-self-improve.plist.template    # launchd schedule template (Phase 6)
 ```
 
 ---
@@ -451,7 +539,7 @@ This foundation is consumed by:
 | 3 | [GH-1255](https://github.com/cdubiel08/ralph-hero/issues/1255) | Unattended morning brief + ntfy push |
 | 4 | [GH-1256](https://github.com/cdubiel08/ralph-hero/issues/1256) | oh-my-pi conventions: `cos-loop.sh` (count/duration loop), `gh-vfs.ts` pi extension (`issue://`, `pr://`, `thoughts://`), `ralph cos role` debug subcommand |
 | 5 | [GH-1257](https://github.com/cdubiel08/ralph-hero/issues/1257) | Streamlit desktop command surface at :8502 (six panels + chat) |
-| 6 | [GH-1258](https://github.com/cdubiel08/ralph-hero/issues/1258) | Nightly self-improvement loop |
+| 6 | [GH-1258](https://github.com/cdubiel08/ralph-hero/issues/1258) | Nightly self-improvement loop — shipped in this phase |
 
 The `cos.sh` CLI surface (positional prompt + `--role` flag + JSONL log shape) and
 `model-roles.sh` sourcing convention are **stable contracts**. Treat changes to these
