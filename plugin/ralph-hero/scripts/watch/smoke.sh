@@ -8,6 +8,8 @@
 #   4. sre-fixit.md body contains the four kubectl shapes and no --force/--cascade
 #   5. watch/SKILL.md SessionStart hook references both set-skill-env.sh and load-team-soul.sh
 #   6. watch/SKILL.md contains at least three TODO(GH-1272) markers
+#   7. sre-allowlist-gate.sh: positive test (permitted kubectl shape passes)
+#   8. sre-allowlist-gate.sh: negative test (disallowed command is blocked)
 #
 # Usage:
 #   bash plugin/ralph-hero/scripts/watch/smoke.sh
@@ -159,6 +161,69 @@ if [[ -f "$SKILL_MD" ]]; then
     _pass "watch/SKILL.md contains ${TODO_COUNT} TODO(GH-1272) markers (>= 3 required)"
   else
     _fail "watch/SKILL.md has only ${TODO_COUNT} TODO(GH-1272) markers — expected at least 3"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 7. sre-allowlist-gate.sh: positive test (permitted kubectl shape passes)
+# ---------------------------------------------------------------------------
+GATE_SCRIPT="${PLUGIN_ROOT}/hooks/scripts/sre-allowlist-gate.sh"
+
+if [[ ! -f "$GATE_SCRIPT" ]]; then
+  _fail "sre-allowlist-gate.sh not found: ${GATE_SCRIPT}"
+else
+  if [[ -x "$GATE_SCRIPT" ]]; then
+    _pass "sre-allowlist-gate.sh is executable"
+  else
+    _fail "sre-allowlist-gate.sh is not executable"
+  fi
+
+  # Positive: kubectl scale deployment (allowed shape) must exit 0
+  POSITIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:sre-fixit","tool_input":{"command":"kubectl scale deployment api --replicas=3"}}'
+  if echo "$POSITIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
+    _pass "sre-allowlist-gate.sh: permitted kubectl shape exits 0 (positive test)"
+  else
+    _fail "sre-allowlist-gate.sh: permitted kubectl shape was blocked — positive test FAILED"
+  fi
+
+  # ---------------------------------------------------------------------------
+  # 8. sre-allowlist-gate.sh: negative test (disallowed command is blocked)
+  # ---------------------------------------------------------------------------
+  # kubectl delete deployment is NOT in the allowlist (only 'delete pod' is)
+  NEGATIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:sre-fixit","tool_input":{"command":"kubectl delete deployment api"}}'
+  if echo "$NEGATIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
+    _fail "sre-allowlist-gate.sh: disallowed command was NOT blocked — negative test FAILED"
+  else
+    EXIT_CODE=$?
+    if [[ "$EXIT_CODE" -eq 2 ]]; then
+      _pass "sre-allowlist-gate.sh: disallowed kubectl command blocked with exit 2 (negative test)"
+    else
+      _pass "sre-allowlist-gate.sh: disallowed kubectl command blocked (exit ${EXIT_CODE}) (negative test)"
+    fi
+  fi
+
+  # log-reader positive: gcloud logging read (allowed shape) must exit 0
+  LOG_POSITIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:log-reader","tool_input":{"command":"gcloud logging read '\''severity>=ERROR'\'' --limit=50 --project=my-proj --format=json"}}'
+  if echo "$LOG_POSITIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
+    _pass "sre-allowlist-gate.sh: permitted gcloud logging read exits 0 (log-reader positive test)"
+  else
+    _fail "sre-allowlist-gate.sh: permitted gcloud logging read was blocked — log-reader positive test FAILED"
+  fi
+
+  # log-reader negative: arbitrary shell command must be blocked
+  LOG_NEGATIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:log-reader","tool_input":{"command":"gcloud projects delete my-proj"}}'
+  if echo "$LOG_NEGATIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
+    _fail "sre-allowlist-gate.sh: disallowed gcloud subcommand was NOT blocked — log-reader negative test FAILED"
+  else
+    _pass "sre-allowlist-gate.sh: disallowed gcloud subcommand blocked (log-reader negative test)"
+  fi
+
+  # non-restricted agent: any command must pass through (exit 0)
+  OTHER_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:impl-agent","tool_input":{"command":"echo hello"}}'
+  if echo "$OTHER_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
+    _pass "sre-allowlist-gate.sh: non-restricted agent_type passes through (exit 0)"
+  else
+    _fail "sre-allowlist-gate.sh: non-restricted agent_type was incorrectly blocked"
   fi
 fi
 

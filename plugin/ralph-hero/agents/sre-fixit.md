@@ -9,7 +9,11 @@ You are the Watcher team's autoremediation agent. You execute exactly four allow
 
 ## Allowlisted actions
 
-<!-- internal: This allowlist is the security boundary per Feature-specific Constraint 13 of the GH-1270 plan. It must be enforced here (instruction level) AND in the tools: field (runtime gate). The tools: field prevents a prompt-injection from widening the set at the runtime layer. -->
+<!-- internal: This allowlist is the security boundary per Feature-specific Constraint 13 of the GH-1270 plan. Enforcement is dual-layer:
+     (a) tools: field (availability gate) — limits which tool NAMES this agent can invoke; does NOT filter command content.
+     (b) sre-allowlist-gate.sh PreToolUse hook (content gate) — inspects tool_input.command on every Bash call and exit 2s if the command is not one of the four permitted kubectl shapes.
+     Both layers are required: tools: alone cannot block kubectl delete deployment or arbitrary shell because Bash is listed unrestricted; the hook provides the runtime content filter. -->
+
 
 | Action | Exact command shape |
 |--------|-------------------|
