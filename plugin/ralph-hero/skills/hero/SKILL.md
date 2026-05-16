@@ -460,7 +460,7 @@ Hero uses **two distinct dispatch modes** depending on session type:
 - **Analyst phases (research, plan, review)**: `Skill()` inline — opus/sonnet models that benefit from context sharing in hero's window.
 - **Implementation**: `Agent(impl-agent)` — runs in isolated worktree. Default model is sonnet (driven by `${RALPH_IMPL_MODEL:-sonnet}`); on an `IMPL BLOCKED ` verdict line Hero re-dispatches once with `model="opus"`. See `plugin/ralph-hero/docs/model-tier-policy.md`.
 - **PR phase**: `Agent(pr-agent)` — haiku model in isolated context (haiku in Opus 1M envelope is wasteful, and pr-agent has no nested fan-out so it's depth-2 safe).
-- **Validate phase**: `Agent(val-agent)` — haiku model in isolated context.
+- **Validate phase**: `Agent(val-agent)` — sonnet model in isolated context.
 - **Merge phase**: `Agent(merge-agent)` forked (haiku, 200k isolated context) — dispatched from `finish` Step 5. Forking prevents the haiku 200k cap from compacting the parent 1M session. `ralph-merge` is a confirmed leaf skill (no nested fan-out); Agent() dispatch is depth-2 safe. See [GH-1265](https://github.com/cdubiel08/ralph-hero/issues/1265).
 - **Finish phase**: `Skill(finish)` inline — orchestrator that owns the code review gate plus dispatches val/impl/merge as needed.
 

@@ -70,7 +70,7 @@ Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that 
 | `impl-agent` | sonnet | ralph-impl | Builder | Downgraded 2026-05-13. On `IMPL BLOCKED needs=opus` verdict, hero re-dispatches once with `model="opus"`. Override with `RALPH_IMPL_MODEL=opus`. |
 | `pr-agent` | haiku | ralph-pr | Integrator | |
 | `merge-agent` | haiku | ralph-merge | Integrator | |
-| `val-agent` | haiku | ralph-val | Integrator | |
+| `val-agent` | sonnet | ralph-val | Integrator | Model aligned with `ralph-val/SKILL.md` in GH-1265 (2026-05-15). |
 | `unblock-agent` | sonnet | ralph-unblock | Async-loop | |
 
 > **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
