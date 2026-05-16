@@ -284,16 +284,16 @@ Author the morning-brief prompt template, the `morning-brief.sh` script, the lau
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/morning-brief.sh` exits 0 (no syntax errors)
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos-unattended.sh` exits 0 (if it exists as a separate file)
-- [ ] `plutil -lint plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-morning-brief.plist.template` exits 0
-- [ ] `bash plugin/ralph-hero/scripts/cos/morning-brief.sh --help` exits 0 (or, if morning-brief.sh has no --help, the dispatcher's usage exits 0 — confirm one of the two paths is documented)
-- [ ] `ralph cos unattended` (no flags) exits 0 and prints usage including `--morning-brief`
-- [ ] `ralph cos unattended --bogus` exits 2 with a clear stderr error
-- [ ] `grep -q '{{DATE}}' plugin/ralph-hero/skills/cos/prompts/morning-brief.md` (placeholder present)
-- [ ] `grep -q '{{OUT_PATH}}' plugin/ralph-hero/skills/cos/prompts/morning-brief.md` (placeholder present)
-- [ ] `grep -q 'Weekday' plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-morning-brief.plist.template` (weekday filter present)
-- [ ] `grep -q 'cos-morning-brief' plugin/ralph-hero/scripts/cos/README.md` (docs present)
+- [x] `bash -n plugin/ralph-hero/scripts/cos/morning-brief.sh` exits 0 (no syntax errors)
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos-unattended.sh` exits 0 (if it exists as a separate file)
+- [x] `plutil -lint plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-morning-brief.plist.template` exits 0
+- [x] `bash plugin/ralph-hero/scripts/cos/morning-brief.sh --help` exits 0 (or, if morning-brief.sh has no --help, the dispatcher's usage exits 0 — confirm one of the two paths is documented)
+- [x] `ralph cos unattended` (no flags) exits 0 and prints usage including `--morning-brief`
+- [x] `ralph cos unattended --bogus` exits 2 with a clear stderr error
+- [x] `grep -q '{{DATE}}' plugin/ralph-hero/skills/cos/prompts/morning-brief.md` (placeholder present)
+- [x] `grep -q '{{OUT_PATH}}' plugin/ralph-hero/skills/cos/prompts/morning-brief.md` (placeholder present)
+- [x] `grep -q 'Weekday' plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-morning-brief.plist.template` (weekday filter present)
+- [x] `grep -q 'cos-morning-brief' plugin/ralph-hero/scripts/cos/README.md` (docs present)
 
 #### Manual Verification:
 - [ ] On a machine with `pi` + `mlx-openai-server` running, `ralph cos unattended --morning-brief` exits 0 within 5 minutes and produces `thoughts/shared/research/$(date +%F)-cos-morning-brief.md` with valid YAML frontmatter and three H2 sections
