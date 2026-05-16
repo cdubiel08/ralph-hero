@@ -102,11 +102,11 @@ Convert the inline `Skill("ralph-hero:ralph-merge", ...)` call in `finish/SKILL.
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Step 5 ("Merge (dispatch ralph-merge)") replaces the `Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")` line at current line 260 with `Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR for GH-NNN. PR URL: PR_URL", description="Merge GH-NNN")`.
-  - [ ] The surrounding prose (the paragraph describing "Dispatch ralph-merge for merge mechanics only") is updated to say "Dispatch the merge-agent (forked, isolated 200k context) for merge mechanics only" — replacing the inline-skill phrasing.
-  - [ ] The output-check block immediately after ("If output contains `MERGE BLOCKED`..." / "If output contains `MERGED`...") is preserved verbatim — the output-string contract is unchanged.
-  - [ ] No other Step 5 sub-steps are touched (Step 5's downstream Step 6 CI Watch logic stays intact).
-  - [ ] grep `Skill("ralph-hero:ralph-merge"` over `plugin/ralph-hero/` returns zero matches after the edit.
+  - [x] Step 5 ("Merge (dispatch ralph-merge)") replaces the `Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")` line at current line 260 with `Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR for GH-NNN. PR URL: PR_URL", description="Merge GH-NNN")`.
+  - [x] The surrounding prose (the paragraph describing "Dispatch ralph-merge for merge mechanics only") is updated to say "Dispatch the merge-agent (forked, isolated 200k context) for merge mechanics only" — replacing the inline-skill phrasing.
+  - [x] The output-check block immediately after ("If output contains `MERGE BLOCKED`..." / "If output contains `MERGED`...") is preserved verbatim — the output-string contract is unchanged.
+  - [x] No other Step 5 sub-steps are touched (Step 5's downstream Step 6 CI Watch logic stays intact).
+  - [x] grep `Skill("ralph-hero:ralph-merge"` over `plugin/ralph-hero/` returns zero matches after the edit.
 
 #### Task 1.2: Align val-agent.md model with ralph-val/SKILL.md
 - **files**: `plugin/ralph-hero/agents/val-agent.md` (modify)
@@ -114,9 +114,9 @@ Convert the inline `Skill("ralph-hero:ralph-merge", ...)` call in `finish/SKILL.
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `val-agent.md:4` reads `model: sonnet` (changed from `model: haiku`).
-  - [ ] No other frontmatter field or body content is changed.
-  - [ ] Frontmatter remains valid YAML (no trailing whitespace, indentation preserved).
+  - [x] `val-agent.md:4` reads `model: sonnet` (changed from `model: haiku`).
+  - [x] No other frontmatter field or body content is changed.
+  - [x] Frontmatter remains valid YAML (no trailing whitespace, indentation preserved).
 
 #### Task 1.3: Add context-window inheritance note to model-tier-policy.md
 - **files**: `plugin/ralph-hero/docs/model-tier-policy.md` (modify)
@@ -124,10 +124,10 @@ Convert the inline `Skill("ralph-hero:ralph-merge", ...)` call in `finish/SKILL.
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] A new section titled `## Context Window and Inline Skill Calls` is appended (after the existing "Why not preemptive Opus?" section).
-  - [ ] The section explains: (a) inline `Skill()` runs in the parent's context window, (b) `model: haiku` in a skill loaded inline applies haiku's 200k cap to the parent, (c) inline-skill-with-haiku from a 1M parent triggers compaction.
-  - [ ] The section recommends `Agent()` dispatch for any haiku-tier skill that may be called from a large parent context.
-  - [ ] Section references GH-1265 as the canonical example.
+  - [x] A new section titled `## Context Window and Inline Skill Calls` is appended (after the existing "Why not preemptive Opus?" section).
+  - [x] The section explains: (a) inline `Skill()` runs in the parent's context window, (b) `model: haiku` in a skill loaded inline applies haiku's 200k cap to the parent, (c) inline-skill-with-haiku from a 1M parent triggers compaction.
+  - [x] The section recommends `Agent()` dispatch for any haiku-tier skill that may be called from a large parent context.
+  - [x] Section references GH-1265 as the canonical example.
 
 #### Task 1.4: Update hero/SKILL.md dispatch-architecture notes for merge phase
 - **files**: `plugin/ralph-hero/skills/hero/SKILL.md` (modify)
@@ -135,17 +135,17 @@ Convert the inline `Skill("ralph-hero:ralph-merge", ...)` call in `finish/SKILL.
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] The bullet at current `hero/SKILL.md:464` describing the Merge phase is updated to read approximately: `**Merge phase**: \`Agent(merge-agent)\` forked (haiku, 200k isolated context) — dispatched from \`finish\` Step 5. Forking prevents the haiku 200k cap from compacting the parent 1M session. See [GH-1265](https://github.com/cdubiel08/ralph-hero/issues/1265).`
-  - [ ] No other Dispatch Architecture bullets (Analyst, Implementation, PR, Validate, Finish) are modified.
+  - [x] The bullet at current `hero/SKILL.md:464` describing the Merge phase is updated to read approximately: `**Merge phase**: \`Agent(merge-agent)\` forked (haiku, 200k isolated context) — dispatched from \`finish\` Step 5. Forking prevents the haiku 200k cap from compacting the parent 1M session. See [GH-1265](https://github.com/cdubiel08/ralph-hero/issues/1265).`
+  - [x] No other Dispatch Architecture bullets (Analyst, Implementation, PR, Validate, Finish) are modified.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -rn 'Skill("ralph-hero:ralph-merge"' plugin/ralph-hero/` — zero matches.
-- [ ] `grep -rn 'Agent(subagent_type="ralph-hero:merge-agent"' plugin/ralph-hero/skills/finish/SKILL.md` — at least one match.
-- [ ] `grep -n '^model:' plugin/ralph-hero/agents/val-agent.md` — returns `model: sonnet`.
-- [ ] `grep -n 'Context Window and Inline Skill Calls' plugin/ralph-hero/docs/model-tier-policy.md` — at least one match.
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (sanity check; markdown-only changes should not affect the TS suite).
+- [x] `grep -rn 'Skill("ralph-hero:ralph-merge"' plugin/ralph-hero/` — zero matches.
+- [x] `grep -rn 'Agent(subagent_type="ralph-hero:merge-agent"' plugin/ralph-hero/skills/finish/SKILL.md` — at least one match.
+- [x] `grep -n '^model:' plugin/ralph-hero/agents/val-agent.md` — returns `model: sonnet`.
+- [x] `grep -n 'Context Window and Inline Skill Calls' plugin/ralph-hero/docs/model-tier-policy.md` — at least one match.
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (sanity check; markdown-only changes should not affect the TS suite).
 
 #### Manual Verification:
 - [ ] Manual smoke: run `/ralph-hero:finish NNN` in a session > 200k tokens against a real PR; confirm Claude Code does NOT trigger context compaction during the merge step.
