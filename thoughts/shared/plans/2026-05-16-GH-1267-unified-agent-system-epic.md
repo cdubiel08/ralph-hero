@@ -1,6 +1,6 @@
 ---
 date: 2026-05-16
-status: draft
+status: complete
 type: plan-of-plans
 tags: [director, agent-teams, watchers, soul, ios-remote, self-healing, dream-loop]
 github_issue: 1267
@@ -8,7 +8,15 @@ github_issues: [1267]
 github_urls:
   - https://github.com/cdubiel08/ralph-hero/issues/1267
 primary_issue: 1267
-child_plans: []
+child_plans:
+  - thoughts/shared/plans/2026-05-16-GH-1268-soul-framework-sessionstart-hook.md
+  - thoughts/shared/plans/2026-05-16-GH-1269-director-skill.md
+  - thoughts/shared/plans/2026-05-16-GH-1270-watcher-team-entrypoint.md
+  - thoughts/shared/plans/2026-05-16-GH-1271-event-shims.md
+  - thoughts/shared/plans/2026-05-16-GH-1272-self-healing-closure.md
+  - thoughts/shared/plans/2026-05-16-GH-1273-scout-scheduling.md
+  - thoughts/shared/plans/2026-05-16-GH-1274-caretaker-team-entrypoint.md
+  - thoughts/shared/plans/2026-05-16-GH-1275-ios-remote-integration.md
 ---
 
 # Unified Agent System (Director → Teams → Operators + iOS Remote Control) — Plan of Plans
