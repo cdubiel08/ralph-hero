@@ -54,11 +54,18 @@ register_schedule() {
         # Use the /schedule skill to create the entry. The skill is idempotent
         # when given a stable name — it skips creation if a schedule with the
         # same name already exists.
-        local output
+        local output claude_exit
+        claude_exit=0
         output=$(claude -p "$(cat <<PROMPT
 /schedule create --name "$name" --cron "$cron" --prompt "$prompt"
 PROMPT
-        )" 2>&1) || true
+        )" 2>&1) || claude_exit=$?
+
+        if [ "$claude_exit" -ne 0 ]; then
+            printf "[install-schedules] FAILED %s: claude -p exited %d\n" "$name" "$claude_exit"
+            printf "    output: %s\n" "$output" | head -10
+            return 1
+        fi
 
         if echo "$output" | grep -qi "already exists\|skipped\|duplicate"; then
             echo "  SKIPPED  $name (already registered)"
