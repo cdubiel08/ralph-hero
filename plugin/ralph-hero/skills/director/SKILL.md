@@ -97,7 +97,7 @@ Set `DISPATCH_REASON=workflow_state:${ISSUE_WORKFLOW_STATE}`.
 
 ### Step 4: Dispatch via Skill()
 
-Director dispatches using `Skill()`. It does NOT call `Agent()` — Director is an orchestrator, not a worker. Team entrypoints receive the issue number as `--issue NNN`.
+Director dispatches using `Skill()`. It does NOT call `Agent()` — Director is an orchestrator, not a worker. Team entrypoints receive the issue number as a bare number `NNN` (not `--issue NNN`).
 
 **Team → entrypoint mapping:**
 
@@ -112,7 +112,7 @@ Director dispatches using `Skill()`. It does NOT call `Agent()` — Director is 
 **If the target entrypoint exists (builders / live teams):**
 
 ```
-Skill("<entrypoint>", args="--issue NNN")
+Skill("<entrypoint>", args="NNN")
 ```
 
 Emit before dispatch: `Classified #NNN as <team> (reason: <DISPATCH_REASON>). Dispatching <entrypoint>.`
