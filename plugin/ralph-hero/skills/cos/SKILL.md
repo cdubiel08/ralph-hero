@@ -37,7 +37,7 @@ The COS skill surfaces project status, WIP, and priorities. It dispatches to one
 | Mode | Description | Status |
 |------|-------------|--------|
 | `remote` | Phone-friendly 2-3 sentence summary via local LLM. 30-min cache at `~/.ralph-hero/cos/cache/remote-status.json`. Zero Claude Code — routes through `cos.sh` → mlx-openai-server. | Active (Phase 2) |
-| `desk` | Interactive Streamlit dashboard for desktop sessions. | Phase 5 (GH-1257) |
+| `desk` | Interactive Streamlit dashboard at `localhost:8502` — six read-only panels (Today's Brief, Pipeline State, KG Growth, Recent Activity, WIP, KG Search) plus a chat panel that shells out to `cos.sh` (zero Claude Code). | Active (Phase 5) |
 | `unattended` | Scheduled morning brief with ntfy push notification. | Phase 3 (GH-1255) |
 
 ## Dispatcher
