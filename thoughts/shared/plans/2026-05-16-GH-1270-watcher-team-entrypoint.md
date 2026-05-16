@@ -142,9 +142,9 @@ Replace the paranoid-but-disciplined SOUL stub that Feature A drops at `plugin/r
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid: `python3 -c 'import yaml; yaml.safe_load(open("plugin/ralph-hero/skills/watch/SOUL.md").read().split("---")[1])'`
-- [ ] Required frontmatter keys present: `grep -E '^(team|voice|refuses):' plugin/ralph-hero/skills/watch/SOUL.md | wc -l` returns `3`
-- [ ] Body word count 150–250: `awk '/^---$/{n++; next} n==2' plugin/ralph-hero/skills/watch/SOUL.md | wc -w` returns a number in `[150, 250]`
+- [x] Frontmatter YAML valid: `python3 -c 'import yaml; yaml.safe_load(open("plugin/ralph-hero/skills/watch/SOUL.md").read().split("---")[1])'`
+- [x] Required frontmatter keys present: `grep -E '^(team|voice|refuses):' plugin/ralph-hero/skills/watch/SOUL.md | wc -l` returns `3`
+- [x] Body word count 150–250: `awk '/^---$/{n++; next} n==2' plugin/ralph-hero/skills/watch/SOUL.md | wc -w` returns a number in `[150, 250]`
 
 #### Manual Verification:
 - [ ] Voice reads as paranoid-but-disciplined, not paranoid-and-panicked
@@ -178,9 +178,9 @@ A subagent the Watcher orchestrator dispatches for "read these logs / run this L
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid (same yaml check shape as Phase 1)
-- [ ] `tools:` field contains no write tools: `grep -E '^tools:' plugin/ralph-hero/agents/log-reader.md | grep -Eqv '(Edit|Write|save_issue|create_|advance_|add_|remove_|batch_update)'`
-- [ ] Model is haiku: `grep -E '^model: haiku$' plugin/ralph-hero/agents/log-reader.md` returns 1 match
+- [x] Frontmatter YAML valid (same yaml check shape as Phase 1)
+- [x] `tools:` field contains no write tools: `grep -E '^tools:' plugin/ralph-hero/agents/log-reader.md | grep -Eqv '(Edit|Write|save_issue|create_|advance_|add_|remove_|batch_update)'`
+- [x] Model is haiku: `grep -E '^model: haiku$' plugin/ralph-hero/agents/log-reader.md` returns 1 match
 
 #### Manual Verification:
 - [ ] Output-format section gives one concrete `## Findings` example with a real-shaped trace ID
@@ -214,10 +214,10 @@ A subagent the Watcher orchestrator dispatches for the four allowlisted kubectl 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid
-- [ ] `tools:` field is exactly three entries: `Bash`, `Read`, the create_comment MCP tool
-- [ ] Body contains exactly four kubectl command shapes in the allowlist table: `grep -cE 'kubectl (scale|drain|rollout|delete pod)' plugin/ralph-hero/agents/sre-fixit.md` returns `4` (allowing for one occurrence per command)
-- [ ] No `--force` or `--cascade=foreground` strings present: `! grep -E '(--force|--cascade=foreground)' plugin/ralph-hero/agents/sre-fixit.md`
+- [x] Frontmatter YAML valid
+- [x] `tools:` field is exactly three entries: `Bash`, `Read`, the create_comment MCP tool
+- [x] Body contains exactly four kubectl command shapes in the allowlist table: `grep -cE 'kubectl (scale|drain|rollout|delete pod)' plugin/ralph-hero/agents/sre-fixit.md` returns `4` (allowing for one occurrence per command)
+- [x] No `--force` or `--cascade=foreground` strings present: `! grep -E '(--force|--cascade=foreground)' plugin/ralph-hero/agents/sre-fixit.md`
 
 #### Manual Verification:
 - [ ] Refusal protocol reads as ironclad — model cannot reasonably argue itself out of escalating
@@ -260,12 +260,12 @@ The Watcher orchestrator skill. Single entrypoint. Accepts `--issue NNN` (direct
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid
-- [ ] `argument-hint` is exactly `"[--issue NNN]"`: `grep -E '^argument-hint: "\[--issue NNN\]"$' plugin/ralph-hero/skills/watch/SKILL.md`
-- [ ] SessionStart hook chains the two scripts: `grep -c 'set-skill-env.sh\|load-team-soul.sh' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `2`
-- [ ] Dispatch table covers all five entries: `grep -cE '(gcp-policy|langfuse-trace|watcher-investigate|watcher-remediate|Human Needed)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `5`
-- [ ] Three `# TODO(GH-1272)` markers present (one per terminal-handler branch): `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `3`
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity: no source changed)
+- [x] Frontmatter YAML valid
+- [x] `argument-hint` is exactly `"[--issue NNN]"`: `grep -E '^argument-hint: "\[--issue NNN\]"$' plugin/ralph-hero/skills/watch/SKILL.md`
+- [x] SessionStart hook chains the two scripts: `grep -c 'set-skill-env.sh\|load-team-soul.sh' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `2`
+- [x] Dispatch table covers all five entries: `grep -cE '(gcp-policy|langfuse-trace|watcher-investigate|watcher-remediate|Human Needed)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `5`
+- [x] Three `# TODO(GH-1272)` markers present (one per terminal-handler branch): `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `3`
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity: no source changed)
 
 #### Manual Verification:
 - [ ] Dispatch table table reads unambiguously — no overlap that would let two rows match the same issue
@@ -318,9 +318,9 @@ User-facing documentation for registering the Watcher heartbeat as a `/schedule`
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/scripts/watch/smoke.sh` — syntax check
-- [ ] `plugin/ralph-hero/scripts/watch/smoke.sh` exits 0 (full smoke pass)
-- [ ] `HEARTBEAT.md` exists and is non-empty
+- [x] `bash -n plugin/ralph-hero/scripts/watch/smoke.sh` — syntax check
+- [x] `plugin/ralph-hero/scripts/watch/smoke.sh` exits 0 (full smoke pass)
+- [x] `HEARTBEAT.md` exists and is non-empty
 
 #### Manual Verification:
 - [ ] HEARTBEAT.md reads well to a user setting up Watcher for the first time
