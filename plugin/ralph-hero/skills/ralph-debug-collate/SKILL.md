@@ -1,6 +1,6 @@
 ---
 description: Collate debug errors from Langfuse — run a dry-run, present grouped error signatures, and on confirmation file `debug-auto` issues (or comment on existing ones) for self-healing observability. Closes the OTel → Langfuse → GitHub feedback loop with a single command.
-argument-hint: "[optional: --since 24h] [--min-occurrences 3]"
+argument-hint: "[optional: --since 24h] [--min-occurrences 3] [--auto-confirm]"
 context: fork
 model: sonnet
 hooks:
@@ -59,6 +59,7 @@ Parse the argument string for optional flags:
 
 - `--since <window>`: Lower bound for the trace window. Accepts ISO dates (e.g., `2026-05-01`) or shorthand (`24h`, `7d`). Default: `24h`.
 - `--min-occurrences <n>`: Minimum number of occurrences for a signature to be reported. Default: `3`.
+- `--auto-confirm`: Skip the human confirmation prompt in Step 5 and proceed directly to filing issues. Used by the Watcher heartbeat (`plugin/ralph-hero/skills/watch/SKILL.md`) for unattended scheduled runs.
 
 Resolve `--since` to an ISO timestamp before calling the tool (e.g., `24h` → 24 hours before now).
 
@@ -128,13 +129,21 @@ If there are more than 5 groups, append:
 
 ### Step 5: Confirm
 
-Ask the user explicitly:
+If `--auto-confirm` is present, skip the human prompt and proceed directly to Step 6 (File Issues). Emit a result line listing each issue that will be filed:
+
+```
+result: auto-confirm active — filing debug-auto issues for <errorGroups> signature(s)
+```
+
+This path is used by the Watcher heartbeat (`plugin/ralph-hero/skills/watch/SKILL.md`). Do not use `--auto-confirm` in interactive sessions.
+
+Otherwise, ask the user explicitly:
 
 ```
 File `debug-auto` issues for these <errorGroups> signatures? [y/N]
 ```
 
-This skill is **interactive** — it is not part of autopilot and must not auto-confirm. If the user declines (any answer that is not `y` / `yes`), exit cleanly:
+This skill is **interactive** — it is not part of autopilot and must not auto-confirm unless the `--auto-confirm` flag is explicitly passed. If the user declines (any answer that is not `y` / `yes`), exit cleanly:
 
 ```
 Skipped — no issues filed.
@@ -186,7 +195,8 @@ Next: run `/ralph-hero:ralph-triage` to prioritize the freshly-filed `debug-auto
 
 ## Constraints
 
-- Interactive only — do not run from autopilot or unattended loops.
+- Interactive by default — do not run from autopilot or unattended loops without the `--auto-confirm` flag.
+- `--auto-confirm` is the path used by the Watcher heartbeat (`plugin/ralph-hero/skills/watch/SKILL.md`). When invoked with this flag the skill skips the human prompt and files issues automatically. Human sessions must not pass `--auto-confirm` unless the intent is truly unattended.
 - Read-only on Langfuse — the tool only queries observations, never mutates traces.
 - Tool-gated by `RALPH_DEBUG=true`. If the tool is not registered, the skill cannot proceed (Step 1 handles this).
 - One Langfuse host: defaults to `http://localhost:3100`. To target a different host, set `LANGFUSE_HOST` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` in the MCP-server environment.
