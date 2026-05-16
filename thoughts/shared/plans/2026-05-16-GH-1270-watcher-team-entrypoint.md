@@ -54,7 +54,7 @@ Inherited verbatim from the parent plan-of-plans (`2026-05-16-GH-1267-unified-ag
 
 ### Feature-specific constraints
 
-11. **Dependency on Feature A is hard.** This feature consumes `plugin/ralph-ho/skills/shared/soul-schema.md` and `plugin/ralph-hero/hooks/scripts/load-team-soul.sh` (both produced by GH-1268). If Feature A has NOT landed when this implements, **stop and escalate** — do not write a placeholder schema or hook script; the schema is authoritative and must originate from A.
+11. **Dependency on Feature A is hard.** This feature consumes `plugin/ralph-hero/skills/shared/soul-schema.md` and `plugin/ralph-hero/hooks/scripts/load-team-soul.sh` (both produced by GH-1268). If Feature A has NOT landed when this implements, **stop and escalate** — do not write a placeholder schema or hook script; the schema is authoritative and must originate from A.
 12. **Wrap, never duplicate.** `gcp-incident-triage` and `ralph-debug-collate` are existing skills. The Watcher orchestrator invokes them via `Skill()`; it does not copy their bodies or re-implement their logic. If a behavior change is needed in either, file a separate issue against that skill, do not edit it from this feature.
 13. **sre-fixit allowlist is the security boundary.** The allowlist must be enforced in TWO places: (a) the agent's `tools:` field (hard runtime gate), and (b) the agent's prompt body (instruction-level reminder). The hardcoded allow set is: `kubectl scale deployment * --replicas=*`, `kubectl drain node*`, `kubectl rollout restart *`, `kubectl delete pod *`. Anything else routes to Human Needed via the standard escalation flow. No `--force`, no `--cascade=foreground`, no node-pool ops.
 14. **log-reader is read-only.** Its `tools:` field excludes `Edit`, `Write`, and all `mcp__plugin_ralph-hero_*` mutation tools. It may call `Bash` only with `gcloud logging read`, `gcloud monitoring metrics list`, and the `gcp-telemetry` skill's documented LQL query commands.
@@ -132,7 +132,7 @@ Replace the paranoid-but-disciplined SOUL stub that Feature A drops at `plugin/r
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Frontmatter contains `team: watch`, `voice: paranoid-but-disciplined`, `refuses: [<list>]` matching Feature A's `soul-schema.md` shape
+  - [ ] Frontmatter contains `team: watchers`, `voice: paranoid-but-disciplined`, `refuses: [<list>]` matching Feature A's `soul-schema.md` shape (plural form per `soul-schema.md`; matches Feature A's existing stub at `plugin/ralph-hero/skills/watch/SOUL.md`)
   - [ ] Refuses list contains exactly these items (verbatim text): `"claims without a trace ID"`, `"claims without a literal LQL/log-query snippet"`, `"comparing timestamps across timezones without explicit TZ conversion"`, `"any remediation outside the sre-fixit allowlist"`
   - [ ] Body has a `## How you talk` section (~80–120 words)
   - [ ] Body has exactly one `## Example exchange` section with `### Bad` and `### Good` subsections; Good explicitly cites a trace ID or `gcloud logging read` snippet
