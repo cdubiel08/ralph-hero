@@ -42,8 +42,10 @@ Inherited verbatim from the parent plan-of-plans (`thoughts/shared/plans/2026-05
 
 Feature-specific constraints discovered during planning:
 
-- The SessionStart hook must be a no-op when `$RALPH_COMMAND` is unset or when no matching SOUL exists. Silent exit 0 — do not warn, do not fail, do not write to the env file.
-- The hook reads `$RALPH_COMMAND` from the environment (already set by `set-skill-env.sh` in each team's frontmatter). It does **not** mutate `CLAUDE_ENV_FILE`; it emits SOUL content to **stdout** as additional context for the model.
+- The SessionStart hook must be a no-op when `$RALPH_COMMAND` is unset or when no matching SOUL exists. Silent exit 0 — do not warn, do not fail, do not write to the env file, do not emit stdout.
+- The hook reads `$RALPH_COMMAND` from the environment (already set by `set-skill-env.sh` in each team's frontmatter). When a matching SOUL exists it emits a **JSON envelope** to stdout — `{ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: <SOUL body> } }` — using `jq -n --arg ctx ...`, mirroring the canonical pattern in `plugin/ralph-hero/hooks/scripts/superpowers-bridge-session.sh`. Raw `cat` of the SOUL file is **not** how Claude Code SessionStart context injection works in this repo and would ship as a silent no-op in production.
+- When a SOUL is loaded, the hook also appends `export RALPH_SOUL_LOADED=<team>` to `$CLAUDE_ENV_FILE` (when `$CLAUDE_ENV_FILE` is set), mirroring `RALPH_SUPERPOWERS_BRIDGE=true` from the superpowers bridge. Downstream hooks in Features B/C/F/G can assert SOUL injection occurred via this env var.
+- `jq` is a required runtime dependency. Both `superpowers-bridge-session.sh` and `load-team-soul.sh` use it; document the dependency in the schema doc and in the hook header.
 - Stub SOUL files (watch, scouts, memorykeepers, caretake) must satisfy the schema (valid frontmatter + non-empty body) so the smoke test passes uniformly across teams — Features C/F/G replace bodies later.
 - `hero/SOUL.md` is the **fully authored** reference SOUL for builders; the other four are stubs.
 - The `memorykeepers` skill directory does not yet exist. The SOUL file is placed at `plugin/ralph-hero/skills/memorykeepers/SOUL.md` and the parent directory is created. No SKILL.md is added — that lives in a future feature.
@@ -69,7 +71,7 @@ What's missing:
 ### Verification
 - [ ] `plugin/ralph-hero/skills/shared/soul-schema.md` exists, documents the frontmatter shape (`team:`, `voice:`, `refuses: [list]`), body conventions (~150–250 words: "How you talk" + Bad/Good exchange), and STYLE-vs-SOUL precedence rule.
 - [ ] `plugin/ralph-hero/hooks/scripts/load-team-soul.sh` exists, is executable, and exits 0 silently when `$RALPH_COMMAND` is unset or no SOUL file exists for the command.
-- [ ] When `$RALPH_COMMAND` is set and the matching SOUL exists, the script writes the SOUL body to stdout for the model to consume.
+- [ ] When `$RALPH_COMMAND` is set and the matching SOUL exists, the script emits a JSON envelope on stdout — `{ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: <SOUL body> } }` — and appends `export RALPH_SOUL_LOADED=<team>` to `$CLAUDE_ENV_FILE` when that var is set.
 - [ ] Five SOUL files exist at: `plugin/ralph-hero/skills/hero/SOUL.md`, `plugin/ralph-hero/skills/watch/SOUL.md`, `plugin/ralph-hero/skills/scouts/SOUL.md`, `plugin/ralph-hero/skills/memorykeepers/SOUL.md`, `plugin/ralph-hero/skills/caretake/SOUL.md`. Hero is fully authored; the other four are schema-valid stubs.
 - [ ] `plugin/ralph-hero/scripts/soul/smoke.sh` exists, runs without external dependencies, exercises the hook against each of the five SOUL files plus an unset-`$RALPH_COMMAND` case, and exits 0 when all assertions pass.
 
@@ -132,24 +134,26 @@ Author the canonical reference for what a SOUL.md looks like. This document is r
 - **depends_on**: [phase-1]
 
 ### Overview
-Implement the single shared SessionStart hook that resolves `$RALPH_COMMAND` to a SOUL file and emits its content to stdout. The hook is deliberately tiny — read env var, check file exists, cat it — but the silent-exit semantics on missing inputs are load-bearing.
+Implement the single shared SessionStart hook that resolves `$RALPH_COMMAND` to a SOUL file and emits its content via the Claude Code SessionStart JSON envelope. The hook is deliberately tiny — read env var, check file exists, wrap content in `{ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: <body> } }` using `jq`, write JSON to stdout, append `RALPH_SOUL_LOADED=<team>` to `$CLAUDE_ENV_FILE` — but the silent-exit semantics on missing inputs and the JSON-envelope contract are both load-bearing. Raw `cat` of the SOUL file to stdout is ignored by the runtime; the canonical pattern lives in `plugin/ralph-hero/hooks/scripts/superpowers-bridge-session.sh`.
 
 ### Tasks
 
 #### Task 2.1: Implement `load-team-soul.sh`
-- **files**: `plugin/ralph-hero/hooks/scripts/load-team-soul.sh` (create), `plugin/ralph-hero/hooks/scripts/set-skill-env.sh` (read for pattern reference)
+- **files**: `plugin/ralph-hero/hooks/scripts/load-team-soul.sh` (create), `plugin/ralph-hero/hooks/scripts/set-skill-env.sh` (read for pattern reference), `plugin/ralph-hero/hooks/scripts/superpowers-bridge-session.sh` (read for canonical JSON-envelope pattern)
 - **tdd**: true
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
   - [ ] Script begins with `#!/usr/bin/env bash` and `set -euo pipefail`.
   - [ ] Resolves `CLAUDE_PLUGIN_ROOT` via `${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}` so it works both as a registered hook and when invoked manually for testing.
-  - [ ] If `${RALPH_COMMAND:-}` is empty, exits 0 silently with no stdout output.
+  - [ ] If `${RALPH_COMMAND:-}` is empty, exits 0 silently with no stdout output and without touching `$CLAUDE_ENV_FILE`.
   - [ ] Resolves the candidate SOUL path as `${CLAUDE_PLUGIN_ROOT}/skills/${RALPH_COMMAND}/SOUL.md`.
-  - [ ] If the candidate path does not exist as a regular file, exits 0 silently.
-  - [ ] If the candidate exists, writes the file contents to stdout (the runtime injects stdout into the model's system context).
+  - [ ] If the candidate path does not exist as a regular file, exits 0 silently with no stdout output and without touching `$CLAUDE_ENV_FILE`.
+  - [ ] If the candidate exists, reads the file contents and emits a JSON envelope on stdout using `jq`: `jq -n --arg ctx "$(cat "$SOUL_PATH")" '{ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: $ctx } }'`. The runtime parses this JSON and injects `additionalContext` into the model's system context. Raw `cat` is **not** sufficient — see `superpowers-bridge-session.sh` for the canonical pattern.
+  - [ ] When the candidate exists and `$CLAUDE_ENV_FILE` is set and non-empty, appends `export RALPH_SOUL_LOADED=<team>` to that file (where `<team>` is `$RALPH_COMMAND`). Mirrors the `RALPH_SUPERPOWERS_BRIDGE=true` precedent so downstream hooks can detect SOUL injection.
+  - [ ] Depends on `jq` being on `$PATH` — same hard requirement as `superpowers-bridge-session.sh`. No fallback needed; both hooks share the dependency.
   - [ ] Has executable bit set (`chmod +x`).
-  - [ ] Does not mutate `$CLAUDE_ENV_FILE` — emits SOUL content via stdout only.
+  - [ ] Final `exit 0` is explicit.
 
 #### Task 2.2: Document the hook contract in a header comment
 - **files**: `plugin/ralph-hero/hooks/scripts/load-team-soul.sh` (modify)
@@ -157,7 +161,7 @@ Implement the single shared SessionStart hook that resolves `$RALPH_COMMAND` to 
 - **complexity**: low
 - **depends_on**: [2.1]
 - **acceptance**:
-  - [ ] Header comment block describes: trigger (SessionStart), expected env (`RALPH_COMMAND`), exit semantics (always 0; stdout empty when no SOUL), wiring (per-skill frontmatter, not plugin-level `hooks.json`), and reference to `soul-schema.md`.
+  - [ ] Header comment block describes: trigger (SessionStart), expected env (`RALPH_COMMAND`), exit semantics (always 0; stdout empty when no SOUL), output contract (JSON envelope with `hookSpecificOutput.hookEventName="SessionStart"` and `hookSpecificOutput.additionalContext=<SOUL body>`), side effect (appends `RALPH_SOUL_LOADED=<team>` to `$CLAUDE_ENV_FILE` when SOUL loaded), runtime dependency (`jq`), wiring (per-skill frontmatter, not plugin-level `hooks.json`), and reference to `soul-schema.md` plus `superpowers-bridge-session.sh` as the canonical envelope pattern.
 
 ### Phase Success Criteria
 
@@ -166,11 +170,14 @@ Implement the single shared SessionStart hook that resolves `$RALPH_COMMAND` to 
 - [ ] `bash -n plugin/ralph-hero/hooks/scripts/load-team-soul.sh` — script parses without syntax errors.
 - [ ] `env -u RALPH_COMMAND bash plugin/ralph-hero/hooks/scripts/load-team-soul.sh` produces no stdout and exit 0.
 - [ ] `RALPH_COMMAND=nonexistent-skill bash plugin/ralph-hero/hooks/scripts/load-team-soul.sh` produces no stdout and exit 0.
+- [ ] With a SOUL present (e.g. `hero/SOUL.md` created in Phase 3), `RALPH_COMMAND=hero bash plugin/ralph-hero/hooks/scripts/load-team-soul.sh | jq -e '.hookSpecificOutput.hookEventName == "SessionStart"'` exits 0 — output is parseable JSON with the correct envelope shape.
+- [ ] Same invocation: `... | jq -r '.hookSpecificOutput.additionalContext' | grep -q '^team: builders'` — `additionalContext` contains the SOUL frontmatter body.
+- [ ] With `CLAUDE_ENV_FILE` set to a tempfile and SOUL present, after invocation the tempfile contains `export RALPH_SOUL_LOADED=hero`.
 
 #### Manual Verification:
 - [ ] Wiring the hook into a test skill's `SessionStart` block surfaces the SOUL body in the next Claude turn's context.
 
-**Creates for next phase**: The runtime contract that Phase 3 (SOUL files) must satisfy.
+**Creates for next phase**: The runtime contract that Phase 3 (SOUL files) must satisfy — and the envelope shape that Phase 4 (smoke test) must assert against.
 
 ---
 
@@ -267,13 +274,14 @@ Bind the contract: assert the hook loads each SOUL when `$RALPH_COMMAND` matches
 - **complexity**: medium
 - **depends_on**: [2.1, 3.1, 3.2, 3.3, 3.4, 3.5]
 - **acceptance**:
-  - [ ] File header: `#!/usr/bin/env bash`, `set -euo pipefail`, brief comment block describing what the smoke covers and how to invoke (`bash plugin/ralph-hero/scripts/soul/smoke.sh`).
+  - [ ] File header: `#!/usr/bin/env bash`, `set -euo pipefail`, brief comment block describing what the smoke covers and how to invoke (`bash plugin/ralph-hero/scripts/soul/smoke.sh`). Hard-depends on `jq` — fail fast with a clear message if `command -v jq` returns non-zero.
   - [ ] Uses `PASS=0`/`FAIL=0` counters with `_pass`/`_fail` helpers mirroring `scripts/cos/smoke.sh`.
   - [ ] Resolves the hook path relative to the script location (no hard-coded absolute paths).
-  - [ ] **Test A**: `env -u RALPH_COMMAND bash <hook>` — assert exit 0 and empty stdout.
-  - [ ] **Test B**: `RALPH_COMMAND=nonexistent bash <hook>` — assert exit 0 and empty stdout.
-  - [ ] **Tests C1–C5**: For each of `hero`, `watch`, `scouts`, `memorykeepers`, `caretake` — invoke `RALPH_COMMAND=<name> bash <hook>` and assert exit 0 and stdout contains the string `team: <expected-team-name>` (frontmatter sanity).
-  - [ ] **Test D**: For `hero/SOUL.md` only — stdout contains both `## How you talk` and `## Bad / Good` headings.
+  - [ ] **Test A**: `env -u RALPH_COMMAND bash <hook>` — assert exit 0 and empty stdout (no JSON envelope when no command).
+  - [ ] **Test B**: `RALPH_COMMAND=nonexistent bash <hook>` — assert exit 0 and empty stdout (no JSON envelope when no SOUL).
+  - [ ] **Tests C1–C5**: For each of `hero`, `watch`, `scouts`, `memorykeepers`, `caretake` — invoke `RALPH_COMMAND=<name> bash <hook>`, capture stdout, then assert (a) exit 0, (b) stdout parses as JSON via `echo "$out" | jq -e '.' >/dev/null`, (c) `echo "$out" | jq -e '.hookSpecificOutput.hookEventName == "SessionStart"'` exits 0, and (d) `echo "$out" | jq -r '.hookSpecificOutput.additionalContext'` contains `team: <expected-team-name>`. Raw substring matches against the unparsed stdout are explicitly disallowed — they would pass on a broken raw-`cat` implementation and mask the bug this contract guards.
+  - [ ] **Test D**: For `hero` only — `jq -r '.hookSpecificOutput.additionalContext'` of the hook output contains both `## How you talk` and `## Bad / Good` headings.
+  - [ ] **Test E** (CLAUDE_ENV_FILE side effect): create a tempfile, set `CLAUDE_ENV_FILE=$tempfile`, invoke `RALPH_COMMAND=hero bash <hook>`, then assert the tempfile contains `export RALPH_SOUL_LOADED=hero`. Cleanup the tempfile after the test.
   - [ ] Final summary line: `=== smoke: PASS=N FAIL=M ===`.
   - [ ] Exits non-zero when any FAIL > 0.
 
