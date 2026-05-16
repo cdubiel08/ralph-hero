@@ -364,6 +364,65 @@ Where `PUSH_DRIVE_FLAG` is `--push-drive`, `--no-push-drive`, or unset (if the u
 If `DRIVE_URL` is non-empty, append a `Drive: <URL>` line to the `## Pull Request` comment body composed in Step 7 BEFORE posting the comment. If `DRIVE_URL` is empty (skip or failure), the comment is posted unchanged — bit-identical to pre-Feature-H behavior.
 
 `Bash` is already in ralph-pr's `allowed-tools`; no allowlist change needed.
+## Step 6.8: Evaluate UI-Touching Heuristic
+
+<!-- internal: this step is intentionally conservative — false negatives (UI PRs that slip
+  through) are recoverable via manual `/scout` comment; false positives (backend PRs flagged)
+  waste Scout-team budget and slow merges. Only flag when a changed file explicitly matches
+  a frontend glob. -->
+
+Fetch the list of changed files in the PR:
+
+```bash
+gh pr diff PR_NUMBER --name-only
+```
+
+The heuristic fires when ANY changed file matches one of the following patterns:
+- `**/*.tsx`
+- `**/*.svelte`
+- `**/*.vue`
+- `**/components/**`
+- `**/*.css`
+- `**/*.scss`
+- `**/storybook/**`
+
+**If zero files match**: skip this step entirely — no comment is posted, no error is raised.
+The PR proceeds normally.
+
+**If one or more files match**: post a `## Scout Trigger` comment on the PR. Failure of the
+`gh pr comment` call is logged to stderr but does NOT block or fail the PR creation flow
+(advisory, not blocking):
+
+```bash
+# Collect matched globs for the trigger comment
+MATCHED_FILES=$(gh pr diff PR_NUMBER --name-only | grep -E '\.(tsx|svelte|vue|css|scss)$|/components/|(^|/)storybook/' || true)
+
+if [[ -n "$MATCHED_FILES" ]]; then
+  gh pr comment PR_NUMBER --body "## Scout Trigger
+
+/scout
+
+This PR touches UI files — the Scout team has been queued to review.
+
+**Matched files:**
+\`\`\`
+${MATCHED_FILES}
+\`\`\`
+
+**Why scouts?** See the Scout team voice and refusals: \`plugin/ralph-hero/skills/scouts/SOUL.md\`
+
+Scouts will post a \`## Scout Report\` comment with a \`Verdict: GREEN\` or \`Verdict: RED\` result.
+merge-agent will check for a green verdict before merging this PR." 2>/dev/null \
+    || echo "[ralph-pr] WARNING: failed to post Scout Trigger comment (non-fatal)" >&2
+fi
+```
+
+**Output contract:**
+
+| Status | Meaning | Caller action |
+|--------|---------|---------------|
+| No comment posted | PR does not touch UI files — heuristic did not fire | None; proceed normally |
+| `## Scout Trigger` posted | PR touches UI files — Scout team queued | merge-agent will gate on Scout Report |
 
 ## Step 7: Post Comment
 
