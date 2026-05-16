@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
-# cos-desk.sh — stub for Phase 5 (Streamlit desktop dashboard)
-#
-# Full implementation: https://github.com/cdubiel08/ralph-hero/issues/1257
-#
-# Usage:
-#   cos-desk.sh [--help|-h]
+# cos-desk.sh — dispatcher for the cos desk Streamlit dashboard (Phase 5)
+# Delegates to desk/launch.sh. Docs: README.md § Desk mode
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
 _usage() {
-    echo "cos desk — Streamlit desktop command surface (stub for Phase 5)"
-    echo ""
-    echo "Full implementation: https://github.com/cdubiel08/ralph-hero/issues/1257"
-    echo ""
-    echo "Usage: ralph cos desk [--help|-h]"
+    cat <<EOF
+cos desk — Streamlit desktop command surface at :8502
+
+Usage:  ralph cos desk [--help|-h]
+Port:   default 8502 (override: RALPH_COS_DESK_PORT=8503 ralph cos desk)
+Install: cd plugin/ralph-hero/scripts/cos/desk && uv sync
+Tailscale: tailscale serve --bg --https 443 http://localhost:\${RALPH_COS_DESK_PORT:-8502}
+Docs:   plugin/ralph-hero/scripts/cos/README.md
+EOF
 }
 
 for arg in "$@"; do
     case "$arg" in
-        --help|-h)
-            _usage
-            exit 0
-            ;;
+        --help|-h) _usage; exit 0 ;;
     esac
 done
 
-echo "cos desk is not yet implemented — see Phase 5 (https://github.com/cdubiel08/ralph-hero/issues/1257)"
-exit 0
+LAUNCHER="${SCRIPT_DIR}/desk/launch.sh"
+if [[ ! -f "$LAUNCHER" ]]; then
+    echo "[cos-desk] ERROR: desk/launch.sh not found at ${LAUNCHER}" >&2
+    exit 127
+fi
+if [[ ! -x "$LAUNCHER" ]]; then
+    echo "[cos-desk] ERROR: desk/launch.sh is not executable at ${LAUNCHER}" >&2
+    exit 127
+fi
+
+exec "${LAUNCHER}" "$@"

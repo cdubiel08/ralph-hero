@@ -251,6 +251,62 @@ The extension does not register any write capabilities — there is no `write_gi
 
 ---
 
+## Desk mode (Streamlit dashboard)
+
+Six-panel Streamlit dashboard at `localhost:8502` with a chat panel that shells out to `cos.sh` (zero Claude Code).
+
+### One-time install
+
+```bash
+cd plugin/ralph-hero/scripts/cos/desk
+uv sync
+```
+
+### Launch
+
+```bash
+ralph cos desk
+# → http://localhost:8502
+```
+
+### Port choice
+
+Port `8502` is used (not Streamlit's default `8501`) to avoid collision with other local Streamlit apps. Override with the `RALPH_COS_DESK_PORT` env var:
+
+```bash
+RALPH_COS_DESK_PORT=8503 ralph cos desk
+```
+
+### Tailscale publishing
+
+```bash
+tailscale serve --bg --https 443 http://localhost:8502
+# → https://<machine>.<tailnet>.ts.net/
+```
+
+Full Tailscale docs: <https://tailscale.com/kb/1242/tailscale-serve>
+
+### Security model
+
+Tailnet-only, no Streamlit auth. The dashboard is read-only and the chat panel routes through `cos.sh` → local LLM. Do not publish `:8502` to the public internet.
+
+### Panels
+
+| Panel | Data source | Refresh | Dependencies |
+|-------|-------------|---------|-------------|
+| Today's Brief | `thoughts/shared/research/YYYY-MM-DD-cos-morning-brief.md` | On load + file glob fallback | Phase 3 morning-brief.sh |
+| Pipeline State | `ralph_hero__pipeline_dashboard` via MCP stdio | Explicit button | MCP server built (`npm run build`) |
+| KG Growth | `~/.ralph-hero/knowledge.db` documents table, last 30 days | On load | ralph-knowledge running + dream-loop |
+| Recent Activity | `ralph_hero__recent_activity` (compact, limit 20) via MCP stdio | On load | MCP server built |
+| WIP | `ralph_hero__list_issues` (In Progress + In Review) via MCP stdio | On load | MCP server built |
+| KG Search | `knowledge_search` via ralph-knowledge MCP stdio | Search button | ralph-knowledge built |
+
+### Chat panel
+
+Every chat message shells out to `cos.sh --role default` — this app never calls the Anthropic SDK, OpenAI SDK, `claude` CLI, or any remote LLM (zero Claude Code). Conversation history lives in `st.session_state.messages` and is lost on tab refresh (not persisted to disk in Phase 5).
+
+---
+
 ## Unattended morning brief (Phase 3)
 
 Phase 3 ([GH-1255](https://github.com/cdubiel08/ralph-hero/issues/1255)) ships the first scheduled
@@ -375,6 +431,10 @@ plugin/ralph-hero/scripts/cos/
 ├── extensions/                   # pi extensions — drop into ~/.pi/agent/extensions/ (Phase 4)
 │   ├── README.md                 # Extension install guide and URL scheme reference
 │   └── gh-vfs.ts                 # read_github_url tool: issue://, pr://, thoughts:// schemes
+├── desk/                         # Streamlit desktop dashboard (Phase 5)
+│   ├── app.py                    # Streamlit application (six panels + chat)
+│   ├── launch.sh                 # uv run streamlit run app.py ...
+│   └── pyproject.toml            # uv-managed deps (streamlit, pandas)
 └── launchd/
     └── com.ralph.cos-morning-brief.plist.template   # launchd schedule template (Phase 3)
 ```
@@ -390,7 +450,7 @@ This foundation is consumed by:
 | 2 | [GH-1254](https://github.com/cdubiel08/ralph-hero/issues/1254) | COS skill scaffold + `ralph cos {desk,remote,unattended}` CLI wiring |
 | 3 | [GH-1255](https://github.com/cdubiel08/ralph-hero/issues/1255) | Unattended morning brief + ntfy push |
 | 4 | [GH-1256](https://github.com/cdubiel08/ralph-hero/issues/1256) | oh-my-pi conventions: `cos-loop.sh` (count/duration loop), `gh-vfs.ts` pi extension (`issue://`, `pr://`, `thoughts://`), `ralph cos role` debug subcommand |
-| 5 | [GH-1257](https://github.com/cdubiel08/ralph-hero/issues/1257) | Streamlit desktop command surface at :8502 |
+| 5 | [GH-1257](https://github.com/cdubiel08/ralph-hero/issues/1257) | Streamlit desktop command surface at :8502 (six panels + chat) |
 | 6 | [GH-1258](https://github.com/cdubiel08/ralph-hero/issues/1258) | Nightly self-improvement loop |
 
 The `cos.sh` CLI surface (positional prompt + `--role` flag + JSONL log shape) and
