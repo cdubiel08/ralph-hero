@@ -357,20 +357,20 @@ Author the Streamlit app, its launcher, its `pyproject.toml`, rewrite the `cos-d
 
 #### Automated Verification
 
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos-desk.sh` exits 0
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/desk/launch.sh` exits 0
-- [ ] `python -c "import ast; ast.parse(open('plugin/ralph-hero/scripts/cos/desk/app.py').read())"` exits 0
-- [ ] `grep -E '^(from|import)\s+(anthropic|openai|claude|langchain|llama_index)' plugin/ralph-hero/scripts/cos/desk/app.py` returns empty
-- [ ] `grep -c 'cos.sh' plugin/ralph-hero/scripts/cos/desk/app.py` returns ≥ 1
-- [ ] `grep -c 'mode=ro' plugin/ralph-hero/scripts/cos/desk/app.py` returns ≥ 1
-- [ ] `grep -c '8502' plugin/ralph-hero/scripts/cos/desk/launch.sh` returns ≥ 1
-- [ ] `grep -c 'cos-desk' plugin/ralph-hero/scripts/cos/README.md` returns ≥ 1 (README documents desk mode)
-- [ ] `grep -c 'desk' plugin/ralph-hero/skills/cos/SKILL.md | grep -v 'Phase 5 (GH-1257)'` — SKILL.md no longer marks desk as Phase 5 placeholder (manual confirm: row says "Active")
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` still passes — no MCP server source changes, but run as regression smoke
-- [ ] `npm run build` in `plugin/ralph-hero/mcp-server/` still passes — same regression smoke
-- [ ] Existing cos shell scripts still pass `bash -n`: `cos.sh`, `cos-remote.sh`, `cos-unattended.sh`, `model-roles.sh`, `install-mcp-config.sh`, `smoke.sh` (this phase does NOT modify them; the check verifies no accidental edits)
-- [ ] `wc -l plugin/ralph-hero/scripts/cos/desk/app.py` returns ≤ 600 (file stays small)
-- [ ] `wc -l plugin/ralph-hero/scripts/cos/cos-desk.sh` returns ≤ 50 (dispatcher stays thin)
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos-desk.sh` exits 0
+- [x] `bash -n plugin/ralph-hero/scripts/cos/desk/launch.sh` exits 0
+- [x] `python -c "import ast; ast.parse(open('plugin/ralph-hero/scripts/cos/desk/app.py').read())"` exits 0
+- [x] `grep -E '^(from|import)\s+(anthropic|openai|claude|langchain|llama_index)' plugin/ralph-hero/scripts/cos/desk/app.py` returns empty
+- [x] `grep -c 'cos.sh' plugin/ralph-hero/scripts/cos/desk/app.py` returns ≥ 1
+- [x] `grep -c 'mode=ro' plugin/ralph-hero/scripts/cos/desk/app.py` returns ≥ 1
+- [x] `grep -c '8502' plugin/ralph-hero/scripts/cos/desk/launch.sh` returns ≥ 1
+- [x] `grep -c 'cos-desk' plugin/ralph-hero/scripts/cos/README.md` returns ≥ 1 (README documents desk mode)
+- [x] `grep -c 'desk' plugin/ralph-hero/skills/cos/SKILL.md | grep -v 'Phase 5 (GH-1257)'` — SKILL.md no longer marks desk as Phase 5 placeholder (manual confirm: row says "Active")
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` still passes — no MCP server source changes, but run as regression smoke
+- [x] `npm run build` in `plugin/ralph-hero/mcp-server/` still passes — same regression smoke
+- [x] Existing cos shell scripts still pass `bash -n`: `cos.sh`, `cos-remote.sh`, `cos-unattended.sh`, `model-roles.sh`, `install-mcp-config.sh`, `smoke.sh` (this phase does NOT modify them; the check verifies no accidental edits)
+- [x] `wc -l plugin/ralph-hero/scripts/cos/desk/app.py` returns ≤ 600 (file stays small)
+- [x] `wc -l plugin/ralph-hero/scripts/cos/cos-desk.sh` returns ≤ 50 (dispatcher stays thin)
 
 #### Manual Verification
 
