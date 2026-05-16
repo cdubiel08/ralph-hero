@@ -214,7 +214,7 @@ def render_pipeline() -> None:
             phases = data.get("phases", [])
             if phases and isinstance(phases, list):
                 rows_dict: list[dict[str, Any]] = [
-                    {"state": p.get("name", str(p)), "count": p.get("count", 0)}
+                    {"state": p.get("state", str(p)), "count": p.get("count", 0)}
                     for p in phases
                     if isinstance(p, dict)
                 ]
