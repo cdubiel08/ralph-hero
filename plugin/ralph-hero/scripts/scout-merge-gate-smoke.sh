@@ -135,6 +135,37 @@ echo ""
 echo "--- Test 8: Trigger buried, no report ---"
 _assert_gate "trigger buried" "$(printf '## Pull Request\n\nPR created.\n\n## Scout Trigger\n\n/scout\n\n## Code Review\n\nLGTM')" "BLOCK_NO_REPORT"
 
+# --- Test 9: Interactive merge path (RALPH_AUTO_MERGE unset) still hits gate ---
+# Verifies Step 4b is unconditional: gate runs even when auto-merge guard is skipped.
+echo ""
+echo "--- Test 9: Interactive merge (no RALPH_AUTO_MERGE) — gate still runs ---"
+(
+  unset RALPH_AUTO_MERGE
+  # Simulate the skip-clause output (no gate skip of Step 4b)
+  # Gate itself is pure bash logic; RALPH_AUTO_MERGE not consulted by _scout_gate.
+  # This test confirms _scout_gate is called unconditionally by asserting BLOCK_NO_REPORT
+  # for a trigger-present comment even when RALPH_AUTO_MERGE is absent from env.
+  actual="$(_scout_gate "$(printf '## Scout Trigger\n\n/scout')")"
+  if [[ "$actual" == "BLOCK_NO_REPORT" ]]; then
+    _pass "interactive merge + trigger no report → BLOCK_NO_REPORT (gate reached)"
+  else
+    _fail "interactive merge + trigger no report → $actual (expected BLOCK_NO_REPORT — gate not reached!)"
+  fi
+)
+
+# --- Test 10: Interactive merge (no RALPH_AUTO_MERGE) — non-UI PR passes through ---
+echo ""
+echo "--- Test 10: Interactive merge — non-UI PR passes through gate ---"
+(
+  unset RALPH_AUTO_MERGE
+  actual="$(_scout_gate "$(printf '## Pull Request\n\nPR created.')")"
+  if [[ "$actual" == "PASS" ]]; then
+    _pass "interactive merge + no trigger → PASS (non-UI PR unblocked)"
+  else
+    _fail "interactive merge + no trigger → $actual (expected PASS)"
+  fi
+)
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

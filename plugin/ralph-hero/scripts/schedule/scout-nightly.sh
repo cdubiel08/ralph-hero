@@ -56,11 +56,11 @@ echo "[scout-nightly] Issue label: ${SCOUT_LABEL}"
 echo "[scout-nightly] $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 echo ""
 
-# Invoke test-e2e via claude -p, passing the deployed URL and label as context.
+# Invoke test-e2e via claude -p, passing the deployed URL and label as env vars.
 # The skill reads playwright-stories/**/*.yaml, executes them against the target
 # URL, and files any critical/high findings as GitHub issues with the given label.
+export RALPH_DEPLOYED_BUILD_URL="${DEPLOYED_BUILD_URL}"
 claude -p "/ralph-playwright:test-e2e --label ${SCOUT_LABEL}" \
-  --context "TARGET_URL=${DEPLOYED_BUILD_URL}" \
   2>&1 | tee -a "${HOME}/.ralph-hero/schedule/scout-nightly-$(date +%Y%m%d).log" || {
     echo "[scout-nightly] WARNING: test-e2e invocation exited non-zero — check log above" >&2
     # Non-fatal: schedule runner should not treat a test failure as a script failure.

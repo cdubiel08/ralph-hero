@@ -157,14 +157,14 @@ Reason: Code review required — invoke /ralph-hero:finish or /ralph-hero:ralph-
 
 ## Step 4a: Autonomous Merge Gate
 
-**Runs only when `RALPH_AUTO_MERGE=true`.** When the env var is unset or set to anything else (the standalone `just merge NNN` case), skip this step entirely and continue with the existing flow at Step 5 — backwards compatibility with interactive merging is preserved.
+**Runs only when `RALPH_AUTO_MERGE=true`.** When the env var is unset or set to anything else (the standalone `just merge NNN` case), skip this step entirely and fall through to Step 4b (Scout Report Gate), then Step 5 — backwards compatibility with interactive merging is preserved.
 
 This gate is the safety net that lets the loop runner (`scripts/ralph-loop.sh --auto-merge`) merge approved PRs autonomously. It is intentionally orthogonal to `RALPH_REVIEW_MODE` (which only gates the code-review step in Step 4): you can have auto code-review without auto-merge, and vice versa.
 
 ```bash
 if [ "${RALPH_AUTO_MERGE:-false}" != "true" ]; then
     echo "RALPH_AUTO_MERGE not set; skipping autonomous merge gate."
-    # fall through to Step 5 — interactive flow
+    # fall through to Step 4b (Scout Report Gate), then Step 5 — interactive flow
 fi
 ```
 
@@ -207,7 +207,11 @@ The next loop iteration will re-evaluate. There is no fix cycle here — `RALPH_
 
 All criteria hold. Proceed to Step 4b (Scout Report Gate).
 
+---
+
 ## Step 4b: Scout Report Gate (UI-touching PRs only)
+
+> **Runs unconditionally after Step 4a regardless of `RALPH_AUTO_MERGE`.** Interactive merges (no `RALPH_AUTO_MERGE`) skip Step 4a but must still pass this gate for UI-touching PRs.
 
 > **Output contract for callers (orchestrators: ralph-finish, ralph-hero):**
 >
