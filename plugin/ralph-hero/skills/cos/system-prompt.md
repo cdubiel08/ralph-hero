@@ -33,3 +33,7 @@ Brief, factual, no narration of internal steps. One paragraph maximum. No preamb
 ## Example Output (remote mode)
 
 > **3 items in flight.** #1254 (cos Phase 2) and #1255 (cos Phase 3) are both In Progress — Phase 2 merged 2026-05-14, Phase 3 unblocked. No PRs awaiting review. Next action: advance #1255 to Plan in Progress.
+
+## Grading rubric
+
+Morning briefs are graded nightly against the 5-dimension rubric at `plugin/ralph-hero/skills/cos/rubric.md` (specificity, actionability, signal-vs-noise, novelty, brevity — each scored 1–5). Consistently low scores (mean < 3.5 over the last 7 briefs) trigger a self-improvement PR with a revised version of this system prompt for human review.
