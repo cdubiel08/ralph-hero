@@ -25,7 +25,7 @@ SELF_IMPROVE="${SCRIPT_DIR}/self-improve.sh"
 # Usage
 # ---------------------------------------------------------------------------
 _usage() {
-    cat <<'EOF'
+    cat >&2 <<'EOF'
 self-improve-smoke.sh — manual end-to-end smoke test for self-improve.sh
 
 Usage:
@@ -48,7 +48,7 @@ for arg in "$@"; do
             ;;
         *)
             echo "[smoke] ERROR: Unknown flag: $arg" >&2
-            _usage >&2
+            _usage
             exit 2
             ;;
     esac
@@ -161,21 +161,19 @@ fi
 BRANCH_DATE="$(date -u +%F)"
 BRANCH_NAME="cos-self-improvement/${BRANCH_DATE}"
 
-if grep -qF "DRY RUN: skipping git push" "$STDERR_LOG"; then
-    echo "[smoke] Path: mean < 3.5 — draft prompt + branch created (dry-run skipped push/PR)"
-    # Verify the branch was created locally
+if grep -qF "DRY RUN: would create branch" "$STDERR_LOG"; then
+    echo "[smoke] Path: mean < 3.5 — dry-run gate fired before git mutation (no branch created)"
+    # Confirm no branch was left behind (dry-run now exits before git checkout -b)
     REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd -P)"
     if git -C "$REPO_ROOT" rev-parse --verify "$BRANCH_NAME" >/dev/null 2>&1; then
-        echo "[smoke] PASS: local branch '${BRANCH_NAME}' was created"
-        # Clean up the local branch
-        git -C "$REPO_ROOT" checkout main 2>/dev/null || git -C "$REPO_ROOT" checkout - 2>/dev/null || true
+        echo "[smoke] FAIL: local branch '${BRANCH_NAME}' was created despite dry-run (regression)" >&2
+        # Clean up the accidentally created branch
         git -C "$REPO_ROOT" branch -D "$BRANCH_NAME" 2>/dev/null || true
-        echo "[smoke] Cleaned up local branch: ${BRANCH_NAME}"
-    else
-        echo "[smoke] FAIL: local branch '${BRANCH_NAME}' was NOT created" >&2
         PASS=0
+    else
+        echo "[smoke] PASS: no local branch created (dry-run correctly exited before git mutation)"
     fi
-    echo "[smoke] Smoke test passed: low-quality briefs triggered draft prompt revision (branch cleaned up)"
+    echo "[smoke] Smoke test passed: low-quality briefs triggered dry-run path (no git state mutated)"
 elif grep -qF ">= 3.5; no revision needed" "$STDERR_LOG"; then
     MEAN_LINE="$(grep -oE "mean [0-9]+\.[0-9]+" "$STDERR_LOG" | head -1)"
     echo "[smoke] Path: mean >= 3.5 — no revision triggered"

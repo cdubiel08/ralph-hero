@@ -55,7 +55,7 @@ SYSTEM_PROMPT_FILE="${PLUGIN_ROOT}/skills/cos/system-prompt.md"
 # Usage
 # ---------------------------------------------------------------------------
 _usage() {
-    cat <<'EOF'
+    cat >&2 <<'EOF'
 self-improve.sh — nightly cos self-improvement loop
 
 Usage:
@@ -86,7 +86,7 @@ for arg in "$@"; do
             ;;
         *)
             echo "[self-improve] ERROR: Unknown flag: $arg" >&2
-            _usage >&2
+            _usage
             exit 2
             ;;
     esac
@@ -239,8 +239,9 @@ EOF
     _debug "Grading ${BRIEF_BASENAME}..."
 
     # Invoke cos.sh --role slow; capture stdout; failures are tolerated
+    # Restrict tools to read-only: grading only needs to inspect content, not write.
     GRADE_EXIT=0
-    "$COS_SH" --role slow "$GRADE_PROMPT" > "$SCORE_FILE" 2>/dev/null || GRADE_EXIT=$?
+    RALPH_COS_TOOLS=read,grep,find "$COS_SH" --role slow "$GRADE_PROMPT" > "$SCORE_FILE" 2>/dev/null || GRADE_EXIT=$?
 
     # Parse 5 integer scores from the output file
     PARSE_OK=1
@@ -368,6 +369,17 @@ if git -C "$REPO_ROOT" rev-parse --verify "$BRANCH_NAME" >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Dry-run gate: must fire BEFORE any git mutation
+# ---------------------------------------------------------------------------
+# (Grading and revision drafting above are read-only. All git operations below
+# this point are mutations. Exit here so dry-run never creates a branch or commit.)
+if [[ "${RALPH_COS_SELF_IMPROVE_DRY_RUN:-}" == "1" ]]; then
+    echo "[self-improve] DRY RUN: would create branch ${BRANCH_NAME}, commit revised system-prompt.md, push, and open PR" >&2
+    echo "[self-improve] DRY RUN: mean=${MEAN} (below threshold 3.5); PR would be opened" >&2
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Draft revised system prompt via cos.sh --role slow
 # ---------------------------------------------------------------------------
 CURRENT_PROMPT_CONTENT="$(cat "$SYSTEM_PROMPT_FILE")"
@@ -411,7 +423,8 @@ DRAFT_PROMPT_FILE="${SCORE_TMPDIR}/draft-system-prompt-${RUN_DATE}.md"
 _debug "Requesting revised system prompt from cos.sh --role slow..."
 
 REVISION_EXIT=0
-"$COS_SH" --role slow "$REVISION_PROMPT" > "$DRAFT_PROMPT_FILE" 2>/dev/null || REVISION_EXIT=$?
+# Restrict tools to read-only: the revision LLM generates content to stdout, no write tool needed.
+RALPH_COS_TOOLS=read,grep,find "$COS_SH" --role slow "$REVISION_PROMPT" > "$DRAFT_PROMPT_FILE" 2>/dev/null || REVISION_EXIT=$?
 
 if [[ $REVISION_EXIT -ne 0 ]]; then
     echo "[self-improve] ERROR: cos.sh failed during revision drafting (exit ${REVISION_EXIT})" >&2
@@ -459,15 +472,6 @@ printf '%s' "$DRAFT_CONTENT" > "$SYSTEM_PROMPT_FILE"
 
 git -C "$REPO_ROOT" add "plugin/ralph-hero/skills/cos/system-prompt.md"
 git -C "$REPO_ROOT" commit -m "docs(cos): self-improvement revision ${RUN_DATE} (mean=${MEAN})"
-
-# ---------------------------------------------------------------------------
-# Dry-run gate: skip push + PR if RALPH_COS_SELF_IMPROVE_DRY_RUN=1
-# ---------------------------------------------------------------------------
-if [[ "${RALPH_COS_SELF_IMPROVE_DRY_RUN:-}" == "1" ]]; then
-    echo "[self-improve] DRY RUN: skipping git push and gh pr create" >&2
-    echo "[self-improve] Branch ${BRANCH_NAME} created locally with commit. Inspect then: git -C ${REPO_ROOT} branch -D ${BRANCH_NAME}" >&2
-    exit 0
-fi
 
 git -C "$REPO_ROOT" push -u origin "$BRANCH_NAME"
 
