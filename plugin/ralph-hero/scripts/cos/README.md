@@ -181,6 +181,76 @@ jq -c . ~/.ralph-hero/cos/runs/$(date +%Y-%m-%d).jsonl | head -5
 
 ---
 
+## Loop mode (`cos-loop.sh`)
+
+Mirror `/loop` semantics — run N iterations or a wall-clock duration of `cos.sh` invocations.
+
+```bash
+cos-loop.sh 10 "Summarise today's open issues"      # 10 iterations
+cos-loop.sh 30s "Summarise today's open issues"     # 30 seconds wall-clock
+cos-loop.sh --keep-going 5 "..."                    # don't abort on non-zero
+cos-loop.sh --role plan 3 "Draft a sprint goal"     # passes --role through
+```
+
+Each iteration writes one row to the same JSONL log that `cos.sh` writes
+(`~/.ralph-hero/cos/runs/YYYY-MM-DD.jsonl`). `cos-loop.sh` itself does not
+write rows — one `cos.sh` call per iteration produces one row.
+
+---
+
+## Role debugging (`ralph cos role`)
+
+Print the resolved model for each role — useful for confirming env-var overrides
+are taking effect.
+
+```bash
+ralph cos role            # prints all four roles + resolved models in a table
+ralph cos role default    # prints just qwen3.5-27b
+ralph cos role plan       # prints just qwen3.5-27b (or RALPH_COS_MODEL_PLAN)
+```
+
+`ralph cos role <unknown>` exits 2 with `unknown role: <unknown>` to stderr.
+This is deliberately stricter than `cos.sh --role <unknown>`, which warns and falls
+back to the default — the CLI failure makes misuse visible at invocation time.
+
+---
+
+## gh-vfs pi extension
+
+A pi extension that registers a single `read_github_url` tool for accessing GitHub
+resources and local thoughts/ files without leaving a pi session.
+
+### Install
+
+```bash
+cp plugin/ralph-hero/scripts/cos/extensions/gh-vfs.ts ~/.pi/agent/extensions/
+```
+
+Restart pi after install. Verify by running:
+
+```bash
+pi -p "what tools are available?"
+# Output should include: read_github_url
+```
+
+### URL schemes
+
+```
+read_github_url('issue://1252')
+read_github_url('pr://1259/diff/3')
+read_github_url('thoughts://shared/research/2026-05-14-pi-coding-harness-as-chief-of-staff.md')
+```
+
+| Scheme | What it fetches | Dependency |
+|--------|----------------|-----------|
+| `issue://N` | GitHub issue body via `ralph_hero__get_issue` MCP tool | `ralph_hero__get_issue` in `mcp.json` `directTools` (Phase 1 configures this) |
+| `pr://N/diff/<ctx>` | Unified diff for PR #N with `<ctx>` context lines | `gh` CLI authenticated (`gh auth status` must succeed) |
+| `thoughts://<path>` | File from the `thoughts/` corpus relative to repo root | pi invoked from a ralph-hero repo root (the default with `cos.sh`) |
+
+The extension does not register any write capabilities — there is no `write_github_url`.
+
+---
+
 ## Unattended morning brief (Phase 3)
 
 Phase 3 ([GH-1255](https://github.com/cdubiel08/ralph-hero/issues/1255)) ships the first scheduled
@@ -295,11 +365,16 @@ plugin/ralph-hero/scripts/cos/
 ├── PREFLIGHT.md                  # Pre-flight install verification outputs (Task 1.0)
 ├── model-roles.sh                # Sourced helper — resolves RALPH_COS_ROLE → COS_MODEL
 ├── cos.sh                        # Entrypoint — invoke pi with model-role + JSONL logging
+├── cos-loop.sh                   # Loop wrapper — count or duration mode (Phase 4)
+├── cos-loop-smoke.sh             # End-to-end smoke for cos-loop.sh (manual; Phase 4)
 ├── cos-unattended.sh             # Dispatcher for scheduled unattended jobs (Phase 3)
 ├── morning-brief.sh              # Weekday 06:30 morning brief + ntfy push (Phase 3)
 ├── mcp.json.example              # Template MCP config (placeholders substituted on install)
 ├── install-mcp-config.sh         # Idempotent installer for mcp.json.example
 ├── smoke.sh                      # End-to-end smoke test (manual; requires pi + MLX server)
+├── extensions/                   # pi extensions — drop into ~/.pi/agent/extensions/ (Phase 4)
+│   ├── README.md                 # Extension install guide and URL scheme reference
+│   └── gh-vfs.ts                 # read_github_url tool: issue://, pr://, thoughts:// schemes
 └── launchd/
     └── com.ralph.cos-morning-brief.plist.template   # launchd schedule template (Phase 3)
 ```
@@ -314,7 +389,7 @@ This foundation is consumed by:
 |-------|-------|-------------|
 | 2 | [GH-1254](https://github.com/cdubiel08/ralph-hero/issues/1254) | COS skill scaffold + `ralph cos {desk,remote,unattended}` CLI wiring |
 | 3 | [GH-1255](https://github.com/cdubiel08/ralph-hero/issues/1255) | Unattended morning brief + ntfy push |
-| 4 | [GH-1256](https://github.com/cdubiel08/ralph-hero/issues/1256) | oh-my-pi conventions (`cos-loop.sh`, `gh-vfs.ts`, model-roles polish) |
+| 4 | [GH-1256](https://github.com/cdubiel08/ralph-hero/issues/1256) | oh-my-pi conventions: `cos-loop.sh` (count/duration loop), `gh-vfs.ts` pi extension (`issue://`, `pr://`, `thoughts://`), `ralph cos role` debug subcommand |
 | 5 | [GH-1257](https://github.com/cdubiel08/ralph-hero/issues/1257) | Streamlit desktop command surface at :8502 |
 | 6 | [GH-1258](https://github.com/cdubiel08/ralph-hero/issues/1258) | Nightly self-improvement loop |
 

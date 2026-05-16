@@ -277,11 +277,12 @@ setup *args:
     set -- $_args
     dispatch "setup" "$@"
 
-# Chief-of-staff: phone-friendly status (remote), desktop dashboard (desk), or scheduled brief (unattended)
-# Usage: just cos [desk|remote|unattended] [args...]
+# Chief-of-staff: phone-friendly status (remote), desktop dashboard (desk), scheduled brief (unattended), or model-role debug (role)
+# Usage: just cos [desk|remote|unattended|role] [args...]
 #   ralph cos remote       - 2-3 sentence status summary via local LLM (30-min cache)
 #   ralph cos desk         - Streamlit desktop dashboard (Phase 5, GH-1257)
 #   ralph cos unattended   - Scheduled morning brief + ntfy (Phase 3, GH-1255)
+#   ralph cos role [name]  - Print resolved model for a role (or all four roles in a table)
 #   ralph cos --help       - Show this help
 [group('cos')]
 cos mode='--help' *args:
@@ -304,6 +305,9 @@ cos mode='--help' *args:
                 "               Zero Claude Code - routes through cos.sh -> mlx-openai-server." \
                 "  desk         Interactive Streamlit dashboard. (Phase 5 - GH-1257)" \
                 "  unattended   Scheduled morning brief + ntfy push. (Phase 3 - GH-1255)" \
+                "  role [name]  Print resolved model for <name> (default|smol|slow|plan)." \
+                "               No arg prints all four roles in a table." \
+                "               Exits 2 if <name> is unrecognised." \
                 "" \
                 "Options:" \
                 "  --help, -h   Show this help and exit 0" \
@@ -312,7 +316,9 @@ cos mode='--help' *args:
                 "  ralph cos remote" \
                 "  ralph cos remote --no-cache" \
                 "  ralph cos desk" \
-                "  ralph cos unattended"
+                "  ralph cos unattended" \
+                "  ralph cos role" \
+                "  ralph cos role plan"
             exit 0
             ;;
         desk)
@@ -323,6 +329,39 @@ cos mode='--help' *args:
             ;;
         unattended)
             exec "${PLUGIN_DIR}/scripts/cos/cos-unattended.sh" "$@"
+            ;;
+        role)
+            # Debug subcommand: print resolved model for a given role (or all four).
+            # Sources model-roles.sh for env-aware resolution — same logic as cos.sh.
+            ROLES_SH="${PLUGIN_DIR}/scripts/cos/model-roles.sh"
+            if [[ ! -f "$ROLES_SH" ]]; then
+                echo "ralph cos role: model-roles.sh not found at ${ROLES_SH}" >&2
+                exit 1
+            fi
+            # shellcheck source=scripts/cos/model-roles.sh
+            source "$ROLES_SH"
+            ROLE_ARG="${1:-}"
+            if [[ -z "$ROLE_ARG" ]]; then
+                # Print all four roles as a table
+                printf '%-8s %s\n' "role" "model"
+                printf '%-8s %s\n' "------" "---------------"
+                for r in default smol slow plan; do
+                    RALPH_COS_ROLE="$r" cos_resolve_model >/dev/null
+                    printf '%-8s %s\n' "$r" "$COS_MODEL"
+                done
+            else
+                # Print just the resolved model for the specified role
+                case "$ROLE_ARG" in
+                    default|smol|slow|plan)
+                        RALPH_COS_ROLE="$ROLE_ARG" cos_resolve_model >/dev/null
+                        echo "$COS_MODEL"
+                        ;;
+                    *)
+                        echo "unknown role: ${ROLE_ARG}" >&2
+                        exit 2
+                        ;;
+                esac
+            fi
             ;;
         *)
             echo "unknown cos mode: {{mode}}" >&2

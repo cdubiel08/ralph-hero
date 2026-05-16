@@ -326,15 +326,15 @@ Author the `gh-vfs.ts` pi extension, the `cos-loop.sh` count-or-duration wrapper
 
 #### Automated Verification
 
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos-loop.sh` exits 0
-- [ ] `bash -n plugin/ralph-hero/scripts/cos/cos-loop-smoke.sh` exits 0
-- [ ] `grep -c 'pi.registerTool' plugin/ralph-hero/scripts/cos/extensions/gh-vfs.ts` returns `1` (exactly one tool registered)
-- [ ] `grep -E '(writeFile|appendFile|gh issue edit|gh pr edit|save_issue|create_issue)' plugin/ralph-hero/scripts/cos/extensions/gh-vfs.ts` returns empty (no write capabilities)
-- [ ] `just --summary` (run from repo root or `plugin/ralph-hero/`) still includes `cos`
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` still passes — no MCP server source changes, but run as regression smoke
-- [ ] `npm run build` in `plugin/ralph-hero/mcp-server/` still passes — same regression smoke
-- [ ] All existing cos shell scripts still pass `bash -n`: `cos.sh`, `cos-desk.sh`, `cos-remote.sh`, `cos-unattended.sh`, `model-roles.sh`, `install-mcp-config.sh`, `smoke.sh` (this phase does NOT modify them; the check verifies no accidental edits)
-- [ ] `wc -l plugin/ralph-hero/scripts/cos/extensions/gh-vfs.ts` returns ≤ 250 (extension stays small — if growing larger, escalate per parent constraint)
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos-loop.sh` exits 0
+- [x] `bash -n plugin/ralph-hero/scripts/cos/cos-loop-smoke.sh` exits 0
+- [x] `grep -c 'pi.registerTool' plugin/ralph-hero/scripts/cos/extensions/gh-vfs.ts` returns `1` (exactly one tool registered)
+- [x] `grep -E '(writeFile|appendFile|gh issue edit|gh pr edit|save_issue|create_issue)' plugin/ralph-hero/scripts/cos/extensions/gh-vfs.ts` returns empty (no write capabilities)
+- [x] `just --summary` (run from repo root or `plugin/ralph-hero/`) still includes `cos`
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` still passes — no MCP server source changes, but run as regression smoke
+- [x] `npm run build` in `plugin/ralph-hero/mcp-server/` still passes — same regression smoke
+- [x] All existing cos shell scripts still pass `bash -n`: `cos.sh`, `cos-desk.sh`, `cos-remote.sh`, `cos-unattended.sh`, `model-roles.sh`, `install-mcp-config.sh`, `smoke.sh` (this phase does NOT modify them; the check verifies no accidental edits)
+- [x] `wc -l plugin/ralph-hero/scripts/cos/extensions/gh-vfs.ts` returns ≤ 250 (extension stays small — if growing larger, escalate per parent constraint)
 
 #### Manual Verification
 
