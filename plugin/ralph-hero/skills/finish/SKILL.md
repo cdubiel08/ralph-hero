@@ -254,11 +254,13 @@ Reason: Code review feedback unresolved after 1 fix cycle.
 
 ## Step 5: Merge (dispatch ralph-merge)
 
-Code review has resolved (approved, skipped by user, or no skill available). Dispatch ralph-merge for merge mechanics only — always pass the PR URL to avoid redundant lookup:
+Code review has resolved (approved, skipped by user, or no skill available). Dispatch the merge-agent (forked, isolated 200k context) for merge mechanics only — always pass the PR URL to avoid redundant lookup:
 
 ```
-Skill("ralph-hero:ralph-merge", args="NNN --pr-url PR_URL")
+Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR for GH-NNN. PR URL: PR_URL", description="Merge GH-NNN")
 ```
+
+Dispatching via Agent() forks ralph-merge into an isolated 200k haiku context. The parent session (Opus 4.7 / Sonnet 4.6 / 1M) is not compacted. See [GH-1265](https://github.com/cdubiel08/ralph-hero/issues/1265).
 
 ralph-merge is now a leaf skill: it handles PR readiness check, merge via `merge-pr.sh`, worktree cleanup, state transition to Done, parent advancement, cross-repo unblock, and posting the Merged comment. It does NOT run code review (that's owned by Step 4 above).
 
