@@ -122,11 +122,11 @@ Build the Director orchestrator: a single skill at `plugin/ralph-hero/skills/dir
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File exists at `plugin/ralph-hero/skills/director/event-classes.md`
-  - [ ] Contains a markdown table with columns: `workflow_state`, `labels`, `team`, `notes`
-  - [ ] Includes rows for: `Backlog` → triage (caretakers), `Research Needed`/`Research in Progress`/`Ready for Plan`/`Plan in Progress`/`Plan in Review`/`In Progress`/`In Review` → builders, `Human Needed` → unblock (caretakers), any state + `trigger:watch` → watchers, any state + `trigger:scouts` → scouts, any state + `trigger:caretake` → caretakers, any state + `trigger:memorykeepers` → memorykeepers, any state + `watcher-auto` → watchers (placeholder, producer ships in Feature D), any state + `scout-auto` → scouts (placeholder, producer ships in Feature F), any state + `process-improvement` → caretakers (placeholder, producer ships in Feature D)
-  - [ ] Document includes a one-paragraph header explaining that this file is the canonical schema and that Features D/F edit it via PR to add new event classes
-  - [ ] No `TODO` rows — placeholders are explicitly marked as "label exists, producer pending"
+  - [x] File exists at `plugin/ralph-hero/skills/director/event-classes.md`
+  - [x] Contains a markdown table with columns: `workflow_state`, `labels`, `team`, `notes`
+  - [x] Includes rows for: `Backlog` → triage (caretakers), `Research Needed`/`Research in Progress`/`Ready for Plan`/`Plan in Progress`/`Plan in Review`/`In Progress`/`In Review` → builders, `Human Needed` → unblock (caretakers), any state + `trigger:watch` → watchers, any state + `trigger:scouts` → scouts, any state + `trigger:caretake` → caretakers, any state + `trigger:memorykeepers` → memorykeepers, any state + `watcher-auto` → watchers (placeholder, producer ships in Feature D), any state + `scout-auto` → scouts (placeholder, producer ships in Feature F), any state + `process-improvement` → caretakers (placeholder, producer ships in Feature D)
+  - [x] Document includes a one-paragraph header explaining that this file is the canonical schema and that Features D/F edit it via PR to add new event classes
+  - [x] No `TODO` rows — placeholders are explicitly marked as "label exists, producer pending"
 
 #### Task 1.2: Write Director SKILL.md skeleton
 - **files**: `plugin/ralph-hero/skills/director/SKILL.md` (create), `plugin/ralph-hero/skills/autopilot/SKILL.md` (read), `plugin/ralph-hero/skills/hero/SKILL.md` (read)
@@ -134,11 +134,11 @@ Build the Director orchestrator: a single skill at `plugin/ralph-hero/skills/dir
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Frontmatter includes: `description` (one sentence about classifying + dispatching events), `argument-hint: "[optional: --issue NNN]"`, `context: inline`, SessionStart hook running `set-skill-env.sh RALPH_COMMAND=director`
-  - [ ] `allowed-tools` includes at minimum: `Skill`, `Read`, `Bash`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues`, `ScheduleWakeup`
-  - [ ] Configuration block at top resolves `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` via backtick directives, mirroring autopilot/hero
-  - [ ] Skill body includes numbered Workflow section with at least: Step 1 (parse args + check for `--issue` override), Step 2 (read `next_actions` or fetch specific issue), Step 3 (classify via taxonomy), Step 4 (dispatch via `Skill()`), Step 5 (consume `trigger:<team>` label if present), Step 6 (emit `result:` marker)
-  - [ ] Body explicitly references `event-classes.md` as the lookup source
+  - [x] Frontmatter includes: `description` (one sentence about classifying + dispatching events), `argument-hint: "[optional: --issue NNN]"`, `context: inline`, SessionStart hook running `set-skill-env.sh RALPH_COMMAND=director`
+  - [x] `allowed-tools` includes at minimum: `Skill`, `Read`, `Bash`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues`, `ScheduleWakeup`
+  - [x] Configuration block at top resolves `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` via backtick directives, mirroring autopilot/hero
+  - [x] Skill body includes numbered Workflow section with at least: Step 1 (parse args + check for `--issue` override), Step 2 (read `next_actions` or fetch specific issue), Step 3 (classify via taxonomy), Step 4 (dispatch via `Skill()`), Step 5 (consume `trigger:<team>` label if present), Step 6 (emit `result:` marker)
+  - [x] Body explicitly references `event-classes.md` as the lookup source
 
 #### Task 1.3: Classifier logic + dispatch
 - **files**: `plugin/ralph-hero/skills/director/SKILL.md` (modify)
@@ -146,10 +146,10 @@ Build the Director orchestrator: a single skill at `plugin/ralph-hero/skills/dir
 - **complexity**: medium
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] Skill body Step 3 documents the classification algorithm: load `event-classes.md`, for the candidate issue evaluate `trigger:*` labels first (highest priority), then automation labels (`*-auto`, `process-improvement`), then `workflow_state`; first match wins
-  - [ ] Skill body Step 4 documents dispatch via `Skill("<plugin>:<team-entrypoint>", args="--issue NNN")` with the team-entrypoint mapping: builders → `ralph-hero:hero`, watchers → `ralph-hero:watch` (note: ships in Feature C), scouts → `ralph-hero:scouts` (Feature F), memorykeepers → manual `dream-now` (no skill yet; Director emits `needs input:` marker), caretakers → `ralph-hero:caretake` (Feature G)
-  - [ ] When the target team entrypoint does not yet exist (watchers/scouts/caretakers pre-Feature-C/F/G), Director emits `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continues
-  - [ ] Skill body explicitly documents that Director does NOT implement work itself — it only classifies and dispatches; this matches the Director SOUL refusals
+  - [x] Skill body Step 3 documents the classification algorithm: load `event-classes.md`, for the candidate issue evaluate `trigger:*` labels first (highest priority), then automation labels (`*-auto`, `process-improvement`), then `workflow_state`; first match wins
+  - [x] Skill body Step 4 documents dispatch via `Skill("<plugin>:<team-entrypoint>", args="--issue NNN")` with the team-entrypoint mapping: builders → `ralph-hero:hero`, watchers → `ralph-hero:watch` (note: ships in Feature C), scouts → `ralph-hero:scouts` (Feature F), memorykeepers → manual `dream-now` (no skill yet; Director emits `needs input:` marker), caretakers → `ralph-hero:caretake` (Feature G)
+  - [x] When the target team entrypoint does not yet exist (watchers/scouts/caretakers pre-Feature-C/F/G), Director emits `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continues
+  - [x] Skill body explicitly documents that Director does NOT implement work itself — it only classifies and dispatches; this matches the Director SOUL refusals
 
 #### Task 1.4: trigger:<team> label handler
 - **files**: `plugin/ralph-hero/skills/director/SKILL.md` (modify)
@@ -157,9 +157,9 @@ Build the Director orchestrator: a single skill at `plugin/ralph-hero/skills/dir
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] Skill body Step 5 documents the label-consumption flow: after a successful dispatch driven by a `trigger:<team>` label, call `save_issue` with `labels: [<existing labels minus trigger:*>]` to remove the trigger label
-  - [ ] Body explicitly handles the priority order from Shared Constraint #6: `RemoteTrigger` inputs > `trigger:<team>` label > `/schedule` heartbeat. Body documents how Director detects each source (RemoteTrigger via tool input shape; label via `get_issue` labels array; heartbeat via no explicit input)
-  - [ ] Body documents that the label is removed **after** successful dispatch initiation, not after team completion (teams may run long; consumption is dispatch-edge-triggered)
+  - [x] Skill body Step 5 documents the label-consumption flow: after a successful dispatch driven by a `trigger:<team>` label, call `save_issue` with `labels: [<existing labels minus trigger:*>]` to remove the trigger label
+  - [x] Body explicitly handles the priority order from Shared Constraint #6: `RemoteTrigger` inputs > `trigger:<team>` label > `/schedule` heartbeat. Body documents how Director detects each source (RemoteTrigger via tool input shape; label via `get_issue` labels array; heartbeat via no explicit input)
+  - [x] Body documents that the label is removed **after** successful dispatch initiation, not after team completion (teams may run long; consumption is dispatch-edge-triggered)
 
 #### Task 1.5: Director SOUL.md
 - **files**: `plugin/ralph-hero/skills/director/SOUL.md` (create)
@@ -167,10 +167,10 @@ Build the Director orchestrator: a single skill at `plugin/ralph-hero/skills/dir
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File exists with frontmatter `team: director`, `voice: terse-decisive`, `refuses: ["implementing work", "modifying files outside director/", "running team operators directly"]`
-  - [ ] Body length 150-250 words covering "How you talk" (terse, declarative, dispatches don't editorialize) + one Bad/Good example exchange demonstrating: bad = Director starts implementing or explaining a team's job; good = Director classifies, dispatches, returns
-  - [ ] Body includes the line: "I do not implement. I dispatch."
-  - [ ] Loadable by Feature A's `load-team-soul.sh` hook when `$RALPH_COMMAND=director`
+  - [x] File exists with frontmatter `team: director`, `voice: terse-decisive`, `refuses: ["implementing work", "modifying files outside director/", "running team operators directly"]`
+  - [x] Body length 150-250 words covering "How you talk" (terse, declarative, dispatches don't editorialize) + one Bad/Good example exchange demonstrating: bad = Director starts implementing or explaining a team's job; good = Director classifies, dispatches, returns
+  - [x] Body includes the line: "I do not implement. I dispatch."
+  - [x] Loadable by Feature A's `load-team-soul.sh` hook when `$RALPH_COMMAND=director`
 
 #### Task 1.6: Rewrite autopilot to delegate to Director
 - **files**: `plugin/ralph-hero/skills/autopilot/SKILL.md` (modify)
@@ -178,22 +178,22 @@ Build the Director orchestrator: a single skill at `plugin/ralph-hero/skills/dir
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] The `Skill("loop", args="...")` body inside autopilot no longer says `Run /ralph-hero:hero on the next-most-important issue`
-  - [ ] Replaced with: `Run /ralph-hero:director on the next-most-important event on the project queue. Director classifies the event and dispatches the correct team (builders / watchers / scouts / memorykeepers / caretakers).`
-  - [ ] Continuation rule preserved verbatim (re-check queue, `ScheduleWakeup` cadence, queue-empty termination)
-  - [ ] Trust language updated: "Trust Director's classification and team dispatch decisions" replaces "Trust hero's escalation decisions" — but the underlying contract (escalation surfaces via `Human Needed`, autopilot does no bookkeeping) is unchanged
-  - [ ] No new env vars introduced; no new opt-in gates added — `RALPH_AUTOPILOT_ENABLE` remains the single switch
-  - [ ] Configuration block at top still shows "Review mode (inherited by hero)" but adds a parallel line for Director: `Director skill: /ralph-hero:director` (no env var needed since Director itself is unconditional)
+  - [x] The `Skill("loop", args="...")` body inside autopilot no longer says `Run /ralph-hero:hero on the next-most-important issue`
+  - [x] Replaced with: `Run /ralph-hero:director on the next-most-important event on the project queue. Director classifies the event and dispatches the correct team (builders / watchers / scouts / memorykeepers / caretakers).`
+  - [x] Continuation rule preserved verbatim (re-check queue, `ScheduleWakeup` cadence, queue-empty termination)
+  - [x] Trust language updated: "Trust Director's classification and team dispatch decisions" replaces "Trust hero's escalation decisions" — but the underlying contract (escalation surfaces via `Human Needed`, autopilot does no bookkeeping) is unchanged
+  - [x] No new env vars introduced; no new opt-in gates added — `RALPH_AUTOPILOT_ENABLE` remains the single switch
+  - [x] Configuration block at top still shows "Review mode (inherited by hero)" but adds a parallel line for Director: `Director skill: /ralph-hero:director` (no env var needed since Director itself is unconditional)
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run lint` — no new errors (Director files are markdown; lint runs against any TypeScript touched, which should be none)
-- [ ] `npm run typecheck` — passes (no TypeScript modified; included as a guard that nothing accidentally broke)
-- [ ] `Skill("ralph-hero:director", args="")` invokable in a fresh Claude Code session with no parse errors in the frontmatter
-- [ ] Markdown frontmatter on all three new files (`SKILL.md`, `SOUL.md`, `event-classes.md`) parses as valid YAML (check via `head -20 <file>` for visual inspection, or any markdown frontmatter validator)
-- [ ] Grep check: `grep -l "Run /ralph-hero:hero on the next" plugin/ralph-hero/skills/autopilot/SKILL.md` returns nothing (the old hero-direct invocation is gone)
-- [ ] Grep check: `grep -l "/ralph-hero:director" plugin/ralph-hero/skills/autopilot/SKILL.md` returns the file (the new Director invocation is present)
+- [x] `npm run lint` — no new errors (Director files are markdown; lint runs against any TypeScript touched, which should be none)
+- [x] `npm run typecheck` — passes (no TypeScript modified; included as a guard that nothing accidentally broke)
+- [x] `Skill("ralph-hero:director", args="")` invokable in a fresh Claude Code session with no parse errors in the frontmatter
+- [x] Markdown frontmatter on all three new files (`SKILL.md`, `SOUL.md`, `event-classes.md`) parses as valid YAML (check via `head -20 <file>` for visual inspection, or any markdown frontmatter validator)
+- [x] Grep check: `grep -l "Run /ralph-hero:hero on the next" plugin/ralph-hero/skills/autopilot/SKILL.md` returns nothing (the old hero-direct invocation is gone)
+- [x] Grep check: `grep -l "/ralph-hero:director" plugin/ralph-hero/skills/autopilot/SKILL.md` returns the file (the new Director invocation is present)
 
 #### Manual Verification:
 - [ ] Add label `trigger:caretake` to a real "Backlog" issue in the project. Run `Skill("ralph-hero:director", args="")`. Confirm Director's output: (a) identifies the label, (b) maps it to `caretakers` team via taxonomy, (c) attempts dispatch (or emits `needs input: team caretake not yet implemented` since Feature G hasn't shipped), (d) removes the label via `save_issue`.
