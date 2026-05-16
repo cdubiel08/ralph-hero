@@ -124,7 +124,7 @@ Author the quiet-steward voice document. Replaces the Feature A stub (which cont
 - [x] `test -f plugin/ralph-hero/skills/caretake/SOUL.md` — file exists.
 - [x] `head -10 plugin/ralph-hero/skills/caretake/SOUL.md | grep -E '^team:|^voice:|^refuses:'` — all three frontmatter fields present.
 - [x] `wc -w plugin/ralph-hero/skills/caretake/SOUL.md` — body word count between 150 and 250 (frontmatter excluded; approximate is fine — gate is "not a stub").
-- [x] `grep -E '^### Bad|^### Good' plugin/ralph-hero/skills/caretake/SOUL.md` — at least one Bad / Good example pair.
+- [x] `grep -E '^\*\*Bad:\*\*|^\*\*Good:\*\*' plugin/ralph-hero/skills/caretake/SOUL.md` — at least one Bad / Good example pair.
 
 #### Manual Verification:
 - [ ] Voice reads as quiet-steward, not as "another helpful assistant".
