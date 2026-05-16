@@ -121,10 +121,10 @@ Author the quiet-steward voice document. Replaces the Feature A stub (which cont
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -f plugin/ralph-hero/skills/caretake/SOUL.md` — file exists.
-- [ ] `head -10 plugin/ralph-hero/skills/caretake/SOUL.md | grep -E '^team:|^voice:|^refuses:'` — all three frontmatter fields present.
-- [ ] `wc -w plugin/ralph-hero/skills/caretake/SOUL.md` — body word count between 150 and 250 (frontmatter excluded; approximate is fine — gate is "not a stub").
-- [ ] `grep -E '^### Bad|^### Good' plugin/ralph-hero/skills/caretake/SOUL.md` — at least one Bad / Good example pair.
+- [x] `test -f plugin/ralph-hero/skills/caretake/SOUL.md` — file exists.
+- [x] `head -10 plugin/ralph-hero/skills/caretake/SOUL.md | grep -E '^team:|^voice:|^refuses:'` — all three frontmatter fields present.
+- [x] `wc -w plugin/ralph-hero/skills/caretake/SOUL.md` — body word count between 150 and 250 (frontmatter excluded; approximate is fine — gate is "not a stub").
+- [x] `grep -E '^### Bad|^### Good' plugin/ralph-hero/skills/caretake/SOUL.md` — at least one Bad / Good example pair.
 
 #### Manual Verification:
 - [ ] Voice reads as quiet-steward, not as "another helpful assistant".
@@ -191,14 +191,14 @@ Author the orchestrator skill body. Wraps six existing skills behind one entrypo
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -f plugin/ralph-hero/skills/caretake/SKILL.md` — file exists.
-- [ ] `head -30 plugin/ralph-hero/skills/caretake/SKILL.md | grep -E 'argument-hint|allowed-tools|SessionStart'` — frontmatter shape correct.
-- [ ] `grep -c "Skill(" plugin/ralph-hero/skills/caretake/SKILL.md` — at least 6 invocations (one per bundled skill in the trigger:caretake branch, plus the three mode branches; standalone invocability of the six skills implies six Skill() calls in the full-fanout branch).
-- [ ] `grep -E "^result:|^needs input:" plugin/ralph-hero/skills/caretake/SKILL.md` — at least 3 marker examples documented in body.
-- [ ] `grep "knowledge_record_outcome" plugin/ralph-hero/skills/caretake/SKILL.md` — outcome stub call present.
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run lint` — no errors (no TS files changed, but lint runs clean on the repo as a precondition).
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes (no regression).
-- [ ] Bundled-skill file hashes unchanged: `git diff plugin/ralph-hero/skills/ralph-triage/SKILL.md plugin/ralph-hero/skills/ralph-hygiene/SKILL.md plugin/ralph-hero/skills/ralph-unblock/SKILL.md plugin/ralph-hero/skills/ralph-postmortem/SKILL.md plugin/ralph-hero/skills/report/SKILL.md plugin/ralph-hero/skills/trends/SKILL.md` — empty diff.
+- [x] `test -f plugin/ralph-hero/skills/caretake/SKILL.md` — file exists.
+- [x] `head -30 plugin/ralph-hero/skills/caretake/SKILL.md | grep -E 'argument-hint|allowed-tools|SessionStart'` — frontmatter shape correct.
+- [x] `grep -c "Skill(" plugin/ralph-hero/skills/caretake/SKILL.md` — at least 6 invocations (one per bundled skill in the trigger:caretake branch, plus the three mode branches; standalone invocability of the six skills implies six Skill() calls in the full-fanout branch).
+- [x] `grep -E "^result:|^needs input:" plugin/ralph-hero/skills/caretake/SKILL.md` — at least 3 marker examples documented in body.
+- [x] `grep "knowledge_record_outcome" plugin/ralph-hero/skills/caretake/SKILL.md` — outcome stub call present.
+- [x] `cd plugin/ralph-hero/mcp-server && npm run lint` — no errors (no TS files changed, but lint runs clean on the repo as a precondition).
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — full vitest suite passes (no regression).
+- [x] Bundled-skill file hashes unchanged: `git diff plugin/ralph-hero/skills/ralph-triage/SKILL.md plugin/ralph-hero/skills/ralph-hygiene/SKILL.md plugin/ralph-hero/skills/ralph-unblock/SKILL.md plugin/ralph-hero/skills/ralph-postmortem/SKILL.md plugin/ralph-hero/skills/report/SKILL.md plugin/ralph-hero/skills/trends/SKILL.md` — empty diff.
 
 #### Manual Verification:
 - [ ] From a fresh shell, `/ralph-hero:caretake --mode hygiene` invokes ralph-hygiene and prints a hygiene report followed by a `result:` line.
@@ -256,10 +256,10 @@ Register the three /schedule routines: hourly hygiene, daily report, weekly tren
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -x plugin/ralph-hero/scripts/caretake/install-schedules.sh` — script exists and is executable.
-- [ ] `bash -n plugin/ralph-hero/scripts/caretake/install-schedules.sh` — script parses (syntax check).
-- [ ] `grep -E "caretake-hourly-hygiene|caretake-daily-report|caretake-weekly-trends" plugin/ralph-hero/scripts/caretake/install-schedules.sh` — all three stable names present.
-- [ ] `grep "## Heartbeat Schedules" plugin/ralph-hero/skills/caretake/SKILL.md` — documentation section present.
+- [x] `test -x plugin/ralph-hero/scripts/caretake/install-schedules.sh` — script exists and is executable.
+- [x] `bash -n plugin/ralph-hero/scripts/caretake/install-schedules.sh` — script parses (syntax check).
+- [x] `grep -E "caretake-hourly-hygiene|caretake-daily-report|caretake-weekly-trends" plugin/ralph-hero/scripts/caretake/install-schedules.sh` — all three stable names present.
+- [x] `grep "## Heartbeat Schedules" plugin/ralph-hero/skills/caretake/SKILL.md` — documentation section present.
 
 #### Manual Verification:
 - [ ] Running the install script on a clean machine creates three schedules visible via `/schedule list`.
