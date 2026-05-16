@@ -181,7 +181,7 @@ def render_pipeline() -> None:
         return _call_mcp("ralph_hero__pipeline_dashboard", {})
 
     if refresh:
-        st.cache_data.clear()
+        _fetch_pipeline.clear()
 
     try:
         data = _fetch_pipeline()
@@ -210,12 +210,19 @@ def render_pipeline() -> None:
             else:
                 st.markdown(data)
         elif isinstance(data, dict):
-            states = data.get("workflowStates", data.get("states", {}))
-            if states:
-                df = pd.DataFrame(
-                    [{"state": k, "count": v} for k, v in states.items()]
-                ).set_index("state")
-                st.bar_chart(df)
+            # pipeline_dashboard returns {phases: [{name, count, ...}, ...], ...}
+            phases = data.get("phases", [])
+            if phases and isinstance(phases, list):
+                rows_dict: list[dict[str, Any]] = [
+                    {"state": p.get("name", str(p)), "count": p.get("count", 0)}
+                    for p in phases
+                    if isinstance(p, dict)
+                ]
+                if rows_dict:
+                    df = pd.DataFrame(rows_dict).set_index("state")
+                    st.bar_chart(df)
+                else:
+                    st.json(data)
             else:
                 st.json(data)
         else:
@@ -497,8 +504,8 @@ def render_chat() -> None:
                 st.write_stream(_line_generator())
 
         full_response = "".join(collected_lines)
-        if full_response.endswith(f"\n[cos.sh exited"):
-            st.error(full_response.split("\n[cos.sh exited")[-1])
+        if f"\n[cos.sh exited" in full_response:
+            st.error(full_response.split("\n[cos.sh exited")[-1].rstrip("]\n").lstrip(" "))
         else:
             st.session_state.messages.append(
                 {"role": "assistant", "content": full_response}
