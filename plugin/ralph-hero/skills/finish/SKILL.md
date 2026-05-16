@@ -1,5 +1,5 @@
 ---
-description: Validate, run code review, merge, and watch CI for a completed implementation. Owns the code review gate (preserves depth-0 fan-out for the code-review:code-review plugin); when RALPH_REVIEW_MODE=auto and code review flags issues, dispatches impl-agent to fix them then re-runs code review (max 1 fix cycle). Once review resolves, dispatches ralph-merge for merge mechanics only.
+description: Validate, run code review, merge, and watch CI for a completed implementation. Owns the code review gate (preserves depth-0 fan-out for the code-review:code-review plugin); when RALPH_REVIEW_MODE=auto and code review flags issues, dispatches impl-agent to fix them then re-runs code review (max 1 fix cycle). Once review resolves, dispatches merge-agent for merge mechanics only.
 user-invocable: true
 argument-hint: <issue-number> [--pr-url url] [--plan-doc path]
 context: inline
@@ -41,7 +41,7 @@ Use these resolved values when constructing GitHub URLs or referencing the repos
 
 # Ralph Finish
 
-Validate, run code review, merge, and watch CI for a completed implementation. Finish owns the code review gate (so the `code-review:code-review` plugin's parallel-agent fan-out always runs at depth 0, depth-2 safe). When `RALPH_REVIEW_MODE=auto` and code review flags issues, finish dispatches impl-agent to fix them, then re-runs code review (max 1 fix cycle). Once review passes, finish dispatches `ralph-merge` for merge mechanics only.
+Validate, run code review, merge, and watch CI for a completed implementation. Finish owns the code review gate (so the `code-review:code-review` plugin's parallel-agent fan-out always runs at depth 0, depth-2 safe). When `RALPH_REVIEW_MODE=auto` and code review flags issues, finish dispatches impl-agent to fix them, then re-runs code review (max 1 fix cycle). Once review passes, finish dispatches `merge-agent` for merge mechanics only.
 
 ## Step 1: Parse Arguments
 
