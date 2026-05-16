@@ -44,7 +44,7 @@ COS_SH="${SCRIPT_DIR}/cos.sh"
 # Usage
 # ---------------------------------------------------------------------------
 _usage() {
-    cat >&1 <<'EOF'
+    cat >&2 <<'EOF'
 cos-loop.sh — loop wrapper for cos.sh
 
 Usage:
@@ -116,7 +116,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -*)
             echo "cos-loop: unknown flag: $1" >&2
-            _usage >&2
+            _usage
             exit 2
             ;;
         *)
@@ -128,7 +128,7 @@ done
 # Require exactly two positional args after flags
 if [[ $# -lt 2 ]]; then
     echo "cos-loop: missing required arguments: <count-or-duration> and <prompt>" >&2
-    _usage >&2
+    _usage
     exit 2
 fi
 

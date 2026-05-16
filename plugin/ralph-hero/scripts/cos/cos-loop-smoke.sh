@@ -69,8 +69,8 @@ BEFORE=$(wc -l < "$RUN_LOG" 2>/dev/null || echo 0)
 BEFORE=$(echo "$BEFORE" | tr -d ' ')
 
 echo "[cos-loop-smoke] running count mode: 3 iterations..."
-bash "$COS_LOOP" 3 "Echo the literal string 'cos-loop iteration ok' and exit"
-COUNT_EXIT=$?
+COUNT_EXIT=0
+bash "$COS_LOOP" 3 "Echo the literal string 'cos-loop iteration ok' and exit" || COUNT_EXIT=$?
 if [[ $COUNT_EXIT -ne 0 ]]; then
     _fail "cos-loop.sh exited ${COUNT_EXIT} (expected 0)"
 fi
@@ -91,8 +91,8 @@ BEFORE2=$(echo "$BEFORE2" | tr -d ' ')
 
 T_START="$(date +%s)"
 echo "[cos-loop-smoke] running duration mode: 5s..."
-bash "$COS_LOOP" 5s "Echo a single word and exit"
-DUR_EXIT=$?
+DUR_EXIT=0
+bash "$COS_LOOP" 5s "Echo a single word and exit" || DUR_EXIT=$?
 T_END="$(date +%s)"
 ELAPSED=$(( T_END - T_START ))
 
