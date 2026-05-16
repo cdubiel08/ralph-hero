@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 import struct
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -827,3 +827,325 @@ class TestLlmTimeoutConfig:
         # regressions to the old 60s value.
         assert captured["timeout"] == reflect.DEFAULT_LLM_TIMEOUT_S
         assert reflect.DEFAULT_LLM_TIMEOUT_S >= 120
+
+
+# ---------------------------------------------------------------------------
+# Task 3.1 — detect_signals() and classify_clusters() (Feature D, GH-1271)
+# ---------------------------------------------------------------------------
+
+
+def _make_raw_row(
+    id: str,
+    content: str = "",
+) -> reflect.RawMemoryRow:
+    import numpy as np
+
+    return reflect.RawMemoryRow(
+        id=id,
+        content=content,
+        path=f"/tmp/{id}.md",
+        date="2026-05-16T10:00:00+00:00",
+        embedding=np.zeros(384, dtype=np.float32),
+    )
+
+
+class TestDetectSignals:
+    def test_no_signals_clean_content(self) -> None:
+        row = _make_raw_row("r1", "everything went fine")
+        assert reflect.detect_signals(row) == set()
+
+    def test_tool_use_error_detected_case_insensitive(self) -> None:
+        row = _make_raw_row("r2", "Got a TOOL_USE_ERROR from the API")
+        assert "tool_use_error" in reflect.detect_signals(row)
+
+    def test_verdict_blocked_detected(self) -> None:
+        row = _make_raw_row("r3", "result: verdict: BLOCKED on step 3")
+        assert "verdict_blocked" in reflect.detect_signals(row)
+
+    def test_verdict_blocked_with_spaces(self) -> None:
+        row = _make_raw_row("r4", "verdict :  BLOCKED (escalated)")
+        assert "verdict_blocked" in reflect.detect_signals(row)
+
+    def test_both_signals_detected(self) -> None:
+        row = _make_raw_row(
+            "r5",
+            "tool_use_error logged; verdict: BLOCKED by hook",
+        )
+        sigs = reflect.detect_signals(row)
+        assert "tool_use_error" in sigs
+        assert "verdict_blocked" in sigs
+
+    def test_empty_content(self) -> None:
+        row = _make_raw_row("r6", "")
+        assert reflect.detect_signals(row) == set()
+
+
+class TestClassifyClusters:
+    def test_cluster_below_size_threshold_not_classified(self) -> None:
+        # 3 members with 100% signal — below default threshold of 5
+        cluster = [
+            _make_raw_row(f"r{i}", "tool_use_error occurred") for i in range(3)
+        ]
+        results = reflect.classify_clusters([cluster], size_threshold=5)
+        assert results == []
+
+    def test_cluster_above_size_below_signal_fraction_not_classified(self) -> None:
+        # 6 members but only 1 has a signal → fraction 1/6 ≈ 0.17 < 0.3
+        members = [_make_raw_row(f"r{i}", "normal memory") for i in range(5)]
+        members.append(_make_raw_row("r5", "tool_use_error"))
+        results = reflect.classify_clusters(
+            [members], size_threshold=5, signal_fraction_threshold=0.3
+        )
+        assert results == []
+
+    def test_cluster_above_both_thresholds_tool_use_error_classified(self) -> None:
+        # 6 members, 3 with tool_use_error → fraction 0.5 >= 0.3
+        members = [
+            _make_raw_row(f"r{i}", "tool_use_error in step") for i in range(3)
+        ] + [_make_raw_row(f"clean{i}", "normal memory") for i in range(3)]
+        results = reflect.classify_clusters(
+            [members], size_threshold=5, signal_fraction_threshold=0.3
+        )
+        assert len(results) == 1
+        r = results[0]
+        assert r["cluster_index"] == 0
+        assert r["size"] == 6
+        assert r["signal_counts"]["tool_use_error"] == 3
+        assert r["signal_counts"]["verdict_blocked"] == 0
+        assert r["theme_hint"] == "tool_use_error"
+
+    def test_cluster_with_mixed_signals_classified(self) -> None:
+        # 6 members: 2 tool_use_error, 2 verdict_blocked, 2 clean
+        members = (
+            [_make_raw_row(f"te{i}", "tool_use_error") for i in range(2)]
+            + [_make_raw_row(f"vb{i}", "verdict: BLOCKED") for i in range(2)]
+            + [_make_raw_row(f"cl{i}", "normal") for i in range(2)]
+        )
+        results = reflect.classify_clusters(
+            [members], size_threshold=5, signal_fraction_threshold=0.3
+        )
+        assert len(results) == 1
+        r = results[0]
+        assert r["signal_counts"]["tool_use_error"] == 2
+        assert r["signal_counts"]["verdict_blocked"] == 2
+        assert r["theme_hint"] == "mixed"
+
+    def test_empty_cluster_list_returns_empty(self) -> None:
+        assert reflect.classify_clusters([]) == []
+
+    def test_env_var_override_applies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("RALPH_DREAM_PROCESS_IMPROVEMENT_MIN_CLUSTER", "3")
+        import importlib
+        importlib.reload(reflect)
+        assert reflect.DEFAULT_CLUSTER_SIZE_THRESHOLD == 3
+        # Restore for other tests
+        monkeypatch.delenv("RALPH_DREAM_PROCESS_IMPROVEMENT_MIN_CLUSTER")
+        importlib.reload(reflect)
+
+
+# ---------------------------------------------------------------------------
+# Task 3.2 — emit_process_improvement_issue() (Feature D, GH-1271)
+# ---------------------------------------------------------------------------
+
+
+def _make_classification(size: int = 6) -> dict[str, Any]:
+    return {
+        "cluster_index": 0,
+        "size": size,
+        "signal_counts": {"tool_use_error": 3, "verdict_blocked": 1},
+        "sample_ids": [f"raw-{i:02d}" for i in range(size)],
+        "theme_hint": "tool_use_error",
+    }
+
+
+class TestEmitProcessImprovementIssue:
+    def test_dry_run_prints_payload_returns_truthy(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cls = _make_classification()
+        result = reflect.emit_process_improvement_issue(cls, dry_run=True)
+        assert result  # truthy ("<dry-run>")
+        out = capsys.readouterr().out
+        assert "title:" in out
+        assert "[process-improvement]" in out
+        assert "labels:" in out
+        assert "## Source" in out
+        assert "## Suggested Team: caretakers" in out
+        assert "<details>" in out
+
+    def test_live_mode_monkeypatched_success_returns_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cls = _make_classification()
+        fake_url = "https://github.com/cdubiel08/ralph-hero/issues/9999"
+
+        def fake_run(cmd, **kwargs):  # noqa: ANN001, ARG001
+            class R:
+                returncode = 0
+                stdout = fake_url
+                stderr = ""
+            return R()
+
+        monkeypatch.setattr(reflect.subprocess, "run", fake_run)
+        result = reflect.emit_process_improvement_issue(cls, dry_run=False)
+        assert result == fake_url
+
+    def test_live_mode_monkeypatched_failure_logs_warning_returns_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        cls = _make_classification()
+        caplog.set_level("WARNING", logger="ralph.dream.reflect")
+
+        def fake_run(cmd, **kwargs):  # noqa: ANN001, ARG001
+            class R:
+                returncode = 1
+                stdout = ""
+                stderr = "label not found"
+            return R()
+
+        monkeypatch.setattr(reflect.subprocess, "run", fake_run)
+        result = reflect.emit_process_improvement_issue(cls, dry_run=False)
+        assert result is None
+        assert any("failed" in r.message for r in caplog.records)
+
+    def test_payload_contains_all_required_sections(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cls = _make_classification()
+        reflect.emit_process_improvement_issue(cls, dry_run=True)
+        out = capsys.readouterr().out
+        for required in ("## Source", "## Suggested Team: caretakers", "<details>"):
+            assert required in out, f"Missing required section: {required!r}"
+
+
+# ---------------------------------------------------------------------------
+# Task 3.3 — main() integration: classifier threaded in (Feature D, GH-1271)
+# ---------------------------------------------------------------------------
+
+
+class TestMainClassifierIntegration:
+    def test_emit_called_and_reflections_still_run(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Classifier fires, emit is called, and _iter_reflections still
+        processes the cluster (classifier is additive, not replacement)."""
+        import yaml as _yaml
+
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            _yaml.safe_dump(
+                {
+                    "base_dir": str(tmp_path / "out"),
+                    "knowledge_db": str(db),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        emit_calls: list[dict[str, Any]] = []
+
+        def fake_emit(classification, dry_run=False, repo=None):  # noqa: ANN001
+            emit_calls.append({"classification": classification, "dry_run": dry_run})
+            return "<dry-run>" if dry_run else "https://github.com/test/issues/1"
+
+        iter_calls: list[int] = []
+
+        def fake_iter(clusters, llm_url, model, *, dry_run):  # noqa: ANN001
+            cluster_list = list(clusters)
+            iter_calls.append(len(cluster_list))
+            # Yield a fake reflection so main() doesn't trigger non-zero exit
+            fake_ref = {
+                "title": "t", "summary": "s", "insights": [],
+                "source_ids": [], "cluster_size": 1,
+            }
+            return iter([(cluster_list[0] if cluster_list else [], fake_ref)])
+
+        # Return a tool-error-heavy cluster so the classifier fires
+        heavy = [
+            _make_raw_row(f"raw-te-{i:02d}", "tool_use_error on step 3")
+            for i in range(8)
+        ]
+        # Stub fetch so main() doesn't short-circuit on empty DB
+        monkeypatch.setattr(reflect, "fetch_recent_raw_memories", lambda _db, _s: heavy)
+        monkeypatch.setattr(reflect, "cluster_memories", lambda _m: [heavy])
+        monkeypatch.setattr(reflect, "emit_process_improvement_issue", fake_emit)
+        monkeypatch.setattr(reflect, "_iter_reflections", fake_iter)
+        monkeypatch.setattr(reflect, "write_reflection", lambda r, base_dir, **kw: tmp_path / "fake.md")
+
+        rc = reflect.main(
+            [
+                "--config", str(cfg_path),
+                "--since", "2026-05-15",
+            ]
+        )
+        # emit was called for the classified cluster
+        assert len(emit_calls) >= 1
+        # _iter_reflections was called (reflection path kept running)
+        assert len(iter_calls) >= 1
+        out = capsys.readouterr().out
+        assert "process-improvement candidate" in out
+        assert rc == 0
+
+    def test_dry_run_skips_gh_calls(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With --dry-run: no gh subprocess.run calls are made even when
+        a classifier-triggering cluster is present."""
+        import yaml as _yaml
+
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, [])
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            _yaml.safe_dump(
+                {
+                    "base_dir": str(tmp_path / "out"),
+                    "knowledge_db": str(db),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        gh_calls: list[Any] = []
+
+        def fail_if_called(*args, **kwargs):  # noqa: ANN001, ARG001
+            gh_calls.append(args)
+            raise AssertionError("gh must not be called in dry-run")
+
+        # Inject memories and a heavy cluster so the classifier path runs
+        heavy = [
+            _make_raw_row(f"raw-dr-{i:02d}", "tool_use_error on step 3")
+            for i in range(8)
+        ]
+        monkeypatch.setattr(reflect, "fetch_recent_raw_memories", lambda _db, _s: heavy)
+        monkeypatch.setattr(reflect, "cluster_memories", lambda _m: [heavy])
+        monkeypatch.setattr(reflect.subprocess, "run", fail_if_called)
+
+        rc = reflect.main(
+            [
+                "--config", str(cfg_path),
+                "--since", "2026-05-15",
+                "--dry-run",
+            ]
+        )
+        assert rc == 0
+        # subprocess.run must not have been called (dry-run prints payload, no gh)
+        assert gh_calls == []
+        out = capsys.readouterr().out
+        assert "Dry run" in out
+        assert "process-improvement candidate" in out
