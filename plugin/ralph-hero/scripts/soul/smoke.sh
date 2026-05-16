@@ -119,9 +119,9 @@ for cmd in hero watch scouts memorykeepers caretake; do
   echo ""
   echo "  C: RALPH_COMMAND=$cmd (expect team: $expected_team)"
 
-  # Capture hook stdout to tempfile
-  RALPH_COMMAND="$cmd" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$HOOK" >"$OUT_TMP" 2>/dev/null
-  hook_exit=$?
+  # Capture hook stdout to tempfile; use || idiom so set -e does not fire on non-zero exit
+  hook_exit=0
+  RALPH_COMMAND="$cmd" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$HOOK" >"$OUT_TMP" 2>/dev/null || hook_exit=$?
 
   # (a) exit 0
   if [[ $hook_exit -ne 0 ]]; then
@@ -159,7 +159,11 @@ done
 echo ""
 echo "--- Test D: hero/SOUL.md body headings in additionalContext ---"
 
-RALPH_COMMAND=hero CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$HOOK" >"$OUT_TMP" 2>/dev/null
+hook_exit_d=0
+RALPH_COMMAND=hero CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$HOOK" >"$OUT_TMP" 2>/dev/null || hook_exit_d=$?
+if [[ $hook_exit_d -ne 0 ]]; then
+  _fail "Test D: hook exited $hook_exit_d (expected 0)"
+fi
 
 ctx=$(jq -r '.hookSpecificOutput.additionalContext' "$OUT_TMP" 2>/dev/null)
 
@@ -186,7 +190,11 @@ ENV_TMP=$(mktemp)
 # Update trap to clean both tempfiles
 trap 'rm -f "$OUT_TMP" "$ENV_TMP"' EXIT
 
-RALPH_COMMAND=hero CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_ENV_FILE="$ENV_TMP" bash "$HOOK" >/dev/null 2>/dev/null
+hook_exit_e=0
+RALPH_COMMAND=hero CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_ENV_FILE="$ENV_TMP" bash "$HOOK" >/dev/null 2>/dev/null || hook_exit_e=$?
+if [[ $hook_exit_e -ne 0 ]]; then
+  _fail "Test E: hook exited $hook_exit_e (expected 0)"
+fi
 
 if grep -q 'export RALPH_SOUL_LOADED=hero' "$ENV_TMP"; then
   _pass "Test E: 'export RALPH_SOUL_LOADED=hero' written to CLAUDE_ENV_FILE"
