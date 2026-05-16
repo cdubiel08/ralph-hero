@@ -1,5 +1,6 @@
 ---
 date: 2026-05-15
+last_iterated: 2026-05-16
 status: draft
 type: plan
 github_issue: 1257
@@ -12,12 +13,22 @@ tags: [cos-mode, streamlit, pi-coding-agent, desk-mode, tailscale, dashboard]
 
 # cos mode Phase 5 — Streamlit desktop command surface at :8502
 
+## Iteration history
+
+- **2026-05-16 (iteration 1)** — Addressed `thoughts/shared/reviews/2026-05-15-GH-1257-critique.md` (`NEEDS_ITERATION`). Changes:
+  - Fixed Panel 3 (KG Growth) SQL: `created_at` → `date` (column verified against `plugin/ralph-knowledge/src/db.ts:104-113`). Updated Shared Constraints / Key Discoveries / Task 5.3 acceptance to match.
+  - Clarified chat-panel streaming semantics in Task 5.3 — `cos.sh` is non-streaming, so `st.write_stream` renders line-buffered / one-shot. Wrapped in `st.spinner`. Token-by-token streaming is deferred to Phase 6+.
+  - De-duplicated `st.set_page_config` wording — explicitly stated "exactly one call inside `main()`" with a note about `StreamlitAPIException`.
+  - Added `Subagent context required` note to Task 5.3 listing the three plan sections the implementer must pre-read.
+  - Added pre-flight finding that `ralph status --json` / `ralph activity --json` / `ralph list --json` do NOT exist today (verified by grep); promoted the MCP-stdio path from "fallback" to "primary path" for Panels 2/4/5. CLI `--json` flag work is out of scope.
+
 ## Prior Work
 
 - builds_on:: [[2026-05-15-GH-1253-cos-phase1-pi-foundation]] (Phase 1 — `cos.sh` CLI surface, `model-roles.sh` sourced helper, `mcp.json` read-only allowlist, JSONL run-log schema)
 - builds_on:: [[2026-05-15-GH-1254-cos-phase2-skill-scaffold]] (Phase 2 — `plugin/ralph-hero/skills/cos/SKILL.md`, `cos-desk.sh` stub at `scripts/cos/cos-desk.sh`, `ralph cos desk` justfile dispatch)
 - builds_on:: [[2026-05-15-GH-1255-cos-phase3-morning-brief-ntfy]] (Phase 3 — froze the brief filename convention `thoughts/shared/research/YYYY-MM-DD-cos-morning-brief.md` that Panel 1 globs)
 - builds_on:: [[2026-05-15-GH-1256-cos-phase4-oh-my-pi-conventions]] (Phase 4 — `cos-loop.sh` and `gh-vfs.ts` extension available to operators who use pi directly during a desk session)
+- addresses:: [[2026-05-15-GH-1257-critique]] (auto-review critique — see Iteration history above)
 
 ## Overview
 
@@ -65,7 +76,8 @@ Phase 5-specific constraints:
 - **`cos.sh` CLI contract confirmed.** `plugin/ralph-hero/scripts/cos/cos.sh:33-228` accepts `[--role <name>] [--append-system-prompt <file>] <prompt>` and writes one JSONL row per invocation. The chat panel invokes it via `subprocess.run(["bash", cos_sh_path, "--role", "default", prompt], capture_output=True, text=True)`.
 - **MCP tool names confirmed.** `plugin/ralph-hero/mcp-server/src/index.ts:540` registers `ralph_hero__recent_activity`. `pipeline_dashboard` and `list_issues` are also registered (confirmed via `grep -rn "ralph_hero__pipeline_dashboard" plugin/ralph-hero/mcp-server/src/`). The Phase 1 `mcp.json` allowlist includes all three.
 - **Brief filename confirmed.** `plugin/ralph-hero/scripts/cos/morning-brief.sh:115` writes to `${THOUGHTS_DIR}/shared/research/${DATE}-cos-morning-brief.md`. Panel 1 globs the same path.
-- **KG DB path confirmed.** `~/.ralph-hero/knowledge.db` per `~/projects/CLAUDE.md` and `~/.ralph/knowledge.config.json`. SQLite schema includes a `documents` table with a `memory_tier` column (per the dream-loop spec); Panel 3 queries `SELECT date(created_at), memory_tier, COUNT(*) FROM documents WHERE created_at >= date('now', '-30 day') GROUP BY 1, 2`.
+- **KG DB path + schema confirmed.** `~/.ralph-hero/knowledge.db` per `~/projects/CLAUDE.md` and `~/.ralph/knowledge.config.json`. SQLite schema verified against `plugin/ralph-knowledge/src/db.ts:104-113` — the `documents` table has columns `id, path, title, date, type, status, github_issue, content, is_stub, memory_tier`. **There is no `created_at` column; the timestamp column is `date` (TEXT, ISO-8601).** Panel 3 queries `SELECT date(date) AS day, memory_tier, COUNT(*) FROM documents WHERE date >= date('now', '-30 day') GROUP BY 1, 2`. The outer `date()` is the SQLite function, the inner `date` is the column — awkward but valid.
+- **ralph CLI `--json` flag — does NOT exist today.** Verified by `grep -rn -- "--json" plugin/ralph-hero/scripts/ralph*` returning empty. Panels 2/4/5 cannot use the `ralph status --json` / `ralph activity --json` / `ralph list --json` shape described in the issue body. **The CLI-first path is aspirational; the MCP-stdio path is the primary path Phase 5 must implement.** Panels 2/4/5 shell out to the built MCP server binary (`node plugin/ralph-hero/mcp-server/dist/index.js`) with a one-shot JSON-RPC `tools/call` request, parse the response, and render. If the MCP server is not built (`dist/index.js` missing), the panel renders an `st.warning` with a build hint. Adding `--json` flags to the ralph CLI is out of scope for this phase.
 - **`knowledge_search` tool shape confirmed.** `plugin/ralph-knowledge/src/index.ts` registers `knowledge_search(query, limit, type, tags, ...)` returning an array of `{ id, title, type, date, tags, score }`. Panel 6 invokes the tool via stdio JSON-RPC against the ralph-knowledge MCP server binary or — simpler — runs `npx --yes @plugin/ralph-knowledge --query "..." --json` if such a CLI exists; if not, it shells out to a small Python helper that opens a stdio child process. The exact invocation is implementation detail; the panel must return the top 5 results with titles and snippets.
 - **`uv` precedent confirmed.** `scripts/dream/pyproject.toml` uses `uv sync` + `uv run`. Phase 5 follows the same convention with a sibling `pyproject.toml` under `scripts/cos/desk/`.
 - **Justfile dispatch unchanged.** `plugin/ralph-hero/justfile:319` already wires `ralph cos desk` to `exec "${PLUGIN_DIR}/scripts/cos/cos-desk.sh" "$@"`. Phase 5 only rewrites the body of `cos-desk.sh`; the justfile recipe stays as-is.
@@ -89,7 +101,7 @@ After Phases 1–4 ship (all four CLOSED on GitHub), the foundation Phase 5 buil
 - The issue body's "Pipeline State panel reflects the live project board (verify by changing an issue's state and refreshing)" criterion is satisfied by either (a) Streamlit's `st.button("Refresh")` triggering a fresh subprocess call, or (b) `st.cache_data(ttl=30)` so the dashboard refreshes every 30 seconds automatically. We pick (a) — explicit refresh button — to keep the panel deterministic and avoid surprise MCP traffic. Auto-refresh can be added as a checkbox in v2.
 - The issue body's "Chat panel: submitting a prompt invokes `cos.sh` and streams the response back into the UI" — Streamlit does not have native stdio-streaming widgets, but `st.chat_message` + `st.write_stream` together can render line-by-line output from a generator. The implementation wraps `subprocess.Popen` and yields stdout lines as they arrive.
 - The issue body mentions `@walterra/pi-charts` as the visualization library. That library is a TypeScript pi extension installed in Phase 1's `pi install` step; it is NOT a Python library and is NOT importable from Streamlit. The plan substitutes Streamlit-native `st.line_chart` / `st.bar_chart` (no external Python deps) and notes the substitution in the README.
-- KG-growth panel: the `documents` table in `~/.ralph-hero/knowledge.db` has a `created_at` column (per the ralph-knowledge schema in `plugin/ralph-knowledge/src/db.ts`). Querying `SELECT date(created_at) AS day, memory_tier, COUNT(*) FROM documents WHERE created_at >= date('now', '-30 day') GROUP BY 1, 2 ORDER BY 1` returns a long-format dataframe that Streamlit can pivot to wide-format and pass to `st.line_chart` (one line per `memory_tier`).
+- KG-growth panel: the `documents` table in `~/.ralph-hero/knowledge.db` has a `date` column (TEXT, ISO-8601) — verified against `plugin/ralph-knowledge/src/db.ts:104-113`. **There is no `created_at` column** (corrected in iteration after critique). Querying `SELECT date(date) AS day, memory_tier, COUNT(*) AS count FROM documents WHERE date >= date('now', '-30 day') GROUP BY 1, 2 ORDER BY 1` returns a long-format dataframe that Streamlit can pivot to wide-format and pass to `st.line_chart` (one line per `memory_tier`). The outer `date()` is the SQLite function, the inner `date` is the column name.
 - The KG-search panel calling `knowledge_search`: the simplest path is to import a small Python helper that opens a stdio child process running the ralph-knowledge MCP server binary, sends one JSON-RPC `tools/call` request for `knowledge_search`, reads the response, and closes the pipe. This pattern is well-trodden — `mcp` SDK has a Python client in beta, but for one-shot calls a hand-rolled JSON-RPC over stdio is ~30 lines and avoids a new dep.
   - Alternative: shell out to a Node-side one-shot script. The decision (stdio Python vs Node CLI) is implementation detail; the acceptance criterion is "returns top 5 results for a known-good query."
 - Chat panel streaming: `subprocess.Popen([..., "--role", "default", prompt], stdout=PIPE, stderr=STDOUT, text=True, bufsize=1)` followed by iterating `proc.stdout` line-by-line yields each line as it arrives. Streamlit's `st.write_stream(generator)` consumes the generator and renders progressively. On `proc.wait()`, the exit code is checked; non-zero shows an error block.
@@ -153,7 +165,9 @@ After this phase merges:
 
 Phase 5 has five task groups. Tasks 5.1 (`pyproject.toml`), 5.2 (`launch.sh`), and 5.3 (`app.py`) can be drafted in parallel but final assembly depends on all three. Task 5.4 (rewrite `cos-desk.sh`) depends on 5.2. Task 5.5 (SKILL.md + README updates) depends on 5.1–5.4 to document what shipped.
 
-`app.py` is structured as: imports → constants (port, paths) → repo-root resolution → six panel-rendering functions (`render_brief()`, `render_pipeline()`, `render_kg_growth()`, `render_recent_activity()`, `render_wip()`, `render_kg_search()`) → chat panel (`render_chat()`) → `main()` which lays out the page (`st.set_page_config`, title, two rows of three columns, then chat). Each panel function is self-contained and catches its own exceptions, rendering an `st.error` block on failure so one broken panel does not break the page.
+`app.py` is structured as: imports → constants (port, paths) → repo-root resolution → MCP-stdio helper (`_call_mcp(tool_name, args)` — shared by Panels 2, 4, 5, 6) → six panel-rendering functions (`render_brief()`, `render_pipeline()`, `render_kg_growth()`, `render_recent_activity()`, `render_wip()`, `render_kg_search()`) → chat panel (`render_chat()`) → `main()` which lays out the page (`st.set_page_config`, title, two rows of three columns, then chat). Each panel function is self-contained and catches its own exceptions, rendering an `st.error` block on failure so one broken panel does not break the page.
+
+The `_call_mcp` helper is the canonical bridge to the read-only MCP tools (`ralph_hero__pipeline_dashboard`, `ralph_hero__recent_activity`, `ralph_hero__list_issues`, ralph-knowledge `knowledge_search`). It spawns the built MCP server binary (`node plugin/ralph-hero/mcp-server/dist/index.js`), writes one JSON-RPC `tools/call` request to stdin, reads one line of JSON response from stdout, parses `result.content[0].text` as JSON, and returns the parsed object. If the binary does not exist, it raises a `RuntimeError` that each panel converts to an `st.warning` with the build-hint command. This is the primary path because the ralph CLI does not have `--json` flags (verified iteration 1).
 
 `launch.sh` is a thin wrapper: cd into the desk dir, verify `uv` is on PATH, verify `.venv` exists (else suggest `uv sync`), then `exec uv run streamlit run app.py --server.port "${RALPH_COS_DESK_PORT:-8502}" --server.address 0.0.0.0`.
 
@@ -213,6 +227,7 @@ Author the Streamlit app, its launcher, its `pyproject.toml`, rewrite the `cos-d
 - **tdd**: false
 - **complexity**: high
 - **depends_on**: null
+- **Subagent context required**: this task is `complexity: high` and the acceptance list spans six panel functions + chat + main. Before starting, a subagent dispatched to this task MUST read these sections of the plan in full: `## Shared Constraints` (port, address, zero-Claude-Code rule, read-only DB access, subprocess fallback rules), `## Current State Analysis` + `### Key Discoveries` (brief glob, chat-streaming semantics, KG DB column name, layout decisions), and `## Implementation Approach` (file structure: imports → constants → repo-root → six panel functions → chat → main). The task block alone is insufficient.
 - **acceptance**:
   - [ ] File exists at `plugin/ralph-hero/scripts/cos/desk/app.py`
   - [ ] First line is a doc comment block describing all six panels + chat, the port (8502), the zero-Claude-Code constraint, and a one-line "run with `ralph cos desk`"
@@ -223,7 +238,7 @@ Author the Streamlit app, its launcher, its `pyproject.toml`, rewrite the `cos-d
     - `COS_SH = REPO_ROOT / "plugin" / "ralph-hero" / "scripts" / "cos" / "cos.sh"`
     - `THOUGHTS_DIR = Path(os.environ.get("RALPH_COS_THOUGHTS_DIR", REPO_ROOT / "thoughts"))`
     - `KG_DB = Path(os.path.expanduser("~/.ralph-hero/knowledge.db"))`
-  - [ ] `st.set_page_config(page_title="cos — desk", layout="wide", initial_sidebar_state="collapsed")` at top of `main()`
+  - [ ] **Exactly one** `st.set_page_config(page_title="cos — desk", layout="wide", initial_sidebar_state="collapsed")` call, placed as the first statement inside `main()` (before `st.title(...)`). Streamlit throws `StreamlitAPIException: set_page_config can only be called once per app` if called twice — do not duplicate this in any panel function.
   - [ ] `def render_brief() -> None:` — Panel 1 (Today's Brief)
     - Resolves today's brief path: `THOUGHTS_DIR / "shared" / "research" / f"{datetime.date.today().isoformat()}-cos-morning-brief.md"`
     - If exists, reads and renders with `st.markdown(content)`
@@ -231,28 +246,37 @@ Author the Streamlit app, its launcher, its `pyproject.toml`, rewrite the `cos-d
     - If zero matches, renders `st.info("No morning brief found. Run `ralph cos unattended --morning-brief` to generate one.")`
   - [ ] `def render_pipeline() -> None:` — Panel 2 (Pipeline State)
     - Uses `st.button("Refresh pipeline")` to trigger a fresh call
-    - Invokes `subprocess.run(["ralph", "status", "--json"], capture_output=True, text=True, check=False)` OR a fallback that invokes the MCP server stdio (see Implementation Approach)
-    - Parses the JSON, extracts workflow-state counts
+    - **Primary path (CLI `--json` does NOT exist — verified during iteration):** invokes the MCP server stdio binary directly with a one-shot JSON-RPC `tools/call` for `ralph_hero__pipeline_dashboard`. Spawns `node ${REPO_ROOT}/plugin/ralph-hero/mcp-server/dist/index.js`, writes a single JSON-RPC request to stdin, reads one response line from stdout, then closes the pipe. A small `_call_mcp(tool_name, args)` helper at the top of `app.py` encapsulates this for reuse by Panels 4 and 5.
+    - If `mcp-server/dist/index.js` does not exist, renders `st.warning("Pipeline panel requires the MCP server to be built. Run 'cd plugin/ralph-hero/mcp-server && npm install && npm run build'.")`
+    - Parses the JSON response, extracts workflow-state counts
     - Renders `st.bar_chart(df)` with workflow states on x-axis, counts on y-axis
     - On non-zero exit or parse error, renders `st.error(stderr)`
   - [ ] `def render_kg_growth() -> None:` — Panel 3 (KG Growth)
     - Opens `KG_DB` with `sqlite3.connect(f"file:{KG_DB}?mode=ro", uri=True)`
-    - Queries `SELECT date(created_at) AS day, memory_tier, COUNT(*) AS count FROM documents WHERE created_at >= date('now', '-30 day') GROUP BY 1, 2 ORDER BY 1`
+    - Queries (verified against `plugin/ralph-knowledge/src/db.ts:104-113` — column is `date`, NOT `created_at`):
+      ```sql
+      SELECT date(date) AS day, memory_tier, COUNT(*) AS count
+      FROM documents
+      WHERE date >= date('now', '-30 day')
+      GROUP BY 1, 2
+      ORDER BY 1
+      ```
+      Note: the outer `date(...)` is the SQLite function, the inner `date` is the column name — both are correct.
     - Loads into a pandas DataFrame, pivots wide so each `memory_tier` becomes a column
     - Renders `st.line_chart(df)`
     - On `OperationalError` (DB missing) or `ProgrammingError` (column missing — schema drift), renders `st.warning(f"KG DB not available: {err}")`
   - [ ] `def render_recent_activity() -> None:` — Panel 4 (Recent Activity)
-    - Invokes `subprocess.run(["ralph", "activity", "--json", "--limit", "20", "--compact"], capture_output=True, text=True, check=False)` OR the MCP-stdio fallback
+    - **Primary path:** uses the same `_call_mcp` helper to invoke `ralph_hero__recent_activity` with `{ compact: true, limit: 20 }` (the CLI `--json` flag does NOT exist as of iteration 1).
     - Parses the JSON list, renders `st.dataframe(df)` with columns `ts`, `kind`, `tool`, `project`
     - On error, renders `st.error(...)`
   - [ ] `def render_wip() -> None:` — Panel 5 (WIP)
-    - Invokes `subprocess.run(["ralph", "list", "--json", "--workflow-state", "In Progress,In Review"], capture_output=True, text=True, check=False)` OR the MCP-stdio fallback
+    - **Primary path:** uses the same `_call_mcp` helper to invoke `ralph_hero__list_issues` twice (once with `workflowState: "In Progress"`, once with `workflowState: "In Review"`) and concatenates the results. The CLI `--json` flag does NOT exist as of iteration 1.
     - Parses the JSON list, renders `st.dataframe(df)` with columns `number`, `title`, `workflowState`, `assignee`, `age_days`
     - Age computed from `updatedAt` field
     - On error, renders `st.error(...)`
   - [ ] `def render_kg_search() -> None:` — Panel 6 (KG Search)
     - `query = st.text_input("KG search query", placeholder="e.g., ralph-hero workflow states")`
-    - `if st.button("Search"):` — invokes `knowledge_search` via MCP stdio (one-shot subprocess) OR a CLI wrapper if available
+    - `if st.button("Search"):` — invokes `knowledge_search` via the same MCP-stdio pattern. Note: `knowledge_search` is registered by the **ralph-knowledge** plugin server (`plugin/ralph-knowledge/dist/` after `npm run build` in that directory), NOT the ralph-hero MCP server. The `_call_mcp` helper must accept an optional `binary_path` argument so this panel can point at the ralph-knowledge binary. If the ralph-knowledge binary is not built, renders `st.warning("KG search requires the ralph-knowledge plugin to be built. Run 'cd plugin/ralph-knowledge && npm install && npm run build'.")`
     - Renders top 5 results as a table with columns `title`, `type`, `date`, `score`
     - On error, renders `st.error(...)`
   - [ ] `def render_chat() -> None:` — Chat panel
@@ -260,16 +284,18 @@ Author the Streamlit app, its launcher, its `pyproject.toml`, rewrite the `cos-d
     - Renders all prior messages: `for msg in st.session_state.messages: with st.chat_message(msg["role"]): st.markdown(msg["content"])`
     - `prompt = st.chat_input("Ask cos anything...")` (Streamlit's chat-style input)
     - If `prompt`: appends `{"role": "user", "content": prompt}` to session state; renders the user message; then spawns `subprocess.Popen([str(COS_SH), "--role", "default", prompt], stdout=PIPE, stderr=STDOUT, text=True, bufsize=1)` and streams stdout via `st.write_stream(line_generator)` inside a `with st.chat_message("assistant"):` block; on completion, appends `{"role": "assistant", "content": collected_text}` to session state
+    - **Streaming semantics (clarified after critique).** `cos.sh` (`plugin/ralph-hero/scripts/cos/cos.sh:33-228`) is a single-prompt wrapper that invokes `pi` non-interactively and prints the accumulated response when `pi` finishes — it does NOT emit token-by-token output to stdout in real time. `st.write_stream` over `proc.stdout` therefore renders **line-buffered (likely one-shot)**, not token-by-token like ChatGPT. This is the expected, acceptable behavior for v1; do NOT attempt to add a `cos.sh --stream` flag or modify `cos.sh` to achieve token streaming (that would re-open the stable CLI contract). The user-facing latency is "wait for the spinner, then the full response appears" — a Streamlit `st.spinner("Asking cos...")` wrapper around the `Popen`/`write_stream` block conveys this. Token-by-token streaming is a Phase 6+ enhancement that requires plumbing changes in `cos.sh` and `pi`.
     - On `cos.sh` non-zero exit, renders `st.error(f"cos.sh exited {rc}")` and does NOT append the assistant message
   - [ ] `def main() -> None:` — entry point
-    - `st.set_page_config(...)` then `st.title("cos — desk")`
+    - First line of `main()` is the single `st.set_page_config(...)` call described above (this is the ONLY call to `set_page_config` in the entire file).
+    - Then `st.title("cos — desk")`
     - Two rows of `st.columns(3)` for panels 1–6 (each panel function takes a column context manager)
     - Full-width `render_chat()` at the bottom
   - [ ] `if __name__ == "__main__": main()` (Streamlit runs this when launched via `streamlit run app.py`)
   - [ ] NO imports of `anthropic`, `openai`, `claude`, or any remote-LLM client. Verified by: `grep -E '^(from|import)\s+(anthropic|openai|claude|langchain|llama_index)' plugin/ralph-hero/scripts/cos/desk/app.py` returns empty
   - [ ] Every panel function wraps its body in `try/except Exception as e: st.error(f"{panel_name}: {e}")` so one broken panel does not break the page
   - [ ] `python -c "import ast; ast.parse(open('plugin/ralph-hero/scripts/cos/desk/app.py').read())"` exits 0
-  - [ ] If `ralph` CLI lacks a `--json` flag for any panel: fallback uses `subprocess.run(["node", str(REPO_ROOT / "plugin/ralph-hero/mcp-server/dist/index.js")], input=json_rpc_request, capture_output=True, text=True)` to send a one-shot JSON-RPC tools/call request. The acceptance criterion is "the panel renders the same data either way"; the exact subprocess shape is implementation detail. **If both paths fail** (CLI missing flag AND MCP server binary not built), the panel renders `st.warning("This panel requires either the `ralph` CLI with --json support or a built MCP server. See README for setup.")` rather than crashing.
+  - [ ] **MCP-stdio is the primary path for Panels 2, 4, 5.** The ralph CLI does NOT have `--json` flags (verified during iteration 1: `grep -rn -- "--json" plugin/ralph-hero/scripts/ralph*` returns empty). Implementation: a `_call_mcp(tool_name, args)` helper at the top of `app.py` spawns `node ${REPO_ROOT}/plugin/ralph-hero/mcp-server/dist/index.js`, writes a JSON-RPC `tools/call` request to stdin, reads one response line, and returns the parsed `result.content[0].text` (or raises on `result.isError`). If `dist/index.js` does not exist, every panel that uses `_call_mcp` renders `st.warning("MCP server not built — run 'cd plugin/ralph-hero/mcp-server && npm install && npm run build'.")` rather than crashing. Adding `--json` flags to the ralph CLI is OUT OF SCOPE for this phase.
   - [ ] File is ≤ 600 lines (target — small enough to read in one sitting; if growing larger, escalate per parent constraint)
 
 #### Task 5.4: Rewrite `cos-desk.sh` to dispatch to `desk/launch.sh`
