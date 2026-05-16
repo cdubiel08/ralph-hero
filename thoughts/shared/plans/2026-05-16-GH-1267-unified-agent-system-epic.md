@@ -68,7 +68,7 @@ The following constraints apply verbatim to every feature plan derived from this
 
 > **Tip on heading conventions.** When `ralph-split` (Step 6 below) creates child issues, this plan-of-plans will be edited in Step 8 to back-fill each feature heading with `### Feature X: <name> (GH-NNNN)`. The `GH-NNNN` token is load-bearing — `ralph-plan` Step 3.5 uses it to detect parent-plan reuse via mapping rule 1.2 and skip child plan generation when the parent phase already has File ownership + Automated Verification entries. Until those child numbers are assigned, each feature is named only.
 
-### Feature A: SOUL framework + SessionStart hook
+### Feature A: SOUL framework + SessionStart hook (GH-1268)
 - **depends_on**: null
 - **produces**:
   - `plugin/ralph-hero/skills/shared/soul-schema.md` — the canonical SOUL.md frontmatter + body conventions, referenced by every team feature
@@ -77,7 +77,7 @@ The following constraints apply verbatim to every feature plan derived from this
   - One smoke test that asserts the hook script loads a SOUL when `$RALPH_COMMAND` is set and is a no-op otherwise.
 - **Estimated atomics**: 4 — (1) schema doc; (2) hook script; (3) five SOUL.md files; (4) hook smoke test
 
-### Feature B: Director skill
+### Feature B: Director skill (GH-1269)
 - **depends_on**: null
 - **produces**:
   - `plugin/ralph-hero/skills/director/SKILL.md` — new orchestrator that reads `next_actions`, classifies the top event into one of {builders, watchers, scouts, memorykeepers, caretakers}, dispatches via `Skill()`, then returns. Replaces the hard-coded `hero` dispatch in `autopilot`.
@@ -88,8 +88,8 @@ The following constraints apply verbatim to every feature plan derived from this
 - **consumes**: SOUL framework (Feature A)
 - **Estimated atomics**: 5 — (1) Director SKILL.md skeleton; (2) event-class taxonomy; (3) classifier logic; (4) `trigger:*` label handler; (5) autopilot rewrite to delegate
 
-### Feature C: Watcher team entrypoint
-- **depends_on**: [Feature A]
+### Feature C: Watcher team entrypoint (GH-1270)
+- **depends_on**: [GH-1268]
 - **produces**:
   - `plugin/ralph-hero/skills/watch/SKILL.md` — single orchestrator that wraps `gcp-incident-triage`, `ralph-debug-collate`, and a new `log-reader` subagent (LQL queries via gcp-telemetry conventions)
   - `plugin/ralph-hero/skills/watch/SOUL.md` — paranoid-but-disciplined voice, refuses claims without trace IDs / LQL queries
@@ -99,8 +99,8 @@ The following constraints apply verbatim to every feature plan derived from this
 - **consumes**: SOUL framework + schema from Feature A
 - **Estimated atomics**: 5 — (1) watch SKILL.md skeleton; (2) watch SOUL.md; (3) log-reader agent; (4) sre-fixit agent with allowlist; (5) heartbeat schedule registration
 
-### Feature D: Event shims (alerts / langfuse / dream-loop → board)
-- **depends_on**: [Feature C]
+### Feature D: Event shims (alerts / langfuse / dream-loop → board) (GH-1271)
+- **depends_on**: [GH-1270, GH-1269]
 - **produces**:
   - Cloud Monitoring → issue bridge: a small Pub/Sub subscriber (Cloud Run job or launchd-scheduled pull) that normalizes monitoring alerts into `create_issue` calls with label `watcher-auto`
   - Langfuse → issue bridge: promote `ralph-debug-collate` from on-demand to a scheduled run inside the Watcher heartbeat (live behind the watch entrypoint, not standalone)
@@ -109,8 +109,8 @@ The following constraints apply verbatim to every feature plan derived from this
 - **consumes**: Watcher entrypoint (Feature C) for runtime context; Director taxonomy (Feature B) for routing labels
 - **Estimated atomics**: 4 — (1) Cloud Monitoring Pub/Sub subscriber; (2) Langfuse scheduled-run wiring; (3) reflect.py cluster classifier; (4) Director taxonomy patch for new labels
 
-### Feature E: Self-healing closure (outcome-recorder + reflection → improvement issue)
-- **depends_on**: [Feature B]
+### Feature E: Self-healing closure (outcome-recorder + reflection → improvement issue) (GH-1272)
+- **depends_on**: [GH-1269]
 - **produces**:
   - `outcome-recorder` — a ~30 LOC wrapper invoked by `ralph-postmortem`, `ralph-merge`, and any other terminal handler. Maps the handler's output (decision, result, trace_id or commit SHA) to a `knowledge_record_outcome` MCP call.
   - Updates to `ralph-postmortem`, `ralph-merge`, `ralph-pr`, and `ralph-val` exit points to call `outcome-recorder`
@@ -118,8 +118,8 @@ The following constraints apply verbatim to every feature plan derived from this
 - **consumes**: Director taxonomy (Feature B). Note: Feature D adds the reflect.py cluster classifier itself; Feature E wires its output through Director and adds the outcome-recorder on the upstream side.
 - **Estimated atomics**: 3 — (1) outcome-recorder wrapper; (2) terminal-handler patches (one per skill); (3) integration test asserting merge → outcome row → next-night dream-loop ingestion
 
-### Feature F: Scout scheduling (on-PR + nightly)
-- **depends_on**: [Feature A]
+### Feature F: Scout scheduling (on-PR + nightly) (GH-1273)
+- **depends_on**: [GH-1268]
 - **produces**:
   - `plugin/ralph-hero/skills/scouts/SOUL.md` — curious-mischievous voice
   - `/scout-on-pr` hook: `pr-agent` posts a comment with a `/scout` trigger when the PR touches a UI directory (heuristic: changed files match `**/*.tsx`, `**/*.svelte`, `**/components/**`, etc.); `merge-agent` waits for green Scout report before merging UI-touching PRs
@@ -128,8 +128,8 @@ The following constraints apply verbatim to every feature plan derived from this
 - **consumes**: SOUL framework (Feature A); minor coordination with Director taxonomy (Feature B) — taxonomy edit is small enough to ship in Feature F itself rather than block on B's plan
 - **Estimated atomics**: 4 — (1) scouts SOUL.md; (2) /scout-on-pr trigger comment from pr-agent; (3) merge-agent gate; (4) nightly schedule registration
 
-### Feature G: Caretaker team entrypoint
-- **depends_on**: [Feature A]
+### Feature G: Caretaker team entrypoint (GH-1274)
+- **depends_on**: [GH-1268]
 - **produces**:
   - `plugin/ralph-hero/skills/caretake/SKILL.md` — single orchestrator that bundles existing `ralph-triage`, `ralph-hygiene`, `ralph-unblock`, `ralph-postmortem`, `report`, and `trends` skills behind one entrypoint
   - `plugin/ralph-hero/skills/caretake/SOUL.md` — quiet-steward voice
@@ -137,8 +137,8 @@ The following constraints apply verbatim to every feature plan derived from this
 - **consumes**: SOUL framework (Feature A)
 - **Estimated atomics**: 3 — (1) caretake SKILL.md wrapper; (2) caretake SOUL.md; (3) heartbeat schedule registration
 
-### Feature H: iOS remote-control integration
-- **depends_on**: [Feature B, Feature C, Feature F, Feature G]
+### Feature H: iOS remote-control integration (GH-1275)
+- **depends_on**: [GH-1269, GH-1270, GH-1273, GH-1274]
 - **produces**:
   - `cos` skill extended to summarize all five teams' state, not just builders (current cos covers builders only — extend the section list + add per-team status rollups)
   - ntfy push notification hooks on team-session completion (extends the existing pattern from `2026-05-15-cos-phase3-morning-brief-ntfy.md`)
@@ -184,10 +184,10 @@ Feature execution order is derived from the `depends_on` graph in the Feature De
 
 Implied waves (for human reading; the planner uses the graph, not the wave numbers):
 
-- **Wave 1** (parallel — no deps): Feature A (SOUL framework), Feature B (Director skill)
-- **Wave 2** (depends on Wave 1): Feature C (Watcher entrypoint — needs A), Feature F (Scouts — needs A), Feature G (Caretakers — needs A)
-- **Wave 3** (depends on Wave 2): Feature D (Event shims — needs C), Feature E (Self-healing closure — needs B)
-- **Wave 4** (depends on Waves 1-3): Feature H (iOS remote control — needs B, C, F, G)
+- **Wave 1** (parallel — no deps): GH-1268 (Feature A: SOUL framework), GH-1269 (Feature B: Director skill)
+- **Wave 2** (depends on Wave 1): GH-1270 (Feature C: Watcher — needs 1268), GH-1273 (Feature F: Scouts — needs 1268), GH-1274 (Feature G: Caretakers — needs 1268)
+- **Wave 3** (depends on Wave 2): GH-1271 (Feature D: Event shims — needs 1270, 1269), GH-1272 (Feature E: Self-healing — needs 1269)
+- **Wave 4** (depends on Waves 1-3): GH-1275 (Feature H: iOS remote control — needs 1269, 1270, 1273, 1274)
 
 After committing the plan-of-plans document, sync feature-level `depends_on` edges to GitHub `blockedBy` relationships using the sync plan graph tool. After Step 6 (ralph-split creates feature children), this section is edited in Step 8 to back-fill GH issue numbers next to each feature name.
 
