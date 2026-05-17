@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 // Hoist the mock before importing the module under test. ESM module namespaces
 // are non-configurable in vitest, so vi.spyOn on an imported namespace fails;
@@ -43,6 +44,7 @@ import {
   buildDeletePodArgv,
   sreDrainSchema,
   buildDrainArgv,
+  registerSreTools,
 } from "../tools/sre-tools.js";
 
 // The module uses promisify(execFile) internally. To control its behaviour from
@@ -824,5 +826,222 @@ describe("ralph_hero__sre__drain — rejects empty-command injection", () => {
 
   it("rejects whitespace-only string in node", () => {
     assertDrainRejects({ node: "   " });
+  });
+});
+
+// =============================================================================
+// Non-zero exitCode path: tool handlers must return toolError, not toolSuccess
+//
+// runKubectl does NOT throw on non-zero exit — it catches execFile's rejection
+// and returns { stdout, stderr, exitCode: e.code }. Each handler must branch on
+// exitCode !== 0 and return toolError with a descriptive message including the
+// failure output. These tests verify that branch is taken.
+//
+// The execFile mock is set to call the callback with a non-zero error object
+// (simulating `kubectl` exiting with code 1 and a stderr message), which causes
+// promisify's wrapper to reject — kubectl-exec.ts catches that rejection and
+// returns a KubectlResult with exitCode=1.
+// =============================================================================
+
+/**
+ * Make execFile's mock simulate a failed kubectl invocation.
+ *
+ * promisify wraps the callback form: execFile(file, args, opts, cb).
+ * To simulate a non-zero exit, the callback must be called with an Error that
+ * carries `.code`, `.stdout`, and `.stderr` — matching the shape that
+ * child_process emits when the subprocess exits non-zero.
+ */
+function makeExecFileMockFailure(
+  stderr = "Error from server (NotFound): deployments.apps \"missing\" not found",
+  stdout = "",
+  code = 1,
+): void {
+  vi.mocked(execFile).mockImplementation(
+    (
+      _file: unknown,
+      _args: unknown,
+      _opts: unknown,
+      callback: unknown,
+    ) => {
+      const err = Object.assign(new Error("Command failed"), {
+        code,
+        stdout,
+        stderr,
+      });
+      (callback as (err: Error, result?: unknown) => void)(err);
+      return undefined as unknown as ReturnType<typeof execFile>;
+    },
+  );
+}
+
+/**
+ * Retrieve the registered tool handler from an McpServer instance.
+ * Uses the same `(server as any)._registeredTools` pattern as activity-tools.test.ts.
+ */
+function getHandler(server: McpServer, toolName: string): (params: unknown) => Promise<unknown> {
+  return (server as unknown as Record<string, Record<string, { handler: (p: unknown) => Promise<unknown> }>>)
+    ._registeredTools[toolName].handler;
+}
+
+/**
+ * Create a minimal McpServer with SRE tools registered.
+ * The GitHub client and field cache are unused by the SRE tool handlers
+ * (they only call runKubectl), so null casts are safe here.
+ */
+function createSreServer(): McpServer {
+  const server = new McpServer({ name: "test", version: "0.0.0" });
+  registerSreTools(server, null as never, null as never);
+  return server;
+}
+
+// ---------------------------------------------------------------------------
+// sre__scale: non-zero exitCode returns toolError
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__scale — non-zero exitCode returns toolError", () => {
+  it("returns toolError with stderr when kubectl exits non-zero", async () => {
+    makeExecFileMockFailure(
+      'Error from server (NotFound): deployments.apps "missing" not found',
+    );
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__scale");
+    const result = await handler({ namespace: "default", deployment: "missing", replicas: 3 }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("kubectl scale failed");
+    expect(result.content[0].text).toContain("exit 1");
+    expect(result.content[0].text).toContain("NotFound");
+  });
+
+  it("includes stdout in error message when stderr is empty", async () => {
+    makeExecFileMockFailure("", "quota exceeded output", 1);
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__scale");
+    const result = await handler({ namespace: "default", deployment: "nginx", replicas: 3 }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("quota exceeded output");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sre__rollout_restart: non-zero exitCode returns toolError
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__rollout_restart — non-zero exitCode returns toolError", () => {
+  it("returns toolError with stderr when kubectl exits non-zero", async () => {
+    makeExecFileMockFailure(
+      'Error from server (NotFound): deployments.apps "missing" not found',
+    );
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__rollout_restart");
+    const result = await handler({ namespace: "default", deployment: "missing" }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("kubectl rollout restart failed");
+    expect(result.content[0].text).toContain("exit 1");
+    expect(result.content[0].text).toContain("NotFound");
+  });
+
+  it("includes stdout in error message when stderr is empty", async () => {
+    makeExecFileMockFailure("", "namespace not found", 1);
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__rollout_restart");
+    const result = await handler({ namespace: "missing-ns", deployment: "nginx" }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("namespace not found");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sre__delete_pod: non-zero exitCode returns toolError
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__delete_pod — non-zero exitCode returns toolError", () => {
+  it("returns toolError with stderr when kubectl exits non-zero", async () => {
+    makeExecFileMockFailure(
+      'Error from server (NotFound): pods "crash-xyz" not found',
+    );
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__delete_pod");
+    const result = await handler({ namespace: "default", pod: "crash-xyz" }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("kubectl delete pod failed");
+    expect(result.content[0].text).toContain("exit 1");
+    expect(result.content[0].text).toContain("NotFound");
+  });
+
+  it("includes stdout in error message when stderr is empty", async () => {
+    makeExecFileMockFailure("", "pod already terminating", 1);
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__delete_pod");
+    const result = await handler({ namespace: "default", pod: "nginx-abc" }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("pod already terminating");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sre__drain: non-zero exitCode returns toolError
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — non-zero exitCode returns toolError", () => {
+  it("returns toolError with stderr when kubectl exits non-zero", async () => {
+    makeExecFileMockFailure(
+      'Error from server (NotFound): nodes "missing-node" not found',
+    );
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__drain");
+    const result = await handler({ node: "missing-node" }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("kubectl drain failed");
+    expect(result.content[0].text).toContain("exit 1");
+    expect(result.content[0].text).toContain("NotFound");
+  });
+
+  it("includes stdout in error message when stderr is empty", async () => {
+    makeExecFileMockFailure("", "node has pods that cannot be evicted", 1);
+
+    const server = createSreServer();
+    const handler = getHandler(server, "ralph_hero__sre__drain");
+    const result = await handler({ node: "node-1" }) as {
+      isError: boolean;
+      content: Array<{ type: string; text: string }>;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("node has pods that cannot be evicted");
   });
 });

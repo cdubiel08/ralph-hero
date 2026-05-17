@@ -330,6 +330,11 @@ export function registerSreTools(
       const argv = buildScaleArgv(namespace, deployment, replicas);
       try {
         const result = await runKubectl(argv);
+        if (result.exitCode !== 0) {
+          return toolError(
+            `kubectl scale failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+          );
+        }
         return toolSuccess(result);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -351,6 +356,11 @@ export function registerSreTools(
       const argv = buildRolloutRestartArgv(namespace, deployment);
       try {
         const result = await runKubectl(argv);
+        if (result.exitCode !== 0) {
+          return toolError(
+            `kubectl rollout restart failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+          );
+        }
         return toolSuccess(result);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -372,6 +382,11 @@ export function registerSreTools(
       const argv = buildDeletePodArgv(namespace, pod);
       try {
         const result = await runKubectl(argv);
+        if (result.exitCode !== 0) {
+          return toolError(
+            `kubectl delete pod failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+          );
+        }
         return toolSuccess(result);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -395,6 +410,11 @@ export function registerSreTools(
       const argv = buildDrainArgv(node, gracePeriodSeconds, timeoutSeconds);
       try {
         const result = await runKubectl(argv);
+        if (result.exitCode !== 0) {
+          return toolError(
+            `kubectl drain failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+          );
+        }
         return toolSuccess(result);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
