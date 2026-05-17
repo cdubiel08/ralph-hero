@@ -1,18 +1,20 @@
 /**
- * Smoke tests for the kubectl-exec helper (Phase 1 / GH-1287).
+ * Tests for the kubectl-exec helper (Phase 1 / GH-1287) and the typed
+ * sre__* MCP tool schemas (Phases 2-5).
  *
- * These tests verify two foundational invariants:
- *
+ * Phase 1 tests (kubectl-exec helper):
  *  1. shell:false guarantee — `runKubectl` invokes kubectl via execFile with
  *     the shell option absent (or explicitly false). A shell option of `true`
  *     must NEVER appear in the options object passed to execFile.
- *
  *  2. Forbidden-flag rejection — the defense-in-depth check rejects each of
  *     the four unconditionally banned kubectl flags before any subprocess is
  *     spawned.
  *
- * Operation-level adversarial tests (phases 2-5) will be added in later
- * describe blocks inside this same file.
+ * Phase 2 tests (sre__scale — GH-1288):
+ *  - Happy path: valid inputs produce the exact expected argv.
+ *  - Four named adversarial bypass classes (per PR #1278 security review):
+ *      shell-metacharacter, multiline-suffix, multiline-prefix, empty-command.
+ *  - Replica bounds: ceiling exceeded, negative, non-integer.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -31,6 +33,11 @@ vi.mock("node:child_process", async (importOriginal) => {
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { runKubectl, FORBIDDEN_FLAGS } from "../lib/kubectl-exec.js";
+import {
+  sreScaleSchema,
+  buildScaleArgv,
+  REPLICA_CEILING,
+} from "../tools/sre-tools.js";
 
 // The module uses promisify(execFile) internally. To control its behaviour from
 // the test we set the mock implementation on the raw `execFile` fn before each
@@ -124,5 +131,181 @@ describe("kubectl-exec helper — forbidden-flag rejection", () => {
     expect(FORBIDDEN_FLAGS).toContain("--grace-period=0");
     expect(FORBIDDEN_FLAGS).toContain("--delete-emptydir-data");
     expect(FORBIDDEN_FLAGS).toHaveLength(4);
+  });
+});
+
+// =============================================================================
+// Phase 2 (GH-1288): ralph_hero__sre__scale
+//
+// Canonical adversarial-test pattern for the sre__* family.
+// One named test per bypass class so a future regression points at the
+// specific class that regressed (per PR #1278 security review taxonomy).
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Helper: assert that a Zod parse fails (schema rejects the input)
+// ---------------------------------------------------------------------------
+
+function assertRejects(input: unknown): void {
+  const result = sreScaleSchema.safeParse(input);
+  expect(result.success).toBe(false);
+}
+
+// ---------------------------------------------------------------------------
+// Happy path
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__scale — happy path", () => {
+  it("happy path produces expected argv", () => {
+    // Verify the schema accepts valid input.
+    const parseResult = sreScaleSchema.safeParse({
+      namespace: "default",
+      deployment: "nginx",
+      replicas: 3,
+    });
+    expect(parseResult.success).toBe(true);
+
+    // Verify buildScaleArgv produces the exact expected argv.
+    const argv = buildScaleArgv("default", "nginx", 3);
+    expect(argv).toEqual([
+      "scale",
+      "--namespace",
+      "default",
+      "deployment",
+      "nginx",
+      "--replicas",
+      "3",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: shell-metacharacter injection
+//
+// Inputs containing `;`, `&&`, `|`, backtick, `$()`, `>` must be rejected
+// by the RFC 1123 label regex before they reach runKubectl.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__scale — rejects shell-metacharacter injection", () => {
+  const metacharacterCases: Array<[string, string]> = [
+    ["semicolon (;)", "nginx;rm -rf /"],
+    ["double-ampersand (&&)", "nginx&&id"],
+    ["pipe (|)", "nginx|cat /etc/passwd"],
+    ["backtick (`)", "nginx`id`"],
+    ["command-substitution ($(...))", "nginx$(id)"],
+    ["redirect (>)", "nginx>/tmp/x"],
+  ];
+
+  for (const [label, injected] of metacharacterCases) {
+    it(`rejects ${label} in namespace`, () => {
+      assertRejects({ namespace: injected, deployment: "nginx", replicas: 1 });
+    });
+    it(`rejects ${label} in deployment`, () => {
+      assertRejects({ namespace: "default", deployment: injected, replicas: 1 });
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-suffix injection
+//
+// A newline appended after a valid name would allow injecting a second
+// kubectl command. The RFC 1123 regex forbids `\n`.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__scale — rejects multiline-suffix injection", () => {
+  it("rejects namespace with trailing newline + shell command", () => {
+    assertRejects({
+      namespace: "default\nrm -rf /",
+      deployment: "nginx",
+      replicas: 1,
+    });
+  });
+
+  it("rejects deployment with trailing newline + shell command", () => {
+    assertRejects({
+      namespace: "default",
+      deployment: "nginx\nrm -rf /",
+      replicas: 1,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-prefix injection
+//
+// A leading newline can shift the original name to a second line, turning
+// it into an argument to a previously injected command.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__scale — rejects multiline-prefix injection", () => {
+  it("rejects namespace with leading newline", () => {
+    assertRejects({ namespace: "\nnginx", deployment: "nginx", replicas: 1 });
+  });
+
+  it("rejects deployment with leading newline", () => {
+    assertRejects({ namespace: "default", deployment: "\nnginx", replicas: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: empty-command injection
+//
+// An empty string or whitespace-only string passes many naive checks but
+// would result in kubectl receiving an empty argument. The .min(1) + regex
+// reject both forms.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__scale — rejects empty-command injection", () => {
+  it("rejects empty string in namespace", () => {
+    assertRejects({ namespace: "", deployment: "nginx", replicas: 1 });
+  });
+
+  it("rejects whitespace-only string in namespace", () => {
+    assertRejects({ namespace: "   ", deployment: "nginx", replicas: 1 });
+  });
+
+  it("rejects empty string in deployment", () => {
+    assertRejects({ namespace: "default", deployment: "", replicas: 1 });
+  });
+
+  it("rejects whitespace-only string in deployment", () => {
+    assertRejects({ namespace: "default", deployment: "   ", replicas: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Replica bounds
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__scale — replica bounds", () => {
+  it(`rejects replicas > ceiling (${REPLICA_CEILING})`, () => {
+    assertRejects({ namespace: "default", deployment: "nginx", replicas: REPLICA_CEILING + 1 });
+  });
+
+  it("rejects negative replicas", () => {
+    assertRejects({ namespace: "default", deployment: "nginx", replicas: -1 });
+  });
+
+  it("rejects non-integer replicas", () => {
+    assertRejects({ namespace: "default", deployment: "nginx", replicas: 3.5 });
+  });
+
+  it("accepts replicas = 0 (scale-to-zero is valid)", () => {
+    const result = sreScaleSchema.safeParse({
+      namespace: "default",
+      deployment: "nginx",
+      replicas: 0,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it(`accepts replicas = ${REPLICA_CEILING} (ceiling is inclusive)`, () => {
+    const result = sreScaleSchema.safeParse({
+      namespace: "default",
+      deployment: "nginx",
+      replicas: REPLICA_CEILING,
+    });
+    expect(result.success).toBe(true);
   });
 });

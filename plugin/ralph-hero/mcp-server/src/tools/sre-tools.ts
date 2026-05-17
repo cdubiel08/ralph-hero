@@ -19,11 +19,86 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import type { FieldOptionCache } from "../lib/cache.js";
-// runKubectl is imported here for use by operation phases 2-5.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { runKubectl } from "../lib/kubectl-exec.js";
+import { toolSuccess, toolError } from "../types.js";
+
+// ---------------------------------------------------------------------------
+// Shared Zod field schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * RFC 1123 label regex for Kubernetes namespace and deployment names.
+ * Intentionally rejects shell metacharacters, slashes, newlines, and empty
+ * strings as a single Zod check.
+ */
+const k8sLabelSchema = z.string().min(1).regex(/^[a-z0-9-]+$/);
+
+/**
+ * Bounded replica count. Ceiling is 50 — configurable in a follow-up; the
+ * explicit ceiling prevents runaway scale-out from an LLM miscalculation.
+ */
+export const REPLICA_CEILING = 50;
+const replicasSchema = z.number().int().min(0).max(REPLICA_CEILING);
+
+// ---------------------------------------------------------------------------
+// sre__scale schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * Raw Zod shape for the sre__scale tool.
+ * Passed to `server.tool()` which expects a `ZodRawShape` (plain object of
+ * Zod field schemas).
+ */
+const sreScaleShape = {
+  namespace: k8sLabelSchema.describe(
+    "Kubernetes namespace (RFC 1123 label: lowercase alphanumeric and hyphens only).",
+  ),
+  deployment: k8sLabelSchema.describe(
+    "Deployment name (RFC 1123 label: lowercase alphanumeric and hyphens only).",
+  ),
+  replicas: replicasSchema.describe(
+    `Target replica count (integer, 0–${REPLICA_CEILING}).`,
+  ),
+};
+
+/**
+ * Strict Zod object schema for sre__scale parameters.
+ *
+ * Exported so adversarial-input tests (sre-tools.test.ts) can call
+ * `.safeParse()` directly. `.strict()` ensures unknown keys are rejected —
+ * any attempt to pass extra fields (e.g., a `flags` bypass) is caught at
+ * the schema level.
+ */
+export const sreScaleSchema = z.object(sreScaleShape).strict();
+
+/**
+ * Build the kubectl argv array for a scale operation.
+ *
+ * Exported for unit-testing the argv shape independently of the MCP server.
+ * The argv is a plain array literal — no string interpolation, no concat.
+ *
+ * @param namespace  - Validated Kubernetes namespace.
+ * @param deployment - Validated deployment name.
+ * @param replicas   - Validated replica count.
+ */
+export function buildScaleArgv(
+  namespace: string,
+  deployment: string,
+  replicas: number,
+): string[] {
+  return [
+    "scale",
+    "--namespace",
+    namespace,
+    "deployment",
+    deployment,
+    "--replicas",
+    String(replicas),
+  ];
+}
 
 /**
  * Register all SRE operation tools on the MCP server.
@@ -43,9 +118,28 @@ export function registerSreTools(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _fieldCache: FieldOptionCache,
 ): void {
-  // Phase 2 (GH-1288): sre__scale — register here
+  // -------------------------------------------------------------------------
+  // ralph_hero__sre__scale  (Phase 2 / GH-1288)
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__sre__scale",
+    "Scale a Kubernetes deployment to a specified replica count. " +
+      "Typed parameters only — no shell, no flag pass-through. " +
+      `Replica ceiling: ${REPLICA_CEILING}.`,
+    sreScaleShape,
+    async ({ namespace, deployment, replicas }) => {
+      const argv = buildScaleArgv(namespace, deployment, replicas);
+      try {
+        const result = await runKubectl(argv);
+        return toolSuccess(result);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return toolError(`kubectl scale failed: ${message}`);
+      }
+    },
+  );
+
   // Phase 3 (GH-1289): sre__rollout_restart — register here
   // Phase 4 (GH-1290): sre__delete_pod — register here
   // Phase 5 (GH-1291): sre__drain — register here
-  void server; // referenced but empty in Phase 1
 }

@@ -191,6 +191,7 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__remove_dependency",
   "ralph_hero__save_issue",
   "ralph_hero__setup_project",
+  "ralph_hero__sre__scale",
   "ralph_hero__sync_plan_graph",
   "ralph_hero__update_draft_issue",
 ];
