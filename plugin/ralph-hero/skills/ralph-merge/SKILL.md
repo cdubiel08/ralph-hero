@@ -157,14 +157,14 @@ Reason: Code review required — invoke /ralph-hero:finish or /ralph-hero:ralph-
 
 ## Step 4a: Autonomous Merge Gate
 
-**Runs only when `RALPH_AUTO_MERGE=true`.** When the env var is unset or set to anything else (the standalone `just merge NNN` case), skip this step entirely and continue with the existing flow at Step 5 — backwards compatibility with interactive merging is preserved.
+**Runs only when `RALPH_AUTO_MERGE=true`.** When the env var is unset or set to anything else (the standalone `just merge NNN` case), skip this step entirely and fall through to Step 4b (Scout Report Gate), then Step 5 — backwards compatibility with interactive merging is preserved.
 
 This gate is the safety net that lets the loop runner (`scripts/ralph-loop.sh --auto-merge`) merge approved PRs autonomously. It is intentionally orthogonal to `RALPH_REVIEW_MODE` (which only gates the code-review step in Step 4): you can have auto code-review without auto-merge, and vice versa.
 
 ```bash
 if [ "${RALPH_AUTO_MERGE:-false}" != "true" ]; then
     echo "RALPH_AUTO_MERGE not set; skipping autonomous merge gate."
-    # fall through to Step 5 — interactive flow
+    # fall through to Step 4b (Scout Report Gate), then Step 5 — interactive flow
 fi
 ```
 
@@ -205,7 +205,75 @@ The next loop iteration will re-evaluate. There is no fix cycle here — `RALPH_
 
 ### On pass
 
-All criteria hold. Proceed to Step 5 (the existing readiness check + merge flow).
+All criteria hold. Proceed to Step 4b (Scout Report Gate).
+
+---
+
+## Step 4b: Scout Report Gate (UI-touching PRs only)
+
+> **Runs unconditionally after Step 4a regardless of `RALPH_AUTO_MERGE`.** Interactive merges (no `RALPH_AUTO_MERGE`) skip Step 4a but must still pass this gate for UI-touching PRs.
+
+> **Output contract for callers (orchestrators: ralph-finish, ralph-hero):**
+>
+> This step produces one additional stop status that callers MUST handle:
+>
+> | Status | Meaning | Caller action |
+> |--------|---------|---------------|
+> | `MERGE BLOCKED — Scout review required` | PR touched UI files (Scout Trigger comment exists) but no green Scout Report was found. | Run `/ralph-playwright:test-e2e` against the PR's preview build, then post `## Scout Report: Verdict: GREEN`. |
+>
+> Non-UI PRs (no `## Scout Trigger` comment on the PR) are a no-op — this step passes through silently.
+
+Fetch all PR comment bodies:
+
+```bash
+PR_COMMENTS=$(gh pr view PR_NUMBER --json comments --jq '.comments[].body')
+```
+
+**Gate logic (evaluate in order):**
+
+**Step 4b.1 — Check for trigger.** If no comment body starts with `## Scout Trigger`, this PR does not touch UI files. Skip the rest of Step 4b and proceed to Step 5.
+
+```bash
+HAS_TRIGGER=$(printf '%s\n' "$PR_COMMENTS" | grep -c '^## Scout Trigger' || true)
+if [[ "$HAS_TRIGGER" -eq 0 ]]; then
+  # Non-UI PR — Scout gate is a no-op
+  # proceed to Step 5
+fi
+```
+
+**Step 4b.2 — Scout Trigger found. Check for green verdict.**
+
+```bash
+HAS_GREEN=$(printf '%s\n' "$PR_COMMENTS" | grep -c '## Scout Report' | xargs)
+# A comment is GREEN if it contains "## Scout Report" AND ("Verdict: GREEN" or "Verdict: green")
+HAS_GREEN_VERDICT=$(printf '%s\n' "$PR_COMMENTS" | grep -iE 'Verdict: GREEN' | wc -l | xargs)
+HAS_OVERRIDE=$(printf '%s\n' "$PR_COMMENTS" | grep -ic 'Verdict: GREEN (override)' || true)
+HAS_RED=$(printf '%s\n' "$PR_COMMENTS" | grep -ic 'Verdict: RED' || true)
+```
+
+**Step 4b.3 — Evaluate verdicts:**
+
+- If any comment contains `Verdict: GREEN (override)` (case-insensitive): **PASS** — human override accepted. Proceed to Step 5.
+- If any comment contains `## Scout Report` AND `Verdict: GREEN` (case-insensitive on `GREEN`): **PASS** — Scout approved. Proceed to Step 5.
+- If any comment contains `## Scout Report` AND `Verdict: RED` (and no override): **BLOCK**:
+
+```
+MERGE BLOCKED — Scout review required
+Issue: #NNN
+PR: #PR_NUMBER
+Reason: Scout report is RED — address findings before merging.
+Action: Fix issues, re-run /ralph-playwright:test-e2e, then post "## Scout Report: Verdict: GREEN".
+```
+
+- If `## Scout Trigger` exists but no `## Scout Report` at all: **BLOCK**:
+
+```
+MERGE BLOCKED — Scout review required
+Issue: #NNN
+PR: #PR_NUMBER
+Reason: Scout Trigger was posted but no Scout Report found yet.
+Action: Run /ralph-playwright:test-e2e against the PR's preview build, then post "## Scout Report: Verdict: GREEN".
+```
 
 ## Step 5: Check PR Readiness (with Rejection Detection)
 

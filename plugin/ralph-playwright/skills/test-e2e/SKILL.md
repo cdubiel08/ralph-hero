@@ -62,12 +62,20 @@ Produce an aggregated signal report to `.playwright-cli/<date>-test-e2e/signal-r
 
 ### Step 4: Act
 
+Optional flags accepted at invocation:
+
+- `--type happy|sad|edge` — run only stories of that type (filters discovery; already documented in Step 1)
+- `--tags auth,login` — run only stories with matching tags (filters discovery; already documented in Step 1)
+- `--story "Login succeeds"` — run a specific story by name (filters discovery; already documented in Step 1)
+- `--label LABEL_NAME` — apply this label to every GitHub issue created in this step. When absent, no label is applied beyond the story's own tags (existing behavior, no change). Used by the `scout-nightly` schedule routine to tag findings as `scout-auto`.
+
 Based on the signal report:
 
 1. For `critical` or `high` severity signals: **create GitHub issues** via ralph-hero MCP (`ralph_hero__create_issue`) with:
    - Title prefixed by signal type (e.g., `a11y: Missing label on email field`)
    - Body includes step details, expected vs actual, console errors
    - Tags from the story's tags
+   - If `--label LABEL_NAME` was provided, include `LABEL_NAME` in the `labels:` parameter of `ralph_hero__create_issue` (appended alongside any story tags, not replacing them)
 
 2. **Render annotated siblings for failure screenshots that carry bboxes.** If the signal's `evidence.bboxes[]` is populated, invoke the zero-dep renderer to emit `<stem>.annotated.png` next to the original:
    ```bash

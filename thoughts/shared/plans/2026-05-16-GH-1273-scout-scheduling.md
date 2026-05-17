@@ -124,8 +124,8 @@ Replace the curious-mischievous stub at `plugin/ralph-hero/skills/scouts/SOUL.md
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `wc -w plugin/ralph-hero/skills/scouts/SOUL.md` — body section is in the 150-250 word range (excluding frontmatter)
-- [ ] `head -20 plugin/ralph-hero/skills/scouts/SOUL.md` shows valid YAML frontmatter that parses (no broken keys)
+- [x] `wc -w plugin/ralph-hero/skills/scouts/SOUL.md` — body section is in the 150-250 word range (excluding frontmatter)
+- [x] `head -20 plugin/ralph-hero/skills/scouts/SOUL.md` shows valid YAML frontmatter that parses (no broken keys)
 
 #### Manual Verification:
 - [ ] Bad/Good example reads naturally and demonstrates the scouts voice
@@ -182,9 +182,9 @@ Add a new step to `plugin/ralph-hero/skills/ralph-pr/SKILL.md` (between current 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` — passes all test cases, exits 0
-- [ ] `grep -n "Step 6.5" plugin/ralph-hero/skills/ralph-pr/SKILL.md` — confirms step header present
-- [ ] `grep -n "## Scout Trigger" plugin/ralph-hero/skills/ralph-pr/SKILL.md` — confirms comment header in heredoc
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` — passes all test cases, exits 0
+- [x] `grep -n "Step 6.5" plugin/ralph-hero/skills/ralph-pr/SKILL.md` — confirms step header present
+- [x] `grep -n "## Scout Trigger" plugin/ralph-hero/skills/ralph-pr/SKILL.md` — confirms comment header in heredoc
 
 #### Manual Verification:
 - [ ] Open a test PR touching `src/components/Foo.tsx`; verify `## Scout Trigger` comment appears
@@ -241,9 +241,9 @@ Add a new sub-step to `plugin/ralph-hero/skills/ralph-merge/SKILL.md` Step 4 (im
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash plugin/ralph-hero/scripts/scout-merge-gate-smoke.sh` — passes all test cases, exits 0
-- [ ] `grep -n "Step 4b" plugin/ralph-hero/skills/ralph-merge/SKILL.md` — confirms sub-step header present
-- [ ] `grep -n "MERGE BLOCKED — Scout review required" plugin/ralph-hero/skills/ralph-merge/SKILL.md` — confirms new status string documented
+- [x] `bash plugin/ralph-hero/scripts/scout-merge-gate-smoke.sh` — passes all test cases, exits 0
+- [x] `grep -n "Step 4b" plugin/ralph-hero/skills/ralph-merge/SKILL.md` — confirms sub-step header present
+- [x] `grep -n "MERGE BLOCKED — Scout review required" plugin/ralph-hero/skills/ralph-merge/SKILL.md` — confirms new status string documented
 
 #### Manual Verification:
 - [ ] Open a UI-touching test PR; verify pr-agent posts `## Scout Trigger`; attempt merge without Scout Report; verify `MERGE BLOCKED — Scout review required`
@@ -300,9 +300,9 @@ Register a nightly `/schedule` routine that invokes `/ralph-playwright:test-e2e`
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `test -x plugin/ralph-hero/scripts/schedule/scout-nightly.sh` — script exists and is executable
-- [ ] `grep -n "scout-auto" plugin/ralph-hero/skills/director/event-classes.md` — taxonomy row present
-- [ ] `grep -n "\\-\\-label" plugin/ralph-playwright/skills/test-e2e/SKILL.md` — flag documented
+- [x] `test -x plugin/ralph-hero/scripts/schedule/scout-nightly.sh` — script exists and is executable
+- [x] `grep -n "scout-auto" plugin/ralph-hero/skills/director/event-classes.md` — taxonomy row present
+- [x] `grep -n "\\-\\-label" plugin/ralph-playwright/skills/test-e2e/SKILL.md` — flag documented
 
 #### Manual Verification:
 - [ ] Run `/schedule list` after installing the routine; verify `scout-nightly` appears with `0 3 * * *` cadence
