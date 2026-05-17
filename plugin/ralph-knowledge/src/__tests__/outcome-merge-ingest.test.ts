@@ -143,4 +143,27 @@ describe("outcome-merge-ingest: record outcome → query outcome", () => {
     expect(rows.length).toBe(2);
     expect(rows.every((r) => r.eventType === "merge_completed")).toBe(true);
   });
+
+  it("Test 4: does not throw when the DB is unavailable (best-effort failure mode)", async () => {
+    // Simulate the outcome-recorder failure mode: close the underlying DB
+    // so that insertOutcomeEvent() throws internally. The MCP tool must catch
+    // the error and return isError: true — it must NOT propagate an unhandled
+    // exception that would block a caller's terminal transition path
+    // (e.g., ralph-merge Step 7 / Step 10).
+    db.close();
+
+    const result = await callTool(server, "knowledge_record_outcome", {
+      event_type: "merge_completed",
+      issue_number: 9999,
+      verdict: "success",
+      payload: { trace_id_or_sha: "test-sha" },
+    });
+
+    // The call must return (not throw), and must signal failure via isError.
+    // This mirrors the `!cat outcome-recorder.md` pattern in ralph-merge:
+    // the caller logs the error and continues to Step 10 (Report Result).
+    expect(result).toBeDefined();
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Error:/);
+  });
 });
