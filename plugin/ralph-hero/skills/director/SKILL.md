@@ -46,7 +46,7 @@ Director accepts events from three sources in priority order:
 Parse `$ARGUMENTS` for an optional `--issue NNN` flag.
 
 - If `--issue NNN` is present: set `TARGET_ISSUE=NNN`. Skip to Step 2b.
-- If a `RemoteTrigger` tool input is present in the session context: extract `issue_number` and `team` from the tool payload. Set `TARGET_ISSUE` and `FORCED_TEAM` accordingly. Skip to Step 4 (dispatch directly with `FORCED_TEAM`).
+- If a `RemoteTrigger` tool input is present in the session context: extract `issue_number` and `team` from the tool payload. Set `TARGET_ISSUE`, `FORCED_TEAM`, and `DISPATCH_REASON=RemoteTrigger`. Skip to Step 4 (dispatch directly with `FORCED_TEAM`).
 - Otherwise: proceed to Step 2a (read `next_actions`).
 
 ### Step 2a: Read next_actions (no issue override)
