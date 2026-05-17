@@ -23,6 +23,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 
 ## Configuration (resolved at load time)
@@ -321,6 +322,20 @@ list_sub_issues(number=NNN)
 
 - **Standalone** (no children): update the issue's own workflow state to "In Review" via `save_issue` with `command: "ralph_pr"`.
 - **Group** (has children): advance every child returned by `list_sub_issues` to "In Review" via `save_issue`. Do NOT also advance the parent here — parent advancement is handled server-side by the `advance-parent` workflow when children reach the gate state.
+
+## Step 6.5: Record Outcome Event
+
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/outcome-recorder.md
+
+Call `mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome` with:
+- `event_type`: `"pr_created"`
+- `issue_number`: the issue number (NNN)
+- `verdict`: `"created"`
+- `payload`: `{ "pr_url": "<PR URL captured in Step 5>", "branch": "feature/GH-NNN", "repo": "<RALPH_GH_REPO>" }`
+
+This step runs after Step 6 (Move Issues to In Review) completes on the success path.
+
+If the MCP call fails, log to stderr (`echo "outcome-record failed: ..." >&2`) and continue to Step 7.
 
 ## Step 7: Post Comment
 
