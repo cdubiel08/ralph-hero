@@ -36,7 +36,7 @@ tags: [mcp-server, security, kubectl, sre-fixit, command-injection]
 | 3 | GH-1289 | sre__rollout_restart MCP tool with adversarial input tests | XS |
 | 4 | GH-1290 | sre__delete_pod MCP tool with adversarial input tests | XS |
 | 5 | GH-1291 | sre__drain MCP tool with adversarial input tests | S |
-| 6 | GH-1292 | sre-fixit agent created with ralph_hero__sre__* allowlist | XS |
+| 6 | GH-1292 | sre-fixit agent updated with ralph_hero__sre__* allowlist (modifies existing refusal-only stub) | XS |
 
 **Why grouped**: Per the split rationale on #1285, these six children share the same module file (`sre-tools.ts`), the same shared exec helper (`kubectl-exec.ts`), and the same test file (`sre-tools.test.ts`). Landing them in one PR keeps the test suite cohesive, the canonical adversarial-class assertions in one place, and the eventual agent wiring atomic. The dependency chain (scaffold → ops in parallel → agent) maps directly to a 6-phase atomic plan.
 
@@ -64,7 +64,7 @@ These constraints apply to ALL phases below and are non-negotiable. They derive 
 
 5. **No `Bash` tool on sre-fixit agent.** The agent's `tools:` allowlist (phase 6) is a hard runtime gate (per CLAUDE.md "Per-Phase Agents"). Bash is the bypass surface PR #1278 grappled with; allowing it on this agent defeats the whole redesign.
 
-6. **Tool prefix convention.** All four operation tools use the `ralph_hero__sre__*` family: `sre__scale`, `sre__rollout_restart`, `sre__delete_pod`, `sre__drain`. The double-underscore matches the existing `ralph_hero__` prefix convention from `plugin/ralph-hero/mcp-server/src/index.ts`.
+6. **Tool prefix convention.** All four operation tools use the `ralph_hero__sre__*` family: `sre__scale`, `sre__rollout_restart`, `sre__delete_pod`, `sre__drain`. This **introduces a new `sre__` sub-namespace inside the existing `ralph_hero__` prefix** — the outer `ralph_hero__` prefix follows the established MCP server convention from `plugin/ralph-hero/mcp-server/src/index.ts`, while the inner `sre__` segment groups the four SRE operations as a related family. Existing tools use only the single `ralph_hero__<name>` form; the SRE family is the first to add a sub-namespace segment, and future operator-tool families (e.g., `db__`, `cache__`) may follow the same pattern.
 
 7. **RFC 1123 label regex for k8s names.** Namespaces, deployments, and pod names use `/^[a-z0-9-]+$/`. Node names use `/^[a-z0-9.-]+$/` (FQDN form). These regexes intentionally reject shell metacharacters, slashes, newlines, and empty strings as a single Zod check.
 
@@ -82,7 +82,7 @@ Tool modules already present (per `ls plugin/ralph-hero/mcp-server/src/tools/`):
 
 There is NO existing `sre-tools.ts` and NO existing `kubectl-exec.ts` helper — phase 1 creates both from scratch.
 
-There is NO existing `agents/sre-fixit.md` (verified during the split at #1285). Phase 6 creates the file from scratch following the per-phase agent frontmatter pattern visible in `agents/impl-agent.md`, `agents/val-agent.md`, etc.
+`plugin/ralph-hero/agents/sre-fixit.md` **EXISTS** today as a refusal-only stub shipped with GH-1270. Its current frontmatter declares `tools: Read, mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment, mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue` and its body documents the four future operations, the hard constraints, and the unconditional-escalation protocol. Phase 6 **modifies** this existing file: it retires the unconditional-refusal posture, tightens `tools:` to add the four new `ralph_hero__sre__*` tools (and intentionally drop `Read` while keeping `create_comment` + `save_issue` for the escalation path), and rewrites the body so the agent now attempts the typed-tool path first and only escalates when the request falls outside the four ops or the tool returns a validation error. The existing `# TODO(GH-1285)` comment block in the file pre-stages exactly this replacement — the iteration is intentional and explicit, not a from-scratch authoring.
 
 The watcher team entrypoint (GH-1270, plan at `thoughts/shared/plans/2026-05-16-GH-1270-watcher-team-entrypoint.md`) already shipped with sre-fixit in refusal-only mode pending this work. Once phase 6 lands, the agent can be wired into the watcher dispatch in a follow-up (out of scope here).
 
@@ -94,7 +94,7 @@ A single PR that:
 2. Adds `plugin/ralph-hero/mcp-server/src/tools/sre-tools.ts` registering exactly four typed tools: `ralph_hero__sre__scale`, `ralph_hero__sre__rollout_restart`, `ralph_hero__sre__delete_pod`, `ralph_hero__sre__drain`.
 3. Wires `registerSreTools` in `src/index.ts`.
 4. Adds `plugin/ralph-hero/mcp-server/src/__tests__/sre-tools.test.ts` with one named per-class adversarial test per operation, plus happy-path argv assertion, plus the forbidden-flag and shell:false checks at the helper layer.
-5. Adds `plugin/ralph-hero/agents/sre-fixit.md` with a hard `tools:` allowlist containing only the four sre__* tools plus a minimal read-only set (`ralph_hero__get_issue`, `ralph_hero__create_comment`) — explicitly no `Bash`.
+5. Modifies the existing `plugin/ralph-hero/agents/sre-fixit.md` refusal-only stub: tightens `tools:` to the four `ralph_hero__sre__*` tools plus `ralph_hero__get_issue`, `ralph_hero__create_comment`, and `ralph_hero__save_issue` (retained for "Human Needed" escalation); rewrites the body to attempt the typed-tool path first and escalate only on out-of-shape requests; explicitly no `Bash`.
 
 ### Verification
 
@@ -256,6 +256,8 @@ Register `ralph_hero__sre__scale` and establish the canonical per-class adversar
 
 Register `ralph_hero__sre__rollout_restart`. Single-shape op — narrowest input surface. Reuses the per-class adversarial test pattern from phase 2.
 
+**Argv-shape note (lone exception to the array-literal pattern)**: This is the only phase whose argv uses a template literal (`` `deployment/${deployment}` ``). Every other phase builds argv from plain array literals. The interpolation is safe by construction because the `deployment` Zod schema (`/^[a-z0-9-]+$/`) forbids `/`, newlines, and shell metacharacters — the only characters that could escape the literal prefix. Do not generalize this pattern to other phases; phases 2, 4, and 5 deliberately keep argv as plain array literals because the resource-qualified `deployment/<name>` form is specific to `kubectl rollout restart`'s argv shape.
+
 ### Tasks
 
 #### Task 3.1: Register sre__rollout_restart tool
@@ -347,6 +349,8 @@ Register `ralph_hero__sre__delete_pod`. Single-pod-name only; the schema is stru
 
 Register `ralph_hero__sre__drain`. Largest legitimate flag surface of the four ops: `--ignore-daemonsets` is hard-coded into argv (not a user-controllable param), while `--force` and `--delete-emptydir-data` are unreachable by construction.
 
+**Cluster-scoped op (no `--namespace`)**: Unlike phases 2-4 which target namespace-scoped resources (deployments, pods), `kubectl drain` targets a **node**, which is a cluster-scoped resource. The argv intentionally omits `--namespace` and the Zod schema has no `namespace` field. Do not reflexively add a namespace parameter after writing four namespace-scoped tools — its absence here is correct.
+
 ### Tasks
 
 #### Task 5.1: Register sre__drain tool
@@ -369,7 +373,7 @@ Register `ralph_hero__sre__drain`. Largest legitimate flag surface of the four o
   - [ ] `describe("ralph_hero__sre__drain")` block added
   - [ ] Test `happy path produces expected argv with --ignore-daemonsets` — `{ node: "node-1" }` produces `["drain", "node-1", "--ignore-daemonsets"]`
   - [ ] Test `--ignore-daemonsets is always present` — runs the handler with several input shapes; asserts every argv contains `--ignore-daemonsets`
-  - [ ] Test `argv never contains --force, --delete-emptydir-data, --grace-period=0` — runs handler across the valid input space (a few representative cases including gracePeriodSeconds=1 — the minimum); asserts none of the three strings appear in argv
+  - [ ] Test `argv never contains forbidden flags` — runs handler across the valid input space (a few representative cases including gracePeriodSeconds=1 — the minimum); asserts none of `--force`, `--cascade=foreground`, `--grace-period=0`, `--delete-emptydir-data` (all four Shared Constraint #3 flags) appear in argv. This identical assertion serves as the same regression gate that phases 2-4 carry, so a future regression points at this phase's invariant rather than a missing assertion.
   - [ ] Test `rejects gracePeriodSeconds=0` — Zod `.min(1)` rejects 0
   - [ ] Test `rejects shell-metacharacter injection` (in `node`)
   - [ ] Test `rejects multiline-suffix injection`
@@ -388,29 +392,36 @@ Register `ralph_hero__sre__drain`. Largest legitimate flag surface of the four o
 
 ---
 
-## Phase 6: GH-1292 — sre-fixit agent with ralph_hero__sre__* allowlist
+## Phase 6: GH-1292 — sre-fixit agent updated with ralph_hero__sre__* allowlist
 
 - **depends_on**: [phase-2, phase-3, phase-4, phase-5]
 
 ### Overview
 
-Create `plugin/ralph-hero/agents/sre-fixit.md` with a hard `tools:` allowlist restricted to the four sre__* tools plus a minimal read-only surface. No `Bash`. Document the four operations, the escalation path, and the no-Bash rationale in the agent body.
+Modify the existing `plugin/ralph-hero/agents/sre-fixit.md` refusal-only stub (shipped with GH-1270) to retire its unconditional-escalation posture: tighten `tools:` to the four `ralph_hero__sre__*` tools plus the minimum needed for escalation (`get_issue`, `create_comment`, `save_issue`), and rewrite the body so the agent attempts the typed-tool path first and only escalates when the request falls outside the four ops or the tool returns a validation error. The existing `# TODO(GH-1285)` block in the stub pre-stages exactly this transition.
+
+**Why `save_issue` stays in the allowlist**: The original refusal-only stub uses `save_issue` to move issues to `workflowState: "Human Needed"`. The new agent retains the same escalation path for out-of-shape requests and for typed-tool validation failures, so `save_issue` remains in scope for this agent. Dropping it would break the documented escalation protocol and force a re-shape of the watcher dispatch contract — neither of which is in scope here.
+
+**Why `Read` is dropped**: The original stub's `tools:` line includes `Read`, but the new agent operates entirely on incoming dispatch context plus typed-tool calls — there is no file-reading path in the runtime workflow. Removing `Read` tightens the surface; it can be re-added in a follow-up if a concrete workflow needs it.
 
 ### Tasks
 
-#### Task 6.1: Create sre-fixit agent file
-- **files**: `plugin/ralph-hero/agents/sre-fixit.md` (create), `plugin/ralph-hero/agents/impl-agent.md` (read for pattern)
+#### Task 6.1: Rewrite sre-fixit agent file
+- **files**: `plugin/ralph-hero/agents/sre-fixit.md` (modify), `plugin/ralph-hero/agents/impl-agent.md` (read for pattern)
 - **tdd**: false
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File exists with valid YAML frontmatter: `name: sre-fixit`, `description: ...`, `model: sonnet` (or as appropriate — match other operator agents), `tools: ...`
-  - [ ] `tools:` line is a comma-separated allowlist containing exactly: `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__scale`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__rollout_restart`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__delete_pod`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__drain`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment`
+  - [ ] Existing file is updated in-place (NOT replaced as a new create; the file already exists and any "file already exists" guard must be respected)
+  - [ ] Frontmatter retains `name: sre-fixit`, `model: sonnet`; `description:` is updated to reflect that the agent now has autoremediation capability (no longer refusal-only)
+  - [ ] `tools:` line is a comma-separated allowlist containing exactly seven entries: `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__scale`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__rollout_restart`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__delete_pod`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__drain`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue`
   - [ ] `tools:` line does NOT contain `Bash` (string match)
+  - [ ] `tools:` line does NOT contain `Read` (string match) — dropped intentionally; see phase overview
   - [ ] Frontmatter does NOT declare `hooks`, `mcpServers`, or `permissionMode` (per CLAUDE.md plugin agent constraint)
-  - [ ] Body documents the four operations and when to use each
-  - [ ] Body documents the escalation path: when the situation falls outside the four ops, refuse and escalate via `create_comment` to Human Needed
-  - [ ] Body documents the no-Bash invariant and references PR #1278 / the typed-tool redesign for context
+  - [ ] Body documents the four operations and when to use each (replace the "future autoremediation surface" framing with "current autoremediation surface")
+  - [ ] Body documents the escalation path: when the request falls outside the four ops OR when a typed tool returns a validation error, post `## Escalation` via `create_comment` and move the issue to `Human Needed` via `save_issue` (the existing refusal protocol, narrowed to the unhandled cases)
+  - [ ] Body documents the no-Bash invariant and references PR #1278 / the typed-tool redesign for context (existing body already does this — preserve)
+  - [ ] The `# TODO(GH-1285)` block is removed (its replacement is now realized) and the `# TODO(GH-1272)` outcome-recorder block is preserved verbatim (still in flight)
 
 #### Task 6.2: Verify the agent frontmatter parses
 - **files**: `plugin/ralph-hero/agents/sre-fixit.md` (read)
@@ -418,10 +429,12 @@ Create `plugin/ralph-hero/agents/sre-fixit.md` with a hard `tools:` allowlist re
 - **complexity**: low
 - **depends_on**: [6.1]
 - **acceptance**:
-  - [ ] If a doc-lint or agent-frontmatter test exists in the repo, run it and confirm it passes for the new file
+  - [ ] If a doc-lint or agent-frontmatter test exists in the repo, run it and confirm it passes for the modified file
   - [ ] If no such test exists, manually verify the frontmatter parses as valid YAML (e.g., `python -c "import yaml; ..."` or `head -20 sre-fixit.md` inspection)
   - [ ] `grep -nE '"Bash"|\bBash\b' plugin/ralph-hero/agents/sre-fixit.md` returns no matches
   - [ ] `grep -c "mcp__plugin_ralph-hero_ralph-github__ralph_hero__sre__" plugin/ralph-hero/agents/sre-fixit.md` returns 4 (exactly four sre__* tools)
+  - [ ] `grep -c "ralph_hero__save_issue" plugin/ralph-hero/agents/sre-fixit.md` returns at least 1 (allowlist preserves escalation path)
+  - [ ] `grep -c "TODO(GH-1285)" plugin/ralph-hero/agents/sre-fixit.md` returns 0 (resolved)
 
 ### Phase Success Criteria
 
