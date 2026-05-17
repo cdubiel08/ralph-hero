@@ -238,11 +238,11 @@ Register `ralph_hero__sre__scale` and establish the canonical per-class adversar
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/sre-tools.test.ts -t "sre__scale"` — all sre__scale tests pass
+- [x] `npm run build` — no TypeScript errors
+- [x] `npx vitest run src/__tests__/sre-tools.test.ts -t "sre__scale"` — all sre__scale tests pass
 
 #### Manual Verification:
-- [ ] Reading `sre-tools.ts` for the scale handler, confirm argv is constructed as a single array literal with no string interpolation
+- [x] Reading `sre-tools.ts` for the scale handler, confirm argv is constructed as a single array literal with no string interpolation
 
 **Creates for next phase**: The adversarial-test pattern (one named test per bypass class) that phases 3-5 reuse.
 
@@ -266,10 +266,10 @@ Register `ralph_hero__sre__rollout_restart`. Single-shape op — narrowest input
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `server.tool("ralph_hero__sre__rollout_restart", ...)` registered
-  - [ ] Zod schema: `namespace: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `deployment: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `.strict()`
-  - [ ] Argv: `["rollout", "restart", "--namespace", namespace, \`deployment/${deployment}\`]` — the `deployment/` literal prefix is safe because the regex forbids `/` in the suffix
-  - [ ] Handler invokes `runKubectl(argv)` and returns via `toolSuccess`/`toolError`
+  - [x] `server.tool("ralph_hero__sre__rollout_restart", ...)` registered
+  - [x] Zod schema: `namespace: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `deployment: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `.strict()`
+  - [x] Argv: `["rollout", "restart", "--namespace", namespace, \`deployment/${deployment}\`]` — the `deployment/` literal prefix is safe because the regex forbids `/` in the suffix
+  - [x] Handler invokes `runKubectl(argv)` and returns via `toolSuccess`/`toolError`
 
 #### Task 3.2: Adversarial test suite for sre__rollout_restart
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/sre-tools.test.ts` (modify)
@@ -277,19 +277,19 @@ Register `ralph_hero__sre__rollout_restart`. Single-shape op — narrowest input
 - **complexity**: low
 - **depends_on**: [3.1]
 - **acceptance**:
-  - [ ] `describe("ralph_hero__sre__rollout_restart")` block added
-  - [ ] Test `happy path produces expected argv` — asserts argv was `["rollout", "restart", "--namespace", "default", "deployment/nginx"]`
-  - [ ] Test `rejects shell-metacharacter injection` — same metacharacters as phase 2
-  - [ ] Test `rejects multiline-suffix injection`
-  - [ ] Test `rejects multiline-prefix injection`
-  - [ ] Test `rejects empty-command injection`
-  - [ ] All tests pass
+  - [x] `describe("ralph_hero__sre__rollout_restart")` block added
+  - [x] Test `happy path produces expected argv` — asserts argv was `["rollout", "restart", "--namespace", "default", "deployment/nginx"]`
+  - [x] Test `rejects shell-metacharacter injection` — same metacharacters as phase 2
+  - [x] Test `rejects multiline-suffix injection`
+  - [x] Test `rejects multiline-prefix injection`
+  - [x] Test `rejects empty-command injection`
+  - [x] All tests pass
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/sre-tools.test.ts -t "rollout_restart"` — all tests pass
+- [x] `npm run build` — no TypeScript errors
+- [x] `npx vitest run src/__tests__/sre-tools.test.ts -t "rollout_restart"` — all tests pass
 
 **Creates for next phase**: No phase-specific output (parallel sibling of phases 4-5).
 
@@ -311,10 +311,10 @@ Register `ralph_hero__sre__delete_pod`. Single-pod-name only; the schema is stru
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `server.tool("ralph_hero__sre__delete_pod", ...)` registered
-  - [ ] Zod schema: `namespace: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `pod: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `.strict()`
-  - [ ] Argv: `["delete", "pod", "--namespace", namespace, pod]`
-  - [ ] Handler invokes `runKubectl(argv)` and returns via `toolSuccess`/`toolError`
+  - [x] `server.tool("ralph_hero__sre__delete_pod", ...)` registered
+  - [x] Zod schema: `namespace: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `pod: z.string().min(1).regex(/^[a-z0-9-]+$/)`, `.strict()`
+  - [x] Argv: `["delete", "pod", "--namespace", namespace, pod]`
+  - [x] Handler invokes `runKubectl(argv)` and returns via `toolSuccess`/`toolError`
 
 #### Task 4.2: Adversarial test suite for sre__delete_pod
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/sre-tools.test.ts` (modify)
@@ -322,20 +322,20 @@ Register `ralph_hero__sre__delete_pod`. Single-pod-name only; the schema is stru
 - **complexity**: low
 - **depends_on**: [4.1]
 - **acceptance**:
-  - [ ] `describe("ralph_hero__sre__delete_pod")` block added
-  - [ ] Test `happy path produces expected argv` — asserts argv was `["delete", "pod", "--namespace", "default", "nginx-abc123"]`
-  - [ ] Test `rejects shell-metacharacter injection`
-  - [ ] Test `rejects multiline-suffix injection`
-  - [ ] Test `rejects multiline-prefix injection`
-  - [ ] Test `rejects empty-command injection`
-  - [ ] Test `rejects label-selector field` — passing `{ namespace: "default", pod: "nginx-abc", selector: "app=foo" }` is rejected by the `.strict()` schema (no unknown keys)
-  - [ ] All tests pass
+  - [x] `describe("ralph_hero__sre__delete_pod")` block added
+  - [x] Test `happy path produces expected argv` — asserts argv was `["delete", "pod", "--namespace", "default", "nginx-abc123"]`
+  - [x] Test `rejects shell-metacharacter injection`
+  - [x] Test `rejects multiline-suffix injection`
+  - [x] Test `rejects multiline-prefix injection`
+  - [x] Test `rejects empty-command injection`
+  - [x] Test `rejects label-selector field` — passing `{ namespace: "default", pod: "nginx-abc", selector: "app=foo" }` is rejected by the `.strict()` schema (no unknown keys)
+  - [x] All tests pass
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/sre-tools.test.ts -t "delete_pod"` — all tests pass
+- [x] `npm run build` — no TypeScript errors
+- [x] `npx vitest run src/__tests__/sre-tools.test.ts -t "delete_pod"` — all tests pass
 
 **Creates for next phase**: No phase-specific output (parallel sibling).
 
@@ -359,10 +359,10 @@ Register `ralph_hero__sre__drain`. Largest legitimate flag surface of the four o
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `server.tool("ralph_hero__sre__drain", ...)` registered
-  - [ ] Zod schema: `node: z.string().min(1).regex(/^[a-z0-9.-]+$/)`, `gracePeriodSeconds: z.number().int().min(1).max(3600).optional()`, `timeoutSeconds: z.number().int().min(1).max(3600).optional()`, `.strict()`
-  - [ ] Argv builder always prefixes with `["drain", node, "--ignore-daemonsets"]`; appends `["--grace-period", String(gracePeriodSeconds)]` only when defined; appends `["--timeout", \`${timeoutSeconds}s\`]` only when defined
-  - [ ] Handler invokes `runKubectl(argv)` and returns via `toolSuccess`/`toolError`
+  - [x] `server.tool("ralph_hero__sre__drain", ...)` registered
+  - [x] Zod schema: `node: z.string().min(1).regex(/^[a-z0-9.-]+$/)`, `gracePeriodSeconds: z.number().int().min(1).max(3600).optional()`, `timeoutSeconds: z.number().int().min(1).max(3600).optional()`, `.strict()`
+  - [x] Argv builder always prefixes with `["drain", node, "--ignore-daemonsets"]`; appends `["--grace-period", String(gracePeriodSeconds)]` only when defined; appends `["--timeout", \`${timeoutSeconds}s\`]` only when defined
+  - [x] Handler invokes `runKubectl(argv)` and returns via `toolSuccess`/`toolError`
 
 #### Task 5.2: Adversarial + invariant test suite for sre__drain
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/sre-tools.test.ts` (modify)
@@ -370,23 +370,23 @@ Register `ralph_hero__sre__drain`. Largest legitimate flag surface of the four o
 - **complexity**: medium
 - **depends_on**: [5.1]
 - **acceptance**:
-  - [ ] `describe("ralph_hero__sre__drain")` block added
-  - [ ] Test `happy path produces expected argv with --ignore-daemonsets` — `{ node: "node-1" }` produces `["drain", "node-1", "--ignore-daemonsets"]`
-  - [ ] Test `--ignore-daemonsets is always present` — runs the handler with several input shapes; asserts every argv contains `--ignore-daemonsets`
-  - [ ] Test `argv never contains forbidden flags` — runs handler across the valid input space (a few representative cases including gracePeriodSeconds=1 — the minimum); asserts none of `--force`, `--cascade=foreground`, `--grace-period=0`, `--delete-emptydir-data` (all four Shared Constraint #3 flags) appear in argv. This identical assertion serves as the same regression gate that phases 2-4 carry, so a future regression points at this phase's invariant rather than a missing assertion.
-  - [ ] Test `rejects gracePeriodSeconds=0` — Zod `.min(1)` rejects 0
-  - [ ] Test `rejects shell-metacharacter injection` (in `node`)
-  - [ ] Test `rejects multiline-suffix injection`
-  - [ ] Test `rejects multiline-prefix injection`
-  - [ ] Test `rejects empty-command injection`
-  - [ ] All tests pass
+  - [x] `describe("ralph_hero__sre__drain")` block added
+  - [x] Test `happy path produces expected argv with --ignore-daemonsets` — `{ node: "node-1" }` produces `["drain", "node-1", "--ignore-daemonsets"]`
+  - [x] Test `--ignore-daemonsets is always present` — runs the handler with several input shapes; asserts every argv contains `--ignore-daemonsets`
+  - [x] Test `argv never contains forbidden flags` — runs handler across the valid input space (a few representative cases including gracePeriodSeconds=1 — the minimum); asserts none of `--force`, `--cascade=foreground`, `--grace-period=0`, `--delete-emptydir-data` (all four Shared Constraint #3 flags) appear in argv. This identical assertion serves as the same regression gate that phases 2-4 carry, so a future regression points at this phase's invariant rather than a missing assertion.
+  - [x] Test `rejects gracePeriodSeconds=0` — Zod `.min(1)` rejects 0
+  - [x] Test `rejects shell-metacharacter injection` (in `node`)
+  - [x] Test `rejects multiline-suffix injection`
+  - [x] Test `rejects multiline-prefix injection`
+  - [x] Test `rejects empty-command injection`
+  - [x] All tests pass
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/sre-tools.test.ts -t "sre__drain"` — all tests pass
-- [ ] `npm test` (full suite) — all suites green
+- [x] `npm run build` — no TypeScript errors
+- [x] `npx vitest run src/__tests__/sre-tools.test.ts -t "sre__drain"` — all tests pass
+- [x] `npm test` (full suite) — all suites green
 
 **Creates for next phase**: All four sre__* tools now registered; phase 6 can reference them by exact name.
 
@@ -439,9 +439,9 @@ Modify the existing `plugin/ralph-hero/agents/sre-fixit.md` refusal-only stub (s
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -nE '"Bash"|\bBash\b' plugin/ralph-hero/agents/sre-fixit.md` — zero matches
-- [ ] `grep -c "ralph_hero__sre__" plugin/ralph-hero/agents/sre-fixit.md` — exactly 4
-- [ ] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — still clean (no incidental breakage)
+- [x] `grep -nE '"Bash"|\bBash\b' plugin/ralph-hero/agents/sre-fixit.md` — zero matches
+- [x] `grep -c "ralph_hero__sre__" plugin/ralph-hero/agents/sre-fixit.md` — exactly 4
+- [x] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — still clean (no incidental breakage)
 
 #### Manual Verification:
 - [ ] Read the agent body; confirm the four-op documentation and escalation path read coherently

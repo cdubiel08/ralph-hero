@@ -177,13 +177,13 @@ Add a "Step 6c — Delegation Onboarding (Optional)" sub-step to the setup skill
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` in `plugin/ralph-hero/mcp-server/` — no errors (no TS changes expected, but build must remain green for the merge)
-- [ ] `grep -nri "upcoming" plugin/ralph-hero/skills/shared/delegation-conventions.md` — zero matches
-- [ ] `grep -c "## Delegation" /Users/dubiel/projects/ralph-hero/README.md` — at least 1
-- [ ] `grep -c "### Delegation" /Users/dubiel/projects/ralph-hero/CLAUDE.md` — at least 1
-- [ ] `grep -c "Step 6c" plugin/ralph-hero/skills/setup/SKILL.md` — at least 1
-- [ ] `grep -c "ralph-delegate.sh --health-check" plugin/ralph-hero/skills/setup/SKILL.md` — at least 1 (the probe invocation)
-- [ ] `grep -c "RALPH_DELEGATE_ENABLED" plugin/ralph-hero/skills/setup/SKILL.md` — at least 1 (the env var the skill writes)
+- [x] `npm run build` in `plugin/ralph-hero/mcp-server/` — no errors (no TS changes expected, but build must remain green for the merge)
+- [x] `grep -nri "upcoming" plugin/ralph-hero/skills/shared/delegation-conventions.md` — zero matches
+- [x] `grep -c "## Delegation" /Users/dubiel/projects/ralph-hero/README.md` — at least 1
+- [x] `grep -c "### Delegation" /Users/dubiel/projects/ralph-hero/CLAUDE.md` — at least 1
+- [x] `grep -c "Step 6c" plugin/ralph-hero/skills/setup/SKILL.md` — at least 1
+- [x] `grep -c "ralph-delegate.sh --health-check" plugin/ralph-hero/skills/setup/SKILL.md` — at least 1 (the probe invocation)
+- [x] `grep -c "RALPH_DELEGATE_ENABLED" plugin/ralph-hero/skills/setup/SKILL.md` — at least 1 (the env var the skill writes)
 
 #### Manual Verification:
 - [ ] Live test 1 (probe succeeds): run `gemma-up` on the dev machine, then `/ralph-hero:setup` (or read through the SKILL.md Step 6c flow mentally) — confirm the AskUserQuestion appears with both options

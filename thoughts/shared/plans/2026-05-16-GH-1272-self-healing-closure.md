@@ -205,12 +205,12 @@ Add a shared `outcome-recorder` fragment, patch the four terminal handlers to in
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `cd plugin/ralph-knowledge && npm test` — all tests passing including the new `outcome-merge-ingest.test.ts`
-- [ ] `cd plugin/ralph-knowledge && npm run typecheck` — no errors
-- [ ] `cd plugin/ralph-knowledge && npm run build` — clean build
-- [ ] `grep -c "outcome-recorder" plugin/ralph-hero/skills/ralph-merge/SKILL.md plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-val/SKILL.md plugin/ralph-hero/skills/ralph-postmortem/SKILL.md` returns `≥ 1` for each of the four files
-- [ ] `grep -c "knowledge_record_outcome" plugin/ralph-hero/skills/ralph-merge/SKILL.md plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-val/SKILL.md plugin/ralph-hero/skills/ralph-postmortem/SKILL.md` returns `≥ 1` for each of the four files
-- [ ] `wc -l plugin/ralph-hero/skills/shared/fragments/outcome-recorder.md` returns ≤ 50
+- [x] `cd plugin/ralph-knowledge && npm test` — all tests passing including the new `outcome-merge-ingest.test.ts`
+- [x] `cd plugin/ralph-knowledge && npm run typecheck` — no errors
+- [x] `cd plugin/ralph-knowledge && npm run build` — clean build
+- [x] `grep -c "outcome-recorder" plugin/ralph-hero/skills/ralph-merge/SKILL.md plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-val/SKILL.md plugin/ralph-hero/skills/ralph-postmortem/SKILL.md` returns `≥ 1` for each of the four files
+- [x] `grep -c "knowledge_record_outcome" plugin/ralph-hero/skills/ralph-merge/SKILL.md plugin/ralph-hero/skills/ralph-pr/SKILL.md plugin/ralph-hero/skills/ralph-val/SKILL.md plugin/ralph-hero/skills/ralph-postmortem/SKILL.md` returns `≥ 1` for each of the four files
+- [x] `wc -l plugin/ralph-hero/skills/shared/fragments/outcome-recorder.md` returns ≤ 50
 
 #### Manual Verification:
 - [ ] Trigger a real merge via `Skill("ralph-hero:ralph-merge", ...)` against a test issue; confirm a `merge_completed` row lands in `~/.ralph-hero/knowledge.db` via `sqlite3 ~/.ralph-hero/knowledge.db "SELECT * FROM outcome_events ORDER BY timestamp DESC LIMIT 1"`
