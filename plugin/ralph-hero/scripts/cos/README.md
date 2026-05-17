@@ -131,6 +131,26 @@ cat ~/.ralph-hero/cos/runs/$(date +%Y-%m-%d).jsonl
 
 ---
 
+## Five-team rollup
+
+Since Feature H (GH-1275), `cos` output covers all five teams in the unified agent organization: **Builders**, **Watchers**, **Scouts**, **Memorykeepers**, and **Caretakers**.
+
+Team attribution uses the Director event-classes taxonomy (see `plugin/ralph-hero/skills/director/event-classes.md` as the canonical source):
+
+| Team | Attribution method | Label / filter |
+|------|--------------------|----------------|
+| Builders | workflow state | `In Progress`, `In Review` (no automation label for builders) |
+| Watchers | label | `watcher-auto` (Priority 2, written by monitoring bridge) |
+| Scouts | label | `scout-auto` (Priority 2, written by scout scheduling hook) |
+| Memorykeepers | placeholder | no producer yet; reserved in event-classes.md |
+| Caretakers | label | `process-improvement` (Priority 2, written by dream-loop classifier) |
+
+Each section in the cos output shows: open issue count, titles of top 3 by priority, and a one-line WIP sentence.
+
+For the iOS workflow (trigger teams from your phone, receive ntfy pushes, open Drive artifacts), see [`../skills/director/IOS-REMOTE.md`](../skills/director/IOS-REMOTE.md).
+
+---
+
 ## Write gate
 
 Write tools (`save_issue`, `create_issue`, `batch_update`, etc.) are **deliberately omitted**

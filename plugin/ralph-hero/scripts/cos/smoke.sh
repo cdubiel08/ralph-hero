@@ -95,7 +95,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Clean up
+# 7. Five-team rollup assertion (Feature H, GH-1275)
+#    Gated on pi + mlx-openai-server being available (already checked above).
+#    Asks cos.sh to emit a five-team status rollup and asserts all five section
+#    headers appear in the output.
+# ---------------------------------------------------------------------------
+echo ""
+echo "Running five-team rollup assertion..."
+ROLLUP_FILE="/tmp/cos-smoke-rollup.txt"
+rm -f "$ROLLUP_FILE"
+
+"$COS_SH" --role smol "Output a five-team status rollup with sections for Builders, Watchers, Scouts, Memorykeepers, and Caretakers. Write the output to /tmp/cos-smoke-rollup.txt." || true
+
+if [[ -f "$ROLLUP_FILE" ]]; then
+    for section in "Builders" "Watchers" "Scouts" "Memorykeepers" "Caretakers"; do
+        if grep -q "$section" "$ROLLUP_FILE"; then
+            _pass "Five-team rollup contains '${section}' section"
+        else
+            _fail "Five-team rollup missing '${section}' section"
+        fi
+    done
+    rm -f "$ROLLUP_FILE"
+else
+    _fail "Five-team rollup file was not created at ${ROLLUP_FILE}"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. Clean up
 # ---------------------------------------------------------------------------
 rm -f "$SMOKE_FILE"
 

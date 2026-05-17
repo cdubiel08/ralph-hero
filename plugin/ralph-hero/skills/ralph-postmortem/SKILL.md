@@ -173,6 +173,28 @@ Create a new issue with:
 
 Update the blocker entry in the post-mortem to include the created issue number: `[issue created: #NNN]`
 
+## Step 6.5: Drive Push (Feature H)
+
+After writing the post-mortem report to disk (Step 4), optionally push it to Google Drive.
+
+iOS-mode is active when the sentinel file `${TMPDIR:-/tmp}/ralph-ios-mode` exists (Director writes it on `trigger:*` / `RemoteTrigger` dispatch) OR when `RALPH_IOS_MODE` is non-empty (manual operator override). The `push-artifact.sh` helper checks both conditions internally.
+
+ralph-postmortem has no CLI args (it is invoked inline by the team lead). The iOS-mode sentinel from Phase 0 (or the legacy `RALPH_IOS_MODE=1` env var) is the only opt-in path — no `--push-drive` / `--no-push-drive` flag is needed here.
+
+```bash
+# Drive push — Feature H (GH-1275)
+# See: thoughts/shared/plans/2026-05-16-GH-1275-ios-remote-integration.md Phase 3
+DRIVE_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/lib/push-artifact.sh" \
+    "${REPORT_PATH}" \
+    "Postmortem: ${SESSION_SUMMARY}" 2>/dev/null || true)
+```
+
+Where `REPORT_PATH` is the path written in Step 4 and `SESSION_SUMMARY` is the report title (first H1 line, e.g., "Ralph Team Session Report: {team-name}").
+
+If `DRIVE_URL` is non-empty, include a `Drive: <URL>` line in any `## Postmortem` comment body posted on blocker issues. If `DRIVE_URL` is empty (skip or failure), the comment is posted unchanged — bit-identical to pre-Feature-H behavior.
+
+`Bash` is already in ralph-postmortem's `allowed-tools`; no allowlist change needed.
+
 ## Step 7: Commit and Push
 
 ```bash

@@ -30,7 +30,7 @@ allowed-tools:
 
 # Ralph COS — Chief of Staff
 
-The COS skill surfaces project status, WIP, and priorities. It dispatches to one of three operating modes based on the first argument.
+The COS skill surfaces agent organization status across all five teams (Builders, Watchers, Scouts, Memorykeepers, Caretakers). It dispatches to one of three operating modes based on the first argument.
 
 ## Modes
 

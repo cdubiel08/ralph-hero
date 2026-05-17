@@ -309,6 +309,30 @@ After merging a PR, check if cross-repo dependents are now unblocked:
 
 Then stop — do not run Steps 6-9 (no merge, no Done transition).
 
+## Step 9c: iOS Completion Push (Feature H)
+
+After completing Step 9 (post completion comment), fire an ntfy push when iOS-mode is active.
+
+iOS-mode is active when either:
+- The sentinel file `${TMPDIR:-/tmp}/ralph-ios-mode` exists (written by Director on `trigger:*` or `RemoteTrigger` dispatch), OR
+- The env var `RALPH_IOS_MODE` is non-empty (manual operator override for desk-mode testing)
+
+```bash
+# iOS completion push — Feature H (GH-1275)
+# See: thoughts/shared/plans/2026-05-16-GH-1275-ios-remote-integration.md Phase 2
+if [[ -f "${TMPDIR:-/tmp}/ralph-ios-mode" ]] || [[ -n "${RALPH_IOS_MODE:-}" ]]; then
+    bash "${CLAUDE_PLUGIN_ROOT}/scripts/lib/push-on-completion.sh" \
+        "Merged: ${PR_TITLE}" \
+        "${PR_URL}" || true
+fi
+```
+
+Where `PR_TITLE` is the PR title fetched in Step 3 and `PR_URL` is the PR URL.
+
+Failure of `push-on-completion.sh` does NOT fail the merge skill — the merge already succeeded. The `|| true` ensures this step is best-effort.
+
+`Bash` is already in ralph-merge's `allowed-tools`; no allowlist change is needed.
+
 ## Step 10: Report Result
 
 Output completion status:
