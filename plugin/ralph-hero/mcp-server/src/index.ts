@@ -35,6 +35,7 @@ import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
 import { registerActivityTools } from "./tools/activity-tools.js";
 import { registerDelegationTools } from "./tools/delegation-tools.js";
 import { registerTrendsTools } from "./tools/trends-tools.js";
+import { registerSreTools } from "./tools/sre-tools.js";
 
 /**
  * Initialize the GitHub client from environment variables.
@@ -545,6 +546,9 @@ async function main(): Promise<void> {
 
   // Trends tools (capture_snapshot — JSONL persistence under ~/.ralph-hero/snapshots/)
   registerTrendsTools(server, client, fieldCache);
+
+  // SRE operation tools (kubectl autoremediation — typed argv, no-shell invariant)
+  registerSreTools(server, client, fieldCache);
 
   // Debug tools (only when RALPH_DEBUG=true)
   if (process.env.RALPH_DEBUG === 'true') {
