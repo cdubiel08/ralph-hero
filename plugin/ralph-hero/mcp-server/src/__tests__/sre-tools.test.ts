@@ -39,6 +39,8 @@ import {
   REPLICA_CEILING,
   sreRolloutRestartSchema,
   buildRolloutRestartArgv,
+  sreDeletePodSchema,
+  buildDeletePodArgv,
 } from "../tools/sre-tools.js";
 
 // The module uses promisify(execFile) internally. To control its behaviour from
@@ -434,5 +436,174 @@ describe("ralph_hero__sre__rollout_restart — rejects empty-command injection",
 
   it("rejects whitespace-only string in deployment", () => {
     assertRolloutRestartRejects({ namespace: "default", deployment: "   " });
+  });
+});
+
+// =============================================================================
+// Phase 4 (GH-1290): ralph_hero__sre__delete_pod
+//
+// Reuses the canonical adversarial-test pattern from Phase 2 (sre__scale).
+// One named test per bypass class so a future regression points at the
+// specific class that regressed. Adds the no-label-selector guarantee test
+// via `.strict()` — asserting the schema structurally cannot express `-l app=foo`.
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Helper: assert that a Zod parse fails for the delete_pod schema
+// ---------------------------------------------------------------------------
+
+function assertDeletePodRejects(input: unknown): void {
+  const result = sreDeletePodSchema.safeParse(input);
+  expect(result.success).toBe(false);
+}
+
+// ---------------------------------------------------------------------------
+// Happy path
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__delete_pod — happy path", () => {
+  it("happy path produces expected argv", () => {
+    // Verify the schema accepts valid input.
+    const parseResult = sreDeletePodSchema.safeParse({
+      namespace: "default",
+      pod: "nginx-abc123",
+    });
+    expect(parseResult.success).toBe(true);
+
+    // Verify buildDeletePodArgv produces the exact expected argv.
+    // Argv is a plain array literal — no template strings, no string concat.
+    const argv = buildDeletePodArgv("default", "nginx-abc123");
+    expect(argv).toEqual([
+      "delete",
+      "pod",
+      "--namespace",
+      "default",
+      "nginx-abc123",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: shell-metacharacter injection
+//
+// Inputs containing `;`, `&&`, `|`, backtick, `$()`, `>` must be rejected
+// by the RFC 1123 label regex before they reach runKubectl.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__delete_pod — rejects shell-metacharacter injection", () => {
+  const metacharacterCases: Array<[string, string]> = [
+    ["semicolon (;)", "nginx;rm -rf /"],
+    ["double-ampersand (&&)", "nginx&&id"],
+    ["pipe (|)", "nginx|cat /etc/passwd"],
+    ["backtick (`)", "nginx`id`"],
+    ["command-substitution ($(...))", "nginx$(id)"],
+    ["redirect (>)", "nginx>/tmp/x"],
+  ];
+
+  for (const [label, injected] of metacharacterCases) {
+    it(`rejects ${label} in namespace`, () => {
+      assertDeletePodRejects({ namespace: injected, pod: "nginx-abc123" });
+    });
+    it(`rejects ${label} in pod`, () => {
+      assertDeletePodRejects({ namespace: "default", pod: injected });
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-suffix injection
+//
+// A newline appended after a valid name would allow injecting a second
+// kubectl command. The RFC 1123 regex forbids `\n`.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__delete_pod — rejects multiline-suffix injection", () => {
+  it("rejects namespace with trailing newline + shell command", () => {
+    assertDeletePodRejects({
+      namespace: "default\nrm -rf /",
+      pod: "nginx-abc123",
+    });
+  });
+
+  it("rejects pod with trailing newline + shell command", () => {
+    assertDeletePodRejects({
+      namespace: "default",
+      pod: "nginx-abc123\nrm -rf /",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-prefix injection
+//
+// A leading newline can shift the original name to a second line, turning
+// it into an argument to a previously injected command.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__delete_pod — rejects multiline-prefix injection", () => {
+  it("rejects namespace with leading newline", () => {
+    assertDeletePodRejects({ namespace: "\ndefault", pod: "nginx-abc123" });
+  });
+
+  it("rejects pod with leading newline", () => {
+    assertDeletePodRejects({ namespace: "default", pod: "\nnginx-abc123" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: empty-command injection
+//
+// An empty string or whitespace-only string passes many naive checks but
+// would result in kubectl receiving an empty argument. The .min(1) + regex
+// reject both forms.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__delete_pod — rejects empty-command injection", () => {
+  it("rejects empty string in namespace", () => {
+    assertDeletePodRejects({ namespace: "", pod: "nginx-abc123" });
+  });
+
+  it("rejects whitespace-only string in namespace", () => {
+    assertDeletePodRejects({ namespace: "   ", pod: "nginx-abc123" });
+  });
+
+  it("rejects empty string in pod", () => {
+    assertDeletePodRejects({ namespace: "default", pod: "" });
+  });
+
+  it("rejects whitespace-only string in pod", () => {
+    assertDeletePodRejects({ namespace: "default", pod: "   " });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// No-label-selector guarantee (.strict() test)
+//
+// The schema MUST have no `selector` field (or any other label-selector
+// analogue). Passing an extra key must be rejected by the `.strict()` schema,
+// proving that the typed surface is structurally incapable of expressing
+// `-l app=foo` bulk deletion.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__delete_pod — rejects label-selector field", () => {
+  it("rejects input with selector field (strict schema rejects unknown keys)", () => {
+    // Passing { namespace, pod, selector } should fail because `.strict()`
+    // rejects any key not present in the schema definition. There is no
+    // label-selector field — the schema cannot express bulk deletion.
+    assertDeletePodRejects({
+      namespace: "default",
+      pod: "nginx-abc",
+      selector: "app=foo",
+    });
+  });
+
+  it("rejects input with any unknown extra field", () => {
+    // Belt-and-suspenders: any unknown key should be rejected, not just
+    // `selector` — this is the `.strict()` invariant.
+    assertDeletePodRejects({
+      namespace: "default",
+      pod: "nginx-abc",
+      force: true,
+    });
   });
 });

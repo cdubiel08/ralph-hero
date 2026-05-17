@@ -155,6 +155,53 @@ export function buildRolloutRestartArgv(
 }
 
 // ---------------------------------------------------------------------------
+// sre__delete_pod schemas  (Phase 4 / GH-1290)
+// ---------------------------------------------------------------------------
+
+/**
+ * Raw Zod shape for the sre__delete_pod tool.
+ *
+ * The schema has exactly two fields — `namespace` and `pod`. There is no
+ * label-selector field, no `--force` field, and no `--grace-period` field.
+ * The absence of these fields is the primary typed-surface guarantee: there is
+ * no way to express bulk deletion, forced deletion, or grace-period override
+ * through this schema. `.strict()` rejects any extra keys the caller might
+ * try to pass.
+ */
+const sreDeletePodShape = {
+  namespace: k8sLabelSchema.describe(
+    "Kubernetes namespace (RFC 1123 label: lowercase alphanumeric and hyphens only).",
+  ),
+  pod: k8sLabelSchema.describe(
+    "Pod name to delete (RFC 1123 label: lowercase alphanumeric and hyphens only). " +
+      "Single pod only — no label selector, no wildcard.",
+  ),
+};
+
+/**
+ * Strict Zod object schema for sre__delete_pod parameters.
+ *
+ * Exported so adversarial-input tests (sre-tools.test.ts) can call
+ * `.safeParse()` directly, including the `.strict()` no-label-selector
+ * assertion. `.strict()` ensures unknown keys (e.g., `selector: "app=foo"`)
+ * are rejected at the schema level.
+ */
+export const sreDeletePodSchema = z.object(sreDeletePodShape).strict();
+
+/**
+ * Build the kubectl argv array for a delete-pod operation.
+ *
+ * Exported for unit-testing the argv shape independently of the MCP server.
+ * The argv is a plain array literal — no string interpolation, no concat.
+ *
+ * @param namespace - Validated Kubernetes namespace.
+ * @param pod       - Validated pod name (single pod, no label selector).
+ */
+export function buildDeletePodArgv(namespace: string, pod: string): string[] {
+  return ["delete", "pod", "--namespace", namespace, pod];
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Register all SRE operation tools on the MCP server.
@@ -216,6 +263,26 @@ export function registerSreTools(
     },
   );
 
-  // Phase 4 (GH-1290): sre__delete_pod — register here
+  // -------------------------------------------------------------------------
+  // ralph_hero__sre__delete_pod  (Phase 4 / GH-1290)
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__sre__delete_pod",
+    "Delete a single named pod in a Kubernetes namespace. " +
+      "Single pod by name only — no label selector, no --force, no --grace-period=0. " +
+      "Typed parameters only — no shell, no flag pass-through.",
+    sreDeletePodShape,
+    async ({ namespace, pod }) => {
+      const argv = buildDeletePodArgv(namespace, pod);
+      try {
+        const result = await runKubectl(argv);
+        return toolSuccess(result);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return toolError(`kubectl delete pod failed: ${message}`);
+      }
+    },
+  );
+
   // Phase 5 (GH-1291): sre__drain — register here
 }
