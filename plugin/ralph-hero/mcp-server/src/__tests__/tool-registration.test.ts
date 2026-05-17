@@ -192,6 +192,7 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__save_issue",
   "ralph_hero__setup_project",
   "ralph_hero__sre__delete_pod",
+  "ralph_hero__sre__drain",
   "ralph_hero__sre__rollout_restart",
   "ralph_hero__sre__scale",
   "ralph_hero__sync_plan_graph",

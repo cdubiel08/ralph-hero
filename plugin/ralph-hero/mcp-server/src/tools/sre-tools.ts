@@ -202,6 +202,102 @@ export function buildDeletePodArgv(namespace: string, pod: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// sre__drain schemas  (Phase 5 / GH-1291)
+// ---------------------------------------------------------------------------
+
+/**
+ * Node name regex — slightly looser than the RFC 1123 label regex because
+ * Kubernetes node names can be in FQDN form (e.g., "node-1.us-east-1.example.com").
+ * The dot (`.`) is the only addition over the namespace/deployment regex.
+ * Intentionally rejects shell metacharacters, slashes, newlines, and empty
+ * strings as a single Zod check.
+ */
+const k8sNodeNameSchema = z.string().min(1).regex(/^[a-z0-9.-]+$/);
+
+/**
+ * Bounded grace period in seconds. Minimum is 1 — gracePeriodSeconds=0 is
+ * equivalent to --force (immediate kill) and is explicitly forbidden by the
+ * plan's Shared Constraint #3.  Maximum is 3600 (one hour).
+ */
+const gracePeriodSecondsSchema = z.number().int().min(1).max(3600);
+
+/**
+ * Bounded timeout in seconds. Minimum is 1. Maximum is 3600 (one hour).
+ */
+const timeoutSecondsSchema = z.number().int().min(1).max(3600);
+
+/**
+ * Raw Zod shape for the sre__drain tool.
+ *
+ * `--namespace` is intentionally absent: `kubectl drain` targets a node, which
+ * is a cluster-scoped resource. Do not add a namespace field — its absence is
+ * correct per the plan's Phase 5 note.
+ *
+ * `--ignore-daemonsets` is hard-coded into argv by the builder; it is NOT a
+ * user-controllable parameter. `--force` and `--delete-emptydir-data` are
+ * structurally unreachable through this schema.
+ */
+const sreDrainShape = {
+  node: k8sNodeNameSchema.describe(
+    "Node name to drain (RFC 1123 / FQDN form: lowercase alphanumeric, hyphens, and dots only).",
+  ),
+  gracePeriodSeconds: gracePeriodSecondsSchema.optional().describe(
+    "Grace period for evicting pods in seconds (integer, 1–3600). " +
+      "Omit to use the pod's default. " +
+      "0 is explicitly forbidden (equivalent to --force).",
+  ),
+  timeoutSeconds: timeoutSecondsSchema.optional().describe(
+    "Timeout for the drain operation in seconds (integer, 1–3600). " +
+      "Omit to use kubectl's default.",
+  ),
+};
+
+/**
+ * Strict Zod object schema for sre__drain parameters.
+ *
+ * Exported so adversarial-input tests (sre-tools.test.ts) can call
+ * `.safeParse()` directly. `.strict()` ensures unknown keys are rejected —
+ * any attempt to pass extra fields (e.g., a `force` bypass) is caught at
+ * the schema level.
+ */
+export const sreDrainSchema = z.object(sreDrainShape).strict();
+
+/**
+ * Build the kubectl argv array for a drain operation.
+ *
+ * Exported for unit-testing the argv shape independently of the MCP server.
+ * The argv is a plain array literal — no string interpolation, no concat
+ * (drain follows the same plain-array-literal pattern as phases 2 and 4).
+ *
+ * INVARIANTS (enforced by construction):
+ *   - `--ignore-daemonsets` is always present (hard-coded, not user-controlled).
+ *   - `--force` is never present (no schema field; helper also rejects it).
+ *   - `--delete-emptydir-data` is never present (no schema field).
+ *   - `--grace-period=0` is never present (gracePeriodSeconds min is 1 via Zod).
+ *
+ * @param node               - Validated node name.
+ * @param gracePeriodSeconds - Optional validated grace period (seconds, >= 1).
+ * @param timeoutSeconds     - Optional validated timeout (seconds, >= 1).
+ */
+export function buildDrainArgv(
+  node: string,
+  gracePeriodSeconds?: number,
+  timeoutSeconds?: number,
+): string[] {
+  const argv: string[] = ["drain", node, "--ignore-daemonsets"];
+
+  if (gracePeriodSeconds !== undefined) {
+    argv.push("--grace-period", String(gracePeriodSeconds));
+  }
+
+  if (timeoutSeconds !== undefined) {
+    argv.push("--timeout", `${timeoutSeconds}s`);
+  }
+
+  return argv;
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Register all SRE operation tools on the MCP server.
@@ -284,5 +380,26 @@ export function registerSreTools(
     },
   );
 
-  // Phase 5 (GH-1291): sre__drain — register here
+  // -------------------------------------------------------------------------
+  // ralph_hero__sre__drain  (Phase 5 / GH-1291)
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__sre__drain",
+    "Drain a Kubernetes node by evicting all non-daemonset pods. " +
+      "--ignore-daemonsets is hard-coded on (always present). " +
+      "--force, --delete-emptydir-data, and --grace-period=0 are structurally unreachable. " +
+      "Cluster-scoped operation — no --namespace flag. " +
+      "Typed parameters only — no shell, no flag pass-through.",
+    sreDrainShape,
+    async ({ node, gracePeriodSeconds, timeoutSeconds }) => {
+      const argv = buildDrainArgv(node, gracePeriodSeconds, timeoutSeconds);
+      try {
+        const result = await runKubectl(argv);
+        return toolSuccess(result);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return toolError(`kubectl drain failed: ${message}`);
+      }
+    },
+  );
 }

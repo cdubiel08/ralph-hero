@@ -41,6 +41,8 @@ import {
   buildRolloutRestartArgv,
   sreDeletePodSchema,
   buildDeletePodArgv,
+  sreDrainSchema,
+  buildDrainArgv,
 } from "../tools/sre-tools.js";
 
 // The module uses promisify(execFile) internally. To control its behaviour from
@@ -605,5 +607,222 @@ describe("ralph_hero__sre__delete_pod — rejects label-selector field", () => {
       pod: "nginx-abc",
       force: true,
     });
+  });
+});
+
+// =============================================================================
+// Phase 5 (GH-1291): ralph_hero__sre__drain
+//
+// Reuses the canonical adversarial-test pattern from Phase 2 (sre__scale).
+// One named test per bypass class. Adds two invariant assertions unique to drain:
+//   1. --ignore-daemonsets is always present in argv (hard-coded on).
+//   2. None of the four Shared Constraint #3 forbidden flags ever appear in argv.
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Helper: assert that a Zod parse fails for the drain schema
+// ---------------------------------------------------------------------------
+
+function assertDrainRejects(input: unknown): void {
+  const result = sreDrainSchema.safeParse(input);
+  expect(result.success).toBe(false);
+}
+
+// ---------------------------------------------------------------------------
+// Happy path
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — happy path", () => {
+  it("happy path produces expected argv with --ignore-daemonsets", () => {
+    // Verify the schema accepts valid input.
+    const parseResult = sreDrainSchema.safeParse({ node: "node-1" });
+    expect(parseResult.success).toBe(true);
+
+    // Verify buildDrainArgv produces the exact expected argv for the minimal case.
+    const argv = buildDrainArgv("node-1");
+    expect(argv).toEqual(["drain", "node-1", "--ignore-daemonsets"]);
+  });
+
+  it("appends --grace-period when gracePeriodSeconds is provided", () => {
+    const argv = buildDrainArgv("node-1", 30);
+    expect(argv).toEqual(["drain", "node-1", "--ignore-daemonsets", "--grace-period", "30"]);
+  });
+
+  it("appends --timeout when timeoutSeconds is provided", () => {
+    const argv = buildDrainArgv("node-1", undefined, 60);
+    expect(argv).toEqual(["drain", "node-1", "--ignore-daemonsets", "--timeout", "60s"]);
+  });
+
+  it("appends both --grace-period and --timeout when both are provided", () => {
+    const argv = buildDrainArgv("node-1", 30, 60);
+    expect(argv).toEqual([
+      "drain",
+      "node-1",
+      "--ignore-daemonsets",
+      "--grace-period",
+      "30",
+      "--timeout",
+      "60s",
+    ]);
+  });
+
+  it("accepts FQDN-form node name", () => {
+    const parseResult = sreDrainSchema.safeParse({
+      node: "node-1.us-east-1.example.com",
+    });
+    expect(parseResult.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invariant: --ignore-daemonsets is always present
+//
+// The flag is hard-coded into buildDrainArgv — it is not a user-controllable
+// parameter. Run multiple input shapes to assert the invariant is unconditional.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — --ignore-daemonsets is always present", () => {
+  const inputShapes: Array<{ label: string; node: string; gracePeriodSeconds?: number; timeoutSeconds?: number }> = [
+    { label: "node only", node: "node-1" },
+    { label: "with gracePeriodSeconds", node: "node-2", gracePeriodSeconds: 1 },
+    { label: "with timeoutSeconds", node: "node-3", timeoutSeconds: 120 },
+    { label: "with both optional params", node: "node-4", gracePeriodSeconds: 10, timeoutSeconds: 300 },
+    { label: "FQDN node name", node: "worker.us-east-1.example.com" },
+    { label: "minimum gracePeriodSeconds", node: "node-5", gracePeriodSeconds: 1 },
+    { label: "maximum gracePeriodSeconds", node: "node-6", gracePeriodSeconds: 3600 },
+  ];
+
+  for (const { label, node, gracePeriodSeconds, timeoutSeconds } of inputShapes) {
+    it(`--ignore-daemonsets present: ${label}`, () => {
+      const argv = buildDrainArgv(node, gracePeriodSeconds, timeoutSeconds);
+      expect(argv).toContain("--ignore-daemonsets");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Invariant: argv never contains any of the four Shared Constraint #3 forbidden flags
+//
+// Asserts that no input combination can cause --force, --cascade=foreground,
+// --grace-period=0, or --delete-emptydir-data to appear in argv.
+// This serves as the same regression gate as phases 2-4.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — argv never contains forbidden flags", () => {
+  const FORBIDDEN = ["--force", "--cascade=foreground", "--grace-period=0", "--delete-emptydir-data"];
+
+  const representativeCases: Array<{ label: string; node: string; gracePeriodSeconds?: number; timeoutSeconds?: number }> = [
+    { label: "node only", node: "node-1" },
+    { label: "gracePeriodSeconds=1 (minimum)", node: "node-2", gracePeriodSeconds: 1 },
+    { label: "gracePeriodSeconds=3600 (maximum)", node: "node-3", gracePeriodSeconds: 3600 },
+    { label: "timeoutSeconds=1", node: "node-4", timeoutSeconds: 1 },
+    { label: "timeoutSeconds=3600", node: "node-5", timeoutSeconds: 3600 },
+    { label: "both optional params", node: "node-6", gracePeriodSeconds: 30, timeoutSeconds: 120 },
+  ];
+
+  for (const { label, node, gracePeriodSeconds, timeoutSeconds } of representativeCases) {
+    it(`no forbidden flags in argv: ${label}`, () => {
+      const argv = buildDrainArgv(node, gracePeriodSeconds, timeoutSeconds);
+      for (const flag of FORBIDDEN) {
+        expect(argv).not.toContain(flag);
+        // Also check for flags that might be embedded as a single element (e.g. "--grace-period=0")
+        // The argv join should not contain the forbidden flag string at all.
+        expect(argv.join(" ")).not.toContain(flag);
+      }
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// gracePeriodSeconds=0 rejection
+//
+// 0 is the Zod .min(1) rejection case — equivalent to --force, explicitly
+// forbidden per the plan's Shared Constraint #3.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — rejects gracePeriodSeconds=0", () => {
+  it("rejects gracePeriodSeconds=0 (equivalent to --force, min is 1)", () => {
+    assertDrainRejects({ node: "node-1", gracePeriodSeconds: 0 });
+  });
+
+  it("rejects negative gracePeriodSeconds", () => {
+    assertDrainRejects({ node: "node-1", gracePeriodSeconds: -1 });
+  });
+
+  it("accepts gracePeriodSeconds=1 (minimum valid value)", () => {
+    const result = sreDrainSchema.safeParse({ node: "node-1", gracePeriodSeconds: 1 });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: shell-metacharacter injection (in node)
+//
+// Inputs containing `;`, `&&`, `|`, backtick, `$()`, `>` must be rejected
+// by the node name regex before they reach runKubectl.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — rejects shell-metacharacter injection", () => {
+  const metacharacterCases: Array<[string, string]> = [
+    ["semicolon (;)", "node-1;rm -rf /"],
+    ["double-ampersand (&&)", "node-1&&id"],
+    ["pipe (|)", "node-1|cat /etc/passwd"],
+    ["backtick (`)", "node-1`id`"],
+    ["command-substitution ($(...))", "node-1$(id)"],
+    ["redirect (>)", "node-1>/tmp/x"],
+  ];
+
+  for (const [label, injected] of metacharacterCases) {
+    it(`rejects ${label} in node`, () => {
+      assertDrainRejects({ node: injected });
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-suffix injection
+//
+// A newline appended after a valid node name would allow injecting a second
+// kubectl command. The node name regex forbids `\n`.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — rejects multiline-suffix injection", () => {
+  it("rejects node with trailing newline + shell command", () => {
+    assertDrainRejects({ node: "node-1\nrm -rf /" });
+  });
+
+  it("rejects node with trailing newline only", () => {
+    assertDrainRejects({ node: "node-1\n" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-prefix injection
+//
+// A leading newline can shift the original name to a second line, turning
+// it into an argument to a previously injected command.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — rejects multiline-prefix injection", () => {
+  it("rejects node with leading newline", () => {
+    assertDrainRejects({ node: "\nnode-1" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: empty-command injection
+//
+// An empty string or whitespace-only string passes many naive checks but
+// would result in kubectl receiving an empty argument. The .min(1) + regex
+// reject both forms.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__drain — rejects empty-command injection", () => {
+  it("rejects empty string in node", () => {
+    assertDrainRejects({ node: "" });
+  });
+
+  it("rejects whitespace-only string in node", () => {
+    assertDrainRejects({ node: "   " });
   });
 });
