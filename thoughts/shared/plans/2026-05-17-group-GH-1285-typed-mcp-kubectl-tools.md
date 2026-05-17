@@ -139,12 +139,12 @@ Create the new tool module file and the shared kubectl exec helper. Wire `regist
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Exports `runKubectl(args: string[]): Promise<{ stdout: string, stderr: string, exitCode: number }>`
-  - [ ] Uses `child_process.execFile("kubectl", args, { shell: false })` (or `spawn` with `shell: false`); MUST NOT use `exec` or any `shell: true` variant
-  - [ ] Exports `FORBIDDEN_FLAGS = ["--force", "--cascade=foreground", "--grace-period=0", "--delete-emptydir-data"]` (or equivalent readonly constant)
-  - [ ] Before invocation, scans the argv for any element matching one of the forbidden flags; throws/rejects with a clear error mentioning the offending flag if found
-  - [ ] Argv input is `readonly string[]` (or `string[]`) — never accepts a string command
-  - [ ] Returns a typed result object with `stdout`, `stderr`, `exitCode` fields
+  - [x] Exports `runKubectl(args: string[]): Promise<{ stdout: string, stderr: string, exitCode: number }>`
+  - [x] Uses `child_process.execFile("kubectl", args, { shell: false })` (or `spawn` with `shell: false`); MUST NOT use `exec` or any `shell: true` variant
+  - [x] Exports `FORBIDDEN_FLAGS = ["--force", "--cascade=foreground", "--grace-period=0", "--delete-emptydir-data"]` (or equivalent readonly constant)
+  - [x] Before invocation, scans the argv for any element matching one of the forbidden flags; throws/rejects with a clear error mentioning the offending flag if found
+  - [x] Argv input is `readonly string[]` (or `string[]`) — never accepts a string command
+  - [x] Returns a typed result object with `stdout`, `stderr`, `exitCode` fields
 
 #### Task 1.2: Create sre-tools.ts module skeleton
 - **files**: `plugin/ralph-hero/mcp-server/src/tools/sre-tools.ts` (create), `plugin/ralph-hero/mcp-server/src/tools/issue-tools.ts` (read for pattern)
@@ -152,10 +152,10 @@ Create the new tool module file and the shared kubectl exec helper. Wire `regist
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Exports `registerSreTools(server: McpServer, client: GitHubClient, fieldCache: FieldOptionCache): void` (fieldCache may be unused in phase 1; keep the signature consistent with other register functions)
-  - [ ] Imports follow ESM `.js` extension convention (e.g., `from "../lib/kubectl-exec.js"`)
-  - [ ] Function body is empty (no tool registrations yet); phases 2-5 fill it in
-  - [ ] File has a top-of-file JSDoc explaining the module purpose and the no-shell invariant
+  - [x] Exports `registerSreTools(server: McpServer, client: GitHubClient, fieldCache: FieldOptionCache): void` (fieldCache may be unused in phase 1; keep the signature consistent with other register functions)
+  - [x] Imports follow ESM `.js` extension convention (e.g., `from "../lib/kubectl-exec.js"`)
+  - [x] Function body is empty (no tool registrations yet); phases 2-5 fill it in
+  - [x] File has a top-of-file JSDoc explaining the module purpose and the no-shell invariant
 
 #### Task 1.3: Wire registerSreTools in index.ts
 - **files**: `plugin/ralph-hero/mcp-server/src/index.ts` (modify)
@@ -163,9 +163,9 @@ Create the new tool module file and the shared kubectl exec helper. Wire `regist
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `import { registerSreTools } from "./tools/sre-tools.js"` added alongside other tool imports
-  - [ ] `registerSreTools(server, client, fieldCache)` called inside `main()` alongside other `register*Tools` calls
-  - [ ] Insertion order is alphabetically near `registerTrendsTools` or grouped with other operation-tool registrations (style choice — doesn't affect runtime)
+  - [x] `import { registerSreTools } from "./tools/sre-tools.js"` added alongside other tool imports
+  - [x] `registerSreTools(server, client, fieldCache)` called inside `main()` alongside other `register*Tools` calls
+  - [x] Insertion order is alphabetically near `registerTrendsTools` or grouped with other operation-tool registrations (style choice — doesn't affect runtime)
 
 #### Task 1.4: Smoke tests for the exec helper
 - **files**: `plugin/ralph-hero/mcp-server/src/__tests__/sre-tools.test.ts` (create)
@@ -173,19 +173,19 @@ Create the new tool module file and the shared kubectl exec helper. Wire `regist
 - **complexity**: medium
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Test `invokes kubectl with shell:false` — mocks `child_process.execFile`, calls `runKubectl(["version"])`, asserts the mock was called with `("kubectl", ["version"], <opts>)` where opts.shell is `false` or absent (execFile default is no-shell, but the test should assert the options object does not set `shell: true`)
-  - [ ] Test `rejects --force flag in argv` — calls `runKubectl(["delete", "pod", "foo", "--force"])`, asserts rejection with error message mentioning `--force`
-  - [ ] Test `rejects --cascade=foreground flag in argv` — analogous
-  - [ ] Test `rejects --grace-period=0 flag in argv` — analogous
-  - [ ] Test `rejects --delete-emptydir-data flag in argv` — analogous
-  - [ ] All five tests pass via `npx vitest run src/__tests__/sre-tools.test.ts`
+  - [x] Test `invokes kubectl with shell:false` — mocks `child_process.execFile`, calls `runKubectl(["version"])`, asserts the mock was called with `("kubectl", ["version"], <opts>)` where opts.shell is `false` or absent (execFile default is no-shell, but the test should assert the options object does not set `shell: true`)
+  - [x] Test `rejects --force flag in argv` — calls `runKubectl(["delete", "pod", "foo", "--force"])`, asserts rejection with error message mentioning `--force`
+  - [x] Test `rejects --cascade=foreground flag in argv` — analogous
+  - [x] Test `rejects --grace-period=0 flag in argv` — analogous
+  - [x] Test `rejects --delete-emptydir-data flag in argv` — analogous
+  - [x] All five tests pass via `npx vitest run src/__tests__/sre-tools.test.ts`
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no TypeScript errors
-- [ ] `npx vitest run src/__tests__/sre-tools.test.ts` — all 5 tests pass
-- [ ] `npm test` — full suite still green (no regressions in other tool modules)
+- [x] `npm run build` (in `plugin/ralph-hero/mcp-server/`) — no TypeScript errors
+- [x] `npx vitest run src/__tests__/sre-tools.test.ts` — all 5 tests pass
+- [x] `npm test` — full suite still green (no regressions in other tool modules)
 
 #### Manual Verification:
 - [ ] `grep -n "shell" plugin/ralph-hero/mcp-server/src/lib/kubectl-exec.ts` — only safe matches (no `shell: true`)
