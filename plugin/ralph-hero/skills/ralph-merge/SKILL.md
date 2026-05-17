@@ -23,6 +23,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_dependencies
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 
 ## Configuration (resolved at load time)
@@ -255,6 +256,20 @@ If merge fails, report the error and stop.
 ## Step 7: Move Issues to Done
 
 Advance all children of the issue to "Done". For a standalone issue: update the workflow state to "Done" (command: "ralph_merge").
+
+## Step 7.5: Record Outcome Event
+
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/outcome-recorder.md
+
+Call `mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome` with:
+- `event_type`: `"merge_completed"`
+- `issue_number`: the issue number (NNN)
+- `verdict`: `"merged"`
+- `payload`: `{ "pr_url": "<PR URL>", "commit_sha": "<merge commit SHA>", "repo": "<RALPH_GH_REPO>" }`
+
+This step runs only on the success path (after Step 7 completes). The rejection branch (Step 9b) does NOT call the recorder.
+
+If the MCP call fails, log to stderr (`echo "outcome-record failed: ..." >&2`) and continue to Step 8.
 
 ## Step 8: Advance Parent
 

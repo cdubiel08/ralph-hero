@@ -21,6 +21,7 @@ allowed-tools:
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 
 ## Configuration (resolved at load time)
@@ -498,6 +499,20 @@ Worktree: [worktree path]
 ```
 
 Similarly invalid: `Status: ❌`, `COMPLETE`, `Phase Assessment` as the verdict prefix. Only `VALIDATION PASS`, `VALIDATION FIX`, or `VALIDATION FAIL` (followed by the report body) is accepted.
+
+## Step 7.5: Record Outcome Event
+
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/outcome-recorder.md
+
+Based on `${VERDICT_PREFIX}` (set by Step 7.0), call `mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome` with:
+- `event_type`: `"validation_passed"` when `VERDICT_PREFIX` is `VALIDATION PASS`; `"validation_failed"` when `VERDICT_PREFIX` is `VALIDATION FIX` or `VALIDATION FAIL`
+- `issue_number`: the issue number (NNN)
+- `verdict`: the literal `${VERDICT_PREFIX}` value (one of: `"VALIDATION PASS"`, `"VALIDATION FIX"`, `"VALIDATION FAIL"`)
+- `payload`: `{ "total_checks": <TOTAL_CHECKS>, "failed_checks": <FAILED_CHECKS>, "substantive_failures": <SUBSTANTIVE_FAILURES> }`
+
+This step runs on all three verdict paths (PASS, FIX, FAIL). A recorder failure does NOT prevent Step 8 (Post Comment) or the `val-postcondition.sh` Stop hook from succeeding.
+
+If the MCP call fails, log to stderr (`echo "outcome-record failed: ..." >&2`) and continue to Step 8.
 
 ## Step 8: Post GitHub Comment
 

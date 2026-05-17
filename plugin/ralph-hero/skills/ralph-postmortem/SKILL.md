@@ -54,26 +54,25 @@ Review the session events collected in Step 1. Apply these rules:
 
 ### Step 3.5: Record outcome events
 
-After classifying blockers and impediments, record each to the outcome ledger:
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/outcome-recorder.md
 
-For each **blocker**: record outcome with:
-- `event_type`: `"blocker_recorded"`
+After classifying blockers and impediments, record each to the outcome ledger using
+`mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome`:
+
+**Postmortem-specific events** (in addition to the shared vocabulary above):
+
+For each **blocker**: use `event_type="blocker_recorded"`, `verdict="blocker"`, and:
 - `issue_number`: the primary issue number
 - `agent_type`: the worker that encountered the blocker
 - `session_id`: the team session identifier
 - `payload`: `{ blocker_type, description, created_issue_number }`
 
-For each **impediment**: record outcome with:
-- `event_type`: `"impediment_recorded"`
+For each **impediment**: use `event_type="impediment_recorded"`, `verdict="impediment"`, and:
 - `issue_number`: the primary issue number
 - `agent_type`: the worker that encountered the impediment
 - `payload`: `{ impediment_type, description, self_resolved, workaround }`
 
-After writing the report, record session completion:
-- `event_type`: `"session_completed"`
-- `issue_number`: the primary issue number
-- `session_id`: the team session identifier
-- `payload`: `{ issues_processed, issues_completed, workers, total_tokens }`
+If any MCP call fails, log to stderr (`echo "outcome-record failed: ..." >&2`) and continue — do not block classification or report writing.
 
 ## Step 4: Write Post-Mortem
 
@@ -131,6 +130,24 @@ Where:
 - Blocker items: `- [issue created: #NNN] Description of what failed and the retry cost`
 - Impediment items: `- Description of friction observed`
 - `## Notes` section: omit entirely if there is nothing to add beyond Blockers/Impediments
+
+### Step 4.5: Record postmortem_completed
+
+After the report file is written, record session completion using
+`mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome`:
+- `event_type`: `"session_completed"`
+- `issue_number`: the primary issue number
+- `verdict`: `"completed"`
+- `session_id`: the team session identifier
+- `payload`: `{ issues_processed, issues_completed, workers, total_tokens }`
+
+Then record the postmortem filing:
+- `event_type`: `"postmortem_completed"`
+- `issue_number`: the primary issue number
+- `verdict`: `"filed"`
+- `payload`: `{ "postmortem_path": "<path written in Step 4>", "blocker_count": <N>, "impediment_count": <N> }`
+
+If either MCP call fails, log to stderr and continue to Step 5.
 
 ## Step 5: Patch Plan Documents
 
