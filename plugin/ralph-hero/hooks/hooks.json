@@ -102,6 +102,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-worktree-validator.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/sre-allowlist-gate.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [

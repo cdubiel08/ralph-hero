@@ -13,11 +13,30 @@ tags: [watchers, soul, gcp-incident-triage, debug-collate, heartbeat, sre-fixit]
 
 # Watcher Team Entrypoint (GH-1270) — Implementation Plan
 
+## Round-2 Redesign (2026-05-17)
+
+**PR #1278 was abandoned in favor of `feature/GH-1270-security-fix`.**
+
+Round-2 automated code review of PR #1278 surfaced three command-injection bypass classes in the `sre-allowlist-gate.sh` Bash content filter (shell metacharacters, multiline injection, empty-command bypass). The unblock answer chose redesign over hardening: drop `Bash` from `sre-fixit`'s `tools:` allowlist entirely and route the four kubectl operations through a typed MCP tool surface where the input shape is parsed, not pattern-matched.
+
+The typed MCP tool surface is tracked in a sibling sub-issue of the parent epic: **GH-1285 (Typed MCP tool surface for kubectl autoremediation)**.
+
+**Scope delta vs. PR #1278:**
+
+- Phase 3 (`sre-fixit.md`): now refusal-only. Drops `Bash` from `tools:` (keeps `Read`, `create_comment`, `save_issue`). Every dispatch escalates to Human Needed with a `## Escalation` comment that names GH-1285 as the unblocker. The four kubectl shapes are still documented in the body as the future surface so the dispatch contract is visible to readers. Adds a `TODO(GH-1285)` marker pointing at the typed-tool work.
+- Phase 5 (`smoke.sh`): check 4 inverted from "tools: contains Bash" to "tools: has NO Bash"; adds checks 4d (TODO(GH-1285) marker) and 4b (refusal protocol tools present). Checks 7-8 retained for the gate's still-load-bearing log-reader branch; the sre-fixit positive/negative cases are removed (sre-fixit can no longer invoke Bash).
+- Constraint 13: rewritten — the gate's content filter is no longer the security boundary for sre-fixit; the typed MCP tool surface (GH-1285) is.
+- All other artifacts (SOUL.md, log-reader.md, watch/SKILL.md, HEARTBEAT.md, sre-allowlist-gate.sh) are unchanged from PR #1278 — they pass the round-2 review.
+
+The original Phase 3 / Constraint 13 / Phase 5 acceptance criteria below are preserved as historical record (marked `[x]` from PR #1278's val-agent pass); the smoke test in `plugin/ralph-hero/scripts/watch/smoke.sh` is now the authoritative spec.
+
 ## Prior Work
 
 - builds_on:: [[2026-05-16-GH-1267-unified-agent-system-epic]]
 - builds_on:: [[2026-05-16-unified-agent-system-architecture]]
 - builds_on:: [[2026-05-15-cos-phase3-morning-brief-ntfy]]
+- supersedes_pr:: cdubiel08/ralph-hero#1278
+- spawned_followup:: cdubiel08/ralph-hero#1285
 
 ## Overview
 
@@ -56,7 +75,7 @@ Inherited verbatim from the parent plan-of-plans (`2026-05-16-GH-1267-unified-ag
 
 11. **Dependency on Feature A is hard.** This feature consumes `plugin/ralph-hero/skills/shared/soul-schema.md` and `plugin/ralph-hero/hooks/scripts/load-team-soul.sh` (both produced by GH-1268). If Feature A has NOT landed when this implements, **stop and escalate** — do not write a placeholder schema or hook script; the schema is authoritative and must originate from A.
 12. **Wrap, never duplicate.** `gcp-incident-triage` and `ralph-debug-collate` are existing skills. The Watcher orchestrator invokes them via `Skill()`; it does not copy their bodies or re-implement their logic. If a behavior change is needed in either, file a separate issue against that skill, do not edit it from this feature.
-13. **sre-fixit allowlist is the security boundary.** The allowlist must be enforced in TWO places: (a) the agent's `tools:` field (hard runtime gate), and (b) the agent's prompt body (instruction-level reminder). The hardcoded allow set is: `kubectl scale deployment * --replicas=*`, `kubectl drain node*`, `kubectl rollout restart *`, `kubectl delete pod *`. Anything else routes to Human Needed via the standard escalation flow. No `--force`, no `--cascade=foreground`, no node-pool ops.
+13. **sre-fixit allowlist is the security boundary.** The allowlist is enforced in THREE places: (a) the agent's `tools:` field (availability gate — controls which tool NAMES are callable, does NOT filter command content), (b) the agent's prompt body (instruction-level reminder), and (c) `plugin/ralph-hero/hooks/scripts/sre-allowlist-gate.sh` registered as a plugin-level `PreToolUse:Bash` hook (content gate — inspects `tool_input.command` on every Bash call and `exit 2`s if the command is not one of the four permitted kubectl shapes). The `tools:` field alone cannot block `kubectl delete deployment` or arbitrary shell because `Bash` is listed unrestricted; the hook is the binding runtime content filter. The hardcoded allow set is: `kubectl scale deployment * --replicas=*`, `kubectl drain node*`, `kubectl rollout restart *`, `kubectl delete pod *`. Anything else routes to Human Needed via the standard escalation flow. No `--force`, no `--cascade=foreground`, no node-pool ops.
 14. **log-reader is read-only.** Its `tools:` field excludes `Edit`, `Write`, and all `mcp__plugin_ralph-hero_*` mutation tools. It may call `Bash` only with `gcloud logging read`, `gcloud monitoring metrics list`, and the `gcp-telemetry` skill's documented LQL query commands.
 
 ## Current State Analysis
@@ -142,9 +161,9 @@ Replace the paranoid-but-disciplined SOUL stub that Feature A drops at `plugin/r
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid: `python3 -c 'import yaml; yaml.safe_load(open("plugin/ralph-hero/skills/watch/SOUL.md").read().split("---")[1])'`
-- [ ] Required frontmatter keys present: `grep -E '^(team|voice|refuses):' plugin/ralph-hero/skills/watch/SOUL.md | wc -l` returns `3`
-- [ ] Body word count 150–250: `awk '/^---$/{n++; next} n==2' plugin/ralph-hero/skills/watch/SOUL.md | wc -w` returns a number in `[150, 250]`
+- [x] Frontmatter YAML valid: `python3 -c 'import yaml; yaml.safe_load(open("plugin/ralph-hero/skills/watch/SOUL.md").read().split("---")[1])'`
+- [x] Required frontmatter keys present: `grep -E '^(team|voice|refuses):' plugin/ralph-hero/skills/watch/SOUL.md | wc -l` returns `3`
+- [x] Body word count 150–250: `awk '/^---$/{n++; next} n==2' plugin/ralph-hero/skills/watch/SOUL.md | wc -w` returns a number in `[150, 250]`
 
 #### Manual Verification:
 - [ ] Voice reads as paranoid-but-disciplined, not paranoid-and-panicked
@@ -178,9 +197,9 @@ A subagent the Watcher orchestrator dispatches for "read these logs / run this L
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid (same yaml check shape as Phase 1)
-- [ ] `tools:` field contains no write tools: `grep -E '^tools:' plugin/ralph-hero/agents/log-reader.md | grep -Eqv '(Edit|Write|save_issue|create_|advance_|add_|remove_|batch_update)'`
-- [ ] Model is haiku: `grep -E '^model: haiku$' plugin/ralph-hero/agents/log-reader.md` returns 1 match
+- [x] Frontmatter YAML valid (same yaml check shape as Phase 1)
+- [x] `tools:` field contains no write tools: `grep -E '^tools:' plugin/ralph-hero/agents/log-reader.md | grep -Eqv '(Edit|Write|save_issue|create_|advance_|add_|remove_|batch_update)'`
+- [x] Model is haiku: `grep -E '^model: haiku$' plugin/ralph-hero/agents/log-reader.md` returns 1 match
 
 #### Manual Verification:
 - [ ] Output-format section gives one concrete `## Findings` example with a real-shaped trace ID
@@ -214,10 +233,10 @@ A subagent the Watcher orchestrator dispatches for the four allowlisted kubectl 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid
-- [ ] `tools:` field is exactly three entries: `Bash`, `Read`, the create_comment MCP tool
-- [ ] Body contains exactly four kubectl command shapes in the allowlist table: `grep -cE 'kubectl (scale|drain|rollout|delete pod)' plugin/ralph-hero/agents/sre-fixit.md` returns `4` (allowing for one occurrence per command)
-- [ ] No `--force` or `--cascade=foreground` strings present: `! grep -E '(--force|--cascade=foreground)' plugin/ralph-hero/agents/sre-fixit.md`
+- [x] Frontmatter YAML valid
+- [x] `tools:` field is exactly three entries: `Bash`, `Read`, the create_comment MCP tool
+- [x] Body contains exactly four kubectl command shapes in the allowlist table: `grep -cE 'kubectl (scale|drain|rollout|delete pod)' plugin/ralph-hero/agents/sre-fixit.md` returns `4` (allowing for one occurrence per command)
+- [x] No `--force` or `--cascade=foreground` strings present: `! grep -E '(--force|--cascade=foreground)' plugin/ralph-hero/agents/sre-fixit.md`
 
 #### Manual Verification:
 - [ ] Refusal protocol reads as ironclad — model cannot reasonably argue itself out of escalating
@@ -260,12 +279,12 @@ The Watcher orchestrator skill. Single entrypoint. Accepts `--issue NNN` (direct
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] Frontmatter YAML valid
-- [ ] `argument-hint` is exactly `"[--issue NNN]"`: `grep -E '^argument-hint: "\[--issue NNN\]"$' plugin/ralph-hero/skills/watch/SKILL.md`
-- [ ] SessionStart hook chains the two scripts: `grep -c 'set-skill-env.sh\|load-team-soul.sh' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `2`
-- [ ] Dispatch table covers all five entries: `grep -cE '(gcp-policy|langfuse-trace|watcher-investigate|watcher-remediate|Human Needed)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `5`
-- [ ] Three `# TODO(GH-1272)` markers present (one per terminal-handler branch): `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `3`
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity: no source changed)
+- [x] Frontmatter YAML valid
+- [x] `argument-hint` is exactly `"[--issue NNN]"`: `grep -E '^argument-hint: "\[--issue NNN\]"$' plugin/ralph-hero/skills/watch/SKILL.md`
+- [x] SessionStart hook chains the two scripts: `grep -c 'set-skill-env.sh\|load-team-soul.sh' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `2`
+- [x] Dispatch table covers all five entries: `grep -cE '(gcp-policy|langfuse-trace|watcher-investigate|watcher-remediate|Human Needed)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `5`
+- [x] Three `# TODO(GH-1272)` markers present (one per terminal-handler branch): `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/watch/SKILL.md` returns at least `3`
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity: no source changed)
 
 #### Manual Verification:
 - [ ] Dispatch table table reads unambiguously — no overlap that would let two rows match the same issue
@@ -318,9 +337,9 @@ User-facing documentation for registering the Watcher heartbeat as a `/schedule`
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash -n plugin/ralph-hero/scripts/watch/smoke.sh` — syntax check
-- [ ] `plugin/ralph-hero/scripts/watch/smoke.sh` exits 0 (full smoke pass)
-- [ ] `HEARTBEAT.md` exists and is non-empty
+- [x] `bash -n plugin/ralph-hero/scripts/watch/smoke.sh` — syntax check
+- [x] `plugin/ralph-hero/scripts/watch/smoke.sh` exits 0 (full smoke pass)
+- [x] `HEARTBEAT.md` exists and is non-empty
 
 #### Manual Verification:
 - [ ] HEARTBEAT.md reads well to a user setting up Watcher for the first time
