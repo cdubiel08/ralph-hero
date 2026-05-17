@@ -164,6 +164,8 @@ def normalise_alert(raw_message: dict[str, Any]) -> dict[str, Any]:
         f"- Project: `{project_id}`\n"
         f"- State: `{state}` | Started: `{started_at}`\n"
         f"\n"
+        f"**Policy ID:** `gcp-policy/{policy_id}`\n"
+        f"\n"
         f"## Suggested Team: watchers\n"
         f"\n"
         f"<!-- gcp-policy: {policy_id} -->\n"
@@ -192,13 +194,17 @@ def normalise_alert(raw_message: dict[str, Any]) -> dict[str, Any]:
 
 
 def _issue_exists_for_policy(policy_id: str, repo: str | None) -> bool:
-    """Return True if an open issue with ``<!-- gcp-policy: <id> -->`` exists.
+    """Return True if an open issue with the plain-text policy marker exists.
+
+    Searches for the plain-text line ``gcp-policy/<id>`` which is indexed by
+    GitHub's search API (HTML comments are stripped before indexing and would
+    always return zero matches).
 
     Uses ``gh issue list`` with a search query; no external API calls.
     Returns False (allow creation) on any gh CLI error so a missing/
     misconfigured CLI does not silently drop alerts.
     """
-    marker = f"gcp-policy: {policy_id}"
+    marker = f"gcp-policy/{policy_id}"
     cmd = [
         "gh", "issue", "list",
         "--state", "open",
@@ -279,13 +285,22 @@ def _pull_messages(
     project: str,
     max_messages: int,
     timeout: int,
-) -> list[dict[str, Any]]:
-    """Pull messages from a Pub/Sub subscription via the gcloud CLI.
+) -> tuple[list[dict[str, Any]], list[str], "pubsub_v1.SubscriberClient", str]:
+    """Pull messages from a Pub/Sub subscription via the Pub/Sub client library.
 
-    Returns a list of raw message dicts (the ``message`` field of each
-    receivedMessage). Acknowledges each message after a successful pull so
-    re-runs don't re-process the same alert (idempotency guard provides the
-    second line of defence).
+    Returns a 4-tuple of:
+    - list of raw message dicts (the ``message`` field of each receivedMessage)
+    - list of ack_ids in the same order as the messages
+    - the open SubscriberClient (caller must close it)
+    - the resolved subscription path
+
+    The caller is responsible for ACKing each message individually AFTER
+    successfully processing it (at-least-once delivery). Messages that fail
+    processing are NOT ACKed and will be re-delivered by Pub/Sub after the
+    ack deadline expires.
+
+    Returns an empty tuple-of-empties on error so the caller can do a simple
+    ``if not messages`` guard.
     """
     try:
         from google.cloud import pubsub_v1  # type: ignore[import-untyped]
@@ -294,7 +309,7 @@ def _pull_messages(
             "google-cloud-pubsub is required; run `uv sync` inside "
             "plugin/ralph-hero/scripts/monitoring-bridge/"
         )
-        return []
+        return [], [], None, ""  # type: ignore[return-value]
 
     subscriber = pubsub_v1.SubscriberClient()
     subscription_path = (
@@ -313,7 +328,8 @@ def _pull_messages(
         )
     except Exception as exc:  # noqa: BLE001
         log.error("Pub/Sub pull failed: %s", exc)
-        return []
+        subscriber.close()
+        return [], [], None, ""  # type: ignore[return-value]
 
     messages = []
     ack_ids = []
@@ -327,20 +343,29 @@ def _pull_messages(
         messages.append(raw)
         ack_ids.append(received_message.ack_id)
 
-    if ack_ids:
-        try:
-            subscriber.acknowledge(
-                request={
-                    "subscription": subscription_path,
-                    "ack_ids": ack_ids,
-                }
-            )
-            log.info("Acknowledged %d message(s)", len(ack_ids))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Acknowledge failed (messages will be re-delivered): %s", exc)
+    return messages, ack_ids, subscriber, subscription_path
 
-    subscriber.close()
-    return messages
+
+def _ack_message(
+    subscriber: "pubsub_v1.SubscriberClient",
+    subscription_path: str,
+    ack_id: str,
+) -> None:
+    """ACK a single Pub/Sub message. Logs a warning on failure (non-fatal)."""
+    try:
+        subscriber.acknowledge(
+            request={
+                "subscription": subscription_path,
+                "ack_ids": [ack_id],
+            }
+        )
+        log.debug("Acknowledged message ack_id=%s…", ack_id[:16])
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "Acknowledge failed for ack_id=%s… (will be re-delivered): %s",
+            ack_id[:16],
+            exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -459,9 +484,12 @@ def main(argv: list[str] | None = None) -> int:
             log.error("Fixture file not found: %s", fixture_path)
             return 1
         messages = _load_fixture(fixture_path)
+        ack_ids: list[str] = []
+        subscriber = None
+        subscription_path = ""
         log.info("Dry-run mode: loaded %d message(s) from fixture", len(messages))
     else:
-        messages = _pull_messages(
+        messages, ack_ids, subscriber, subscription_path = _pull_messages(
             args.subscription,
             args.project,
             args.max_messages,
@@ -471,41 +499,52 @@ def main(argv: list[str] | None = None) -> int:
 
     if not messages:
         print("No messages to process.")
+        if subscriber is not None:
+            subscriber.close()
         return 0
 
     created = 0
     skipped = 0
     failed = 0
 
-    for i, msg in enumerate(messages, start=1):
-        payload = normalise_alert(msg)
-        policy_id = payload["policy_id"]
+    try:
+        for i, msg in enumerate(messages, start=1):
+            payload = normalise_alert(msg)
+            policy_id = payload["policy_id"]
 
-        if args.dry_run:
-            print(f"\n--- Message {i} ---")
-            print(f"title: {payload['title']}")
-            print(f"labels: {payload['labels']}")
-            print(f"policy_id: {policy_id}")
-            print("body:")
-            print(payload["body"])
-            created += 1
-            continue
+            if args.dry_run:
+                print(f"\n--- Message {i} ---")
+                print(f"title: {payload['title']}")
+                print(f"labels: {payload['labels']}")
+                print(f"policy_id: {policy_id}")
+                print("body:")
+                print(payload["body"])
+                created += 1
+                continue
 
-        # Idempotency check
-        if _issue_exists_for_policy(policy_id, args.repo):
-            log.info(
-                "Skipping policy_id=%s — open issue already exists", policy_id
-            )
-            skipped += 1
-            continue
+            # Idempotency check — duplicate alerts are ACKed (already handled)
+            if _issue_exists_for_policy(policy_id, args.repo):
+                log.info(
+                    "Skipping policy_id=%s — open issue already exists", policy_id
+                )
+                skipped += 1
+                # ACK the duplicate so it isn't re-delivered on the next run
+                _ack_message(subscriber, subscription_path, ack_ids[i - 1])
+                continue
 
-        url = _create_issue(payload, args.repo)
-        if url:
-            print(f"Created issue: {url}  [policy_id={policy_id}]")
-            created += 1
-        else:
-            log.error("Failed to create issue for policy_id=%s", policy_id)
-            failed += 1
+            url = _create_issue(payload, args.repo)
+            if url:
+                print(f"Created issue: {url}  [policy_id={policy_id}]")
+                created += 1
+                # ACK only after successful issue creation (at-least-once delivery)
+                _ack_message(subscriber, subscription_path, ack_ids[i - 1])
+            else:
+                log.error("Failed to create issue for policy_id=%s", policy_id)
+                failed += 1
+                # Do NOT ACK — Pub/Sub will re-deliver after the ack deadline
+    finally:
+        if subscriber is not None:
+            subscriber.close()
 
     print(
         f"\nResult: {created} created, {skipped} skipped (duplicate), "

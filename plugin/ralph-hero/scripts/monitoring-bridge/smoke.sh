@@ -9,7 +9,8 @@
 #   5. Dry-run mode: runs subscribe.py --dry-run and asserts required tokens
 #      present in stdout:
 #        - watcher-auto
-#        - <!-- gcp-policy:
+#        - <!-- gcp-policy:  (HTML comment, preserved for gcp-incident-triage)
+#        - gcp-policy/       (plain-text marker, indexed by GitHub search)
 #        - [gcp-alert]
 #        - ## Source
 #        - ## Suggested Team: watchers
@@ -113,6 +114,7 @@ if [[ -f "$SUBSCRIBE_PY" && -f "$FIXTURE" ]]; then
         REQUIRED_TOKENS=(
             "watcher-auto"
             "<!-- gcp-policy:"
+            "gcp-policy/"
             "[gcp-alert]"
             "## Source"
             "## Suggested Team: watchers"
