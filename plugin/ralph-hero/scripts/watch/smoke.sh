@@ -5,11 +5,17 @@
 #   1. SOUL.md frontmatter has team, voice, refuses keys
 #   2. SOUL.md body word count is in [150, 250]
 #   3. log-reader.md tools: field excludes write/mutation tools
-#   4. sre-fixit.md body contains the four kubectl shapes and no --force/--cascade
+#   4. sre-fixit.md is refusal-only after the GH-1270 round-2 redesign:
+#      4a. tools: field does NOT contain Bash (security boundary; bash gate was
+#          abandoned in favour of a typed MCP tool surface — GH-1285)
+#      4b. tools: includes create_comment and save_issue (refusal protocol)
+#      4c. body documents the four future-surface kubectl shapes
+#      4d. body contains a TODO(GH-1285) marker
+#      4e. body has no --force or --cascade=foreground anywhere
 #   5. watch/SKILL.md SessionStart hook references both set-skill-env.sh and load-team-soul.sh
 #   6. watch/SKILL.md contains at least three TODO(GH-1272) markers
-#   7. sre-allowlist-gate.sh: positive test (permitted kubectl shape passes)
-#   8. sre-allowlist-gate.sh: negative test (disallowed command is blocked)
+#   7. sre-allowlist-gate.sh: log-reader positive test (permitted gcloud passes)
+#   8. sre-allowlist-gate.sh: log-reader negative test (disallowed gcloud blocked)
 #   9. Heartbeat patch (Feature D, GH-1271): SKILL.md contains --auto-confirm step
 #  10. ralph-debug-collate/SKILL.md documents --auto-confirm flag (Feature D)
 #
@@ -112,7 +118,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4a. sre-fixit.md body contains all four kubectl shapes
+# 4. sre-fixit.md is refusal-only (round-2 redesign per GH-1270 unblock answer)
 # ---------------------------------------------------------------------------
 if [[ ! -f "$SRE_FIXIT_MD" ]]; then
   _skip "sre-fixit.md not found: ${SRE_FIXIT_MD}"
@@ -123,14 +129,37 @@ else
     _fail "sre-fixit.md frontmatter YAML is invalid"
   fi
 
-  KUBECTL_COUNT=$(grep -cE 'kubectl (scale|drain|rollout|delete pod)' "$SRE_FIXIT_MD" || true)
-  if [[ "$KUBECTL_COUNT" -ge 4 ]]; then
-    _pass "sre-fixit.md contains at least 4 kubectl allowlist shapes (found ${KUBECTL_COUNT})"
+  # 4a. tools: field must NOT contain Bash (security boundary)
+  SRE_TOOLS_LINE=$(grep -E '^tools:' "$SRE_FIXIT_MD" || true)
+  if echo "$SRE_TOOLS_LINE" | grep -qE '(^|, )Bash($|,)'; then
+    _fail "sre-fixit.md tools: field contains Bash — security boundary violated (line: '${SRE_TOOLS_LINE}')"
   else
-    _fail "sre-fixit.md missing kubectl allowlist shapes — expected >=4, found ${KUBECTL_COUNT}"
+    _pass "sre-fixit.md tools: field has no Bash (security boundary intact)"
   fi
 
-  # 4b. No --force or --cascade=foreground
+  # 4b. tools: must include create_comment and save_issue (for refusal protocol)
+  if echo "$SRE_TOOLS_LINE" | grep -q 'create_comment' && echo "$SRE_TOOLS_LINE" | grep -q 'save_issue'; then
+    _pass "sre-fixit.md tools: field includes create_comment and save_issue"
+  else
+    _fail "sre-fixit.md tools: field missing create_comment or save_issue (refusal protocol cannot fire)"
+  fi
+
+  # 4c. body still documents the four future-surface kubectl shapes
+  KUBECTL_COUNT=$(grep -cE 'kubectl (scale|drain|rollout|delete pod)' "$SRE_FIXIT_MD" || true)
+  if [[ "$KUBECTL_COUNT" -ge 4 ]]; then
+    _pass "sre-fixit.md documents at least 4 future-surface kubectl shapes (found ${KUBECTL_COUNT})"
+  else
+    _fail "sre-fixit.md missing future-surface kubectl documentation — expected >=4, found ${KUBECTL_COUNT}"
+  fi
+
+  # 4d. body contains TODO(GH-1285) marker pointing at typed MCP tool work
+  if grep -q 'TODO(GH-1285)' "$SRE_FIXIT_MD"; then
+    _pass "sre-fixit.md contains TODO(GH-1285) marker"
+  else
+    _fail "sre-fixit.md missing TODO(GH-1285) marker"
+  fi
+
+  # 4e. body has no --force or --cascade=foreground anywhere
   if grep -qE '(--force|--cascade=foreground)' "$SRE_FIXIT_MD"; then
     _fail "sre-fixit.md contains forbidden flags (--force or --cascade=foreground)"
   else
@@ -178,7 +207,11 @@ if [[ -f "$SKILL_MD" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7. sre-allowlist-gate.sh: positive test (permitted kubectl shape passes)
+# 7-8. sre-allowlist-gate.sh: log-reader gcloud allowlist tests
+#
+# Round-2 redesign of GH-1270 dropped Bash from sre-fixit, so the gate's
+# sre-fixit branch is now defense-in-depth dead code. The log-reader branch
+# is still load-bearing for the read-only gcloud queries log-reader runs.
 # ---------------------------------------------------------------------------
 GATE_SCRIPT="${PLUGIN_ROOT}/hooks/scripts/sre-allowlist-gate.sh"
 
@@ -191,50 +224,26 @@ else
     _fail "sre-allowlist-gate.sh is not executable"
   fi
 
-  # Positive: kubectl scale deployment (allowed shape) must exit 0
-  POSITIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:sre-fixit","tool_input":{"command":"kubectl scale deployment api --replicas=3"}}'
-  if echo "$POSITIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
-    _pass "sre-allowlist-gate.sh: permitted kubectl shape exits 0 (positive test)"
-  else
-    _fail "sre-allowlist-gate.sh: permitted kubectl shape was blocked — positive test FAILED"
-  fi
-
-  # ---------------------------------------------------------------------------
-  # 8. sre-allowlist-gate.sh: negative test (disallowed command is blocked)
-  # ---------------------------------------------------------------------------
-  # kubectl delete deployment is NOT in the allowlist (only 'delete pod' is)
-  NEGATIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:sre-fixit","tool_input":{"command":"kubectl delete deployment api"}}'
-  if echo "$NEGATIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
-    _fail "sre-allowlist-gate.sh: disallowed command was NOT blocked — negative test FAILED"
-  else
-    EXIT_CODE=$?
-    if [[ "$EXIT_CODE" -eq 2 ]]; then
-      _pass "sre-allowlist-gate.sh: disallowed kubectl command blocked with exit 2 (negative test)"
-    else
-      _pass "sre-allowlist-gate.sh: disallowed kubectl command blocked (exit ${EXIT_CODE}) (negative test)"
-    fi
-  fi
-
-  # log-reader positive: gcloud logging read (allowed shape) must exit 0
+  # 7. log-reader positive: gcloud logging read (allowed shape) must exit 0
   LOG_POSITIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:log-reader","tool_input":{"command":"gcloud logging read '\''severity>=ERROR'\'' --limit=50 --project=my-proj --format=json"}}'
   if echo "$LOG_POSITIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
-    _pass "sre-allowlist-gate.sh: permitted gcloud logging read exits 0 (log-reader positive test)"
+    _pass "sre-allowlist-gate.sh: log-reader permitted gcloud logging read exits 0"
   else
-    _fail "sre-allowlist-gate.sh: permitted gcloud logging read was blocked — log-reader positive test FAILED"
+    _fail "sre-allowlist-gate.sh: log-reader permitted gcloud logging read was blocked"
   fi
 
-  # log-reader negative: arbitrary shell command must be blocked
+  # 8. log-reader negative: disallowed gcloud subcommand must be blocked
   LOG_NEGATIVE_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:log-reader","tool_input":{"command":"gcloud projects delete my-proj"}}'
   if echo "$LOG_NEGATIVE_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
-    _fail "sre-allowlist-gate.sh: disallowed gcloud subcommand was NOT blocked — log-reader negative test FAILED"
+    _fail "sre-allowlist-gate.sh: log-reader disallowed gcloud subcommand was NOT blocked"
   else
-    _pass "sre-allowlist-gate.sh: disallowed gcloud subcommand blocked (log-reader negative test)"
+    _pass "sre-allowlist-gate.sh: log-reader disallowed gcloud subcommand blocked"
   fi
 
-  # non-restricted agent: any command must pass through (exit 0)
+  # Non-restricted agent: any command must pass through (exit 0)
   OTHER_PAYLOAD='{"hook_event_name":"PreToolUse","tool_name":"Bash","agent_type":"ralph-hero:impl-agent","tool_input":{"command":"echo hello"}}'
   if echo "$OTHER_PAYLOAD" | bash "$GATE_SCRIPT" >/dev/null 2>&1; then
-    _pass "sre-allowlist-gate.sh: non-restricted agent_type passes through (exit 0)"
+    _pass "sre-allowlist-gate.sh: non-restricted agent_type passes through"
   else
     _fail "sre-allowlist-gate.sh: non-restricted agent_type was incorrectly blocked"
   fi
