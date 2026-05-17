@@ -47,6 +47,7 @@ const replicasSchema = z.number().int().min(0).max(REPLICA_CEILING);
 // sre__scale schemas
 // ---------------------------------------------------------------------------
 
+
 /**
  * Raw Zod shape for the sre__scale tool.
  * Passed to `server.tool()` which expects a `ZodRawShape` (plain object of
@@ -100,6 +101,61 @@ export function buildScaleArgv(
   ];
 }
 
+// ---------------------------------------------------------------------------
+// sre__rollout_restart schemas  (Phase 3 / GH-1289)
+// ---------------------------------------------------------------------------
+
+/**
+ * Raw Zod shape for the sre__rollout_restart tool.
+ */
+const sreRolloutRestartShape = {
+  namespace: k8sLabelSchema.describe(
+    "Kubernetes namespace (RFC 1123 label: lowercase alphanumeric and hyphens only).",
+  ),
+  deployment: k8sLabelSchema.describe(
+    "Deployment name (RFC 1123 label: lowercase alphanumeric and hyphens only).",
+  ),
+};
+
+/**
+ * Strict Zod object schema for sre__rollout_restart parameters.
+ *
+ * Exported so adversarial-input tests (sre-tools.test.ts) can call
+ * `.safeParse()` directly. `.strict()` ensures unknown keys are rejected.
+ */
+export const sreRolloutRestartSchema = z.object(sreRolloutRestartShape).strict();
+
+/**
+ * Build the kubectl argv array for a rollout restart operation.
+ *
+ * Exported for unit-testing the argv shape independently of the MCP server.
+ *
+ * NOTE — deliberate template-literal exception: This is the only argv builder
+ * in the sre__* family that uses a template literal. The `deployment/<name>`
+ * form is specific to `kubectl rollout restart`'s resource-qualified argument
+ * syntax. The interpolation is safe by construction: the `deployment` Zod
+ * schema (`/^[a-z0-9-]+$/`) forbids `/`, newlines, and shell metacharacters —
+ * the only characters that could escape the literal prefix. Do NOT generalise
+ * this pattern to other phases; phases 2, 4, and 5 keep plain array literals.
+ *
+ * @param namespace  - Validated Kubernetes namespace.
+ * @param deployment - Validated deployment name.
+ */
+export function buildRolloutRestartArgv(
+  namespace: string,
+  deployment: string,
+): string[] {
+  return [
+    "rollout",
+    "restart",
+    "--namespace",
+    namespace,
+    `deployment/${deployment}`,
+  ];
+}
+
+// ---------------------------------------------------------------------------
+
 /**
  * Register all SRE operation tools on the MCP server.
  *
@@ -139,7 +195,27 @@ export function registerSreTools(
     },
   );
 
-  // Phase 3 (GH-1289): sre__rollout_restart — register here
+  // -------------------------------------------------------------------------
+  // ralph_hero__sre__rollout_restart  (Phase 3 / GH-1289)
+  // -------------------------------------------------------------------------
+  server.tool(
+    "ralph_hero__sre__rollout_restart",
+    "Trigger a rolling restart of a Kubernetes deployment. " +
+      "Typed parameters only — no shell, no flag pass-through. " +
+      "Equivalent to: kubectl rollout restart deployment/<name> -n <namespace>.",
+    sreRolloutRestartShape,
+    async ({ namespace, deployment }) => {
+      const argv = buildRolloutRestartArgv(namespace, deployment);
+      try {
+        const result = await runKubectl(argv);
+        return toolSuccess(result);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return toolError(`kubectl rollout restart failed: ${message}`);
+      }
+    },
+  );
+
   // Phase 4 (GH-1290): sre__delete_pod — register here
   // Phase 5 (GH-1291): sre__drain — register here
 }

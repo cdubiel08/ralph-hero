@@ -37,6 +37,8 @@ import {
   sreScaleSchema,
   buildScaleArgv,
   REPLICA_CEILING,
+  sreRolloutRestartSchema,
+  buildRolloutRestartArgv,
 } from "../tools/sre-tools.js";
 
 // The module uses promisify(execFile) internally. To control its behaviour from
@@ -307,5 +309,130 @@ describe("ralph_hero__sre__scale — replica bounds", () => {
       replicas: REPLICA_CEILING,
     });
     expect(result.success).toBe(true);
+  });
+});
+
+// =============================================================================
+// Phase 3 (GH-1289): ralph_hero__sre__rollout_restart
+//
+// Reuses the canonical adversarial-test pattern from Phase 2 (sre__scale).
+// One named test per bypass class so a future regression points at the
+// specific class that regressed.
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// Helper: assert that a Zod parse fails for the rollout_restart schema
+// ---------------------------------------------------------------------------
+
+function assertRolloutRestartRejects(input: unknown): void {
+  const result = sreRolloutRestartSchema.safeParse(input);
+  expect(result.success).toBe(false);
+}
+
+// ---------------------------------------------------------------------------
+// Happy path
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__rollout_restart — happy path", () => {
+  it("happy path produces expected argv", () => {
+    // Verify the schema accepts valid input.
+    const parseResult = sreRolloutRestartSchema.safeParse({
+      namespace: "default",
+      deployment: "nginx",
+    });
+    expect(parseResult.success).toBe(true);
+
+    // Verify buildRolloutRestartArgv produces the exact expected argv.
+    // Note: the resource-qualified `deployment/<name>` form is specific to
+    // `kubectl rollout restart` — this is the deliberate template-literal
+    // exception documented in the plan's Phase 3 overview.
+    const argv = buildRolloutRestartArgv("default", "nginx");
+    expect(argv).toEqual([
+      "rollout",
+      "restart",
+      "--namespace",
+      "default",
+      "deployment/nginx",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: shell-metacharacter injection
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__rollout_restart — rejects shell-metacharacter injection", () => {
+  const metacharacterCases: Array<[string, string]> = [
+    ["semicolon (;)", "nginx;rm -rf /"],
+    ["double-ampersand (&&)", "nginx&&id"],
+    ["pipe (|)", "nginx|cat /etc/passwd"],
+    ["backtick (`)", "nginx`id`"],
+    ["command-substitution ($(...))", "nginx$(id)"],
+    ["redirect (>)", "nginx>/tmp/x"],
+  ];
+
+  for (const [label, injected] of metacharacterCases) {
+    it(`rejects ${label} in namespace`, () => {
+      assertRolloutRestartRejects({ namespace: injected, deployment: "nginx" });
+    });
+    it(`rejects ${label} in deployment`, () => {
+      assertRolloutRestartRejects({ namespace: "default", deployment: injected });
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-suffix injection
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__rollout_restart — rejects multiline-suffix injection", () => {
+  it("rejects namespace with trailing newline + shell command", () => {
+    assertRolloutRestartRejects({
+      namespace: "default\nrm -rf /",
+      deployment: "nginx",
+    });
+  });
+
+  it("rejects deployment with trailing newline + shell command", () => {
+    assertRolloutRestartRejects({
+      namespace: "default",
+      deployment: "nginx\nrm -rf /",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: multiline-prefix injection
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__rollout_restart — rejects multiline-prefix injection", () => {
+  it("rejects namespace with leading newline", () => {
+    assertRolloutRestartRejects({ namespace: "\nnginx", deployment: "nginx" });
+  });
+
+  it("rejects deployment with leading newline", () => {
+    assertRolloutRestartRejects({ namespace: "default", deployment: "\nnginx" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial bypass class: empty-command injection
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__sre__rollout_restart — rejects empty-command injection", () => {
+  it("rejects empty string in namespace", () => {
+    assertRolloutRestartRejects({ namespace: "", deployment: "nginx" });
+  });
+
+  it("rejects whitespace-only string in namespace", () => {
+    assertRolloutRestartRejects({ namespace: "   ", deployment: "nginx" });
+  });
+
+  it("rejects empty string in deployment", () => {
+    assertRolloutRestartRejects({ namespace: "default", deployment: "" });
+  });
+
+  it("rejects whitespace-only string in deployment", () => {
+    assertRolloutRestartRejects({ namespace: "default", deployment: "   " });
   });
 });
