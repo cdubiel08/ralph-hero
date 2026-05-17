@@ -99,6 +99,16 @@ Set `DISPATCH_REASON=workflow_state:${ISSUE_WORKFLOW_STATE}`.
 
 Director dispatches using `Skill()`. It does NOT call `Agent()` — Director is an orchestrator, not a worker. Team entrypoints receive the issue number as a bare number `NNN` (not `--issue NNN`).
 
+**iOS-mode sentinel write (Feature H contract):**
+
+Before the `Skill()` call, if `DISPATCH_REASON` starts with `trigger:` OR equals `RemoteTrigger`, write the iOS-mode sentinel:
+
+```bash
+touch "${TMPDIR:-/tmp}/ralph-ios-mode"
+```
+
+This signals downstream producers (Feature H) that the current dispatch is iOS-initiated. Workflow_state-driven dispatches (Priority 3) do NOT write the sentinel — only Priority 1 (`trigger:*`) and `RemoteTrigger` paths do. The sentinel may persist until session end; that is intentional — producers running inside the dispatched session see it. No explicit cleanup is required.
+
 **Team → entrypoint mapping:**
 
 | team | entrypoint | status |
@@ -107,7 +117,7 @@ Director dispatches using `Skill()`. It does NOT call `Agent()` — Director is 
 | watchers | `ralph-hero:watch` | pending Feature C (GH-1270) |
 | scouts | `ralph-hero:scouts` | pending Feature F (GH-1273) |
 | memorykeepers | manual `dream-now` | no skill; Director emits `needs input:` |
-| caretakers | `ralph-hero:caretake` | pending Feature G (GH-1274) |
+| caretakers | `ralph-hero:caretake` | live (Feature G, GH-1274) |
 
 **If the target entrypoint exists (builders / live teams):**
 
@@ -180,3 +190,9 @@ result: Queue empty. No events to dispatch.
 - **Trigger-label priority**: `trigger:*` labels give humans and iOS shortcuts a direct, auditable override path without requiring a separate tool surface.
 - **Consumption at dispatch edge**: Removing the label after dispatch (not after team completion) ensures the trigger is not re-processed on the next tick even if the team runs long or fails.
 - **`needs input:` for unimplemented teams**: Director ships before Features C, F, and G. Emitting a marker instead of erroring keeps the system functional during the rollout window.
+
+## See also
+
+- [IOS-REMOTE.md](IOS-REMOTE.md) — user-facing guide: trigger teams from iOS, read `cos` summaries, receive ntfy completion pushes, open Drive artifacts
+- [event-classes.md](event-classes.md) — canonical event taxonomy and iOS-mode sentinel contract
+- [plugin/ralph-hero/skills/cos/SKILL.md](../cos/SKILL.md) — chief-of-staff five-team rollup

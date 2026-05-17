@@ -1,7 +1,7 @@
 ---
 description: Create a pull request for a completed implementation — pushes branch, creates PR via gh, moves issues to In Review. Use when you want to create a PR for a completed issue.
 user-invocable: false
-argument-hint: <issue-number> [--worktree path]
+argument-hint: <issue-number> [--worktree path] [--push-drive | --no-push-drive]
 context: fork
 model: haiku
 hooks:
@@ -337,9 +337,37 @@ This step runs after Step 6 (Move Issues to In Review) completes on the success 
 
 If the MCP call fails, log to stderr (`echo "outcome-record failed: ..." >&2`) and continue to Step 7.
 
+## Step 6.7: Drive Push (Feature H)
+
+After the outcome event (Step 6.5), optionally push the PR body to Google Drive.
+
+Parse `--push-drive` / `--no-push-drive` from the original arguments (forwarded unparsed to the helper — the helper performs centralized flag parsing).
+
+```bash
+# Drive push — Feature H (GH-1275)
+# See: thoughts/shared/plans/2026-05-16-GH-1275-ios-remote-integration.md Phase 3
+PR_BODY_TMP=$(mktemp -t "ralph-pr-${ISSUE_NUMBER}-body-XXXXXX.md")
+# Write the PR body (same content as submitted to gh pr create) to the temp file
+cat > "$PR_BODY_TMP" <<'BODYEOF'
+[PR body content composed in Step 5 — substitute the actual rendered body here]
+BODYEOF
+
+DRIVE_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/lib/push-artifact.sh" \
+    "$PR_BODY_TMP" \
+    "PR for GH-${ISSUE_NUMBER}" \
+    ${PUSH_DRIVE_FLAG:+"$PUSH_DRIVE_FLAG"} 2>/dev/null || true)
+rm -f "$PR_BODY_TMP"
+```
+
+Where `PUSH_DRIVE_FLAG` is `--push-drive`, `--no-push-drive`, or unset (if the user passed no flag — the helper then decides based on the sentinel / `RALPH_IOS_MODE`).
+
+If `DRIVE_URL` is non-empty, append a `Drive: <URL>` line to the `## Pull Request` comment body composed in Step 7 BEFORE posting the comment. If `DRIVE_URL` is empty (skip or failure), the comment is posted unchanged — bit-identical to pre-Feature-H behavior.
+
+`Bash` is already in ralph-pr's `allowed-tools`; no allowlist change needed.
+
 ## Step 7: Post Comment
 
-Post a comment on the issue with the PR URL:
+Post a comment on the issue with the PR URL (include `Drive: <URL>` line if Step 6.7 returned a non-empty Drive URL):
 ```markdown
 ## Pull Request
 
