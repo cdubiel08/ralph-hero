@@ -24,9 +24,10 @@ These labels are written by automated producers (event shims, dream-loop classif
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
-| any | `watcher-auto` | watchers | Label written by Cloud Monitoring → board bridge. Producer ships in Feature D (GH-1271). Feature C ships the `ralph-hero:watch` entrypoint. |
+| any | `watcher-auto` | watchers | Label written by Cloud Monitoring → board bridge (`plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py`). Feature C ships the `ralph-hero:watch` entrypoint. |
+| any | `debug-auto` | watchers | Label written by `ralph-debug-collate` (invoked from Watcher heartbeat). Observability follow-ups are owned by watchers. |
 | any | `scout-auto` | scouts | Label written by Scout scheduling hook (on-PR + nightly). Producer ships in Feature F (GH-1273). Feature F also ships `ralph-hero:scouts`. |
-| any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier output. Producer ships in Feature D (GH-1271). Feature G ships `ralph-hero:caretake`. |
+| any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). Feature G ships `ralph-hero:caretake`. |
 
 ## Priority 3 — Workflow state (fallback routing)
 
@@ -66,6 +67,18 @@ Director evaluates in this order:
 
 1. Fetch the candidate issue's labels array.
 2. Check for any `trigger:*` label (Priority 1). First match wins.
-3. Check for any automation label: `watcher-auto`, `scout-auto`, `process-improvement` (Priority 2). First match wins.
+3. Check for any automation label: `watcher-auto`, `debug-auto`, `scout-auto`, `process-improvement` (Priority 2). First match wins.
 4. Fall through to `workflow_state` lookup (Priority 3).
 5. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.
+
+---
+
+## Producers
+
+This table is the canonical inventory of automated label producers as of Feature D (GH-1271). New producers should add a row here when they land.
+
+| Label | Producer file | Trigger condition |
+|-------|---------------|-------------------|
+| `watcher-auto` | `plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py` | GCP Cloud Monitoring alert delivered to the configured Pub/Sub subscription |
+| `debug-auto` | `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` (invoked from Watcher heartbeat) | Langfuse error grouping with ≥ N occurrences in window (default: 3) |
+| `process-improvement` | `scripts/dream/reflect.py::emit_process_improvement_issue` | Dream-loop cluster of size ≥ threshold (default: 5) with ≥ N% `tool_use_error` or `verdict: BLOCKED` signals (default: 30%) |

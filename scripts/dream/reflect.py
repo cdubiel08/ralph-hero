@@ -25,12 +25,13 @@ Run via ``uv run reflect.py --since 24h`` (see ``--help`` for options).
 from __future__ import annotations
 
 import argparse
-import json
+import hashlib
 import logging
 import os
 import re
 import sqlite3
 import struct
+import subprocess
 import sys
 import unicodedata
 from dataclasses import dataclass
@@ -65,6 +66,24 @@ PROMPT_CONTENT_CLIP = 800
 # timed out non-deterministically. Override with
 # ``RALPH_DREAM_LLM_TIMEOUT_S`` if your hardware needs longer.
 DEFAULT_LLM_TIMEOUT_S = int(os.environ.get("RALPH_DREAM_LLM_TIMEOUT_S", "180"))
+
+# ---------------------------------------------------------------------------
+# Process-improvement cluster classifier constants (Feature D, GH-1271)
+# ---------------------------------------------------------------------------
+
+# Minimum cluster size to consider for process-improvement issue filing.
+# Clusters smaller than this threshold are skipped regardless of signal
+# fraction. Overridable via RALPH_DREAM_PROCESS_IMPROVEMENT_MIN_CLUSTER.
+DEFAULT_CLUSTER_SIZE_THRESHOLD = int(
+    os.environ.get("RALPH_DREAM_PROCESS_IMPROVEMENT_MIN_CLUSTER", "5")
+)
+
+# Fraction of cluster members that must carry a failure signal
+# (tool_use_error or verdict: BLOCKED) before an issue is filed.
+# Overridable via RALPH_DREAM_PROCESS_IMPROVEMENT_SIGNAL_FRACTION.
+DEFAULT_SIGNAL_FRACTION_THRESHOLD = float(
+    os.environ.get("RALPH_DREAM_PROCESS_IMPROVEMENT_SIGNAL_FRACTION", "0.3")
+)
 
 # Reuse the parent plan's A-Mem prompt header verbatim so the prompt is
 # traceable to the spec. See:
@@ -331,6 +350,202 @@ def cluster_memories(
 
     # Sort by cluster size desc so "biggest theme" comes first in logs.
     return sorted(bucket.values(), key=len, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Process-improvement cluster classifier (Feature D, GH-1271)
+# ---------------------------------------------------------------------------
+
+_VERDICT_BLOCKED_RE = re.compile(r"verdict\s*:\s*BLOCKED", re.IGNORECASE)
+
+
+def detect_signals(memory: RawMemoryRow) -> set[str]:
+    """Return the subset of known failure signals present in a raw memory.
+
+    Signals detected:
+    - ``"tool_use_error"``: case-insensitive substring match in content
+    - ``"verdict_blocked"``: regex match for ``verdict:\\s*BLOCKED``
+
+    Pure function — no I/O, no MCP calls.
+    """
+    found: set[str] = set()
+    content = memory.content or ""
+    if "tool_use_error" in content.lower():
+        found.add("tool_use_error")
+    if _VERDICT_BLOCKED_RE.search(content):
+        found.add("verdict_blocked")
+    return found
+
+
+def classify_clusters(
+    clusters: list[list[RawMemoryRow]],
+    size_threshold: int = DEFAULT_CLUSTER_SIZE_THRESHOLD,
+    signal_fraction_threshold: float = DEFAULT_SIGNAL_FRACTION_THRESHOLD,
+) -> list[dict[str, Any]]:
+    """Return classification dicts for clusters that meet both thresholds.
+
+    A cluster is classified when:
+    1. ``len(cluster) >= size_threshold``
+    2. The fraction of members carrying at least one failure signal
+       (``tool_use_error`` or ``verdict_blocked``) >=
+       ``signal_fraction_threshold``
+
+    Returns a list of dicts with keys:
+    - ``cluster_index``: 0-based index into ``clusters``
+    - ``size``: number of members
+    - ``signal_counts``: ``{"tool_use_error": N, "verdict_blocked": M}``
+    - ``sample_ids``: list of member ids (all members, for dedup hashing)
+    - ``theme_hint``: most common signal name, or "mixed" if tied
+
+    Pure function — no I/O, no MCP calls. A failing caller (e.g. unreachable
+    MCP endpoint) must not affect the reflection pipeline; callers wrap this
+    in try/except and log a warning on failure.
+    """
+    results: list[dict[str, Any]] = []
+    for idx, cluster in enumerate(clusters):
+        if len(cluster) < size_threshold:
+            continue
+
+        signal_counts: dict[str, int] = {"tool_use_error": 0, "verdict_blocked": 0}
+        signalled = 0
+        for mem in cluster:
+            sigs = detect_signals(mem)
+            if sigs:
+                signalled += 1
+            for sig in sigs:
+                signal_counts[sig] = signal_counts.get(sig, 0) + 1
+
+        fraction = signalled / len(cluster)
+        if fraction < signal_fraction_threshold:
+            continue
+
+        # Determine a simple theme hint from the dominant signal
+        if signal_counts["tool_use_error"] > signal_counts["verdict_blocked"]:
+            theme_hint = "tool_use_error"
+        elif signal_counts["verdict_blocked"] > signal_counts["tool_use_error"]:
+            theme_hint = "verdict_blocked"
+        elif signal_counts["tool_use_error"] > 0:
+            theme_hint = "mixed"
+        else:
+            theme_hint = "unknown"
+
+        results.append(
+            {
+                "cluster_index": idx,
+                "size": len(cluster),
+                "signal_counts": signal_counts,
+                "sample_ids": [m.id for m in cluster],
+                "theme_hint": theme_hint,
+            }
+        )
+    return results
+
+
+def emit_process_improvement_issue(
+    classification: dict[str, Any],
+    dry_run: bool = False,
+    repo: str | None = None,
+) -> str | None:
+    """Build and file a ``process-improvement`` draft issue for a classified cluster.
+
+    In dry-run mode, prints the full payload to stdout and returns a truthy
+    string (``"<dry-run>"``). In live mode, calls ``gh issue create`` via
+    subprocess and returns the issue URL string, or ``None`` on failure.
+
+    On any subprocess/CLI failure the function logs a single warning and
+    returns ``None`` — the reflection pipeline keeps running.
+    """
+    size = classification["size"]
+    signal_counts = classification["signal_counts"]
+    sample_ids = classification["sample_ids"]
+    theme_hint = classification["theme_hint"]
+
+    tool_err_n = signal_counts.get("tool_use_error", 0)
+    blocked_n = signal_counts.get("verdict_blocked", 0)
+
+    title = (
+        f"[process-improvement] {theme_hint} cluster "
+        f"(cluster size={size}, blocked={blocked_n}, tool_errors={tool_err_n})"
+    )
+
+    # Deterministic cluster id from sorted member ids
+    cluster_id = hashlib.sha256(
+        "|".join(sorted(sample_ids)).encode()
+    ).hexdigest()[:12]
+
+    dominant = "tool errors" if tool_err_n >= blocked_n else "blocked verdicts"
+    para = (
+        f"Dream-loop detected a recurring failure cluster of {size} memories "
+        f"with {tool_err_n} `tool_use_error` signal(s) and "
+        f"{blocked_n} `verdict: BLOCKED` signal(s). "
+        f"Dominant signal: **{dominant}**. "
+        f"Theme: `{theme_hint}`. "
+        f"Cluster id: `{cluster_id}`."
+    )
+
+    ids_list = "\n".join(f"- {sid}" for sid in sample_ids)
+
+    body = (
+        f"{para}\n"
+        f"\n"
+        f"## Source\n"
+        f"\n"
+        f"- Cluster id: `{cluster_id}`\n"
+        f"- Cluster size: {size}\n"
+        f"- Tool errors: {tool_err_n}\n"
+        f"- Blocked verdicts: {blocked_n}\n"
+        f"\n"
+        f"## Suggested Team: caretakers\n"
+        f"\n"
+        f"<details>\n"
+        f"<summary>Source memory ids ({len(sample_ids)} total)</summary>\n"
+        f"\n"
+        f"{ids_list}\n"
+        f"\n"
+        f"</details>\n"
+    )
+
+    if dry_run:
+        print(f"title: {title}")
+        print("labels: ['process-improvement']")
+        print("body:")
+        print(body)
+        return "<dry-run>"
+
+    cmd = [
+        "gh", "issue", "create",
+        "--title", title,
+        "--body", body,
+        "--label", "process-improvement",
+    ]
+    if repo:
+        cmd += ["--repo", repo]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            log.warning(
+                "gh issue create failed for process-improvement cluster %s "
+                "(rc=%d): %s",
+                cluster_id,
+                result.returncode,
+                result.stderr.strip(),
+            )
+            return None
+        url = result.stdout.strip()
+        return url
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "emit_process_improvement_issue failed for cluster %s: %s",
+            cluster_id,
+            exc,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +975,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "Fetch + cluster + print counts and candidate titles but "
-            "do not call the LLM or write any files."
+            "do not call the LLM or write any files. Also skips "
+            "process-improvement issue creation (classifier runs but "
+            "prints payloads instead of calling gh issue create)."
+        ),
+    )
+    parser.add_argument(
+        "--gh-repo",
+        default=None,
+        help=(
+            "GitHub repo in owner/name format for process-improvement "
+            "issue creation. Defaults to repo inferred by gh CLI."
         ),
     )
     parser.add_argument(
@@ -812,6 +1037,34 @@ def main(argv: list[str] | None = None) -> int:
         ids_preview = ", ".join(m.id for m in cluster[:3])
         extra = "" if len(cluster) <= 3 else f" (+{len(cluster) - 3} more)"
         print(f"  Cluster {i}: size={len(cluster)} members=[{ids_preview}{extra}]")
+
+    # --- Process-improvement classifier (Feature D, GH-1271) ---
+    # Runs AFTER cluster_memories() and BEFORE _iter_reflections().
+    # The classifier is additive: it does not mutate clusters or affect
+    # the reflection-writing path. A failing classifier logs a warning
+    # and continues — the reflection pipeline keeps running.
+    classifications: list[dict[str, Any]] = []
+    try:
+        classifications = classify_clusters(clusters)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("classify_clusters failed (continuing): %s", exc)
+
+    pi_filed = 0
+    for cls in classifications:
+        result = emit_process_improvement_issue(
+            cls,
+            dry_run=args.dry_run,
+            repo=getattr(args, "gh_repo", None),
+        )
+        if result:
+            pi_filed += 1
+            if not args.dry_run:
+                log.info("Filed process-improvement issue: %s", result)
+
+    print(
+        f"Found {len(classifications)} process-improvement candidate(s); "
+        f"filed {pi_filed} issue(s)."
+    )
 
     if args.dry_run:
         print("Dry run; no LLM calls, no files written.")

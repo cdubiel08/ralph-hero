@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.ralph.monitoring-bridge</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-lc</string>
+		<string>cd /Users/dubiel/projects/ralph-hero/plugin/ralph-hero/scripts/monitoring-bridge &amp;&amp; uv run subscribe.py --subscription "$RALPH_MONITORING_SUBSCRIPTION" --project "$GOOGLE_CLOUD_PROJECT"</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>StandardOutPath</key>
+	<string>/tmp/ralph-monitoring-bridge.out</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/ralph-monitoring-bridge.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>
