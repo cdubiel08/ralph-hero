@@ -274,16 +274,16 @@ Ship the env-flag-gated nightly grading + auto-PR loop in a single PR. The work 
 
 #### Automated Verification:
 
-- [ ] `shellcheck plugin/ralph-hero/scripts/cos/self-improve.sh` — no warnings
-- [ ] `shellcheck plugin/ralph-hero/scripts/cos/self-improve-smoke.sh` — no warnings
-- [ ] `plutil -lint plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-self-improve.plist.template` — `OK`
-- [ ] `grep -F "rubric.md" plugin/ralph-hero/skills/cos/system-prompt.md` — exit 0
-- [ ] `grep -F "rubric.md" plugin/ralph-hero/scripts/cos/self-improve.sh` — exit 0
-- [ ] `grep -F "two manual verification" plugin/ralph-hero/scripts/cos/README.md` — exit 0 (case-insensitive: `grep -iF`)
-- [ ] `grep -F "RALPH_COS_SELF_IMPROVE" plugin/ralph-hero/scripts/cos/self-improve.sh` — exit 0
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (regression check — this phase touches no TS but the gate must stay green)
-- [ ] `unset RALPH_COS_SELF_IMPROVE && plugin/ralph-hero/scripts/cos/self-improve.sh; echo $?` — prints `0` (env-gate fast-exit)
-- [ ] `unset RALPH_COS_SELF_IMPROVE && plugin/ralph-hero/scripts/cos/self-improve.sh 2>&1 >/dev/null | grep -F "quarantined"` — exit 0
+- [x] `shellcheck plugin/ralph-hero/scripts/cos/self-improve.sh` — no warnings
+- [x] `shellcheck plugin/ralph-hero/scripts/cos/self-improve-smoke.sh` — no warnings
+- [x] `plutil -lint plugin/ralph-hero/scripts/cos/launchd/com.ralph.cos-self-improve.plist.template` — `OK`
+- [x] `grep -F "rubric.md" plugin/ralph-hero/skills/cos/system-prompt.md` — exit 0
+- [x] `grep -F "rubric.md" plugin/ralph-hero/scripts/cos/self-improve.sh` — exit 0
+- [x] `grep -F "two manual verification" plugin/ralph-hero/scripts/cos/README.md` — exit 0 (case-insensitive: `grep -iF`)
+- [x] `grep -F "RALPH_COS_SELF_IMPROVE" plugin/ralph-hero/scripts/cos/self-improve.sh` — exit 0
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (regression check — this phase touches no TS but the gate must stay green)
+- [x] `unset RALPH_COS_SELF_IMPROVE && plugin/ralph-hero/scripts/cos/self-improve.sh; echo $?` — prints `0` (env-gate fast-exit)
+- [x] `unset RALPH_COS_SELF_IMPROVE && plugin/ralph-hero/scripts/cos/self-improve.sh 2>&1 >/dev/null | grep -F "quarantined"` — exit 0
 
 #### Manual Verification:
 
