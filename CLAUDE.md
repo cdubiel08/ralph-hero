@@ -202,7 +202,7 @@ Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead 
 
 ### Autopilot
 
-`/ralph-hero:autopilot` is a thin wrapper around `/loop /ralph-hero:hero`. The skill body delegates to the built-in `/loop` skill in dynamic mode (model self-paces wakeup cadence via `ScheduleWakeup`) and trusts hero for every per-issue decision including escalation. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`, enforced deterministically by `hooks/scripts/autopilot-enable-gate.sh` (PreToolUse:Skill matcher) — the gate exits 2 with a fixed message if the env var is missing. No state machine, no audit log, no hardcoded delays in autopilot itself; `/loop` and hero own that machinery. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
+`/ralph-hero:autopilot` is a thin wrapper around `/loop /ralph-hero:director`. The skill body delegates to the built-in `/loop` skill in dynamic mode (model self-paces wakeup cadence via `ScheduleWakeup`) and trusts Director for every per-event classification — Director picks the next event from `next_actions`, dispatches the correct team (builders/watchers/caretakers/scouts/memorykeepers) via `Skill()`, and drains the queue end-to-end. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`, enforced deterministically by `hooks/scripts/autopilot-enable-gate.sh` (PreToolUse:Skill matcher) — the gate exits 2 with a fixed message if the env var is missing. No state machine, no audit log, no hardcoded delays in autopilot itself; `/loop` and Director own that machinery. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
 
 ### Activity log + retention
 
