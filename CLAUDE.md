@@ -76,6 +76,40 @@ Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that 
 > **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
 > the complexity-driven tier rules and `RALPH_<AGENT>_MODEL` override pattern.
 
+### Unified Agent System (Director → Teams → Operators)
+
+Epic [#1267](https://github.com/cdubiel08/ralph-hero/issues/1267) wired the per-phase agents above plus the observability skills, dream-loop, and chief-of-staff surfaces into one event-driven pipeline driven from the GitHub Projects V2 board. See [`docs/unified-agent-system.md`](docs/unified-agent-system.md) for the user-facing quickstart and [`thoughts/shared/research/2026-05-17-GH-1267-unified-agent-system-usage-guide.md`](thoughts/shared/research/2026-05-17-GH-1267-unified-agent-system-usage-guide.md) for the implementation deep-dive.
+
+The user-facing surface:
+
+| Concern | Entrypoint |
+|---------|-----------|
+| Dispatch one event | `/ralph-hero:director [--issue NNN]` |
+| Drive the queue end-to-end | `/ralph-hero:autopilot` (requires `RALPH_AUTOPILOT_ENABLE=true`) |
+| Builders team | `/ralph-hero:hero NNN` |
+| Watchers team | `/ralph-hero:watch [--issue NNN]` (heartbeat when no arg) |
+| Caretakers team | `/ralph-hero:caretake [--issue NNN \| --mode hygiene\|report\|trends]` |
+| Scouts team | no skill — `scout-nightly.sh` cron + on-PR comment trigger |
+| Memorykeepers team | manual `dream-now` zsh function |
+| iOS trigger | add `trigger:<team>` label from GitHub mobile app |
+| iOS status | `ralph cos remote` (local LLM) / `ralph cos desk` (Streamlit via Tailscale) |
+| iOS push | ntfy (`RALPH_COS_NTFY_TOPIC`) — fires from `ralph-merge` Step 9c + morning-brief |
+| iOS artifacts | `gdrive-push` — triggered by iOS-mode sentinel `${TMPDIR}/ralph-ios-mode` |
+
+Director classifies each issue in three-priority order: `trigger:<team>` label → automation label (`watcher-auto`/`debug-auto`/`scout-auto`/`process-improvement`) → workflow state. Taxonomy lives at [`plugin/ralph-hero/skills/director/event-classes.md`](plugin/ralph-hero/skills/director/event-classes.md) — adding a new event class is a one-row PR.
+
+Per-team voice and refusals live in `plugin/ralph-hero/skills/<team>/SOUL.md`, loaded into the orchestrator's system prompt by the `load-team-soul.sh` SessionStart hook. SOUL governs voice; `STYLE.md` governs mechanics (file paths, link formats, comment headers).
+
+Heartbeats are user-scheduled (nothing auto-installs):
+- Watcher: `Skill("schedule", "every 15m /ralph-hero:watch")` (override via `RALPH_WATCH_HEARTBEAT_MIN`)
+- Caretaker (×3): `bash plugin/ralph-hero/scripts/caretake/install-schedules.sh`
+- Scout: `/schedule create scout-nightly --cron "0 3 * * *" --script plugin/ralph-hero/scripts/schedule/scout-nightly.sh`
+- Cloud Monitoring bridge (launchd): see [`plugin/ralph-hero/scripts/monitoring-bridge/README.md`](plugin/ralph-hero/scripts/monitoring-bridge/README.md)
+
+Self-healing closure: terminal handlers call `knowledge_record_outcome` (MCP), `outcome-collector.sh` mirrors state transitions to the same SQLite `outcome_events` table, and `scripts/dream/reflect.py` clusters raw memories into `process-improvement` issues when recurring-failure signals exceed thresholds (`RALPH_DREAM_PROCESS_IMPROVEMENT_MIN_CLUSTER`, `RALPH_DREAM_PROCESS_IMPROVEMENT_SIGNAL_FRACTION`).
+
+`sre-fixit` autoremediation no longer takes `Bash`; epic [#1285](https://github.com/cdubiel08/ralph-hero/issues/1285) replaced the regex-allowlist gate with four typed MCP tools (`ralph_hero__sre__scale`, `ralph_hero__sre__rollout_restart`, `ralph_hero__sre__delete_pod`, `ralph_hero__sre__drain`) that use `child_process.execFile()` with `shell: false`.
+
 > `ralph-plan` skips writing a child plan file when invoked with `--parent-plan`
 > and the parent plan contains a phase matching the child by issue number or
 > title. The child receives a `## Plan Reference` comment and advances to
@@ -168,7 +202,7 @@ Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead 
 
 ### Autopilot
 
-`/ralph-hero:autopilot` is a thin wrapper around `/loop /ralph-hero:hero`. The skill body delegates to the built-in `/loop` skill in dynamic mode (model self-paces wakeup cadence via `ScheduleWakeup`) and trusts hero for every per-issue decision including escalation. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`, enforced deterministically by `hooks/scripts/autopilot-enable-gate.sh` (PreToolUse:Skill matcher) — the gate exits 2 with a fixed message if the env var is missing. No state machine, no audit log, no hardcoded delays in autopilot itself; `/loop` and hero own that machinery. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
+`/ralph-hero:autopilot` is a thin wrapper around `/loop /ralph-hero:director`. The skill body delegates to the built-in `/loop` skill in dynamic mode (model self-paces wakeup cadence via `ScheduleWakeup`) and trusts Director for every per-event classification — Director picks the next event from `next_actions`, dispatches the correct team (builders/watchers/caretakers/scouts/memorykeepers) via `Skill()`, and drains the queue end-to-end. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`, enforced deterministically by `hooks/scripts/autopilot-enable-gate.sh` (PreToolUse:Skill matcher) — the gate exits 2 with a fixed message if the env var is missing. No state machine, no audit log, no hardcoded delays in autopilot itself; `/loop` and Director own that machinery. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
 
 ### Activity log + retention
 
