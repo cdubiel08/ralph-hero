@@ -637,13 +637,18 @@ def main(argv: list[str] | None = None) -> int:
                     try:
                         issue_number = int(url.rstrip("/").split("/")[-1])
                     except (ValueError, IndexError):
+                        # Issue was already created and ACKed; only the Routine fire
+                        # is skipped. The structured marker
+                        # `routine_fire_skipped_parse_failure` is grep-able in log
+                        # aggregation. Do NOT increment `failed` — that counter is
+                        # reserved for issue-creation failures and double-counting
+                        # would cause a non-zero exit on a documented non-fatal path.
                         log.error(
                             "Could not parse issue number from URL %r; "
                             "skipping Routine fire (routine_fire_skipped_parse_failure)",
                             url,
                         )
                         issue_number = 0
-                        failed += 1
                     if issue_number:
                         _fire_routine(issue_number, "caretakers", dry_run=False)
             else:
