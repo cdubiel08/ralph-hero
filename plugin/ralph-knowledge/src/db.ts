@@ -430,6 +430,26 @@ export class KnowledgeDB {
     return this.db.prepare(sql).all(...values, limit) as OutcomeEventRow[];
   }
 
+  /**
+   * Return outcome events whose payload JSON contains a matching `query_id`.
+   * Uses SQLite's JSON1 `json_extract()` function (available by default in
+   * better-sqlite3). Rows with malformed payload JSON silently return NULL
+   * from json_extract and are excluded — the desired behavior.
+   */
+  queryOutcomeEventsByQueryId(queryId: string, limit = 50): OutcomeEventRow[] {
+    const sql = `
+      SELECT id, event_type AS eventType, issue_number AS issueNumber, session_id AS sessionId,
+             timestamp, duration_ms AS durationMs, verdict, component_area AS componentArea,
+             estimate, drift_count AS driftCount, model, agent_type AS agentType,
+             iteration_count AS iterationCount, payload
+      FROM outcome_events
+      WHERE json_extract(payload, '$.query_id') = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `;
+    return this.db.prepare(sql).all(queryId, limit) as OutcomeEventRow[];
+  }
+
   aggregateOutcomeEvents(params: OutcomeQueryParams = {}): OutcomeAggregate {
     // Override limit to aggregate over all matching events, not just the caller's limit
     const rows = this.queryOutcomeEvents({ ...params, limit: undefined });

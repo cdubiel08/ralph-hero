@@ -656,10 +656,15 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
       model: z.string().optional().describe("LLM model used (opus, sonnet, haiku)"),
       agent_type: z.string().optional().describe("Agent type (analyst, builder, integrator)"),
       iteration_count: z.number().optional().describe("Number of retry/review cycles"),
+      query_id: z.string().optional().describe("Query ID returned by a prior knowledge_expert call. Stored in payload.query_id for outcome correlation."),
       payload: z.record(z.unknown()).optional().describe("Arbitrary JSON payload"),
     },
     async (args) => {
       try {
+        const mergedPayload: Record<string, unknown> = {
+          ...(args.payload ?? {}),
+          ...(args.query_id !== undefined ? { query_id: args.query_id } : {}),
+        };
         const result = db.insertOutcomeEvent({
           eventType: args.event_type,
           issueNumber: args.issue_number,
@@ -672,7 +677,7 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           model: args.model,
           agentType: args.agent_type,
           iterationCount: args.iteration_count,
-          payload: args.payload as Record<string, unknown>,
+          payload: mergedPayload,
         });
         return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       } catch (e) {
@@ -731,7 +736,6 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
       session_id: z.string().optional().describe("Team/hero session identifier — passes through to the outcome event in Phase 2."),
     },
     async (args) => {
-      // Phase 1: pure retrieval (no outcome write — Phase 2 adds that)
       try {
         const queryId = randomUUID();
         const limit = args.limit ?? 5;
@@ -768,6 +772,27 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           wiki.length === 0 && reflections.length === 0
             ? `No documents found tagged with domain "${args.domain}". Consider tagging existing docs or using a broader domain term.`
             : null;
+
+        // Phase 2: write an outcome_events row per call so per-domain hit rate
+        // is observable from day one via knowledge_query_outcomes({ event_type: 'expert_call' }).
+        db.insertOutcomeEvent({
+          eventType: "expert_call",
+          issueNumber: args.issue_number,
+          sessionId: args.session_id,
+          agentType: "knowledge_expert",
+          payload: {
+            query_id: queryId,
+            domain: args.domain,
+            returned_doc_ids: {
+              wiki: wiki.map((d) => d.id),
+              reflections: reflections.map((d) => d.id),
+            },
+            limit,
+            recency_window_days: recencyWindowDays,
+            path_prefix: args.path_prefix ?? null,
+            warning,
+          },
+        });
 
         const result = {
           query_id: queryId,

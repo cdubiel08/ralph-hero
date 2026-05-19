@@ -1057,4 +1057,130 @@ describe("knowledge_expert", () => {
     const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
     expect(Array.isArray(payload.prior_outcomes)).toBe(true);
   });
+
+  // Phase 2 telemetry tests
+
+  it("writes an expert_call outcome event with payload.query_id on every call", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+
+    // One expert_call event should exist for issue 1306
+    const events = db.queryOutcomeEvents({ issueNumber: 1306, eventType: "expert_call" });
+    expect(events).toHaveLength(1);
+
+    // Payload must carry query_id and domain
+    const evtPayload = JSON.parse(events[0].payload) as Record<string, unknown>;
+    expect(evtPayload.query_id).toBe(payload.query_id);
+    expect(evtPayload.domain).toBe("auth");
+  });
+
+  it("expert_call event payload includes returned_doc_ids with wiki and reflections arrays", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed a wiki doc tagged 'logging'
+    db.upsertDocument({
+      id: "wiki-logging",
+      path: "thoughts/wiki/logging.md",
+      title: "Logging",
+      date: "2026-04-01",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Logging best practices.",
+      memoryTier: "wiki",
+    });
+    db.setTags("wiki-logging", ["logging"]);
+
+    await callTool(server, "knowledge_expert", { domain: "logging", issue_number: 1306 });
+
+    const events = db.queryOutcomeEvents({ issueNumber: 1306, eventType: "expert_call" });
+    expect(events).toHaveLength(1);
+    const evtPayload = JSON.parse(events[0].payload) as Record<string, unknown>;
+    const returnedDocIds = evtPayload.returned_doc_ids as { wiki: string[]; reflections: string[] };
+    expect(returnedDocIds.wiki).toContain("wiki-logging");
+    expect(Array.isArray(returnedDocIds.reflections)).toBe(true);
+  });
+
+  it("knowledge_record_outcome accepts query_id and stores it in payload", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // First call knowledge_expert to get a query_id
+    const expertResult = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+    });
+    expect(expertResult.isError).not.toBe(true);
+    const queryId = (JSON.parse(expertResult.content[0].text) as Record<string, unknown>).query_id as string;
+
+    // Record an outcome correlated to the expert call
+    const recordResult = await callTool(server, "knowledge_record_outcome", {
+      event_type: "phase_completed",
+      issue_number: 1306,
+      query_id: queryId,
+      verdict: "pass",
+    });
+    expect(recordResult.isError).not.toBe(true);
+
+    // Query by query_id: both the expert_call row and the phase_completed row must return
+    const correlated = db.queryOutcomeEventsByQueryId(queryId);
+    expect(correlated).toHaveLength(2);
+
+    // Verify both event types are present
+    const eventTypes = correlated.map((e) => e.eventType);
+    expect(eventTypes).toContain("expert_call");
+    expect(eventTypes).toContain("phase_completed");
+  });
+
+  it("knowledge_record_outcome without query_id still works (backwards compatible)", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // Call without query_id — must not error
+    const result = await callTool(server, "knowledge_record_outcome", {
+      event_type: "research_started",
+      issue_number: 9999,
+      verdict: "pass",
+    });
+    expect(result.isError).not.toBe(true);
+
+    // Event is stored; querying by a random query_id returns nothing
+    const events = db.queryOutcomeEvents({ issueNumber: 9999 });
+    expect(events).toHaveLength(1);
+    const evtPayload = JSON.parse(events[0].payload) as Record<string, unknown>;
+    // query_id should be absent from payload
+    expect(evtPayload.query_id).toBeUndefined();
+  });
+
+  it("queryOutcomeEventsByQueryId returns only events matching the query_id", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // Call knowledge_expert twice — two different query_ids
+    const r1 = await callTool(server, "knowledge_expert", { domain: "auth", issue_number: 1306 });
+    const r2 = await callTool(server, "knowledge_expert", { domain: "caching", issue_number: 1306 });
+    const qid1 = (JSON.parse(r1.content[0].text) as Record<string, unknown>).query_id as string;
+    const qid2 = (JSON.parse(r2.content[0].text) as Record<string, unknown>).query_id as string;
+
+    // Add a correlated outcome for qid1 only
+    await callTool(server, "knowledge_record_outcome", {
+      event_type: "phase_completed",
+      issue_number: 1306,
+      query_id: qid1,
+    });
+
+    const byQid1 = db.queryOutcomeEventsByQueryId(qid1);
+    const byQid2 = db.queryOutcomeEventsByQueryId(qid2);
+
+    // qid1: expert_call + phase_completed = 2
+    expect(byQid1).toHaveLength(2);
+    // qid2: only its expert_call = 1
+    expect(byQid2).toHaveLength(1);
+  });
 });
