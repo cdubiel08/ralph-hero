@@ -215,11 +215,11 @@ Add a `severity == "CRITICAL"` gate to `monitoring-bridge`'s `subscribe.py` that
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `python3 -c "import ast; ast.parse(open('plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py').read())"` — exit 0
-- [ ] `python3 -c "import json; json.load(open('plugin/ralph-hero/scripts/monitoring-bridge/fixtures/sample-alert-critical.json'))"` — exit 0
-- [ ] `bash plugin/ralph-hero/scripts/monitoring-bridge/smoke.sh` — exit 0; all 7 assertions PASS (5 existing + 2 new)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors (sanity check that nothing else broke)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all existing tests pass
+- [x] `python3 -c "import ast; ast.parse(open('plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py').read())"` — exit 0
+- [x] `python3 -c "import json; json.load(open('plugin/ralph-hero/scripts/monitoring-bridge/fixtures/sample-alert-critical.json'))"` — exit 0
+- [x] `bash plugin/ralph-hero/scripts/monitoring-bridge/smoke.sh` — exit 0; all 7 assertions PASS (5 existing + 2 new)
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no TypeScript errors (sanity check that nothing else broke)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all existing tests pass
 
 #### Manual Verification:
 - [ ] Run the documented `RemoteTrigger(...)` setup once in a Claude Code session; confirm the Routine appears in claude.ai → Routines

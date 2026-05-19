@@ -1,0 +1,46 @@
+{
+  "message": {
+    "data": "eyJpbmNpZGVudCI6IHsiaW5jaWRlbnRfaWQiOiAiOTk4ODc3NjYtZGNiYS1mZTk4LTc2NTQtMzIxMDk4ZmVkY2JhIiwgInJlc291cmNlX25hbWUiOiAicHJvamVjdHMvbXktcHJvamVjdC1pZCIsICJyZXNvdXJjZSI6IHsidHlwZSI6ICJjbG91ZHNxbF9kYXRhYmFzZSIsICJsYWJlbHMiOiB7ImRhdGFiYXNlX2lkIjogIm15LXByb2plY3QtaWQ6cHJvZC1kYiIsICJwcm9qZWN0X2lkIjogIm15LXByb2plY3QtaWQifX0sICJtZXRyaWMiOiB7InR5cGUiOiAiY2xvdWRzcWwuZ29vZ2xlYXBpcy5jb20vZGF0YWJhc2UvdXAiLCAiZGlzcGxheU5hbWUiOiAiU2VydmVyIHVwIn0sICJtZXRhZGF0YSI6IHsic3lzdGVtX2xhYmVscyI6IHsibGlua3MiOiBbeyJyZWwiOiAiaHR0cHM6Ly9zY2hlbWFzLmdvb2dsZS5jb20vc2VydmljZS9wb2xpY3kiLCAiaHJlZiI6ICJodHRwczovL2NvbnNvbGUuY2xvdWQuZ29vZ2xlLmNvbS9tb25pdG9yaW5nL2FsZXJ0cG9saWNpZXMvZGV0YWlsLzk4NzY1NDMyMTA5ODc2NTQzMjEwIn1dfX0sICJwb2xpY3lfbmFtZSI6ICJwcm9qZWN0cy8xMjM0NTY3ODkwL2FsZXJ0UG9saWNpZXMvOTg3NjU0MzIxMDk4NzY1NDMyMTAiLCAiY29uZGl0aW9uX25hbWUiOiAiQ3JpdGljYWw6IFByb2R1Y3Rpb24gZGF0YWJhc2UgZG93biIsICJ1cmwiOiAiaHR0cHM6Ly9jb25zb2xlLmNsb3VkLmdvb2dsZS5jb20vbW9uaXRvcmluZy9hbGVydHMvaW5jaWRlbnRzLzk5ODg3NzY2LWRjYmEtZmU5OC03NjU0LTMyMTA5OGZlZGNiYSIsICJzdGFydGVkX2F0IjogMTc0NzQxMDAwMCwgImVuZGVkX2F0IjogbnVsbCwgInN0YXRlIjogIm9wZW4iLCAic2V2ZXJpdHkiOiAiQ1JJVElDQUwiLCAic3VtbWFyeSI6ICJDbG91ZCBTUUwgcHJvZHVjdGlvbiBkYXRhYmFzZSBpcyB1bnJlYWNoYWJsZSJ9LCAidmVyc2lvbiI6ICIxLjIiLCAiYWxlcnRfcG9saWN5X25hbWUiOiAiQ3JpdGljYWw6IFByb2R1Y3Rpb24gZGF0YWJhc2UgZG93biIsICJjb25kaXRpb25fbmFtZSI6ICJDcml0aWNhbDogUHJvZHVjdGlvbiBkYXRhYmFzZSBkb3duIn0=",
+    "messageId": "9876543210987654",
+    "publishTime": "2026-05-19T03:00:00Z"
+  },
+  "subscription": "projects/my-project-id/subscriptions/monitoring-alerts-sub",
+  "_decoded": {
+    "incident": {
+      "incident_id": "99887766-dcba-fe98-7654-321098fedcba",
+      "resource_name": "projects/my-project-id",
+      "resource": {
+        "type": "cloudsql_database",
+        "labels": {
+          "database_id": "my-project-id:prod-db",
+          "project_id": "my-project-id"
+        }
+      },
+      "metric": {
+        "type": "cloudsql.googleapis.com/database/up",
+        "displayName": "Server up"
+      },
+      "metadata": {
+        "system_labels": {
+          "links": [
+            {
+              "rel": "https://schemas.google.com/service/policy",
+              "href": "https://console.cloud.google.com/monitoring/alertpolicies/detail/98765432109876543210"
+            }
+          ]
+        }
+      },
+      "policy_name": "projects/1234567890/alertPolicies/98765432109876543210",
+      "condition_name": "Critical: Production database down",
+      "url": "https://console.cloud.google.com/monitoring/alerts/incidents/99887766-dcba-fe98-7654-321098fedcba",
+      "started_at": 1747410000,
+      "ended_at": null,
+      "state": "open",
+      "severity": "CRITICAL",
+      "summary": "Cloud SQL production database is unreachable"
+    },
+    "version": "1.2",
+    "alert_policy_name": "Critical: Production database down",
+    "condition_name": "Critical: Production database down"
+  }
+}

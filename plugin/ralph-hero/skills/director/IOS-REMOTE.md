@@ -164,6 +164,48 @@ The `--push-drive` / `--no-push-drive` CLI flag always wins over the sentinel an
 
 ---
 
+## 5. External producers (`RemoteTrigger` payload shape)
+
+External services can dispatch Director directly — without adding a
+`trigger:*` label through the GitHub mobile app — by firing a cloud Routine
+via the `gh` CLI or the Claude Code Routines API.
+
+**Payload Director consumes:**
+
+```json
+{
+  "issue_number": <int>,
+  "team": "<team>"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `issue_number` | `int` | GitHub issue number that triggered the dispatch. Director routes the named team to this issue. |
+| `team` | `string` | One of `builders`, `watchers`, `scouts`, `caretakers`, `memorykeepers`. |
+
+**What Director does when a Routine fires:**
+
+1. Sets `DISPATCH_REASON=RemoteTrigger` internally.
+2. Skips taxonomy classification (no `trigger:*` label consumed, no `watcher-auto` / automation-label lookup).
+3. Writes the iOS-mode sentinel at `${TMPDIR:-/tmp}/ralph-ios-mode` — the same sentinel written for `trigger:*` label dispatches. Terminal handlers (e.g., `ralph-merge`) will fire an ntfy push on completion if `RALPH_COS_NTFY_TOPIC` is set.
+4. Dispatches the named team directly with `issue_number` as the context.
+
+**Current real-world producer:**
+
+The `monitoring-bridge` subscriber (`subscribe.py`) fires the
+`ralph-hero-critical-alert` Routine after creating a GitHub Issue for any alert
+with `incident.severity == "CRITICAL"`. See
+[`plugin/ralph-hero/scripts/monitoring-bridge/README.md` § "CRITICAL-alert RemoteTrigger"](../../scripts/monitoring-bridge/README.md#critical-alert-remotetrigger)
+for the one-time setup command and rate-of-fire considerations.
+
+**Opt-in:** The Routine must be created once by the user before any fires can
+occur. `subscribe.py` does not auto-create the Routine — it only calls
+`gh routine fire` after the user has run the `RemoteTrigger(...)` setup
+command documented in the monitoring-bridge README.
+
+---
+
 ## Troubleshooting
 
 **No ntfy push arrived after a merge**
@@ -225,3 +267,4 @@ The `--push-drive` / `--no-push-drive` CLI flag always wins over the sentinel an
 - [cos README](../../scripts/cos/README.md) — five-team rollup, model roles, write gate
 - [cos Phase 3 plan](../../../../thoughts/shared/plans/2026-05-15-GH-1255-cos-phase3-morning-brief-ntfy.md) — underlying ntfy convention (topic env var, graceful degradation pattern)
 - [Feature H implementation plan](../../../../thoughts/shared/plans/2026-05-16-GH-1275-ios-remote-integration.md) — full spec for this feature
+- [monitoring-bridge README § CRITICAL-alert RemoteTrigger](../../scripts/monitoring-bridge/README.md#critical-alert-remotetrigger) — first real-world external producer using the Routine payload shape
