@@ -5,7 +5,7 @@ import { z } from "zod";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { KnowledgeDB } from "./db.js";
 import { FtsSearch } from "./search.js";
 import { VectorSearch } from "./vector-search.js";
@@ -713,6 +713,72 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
         }
         const rows = db.queryOutcomeEvents(params);
         return { content: [{ type: "text" as const, text: JSON.stringify(rows, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    },
+  );
+
+  server.tool(
+    "knowledge_expert",
+    "Return a domain-keyed memory bundle: curated wiki entries + recent reflections + prior outcomes for a named domain. Use to specialize a sub-agent's context for a topic before it starts work.",
+    {
+      domain: z.string().describe("Domain tag (e.g., 'auth', 'memory-tiers', 'ralph-knowledge'). Matches against frontmatter tags; open string."),
+      issue_number: z.number().describe("GitHub issue number this call is being made on behalf of (required for outcome correlation)."),
+      limit: z.number().optional().default(5).describe("Max entries per bucket (wiki, reflections, outcomes). Default 5."),
+      recency_window_days: z.number().optional().default(30).describe("Reflection age cutoff in days. Default 30."),
+      path_prefix: z.string().optional().describe("Optional secondary filter: only return docs whose path starts with this prefix (e.g., 'thoughts/shared/'). Tags are the primary signal."),
+      session_id: z.string().optional().describe("Team/hero session identifier — passes through to the outcome event in Phase 2."),
+    },
+    async (args) => {
+      // Phase 1: pure retrieval (no outcome write — Phase 2 adds that)
+      try {
+        const queryId = randomUUID();
+        const limit = args.limit ?? 5;
+        const recencyWindowDays = args.recency_window_days ?? 30;
+
+        const wiki = db.queryByDomain({
+          domain: args.domain,
+          memoryTier: "wiki",
+          limit,
+          pathPrefix: args.path_prefix,
+        });
+
+        const sinceIso = new Date(Date.now() - recencyWindowDays * 86_400_000).toISOString();
+        const reflections = db.queryByDomain({
+          domain: args.domain,
+          memoryTier: "reflection",
+          limit,
+          pathPrefix: args.path_prefix,
+          sinceDate: sinceIso,
+        });
+
+        const priorOutcomes = db.queryOutcomeEvents({
+          limit,
+        }).filter((evt) => {
+          try {
+            const p = JSON.parse(evt.payload ?? "{}") as Record<string, unknown>;
+            return p.domain === args.domain;
+          } catch {
+            return false;
+          }
+        });
+
+        const warning =
+          wiki.length === 0 && reflections.length === 0
+            ? `No documents found tagged with domain "${args.domain}". Consider tagging existing docs or using a broader domain term.`
+            : null;
+
+        const result = {
+          query_id: queryId,
+          domain: args.domain,
+          wiki,
+          reflections,
+          prior_outcomes: priorOutcomes,
+          warning,
+        };
+
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       } catch (e) {
         return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
       }

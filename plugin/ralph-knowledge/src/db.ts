@@ -304,6 +304,43 @@ export class KnowledgeDB {
     return (this.db.prepare("SELECT tag FROM tags WHERE doc_id = ? ORDER BY tag").all(docId) as Array<{ tag: string }>).map(r => r.tag);
   }
 
+  /**
+   * Return documents matching a domain tag and memory tier.
+   * Joins documents ↔ tags so the domain (frontmatter tag) is the primary
+   * signal. Optional pathPrefix and sinceDate narrow further.
+   */
+  queryByDomain(params: {
+    domain: string;
+    memoryTier: "wiki" | "reflection" | "doc" | "raw";
+    limit: number;
+    pathPrefix?: string;
+    sinceDate?: string;
+  }): DocumentRow[] {
+    const conditions: string[] = ["t.tag = ?", "d.memory_tier = ?"];
+    const values: unknown[] = [params.domain, params.memoryTier];
+
+    if (params.pathPrefix !== undefined) {
+      conditions.push("d.path LIKE ?");
+      values.push(`${params.pathPrefix}%`);
+    }
+    if (params.sinceDate !== undefined) {
+      conditions.push("d.date >= ?");
+      values.push(params.sinceDate);
+    }
+
+    const sql = `
+      SELECT DISTINCT d.id, d.path, d.title, d.date, d.type, d.status,
+             d.github_issue AS githubIssue, d.content, d.is_stub AS isStub
+      FROM documents d
+      JOIN tags t ON t.doc_id = d.id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY d.date DESC NULLS LAST
+      LIMIT ?
+    `;
+
+    return this.db.prepare(sql).all(...values, params.limit) as DocumentRow[];
+  }
+
   addRelationship(sourceId: string, targetId: string, type: string, context?: string): void {
     this.db.prepare("INSERT OR IGNORE INTO relationships (source_id, target_id, type, context) VALUES (?, ?, ?, ?)").run(sourceId, targetId, type, context ?? null);
   }

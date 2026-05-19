@@ -894,3 +894,167 @@ describe("knowledge_search rerank parameter (GH-926)", () => {
     }
   });
 });
+
+describe("knowledge_expert", () => {
+  it("is registered alongside knowledge_recall and knowledge_search", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const registered = (server as unknown as Record<string, unknown>)
+      ._registeredTools as Record<string, unknown>;
+    expect(registered).toHaveProperty("knowledge_expert");
+  });
+
+  it("returns empty bundle + warning when no docs match the domain", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "nonexistent-domain",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(payload.wiki).toEqual([]);
+    expect(payload.reflections).toEqual([]);
+    expect(payload.warning).toMatch(/No documents found/);
+    expect(typeof payload.query_id).toBe("string");
+    expect((payload.query_id as string)).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("returns wiki + reflection buckets filtered by domain tag", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed: one wiki doc and one reflection, both tagged 'auth'
+    db.upsertDocument({
+      id: "wiki-auth",
+      path: "thoughts/wiki/auth.md",
+      title: "Auth",
+      date: "2026-04-01",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Authentication best practices.",
+      memoryTier: "wiki",
+    });
+    db.upsertDocument({
+      id: "refl-auth",
+      path: "thoughts/dream-memories/2026/05/refl.md",
+      title: "Auth reflection",
+      date: "2026-05-10",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Reflection on auth patterns observed this week.",
+      memoryTier: "reflection",
+    });
+    db.setTags("wiki-auth", ["auth"]);
+    db.setTags("refl-auth", ["auth", "dream"]);
+
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect((payload.wiki as unknown[]).length).toBe(1);
+    expect((payload.reflections as unknown[]).length).toBe(1);
+    expect(payload.warning).toBeNull();
+  });
+
+  it("does not return docs from other tiers in the wiki bucket", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed a doc-tier and a raw-tier document both tagged 'search'
+    db.upsertDocument({
+      id: "doc-search",
+      path: "thoughts/research/search.md",
+      title: "Search doc",
+      date: "2026-04-01",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Research notes on search.",
+      memoryTier: "doc",
+    });
+    db.upsertDocument({
+      id: "raw-search",
+      path: "thoughts/dream-memories/raw.md",
+      title: "Search raw",
+      date: "2026-04-02",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Raw memory about search.",
+      memoryTier: "raw",
+    });
+    db.setTags("doc-search", ["search"]);
+    db.setTags("raw-search", ["search"]);
+
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "search",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    // Neither doc nor raw tier should appear in wiki or reflections
+    expect((payload.wiki as unknown[]).length).toBe(0);
+    expect((payload.reflections as unknown[]).length).toBe(0);
+    expect(payload.warning).toMatch(/No documents found/);
+  });
+
+  it("respects recency_window_days for reflections", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed an old reflection (100 days ago) — should be excluded with a 7-day window
+    const oldDate = new Date(Date.now() - 100 * 86_400_000).toISOString().slice(0, 10);
+    db.upsertDocument({
+      id: "refl-old",
+      path: "thoughts/dream-memories/old.md",
+      title: "Old reflection",
+      date: oldDate,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Old reflection about caching.",
+      memoryTier: "reflection",
+    });
+    // Seed a recent reflection
+    const recentDate = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+    db.upsertDocument({
+      id: "refl-recent",
+      path: "thoughts/dream-memories/recent.md",
+      title: "Recent reflection",
+      date: recentDate,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Recent reflection about caching.",
+      memoryTier: "reflection",
+    });
+    db.setTags("refl-old", ["caching"]);
+    db.setTags("refl-recent", ["caching"]);
+
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "caching",
+      issue_number: 1306,
+      recency_window_days: 7,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    const reflections = payload.reflections as Array<{ id: string }>;
+    const ids = reflections.map((r) => r.id);
+    expect(ids).toContain("refl-recent");
+    expect(ids).not.toContain("refl-old");
+  });
+
+  it("prior_outcomes field is an array (empty when no matching outcomes)", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "deployment",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(Array.isArray(payload.prior_outcomes)).toBe(true);
+  });
+});
