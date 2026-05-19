@@ -111,10 +111,10 @@ Add `PushNotification` calls at the three terminal-state markers identified in C
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `PushNotification` appears in the `allowed-tools` list (frontmatter, alphabetical or grouped with `Bash`-class tools)
-  - [ ] Inside Step 9c, immediately after the existing `bash ".../push-on-completion.sh" ...` invocation, a `PushNotification` call is documented with `title="Merged #${issue_number}"` and `body="${PR_TITLE} (${PR_URL})"` truncated to fit the body cap
-  - [ ] The skill body includes a one-line comment noting `PushNotification` no-ops gracefully on unpaired Remote Control or non-Anthropic-API routing
-  - [ ] The existing ntfy bash invocation is unchanged — both fire
+  - [x] `PushNotification` appears in the `allowed-tools` list (frontmatter, alphabetical or grouped with `Bash`-class tools)
+  - [x] Inside Step 9c, immediately after the existing `bash ".../push-on-completion.sh" ...` invocation, a `PushNotification` call is documented with `title="Merged #${issue_number}"` and `body="${PR_TITLE} (${PR_URL})"` truncated to fit the body cap
+  - [x] The skill body includes a one-line comment noting `PushNotification` no-ops gracefully on unpaired Remote Control or non-Anthropic-API routing
+  - [x] The existing ntfy bash invocation is unchanged — both fire
 
 #### Task 1.2: Add `PushNotification` to `ralph-unblock` allowlist and post-comment step
 - **files**: `plugin/ralph-hero/skills/ralph-unblock/SKILL.md` (modify)
@@ -122,10 +122,10 @@ Add `PushNotification` calls at the three terminal-state markers identified in C
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] `PushNotification` appears in the `allowed-tools` list (frontmatter)
-  - [ ] After the step that posts the `## Unblock Request` comment (currently Step 4 per skill body), a `PushNotification(title="Human Needed #${issue_number}", body="<issue title> — <issue URL>")` call is documented
-  - [ ] The skill body notes that failure of `PushNotification` does NOT fail the unblock skill (best-effort; mirrors the `|| true` convention from `ralph-merge` Step 9c)
-  - [ ] No state mutation is added — the skill still does NOT call `save_issue` (preserves the `## Unblock Request`-only contract)
+  - [x] `PushNotification` appears in the `allowed-tools` list (frontmatter)
+  - [x] After the step that posts the `## Unblock Request` comment (currently Step 4 per skill body), a `PushNotification(title="Human Needed #${issue_number}", body="<issue title> — <issue URL>")` call is documented
+  - [x] The skill body notes that failure of `PushNotification` does NOT fail the unblock skill (best-effort; mirrors the `|| true` convention from `ralph-merge` Step 9c)
+  - [x] No state mutation is added — the skill still does NOT call `save_issue` (preserves the `## Unblock Request`-only contract)
 
 #### Task 1.3: Add `PushNotification` to `caretake` allowlist
 - **files**: `plugin/ralph-hero/skills/caretake/SKILL.md` (modify)
@@ -133,9 +133,9 @@ Add `PushNotification` calls at the three terminal-state markers identified in C
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] `PushNotification` appears in the `allowed-tools` list (frontmatter)
-  - [ ] A one-paragraph note in the skill body documents that the actual user-visible Human Needed notification fires from `ralph-unblock` (Task 1.2), so caretake does not need to fire its own — the allowlist addition exists to permit caretake to fire `PushNotification` in future modes (e.g., a future Heartbeat-mode that surfaces hygiene findings)
-  - [ ] No new `PushNotification` call sites in caretake's body for this phase
+  - [x] `PushNotification` appears in the `allowed-tools` list (frontmatter)
+  - [x] A one-paragraph note in the skill body documents that the actual user-visible Human Needed notification fires from `ralph-unblock` (Task 1.2), so caretake does not need to fire its own — the allowlist addition exists to permit caretake to fire `PushNotification` in future modes (e.g., a future Heartbeat-mode that surfaces hygiene findings)
+  - [x] No new `PushNotification` call sites in caretake's body for this phase
 
 #### Task 1.4: Add `PushNotification` to `hero` allowlist and failure terminal
 - **files**: `plugin/ralph-hero/skills/hero/SKILL.md` (modify)
@@ -143,18 +143,18 @@ Add `PushNotification` calls at the three terminal-state markers identified in C
 - **complexity**: low
 - **depends_on**: [1.3]
 - **acceptance**:
-  - [ ] `PushNotification` appears in the `allowed-tools` list (frontmatter)
-  - [ ] At the `__ESCALATE__` transition path (currently at line ~449), immediately before `STOP the hero loop and report the BLOCKED reason`, a `PushNotification(title="Failed #${issue_number}", body="${reason} — ${issue_url}")` call is added
-  - [ ] The skill body notes that `PushNotification` failure does NOT block the escalation transition (best-effort; the `save_issue` call to move the issue to `Human Needed` always runs first)
-  - [ ] The fire-and-stop order is preserved: `save_issue(__ESCALATE__)` → `PushNotification(...)` → STOP
+  - [x] `PushNotification` appears in the `allowed-tools` list (frontmatter)
+  - [x] At the `__ESCALATE__` transition path (currently at line ~449), immediately before `STOP the hero loop and report the BLOCKED reason`, a `PushNotification(title="Failed #${issue_number}", body="${reason} — ${issue_url}")` call is added
+  - [x] The skill body notes that `PushNotification` failure does NOT block the escalation transition (best-effort; the `save_issue` call to move the issue to `Human Needed` always runs first)
+  - [x] The fire-and-stop order is preserved: `save_issue(__ESCALATE__)` → `PushNotification(...)` → STOP
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `git diff --stat main..` shows exactly four files modified: `skills/ralph-merge/SKILL.md`, `skills/ralph-unblock/SKILL.md`, `skills/caretake/SKILL.md`, `skills/hero/SKILL.md`
-- [ ] `grep -c "PushNotification" plugin/ralph-hero/skills/ralph-merge/SKILL.md plugin/ralph-hero/skills/ralph-unblock/SKILL.md plugin/ralph-hero/skills/caretake/SKILL.md plugin/ralph-hero/skills/hero/SKILL.md` returns at least 2 per file (1 allowlist line + 1 call site or doc reference)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check that no inadvertent MCP code changes broke the build)
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (no behavior change expected; this is a regression guard)
+- [x] `git diff --stat main..` shows exactly four files modified: `skills/ralph-merge/SKILL.md`, `skills/ralph-unblock/SKILL.md`, `skills/caretake/SKILL.md`, `skills/hero/SKILL.md`
+- [x] `grep -c "PushNotification" plugin/ralph-hero/skills/ralph-merge/SKILL.md plugin/ralph-hero/skills/ralph-unblock/SKILL.md plugin/ralph-hero/skills/caretake/SKILL.md plugin/ralph-hero/skills/hero/SKILL.md` returns at least 2 per file (1 allowlist line + 1 call site or doc reference)
+- [x] `cd plugin/ralph-hero/mcp-server && npm run build` — no errors (sanity check that no inadvertent MCP code changes broke the build)
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` — all passing (no behavior change expected; this is a regression guard)
 
 #### Manual Verification:
 - [ ] Re-load Claude Code and confirm each of the four skills shows `PushNotification` as an allowed tool when invoked (no permission prompt)
