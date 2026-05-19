@@ -110,9 +110,9 @@ def normalise_alert(raw_message: dict[str, Any]) -> dict[str, Any]:
           "publishTime": "..."
         }
 
-    Returns a dict with ``title``, ``labels``, ``body``, and ``policy_id``.
-    On any parse error the function returns a best-effort payload rather than
-    raising — downstream idempotency checks will de-dup duplicates.
+    Returns a dict with ``title``, ``labels``, ``body``, ``policy_id``, and
+    ``severity``. On any parse error the function returns a best-effort payload
+    rather than raising — downstream idempotency checks will de-dup duplicates.
     """
     # Decode the base64 data field
     data_b64 = raw_message.get("data", "")
@@ -137,6 +137,10 @@ def normalise_alert(raw_message: dict[str, Any]) -> dict[str, Any]:
         incident.get("resource", {}).get("labels", {}).get("project_id", "")
         or incident.get("resource_name", "").replace("projects/", "")
     )
+    # Severity field from the Cloud Monitoring incident payload.
+    # Missing or non-string values are normalised to "" — never default to
+    # "CRITICAL" so the gate below is always a strict opt-in.
+    severity: str = incident.get("severity", "") or ""
 
     # iOS-friendly title: prefix + condition name (short, scannable)
     title = f"[gcp-alert] {condition_name}"
@@ -185,6 +189,7 @@ def normalise_alert(raw_message: dict[str, Any]) -> dict[str, Any]:
         "labels": ["watcher-auto"],
         "body": body,
         "policy_id": policy_id,
+        "severity": severity,
     }
 
 
@@ -273,6 +278,78 @@ def _create_issue(
     except Exception as exc:  # noqa: BLE001
         log.error("Issue creation failed: %s", exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# RemoteTrigger producer — fires a cloud Routine for CRITICAL-severity alerts
+# ---------------------------------------------------------------------------
+
+
+def _fire_routine(issue_number: int, team: str, *, dry_run: bool) -> bool:
+    """Fire the ``ralph-hero-critical-alert`` cloud Routine via ``gh routine fire``.
+
+    In dry-run mode, prints ``[would-fire-routine] issue=<N> team=<team>`` to
+    stdout and returns True without invoking ``subprocess``.
+
+    In live mode, invokes ``gh routine fire ralph-hero-critical-alert`` with the
+    ``{issue_number, team}`` payload. On success logs at INFO and returns True.
+    On any failure (non-zero returncode, timeout, unexpected exception) logs at
+    WARNING (not ERROR — the GitHub Issue was already created, so the worst case
+    is "autopilot picks it up on the next tick") and returns False. The relay
+    does not retry on failure.
+
+    Args:
+        issue_number: GitHub issue number extracted from the freshly-created
+            issue URL. Use 0 as a placeholder in dry-run mode.
+        team: The Director team to dispatch (e.g. ``"caretakers"``).
+        dry_run: If True, print the would-fire marker and return without
+            executing ``gh``.
+
+    Returns:
+        True on success (or dry-run), False on any live-mode failure.
+    """
+    if dry_run:
+        print(f"[would-fire-routine] issue={issue_number} team={team}")
+        return True
+
+    json_payload = json.dumps({"issue_number": issue_number, "team": team})
+    cmd = [
+        "gh", "routine", "fire", "ralph-hero-critical-alert",
+        "--data", json_payload,
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            log.info(
+                "Fired Routine ralph-hero-critical-alert for issue #%d",
+                issue_number,
+            )
+            return True
+        log.warning(
+            "gh routine fire failed (rc=%d): %s",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return False
+    except subprocess.TimeoutExpired:
+        log.warning(
+            "gh routine fire timed out for issue #%d — "
+            "autopilot will pick up the issue on the next tick",
+            issue_number,
+        )
+        return False
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "gh routine fire raised an unexpected error for issue #%d: %s",
+            issue_number,
+            exc,
+        )
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +596,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"policy_id: {policy_id}")
                 print("body:")
                 print(payload["body"])
+                # Gate: would the Routine fire for this message?
+                if payload.get("severity") == "CRITICAL":
+                    _fire_routine(0, "caretakers", dry_run=True)
                 created += 1
                 continue
 
@@ -538,6 +618,22 @@ def main(argv: list[str] | None = None) -> int:
                 created += 1
                 # ACK only after successful issue creation (at-least-once delivery)
                 _ack_message(subscriber, subscription_path, ack_ids[i - 1])
+                # RemoteTrigger gate: fire the cloud Routine for CRITICAL alerts.
+                # Failure is non-fatal — the issue is already created and autopilot
+                # will pick it up on the next tick. The created/failed counters are
+                # NOT adjusted on Routine failure.
+                if payload.get("severity") == "CRITICAL":
+                    try:
+                        issue_number = int(url.rstrip("/").split("/")[-1])
+                    except (ValueError, IndexError):
+                        log.warning(
+                            "Could not parse issue number from URL %r; "
+                            "skipping Routine fire",
+                            url,
+                        )
+                        issue_number = 0
+                    if issue_number:
+                        _fire_routine(issue_number, "caretakers", dry_run=False)
             else:
                 log.error("Failed to create issue for policy_id=%s", policy_id)
                 failed += 1

@@ -138,6 +138,62 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 6. CRITICAL fixture: dry-run prints [would-fire-routine] marker
+# ---------------------------------------------------------------------------
+CRITICAL_FIXTURE="${SCRIPT_DIR}/fixtures/sample-alert-critical.json"
+if [[ -f "$SUBSCRIBE_PY" && -f "$CRITICAL_FIXTURE" ]]; then
+    CRITICAL_DRY_RUN_OUTPUT=$(
+        cd "$SCRIPT_DIR" &&
+        python3 subscribe.py \
+            --dry-run \
+            --subscription dummy \
+            --project dummy \
+            --fixture fixtures/sample-alert-critical.json \
+            2>/dev/null
+    ) || {
+        _fail "subscribe.py --dry-run (CRITICAL fixture) exited non-zero"
+        CRITICAL_DRY_RUN_OUTPUT=""
+    }
+
+    if [[ -n "$CRITICAL_DRY_RUN_OUTPUT" ]]; then
+        if echo "$CRITICAL_DRY_RUN_OUTPUT" | grep -qF "[would-fire-routine] issue=0 team=caretakers"; then
+            _pass "CRITICAL dry-run prints: [would-fire-routine] issue=0 team=caretakers"
+        else
+            _fail "CRITICAL dry-run MISSING: [would-fire-routine] issue=0 team=caretakers"
+        fi
+    fi
+else
+    _fail "Skipping CRITICAL fire assertion (subscribe.py or CRITICAL fixture missing)"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Non-CRITICAL fixture: dry-run does NOT print [would-fire-routine]
+# ---------------------------------------------------------------------------
+if [[ -f "$SUBSCRIBE_PY" && -f "$FIXTURE" ]]; then
+    NON_CRITICAL_DRY_RUN_OUTPUT=$(
+        cd "$SCRIPT_DIR" &&
+        python3 subscribe.py \
+            --dry-run \
+            --subscription dummy \
+            --project dummy \
+            2>/dev/null
+    ) || {
+        _fail "subscribe.py --dry-run (non-CRITICAL fixture) exited non-zero"
+        NON_CRITICAL_DRY_RUN_OUTPUT=""
+    }
+
+    if [[ -n "$NON_CRITICAL_DRY_RUN_OUTPUT" ]]; then
+        if echo "$NON_CRITICAL_DRY_RUN_OUTPUT" | grep -qF "[would-fire-routine]"; then
+            _fail "Non-CRITICAL dry-run unexpectedly contains: [would-fire-routine]"
+        else
+            _pass "Non-CRITICAL dry-run does NOT contain: [would-fire-routine]"
+        fi
+    fi
+else
+    _fail "Skipping non-CRITICAL no-fire assertion (subscribe.py or fixture missing)"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

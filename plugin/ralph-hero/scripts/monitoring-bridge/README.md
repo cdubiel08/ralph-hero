@@ -94,6 +94,57 @@ prints the normalised issue payload to stdout without creating any GitHub
 issues. Use this to verify the normalisation logic and the `<!-- gcp-policy:
 ... -->` marker shape before enabling the live launchd agent.
 
+## CRITICAL-alert RemoteTrigger
+
+When `subscribe.py` creates a GitHub Issue for an alert with
+`incident.severity == "CRITICAL"`, it immediately fires a cloud Routine via
+`gh routine fire ralph-hero-critical-alert`. Director receives the Routine
+payload, skips taxonomy classification, and dispatches the caretakers team
+directly — routing the alert to triage in seconds rather than waiting for the
+next autopilot tick.
+
+**Which alerts fire the Routine:** Only alerts where `incident.severity` is
+exactly `"CRITICAL"` (case-sensitive). All other severity values — including
+`WARNING`, `ERROR`, or missing — create a GitHub Issue only.
+
+**One-time setup (user runs once in a Claude Code session):**
+
+```
+RemoteTrigger(
+  name: "ralph-hero-critical-alert",
+  prompt: "Run /ralph-hero:director — the harness passes issue_number and team via tool input.",
+  trigger: {type: "api"},
+  model: "sonnet",
+  repos: ["cdubiel08/ralph-hero"]
+)
+```
+
+After creating the Routine, confirm it appears in claude.ai → Routines. No
+further configuration is needed — `subscribe.py` calls
+`gh routine fire ralph-hero-critical-alert` automatically.
+
+**Payload shape Director consumes:**
+
+```json
+{"issue_number": <int>, "team": "caretakers"}
+```
+
+See [`plugin/ralph-hero/skills/director/IOS-REMOTE.md` § "External producers"](../../skills/director/IOS-REMOTE.md#5-external-producers-remotetrigger-payload-shape) for the full payload contract.
+
+**Failure mode:** Routine fire failure is non-fatal. If `gh routine fire`
+returns a non-zero exit code, times out, or raises any exception, `subscribe.py`
+logs a WARNING and continues — the GitHub Issue was already created and
+acknowledged, so the worst-case outcome is "autopilot picks it up on the next
+tick" (matching today's default behavior). The `created`/`failed` counters are
+not adjusted on Routine failure.
+
+**Rate-of-fire risk:** Every CRITICAL alert fires one Routine invocation, which
+consumes Claude Code subscription usage. A spike in CRITICAL alerts (e.g., a
+misconfigured alert policy) can fire many Routines in quick succession. A
+per-day rate cap is deferred to a follow-up issue; the env var name
+`RALPH_MONITORING_CRITICAL_CAP_PER_DAY` is reserved for that future S-sized
+change.
+
 ## Relation to gcp-incident-triage
 
 This subscriber is **not** a replacement for the `gcp-incident-triage` skill.
