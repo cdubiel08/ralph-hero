@@ -12,7 +12,8 @@ Design constraints (from Feature D shared constraints):
 - Idempotency: pre-flight checks for an open issue with the same
   policy-id marker via ``gh issue list``; skips creation if found.
 - iOS-friendly issue body: one-paragraph summary, ``## Source``,
-  ``## Suggested Team: watchers``, full alert JSON in ``<details>``.
+  ``## Suggested Team: watchers`` (or ``caretakers`` for CRITICAL-severity
+  alerts), full alert JSON in ``<details>``.
 
 Run via ``uv run subscribe.py --help`` for options.
 """
@@ -158,6 +159,10 @@ def normalise_alert(raw_message: dict[str, Any]) -> dict[str, Any]:
     # Full alert JSON in a collapsed <details> block
     full_json = json.dumps(alert, indent=2, default=str)
 
+    # Severity-aware team routing: CRITICAL alerts go directly to caretakers,
+    # all other severities (WARNING, ERROR, or missing) go to watchers.
+    suggested_team = "caretakers" if severity == "CRITICAL" else "watchers"
+
     body = (
         f"{para}\n"
         f"\n"
@@ -170,7 +175,7 @@ def normalise_alert(raw_message: dict[str, Any]) -> dict[str, Any]:
         f"\n"
         f"**Policy ID:** `gcp-policy/{policy_id}`\n"
         f"\n"
-        f"## Suggested Team: watchers\n"
+        f"## Suggested Team: {suggested_team}\n"
         f"\n"
         f"<!-- gcp-policy: {policy_id} -->\n"
         f"\n"
@@ -300,7 +305,13 @@ def _fire_routine(issue_number: int, team: str, *, dry_run: bool) -> bool:
 
     Args:
         issue_number: GitHub issue number extracted from the freshly-created
-            issue URL. Use 0 as a placeholder in dry-run mode.
+            issue URL. Use ``0`` as a placeholder in dry-run mode (the
+            ``[would-fire-routine]`` output line renders ``issue=0``). Callers
+            MAY also use ``0`` as a "do not fire" sentinel in live mode: the
+            ``if issue_number:`` guard at the call site treats ``0`` as falsy
+            and skips the live ``gh routine fire`` invocation entirely. This
+            pattern is used when URL parsing fails and the real issue number
+            cannot be determined.
         team: The Director team to dispatch (e.g. ``"caretakers"``).
         dry_run: If True, print the would-fire marker and return without
             executing ``gh``.
@@ -626,12 +637,13 @@ def main(argv: list[str] | None = None) -> int:
                     try:
                         issue_number = int(url.rstrip("/").split("/")[-1])
                     except (ValueError, IndexError):
-                        log.warning(
+                        log.error(
                             "Could not parse issue number from URL %r; "
-                            "skipping Routine fire",
+                            "skipping Routine fire (routine_fire_skipped_parse_failure)",
                             url,
                         )
                         issue_number = 0
+                        failed += 1
                     if issue_number:
                         _fire_routine(issue_number, "caretakers", dry_run=False)
             else:

@@ -13,7 +13,7 @@
 #        - gcp-policy/       (plain-text marker, indexed by GitHub search)
 #        - [gcp-alert]
 #        - ## Source
-#        - ## Suggested Team: watchers
+#        - ## Suggested Team: watchers  (non-CRITICAL fixture; CRITICAL emits caretakers)
 #
 # Usage (from repo root):
 #   bash plugin/ralph-hero/scripts/monitoring-bridge/smoke.sh
@@ -161,6 +161,13 @@ if [[ -f "$SUBSCRIBE_PY" && -f "$CRITICAL_FIXTURE" ]]; then
         else
             _fail "CRITICAL dry-run MISSING: [would-fire-routine] issue=0 team=caretakers"
         fi
+        if echo "$CRITICAL_DRY_RUN_OUTPUT" | grep -qF "## Suggested Team: caretakers"; then
+            _pass "CRITICAL dry-run body contains: ## Suggested Team: caretakers"
+        else
+            _fail "CRITICAL dry-run body MISSING: ## Suggested Team: caretakers"
+        fi
+    else
+        _fail "Test 6 produced empty output — silent skip indicates broken dry-run path"
     fi
 else
     _fail "Skipping CRITICAL fire assertion (subscribe.py or CRITICAL fixture missing)"
@@ -188,6 +195,8 @@ if [[ -f "$SUBSCRIBE_PY" && -f "$FIXTURE" ]]; then
         else
             _pass "Non-CRITICAL dry-run does NOT contain: [would-fire-routine]"
         fi
+    else
+        _fail "Test 7 produced empty output — silent skip indicates broken dry-run path"
     fi
 else
     _fail "Skipping non-CRITICAL no-fire assertion (subscribe.py or fixture missing)"

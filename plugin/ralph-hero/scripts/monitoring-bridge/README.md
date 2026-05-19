@@ -25,6 +25,12 @@ script is the producer side.
    --search`). Duplicate alerts are skipped.
 4. On successful creation, the Pub/Sub message is acknowledged so it is not
    re-delivered.
+5. If `incident.severity == "CRITICAL"`, `gh routine fire
+   ralph-hero-critical-alert` is invoked immediately after ACK with the new
+   issue number and `team=caretakers`. Routine failure is non-fatal — the
+   issue was already created and autopilot will pick it up on the next tick.
+   See [## CRITICAL-alert RemoteTrigger](#critical-alert-remotetrigger) for
+   one-time setup and failure-mode details.
 
 No LLM calls are made. The mapping from alert fields to issue fields is
 deterministic.
@@ -53,6 +59,7 @@ uv sync
 |----------|----------|-------------|
 | `RALPH_MONITORING_SUBSCRIPTION` | Yes | Pub/Sub subscription name or full resource path |
 | `GOOGLE_CLOUD_PROJECT` | Yes | GCP project id |
+| `RALPH_MONITORING_CRITICAL_CAP_PER_DAY` | No | Reserved; not yet active — per-day cap for CRITICAL Routine fires (follow-up issue) |
 
 Set these in your shell profile or in the launchd plist's `EnvironmentVariables`
 block before loading the agent.
@@ -131,12 +138,21 @@ further configuration is needed — `subscribe.py` calls
 
 See [`plugin/ralph-hero/skills/director/IOS-REMOTE.md` § "External producers"](../../skills/director/IOS-REMOTE.md#5-external-producers-remotetrigger-payload-shape) for the full payload contract.
 
-**Failure mode:** Routine fire failure is non-fatal. If `gh routine fire`
-returns a non-zero exit code, times out, or raises any exception, `subscribe.py`
-logs a WARNING and continues — the GitHub Issue was already created and
-acknowledged, so the worst-case outcome is "autopilot picks it up on the next
-tick" (matching today's default behavior). The `created`/`failed` counters are
-not adjusted on Routine failure.
+**Failure mode:** Two distinct failure paths exist:
+
+1. **`gh routine fire` failure** — If `gh routine fire` returns a non-zero exit
+   code, times out, or raises any exception, `subscribe.py` logs a WARNING and
+   continues. The GitHub Issue was already created and acknowledged, so the
+   worst-case outcome is "autopilot picks it up on the next tick" (matching
+   today's default behavior). The `created`/`failed` counters are not adjusted
+   on Routine failure.
+
+2. **Issue URL parse failure** — If the issue number cannot be extracted from
+   the URL returned by `gh issue create`, `subscribe.py` logs an ERROR with the
+   marker `routine_fire_skipped_parse_failure` and increments the `failed`
+   counter. This failure is visible in the summary line printed at the end of
+   each run (e.g., `Result: 1 created, 0 skipped (duplicate), 1 failed`) and
+   causes the script to exit with code 1. The Routine is not fired in this case.
 
 **Rate-of-fire risk:** Every CRITICAL alert fires one Routine invocation, which
 consumes Claude Code subscription usage. A spike in CRITICAL alerts (e.g., a
