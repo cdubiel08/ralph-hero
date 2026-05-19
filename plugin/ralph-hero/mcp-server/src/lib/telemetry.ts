@@ -145,10 +145,10 @@ export async function initTelemetry(): Promise<unknown | null> {
   const { OTLPTraceExporter } = await import(
     "@opentelemetry/exporter-trace-otlp-http"
   );
-  const { Resource } = await import("@opentelemetry/resources");
+  const { resourceFromAttributes } = await import("@opentelemetry/resources");
   const {
-    SEMRESATTRS_SERVICE_NAME,
-    SEMRESATTRS_SERVICE_VERSION,
+    ATTR_SERVICE_NAME,
+    ATTR_SERVICE_VERSION,
   } = await import("@opentelemetry/semantic-conventions");
   const { BatchSpanProcessor } = await import(
     "@opentelemetry/sdk-trace-base"
@@ -161,9 +161,9 @@ export async function initTelemetry(): Promise<unknown | null> {
   const exporter = new OTLPTraceExporter({ url: endpoint });
 
   const sdk = new NodeSDK({
-    resource: new Resource({
-      [SEMRESATTRS_SERVICE_NAME]: "ralph-hero",
-      [SEMRESATTRS_SERVICE_VERSION]: resolveServiceVersion(),
+    resource: resourceFromAttributes({
+      [ATTR_SERVICE_NAME]: "ralph-hero",
+      [ATTR_SERVICE_VERSION]: resolveServiceVersion(),
     }),
     spanProcessors: [
       new TokenScrubbingSpanProcessor(),
