@@ -54,12 +54,11 @@ Parse `$ARGUMENTS` for an optional `--issue NNN` flag.
 Call `next_actions({})` to get the ranked project queue. Do NOT recompute ranking — reuse the tool's output as-is.
 
 - If the queue is empty or all issues are in terminal states (`Done`, `Canceled`): emit `result: Queue empty. No events to dispatch.` and STOP.
-- Select the top-ranked direction (the entry marked `recommended: true`, or the first entry if none is marked). Resolve `TARGET_ISSUE` from the direction based on its `kind`:
-  - `kind: "issue" | "tree-continue" | "lock-stale" | "human-needed-unblock"` → `TARGET_ISSUE = direction.issue.number`.
+- Select the top-ranked direction (the entry marked `recommended: true`, or the first entry if none is marked). Resolve `TARGET_ISSUE` from the direction based on its `kind` — process only this one direction per invocation:
+  - `kind: "issue" | "tree-continue" | "lock-stale" | "human-needed-unblock"` → `TARGET_ISSUE = direction.issue.number`. Proceed to Step 2b.
   - `kind: "pr"` → `direction.issue` is `null`. Use the linked-issue fallback:
-    - If `direction.signals.linkedIssueNumber` is set: `TARGET_ISSUE = direction.signals.linkedIssueNumber`. Proceed to Step 2b — the linked issue's `workflowState` (typically `In Review`) drives routing in Step 3.
-    - If `linkedIssueNumber` is absent (the PR's `headRefName` did not match `feature/GH-NNNN`): skip this direction and try the next one in the list. Repeat until an issue-bearing direction is found.
-    - If every remaining direction is `kind: "pr"` with no `linkedIssueNumber`: emit `result: Queue contains only unlinked PRs. No issue to dispatch.` and STOP.
+    - If `direction.signals.linkedIssueNumber` is set: `TARGET_ISSUE = direction.signals.linkedIssueNumber`. Proceed to Step 2b; Step 3 classifies the linked issue's `workflowState` via the taxonomy.
+    - If `linkedIssueNumber` is absent (the PR's `headRefName` did not match `feature/GH-NNNN`): emit `result: Top direction is PR #<N> with no linked issue. Skipping.` and STOP. Do NOT iterate the rest of the list — Director processes one direction per invocation, and `/loop` owns the re-tick cadence.
 
 ### Step 2b: Fetch specific issue (--issue override or label trigger)
 
