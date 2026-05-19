@@ -38,6 +38,7 @@ allowed-tools:
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
   - AskUserQuestion
+  - PushNotification
 ---
 
 ## Configuration (resolved at load time)
@@ -447,6 +448,17 @@ After impl-agent returns, inspect its final terminal output. If it contains the 
   Mark a per-issue retry counter in TaskList metadata so a second BLOCKED at opus does not loop.
 - If this dispatch's model WAS opus, OR the retry counter is already 1 (one prior opus retry):
   escalate via `save_issue(workflowState="__ESCALATE__", command="ralph_impl")` to Human Needed.
+  Then fire a native push notification (best-effort) before stopping:
+  ```
+  # Native push — GH-1299: PushNotification no-ops gracefully when Remote Control is
+  # unpaired or when routed through Bedrock/Vertex (non-Anthropic-API sessions).
+  # Fire-and-stop order: save_issue(__ESCALATE__) → PushNotification(...) → STOP.
+  # PushNotification failure does NOT block the escalation; save_issue already ran.
+  PushNotification(
+    title="Failed #${issue_number}",
+    body="${blocked_reason} — ${issue_url}"
+  )
+  ```
   STOP the hero loop and report the BLOCKED reason.
 
 The contract is: at most ONE re-dispatch at the higher tier. A double-BLOCKED is a real escalation, not a model-tier issue.

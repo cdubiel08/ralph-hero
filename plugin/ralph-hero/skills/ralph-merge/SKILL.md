@@ -17,6 +17,7 @@ allowed-tools:
   - Read
   - Glob
   - Bash
+  - PushNotification
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
@@ -398,6 +399,19 @@ fi
 Where `PR_TITLE` is the PR title fetched in Step 3 and `PR_URL` is the PR URL.
 
 Failure of `push-on-completion.sh` does NOT fail the merge skill — the merge already succeeded. The `|| true` ensures this step is best-effort.
+
+After the ntfy block, fire a native push notification unconditionally (best-effort):
+
+```
+# Native push — GH-1299: PushNotification no-ops gracefully when Remote Control is
+# unpaired or when routed through Bedrock/Vertex (non-Anthropic-API sessions).
+PushNotification(
+  title="Merged #${issue_number}",
+  body="${PR_TITLE} (${PR_URL})"
+)
+```
+
+`PushNotification` failure does NOT fail the merge skill. The call is best-effort, identical in spirit to the `|| true` convention on the ntfy curl above. Both the ntfy push and the native push fire independently — either can no-op without affecting the other.
 
 `Bash` is already in ralph-merge's `allowed-tools`; no allowlist change is needed.
 

@@ -14,6 +14,7 @@ allowed-tools:
   - Read
   - Bash
   - Skill
+  - PushNotification
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
@@ -46,6 +47,8 @@ The six skills this orchestrator wraps (invoked via `Skill()` — never reimplem
 | `trends` | Captures a snapshot, renders sparklines + 1d/7d/30d delta report |
 
 **These skill bodies are NOT modified by caretake.** Caretake only invokes them. Each bundled skill remains independently invokable (e.g., `/ralph-hero:ralph-hygiene` still works as before).
+
+**PushNotification note (GH-1299):** The user-visible Human Needed notification fires from `ralph-unblock` (after it posts the `## Unblock Request` comment), not from caretake directly. Caretake dispatches to `ralph-unblock` via `Skill("ralph-unblock", args="NNN")` and does not fire its own `PushNotification` on this path. The `PushNotification` entry in caretake's `allowed-tools` exists to permit caretake to fire native pushes in future modes (e.g., a Heartbeat mode that surfaces high-severity hygiene findings) without a frontmatter change. No `PushNotification` call sites exist in caretake's body for this phase.
 
 ## Workflow
 

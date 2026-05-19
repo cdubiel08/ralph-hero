@@ -23,6 +23,7 @@ allowed-tools:
   - Glob
   - Grep
   - Bash
+  - PushNotification
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
@@ -168,6 +169,19 @@ export RALPH_UNBLOCK_REQUEST_POSTED=1
 ```
 
 If `create_comment` returns an error, do NOT set the flag — the postcondition hook will block exit and surface the error.
+
+**After setting `RALPH_UNBLOCK_REQUEST_POSTED=1`**, fire a native push notification (best-effort):
+
+```
+# Native push — GH-1299: PushNotification no-ops gracefully when Remote Control is
+# unpaired or when routed through Bedrock/Vertex (non-Anthropic-API sessions).
+PushNotification(
+  title="Human Needed #${issue_number}",
+  body="${issue_title} — ${issue_url}"
+)
+```
+
+`PushNotification` failure does NOT fail the unblock skill — the `## Unblock Request` comment is the source of truth. The call is best-effort (mirrors the `|| true` convention from `ralph-merge` Step 9c). No state mutation is added; the issue remains in `Human Needed`.
 
 ### Step 6: Record Outcome Event
 
