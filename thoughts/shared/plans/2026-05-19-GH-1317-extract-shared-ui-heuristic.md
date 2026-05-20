@@ -67,14 +67,14 @@ Sibling phases (NOT in scope here) need to source the heuristic:
 
 ### Verification
 
-- [ ] `plugin/ralph-hero/scripts/shared/ui-heuristic.sh` exists and defines `is_ui_touching` (taking newline-separated file paths via stdin OR a single arg) returning exit 0 on match, exit 1 on no-match.
-- [ ] `plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` sources the shared helper and contains no inline copy of the regex.
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 and prints `PASS=17 FAIL=0` (or whatever the new total is after adding direct-helper assertions — see Task 1.3).
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check src/components/Button.tsx` prints `MATCH` and exits 0.
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check README.md` prints `NO_MATCH` and exits 0.
-- [ ] `grep -rn '/components/' plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` returns nothing (regex no longer inline).
-- [ ] `grep -rn '/components/' plugin/ralph-hero/scripts/shared/ui-heuristic.sh` returns exactly one occurrence.
-- [ ] A simulated GitHub Actions workflow invocation works: `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && echo "src/components/Foo.tsx" | is_ui_touching && echo OK'` prints `OK`.
+- [x] `plugin/ralph-hero/scripts/shared/ui-heuristic.sh` exists and defines `is_ui_touching` (taking newline-separated file paths via stdin OR a single arg) returning exit 0 on match, exit 1 on no-match.
+- [x] `plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` sources the shared helper and contains no inline copy of the regex.
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 and prints `PASS=17 FAIL=0` (or whatever the new total is after adding direct-helper assertions — see Task 1.3).
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check src/components/Button.tsx` prints `MATCH` and exits 0.
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check README.md` prints `NO_MATCH` and exits 0.
+- [x] `grep -rn '/components/' plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` returns nothing (regex no longer inline).
+- [x] `grep -rn '/components/' plugin/ralph-hero/scripts/shared/ui-heuristic.sh` returns exactly one occurrence.
+- [x] A simulated GitHub Actions workflow invocation works: `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && echo "src/components/Foo.tsx" | is_ui_touching && echo OK'` prints `OK`.
 
 ## What We're NOT Doing
 
@@ -107,19 +107,19 @@ Move the `_ui_heuristic` function and its regex into a new sourceable bash libra
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] File begins with `#!/usr/bin/env bash` shebang and a header comment block explaining: purpose (shared UI-touching heuristic), public API (`is_ui_touching`), invocation patterns (source from bash, source from GitHub Actions step), and the matched-pattern list.
-  - [ ] Header documents both invocation patterns:
+  - [x] File begins with `#!/usr/bin/env bash` shebang and a header comment block explaining: purpose (shared UI-touching heuristic), public API (`is_ui_touching`), invocation patterns (source from bash, source from GitHub Actions step), and the matched-pattern list.
+  - [x] Header documents both invocation patterns:
     - From bash: `source "$(dirname "$0")/shared/ui-heuristic.sh"`
     - From GitHub Actions: `run: source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && echo "${{ steps.changed.outputs.files }}" | is_ui_touching`
-  - [ ] Defines `is_ui_touching()` that:
+  - [x] Defines `is_ui_touching()` that:
     - Reads newline-separated paths from stdin OR accepts them as a single first arg (e.g., `is_ui_touching "$files"` or `printf '%s\n' "${paths[@]}" | is_ui_touching`).
     - Uses the exact regex `\.(tsx|svelte|vue|css|scss)$|/components/|(^|/)storybook/`.
     - Returns 0 on match, 1 on no-match.
-  - [ ] Also defines an internal-alias `_ui_heuristic()` that delegates to `is_ui_touching` (so the existing smoke-test internals keep working with minimal diff).
-  - [ ] Uses an `if ! declare -F is_ui_touching >/dev/null; then ... fi` guard (or equivalent) so multiple `source` calls do not redefine the function with an error.
-  - [ ] Does NOT call `set -euo pipefail` at top level (sourceable libraries must not mutate caller shell options); local defensive options inside the function are fine if needed.
-  - [ ] Does NOT execute anything on source (no top-level side-effects beyond function definitions).
-  - [ ] File mode set executable (`chmod +x`) for consistency with sibling scripts even though it's primarily sourced.
+  - [x] Also defines an internal-alias `_ui_heuristic()` that delegates to `is_ui_touching` (so the existing smoke-test internals keep working with minimal diff).
+  - [x] Uses an `if ! declare -F is_ui_touching >/dev/null; then ... fi` guard (or equivalent) so multiple `source` calls do not redefine the function with an error.
+  - [x] Does NOT call `set -euo pipefail` at top level (sourceable libraries must not mutate caller shell options); local defensive options inside the function are fine if needed.
+  - [x] Does NOT execute anything on source (no top-level side-effects beyond function definitions).
+  - [x] File mode set executable (`chmod +x`) for consistency with sibling scripts even though it's primarily sourced.
 
 #### Task 1.2: Refactor `scout-heuristic-smoke.sh` to source the shared helper
 - **files**: `plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` (modify)
@@ -127,11 +127,11 @@ Move the `_ui_heuristic` function and its regex into a new sourceable bash libra
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Lines 32-38 (inline `_ui_heuristic` definition) removed.
-  - [ ] New `source` directive near the top (after `set -euo pipefail`) loads the shared helper using a path resolved from `$0` so the script works from any CWD: `source "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/shared/ui-heuristic.sh"` (or simpler `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" ; source "$SCRIPT_DIR/shared/ui-heuristic.sh"`).
-  - [ ] The header comment block (lines 1-19) updated to note that the heuristic now lives in `shared/ui-heuristic.sh` and this script is a smoke-test wrapper.
-  - [ ] All other behavior preserved: `--check` mode (lines 43-56), 17 existing test cases (lines 84-106), exit-code conventions, summary line.
-  - [ ] `grep -E 'tsx\|svelte\|vue' plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` returns nothing (regex literal not duplicated).
+  - [x] Lines 32-38 (inline `_ui_heuristic` definition) removed.
+  - [x] New `source` directive near the top (after `set -euo pipefail`) loads the shared helper using a path resolved from `$0` so the script works from any CWD: `source "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/shared/ui-heuristic.sh"` (or simpler `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" ; source "$SCRIPT_DIR/shared/ui-heuristic.sh"`).
+  - [x] The header comment block (lines 1-19) updated to note that the heuristic now lives in `shared/ui-heuristic.sh` and this script is a smoke-test wrapper.
+  - [x] All other behavior preserved: `--check` mode (lines 43-56), 17 existing test cases (lines 84-106), exit-code conventions, summary line.
+  - [x] `grep -E 'tsx\|svelte\|vue' plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` returns nothing (regex literal not duplicated).
 
 #### Task 1.3: Extend smoke test with direct-helper sourceability assertions
 - **files**: `plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` (modify)
@@ -139,27 +139,27 @@ Move the `_ui_heuristic` function and its regex into a new sourceable bash libra
 - **complexity**: low
 - **depends_on**: [1.2]
 - **acceptance**:
-  - [ ] New assertion block added before the existing match/no-match cases (or appended after, with its own `--- Sourceability ---` section header) that proves the shared helper is sourceable as Phase 2/3 will invoke it.
-  - [ ] At least 2 new assertions:
+  - [x] New assertion block added before the existing match/no-match cases (or appended after, with its own `--- Sourceability ---` section header) that proves the shared helper is sourceable as Phase 2/3 will invoke it.
+  - [x] At least 2 new assertions:
     - **Sub-shell source via stdin pipe**: `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && echo "src/components/X.tsx" | is_ui_touching'` exits 0 → assert MATCH.
     - **Sub-shell source via arg**: `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && is_ui_touching "README.md"'` exits 1 → assert NO_MATCH.
-  - [ ] New assertions integrate with the existing `PASS`/`FAIL` counters and contribute to the summary line.
-  - [ ] Total assertion count increases from 17 to at least 19; summary still exits 0 when all pass.
+  - [x] New assertions integrate with the existing `PASS`/`FAIL` counters and contribute to the summary line.
+  - [x] Total assertion count increases from 17 to at least 19; summary still exits 0 when all pass.
 
 ### Phase Success Criteria
 
 #### Automated Verification:
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 with `FAIL=0` in the summary.
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check src/components/Button.tsx` prints `MATCH` and exits 0.
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check README.md` prints `NO_MATCH` and exits 0.
-- [ ] `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && declare -F is_ui_touching'` prints `is_ui_touching` and exits 0 (function is defined after sourcing).
-- [ ] `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && echo OK'` prints `OK` (idempotent source).
-- [ ] `grep -cE '\\\.(tsx\|svelte\|vue\|css\|scss)\$' plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` returns `0` (regex no longer duplicated).
-- [ ] `grep -cE '\\\.(tsx\|svelte\|vue\|css\|scss)\$' plugin/ralph-hero/scripts/shared/ui-heuristic.sh` returns `1` (regex lives in shared only).
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 with `FAIL=0` in the summary.
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check src/components/Button.tsx` prints `MATCH` and exits 0.
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh --check README.md` prints `NO_MATCH` and exits 0.
+- [x] `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && declare -F is_ui_touching'` prints `is_ui_touching` and exits 0 (function is defined after sourcing).
+- [x] `bash -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && source plugin/ralph-hero/scripts/shared/ui-heuristic.sh && echo OK'` prints `OK` (idempotent source).
+- [x] `grep -cE '\\\.(tsx\|svelte\|vue\|css\|scss)\$' plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` returns `0` (regex no longer duplicated).
+- [x] `grep -cE '\\\.(tsx\|svelte\|vue\|css\|scss)\$' plugin/ralph-hero/scripts/shared/ui-heuristic.sh` returns `1` (regex lives in shared only).
 
 #### Manual Verification:
-- [ ] Header comments in `shared/ui-heuristic.sh` clearly document the GitHub-Actions invocation pattern that Phase 3 will use.
-- [ ] Reading just `shared/ui-heuristic.sh` is sufficient to understand the heuristic without cross-referencing the smoke test.
+- [x] Header comments in `shared/ui-heuristic.sh` clearly document the GitHub-Actions invocation pattern that Phase 3 will use.
+- [x] Reading just `shared/ui-heuristic.sh` is sufficient to understand the heuristic without cross-referencing the smoke test.
 
 **Creates for next phase**: A sourceable `is_ui_touching` function at a stable path (`plugin/ralph-hero/scripts/shared/ui-heuristic.sh`) that Phase 2 (GH-1318 scouts skill) and Phase 3 (GH-1319 playwright-auto.yml workflow) can both consume without re-implementing the regex.
 
@@ -169,7 +169,7 @@ Move the `_ui_heuristic` function and its regex into a new sourceable bash libra
 
 This is a self-contained refactor with no integration surface beyond the existing smoke test. Future integration is exercised by sibling phases (GH-1318, GH-1319, GH-1321 self-host validation).
 
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` passes (regression check).
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` passes (regression check).
 - [ ] Optional: `bash plugin/ralph-hero/scripts/scout-merge-gate-smoke.sh` still passes (sibling smoke that references this file in a comment only — should be unaffected).
 
 ## References
