@@ -1,0 +1,142 @@
+# Playwright Auto (Scout Producer)
+#
+# Fires on every non-draft PR open/sync/reopen. Sources the shared UI heuristic
+# (plugin/ralph-hero/scripts/shared/ui-heuristic.sh) to decide whether the PR
+# touches frontend files. If it does, files a `scout-auto` labeled issue with a
+# dual idempotency marker:
+#
+#   <!-- scout-pr: NNN -->   — HTML comment, line 1 (visual traceability)
+#   scout-pr/NNN             — plain text, line 2 (GitHub search-API indexing)
+#
+# Idempotency (ported from monitoring-bridge/subscribe.py:206-246):
+#   Search open issues for the plain-text marker before creating. If an open
+#   issue already exists for this PR, skip creation and exit 0.
+#
+# Least-privilege permissions: issues: write, pull-requests: read, contents: read.
+# No new secrets — reuses ROUTING_PAT already required by sibling workflows.
+# No third-party actions beyond actions/checkout — uses preinstalled bash/git/grep/gh.
+
+name: Playwright Auto (Scout Producer)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+
+concurrency:
+  group: playwright-auto-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  file-scout-auto-issue:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.ROUTING_PAT }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr diff "${PR_NUMBER}" --name-only > "${RUNNER_TEMP}/changed-files.txt"
+          COUNT=$(wc -l < "${RUNNER_TEMP}/changed-files.txt" || echo 0)
+          echo "file_count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "[playwright-auto] PR #${PR_NUMBER} changed ${COUNT} file(s)"
+
+      - name: Check UI heuristic
+        id: heuristic
+        shell: bash
+        run: |
+          set -euo pipefail
+          source plugin/ralph-hero/scripts/shared/ui-heuristic.sh
+          if is_ui_touching "$(cat "${RUNNER_TEMP}/changed-files.txt")"; then
+            echo "is_ui=true" >> "$GITHUB_OUTPUT"
+            echo "[playwright-auto] UI-touching files detected in PR #${PR_NUMBER}"
+          else
+            echo "is_ui=false" >> "$GITHUB_OUTPUT"
+            echo "[playwright-auto] skipping: no UI-touching files in diff"
+          fi
+
+      - name: Extract UI-touching files
+        id: ui_files
+        if: steps.heuristic.outputs.is_ui == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source plugin/ralph-hero/scripts/shared/ui-heuristic.sh
+          # Filter to only UI-touching lines using the heuristic regex
+          grep -E '\.(tsx|svelte|vue|css|scss)$|/components/|(^|/)storybook/' \
+            "${RUNNER_TEMP}/changed-files.txt" > "${RUNNER_TEMP}/ui-files.txt" || true
+          UI_COUNT=$(wc -l < "${RUNNER_TEMP}/ui-files.txt" || echo 0)
+          echo "ui_count=${UI_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "[playwright-auto] ${UI_COUNT} UI-touching file(s) in PR #${PR_NUMBER}"
+
+      - name: Idempotency check
+        id: idempotency
+        if: steps.heuristic.outputs.is_ui == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Search by plain-text marker — GitHub search API does NOT index HTML comments.
+          # Mirrors monitoring-bridge/subscribe.py:_issue_exists_for_policy (lines 206-246).
+          MARKER="scout-pr/${PR_NUMBER}"
+          EXISTING=$(gh issue list \
+            --state open \
+            --search "$MARKER" \
+            --json number \
+            --limit 5 \
+            --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "[playwright-auto] skipping: open scout-auto issue exists for PR ${PR_NUMBER} (#${EXISTING})"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "existing_issue=${EXISTING}" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create scout-auto issue
+        if: steps.heuristic.outputs.is_ui == 'true' && steps.idempotency.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          UI_FILES="$(cat "${RUNNER_TEMP}/ui-files.txt")"
+          ISSUE_URL=$(gh issue create \
+            --title "Scout: UI review for PR #${PR_NUMBER}" \
+            --label "scout-auto" \
+            --body "$(cat <<EOF
+          <!-- scout-pr: ${PR_NUMBER} -->
+          scout-pr/${PR_NUMBER}
+
+          Scout review requested for PR #${PR_NUMBER}.
+
+          - **PR**: ${PR_URL}
+          - **Head SHA**: \`${HEAD_SHA}\`
+
+          ## UI-touching files
+
+          \`\`\`
+          ${UI_FILES}
+          \`\`\`
+
+          ---
+
+          *Filed by \`.github/workflows/playwright-auto.yml\`. Director will route this issue to the scouts team-skill via the \`scout-auto\` label. Re-running the workflow on the same PR is a no-op as long as this issue stays open (idempotency: \`scout-pr/${PR_NUMBER}\`).*
+          EOF
+          )")
+          ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
+          echo "[playwright-auto] created scout-auto issue #${ISSUE_NUMBER} for PR ${PR_NUMBER}"
+          echo "$ISSUE_URL"
