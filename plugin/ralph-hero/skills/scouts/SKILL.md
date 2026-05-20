@@ -128,7 +128,7 @@ test -d playwright-stories && DISPATCH_TEST_E2E=true || DISPATCH_TEST_E2E=false
 
 # Row 4 — visual-diff
 if [[ -f package.json ]]; then
-  grep -q '"chromatic"\|"applitools"' package.json && DISPATCH_VISUAL_DIFF=true || DISPATCH_VISUAL_DIFF=true
+  grep -q '"chromatic"\|"applitools"' package.json && DISPATCH_VISUAL_DIFF=true || DISPATCH_VISUAL_DIFF=false
   # (false when grep returns non-zero)
 else
   DISPATCH_VISUAL_DIFF=false
