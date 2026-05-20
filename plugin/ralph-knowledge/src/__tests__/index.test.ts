@@ -894,3 +894,344 @@ describe("knowledge_search rerank parameter (GH-926)", () => {
     }
   });
 });
+
+describe("knowledge_expert", () => {
+  it("is registered alongside knowledge_recall and knowledge_search", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const registered = (server as unknown as Record<string, unknown>)
+      ._registeredTools as Record<string, unknown>;
+    expect(registered).toHaveProperty("knowledge_expert");
+  });
+
+  it("returns empty bundle + warning when no docs match the domain", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "nonexistent-domain",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(payload.wiki).toEqual([]);
+    expect(payload.reflections).toEqual([]);
+    expect(payload.warning).toMatch(/No documents found/);
+    expect(typeof payload.query_id).toBe("string");
+    expect((payload.query_id as string)).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("returns wiki + reflection buckets filtered by domain tag", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed: one wiki doc and one reflection, both tagged 'auth'
+    db.upsertDocument({
+      id: "wiki-auth",
+      path: "thoughts/wiki/auth.md",
+      title: "Auth",
+      date: "2026-04-01",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Authentication best practices.",
+      memoryTier: "wiki",
+    });
+    db.upsertDocument({
+      id: "refl-auth",
+      path: "thoughts/dream-memories/2026/05/refl.md",
+      title: "Auth reflection",
+      date: "2026-05-10",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Reflection on auth patterns observed this week.",
+      memoryTier: "reflection",
+    });
+    db.setTags("wiki-auth", ["auth"]);
+    db.setTags("refl-auth", ["auth", "dream"]);
+
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect((payload.wiki as unknown[]).length).toBe(1);
+    expect((payload.reflections as unknown[]).length).toBe(1);
+    expect(payload.warning).toBeNull();
+  });
+
+  it("does not return docs from other tiers in the wiki bucket", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed a doc-tier and a raw-tier document both tagged 'search'
+    db.upsertDocument({
+      id: "doc-search",
+      path: "thoughts/research/search.md",
+      title: "Search doc",
+      date: "2026-04-01",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Research notes on search.",
+      memoryTier: "doc",
+    });
+    db.upsertDocument({
+      id: "raw-search",
+      path: "thoughts/dream-memories/raw.md",
+      title: "Search raw",
+      date: "2026-04-02",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Raw memory about search.",
+      memoryTier: "raw",
+    });
+    db.setTags("doc-search", ["search"]);
+    db.setTags("raw-search", ["search"]);
+
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "search",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    // Neither doc nor raw tier should appear in wiki or reflections
+    expect((payload.wiki as unknown[]).length).toBe(0);
+    expect((payload.reflections as unknown[]).length).toBe(0);
+    expect(payload.warning).toMatch(/No documents found/);
+  });
+
+  it("respects recency_window_days for reflections", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed an old reflection (100 days ago) — should be excluded with a 7-day window
+    const oldDate = new Date(Date.now() - 100 * 86_400_000).toISOString().slice(0, 10);
+    db.upsertDocument({
+      id: "refl-old",
+      path: "thoughts/dream-memories/old.md",
+      title: "Old reflection",
+      date: oldDate,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Old reflection about caching.",
+      memoryTier: "reflection",
+    });
+    // Seed a recent reflection
+    const recentDate = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+    db.upsertDocument({
+      id: "refl-recent",
+      path: "thoughts/dream-memories/recent.md",
+      title: "Recent reflection",
+      date: recentDate,
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Recent reflection about caching.",
+      memoryTier: "reflection",
+    });
+    db.setTags("refl-old", ["caching"]);
+    db.setTags("refl-recent", ["caching"]);
+
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "caching",
+      issue_number: 1306,
+      recency_window_days: 7,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    const reflections = payload.reflections as Array<{ id: string }>;
+    const ids = reflections.map((r) => r.id);
+    expect(ids).toContain("refl-recent");
+    expect(ids).not.toContain("refl-old");
+  });
+
+  it("prior_outcomes field is an array (empty when no matching outcomes)", async () => {
+    const mod = await import("../index.js");
+    const { server } = mod.createServer(":memory:");
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "deployment",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(Array.isArray(payload.prior_outcomes)).toBe(true);
+  });
+
+  // Phase 2 telemetry tests
+
+  it("writes an expert_call outcome event with payload.query_id on every call", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+
+    // One expert_call event should exist for issue 1306
+    const events = db.queryOutcomeEvents({ issueNumber: 1306, eventType: "expert_call" });
+    expect(events).toHaveLength(1);
+
+    // Payload must carry query_id and domain
+    const evtPayload = JSON.parse(events[0].payload) as Record<string, unknown>;
+    expect(evtPayload.query_id).toBe(payload.query_id);
+    expect(evtPayload.domain).toBe("auth");
+  });
+
+  it("expert_call event payload includes returned_doc_ids with wiki and reflections arrays", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+    // Seed a wiki doc tagged 'logging'
+    db.upsertDocument({
+      id: "wiki-logging",
+      path: "thoughts/wiki/logging.md",
+      title: "Logging",
+      date: "2026-04-01",
+      type: null,
+      status: null,
+      githubIssue: null,
+      content: "Logging best practices.",
+      memoryTier: "wiki",
+    });
+    db.setTags("wiki-logging", ["logging"]);
+
+    await callTool(server, "knowledge_expert", { domain: "logging", issue_number: 1306 });
+
+    const events = db.queryOutcomeEvents({ issueNumber: 1306, eventType: "expert_call" });
+    expect(events).toHaveLength(1);
+    const evtPayload = JSON.parse(events[0].payload) as Record<string, unknown>;
+    const returnedDocIds = evtPayload.returned_doc_ids as { wiki: string[]; reflections: string[] };
+    expect(returnedDocIds.wiki).toContain("wiki-logging");
+    expect(Array.isArray(returnedDocIds.reflections)).toBe(true);
+  });
+
+  it("knowledge_record_outcome accepts query_id and stores it in payload", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // First call knowledge_expert to get a query_id
+    const expertResult = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+    });
+    expect(expertResult.isError).not.toBe(true);
+    const queryId = (JSON.parse(expertResult.content[0].text) as Record<string, unknown>).query_id as string;
+
+    // Record an outcome correlated to the expert call
+    const recordResult = await callTool(server, "knowledge_record_outcome", {
+      event_type: "phase_completed",
+      issue_number: 1306,
+      query_id: queryId,
+      verdict: "pass",
+    });
+    expect(recordResult.isError).not.toBe(true);
+
+    // Query by query_id: both the expert_call row and the phase_completed row must return
+    const correlated = db.queryOutcomeEventsByQueryId(queryId);
+    expect(correlated).toHaveLength(2);
+
+    // Verify both event types are present
+    const eventTypes = correlated.map((e) => e.eventType);
+    expect(eventTypes).toContain("expert_call");
+    expect(eventTypes).toContain("phase_completed");
+  });
+
+  it("knowledge_record_outcome without query_id still works (backwards compatible)", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // Call without query_id — must not error
+    const result = await callTool(server, "knowledge_record_outcome", {
+      event_type: "research_started",
+      issue_number: 9999,
+      verdict: "pass",
+    });
+    expect(result.isError).not.toBe(true);
+
+    // Event is stored; querying by a random query_id returns nothing
+    const events = db.queryOutcomeEvents({ issueNumber: 9999 });
+    expect(events).toHaveLength(1);
+    const evtPayload = JSON.parse(events[0].payload) as Record<string, unknown>;
+    // query_id should be absent from payload
+    expect(evtPayload.query_id).toBeUndefined();
+  });
+
+  it("queryOutcomeEventsByQueryId returns only events matching the query_id", async () => {
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // Call knowledge_expert twice — two different query_ids
+    const r1 = await callTool(server, "knowledge_expert", { domain: "auth", issue_number: 1306 });
+    const r2 = await callTool(server, "knowledge_expert", { domain: "caching", issue_number: 1306 });
+    const qid1 = (JSON.parse(r1.content[0].text) as Record<string, unknown>).query_id as string;
+    const qid2 = (JSON.parse(r2.content[0].text) as Record<string, unknown>).query_id as string;
+
+    // Add a correlated outcome for qid1 only
+    await callTool(server, "knowledge_record_outcome", {
+      event_type: "phase_completed",
+      issue_number: 1306,
+      query_id: qid1,
+    });
+
+    const byQid1 = db.queryOutcomeEventsByQueryId(qid1);
+    const byQid2 = db.queryOutcomeEventsByQueryId(qid2);
+
+    // qid1: expert_call + phase_completed = 2
+    expect(byQid1).toHaveLength(2);
+    // qid2: only its expert_call = 1
+    expect(byQid2).toHaveLength(1);
+  });
+
+  it("prior_outcomes domain filter is applied in SQL before LIMIT (not JS-side after)", async () => {
+    // Regression test: a burst of M other-domain expert_call rows (more recent) must not
+    // starve the target domain when prior_outcomes uses a SQL domain predicate + LIMIT.
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // Seed N=3 target-domain expert_call rows
+    for (let i = 0; i < 3; i++) {
+      db.insertOutcomeEvent({
+        eventType: "expert_call",
+        issueNumber: 1306,
+        sessionId: `session-target-${i}`,
+        agentType: "knowledge_expert",
+        payload: { domain: "auth", query_id: `qid-auth-${i}` },
+      });
+    }
+
+    // Seed M=5 other-domain expert_call rows (these are more recent because inserted after)
+    for (let i = 0; i < 5; i++) {
+      db.insertOutcomeEvent({
+        eventType: "expert_call",
+        issueNumber: 1306,
+        sessionId: `session-other-${i}`,
+        agentType: "knowledge_expert",
+        payload: { domain: "caching", query_id: `qid-caching-${i}` },
+      });
+    }
+
+    // Call knowledge_expert for "auth" with limit=3.
+    // Without the SQL domain predicate, the 5 "caching" rows (being more recent) would
+    // consume the entire LIMIT before the JS filter runs, returning 0 "auth" rows.
+    // With the fix, the SQL WHERE filters first and we get back up to 3 "auth" rows.
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+      limit: 3,
+    });
+    expect(result.isError).not.toBe(true);
+
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    const priorOutcomes = payload.prior_outcomes as unknown[];
+
+    // Must return the 3 seeded "auth" rows, not 0 (the pre-fix behavior)
+    expect(priorOutcomes).toHaveLength(3);
+    // Confirm all returned rows are for the "auth" domain
+    for (const row of priorOutcomes) {
+      const rowPayload = JSON.parse((row as { payload: string }).payload) as Record<string, unknown>;
+      expect(rowPayload.domain).toBe("auth");
+    }
+  });
+});

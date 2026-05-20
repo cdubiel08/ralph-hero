@@ -69,6 +69,7 @@ export interface OutcomeQueryParams {
   verdict?: string;
   sessionId?: string;
   since?: string;
+  domain?: string;
   limit?: number;
 }
 
@@ -304,6 +305,43 @@ export class KnowledgeDB {
     return (this.db.prepare("SELECT tag FROM tags WHERE doc_id = ? ORDER BY tag").all(docId) as Array<{ tag: string }>).map(r => r.tag);
   }
 
+  /**
+   * Return documents matching a domain tag and memory tier.
+   * Joins documents ↔ tags so the domain (frontmatter tag) is the primary
+   * signal. Optional pathPrefix and sinceDate narrow further.
+   */
+  queryByDomain(params: {
+    domain: string;
+    memoryTier: "wiki" | "reflection" | "doc" | "raw";
+    limit: number;
+    pathPrefix?: string;
+    sinceDate?: string;
+  }): DocumentRow[] {
+    const conditions: string[] = ["t.tag = ?", "d.memory_tier = ?"];
+    const values: unknown[] = [params.domain, params.memoryTier];
+
+    if (params.pathPrefix !== undefined) {
+      conditions.push("d.path LIKE ?");
+      values.push(`${params.pathPrefix}%`);
+    }
+    if (params.sinceDate !== undefined) {
+      conditions.push("d.date >= ?");
+      values.push(params.sinceDate);
+    }
+
+    const sql = `
+      SELECT DISTINCT d.id, d.path, d.title, d.date, d.type, d.status,
+             d.github_issue AS githubIssue, d.content, d.is_stub AS isStub
+      FROM documents d
+      JOIN tags t ON t.doc_id = d.id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY d.date DESC NULLS LAST
+      LIMIT ?
+    `;
+
+    return this.db.prepare(sql).all(...values, params.limit) as DocumentRow[];
+  }
+
   addRelationship(sourceId: string, targetId: string, type: string, context?: string): void {
     this.db.prepare("INSERT OR IGNORE INTO relationships (source_id, target_id, type, context) VALUES (?, ?, ?, ?)").run(sourceId, targetId, type, context ?? null);
   }
@@ -376,6 +414,10 @@ export class KnowledgeDB {
       conditions.push("timestamp >= ?");
       values.push(params.since);
     }
+    if (params.domain !== undefined) {
+      conditions.push("json_extract(payload, '$.domain') = ?");
+      values.push(params.domain);
+    }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = params.limit ?? 50;
@@ -391,6 +433,26 @@ export class KnowledgeDB {
     `;
 
     return this.db.prepare(sql).all(...values, limit) as OutcomeEventRow[];
+  }
+
+  /**
+   * Return outcome events whose payload JSON contains a matching `query_id`.
+   * Uses SQLite's JSON1 `json_extract()` function (available by default in
+   * better-sqlite3). Rows with malformed payload JSON silently return NULL
+   * from json_extract and are excluded — the desired behavior.
+   */
+  queryOutcomeEventsByQueryId(queryId: string, limit = 50): OutcomeEventRow[] {
+    const sql = `
+      SELECT id, event_type AS eventType, issue_number AS issueNumber, session_id AS sessionId,
+             timestamp, duration_ms AS durationMs, verdict, component_area AS componentArea,
+             estimate, drift_count AS driftCount, model, agent_type AS agentType,
+             iteration_count AS iterationCount, payload
+      FROM outcome_events
+      WHERE json_extract(payload, '$.query_id') = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `;
+    return this.db.prepare(sql).all(queryId, limit) as OutcomeEventRow[];
   }
 
   aggregateOutcomeEvents(params: OutcomeQueryParams = {}): OutcomeAggregate {

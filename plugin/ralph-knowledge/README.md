@@ -142,6 +142,85 @@ gather, and ALSO calls `knowledge_search(type="research", ...)` for an explicit
 artifact lookup where it needs a precise type filter. Keeping both tools in a
 skill's allowlist is the recommended pattern.
 
+## `knowledge_expert` — domain-keyed memory bundles
+
+`knowledge_expert(domain, issue_number, ...)` returns a curated context bundle
+for a named domain — wiki entries, recent reflections, and prior outcomes — so
+sub-agents become per-domain experts via memory rather than per-domain prompts.
+It is the **domain-keyed** companion to `knowledge_recall`'s **role-keyed**
+retrieval: role decides which tiers to surface; domain decides which slice of
+the corpus.
+
+### Signature
+
+```
+knowledge_expert(
+  domain: string,             // Tag to match (e.g. "auth", "memory-tiers", "ralph-knowledge")
+  issue_number: number,       // GitHub issue on whose behalf this call is made — required for telemetry
+  limit?: number,             // Max entries per bucket. Default 5.
+  recency_window_days?: number, // Reflection age cutoff in days. Default 30.
+  path_prefix?: string,       // Optional secondary filter: only docs whose path starts with this prefix.
+  session_id?: string,        // Team/hero session ID — passed through to the outcome event.
+)
+```
+
+Domain matching uses the `tags` table (frontmatter `tags:` arrays are the
+primary signal). `path_prefix` is a secondary narrowing filter — not a
+replacement for tags. Pass `"thoughts/shared/"` to restrict to the shared
+corpus, for example.
+
+### Return shape
+
+```json
+{
+  "query_id": "uuid-v4",
+  "domain": "auth",
+  "wiki": [ ...DocumentRow ],
+  "reflections": [ ...DocumentRow ],
+  "prior_outcomes": [ ...OutcomeEventRow ],
+  "warning": null
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `query_id` | UUID generated per call. Save this and pass it to `knowledge_record_outcome` as `query_id` to correlate downstream outcomes back to this expert call. |
+| `domain` | Echo of the requested domain. |
+| `wiki` | Up to `limit` documents with `memory_tier = 'wiki'` tagged with `domain`, ordered by date descending. |
+| `reflections` | Up to `limit` documents with `memory_tier = 'reflection'` tagged with `domain` and dated within `recency_window_days`. |
+| `prior_outcomes` | Up to `limit` `outcome_events` rows whose `payload` JSON contains `domain` — pipeline history for this domain. |
+| `warning` | Non-null string when both `wiki` and `reflections` are empty, suggesting the caller tag existing docs or broaden the domain term. `null` on a successful hit. |
+
+### Telemetry
+
+Every `knowledge_expert` call writes an `outcome_events` row with
+`event_type = 'expert_call'`. The `payload` JSON carries `query_id`, `domain`,
+`returned_doc_ids`, `limit`, `recency_window_days`, `path_prefix`, and
+`warning`. This makes per-domain hit rate queryable from day one:
+
+```
+knowledge_query_outcomes({ event_type: "expert_call", aggregate: true })
+```
+
+Pass `query_id` to `knowledge_record_outcome` to tie subsequent phase/research
+outcomes back to the originating expert call:
+
+```
+knowledge_record_outcome({
+  event_type: "research_completed",
+  issue_number: 1306,
+  query_id: "<query_id from knowledge_expert>",
+  verdict: "complete"
+})
+```
+
+### Degradation
+
+`knowledge_expert` degrades the same way as the other knowledge tools — return
+an empty bundle with a `warning` when no matching documents exist; never throw
+on a valid call. If the domain cannot be determined at call time, callers should
+skip the call rather than pass an empty string.
+
 ## Environment variables
 
 | Variable | Purpose |

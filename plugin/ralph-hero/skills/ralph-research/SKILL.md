@@ -50,6 +50,7 @@ allowed-tools:
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_query_outcomes
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
+  - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_expert
 ---
 
 ## Configuration (resolved at load time)
@@ -171,6 +172,33 @@ This step runs autonomously — no user questions, just detect-and-act. Run the 
 **Power-user note:** `knowledge_recall` wraps `knowledge_search` with the researcher tier policy. If you need an explicit tier (e.g., `memory_tier="wiki"` only), call `knowledge_search` directly — both tools remain available.
 
 If the searches return nothing relevant, proceed to Step 4 with full sub-agent dispatch — the knowledge graph may be stale or sparse on this topic. Do NOT skip sub-agent dispatch on the basis of an empty knowledge result alone.
+
+### Step 3d: Domain Expert Primer
+
+If `knowledge_expert` is available, call it to load a curated domain bundle before dispatching sub-tasks. This narrows the search space — instead of rediscovering relevant docs from scratch, you start with the wiki entries + recent reflections + prior outcomes the corpus has already accumulated for this topic.
+
+**Domain extraction heuristic** (in priority order):
+1. If the issue has a label matching a known domain tag (e.g., `ralph-knowledge`, `auth`, `memory-tiers`), use the first match.
+2. Otherwise, extract the most prominent noun phrase from the issue title (e.g., "knowledge_expert(domain) MCP tool" → `ralph-knowledge`).
+3. If still unclear, skip this step and proceed directly to Step 4.
+
+**Call** (when domain is determinable):
+```
+mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_expert({
+  domain: "<extracted-domain>",
+  issue_number: <current-issue>,
+  limit: 5,
+  recency_window_days: 30
+})
+```
+
+**What to do with the result**:
+- If `wiki` or `reflections` is non-empty: read those docs first, before launching sub-tasks. They are pre-curated context — they should shape the research questions you ask.
+- If `prior_outcomes` is non-empty: review the verdicts; if past calls for this domain ended in `blocked` or `needs_iteration`, flag the recurring issue.
+- If `warning` is set (no docs match): proceed with regular sub-agent research; note the warning in your final research doc so future curators can fill the gap.
+- **Save the `query_id`**. Pass it to `knowledge_record_outcome` in Step 8 so the research outcome correlates back to this expert call.
+
+This step degrades gracefully — skip silently if the tool is unavailable or if no domain can be extracted from the issue.
 
 ### Step 4: Conduct Research
 
@@ -399,11 +427,12 @@ git push origin main
      component_area="[discovered area, e.g., src/tools/]",
      verdict="complete",
      model="sonnet",
-     agent_type="analyst"
+     agent_type="analyst",
+     query_id="[query_id from Step 3d, if available]"
    )
    ```
 
-   Skip silently if the tool is unavailable — do not fail the workflow. This builds the outcome ledger that future research can query (Step 3c).
+   Include `query_id` only when Step 3d ran and returned a `query_id` — this correlates the research outcome back to its domain expert call, enabling per-domain hit-rate observability via `knowledge_query_outcomes({ event_type: "expert_call" })`. Skip silently if the tool is unavailable — do not fail the workflow. This builds the outcome ledger that future research can query (Step 3c).
 
 ### Step 9: Team Result Reporting
 
@@ -437,6 +466,8 @@ The Step 3c prior-art discovery, evidence weighting, Pipeline History section, a
 2. **Tools available but `knowledge_recall` (or `knowledge_search`) returns zero results**: try broader search terms first (remove specific qualifiers, drop component prefixes), then fall back to grep-based search of the `thoughts/` directory. Do NOT skip sub-agent dispatch — an empty knowledge result may indicate a stale or sparsely-indexed graph rather than a true absence of prior art. Continue with full Step 4 sub-agent dispatch and let `thoughts-locator` cross-check the filesystem.
 
 The Step 8 outcome recording (`knowledge_record_outcome`) is also subject to graceful degradation — silently skip the call if the tool is unavailable. The workflow advancement to "Ready for Plan" must still complete even when the outcome ledger cannot be written.
+
+The Step 3d domain expert primer (`knowledge_expert`) degrades gracefully — skip silently if the tool is unavailable or if no domain can be determined from the issue. The research workflow is not gated on it.
 
 ## Available Filter Profiles
 
