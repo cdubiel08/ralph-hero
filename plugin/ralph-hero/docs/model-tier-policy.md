@@ -18,6 +18,8 @@ Escalate on BLOCKED, never preemptively.
 
 (see CLAUDE.md table for the live mapping)
 
+- `scouts-agent`: sonnet — multi-skill orchestration role; same tier as impl-agent / val-agent / log-reader.
+
 ## Per-session overrides
 
 Set `RALPH_<AGENT_UPPER>_MODEL=opus|sonnet|haiku` to override frontmatter
@@ -30,6 +32,7 @@ Examples:
 RALPH_IMPL_MODEL=opus            # force impl-agent back to opus
 RALPH_PLAN_MODEL=sonnet          # rare: cheaper plan-agent runs
 RALPH_SPLIT_MODEL=opus           # rare: complex decompositions
+RALPH_SCOUTS_MODEL=opus          # rare: scouts orchestrator on complex multi-PR fan-out
 ```
 
 ## Escalation contract

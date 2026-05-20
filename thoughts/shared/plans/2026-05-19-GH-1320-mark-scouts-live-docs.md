@@ -75,15 +75,15 @@ These constraints are inherited from the GH-1314 epic (reconstructed from the ep
 
 ### Verification
 
-- [ ] `event-classes.md` Team→entrypoint mapping row for `scouts` shows status `live` (no `pending Feature F` caveat).
-- [ ] `event-classes.md` `trigger:scouts` row note no longer references "Feature F ships" — instead documents the live entrypoint `/ralph-hero:scouts --issue NNN`.
-- [ ] `event-classes.md` `scout-auto` row note documents that the producer is `playwright-auto.yml` (Phase 3) and that dispatch routes to the live `ralph-hero:scouts` skill.
-- [ ] `CLAUDE.md` Per-Phase Agents table contains a `scouts-agent` row with: model `sonnet`, preloaded skill `ralph-hero:scouts`, tier `Scout`, and a note documenting the `RALPH_SCOUTS_MODEL` override.
-- [ ] `CLAUDE.md` User-facing surface table row for "Scouts team" reads `/ralph-hero:scouts [--issue NNN]` while preserving the cron note (e.g., "Scouts team | `/ralph-hero:scouts [--issue NNN]` (per-PR via `playwright-auto.yml`; nightly batch via `scout-nightly.sh` cron)").
-- [ ] `docs/model-tier-policy.md` includes `RALPH_SCOUTS_MODEL` in the examples block at lines 29-33.
-- [ ] `docs/model-tier-policy.md` includes a one-line entry documenting scouts-agent's default tier (sonnet) and rationale (multi-skill orchestration role).
-- [ ] No edits outside the three target files. `git diff --stat` shows exactly 3 changed files.
-- [ ] All sibling plan files referenced in `## Prior Work` exist on disk (sanity check — confirms the dependency chain was actually planned).
+- [x] `event-classes.md` Team→entrypoint mapping row for `scouts` shows status `live` (no `pending Feature F` caveat).
+- [x] `event-classes.md` `trigger:scouts` row note no longer references "Feature F ships" — instead documents the live entrypoint `/ralph-hero:scouts --issue NNN`.
+- [x] `event-classes.md` `scout-auto` row note documents that the producer is `playwright-auto.yml` (Phase 3) and that dispatch routes to the live `ralph-hero:scouts` skill.
+- [x] `CLAUDE.md` Per-Phase Agents table contains a `scouts-agent` row with: model `sonnet`, preloaded skill `ralph-hero:scouts`, tier `Scout`, and a note documenting the `RALPH_SCOUTS_MODEL` override.
+- [x] `CLAUDE.md` User-facing surface table row for "Scouts team" reads `/ralph-hero:scouts [--issue NNN]` while preserving the cron note (e.g., "Scouts team | `/ralph-hero:scouts [--issue NNN]` (per-PR via `playwright-auto.yml`; nightly batch via `scout-nightly.sh` cron)").
+- [x] `docs/model-tier-policy.md` includes `RALPH_SCOUTS_MODEL` in the examples block at lines 29-33.
+- [x] `docs/model-tier-policy.md` includes a one-line entry documenting scouts-agent's default tier (sonnet) and rationale (multi-skill orchestration role).
+- [x] No edits outside the three target files. `git diff --stat` shows exactly 3 changed files.
+- [x] All sibling plan files referenced in `## Prior Work` exist on disk (sanity check — confirms the dependency chain was actually planned).
 
 ## What We're NOT Doing
 
@@ -181,15 +181,15 @@ Flip the three docs surfaces (`event-classes.md`, `CLAUDE.md`, `docs/model-tier-
 
 #### Automated Verification:
 
-- [ ] `git diff --stat` shows exactly three changed files (`CLAUDE.md`, `event-classes.md`, `model-tier-policy.md`).
-- [ ] `grep -c 'pending Feature F' plugin/ralph-hero/skills/director/event-classes.md` returns 0.
-- [ ] `grep -F 'ralph-hero:scouts | live' plugin/ralph-hero/skills/director/event-classes.md` returns ≥ 1.
-- [ ] `grep -c 'scouts-agent' CLAUDE.md` returns ≥ 1.
-- [ ] `grep -F '/ralph-hero:scouts' CLAUDE.md` returns ≥ 1.
-- [ ] `grep -F 'RALPH_SCOUTS_MODEL' CLAUDE.md` returns ≥ 1.
-- [ ] `grep -F 'RALPH_SCOUTS_MODEL' plugin/ralph-hero/docs/model-tier-policy.md` returns ≥ 1.
-- [ ] `grep -c 'scouts-agent' plugin/ralph-hero/docs/model-tier-policy.md` returns ≥ 1.
-- [ ] `test -f plugin/ralph-hero/skills/scouts/SKILL.md && test -f plugin/ralph-hero/agents/scouts-agent.md && test -f .github/workflows/playwright-auto.yml` exits 0 (upstream Phase 2 + 3 sanity check).
+- [x] `git diff --stat` shows exactly three changed files (`CLAUDE.md`, `event-classes.md`, `model-tier-policy.md`).
+- [x] `grep -c 'pending Feature F' plugin/ralph-hero/skills/director/event-classes.md` returns 0.
+- [x] `grep -F 'ralph-hero:scouts | live' plugin/ralph-hero/skills/director/event-classes.md` returns ≥ 1.
+- [x] `grep -c 'scouts-agent' CLAUDE.md` returns ≥ 1.
+- [x] `grep -F '/ralph-hero:scouts' CLAUDE.md` returns ≥ 1.
+- [x] `grep -F 'RALPH_SCOUTS_MODEL' CLAUDE.md` returns ≥ 1.
+- [x] `grep -F 'RALPH_SCOUTS_MODEL' plugin/ralph-hero/docs/model-tier-policy.md` returns ≥ 1.
+- [x] `grep -c 'scouts-agent' plugin/ralph-hero/docs/model-tier-policy.md` returns ≥ 1.
+- [x] `test -f plugin/ralph-hero/skills/scouts/SKILL.md && test -f plugin/ralph-hero/agents/scouts-agent.md && test -f .github/workflows/playwright-auto.yml` exits 0 (upstream Phase 2 + 3 sanity check).
 
 #### Manual Verification:
 

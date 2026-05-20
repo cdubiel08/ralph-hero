@@ -72,6 +72,7 @@ Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that 
 | `merge-agent` | haiku | ralph-merge | Integrator | |
 | `val-agent` | sonnet | ralph-val | Integrator | Model aligned with `ralph-val/SKILL.md` in GH-1265 (2026-05-15). |
 | `unblock-agent` | sonnet | ralph-unblock | Async-loop | |
+| `scouts-agent` | sonnet | scouts | Scout | Multi-skill orchestration (a11y-scan + conditional test-e2e/storybook-test/visual-diff). Override with `RALPH_SCOUTS_MODEL=opus`. |
 
 > **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
 > the complexity-driven tier rules and `RALPH_<AGENT>_MODEL` override pattern.
@@ -89,7 +90,7 @@ The user-facing surface:
 | Builders team | `/ralph-hero:hero NNN` |
 | Watchers team | `/ralph-hero:watch [--issue NNN]` (heartbeat when no arg) |
 | Caretakers team | `/ralph-hero:caretake [--issue NNN \| --mode hygiene\|report\|trends]` |
-| Scouts team | no skill — `scout-nightly.sh` cron + on-PR comment trigger |
+| Scouts team | `/ralph-hero:scouts [--issue NNN]` (per-PR via `playwright-auto.yml`; nightly batch via `scout-nightly.sh` cron) |
 | Memorykeepers team | manual `dream-now` zsh function |
 | iOS trigger | add `trigger:<team>` label from GitHub mobile app |
 | iOS status | `ralph cos remote` (local LLM) / `ralph cos desk` (Streamlit via Tailscale) |

@@ -14,7 +14,7 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 |----------------|--------|------|-------|
 | any | `trigger:builders` | builders | Manual override: force builder dispatch. Hero handles the issue. |
 | any | `trigger:watch` | watchers | Manual override: force watcher dispatch. Feature C ships `ralph-hero:watch`. |
-| any | `trigger:scouts` | scouts | Manual override: force scout dispatch. Feature F ships `ralph-hero:scouts`. |
+| any | `trigger:scouts` | scouts | Manual override: force scout dispatch. Routes to `/ralph-hero:scouts --issue NNN`. |
 | any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch. Feature G ships `ralph-hero:caretake`. |
 | any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. |
 
@@ -26,7 +26,7 @@ These labels are written by automated producers (event shims, dream-loop classif
 |----------------|--------|------|-------|
 | any | `watcher-auto` | watchers | Label written by Cloud Monitoring → board bridge (`plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py`). Feature C ships the `ralph-hero:watch` entrypoint. |
 | any | `debug-auto` | watchers | Label written by `ralph-debug-collate` (invoked from Watcher heartbeat). Observability follow-ups are owned by watchers. |
-| any | `scout-auto` | scouts | Label written by Scout scheduling hook (on-PR + nightly). Producer ships in Feature F (GH-1273). Feature F also ships `ralph-hero:scouts`. |
+| any | `scout-auto` | scouts | Label written by `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch). Routes to `/ralph-hero:scouts`. |
 | any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). Feature G ships `ralph-hero:caretake`. |
 
 ## Priority 3 — Workflow state (fallback routing)
@@ -55,7 +55,7 @@ When no trigger or automation labels are present, Director routes by workflow st
 |------|-----------------|--------|
 | builders | `ralph-hero:hero` | live |
 | watchers | `ralph-hero:watch` | pending Feature C (GH-1270) |
-| scouts | `ralph-hero:scouts` | pending Feature F (GH-1273) |
+| scouts | `ralph-hero:scouts` | live |
 | memorykeepers | manual `dream-now` | no skill yet; Director emits `needs input:` |
 | caretakers | `ralph-hero:caretake` | pending Feature G (GH-1274) |
 
@@ -92,3 +92,4 @@ This table is the canonical inventory of automated label producers as of Feature
 | `watcher-auto` | `plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py` | GCP Cloud Monitoring alert delivered to the configured Pub/Sub subscription |
 | `debug-auto` | `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` (invoked from Watcher heartbeat) | Langfuse error grouping with ≥ N occurrences in window (default: 3) |
 | `process-improvement` | `scripts/dream/reflect.py::emit_process_improvement_issue` | Dream-loop cluster of size ≥ threshold (default: 5) with ≥ N% `tool_use_error` or `verdict: BLOCKED` signals (default: 30%) |
+| `scout-auto` | `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch) | PR opened/synchronized/reopened with UI-touching changes; nightly schedule |
