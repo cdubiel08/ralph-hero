@@ -1,5 +1,5 @@
 ---
-description: Scout team orchestrator — detects UI-touching PRs and dispatches product-user-testing skills (a11y-scan always; test-e2e, storybook-test, visual-diff conditionally). Posts a ## Scout Report with Verdict: GREEN|YELLOW|RED consumed by ralph-merge. Accepts --issue NNN (direct) or a bare issue number (Director canonical form).
+description: Scout team orchestrator — detects UI-touching PRs and dispatches product-user-testing skills (a11y-scan always; test-e2e, storybook-test, visual-diff conditionally). Posts a ## Scout Report with Verdict: GREEN|RED consumed by ralph-merge. Accepts --issue NNN (direct) or a bare issue number (Director canonical form).
 argument-hint: "[--issue NNN]"
 context: inline
 hooks:
@@ -144,7 +144,7 @@ After all sub-skills complete, compose the Scout Report using the **exact** outp
 ```
 ## Scout Report
 
-Verdict: <GREEN|YELLOW|RED>
+Verdict: <GREEN|RED>
 
 Dispatched: <comma-separated list of skills actually run>
 
@@ -160,8 +160,9 @@ Evidence:
 | Condition | Verdict |
 |-----------|---------|
 | Zero critical or high signals across all dispatched skills | `GREEN` |
-| One or more medium or low signals, zero critical/high | `YELLOW` |
 | One or more critical or high signals | `RED` |
+
+**Note:** YELLOW (medium/low signals only, zero critical/high) is reserved for a future ralph-merge handler and is not part of the current contract (tracked in Phase 4 GH-1320 or a follow-up). Until then, emit GREEN when there are no critical or high signals, regardless of medium/low signal count.
 
 The signal severity taxonomy (`critical`, `high`, `medium`, `low`) matches the taxonomy referenced in `SOUL.md` and must be applied consistently. A finding without a severity label is treated as `medium` (conservative).
 
@@ -169,22 +170,29 @@ The signal severity taxonomy (`critical`, `high`, `medium`, `low`) matches the t
 
 ## Posting the Scout Report
 
-Post the composed Scout Report as a comment on the PR using `ralph_hero__create_comment`:
+The Scout Report **must** be posted as a PR-level comment, not on the linked issue. ralph-merge Step 4b reads PR comments via `gh pr view PR_NUMBER --json comments` — a comment posted on the linked issue is invisible to the gate and will silently miss it.
 
-```
-ralph_hero__create_comment(
-  number=SCOUTS_ISSUE_NUMBER,
-  body="## Scout Report\n\nVerdict: <GREEN|YELLOW|RED>\n\n..."
-)
+Post the report using the `gh` CLI:
+
+```bash
+gh pr comment PR_NUMBER --body "## Scout Report
+
+Verdict: <GREEN|RED>
+
+Dispatched: <comma-separated list of skills actually run>
+
+Findings:
+- <bullet per signal>
+
+Evidence:
+- <bullet per artifact path>"
 ```
 
-Note: Post the comment on the **issue** (which `ralph-merge` inspects via `gh pr view --json comments`) rather than directly on the PR diff, so the gate's grep logic finds it. The gate fetches comments from the PR; ralph-merge's Step 4b fetches PR comments via `gh pr view PR_NUMBER --json comments`, so the comment must appear on the PR. Use the gh CLI if a direct PR comment is preferred:
+Or, writing to a temp file first:
 
 ```bash
 gh pr comment PR_NUMBER --body "$(cat scout-report.txt)"
 ```
-
-Either path is acceptable — use whichever is available in the tool context.
 
 ## SOUL refusal enforcement
 
@@ -213,7 +221,7 @@ After the Scout Report is posted (or when escalating), emit a terminal result li
 
 **On success (Scout Report posted with any verdict):**
 ```
-result: #NNN scout complete — Verdict: <GREEN|YELLOW|RED>, Dispatched: <skills>
+result: #NNN scout complete — Verdict: <GREEN|RED>, Dispatched: <skills>
 # TODO(GH-1272): wire outcome-recorder(decision=scouts-complete, result=<verdict>, issue=NNN)
 ```
 
