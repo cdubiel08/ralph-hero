@@ -269,20 +269,20 @@ Create `.github/workflows/playwright-auto.yml` as the per-PR issue producer that
 
 #### Automated Verification:
 
-- [ ] `test -f .github/workflows/playwright-auto.yml` exits 0.
-- [ ] `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/playwright-auto.yml'))"` exits 0 (valid YAML).
-- [ ] `bash plugin/ralph-hero/scripts/playwright-auto-smoke.sh` exits 0 with `FAIL=0` in summary.
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 (regression).
-- [ ] `grep -cE '\.(tsx\|svelte\|vue\|css\|scss)\$' .github/workflows/playwright-auto.yml` returns 0 (regex NOT inlined).
-- [ ] `grep -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh' .github/workflows/playwright-auto.yml` >= 1.
-- [ ] `grep -c '<!-- scout-pr:' .github/workflows/playwright-auto.yml` >= 1.
-- [ ] `grep -c 'scout-pr/' .github/workflows/playwright-auto.yml` >= 2.
-- [ ] `grep -c 'scout-auto' .github/workflows/playwright-auto.yml` >= 1.
-- [ ] `grep -c 'issues: write' .github/workflows/playwright-auto.yml` >= 1 (permissions block).
-- [ ] `grep -c 'pull-requests: read' .github/workflows/playwright-auto.yml` >= 1.
-- [ ] `grep -c 'contents: read' .github/workflows/playwright-auto.yml` >= 1.
-- [ ] `grep -c 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5' .github/workflows/playwright-auto.yml` >= 1 (pinned SHA matches sibling workflows).
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` continues to pass.
+- [x] `test -f .github/workflows/playwright-auto.yml` exits 0.
+- [x] `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/playwright-auto.yml'))"` exits 0 (valid YAML).
+- [x] `bash plugin/ralph-hero/scripts/playwright-auto-smoke.sh` exits 0 with `FAIL=0` in summary.
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 (regression).
+- [x] `grep -cE '\.(tsx\|svelte\|vue\|css\|scss)\$' .github/workflows/playwright-auto.yml` returns 0 (regex NOT inlined).
+- [x] `grep -c 'source plugin/ralph-hero/scripts/shared/ui-heuristic.sh' .github/workflows/playwright-auto.yml` >= 1.
+- [x] `grep -c '<!-- scout-pr:' .github/workflows/playwright-auto.yml` >= 1.
+- [x] `grep -c 'scout-pr/' .github/workflows/playwright-auto.yml` >= 2.
+- [x] `grep -c 'scout-auto' .github/workflows/playwright-auto.yml` >= 1.
+- [x] `grep -c 'issues: write' .github/workflows/playwright-auto.yml` >= 1 (permissions block).
+- [x] `grep -c 'pull-requests: read' .github/workflows/playwright-auto.yml` >= 1.
+- [x] `grep -c 'contents: read' .github/workflows/playwright-auto.yml` >= 1.
+- [x] `grep -c 'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5' .github/workflows/playwright-auto.yml` >= 1 (pinned SHA matches sibling workflows).
+- [x] `cd plugin/ralph-hero/mcp-server && npm test` continues to pass.
 
 #### Manual Verification:
 
