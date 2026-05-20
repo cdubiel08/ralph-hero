@@ -9,8 +9,9 @@
 #   scout-pr/NNN             — plain text, line 2 (GitHub search-API indexing)
 #
 # Idempotency (ported from monitoring-bridge/subscribe.py:206-246):
-#   Search open issues for the plain-text marker before creating. If an open
-#   issue already exists for this PR, skip creation and exit 0.
+#   List open scout-auto issues (list endpoint, immediately consistent) and filter
+#   for the plain-text marker in jq. If an open issue already exists for this PR,
+#   skip creation and exit 0.
 #
 # Least-privilege permissions: issues: write, pull-requests: read, contents: read.
 # No new secrets — reuses ROUTING_PAT already required by sibling workflows.
@@ -96,15 +97,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Search by plain-text marker — GitHub search API does NOT index HTML comments.
-          # Mirrors monitoring-bridge/subscribe.py:_issue_exists_for_policy (lines 206-246).
+          # Use the list endpoint (immediately consistent) instead of --search (Search API
+          # has ~30 s eventual-consistency lag that allows duplicate creation on rapid
+          # synchronize events). Narrow with --label scout-auto so the list is bounded,
+          # then filter in jq for the exact plain-text marker.
           MARKER="scout-pr/${PR_NUMBER}"
           EXISTING=$(gh issue list \
             --state open \
-            --search "$MARKER" \
-            --json number \
-            --limit 5 \
-            --jq '.[0].number // empty')
+            --label scout-auto \
+            --json number,body \
+            --limit 100 \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .number" \
+            | head -1)
           if [ -n "$EXISTING" ]; then
             echo "[playwright-auto] skipping: open scout-auto issue exists for PR ${PR_NUMBER} (#${EXISTING})"
             echo "skip=true" >> "$GITHUB_OUTPUT"
