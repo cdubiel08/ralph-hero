@@ -131,7 +131,11 @@ verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_N
     ```bash
     verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)
     ```
-    `case` on the new `$verdict` using the same four arms above.
+    `case` on the new `$verdict`:
+    - **`APPROVED`**: continue to Step 5.
+    - **`NEEDS_FIX`**: proceed to Step 4a (Code Review Fix Cycle).
+    - **`BLOCKED`**: emit `FINISH BLOCKED` with reason "Code review did not produce a verdict and no self-authored fallback applies" and stop.
+    - **`ERROR: *`**: emit `FINISH BLOCKED` with the error message and stop.
   - **`interactive`** (`RALPH_REVIEW_MODE=interactive`, default): present a choice:
 
     !cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
@@ -154,7 +158,11 @@ verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_N
       ```bash
       verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)
       ```
-      `case` on the new `$verdict` using the same four arms above.
+      `case` on the new `$verdict`:
+      - **`APPROVED`**: continue to Step 5.
+      - **`NEEDS_FIX`**: proceed to Step 4a (Code Review Fix Cycle).
+      - **`BLOCKED`**: emit `FINISH BLOCKED` with reason "Code review did not produce a verdict and no self-authored fallback applies" and stop.
+      - **`ERROR: *`**: emit `FINISH BLOCKED` with the error message and stop.
     - If user selects **"Merge without review"**: continue to Step 5.
     - If user selects **"Other"**: stop.
 
