@@ -78,10 +78,15 @@ jobs:
         run: |
           set -euo pipefail
           source plugin/ralph-hero/scripts/shared/ui-heuristic.sh
-          # Filter to only UI-touching lines using the heuristic regex
-          grep -E '\.(tsx|svelte|vue|css|scss)$|/components/|(^|/)storybook/' \
-            "${RUNNER_TEMP}/changed-files.txt" > "${RUNNER_TEMP}/ui-files.txt" || true
-          UI_COUNT=$(wc -l < "${RUNNER_TEMP}/ui-files.txt" || echo 0)
+          # Filter to only UI-touching lines using the shared helper (no inline regex).
+          ui_files=()
+          while IFS= read -r f; do
+            if [ -n "$f" ] && is_ui_touching "$f"; then
+              ui_files+=("$f")
+            fi
+          done < "${RUNNER_TEMP}/changed-files.txt"
+          printf '%s\n' "${ui_files[@]+"${ui_files[@]}"}" > "${RUNNER_TEMP}/ui-files.txt" || true
+          UI_COUNT=${#ui_files[@]}
           echo "ui_count=${UI_COUNT}" >> "$GITHUB_OUTPUT"
           echo "[playwright-auto] ${UI_COUNT} UI-touching file(s) in PR #${PR_NUMBER}"
 
@@ -114,29 +119,15 @@ jobs:
         run: |
           set -euo pipefail
           UI_FILES="$(cat "${RUNNER_TEMP}/ui-files.txt")"
+          # Build body with printf to guarantee markers start at column 0 (no heredoc indentation).
+          # SC2016: backticks in the format string are markdown literals, not shell expansions.
+          # shellcheck disable=SC2016
+          BODY=$(printf '<!-- scout-pr: %s -->\nscout-pr/%s\n\nScout review requested for PR #%s.\n\n- **PR**: %s\n- **Head SHA**: `%s`\n\n## UI-touching files\n\n```\n%s\n```\n\n---\n\n*Filed by `.github/workflows/playwright-auto.yml`. Director will route this issue to the scouts team-skill via the `scout-auto` label. Re-running the workflow on the same PR is a no-op as long as this issue stays open (idempotency: `scout-pr/%s`).*' \
+            "${PR_NUMBER}" "${PR_NUMBER}" "${PR_NUMBER}" "${PR_URL}" "${HEAD_SHA}" "${UI_FILES}" "${PR_NUMBER}")
           ISSUE_URL=$(gh issue create \
             --title "Scout: UI review for PR #${PR_NUMBER}" \
             --label "scout-auto" \
-            --body "$(cat <<EOF
-          <!-- scout-pr: ${PR_NUMBER} -->
-          scout-pr/${PR_NUMBER}
-
-          Scout review requested for PR #${PR_NUMBER}.
-
-          - **PR**: ${PR_URL}
-          - **Head SHA**: \`${HEAD_SHA}\`
-
-          ## UI-touching files
-
-          \`\`\`
-          ${UI_FILES}
-          \`\`\`
-
-          ---
-
-          *Filed by \`.github/workflows/playwright-auto.yml\`. Director will route this issue to the scouts team-skill via the \`scout-auto\` label. Re-running the workflow on the same PR is a no-op as long as this issue stays open (idempotency: \`scout-pr/${PR_NUMBER}\`).*
-          EOF
-          )")
+            --body "$BODY")
           ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
           echo "[playwright-auto] created scout-auto issue #${ISSUE_NUMBER} for PR ${PR_NUMBER}"
           echo "$ISSUE_URL"

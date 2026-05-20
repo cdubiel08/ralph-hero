@@ -69,32 +69,15 @@ fi
 echo ""
 echo "--- Marker construction ---"
 
-# Build the body template exactly as playwright-auto.yml does it.
-# Using a subshell so PR_NUMBER scoping is clean.
-BODY=$(PR_NUMBER=42 bash -c '
-PR_NUMBER=42
-UI_FILES="src/components/Button.tsx
+# Build the body exactly as playwright-auto.yml does it (printf, no heredoc indentation).
+PR_NUMBER_TEST=42
+PR_URL_TEST="https://github.com/example/repo/pull/42"
+HEAD_SHA_TEST="abc1234"
+UI_FILES_TEST="src/components/Button.tsx
 src/styles/theme.scss"
-cat <<EOF
-<!-- scout-pr: ${PR_NUMBER} -->
-scout-pr/${PR_NUMBER}
 
-Scout review requested for PR #${PR_NUMBER}.
-
-- **PR**: https://github.com/example/repo/pull/${PR_NUMBER}
-- **Head SHA**: \`abc1234\`
-
-## UI-touching files
-
-\`\`\`
-${UI_FILES}
-\`\`\`
-
----
-
-*Filed by \`.github/workflows/playwright-auto.yml\`. Director will route this issue to the scouts team-skill via the \`scout-auto\` label. Re-running the workflow on the same PR is a no-op as long as this issue stays open (idempotency: \`scout-pr/${PR_NUMBER}\`).*
-EOF
-')
+BODY=$(printf '<!-- scout-pr: %s -->\nscout-pr/%s\n\nScout review requested for PR #%s.\n\n- **PR**: %s\n- **Head SHA**: `%s`\n\n## UI-touching files\n\n```\n%s\n```\n\n---\n\n*Filed by `.github/workflows/playwright-auto.yml`. Director will route this issue to the scouts team-skill via the `scout-auto` label. Re-running the workflow on the same PR is a no-op as long as this issue stays open (idempotency: `scout-pr/%s`).*' \
+  "${PR_NUMBER_TEST}" "${PR_NUMBER_TEST}" "${PR_NUMBER_TEST}" "${PR_URL_TEST}" "${HEAD_SHA_TEST}" "${UI_FILES_TEST}" "${PR_NUMBER_TEST}")
 
 # Assertion 3: Both marker forms appear in the body
 if echo "$BODY" | grep -qF "<!-- scout-pr: 42 -->"; then
@@ -109,20 +92,48 @@ else
   _fail "Plain-text marker 'scout-pr/42' NOT found in body"
 fi
 
-# Assertion 4: HTML-comment marker is on line 1
+# Assertion 4: HTML-comment marker is on line 1 with NO leading whitespace
 FIRST_LINE=$(echo "$BODY" | head -n 1)
 if [ "$FIRST_LINE" = "<!-- scout-pr: 42 -->" ]; then
-  _pass "HTML-comment marker is on line 1 of body"
+  _pass "HTML-comment marker is on line 1 of body (no leading whitespace)"
 else
-  _fail "HTML-comment marker is NOT on line 1 — got: '${FIRST_LINE}'"
+  _fail "HTML-comment marker is NOT on line 1 or has leading whitespace — got: '${FIRST_LINE}'"
 fi
 
-# Assertion 5: Plain-text marker is on line 2
+# Assertion 5: Body line 1 has no leading whitespace (belt-and-suspenders check)
+if echo "$FIRST_LINE" | grep -qE '^[[:space:]]'; then
+  _fail "Body line 1 has leading whitespace — got: '${FIRST_LINE}'"
+else
+  _pass "Body line 1 has no leading whitespace"
+fi
+
+# Assertion 6: Plain-text marker is on line 2
 SECOND_LINE=$(echo "$BODY" | sed -n '2p')
 if [ "$SECOND_LINE" = "scout-pr/42" ]; then
   _pass "Plain-text marker is on line 2 of body"
 else
   _fail "Plain-text marker is NOT on line 2 — got: '${SECOND_LINE}'"
+fi
+
+# ---------------------------------------------------------------------------
+# Section 4: Workflow file structural assertions
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Workflow file structure ---"
+
+WORKFLOW_FILE="${SCRIPT_DIR}/../../../.github/workflows/playwright-auto.yml"
+
+if [ -f "$WORKFLOW_FILE" ]; then
+  # Assertion 7: No inline regex in workflow — the pattern must only live in the shared helper
+  # grep -F for literal string search avoids ERE parentheses issues; matches the tsx|svelte|vue pattern fragment
+  INLINE_REGEX_COUNT=$(grep -cF 'tsx|svelte|vue' "$WORKFLOW_FILE" || true)
+  if [ "$INLINE_REGEX_COUNT" -eq 0 ]; then
+    _pass "No inline UI regex in playwright-auto.yml (shared helper is sole source of truth)"
+  else
+    _fail "Inline UI regex found in playwright-auto.yml (${INLINE_REGEX_COUNT} match(es)) — must use is_ui_touching only"
+  fi
+else
+  _fail "Cannot verify workflow structure: $WORKFLOW_FILE not found"
 fi
 
 # ---------------------------------------------------------------------------
