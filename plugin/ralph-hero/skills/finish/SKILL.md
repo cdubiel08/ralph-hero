@@ -112,110 +112,87 @@ Check the agent output for the verdict:
 >
 > The `code-review:code-review` plugin spawns 5 parallel Sonnet reviewers + N parallel Haiku scorers via the `Agent` tool. Those parallel agents land at depth 1 only when `code-review:code-review` itself is invoked from depth 0. By keeping the code review gate inline in finish (which runs at depth 0), we preserve the parallel-agent fan-out. If code review were dispatched from inside an agent context, the runtime's no-depth-2-Agent rule would silently break the parallel reviewers.
 
-Check whether the PR has received a code review:
+Read the initial verdict from the deterministic helper:
 
 ```bash
-gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'
+verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)
 ```
 
-**If `reviewDecision` is `APPROVED`**: a code review has been performed and approved. Proceed to Step 5.
+`case` on `$verdict`:
 
-**If `reviewDecision` is `CHANGES_REQUESTED`**: a human reviewer (not the automated code-review skill) requested changes. Output:
+- **`APPROVED`**: formal review approval or self-authored clean pass — continue to Step 5.
+- **`NEEDS_FIX`**: formal `CHANGES_REQUESTED` or self-authored code-review found issues — proceed to Step 4a.
+- **`BLOCKED`**: multi-author repo with no formal review decision and no self-authored fallback. Branch on `RALPH_REVIEW_MODE`:
+  - **`auto`** (`RALPH_REVIEW_MODE=auto`): run code review inline — do NOT prompt the user:
+    ```
+    Skill("code-review:code-review", "PR_NUMBER")
+    ```
+    The `code-review:code-review` skill runs inline at depth 0; its parallel reviewer agents land at depth 1 (legal). After the review skill completes, re-read the verdict:
+    ```bash
+    verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)
+    ```
+    `case` on the new `$verdict` using the same four arms above.
+  - **`interactive`** (`RALPH_REVIEW_MODE=interactive`, default): present a choice:
 
-```
-FINISH BLOCKED
-Issue: #NNN
-PR: #PR_NUMBER
-Reason: Human reviewer requested changes — address feedback before merging.
-```
+    !cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
 
-And stop.
+    ```
+    AskUserQuestion(
+      questions=[{
+        "question": "This PR has no code review yet. Would you like to run one before merging?",
+        "header": "Code Review",
+        "options": [
+          {"label": "Run code review", "description": "Invoke /code-review:code-review on PR #PR_NUMBER before merging"},
+          {"label": "Merge without review", "description": "Skip code review and proceed to merge"}
+        ],
+        "multiSelect": false
+      }]
+    )
+    ```
 
-**If no review decision exists** (`reviewDecision` is null or empty), branch on `RALPH_REVIEW_MODE`:
+    - If user selects **"Run code review"**: invoke `Skill("code-review:code-review", "PR_NUMBER")`. After it completes, re-read the verdict:
+      ```bash
+      verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)
+      ```
+      `case` on the new `$verdict` using the same four arms above.
+    - If user selects **"Merge without review"**: continue to Step 5.
+    - If user selects **"Other"**: stop.
 
-### Auto mode (`RALPH_REVIEW_MODE=auto`)
+  If the `code-review:code-review` skill is NOT installed:
 
-Run code review automatically — do NOT prompt the user:
-
-```
-Skill("code-review:code-review", "PR_NUMBER")
-```
-
-The `code-review:code-review` skill runs inline at depth 0; its parallel reviewer agents land at depth 1 (legal). After the review skill completes, re-check `reviewDecision`:
-
-```bash
-gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'
-```
-
-- If `APPROVED`: continue to Step 5.
-- If `CHANGES_REQUESTED`: proceed to Step 4a (Code Review Fix Cycle).
-- If still null/empty: the code-review skill posts a comment but never creates a formal review (so `reviewDecision` never changes from null). Branch on self-authorship:
-
-  ```bash
-  PR_AUTHOR=$(gh pr view PR_NUMBER --json author --jq '.author.login')
-  CURRENT_USER=$(gh api user --jq '.login')
-  LAST_COMMENT=$(gh pr view PR_NUMBER --json comments --jq '.comments | map(select(.body | startswith("### Code review"))) | last | .body')
+  ```
+  This PR has no code review. Consider installing the code-review plugin:
+    claude plugins install @anthropic/code-review
   ```
 
-  - If `PR_AUTHOR == CURRENT_USER` AND `LAST_COMMENT` contains the literal string `No issues found`: code review passed clean on a self-authored single-contributor repo (GitHub blocks self-approval, so a formal `APPROVED` is unattainable). Treat as APPROVED-equivalent and continue to Step 5.
-  - If `PR_AUTHOR == CURRENT_USER` AND `LAST_COMMENT` contains `Found ` (i.e., the "Found N issues" variant): code review flagged issues. Proceed to Step 4a (Code Review Fix Cycle).
-  - Otherwise (multi-author repo with null `reviewDecision`, or no code-review comment found): output `FINISH BLOCKED` with `Reason: Code review did not produce a reviewDecision and no self-authored fallback applies` and stop.
+  Then present:
 
-### Interactive mode (`RALPH_REVIEW_MODE=interactive`, default)
+  ```
+  AskUserQuestion(
+    questions=[{
+      "question": "Proceed without code review?",
+      "header": "No Code Review Plugin",
+      "options": [
+        {"label": "Merge without review", "description": "Skip code review and proceed to merge"},
+        {"label": "Stop", "description": "Stop here — install the code-review plugin first"}
+      ],
+      "multiSelect": false
+    }]
+  )
+  ```
 
-Present a choice:
+  - If user selects **"Merge without review"**: continue to Step 5.
+  - If user selects **"Stop"** or **"Other"**: stop.
 
-!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/ask-user-question.md
-
-```
-AskUserQuestion(
-  questions=[{
-    "question": "This PR has no code review yet. Would you like to run one before merging?",
-    "header": "Code Review",
-    "options": [
-      {"label": "Run code review", "description": "Invoke /code-review:code-review on PR #PR_NUMBER before merging"},
-      {"label": "Merge without review", "description": "Skip code review and proceed to merge"}
-    ],
-    "multiSelect": false
-  }]
-)
-```
-
-- If user selects **"Run code review"**: invoke `Skill("code-review:code-review", "PR_NUMBER")`. After it completes, re-check `reviewDecision`. If `APPROVED`, continue to Step 5. If `CHANGES_REQUESTED`, proceed to Step 4a.
-- If user selects **"Merge without review"**: continue to Step 5.
-- If user selects **"Other"**: stop.
-
-### Skill not available
-
-If the `code-review:code-review` skill is NOT installed:
-
-```
-This PR has no code review. Consider installing the code-review plugin:
-  claude plugins install @anthropic/code-review
-```
-
-Then present:
-
-```
-AskUserQuestion(
-  questions=[{
-    "question": "Proceed without code review?",
-    "header": "No Code Review Plugin",
-    "options": [
-      {"label": "Merge without review", "description": "Skip code review and proceed to merge"},
-      {"label": "Stop", "description": "Stop here — install the code-review plugin first"}
-    ],
-    "multiSelect": false
-  }]
-)
-```
-
-- If user selects **"Merge without review"**: continue to Step 5.
-- If user selects **"Stop"** or **"Other"**: stop.
+- **`ERROR: *`**: transient `gh` failure. Retry once:
+  ```bash
+  verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)
+  ```
+  If still `ERROR: *`: output `FINISH BLOCKED` with the error message and stop.
 
 ## Step 4a: Code Review Fix Cycle
 
-Triggered when the auto code review (or interactive "Run code review") returned `CHANGES_REQUESTED`.
+Triggered when Step 4 verdict is `NEEDS_FIX`.
 
 Dispatch impl-agent in Address Mode to fix the flagged issues. The issue is already "In Review" with an open PR that has review comments — impl-agent will auto-detect Address Mode.
 
@@ -229,10 +206,14 @@ After impl-agent completes, re-run code review once:
 Skill("code-review:code-review", "PR_NUMBER")
 ```
 
-Then re-check `reviewDecision` (same self-authored fallback as Step 4):
+Then re-read the verdict via the helper:
+
+```bash
+verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)
+```
 
 - If `APPROVED`: continue to Step 5.
-- If `CHANGES_REQUESTED` again: stop. Max 1 fix cycle. Output:
+- If `NEEDS_FIX` again: stop. Max 1 fix cycle. Output:
 
 ```
 FINISH BLOCKED
@@ -241,16 +222,7 @@ PR: #PR_NUMBER
 Reason: Code review feedback unresolved after 1 fix cycle.
 ```
 
-- If still null/empty: branch on self-authorship + last code-review comment content:
-
-  ```bash
-  PR_AUTHOR=$(gh pr view PR_NUMBER --json author --jq '.author.login')
-  CURRENT_USER=$(gh api user --jq '.login')
-  LAST_COMMENT=$(gh pr view PR_NUMBER --json comments --jq '.comments | map(select(.body | startswith("### Code review"))) | last | .body')
-  ```
-
-  - If `PR_AUTHOR == CURRENT_USER` AND `LAST_COMMENT` contains `No issues found`: the fix cycle resolved the feedback. Continue to Step 5.
-  - Otherwise: stop with `FINISH BLOCKED` and `Reason: Code review feedback unresolved after 1 fix cycle`.
+- If `BLOCKED` or `ERROR: *`: stop with `FINISH BLOCKED` and `Reason: Code review feedback unresolved after 1 fix cycle`.
 
 ## Step 5: Merge (dispatch ralph-merge)
 
