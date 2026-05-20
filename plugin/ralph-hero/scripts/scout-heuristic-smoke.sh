@@ -3,7 +3,8 @@
 #
 # Mirrors the shape of plugin/ralph-hero/scripts/cos/smoke.sh and soul/smoke.sh.
 #
-# The heuristic fires when ANY file path matches one of:
+# The heuristic is defined in shared/ui-heuristic.sh and fires when ANY file
+# path matches one of:
 #   *.tsx  *.svelte  *.vue  */components/*  *.css  *.scss  */storybook/*
 #
 # Usage:
@@ -19,23 +20,17 @@
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# Load shared helper (is_ui_touching + _ui_heuristic alias)
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/shared/ui-heuristic.sh"
+
 PASS=0
 FAIL=0
 
 _pass() { echo "[PASS] $1"; (( PASS++ )) || true; }
 _fail() { echo "[FAIL] $1" >&2; (( FAIL++ )) || true; }
-
-# ---------------------------------------------------------------------------
-# Core heuristic function — returns 0 (MATCH) or 1 (NO_MATCH)
-# Accepts a newline-separated list of file paths on stdin.
-# ---------------------------------------------------------------------------
-_ui_heuristic() {
-  local files="$1"
-  if printf '%s\n' "$files" | grep -qE '\.(tsx|svelte|vue|css|scss)$|/components/|(^|/)storybook/'; then
-    return 0
-  fi
-  return 1
-}
 
 # ---------------------------------------------------------------------------
 # --check mode: print MATCH or NO_MATCH for provided file paths
@@ -104,6 +99,26 @@ _assert_no_match "JSON config"                "package.json"
 _assert_no_match "Empty input"                ""
 _assert_no_match "Backend-only files"         "$(printf 'src/server/routes.ts\nsrc/db/migrations/001.sql')"
 _assert_no_match "YAML skills file"           "plugin/ralph-hero/skills/ralph-pr/SKILL.md"
+
+# ---------------------------------------------------------------------------
+# Sourceability assertions (exercises the Phase 2/3 invocation pattern)
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Sourceability ---"
+
+# Sub-shell source via stdin pipe (GitHub Actions style: pipe file list to is_ui_touching)
+if bash -c "source \"$SCRIPT_DIR/shared/ui-heuristic.sh\" && echo 'src/components/X.tsx' | is_ui_touching" >/dev/null 2>&1; then
+  _pass "sub-shell source + stdin pipe → MATCH (expected)"
+else
+  _fail "sub-shell source + stdin pipe → NO_MATCH (expected MATCH)"
+fi
+
+# Sub-shell source via arg (bash script style: is_ui_touching "\$files")
+if ! bash -c "source \"$SCRIPT_DIR/shared/ui-heuristic.sh\" && is_ui_touching 'README.md'" >/dev/null 2>&1; then
+  _pass "sub-shell source + arg → NO_MATCH (expected)"
+else
+  _fail "sub-shell source + arg → MATCH (expected NO_MATCH)"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary
