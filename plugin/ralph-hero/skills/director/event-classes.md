@@ -92,3 +92,4 @@ This table is the canonical inventory of automated label producers as of Feature
 | `watcher-auto` | `plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py` | GCP Cloud Monitoring alert delivered to the configured Pub/Sub subscription |
 | `debug-auto` | `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` (invoked from Watcher heartbeat) | Langfuse error grouping with ≥ N occurrences in window (default: 3) |
 | `process-improvement` | `scripts/dream/reflect.py::emit_process_improvement_issue` | Dream-loop cluster of size ≥ threshold (default: 5) with ≥ N% `tool_use_error` or `verdict: BLOCKED` signals (default: 30%) |
+| `scout-auto` | `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch) | PR opened/synchronized/reopened with UI-touching changes; nightly schedule |
