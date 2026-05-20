@@ -69,6 +69,7 @@ export interface OutcomeQueryParams {
   verdict?: string;
   sessionId?: string;
   since?: string;
+  domain?: string;
   limit?: number;
 }
 
@@ -412,6 +413,10 @@ export class KnowledgeDB {
     if (params.since !== undefined) {
       conditions.push("timestamp >= ?");
       values.push(params.since);
+    }
+    if (params.domain !== undefined) {
+      conditions.push("json_extract(payload, '$.domain') = ?");
+      values.push(params.domain);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

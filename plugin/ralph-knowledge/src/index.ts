@@ -758,14 +758,8 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
         });
 
         const priorOutcomes = db.queryOutcomeEvents({
+          domain: args.domain,
           limit,
-        }).filter((evt) => {
-          try {
-            const p = JSON.parse(evt.payload ?? "{}") as Record<string, unknown>;
-            return p.domain === args.domain;
-          } catch {
-            return false;
-          }
         });
 
         const warning =

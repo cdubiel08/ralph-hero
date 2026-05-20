@@ -1183,4 +1183,55 @@ describe("knowledge_expert", () => {
     // qid2: only its expert_call = 1
     expect(byQid2).toHaveLength(1);
   });
+
+  it("prior_outcomes domain filter is applied in SQL before LIMIT (not JS-side after)", async () => {
+    // Regression test: a burst of M other-domain expert_call rows (more recent) must not
+    // starve the target domain when prior_outcomes uses a SQL domain predicate + LIMIT.
+    const mod = await import("../index.js");
+    const { server, db } = mod.createServer(":memory:");
+
+    // Seed N=3 target-domain expert_call rows
+    for (let i = 0; i < 3; i++) {
+      db.insertOutcomeEvent({
+        eventType: "expert_call",
+        issueNumber: 1306,
+        sessionId: `session-target-${i}`,
+        agentType: "knowledge_expert",
+        payload: { domain: "auth", query_id: `qid-auth-${i}` },
+      });
+    }
+
+    // Seed M=5 other-domain expert_call rows (these are more recent because inserted after)
+    for (let i = 0; i < 5; i++) {
+      db.insertOutcomeEvent({
+        eventType: "expert_call",
+        issueNumber: 1306,
+        sessionId: `session-other-${i}`,
+        agentType: "knowledge_expert",
+        payload: { domain: "caching", query_id: `qid-caching-${i}` },
+      });
+    }
+
+    // Call knowledge_expert for "auth" with limit=3.
+    // Without the SQL domain predicate, the 5 "caching" rows (being more recent) would
+    // consume the entire LIMIT before the JS filter runs, returning 0 "auth" rows.
+    // With the fix, the SQL WHERE filters first and we get back up to 3 "auth" rows.
+    const result = await callTool(server, "knowledge_expert", {
+      domain: "auth",
+      issue_number: 1306,
+      limit: 3,
+    });
+    expect(result.isError).not.toBe(true);
+
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    const priorOutcomes = payload.prior_outcomes as unknown[];
+
+    // Must return the 3 seeded "auth" rows, not 0 (the pre-fix behavior)
+    expect(priorOutcomes).toHaveLength(3);
+    // Confirm all returned rows are for the "auth" domain
+    for (const row of priorOutcomes) {
+      const rowPayload = JSON.parse((row as { payload: string }).payload) as Record<string, unknown>;
+      expect(rowPayload.domain).toBe("auth");
+    }
+  });
 });
