@@ -1,6 +1,6 @@
 {
   "name": "ralph-hero-mcp-server",
-  "version": "2.5.175",
+  "version": "2.5.176",
   "description": "MCP server for GitHub Projects V2 - Ralph workflow automation",
   "type": "module",
   "main": "dist/index.js",
