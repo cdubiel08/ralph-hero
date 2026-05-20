@@ -21,7 +21,7 @@ tags: [scouts, playwright, team-skill, soul, agent, director]
 
 ## Overview
 
-Single-issue atomic plan to author the missing `ralph-hero:scouts` team-skill, its `SOUL.md` (already exists — verify and integrate), and the per-phase `scouts-agent.md` agent definition. The skill orchestrates `a11y-scan` always and conditionally dispatches `test-e2e`, `storybook-test`, and `visual-diff` based on detected project artifacts, then writes a `## Scout Report` PR comment whose `Verdict: GREEN|YELLOW|RED` is consumed by ralph-merge's existing scout-report gate. Models its shape on the existing `watch` team-skill.
+Single-issue atomic plan to author the missing `ralph-hero:scouts` team-skill, its `SOUL.md` (already exists — verify and integrate), and the per-phase `scouts-agent.md` agent definition. The skill orchestrates `a11y-scan` always and conditionally dispatches `test-e2e`, `storybook-test`, and `visual-diff` based on detected project artifacts, then writes a `## Scout Report` PR comment whose `Verdict: GREEN|RED` is consumed by ralph-merge's existing scout-report gate. Models its shape on the existing `watch` team-skill.
 
 | Phase | Issue | Title | Estimate |
 |-------|-------|-------|----------|
@@ -31,7 +31,7 @@ Single-issue atomic plan to author the missing `ralph-hero:scouts` team-skill, i
 
 These constraints are inherited from the GH-1314 epic (reconstructed from the epic issue body and Phase 1 plan, since the on-disk plan-of-plans file is missing) and extended with feature-specific constraints from this issue's research.
 
-1. **Consumer contract is fixed.** The output is dictated by the existing `ralph-merge` consumer at `plugin/ralph-hero/skills/ralph-merge/SKILL.md:213-276`. Match the `## Scout Report` header and `Verdict: GREEN|YELLOW|RED` line shape exactly — ralph-merge greps for the literal strings `## Scout Report` and `Verdict: GREEN` (case-insensitive on `GREEN`). Do not invent a new schema or rename fields.
+1. **Consumer contract is fixed.** The output is dictated by the existing `ralph-merge` consumer at `plugin/ralph-hero/skills/ralph-merge/SKILL.md:213-276`. Match the `## Scout Report` header and `Verdict: GREEN|RED` line shape exactly — ralph-merge greps for the literal strings `## Scout Report` and `Verdict: GREEN` (case-insensitive on `GREEN`). Do not invent a new schema or rename fields. (YELLOW is reserved for a future ralph-merge handler — out of scope for this phase.)
 2. **Watch is the dispatch-pattern model.** Mirror `plugin/ralph-hero/skills/watch/SKILL.md` in argument parsing, dispatch table, terminal handlers, and `# TODO(GH-1272)` outcome-recorder stubs. Diverge only where scouts-specific logic requires it (conditional sub-skill dispatch instead of single-issue routing).
 3. **SOUL is auto-loaded by `load-team-soul.sh`.** Naming the directory `scouts/` and the file `SOUL.md` is sufficient — the SessionStart hook (`plugin/ralph-hero/hooks/scripts/load-team-soul.sh`) handles loading. The `SOUL.md` file already exists at `plugin/ralph-hero/skills/scouts/SOUL.md` (verified during planning); the plan VERIFIES that it loads correctly rather than recreating it.
 4. **Sourced heuristic, not re-implemented.** When detecting UI artifacts, source `plugin/ralph-hero/scripts/shared/ui-heuristic.sh` (created by Phase 1, GH-1317) rather than inlining the regex. If Phase 1 has not yet merged at impl time, impl-agent must wait — this issue is dependency-blocked by GH-1317 via the `blockedBy` graph maintained by GitHub.
@@ -74,7 +74,7 @@ These constraints are inherited from the GH-1314 epic (reconstructed from the ep
 - [x] `/ralph-hero:scouts --issue NNN` is a valid invocation — `argument-hint` reflects this.
 - [x] `/ralph-hero:scouts 1318` (bare number — Director's canonical form) is also valid.
 - [x] Skill body documents the always-dispatch (`a11y-scan`) and conditional dispatch (`test-e2e` if `playwright-stories/` exists; `storybook-test` if Storybook detected; `visual-diff` if Chromatic/Applitools baselines exist).
-- [x] Skill writes a `## Scout Report` PR comment whose body contains exactly `Verdict: GREEN`, `Verdict: YELLOW`, or `Verdict: RED` — confirmed by grep against the literal strings ralph-merge uses (`## Scout Report` and `Verdict: GREEN` per `ralph-merge/SKILL.md:248,259`).
+- [x] Skill writes a `## Scout Report` PR comment whose body contains exactly `Verdict: GREEN` or `Verdict: RED` — confirmed by grep against the literal strings ralph-merge uses (`## Scout Report` and `Verdict: GREEN` per `ralph-merge/SKILL.md:248,259`). (YELLOW is reserved for a future ralph-merge handler — out of scope for this phase.)
 - [x] Skill emits `result:` and `needs input:` markers per harness convention (mirrors watch).
 - [x] Skill emits `# TODO(GH-1272): wire outcome-recorder(...)` in every terminal handler.
 - [x] `plugin/ralph-hero/agents/scouts-agent.md` exists with `name: scouts-agent`, tier-appropriate `model:` (sonnet — orchestration role with multi-skill coordination matches log-reader/research-agent tier), a tools allowlist sufficient for dispatch (Bash, Skill, Read, MCP github tools), and `skills: [ralph-hero:scouts]` preload.
@@ -144,7 +144,7 @@ Create the missing scouts orchestrator skill and its per-phase agent so Director
     ```
     ## Scout Report
 
-    Verdict: <GREEN|YELLOW|RED>
+    Verdict: <GREEN|RED>
 
     Dispatched: <comma-separated list of skills actually run>
 
@@ -154,7 +154,7 @@ Create the missing scouts orchestrator skill and its per-phase agent so Director
     Evidence:
     - <bullet per artifact path>
     ```
-  - [x] Verdict computation rule documented: GREEN = zero critical/high signals; YELLOW = ≥1 medium/low; RED = ≥1 critical/high. (Signal severity taxonomy is the same one SOUL.md references.)
+  - [x] Verdict computation rule documented: GREEN = zero critical/high signals; RED = ≥1 critical/high. (YELLOW reserved for a future ralph-merge handler — out of scope for this phase.) (Signal severity taxonomy is the same one SOUL.md references.)
   - [x] Body contains a `## Posting the Scout Report` section that uses `mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment` to post the composed report to the PR linked to the issue (PR resolution via `get_issue` → comments search for `## Pull Request` marker).
   - [x] Body contains a `## SOUL refusal enforcement` section mirroring `watch/SKILL.md:62-72` — refuses to file findings without a screenshot/trace ref (matches SOUL.md refusal #1) and refuses to file flaky-on-first-fail (matches SOUL.md refusal #2).
   - [x] Body contains a `## Terminal handlers` section emitting `result:` lines on success, escalation, and SOUL refusal — each handler block MUST include a `# TODO(GH-1272): wire outcome-recorder(...)` stub matching the exact comment shape in `watch/SKILL.md:124,130,136`.
