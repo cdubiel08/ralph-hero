@@ -21,7 +21,7 @@ tags: [scouts, playwright, team-skill, soul, agent, director]
 
 ## Overview
 
-Single-issue atomic plan to author the missing `ralph-hero:scouts` team-skill, its `SOUL.md` (already exists — verify and integrate), and the per-phase `scouts-agent.md` agent definition. The skill orchestrates `a11y-scan` always and conditionally dispatches `test-e2e`, `storybook-test`, and `visual-diff` based on detected project artifacts, then writes a `## Scout Report` PR comment whose `Verdict: GREEN|YELLOW|RED` is consumed by ralph-merge's existing scout-report gate. Models its shape on the existing `watch` team-skill.
+Single-issue atomic plan to author the missing `ralph-hero:scouts` team-skill, its `SOUL.md` (already exists — verify and integrate), and the per-phase `scouts-agent.md` agent definition. The skill orchestrates `a11y-scan` always and conditionally dispatches `test-e2e`, `storybook-test`, and `visual-diff` based on detected project artifacts, then writes a `## Scout Report` PR comment whose `Verdict: GREEN|RED` is consumed by ralph-merge's existing scout-report gate. Models its shape on the existing `watch` team-skill.
 
 | Phase | Issue | Title | Estimate |
 |-------|-------|-------|----------|
@@ -31,7 +31,7 @@ Single-issue atomic plan to author the missing `ralph-hero:scouts` team-skill, i
 
 These constraints are inherited from the GH-1314 epic (reconstructed from the epic issue body and Phase 1 plan, since the on-disk plan-of-plans file is missing) and extended with feature-specific constraints from this issue's research.
 
-1. **Consumer contract is fixed.** The output is dictated by the existing `ralph-merge` consumer at `plugin/ralph-hero/skills/ralph-merge/SKILL.md:213-276`. Match the `## Scout Report` header and `Verdict: GREEN|YELLOW|RED` line shape exactly — ralph-merge greps for the literal strings `## Scout Report` and `Verdict: GREEN` (case-insensitive on `GREEN`). Do not invent a new schema or rename fields.
+1. **Consumer contract is fixed.** The output is dictated by the existing `ralph-merge` consumer at `plugin/ralph-hero/skills/ralph-merge/SKILL.md:213-276`. Match the `## Scout Report` header and `Verdict: GREEN|RED` line shape exactly — ralph-merge greps for the literal strings `## Scout Report` and `Verdict: GREEN` (case-insensitive on `GREEN`). Do not invent a new schema or rename fields. (YELLOW is reserved for a future ralph-merge handler — out of scope for this phase.)
 2. **Watch is the dispatch-pattern model.** Mirror `plugin/ralph-hero/skills/watch/SKILL.md` in argument parsing, dispatch table, terminal handlers, and `# TODO(GH-1272)` outcome-recorder stubs. Diverge only where scouts-specific logic requires it (conditional sub-skill dispatch instead of single-issue routing).
 3. **SOUL is auto-loaded by `load-team-soul.sh`.** Naming the directory `scouts/` and the file `SOUL.md` is sufficient — the SessionStart hook (`plugin/ralph-hero/hooks/scripts/load-team-soul.sh`) handles loading. The `SOUL.md` file already exists at `plugin/ralph-hero/skills/scouts/SOUL.md` (verified during planning); the plan VERIFIES that it loads correctly rather than recreating it.
 4. **Sourced heuristic, not re-implemented.** When detecting UI artifacts, source `plugin/ralph-hero/scripts/shared/ui-heuristic.sh` (created by Phase 1, GH-1317) rather than inlining the regex. If Phase 1 has not yet merged at impl time, impl-agent must wait — this issue is dependency-blocked by GH-1317 via the `blockedBy` graph maintained by GitHub.
@@ -70,16 +70,16 @@ These constraints are inherited from the GH-1314 epic (reconstructed from the ep
 
 ### Verification
 
-- [ ] `plugin/ralph-hero/skills/scouts/SKILL.md` exists with frontmatter declaring `allowed-tools`, `SessionStart` hooks (`set-skill-env.sh RALPH_COMMAND=scouts` + `load-team-soul.sh`), and a documented dispatch matrix.
-- [ ] `/ralph-hero:scouts --issue NNN` is a valid invocation — `argument-hint` reflects this.
-- [ ] `/ralph-hero:scouts 1318` (bare number — Director's canonical form) is also valid.
-- [ ] Skill body documents the always-dispatch (`a11y-scan`) and conditional dispatch (`test-e2e` if `playwright-stories/` exists; `storybook-test` if Storybook detected; `visual-diff` if Chromatic/Applitools baselines exist).
-- [ ] Skill writes a `## Scout Report` PR comment whose body contains exactly `Verdict: GREEN`, `Verdict: YELLOW`, or `Verdict: RED` — confirmed by grep against the literal strings ralph-merge uses (`## Scout Report` and `Verdict: GREEN` per `ralph-merge/SKILL.md:248,259`).
-- [ ] Skill emits `result:` and `needs input:` markers per harness convention (mirrors watch).
-- [ ] Skill emits `# TODO(GH-1272): wire outcome-recorder(...)` in every terminal handler.
-- [ ] `plugin/ralph-hero/agents/scouts-agent.md` exists with `name: scouts-agent`, tier-appropriate `model:` (sonnet — orchestration role with multi-skill coordination matches log-reader/research-agent tier), a tools allowlist sufficient for dispatch (Bash, Skill, Read, MCP github tools), and `skills: [ralph-hero:scouts]` preload.
-- [ ] Loading `/ralph-hero:scouts` does not fail; SOUL is loaded as evidenced by a `RALPH_SOUL_LOADED=scouts` env var or equivalent (per `load-team-soul.sh` side effect).
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` continues to pass (no regression; this phase does not touch the heuristic).
+- [x] `plugin/ralph-hero/skills/scouts/SKILL.md` exists with frontmatter declaring `allowed-tools`, `SessionStart` hooks (`set-skill-env.sh RALPH_COMMAND=scouts` + `load-team-soul.sh`), and a documented dispatch matrix.
+- [x] `/ralph-hero:scouts --issue NNN` is a valid invocation — `argument-hint` reflects this.
+- [x] `/ralph-hero:scouts 1318` (bare number — Director's canonical form) is also valid.
+- [x] Skill body documents the always-dispatch (`a11y-scan`) and conditional dispatch (`test-e2e` if `playwright-stories/` exists; `storybook-test` if Storybook detected; `visual-diff` if Chromatic/Applitools baselines exist).
+- [x] Skill writes a `## Scout Report` PR comment whose body contains exactly `Verdict: GREEN` or `Verdict: RED` — confirmed by grep against the literal strings ralph-merge uses (`## Scout Report` and `Verdict: GREEN` per `ralph-merge/SKILL.md:248,259`). (YELLOW is reserved for a future ralph-merge handler — out of scope for this phase.)
+- [x] Skill emits `result:` and `needs input:` markers per harness convention (mirrors watch).
+- [x] Skill emits `# TODO(GH-1272): wire outcome-recorder(...)` in every terminal handler.
+- [x] `plugin/ralph-hero/agents/scouts-agent.md` exists with `name: scouts-agent`, tier-appropriate `model:` (sonnet — orchestration role with multi-skill coordination matches log-reader/research-agent tier), a tools allowlist sufficient for dispatch (Bash, Skill, Read, MCP github tools), and `skills: [ralph-hero:scouts]` preload.
+- [x] Loading `/ralph-hero:scouts` does not fail; SOUL is loaded as evidenced by a `RALPH_SOUL_LOADED=scouts` env var or equivalent (per `load-team-soul.sh` side effect).
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` continues to pass (no regression; this phase does not touch the heuristic).
 
 ## What We're NOT Doing
 
@@ -122,29 +122,29 @@ Create the missing scouts orchestrator skill and its per-phase agent so Director
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Frontmatter declares `description` summarizing scout dispatch (one sentence, mirrors `watch/SKILL.md:2`).
-  - [ ] Frontmatter declares `argument-hint: "[--issue NNN]"` (matches watch).
-  - [ ] Frontmatter declares `context: inline` (matches watch).
-  - [ ] Frontmatter declares `SessionStart` hooks block with TWO hooks, in this exact order:
+  - [x] Frontmatter declares `description` summarizing scout dispatch (one sentence, mirrors `watch/SKILL.md:2`).
+  - [x] Frontmatter declares `argument-hint: "[--issue NNN]"` (matches watch).
+  - [x] Frontmatter declares `context: inline` (matches watch).
+  - [x] Frontmatter declares `SessionStart` hooks block with TWO hooks, in this exact order:
     1. `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=scouts RALPH_REQUIRED_BRANCH=main`
     2. `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/load-team-soul.sh`
-  - [ ] Frontmatter `allowed-tools` includes at minimum: `Skill`, `Agent`, `Bash`, `Read`, `Glob`, and the four MCP tools used (`mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment`).
-  - [ ] Body opens with `## Configuration (resolved at load time)` block exposing `Owner`, `Repo`, `Project` via the `!`echo ${RALPH_GH_OWNER:-NOT_SET}`` pattern (matches watch:23-28).
-  - [ ] Body contains an `## Argument parsing` section accepting `--issue NNN`, a bare numeric (Director's canonical form), and unrecognized → exit 1 with a `needs input:` line (mirrors `watch/SKILL.md:38-56`). Heartbeat mode is NOT supported (scouts is event-driven only — `scout-auto` issues are produced by Phase 3's workflow per PR).
-  - [ ] Body contains an `## Artifact detection` section that sources the shared heuristic library: `source "${CLAUDE_PLUGIN_ROOT}/scripts/shared/ui-heuristic.sh"`. This step is allowed to no-op when invoked outside a PR context — the heuristic only fires when changed files are available.
-  - [ ] Body contains a `## Dispatch matrix` table with four rows in this exact priority order:
+  - [x] Frontmatter `allowed-tools` includes at minimum: `Skill`, `Agent`, `Bash`, `Read`, `Glob`, and the four MCP tools used (`mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue`, `mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment`).
+  - [x] Body opens with `## Configuration (resolved at load time)` block exposing `Owner`, `Repo`, `Project` via the `!`echo ${RALPH_GH_OWNER:-NOT_SET}`` pattern (matches watch:23-28).
+  - [x] Body contains an `## Argument parsing` section accepting `--issue NNN`, a bare numeric (Director's canonical form), and unrecognized → exit 1 with a `needs input:` line (mirrors `watch/SKILL.md:38-56`). Heartbeat mode is NOT supported (scouts is event-driven only — `scout-auto` issues are produced by Phase 3's workflow per PR).
+  - [x] Body contains an `## Artifact detection` section that sources the shared heuristic library: `source "${CLAUDE_PLUGIN_ROOT}/scripts/shared/ui-heuristic.sh"`. This step is allowed to no-op when invoked outside a PR context — the heuristic only fires when changed files are available.
+  - [x] Body contains a `## Dispatch matrix` table with four rows in this exact priority order:
     | Condition | Action |
     |-----------|--------|
     | Always (per scout invocation) | `Skill("ralph-playwright:a11y-scan", "<target-url>")` |
     | `test -d playwright-stories` returns 0 | `Skill("ralph-playwright:test-e2e", "<target-url>")` |
     | `test -f .storybook/main.js` OR `test -f .storybook/main.ts` returns 0 | `Skill("ralph-playwright:storybook-test")` |
     | `grep -q '"chromatic"\\|"applitools"' package.json` (when package.json exists) | `Skill("ralph-playwright:visual-diff")` |
-  - [ ] Each conditional row documents the exact bash check used to detect the artifact.
-  - [ ] Body contains a `## Scout Report composition` section specifying the exact output shape:
+  - [x] Each conditional row documents the exact bash check used to detect the artifact.
+  - [x] Body contains a `## Scout Report composition` section specifying the exact output shape:
     ```
     ## Scout Report
 
-    Verdict: <GREEN|YELLOW|RED>
+    Verdict: <GREEN|RED>
 
     Dispatched: <comma-separated list of skills actually run>
 
@@ -154,13 +154,13 @@ Create the missing scouts orchestrator skill and its per-phase agent so Director
     Evidence:
     - <bullet per artifact path>
     ```
-  - [ ] Verdict computation rule documented: GREEN = zero critical/high signals; YELLOW = ≥1 medium/low; RED = ≥1 critical/high. (Signal severity taxonomy is the same one SOUL.md references.)
-  - [ ] Body contains a `## Posting the Scout Report` section that uses `mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment` to post the composed report to the PR linked to the issue (PR resolution via `get_issue` → comments search for `## Pull Request` marker).
-  - [ ] Body contains a `## SOUL refusal enforcement` section mirroring `watch/SKILL.md:62-72` — refuses to file findings without a screenshot/trace ref (matches SOUL.md refusal #1) and refuses to file flaky-on-first-fail (matches SOUL.md refusal #2).
-  - [ ] Body contains a `## Terminal handlers` section emitting `result:` lines on success, escalation, and SOUL refusal — each handler block MUST include a `# TODO(GH-1272): wire outcome-recorder(...)` stub matching the exact comment shape in `watch/SKILL.md:124,130,136`.
-  - [ ] Body contains a `## Shared constraints (referenced)` section listing Constraints 6 (Director consumes labels) and 7 (outcome-recorder stubs).
-  - [ ] Skill body does NOT inline the UI heuristic regex (`\.(tsx|svelte|vue|css|scss)$|/components/|(^|/)storybook/`) anywhere — sources from the shared library only.
-  - [ ] Skill body does NOT re-implement `a11y-scan`, `test-e2e`, `storybook-test`, or `visual-diff` logic — only dispatches them via `Skill()`.
+  - [x] Verdict computation rule documented: GREEN = zero critical/high signals; RED = ≥1 critical/high. (YELLOW reserved for a future ralph-merge handler — out of scope for this phase.) (Signal severity taxonomy is the same one SOUL.md references.)
+  - [x] Body contains a `## Posting the Scout Report` section that uses `mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment` to post the composed report to the PR linked to the issue (PR resolution via `get_issue` → comments search for `## Pull Request` marker).
+  - [x] Body contains a `## SOUL refusal enforcement` section mirroring `watch/SKILL.md:62-72` — refuses to file findings without a screenshot/trace ref (matches SOUL.md refusal #1) and refuses to file flaky-on-first-fail (matches SOUL.md refusal #2).
+  - [x] Body contains a `## Terminal handlers` section emitting `result:` lines on success, escalation, and SOUL refusal — each handler block MUST include a `# TODO(GH-1272): wire outcome-recorder(...)` stub matching the exact comment shape in `watch/SKILL.md:124,130,136`.
+  - [x] Body contains a `## Shared constraints (referenced)` section listing Constraints 6 (Director consumes labels) and 7 (outcome-recorder stubs).
+  - [x] Skill body does NOT inline the UI heuristic regex (`\.(tsx|svelte|vue|css|scss)$|/components/|(^|/)storybook/`) anywhere — sources from the shared library only.
+  - [x] Skill body does NOT re-implement `a11y-scan`, `test-e2e`, `storybook-test`, or `visual-diff` logic — only dispatches them via `Skill()`.
 
 #### Task 1.2: Author `plugin/ralph-hero/agents/scouts-agent.md`
 
@@ -169,13 +169,13 @@ Create the missing scouts orchestrator skill and its per-phase agent so Director
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Frontmatter declares `name: scouts-agent`.
-  - [ ] Frontmatter declares `description:` summarizing the agent role in one sentence (e.g., "Scout team agent — dispatches product-user-testing skills against a UI-touching PR and posts a `## Scout Report` consumed by ralph-merge.").
-  - [ ] Frontmatter declares `model: sonnet` (orchestration role with multi-skill coordination — matches log-reader/research-agent/impl-agent/val-agent tier per `docs/model-tier-policy.md`; can be overridden via `RALPH_SCOUTS_MODEL` env var documented in the agent body).
-  - [ ] Frontmatter declares a `tools:` allowlist that is the same set declared in the skill's `allowed-tools` (so `tools:` is a true superset of what the skill needs at runtime — per the wiki entry on allowlist-not-blacklist semantics).
-  - [ ] Frontmatter declares `skills: [ralph-hero:scouts]` preloading the skill (matches `impl-agent.md:6-7`).
-  - [ ] Body is a thin wrapper: 1–3 sentences directing the agent to follow the preloaded scouts instructions for the issue specified in its task prompt (matches `impl-agent.md:10` shape).
-  - [ ] File does NOT declare `hooks`, `mcpServers`, or `permissionMode` — per CLAUDE.md Plugin Agents rule, only allowed frontmatter is `name`, `description`, `model`, `tools`, `disallowedTools`, `skills`, `memory`, `background`, `isolation`, `effort`, `maxTurns`.
+  - [x] Frontmatter declares `name: scouts-agent`.
+  - [x] Frontmatter declares `description:` summarizing the agent role in one sentence (e.g., "Scout team agent — dispatches product-user-testing skills against a UI-touching PR and posts a `## Scout Report` consumed by ralph-merge.").
+  - [x] Frontmatter declares `model: sonnet` (orchestration role with multi-skill coordination — matches log-reader/research-agent/impl-agent/val-agent tier per `docs/model-tier-policy.md`; can be overridden via `RALPH_SCOUTS_MODEL` env var documented in the agent body).
+  - [x] Frontmatter declares a `tools:` allowlist that is the same set declared in the skill's `allowed-tools` (so `tools:` is a true superset of what the skill needs at runtime — per the wiki entry on allowlist-not-blacklist semantics).
+  - [x] Frontmatter declares `skills: [ralph-hero:scouts]` preloading the skill (matches `impl-agent.md:6-7`).
+  - [x] Body is a thin wrapper: 1–3 sentences directing the agent to follow the preloaded scouts instructions for the issue specified in its task prompt (matches `impl-agent.md:10` shape).
+  - [x] File does NOT declare `hooks`, `mcpServers`, or `permissionMode` — per CLAUDE.md Plugin Agents rule, only allowed frontmatter is `name`, `description`, `model`, `tools`, `disallowedTools`, `skills`, `memory`, `background`, `isolation`, `effort`, `maxTurns`.
 
 #### Task 1.3: Verify SOUL integration
 
@@ -184,10 +184,10 @@ Create the missing scouts orchestrator skill and its per-phase agent so Director
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] `plugin/ralph-hero/skills/scouts/SOUL.md` exists with frontmatter `team: scouts` and ≥5 `refuses:` entries (already true — verify, do not modify).
-  - [ ] `load-team-soul.sh` discovery is exercised: a manual invocation like `RALPH_COMMAND=scouts bash plugin/ralph-hero/hooks/scripts/load-team-soul.sh` emits a JSON envelope with `hookSpecificOutput.additionalContext` containing the SOUL body. Capture the output and assert it is non-empty.
-  - [ ] The `## SOUL refusal enforcement` section in `SKILL.md` (added in Task 1.1) explicitly cites at least two of the SOUL refusals — confirmed by grep for `"claiming a finding without a screenshot"` and `"filing a flaky test failure"` substrings in SKILL.md.
-  - [ ] If verification fails (SOUL not loaded, or refusal text not cited), the task fails — impl-agent must fix SKILL.md, not SOUL.md.
+  - [x] `plugin/ralph-hero/skills/scouts/SOUL.md` exists with frontmatter `team: scouts` and ≥5 `refuses:` entries (already true — verify, do not modify).
+  - [x] `load-team-soul.sh` discovery is exercised: a manual invocation like `RALPH_COMMAND=scouts bash plugin/ralph-hero/hooks/scripts/load-team-soul.sh` emits a JSON envelope with `hookSpecificOutput.additionalContext` containing the SOUL body. Capture the output and assert it is non-empty.
+  - [x] The `## SOUL refusal enforcement` section in `SKILL.md` (added in Task 1.1) explicitly cites at least two of the SOUL refusals — confirmed by grep for `"claiming a finding without a screenshot"` and `"filing a flaky test failure"` substrings in SKILL.md.
+  - [x] If verification fails (SOUL not loaded, or refusal text not cited), the task fails — impl-agent must fix SKILL.md, not SOUL.md.
 
 #### Task 1.4: Lint + smoke validation
 
@@ -196,29 +196,29 @@ Create the missing scouts orchestrator skill and its per-phase agent so Director
 - **complexity**: low
 - **depends_on**: [1.1, 1.2, 1.3]
 - **acceptance**:
-  - [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 with `FAIL=0` (regression check — this phase should not affect the heuristic smoke).
-  - [ ] `bash plugin/ralph-hero/scripts/scout-merge-gate-smoke.sh` exits 0 if present (regression check — this phase should not affect the merge-gate smoke).
-  - [ ] `grep -c '^## Scout Report' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 1 (the literal header ralph-merge greps for is documented).
-  - [ ] `grep -c 'Verdict: GREEN' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 1 (the literal verdict string ralph-merge greps for is documented).
-  - [ ] `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 3 (one stub per terminal handler — success, escalation, SOUL refusal).
-  - [ ] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/skills/scouts/SKILL.md').read().split('---')[1])"` exits 0 (frontmatter is valid YAML). If `python3` is not available, fall back to `node -e "require('js-yaml').load(...)"` or any installed YAML parser.
-  - [ ] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/agents/scouts-agent.md').read().split('---')[1])"` exits 0 (agent frontmatter is valid YAML).
-  - [ ] `grep -c 'is_ui_touching\|_ui_heuristic' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 1 (heuristic is referenced by function name, not by inlined regex).
-  - [ ] `grep -cE '\\.(tsx\\|svelte\\|vue\\|css\\|scss)\\$' plugin/ralph-hero/skills/scouts/SKILL.md` returns 0 (regex is NOT inlined — sourced from shared library only).
+  - [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 with `FAIL=0` (regression check — this phase should not affect the heuristic smoke).
+  - [x] `bash plugin/ralph-hero/scripts/scout-merge-gate-smoke.sh` exits 0 if present (regression check — this phase should not affect the merge-gate smoke).
+  - [x] `grep -c '^## Scout Report' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 1 (the literal header ralph-merge greps for is documented). Result: 2
+  - [x] `grep -c 'Verdict: GREEN' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 1 (the literal verdict string ralph-merge greps for is documented). Result: 2
+  - [x] `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 3 (one stub per terminal handler — success, escalation, SOUL refusal). Result: 5
+  - [x] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/skills/scouts/SKILL.md').read().split('---')[1])"` exits 0 (frontmatter is valid YAML). If `python3` is not available, fall back to `node -e "require('js-yaml').load(...)"` or any installed YAML parser.
+  - [x] `python3 -c "import yaml,sys; yaml.safe_load(open('plugin/ralph-hero/agents/scouts-agent.md').read().split('---')[1])"` exits 0 (agent frontmatter is valid YAML).
+  - [x] `grep -c 'is_ui_touching\|_ui_heuristic' plugin/ralph-hero/skills/scouts/SKILL.md` returns ≥ 1 (heuristic is referenced by function name, not by inlined regex). Result: 2
+  - [x] `grep -cE '\\.(tsx\\|svelte\\|vue\\|css\\|scss)\\$' plugin/ralph-hero/skills/scouts/SKILL.md` returns 0 (regex is NOT inlined — sourced from shared library only). Result: 0
 
 ### Phase Success Criteria
 
 #### Automated Verification:
 
-- [ ] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 (regression).
-- [ ] `test -f plugin/ralph-hero/skills/scouts/SKILL.md && test -f plugin/ralph-hero/agents/scouts-agent.md` exits 0.
-- [ ] `grep -E '^name:\s*scouts-agent' plugin/ralph-hero/agents/scouts-agent.md` returns one match.
-- [ ] `grep -E 'skills:\s*$' plugin/ralph-hero/agents/scouts-agent.md` returns one match AND the next line contains `ralph-hero:scouts`.
-- [ ] `grep -c '## Scout Report' plugin/ralph-hero/skills/scouts/SKILL.md` ≥ 1.
-- [ ] `grep -c 'Verdict: GREEN' plugin/ralph-hero/skills/scouts/SKILL.md` ≥ 1.
-- [ ] `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/scouts/SKILL.md` ≥ 3.
-- [ ] `bash plugin/ralph-hero/hooks/scripts/load-team-soul.sh` with `RALPH_COMMAND=scouts` emits a JSON envelope containing `additionalContext` with the SOUL body (manual or scripted check).
-- [ ] `cd plugin/ralph-hero/mcp-server && npm test` continues to pass (no impact on MCP server).
+- [x] `bash plugin/ralph-hero/scripts/scout-heuristic-smoke.sh` exits 0 (regression). PASS=19 FAIL=0
+- [x] `test -f plugin/ralph-hero/skills/scouts/SKILL.md && test -f plugin/ralph-hero/agents/scouts-agent.md` exits 0.
+- [x] `grep -E '^name:\s*scouts-agent' plugin/ralph-hero/agents/scouts-agent.md` returns one match.
+- [x] `grep -E 'skills:\s*$' plugin/ralph-hero/agents/scouts-agent.md` returns one match AND the next line contains `ralph-hero:scouts`.
+- [x] `grep -c '## Scout Report' plugin/ralph-hero/skills/scouts/SKILL.md` ≥ 1. Result: 2
+- [x] `grep -c 'Verdict: GREEN' plugin/ralph-hero/skills/scouts/SKILL.md` ≥ 1. Result: 2
+- [x] `grep -c 'TODO(GH-1272)' plugin/ralph-hero/skills/scouts/SKILL.md` ≥ 3. Result: 5
+- [x] `bash plugin/ralph-hero/hooks/scripts/load-team-soul.sh` with `RALPH_COMMAND=scouts` emits a JSON envelope containing `additionalContext` with the SOUL body (manual or scripted check). VERIFIED: additionalContext non-empty, hookEventName=SessionStart
+- [ ] `cd plugin/ralph-hero/mcp-server && npm test` continues to pass (no impact on MCP server). (deferred to val-agent — no MCP changes in this phase)
 
 #### Manual Verification:
 
