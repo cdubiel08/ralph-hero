@@ -153,6 +153,36 @@ The model is instructed (via the autopilot dispatch prompt) to avoid `delaySecon
 
 ---
 
+## Scenario 7: Silent-drop guard — non-terminal Director result + omitted ScheduleWakeup (GH-1346)
+
+### Input
+
+A test session where Director emits any non-`Queue empty` `result:` line (e.g., `result: Top direction is PR #N with no linked issue. Skipping.`, `result: Dispatched #N to <team>...`, `result: #N is terminal (...). Skipping.`).
+
+Simulated failure mode: the model narrates rescheduling in prose but does NOT actually invoke `ScheduleWakeup` before the /loop turn returns.
+
+- **Env**: `RALPH_AUTOPILOT_ENABLE=true`
+- **Invocation**: `/ralph-hero:autopilot`
+
+### Expected
+
+1. `autopilot-director-postcheck.sh` (PostToolUse:Skill) fires after Director returns. It reads the `result:` line, sees it is not `Queue empty`, and writes `${TMPDIR}/ralph-autopilot-pending-wakeup-<session_id>` containing the result text.
+2. Model produces prose claiming a wakeup was scheduled but does not invoke `ScheduleWakeup` (the bug we are guarding against).
+3. /loop turn returns. Session attempts to stop.
+4. `autopilot-stop-gate.sh` (Stop) fires, sees the sentinel exists, exits 2 with a loud message naming the omitted call and the last Director result.
+5. The session does NOT silently drop. The model is forced to either invoke `ScheduleWakeup` (which would clear the sentinel via `autopilot-wakeup-clear.sh`) or invoke Director once more and confirm `Queue empty` before exiting.
+
+### Assertions
+
+- [ ] After Director emits a non-terminal result and the model omits `ScheduleWakeup`, Stop hook exits 2 (not 0)
+- [ ] Stderr from the Stop hook contains `"Autopilot stop blocked"` and the last Director `result:` text
+- [ ] The sentinel file exists at `${TMPDIR}/ralph-autopilot-pending-wakeup-<session_id>` between Director return and Stop hook firing
+- [ ] After the model invokes `ScheduleWakeup` (in response to the block, or correctly the first time), the sentinel is removed and the second Stop firing (`stop_hook_active=true`) exits 0
+- [ ] When Director emits `result: Queue empty`, the postcheck hook removes the sentinel (or never wrote one) and Stop exits 0 with no message
+- [ ] For non-autopilot sessions (`RALPH_COMMAND != "autopilot"`), all three hooks exit 0 silently — no cross-skill interference
+
+---
+
 ## What's NOT covered (and why)
 
 - **State-machine internals, audit log shape, cooldown math**: removed in the redesign. Autopilot doesn't maintain its own state. Anything that used to live in `~/.ralph-hero/autopilot.jsonl` either now lives in `/loop`'s session state or is unrecorded. If tooling needs per-tick forensics, that's a separate concern from autopilot.
