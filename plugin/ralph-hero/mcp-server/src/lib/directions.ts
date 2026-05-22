@@ -894,7 +894,13 @@ export function rankDirections(
 
   const merged: Entry[] = [];
   for (const c of candidates) merged.push({ kind: "issueRow", payload: c });
-  for (const p of prScored) merged.push({ kind: "prRow", payload: p });
+  // Filter unlinkable PRs (no linked issue) so they don't appear in next_actions.
+  // These are handled by the pr-drain Routine (out of band of Director).
+  // See: thoughts/shared/research/2026-05-22-pr-drain-routine-design.md
+  for (const p of prScored) {
+    if (p.linkedIssueNumber === null) continue;
+    merged.push({ kind: "prRow", payload: p });
+  }
 
   merged.sort((a, b) => {
     const scoreA = a.kind === "issueRow" ? a.payload.score : a.payload.score;
