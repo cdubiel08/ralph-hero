@@ -1159,3 +1159,40 @@ describe("rankDirections — human-needed-unblock", () => {
     expect(result[0].signals.questionCount).toBe(4);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PR filter — drop unlinkable PRs (no feature/GH-NNNN head-ref)
+// ---------------------------------------------------------------------------
+
+describe("rankDirections — unlinkable PR filter", () => {
+  it("drops PRs whose headRefName does not match feature/GH-NNNN", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Plan in Review", priority: "P1" }),
+    ];
+    // ageHours: 168 (>= PR_STALE_HOURS=24) gives PRs a non-zero stale score so
+    // they reach the merged-loop filter; scorePR drops score=0 PRs before then.
+    const openPRs: OpenPR[] = [
+      makePR({ number: 100, headRefName: "feature/GH-1", ageHours: 168 }),       // linked → keep
+      makePR({ number: 101, headRefName: "feature/GH-2", ageHours: 168 }),       // linked → keep
+      makePR({ number: 102, headRefName: "dependabot/pip/idna-3.8", ageHours: 168 }), // unlinked → drop
+    ];
+    const result = rankDirections(items, openPRs, makeConfig({ limit: 10 }));
+
+    const prDirections = result.filter((d) => d.kind === "pr");
+    expect(prDirections).toHaveLength(2);
+    const prNumbers = prDirections.map((d) => d.pr?.number).sort();
+    expect(prNumbers).toEqual([100, 101]);
+  });
+
+  it("returns empty PR slice when every PR is unlinkable", () => {
+    // ageHours: 168 (>= PR_STALE_HOURS=24) gives PRs a non-zero stale score so
+    // they reach the merged-loop filter; scorePR drops score=0 PRs before then.
+    const openPRs: OpenPR[] = [
+      makePR({ number: 200, headRefName: "dependabot/pip/idna-3.8", ageHours: 168 }),
+      makePR({ number: 201, headRefName: "dependabot/npm/typescript-5.6", ageHours: 168 }),
+    ];
+    const result = rankDirections([], openPRs, makeConfig({ limit: 10 }));
+    const prDirections = result.filter((d) => d.kind === "pr");
+    expect(prDirections).toHaveLength(0);
+  });
+});
