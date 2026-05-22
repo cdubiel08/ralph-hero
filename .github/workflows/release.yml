@@ -28,6 +28,17 @@ name: Release
 # tombstoned) for the full retrospective. If you're tempted to re-decouple
 # the bump from publish, read that thread first.
 # =========================================================
+#
+# === Design note: publish-first ordering (hardening) ===
+#
+# When mcp_changed is true, `npm publish` runs BEFORE the commit/tag/push.
+# If publish fails the workflow exits with nothing on main, so `.mcp.json`
+# can never reference a version that doesn't exist on npm. See the matching
+# block in release-knowledge.yml for the full rationale.
+#
+# When mcp_changed is false (skill-only releases), there is no publish step
+# and the bump/commit/tag/push proceeds as before — that path is unchanged.
+# =========================================================
 
 on:
   push:
@@ -147,7 +158,7 @@ jobs:
             fi
           fi
 
-      - name: Bump version
+      - name: Bump version (working tree only)
         id: version
         env:
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
@@ -156,6 +167,45 @@ jobs:
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           PLUGIN_JSON="../.claude-plugin/plugin.json"
           jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
+
+      # ── PUBLISH-FIRST GATE (only when MCP source changed) ─────────────────
+      # Everything below depends on `npm publish` succeeding (when applicable).
+      # Skill-only releases skip publish + verify and proceed straight to the
+      # commit/tag/push path.
+
+      - name: Publish to npm
+        # Uses OIDC trusted publishing (id-token: write at job level).
+        # npm CLI >= 11.5.1 auto-detects OIDC; no NODE_AUTH_TOKEN needed.
+        if: steps.classify.outputs.mcp_changed == 'true'
+        run: npm publish --provenance --access public
+
+      - name: Verify version on npm registry
+        if: steps.classify.outputs.mcp_changed == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        # Poll the registry until the just-published version is visible.
+        # npm has eventual consistency between the publish endpoint and the
+        # CDN that serves `npm view`; without this gate we could push a tag
+        # + .mcp.json referencing a version that briefly 404s for consumers.
+        # Fails loudly if the version never appears — that's the signal that
+        # publish silently failed.
+        run: |
+          set -euo pipefail
+          echo "Verifying ralph-hero-mcp-server@${NEW_VERSION}..."
+          ATTEMPTS=10
+          DELAY=3
+          for i in $(seq 1 "$ATTEMPTS"); do
+            if npm view "ralph-hero-mcp-server@${NEW_VERSION}" version --json >/dev/null 2>&1; then
+              echo "✓ ralph-hero-mcp-server@${NEW_VERSION} verified on registry"
+              exit 0
+            fi
+            echo "  not yet visible (attempt $i/$ATTEMPTS); waiting ${DELAY}s..."
+            sleep "$DELAY"
+          done
+          echo "::error::ralph-hero-mcp-server@${NEW_VERSION} not visible on npm registry after $((ATTEMPTS * DELAY))s"
+          exit 1
+
+      # ── POST-PUBLISH STEPS (run for both MCP and skill-only releases) ─────
 
       - name: Pin version in justfile and .mcp.json
         if: steps.classify.outputs.mcp_changed == 'true'
@@ -189,12 +239,6 @@ jobs:
           git tag "v${NEW_VERSION}"
           git pull --rebase origin main
           git push origin main --tags
-
-      - name: Publish to npm
-        # Uses OIDC trusted publishing (id-token: write at job level).
-        # npm CLI >= 11.5.1 auto-detects OIDC; no NODE_AUTH_TOKEN needed.
-        if: steps.classify.outputs.mcp_changed == 'true'
-        run: npm publish --provenance --access public
 
       - name: Create GitHub Release
         working-directory: .

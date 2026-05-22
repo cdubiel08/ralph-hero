@@ -149,6 +149,89 @@ jobs:
             | sort -z \
             | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"; rc=$?; if [ $rc -ne 0 ]; then echo "FAIL: $0 exited $rc"; exit $rc; fi'
 
+  # Defense-in-depth guard against the failure mode from GH-#####:
+  # `.mcp.json` referencing an npm version that was never published, leaving
+  # every Claude Code session in a broken state (`npx ETARGET`). The release
+  # workflows are the primary defense (publish-first ordering); this job is
+  # the second line that catches manual edits, dependency-bot drift, or any
+  # release-workflow regression that pushes a bad pin to main.
+  verify-mcp-pins:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify every .mcp.json pin resolves on npm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Locate every committed .mcp.json (skip nested copies under node_modules,
+          # build output, the local worktrees stash, and the .git tree itself).
+          # Read into an array with a portable while-read loop instead of mapfile,
+          # so the script also runs on bash < 4 for local verification.
+          MCP_FILES=()
+          while IFS= read -r -d '' f; do
+            MCP_FILES+=("$f")
+          done < <(
+            find . \
+              -name '.mcp.json' \
+              -not -path '*/node_modules/*' \
+              -not -path '*/.claude/worktrees/*' \
+              -not -path '*/dist/*' \
+              -not -path '*/.git/*' \
+              -print0
+          )
+
+          if [ "${#MCP_FILES[@]}" -eq 0 ]; then
+            echo "No .mcp.json files found; nothing to verify."
+            exit 0
+          fi
+
+          FAILED=0
+          for f in "${MCP_FILES[@]}"; do
+            echo "::group::Scanning $f"
+            # Pull every args entry that looks like a pkg@version spec.
+            # Matches both unscoped (foo@1.2.3) and scoped (@scope/foo@1.2.3)
+            # because npm view accepts both formats verbatim.
+            PINS=$(jq -r '
+              (.mcpServers // {})
+              | to_entries[]
+              | .value.args // []
+              | .[]
+              | select(test("@[0-9]+\\.[0-9]+\\.[0-9]+"))
+            ' "$f" 2>/dev/null || true)
+
+            if [ -z "$PINS" ]; then
+              echo "  (no pkg@version pins found)"
+              echo "::endgroup::"
+              continue
+            fi
+
+            while IFS= read -r pin; do
+              [ -z "$pin" ] && continue
+              if npm view "$pin" version --json >/dev/null 2>&1; then
+                echo "  ✓ $pin"
+              else
+                echo "::error file=$f::pinned spec '$pin' is not published on npm — Claude Code sessions will fail to start this MCP server"
+                FAILED=1
+              fi
+            done <<< "$PINS"
+            echo "::endgroup::"
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "::error::One or more .mcp.json files reference unpublished npm versions. See annotations above."
+            exit 1
+          fi
+          echo "All .mcp.json pins resolve on the npm registry."
+
   lint-workflows:
     runs-on: ubuntu-latest
     permissions:
