@@ -1,5 +1,34 @@
 name: Release Knowledge
 
+# === Design note: publish-first ordering (hardening, GH-#####) ===
+#
+# Prior to this change, the workflow ordered steps as:
+#   bump version → commit → tag → push to main → npm publish
+#
+# That ordering had a serious correctness defect: if `npm publish` failed
+# (token expiry, registry hiccup, OIDC misconfig), the commit + tag were
+# already on main and `.mcp.json` pinned a version that did not exist on
+# npm. Every Claude Code session pulling the plugin then failed to start
+# the MCP server (npx ETARGET), until a human ran the workflow with
+# `republish=true`.
+#
+# The new ordering is:
+#   bump version (package.json + plugin.json, working tree only)
+#   → npm publish
+#   → verify version is queryable on registry
+#   → pin .mcp.json
+#   → commit + tag + push to main
+#   → create GitHub Release
+#
+# If `npm publish` or the verification step fails, the workflow exits with
+# nothing landed on main. The package.json bump is also not pushed, so the
+# next merge will retry at the same patch number (npm version is idempotent
+# from a clean working tree).
+#
+# Skill-only changes (mcp_changed=false) still bump + commit + tag + push
+# without touching npm — that path is unaffected.
+# =====================================================================
+
 on:
   push:
     branches: [main]
@@ -120,7 +149,7 @@ jobs:
             fi
           fi
 
-      - name: Bump version
+      - name: Bump version (working tree only)
         id: version
         if: inputs.republish != true
         env:
@@ -130,6 +159,58 @@ jobs:
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           PLUGIN_JSON=".claude-plugin/plugin.json"
           jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
+
+      # ── PUBLISH-FIRST GATE ────────────────────────────────────────────────
+      # Everything below this comment depends on `npm publish` succeeding.
+      # If publish fails, no commit / tag / push happens and main is unchanged.
+
+      - name: Publish to npm
+        # Falls back to classic NPM_TOKEN auth because the OIDC trusted
+        # publisher for `ralph-hero-knowledge-index` is not configured on
+        # npmjs.com (S8 of GH-1035 migrated only ralph-hero-mcp-server).
+        # TODO(GH-1035 follow-up): once the trusted publisher is set up
+        # for this package + workflow, drop NODE_AUTH_TOKEN and re-add
+        # --provenance.
+        # `republish=true` re-publishes the current package.json version to
+        # recover from a stuck release where the publish step previously
+        # failed.
+        if: steps.classify.outputs.mcp_changed == 'true' || inputs.republish == true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Verify version on npm registry
+        if: steps.classify.outputs.mcp_changed == 'true' || inputs.republish == true
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        # Poll the registry until the just-published version is visible.
+        # npm has eventual consistency between the publish endpoint and the
+        # CDN that serves `npm view`; without this gate we could push a tag
+        # + .mcp.json referencing a version that briefly 404s for consumers.
+        # Fails loudly if the version never appears — that's the signal that
+        # publish silently failed (E404 token-permission masquerade, etc.).
+        run: |
+          set -euo pipefail
+          if [ -n "$NEW_VERSION" ]; then
+            PKG_VERSION="$NEW_VERSION"
+          else
+            PKG_VERSION=$(jq -r .version package.json)
+          fi
+          echo "Verifying ralph-hero-knowledge-index@${PKG_VERSION}..."
+          ATTEMPTS=10
+          DELAY=3
+          for i in $(seq 1 "$ATTEMPTS"); do
+            if npm view "ralph-hero-knowledge-index@${PKG_VERSION}" version --json >/dev/null 2>&1; then
+              echo "✓ ralph-hero-knowledge-index@${PKG_VERSION} verified on registry"
+              exit 0
+            fi
+            echo "  not yet visible (attempt $i/$ATTEMPTS); waiting ${DELAY}s..."
+            sleep "$DELAY"
+          done
+          echo "::error::ralph-hero-knowledge-index@${PKG_VERSION} not visible on npm registry after $((ATTEMPTS * DELAY))s"
+          exit 1
+
+      # ── POST-PUBLISH STEPS (only run if publish + verify succeeded) ───────
 
       - name: Pin version in .mcp.json
         if: inputs.republish != true && steps.classify.outputs.mcp_changed == 'true'
@@ -156,25 +237,6 @@ jobs:
           git tag "knowledge-v${NEW_VERSION}"
           git pull --rebase origin main
           git push origin main --tags
-
-      - name: Publish to npm
-        # Falls back to classic NPM_TOKEN auth because the OIDC trusted
-        # publisher for `ralph-hero-knowledge-index` is not configured on
-        # npmjs.com (S8 of GH-1035 migrated only ralph-hero-mcp-server).
-        # When OIDC + provenance was attempted, npm signed the provenance
-        # statement but rejected the publish with E404 "you do not have
-        # permission to access it" — that's the npm error for a missing or
-        # mismatched trusted publisher.
-        # TODO(GH-1035 follow-up): once the trusted publisher is set up
-        # for this package + workflow, drop NODE_AUTH_TOKEN and re-add
-        # --provenance.
-        # `republish=true` re-publishes the current package.json version to
-        # recover from a stuck release where bump/tag/push landed on main but
-        # the publish step failed (e.g., orphaned tags 0.1.34..0.1.37).
-        if: steps.classify.outputs.mcp_changed == 'true' || inputs.republish == true
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
 
       - name: Create GitHub Release
         if: inputs.republish != true
