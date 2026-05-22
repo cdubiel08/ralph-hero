@@ -241,7 +241,7 @@ Emit:
 needs input: PR #<N> shape unrecognized by ralph-pr-drain — manual triage required. Author: <author>, headRef: <headRefName>, title: <title>.
 ```
 
-Do NOT post an audit comment, do NOT add the `pr-drained` label, do NOT advance the synth issue. Instead set `FINAL_CLASS = "needs-human"` and skip directly to Step 7 (where the synth advances to Human Needed rather than Done).
+Do NOT post an audit comment and do NOT add the `pr-drained` label in Step 6. Set `FINAL_CLASS = "needs-human"` and skip Step 6, proceeding directly to Step 7 (which advances the synth to `Human Needed`).
 
 ### Step 6: Audit trail on the PR
 
