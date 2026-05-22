@@ -6,3 +6,4 @@ causing `playwright-auto.yml` to classify this PR as UI-touching and create a
 `scout-auto` labeled issue.
 
 Do NOT merge this PR. It will be closed after validation is complete.
+Idempotency-test commit.
