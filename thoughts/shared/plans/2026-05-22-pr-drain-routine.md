@@ -616,6 +616,18 @@ Validate the skill end-to-end against a real PR before wiring up the cloud Routi
 
 ### Task 4.1: Pick or open a smoke-test PR
 
+- [ ] **Step 0: Create the three GitHub labels** (one-time per repo)
+
+  The skill depends on `pr-drained`, `pr-drain`, and `kind:pr-drain` labels existing on the repo. `gh pr edit --add-label` fails if the label doesn't exist, and `create_issue` silently drops unresolvable labels. Run once:
+
+  ```bash
+  gh label create pr-drained --repo cdubiel08/ralph-hero --color "0075ca" --description "PR processed by ralph-pr-drain" 2>/dev/null || true
+  gh label create pr-drain --repo cdubiel08/ralph-hero --color "e4e669" --description "ralph-pr-drain action" 2>/dev/null || true
+  gh label create kind:pr-drain --repo cdubiel08/ralph-hero --color "fbca04" --description "Synthetic Drain issue created by ralph-pr-drain" 2>/dev/null || true
+  ```
+
+  The `|| true` makes the command idempotent (re-running is a no-op).
+
 - [ ] **Step 1: Find an existing Dependabot PR on `cdubiel08/ralph-hero` to smoke against, or open a sacrificial one**
 
 ```bash
