@@ -1,16 +1,19 @@
 name: Release Knowledge
 
-# === Design note: publish-first ordering (hardening, GH-#####) ===
+# === Design note: publish-first ordering + OIDC (hardening, PR #1343) ===
 #
 # Prior to this change, the workflow ordered steps as:
 #   bump version → commit → tag → push to main → npm publish
+# and used classic NPM_TOKEN auth.
 #
 # That ordering had a serious correctness defect: if `npm publish` failed
-# (token expiry, registry hiccup, OIDC misconfig), the commit + tag were
-# already on main and `.mcp.json` pinned a version that did not exist on
-# npm. Every Claude Code session pulling the plugin then failed to start
-# the MCP server (npx ETARGET), until a human ran the workflow with
-# `republish=true`.
+# (granular-token expiry, registry hiccup, OIDC misconfig), the commit +
+# tag were already on main and `.mcp.json` pinned a version that did not
+# exist on npm. Every Claude Code session pulling the plugin then failed
+# to start the MCP server (npx ETARGET), until a human ran the workflow
+# with `republish=true`. That happened with knowledge-v0.1.46 on
+# 2026-05-20 (granular token presumed expired ~22h after the previous
+# successful release).
 #
 # The new ordering is:
 #   bump version (package.json + plugin.json, working tree only)
@@ -165,19 +168,17 @@ jobs:
       # If publish fails, no commit / tag / push happens and main is unchanged.
 
       - name: Publish to npm
-        # Falls back to classic NPM_TOKEN auth because the OIDC trusted
-        # publisher for `ralph-hero-knowledge-index` is not configured on
-        # npmjs.com (S8 of GH-1035 migrated only ralph-hero-mcp-server).
-        # TODO(GH-1035 follow-up): once the trusted publisher is set up
-        # for this package + workflow, drop NODE_AUTH_TOKEN and re-add
-        # --provenance.
+        # Uses OIDC trusted publishing (id-token: write at job level).
+        # npm CLI >= 11.5.1 auto-detects the OIDC context; no NODE_AUTH_TOKEN
+        # secret is needed. Mirrors release.yml. The previous classic-token
+        # path expired silently on 2026-05-20 and stranded knowledge-v0.1.46
+        # on a tag with no corresponding npm publish; that incident motivated
+        # both this migration and the publish-first reordering above.
         # `republish=true` re-publishes the current package.json version to
         # recover from a stuck release where the publish step previously
         # failed.
         if: steps.classify.outputs.mcp_changed == 'true' || inputs.republish == true
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: npm publish --provenance --access public
 
       - name: Verify version on npm registry
         if: steps.classify.outputs.mcp_changed == 'true' || inputs.republish == true
