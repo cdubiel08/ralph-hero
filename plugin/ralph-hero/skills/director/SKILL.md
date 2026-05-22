@@ -56,9 +56,7 @@ Call `next_actions({})` to get the ranked project queue. Do NOT recompute rankin
 - If the queue is empty or all issues are in terminal states (`Done`, `Canceled`): emit `result: Queue empty. No events to dispatch.` and STOP.
 - Select the top-ranked direction (the entry marked `recommended: true`, or the first entry if none is marked). Resolve `TARGET_ISSUE` from the direction based on its `kind` — process only this one direction per invocation:
   - `kind: "issue" | "tree-continue" | "lock-stale" | "human-needed-unblock"` → `TARGET_ISSUE = direction.issue.number`. Proceed to Step 2b.
-  - `kind: "pr"` → `direction.issue` is `null`. Use the linked-issue fallback:
-    - If `direction.signals.linkedIssueNumber` is set: `TARGET_ISSUE = direction.signals.linkedIssueNumber`. Proceed to Step 2b; Step 3 classifies the linked issue's `workflowState` via the taxonomy.
-    - If `linkedIssueNumber` is absent (the PR's `headRefName` did not match `feature/GH-NNNN`): emit `result: Top direction is PR #<N> with no linked issue. Skipping.` and STOP. Do NOT iterate the rest of the list — Director processes one direction per invocation, and `/loop` owns the re-tick cadence.
+  - `kind: "pr"` → `direction.issue` is `null`. `direction.signals.linkedIssueNumber` is guaranteed to be set because `next_actions` filters out PRs with a null `linkedIssueNumber` at the source (see `mcp-server/src/lib/directions.ts`; unlinkable PRs are handled by the pr-drain Routine, not Director). Set `TARGET_ISSUE = direction.signals.linkedIssueNumber` and proceed to Step 2b; Step 3 classifies the linked issue's `workflowState` via the taxonomy.
 
 ### Step 2b: Fetch specific issue (--issue override or label trigger)
 
