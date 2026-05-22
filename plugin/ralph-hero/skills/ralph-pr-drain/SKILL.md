@@ -92,6 +92,18 @@ Date math is portable across macOS and Linux via a Python 3 one-liner (no `date 
 DAYS_OLD=$(python3 -c "from datetime import datetime, timezone; print(int((datetime.now(timezone.utc) - datetime.fromisoformat('$updatedAt'.replace('Z','+00:00'))).total_seconds() / 86400))")
 ```
 
+**Pre-classification guard — CI still running:**
+
+Before classifying, check `PR_JSON.statusCheckRollup`. If any element has `conclusion` (or `state`) in `[PENDING, IN_PROGRESS, QUEUED]` AND no element is `FAILURE`/`ERROR`/`CANCELLED`, CI is still running. Exit the skill immediately without creating a synth issue, posting a comment, or applying the `pr-drained` label — the next routine fire will reclassify when CI reaches a terminal state. Emit:
+
+```
+result: PR #<N> CI still pending — will reclassify on next fire.
+```
+
+This is the only path that leaves the PR unlabeled on purpose. All terminal classifications below either apply `pr-drained` (success) or skip it intentionally (`needs-human`, `merge-failed`).
+
+**Classification (CI is terminal — all checks have a non-pending conclusion):**
+
 1. **`dependabot-auto-merge` candidate** — all of:
    - `PR_JSON.author.login == "app/dependabot"`
    - Title parses as a patch or minor version bump. The Dependabot convention is `Bump <pkg> from X.Y.Z to A.B.C`. Compute the bump type by comparing `X.Y.Z` and `A.B.C`:
@@ -99,8 +111,8 @@ DAYS_OLD=$(python3 -c "from datetime import datetime, timezone; print(int((datet
      - Else if `Y != B` → minor
      - Else → patch
      - Match only if the bump type is patch or minor.
-   - Every element of `PR_JSON.statusCheckRollup` has `conclusion` (or `state` — the JSON shape varies, check both) in `[SUCCESS, SKIPPED, NEUTRAL]`. If any element is `PENDING` or `IN_PROGRESS` → not yet ready, fall through to `dependabot-needs-review`. If any element is `FAILURE`, `ERROR`, or `CANCELLED` → also fall through to `dependabot-needs-review`.
-2. **`dependabot-needs-review`** — `author == "app/dependabot"` AND any of: bump is major, title doesn't parse as a version bump, or any CI check is non-passing per rule 1.
+   - Every element of `PR_JSON.statusCheckRollup` has `conclusion` (or `state` — the JSON shape varies, check both) in `[SUCCESS, SKIPPED, NEUTRAL]`. If any element is `FAILURE`, `ERROR`, or `CANCELLED` → fall through to `dependabot-needs-review`.
+2. **`dependabot-needs-review`** — `author == "app/dependabot"` AND any of: bump is major, title doesn't parse as a version bump, or any CI check is failed/errored/cancelled per rule 1. (PENDING/IN_PROGRESS is handled by the pre-classification guard above, never here.)
 3. **`stale-close`** — `DAYS_OLD > 30` (using the Python snippet above; threshold 30 days since `updatedAt`).
 4. **`stale-ping`** — `DAYS_OLD > 14` (same snippet; threshold 14 days since `updatedAt`).
 5. **`needs-human`** — default.
@@ -307,6 +319,7 @@ result: Drained PR #<N> (class: <FINAL_CLASS>, synthetic issue: #<SYNTH_NUMBER>)
 ## Constraints
 
 - ralph-pr-drain MUST NOT add the `pr-drained` label until the action attempted in Step 5 has either succeeded or been intentionally held (MUST_FIX / dependabot-needs-review). A failed merge must NOT be labeled drained — the next routine fire must retry.
+- ralph-pr-drain MUST exit early without labeling, commenting, or creating a synth issue when CI is still pending (any check `PENDING`/`IN_PROGRESS`/`QUEUED` AND no terminal failure). The next routine fire reclassifies on CI completion.
 - ralph-pr-drain MUST create the synthetic issue BEFORE attempting any PR mutation, so even a partial-completion failure leaves a queryable board artifact.
 - Code review verdict is the merge gate — never bypass it for auto-merge candidates, even if CI is green.
 - Reuse the synthetic issue (Step 4 list_issues check) — do not create duplicates if the routine fires twice for the same PR before the first run completes.
