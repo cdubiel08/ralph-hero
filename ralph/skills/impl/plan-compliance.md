@@ -43,4 +43,48 @@ Common drift sources to expect (and skip silently if they're not in the table):
 - IDE state files (`.vscode/`, `.idea/`) — should be `.gitignore`d.
 - Test snapshot updates (`__snapshots__/`) — usually in scope; if the plan lists `*.test.ts`, the matching snapshot is implicit.
 
-> §Staging Algorithm, §Multi-repo Commits, §Mismatch Handling are filled in Phase 3 of [GH-1366](https://github.com/cdubiel08/ralph-hero/issues/1366).
+## §Staging Algorithm
+
+After implementing the phase, before committing:
+
+1. `git status --porcelain` — list all modified + new files.
+2. Diff against the phase's File Ownership table.
+3. For each file IN the table: `git add <path>`.
+4. For each file NOT in the table: log to drift, skip.
+5. `git diff --cached --stat` — sanity-check the staged set matches the phase.
+6. Commit with a message identifying the phase: `feat(component): [phase description]` body line `Phase [N] of [M]: #NNN - [Title]`.
+7. Push: `git push -u origin feature/GH-NNN`.
+
+The `impl-verify-commit.sh` hook (PostToolUse on Bash) inspects the commit's `tool_output` for `nothing to commit`, `rejected`, or `pre-commit hook ... failed` and blocks the workflow when push fails.
+
+## §Multi-repo Commits
+
+When the plan spans multiple repos (research doc has a "Cross-Repo Scope" section):
+
+1. **Commit and push separately in each repo's worktree.** Each repo gets its own PR.
+2. Stage specific files only — never `git add -A`/`.`/`--all` in any repo.
+3. Commit messages identify the repo: `feat(ralph-hero): [change]` vs `feat(landcrawler-ai): [change]`.
+4. Push each branch separately: `cd <repo>/worktrees/GH-NNN && git push -u origin feature/GH-NNN`.
+
+The `impl-staging-gate.sh` hook gates `Bash` calls across all worktrees uniformly via `RALPH_COMMAND=impl`; no per-repo configuration needed.
+
+## §Mismatch Handling
+
+When reality doesn't match the plan exactly, STOP and surface the gap. Do NOT silently adapt:
+
+```
+Issue in Phase [N]:
+Expected: [what the plan says]
+Found:    [actual situation]
+Why this matters: [explanation]
+
+How should I proceed?
+```
+
+Common mismatch sources:
+
+- File listed in ownership but the path moved between plan-writing and implementation.
+- Dependency added in a prior phase that changes the API the current phase consumes.
+- Test framework upgraded; old assertion style no longer compiles.
+
+In **default mode**, the user resolves the mismatch interactively (the question becomes part of the phase pause). In **auto mode**, the mismatch is itself a BLOCKED signal — emit `IMPL BLOCKED model=<current> needs=opus reason=<mismatch>` per [phase-execution.md §IMPL BLOCKED escalation](phase-execution.md) so hero can re-dispatch at a higher tier.

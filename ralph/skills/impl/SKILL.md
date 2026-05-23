@@ -141,7 +141,23 @@ For each unchecked phase:
 
 If instructed to execute multiple phases consecutively, skip the pause until the final phase.
 
-> Steps 5-6 (Complete + Next-steps picker) land in Phase 3 of [GH-1366](https://github.com/cdubiel08/ralph-hero/issues/1366).
+### Step 5: Complete
+
+When all phases are verified:
+
+1. **Stage + commit + push** the final phase per [plan-compliance.md §Staging Algorithm](plan-compliance.md). Multi-repo plans: commit and push in each worktree separately.
+2. **Create PR** — either inline `gh pr create` (simple cases) or delegate to `--mode pr` for the full body composition + scout-trigger evaluation. Title `GH-NNN: <issue title>`. Body: `## Summary` + `## Plan` (link to plan doc) + `## Test plan` (from Success Criteria) + `Closes #NNN`. Capture the PR URL.
+3. **Transition issue to "In Review"** via `save_issue`. For groups, advance every sub-issue.
+4. **Post `## Implementation Complete` comment** on the issue with PR URL, branch, and "All phases implemented and verified."
+
+### Step 6: Next-steps picker
+
+Ask the user via AskUserQuestion what to do next:
+
+- **Run finish** — `Skill("ralph-hero:finish", args="NNN")` (until Plan 6 ships `/ralph:review`, then switch to `Skill("ralph:review", args="NNN")`).
+- **Create PR only** — already done in Step 5; re-confirm URL.
+- **Iterate on plan** — `Skill("ralph:plan", args="--mode iterate #NNN")`.
+- **Done for now** — report current state and STOP.
 
 ## Configuration (resolved at load time)
 

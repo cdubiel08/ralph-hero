@@ -247,7 +247,7 @@ Default-mode body Steps 5-6 + finish `plan-compliance.md`.
 
 #### Automated Verification
 
-- [ ] `plan-compliance.md` ≥ 80 lines.
+- [x] `plan-compliance.md` ≥ 80 lines.
 
 #### Manual Verification
 
