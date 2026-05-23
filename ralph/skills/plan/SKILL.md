@@ -115,7 +115,20 @@ For `--mode review`, also export `RALPH_COMMAND=review` and `RALPH_ARTIFACT_DIR=
 
 ## --mode auto
 
-_(Filled by Phase 4.)_
+Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced. Frontmatter `hooks:` gate the flow (tier-validator, state-gate, postcondition, doc-validator, research-required, lock-release). XS/S only, 15-minute budget.
+
+1. **Branch check** — `git branch --show-current` must be `main`.
+2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-plan", limit: 50)`, filter XS/S Ready-for-Plan + unblocked + has-linked-research, pick highest priority. None eligible → exit cleanly.
+3. **Lock + research lookup** — `save_issue(workflowState: "__LOCK__", command: "plan")`. Find linked research per `intake-routing.md` § Linked-research check. If none → escalate to "Human Needed".
+4. **Parent-plan reuse** — per `intake-routing.md` § Parent-plan reuse. If short-circuit: post `## Plan Reference`, advance child to "In Progress", report, STOP.
+5. **Knowledge graph + sub-agent research** — same dispatch as default Steps 2-3, no AskUserQuestion. Wait for ALL, synthesize.
+5a. **UI Validation Phase (conditional)** — per `ui-validation-phase.md`. No user prompt; heuristic-only.
+6. **Write plan doc** — per `plan-shapes.md` (auto-column required sections, including Files Affected). The `plan-research-required.sh` hook blocks Write if no linked research; `doc-structure-validator.sh` blocks Stop if required sections missing.
+7. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN implementation plan" && git push origin main`.
+8. **Post artifact + advance + outcome** — `create_comment(## Implementation Plan ...)` → `save_issue(workflowState: "__COMPLETE__", command: "plan")` (advances to "Plan in Review") → `knowledge_record_outcome(event_type: "plan_completed", ...)` if available.
+9. **Report** — single block: *Plan complete for #NNN: [Title] / Plan: [path] / Status: Plan in Review*.
+
+**Escalation triggers (auto only):** advance to "Human Needed" when (a) no linked research exists, (b) issue is M/L/XL on research (suggest `--mode epic`), or (c) sub-agents surface conflicting implementations.
 
 ## --mode epic
 
