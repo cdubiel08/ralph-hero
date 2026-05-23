@@ -110,7 +110,24 @@ The negative-constraint surface ("never prescribe, never editorialize") is load-
 
 ## --mode report
 
-_(Filled by Phase 4.)_
+Parse arguments:
+
+- `--dry-run`: compose but do not post
+- `--window N`: override the time window in days (default 7)
+- `--status ON_TRACK|AT_RISK|OFF_TRACK`: override auto-determined status
+- `--with-trends`: append a Trends section (sparklines + 1d/7d/30d deltas)
+
+Compose per `report-composition.md`:
+
+1. Fetch `ralph_hero__pipeline_dashboard` with `format="json", includeHealth=true, includeMetrics=true, doneWindowDays=<window>, velocityWindowDays=<window>`.
+2. Handle the metrics-absent fallback per `report-composition.md`.
+3. Compose the markdown body using the template in `report-composition.md`.
+4. If `--with-trends`, call `ralph_hero__metrics_trends` with `format="markdown"` and append under `## Trends` only when ≥2 snapshots exist.
+5. Determine final status: `--status` override > `metrics.status` > fallback.
+
+If `--dry-run`: display the composed body + determined status + `Dry run complete. No status update posted.` Stop.
+
+Otherwise: call `ralph_hero__create_status_update` with `{status, body}`. Display the response: status update ID + status + first 200 chars of body. Print `Status update posted successfully.`
 
 ## References
 
