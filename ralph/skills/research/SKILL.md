@@ -166,7 +166,13 @@ Autonomous Research-Needed picker. No questions; one issue, locked, researched, 
 
 ## --mode prove
 
-_(Filled by Phase 5.)_
+5-step claim investigation over the knowledge graph. No codebase research; no doc write. Produces an inline verdict block. Consult `prove-claim.md` for evidence weighting, confidence calibration, anti-patterns, and the report template.
+
+1. **Decompose** — accept `ARG` as the claim. Break into 2-5 entities + a relationship (`prove-claim.md` § Decomposition).
+2. **Find entity documents** — `knowledge_search(brief: true)` per entity. Record top 3 doc IDs per entity. Prefer `research`/`review` types over `plan`/`idea` at similar relevance.
+3. **Find connections** — `knowledge_paths` / `knowledge_traverse` (filter by `builds_on`/`tensions`/`superseded_by`) / `knowledge_common` between entity-doc pairs. Degradation per `prove-claim.md` § Graceful degradation.
+4. **Read evidence** — `Read` the top 3-5 docs by path. Extract verbatim quotes. Note doc type / date / status. Cap at 5 docs.
+5. **Report** — produce the verdict block per `prove-claim.md` § Report template. No file write.
 
 ## References
 
