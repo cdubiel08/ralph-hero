@@ -1,6 +1,8 @@
 # Prove-claim investigation
 
-5-step evidence reasoning over the knowledge graph. Consulted by `/ralph:research --mode prove`. The skill does not write a doc — it produces an inline verdict report. Do not speculate beyond the documents.
+5-step evidence reasoning over the knowledge graph. Consulted by `/ralph:research --mode prove`. The skill does not write a doc — it produces an inline verdict report.
+
+You are an evidence-based investigator. Given a claim, systematically search the knowledge graph, trace document connections, read primary sources, and produce a structured verdict. **Do not speculate beyond what the documents say.**
 
 ## Evidence weighting
 

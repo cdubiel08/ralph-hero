@@ -1,24 +1,25 @@
 ---
 description: Investigate a codebase question, a GitHub issue, or a claim. Use whenever
-  the user says "research X", "investigate this", "how does Y work", "find me
-  prior art on Z", hands over an issue number, or asks to "prove" / "verify" a
-  claim. Default flow is interactive (asks for the question, dispatches parallel
-  sub-agents, lets you review findings before writing the doc). --mode auto runs
-  the autonomous Research-Needed picker. --mode prove runs a 5-step knowledge-graph
+  the user says "research X", "investigate this", "look into Y", "dig into Z",
+  "explore the codebase for X", "how does Y work", "trace how X happens", "what
+  does X do", "find me prior art on Z", hands over an issue number (#NNN /
+  GH-NNNN), or asks to "prove" / "verify" / "is it true that" a claim. Default
+  flow is interactive (asks for the question, dispatches parallel sub-agents,
+  lets you review findings before writing the doc). --mode auto runs the
+  autonomous Research-Needed picker. --mode prove runs a 5-step knowledge-graph
   claim investigation that produces a verdict + confidence + evidence chains.
 argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-playwright]"
 context: inline
 model: opus
 hooks:
+  # branch-gate.sh is intentionally not declared here. In the slim plugin it's
+  # patched to no-op when RALPH_REQUIRED_BRANCH is unset, and the autonomous
+  # flow's Step 1 does its own explicit branch check via Bash anyway. Wiring it
+  # in frontmatter would also fire on interactive/prove Bash calls.
   SessionStart:
     - hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=research RALPH_REQUIRED_BRANCH=main"
-  PreToolUse:
-    - matcher: "Bash"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=research"
   PostToolUse:
     - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue"
       hooks:
@@ -158,11 +159,14 @@ Autonomous Research-Needed picker. No questions; one issue, locked, researched, 
 2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-research", limit: 50)`, filter XS/Small + unblocked (per `intake-routing.md` § Blocker semantics — fetch each blocker, do not infer), pick highest priority. None eligible → exit cleanly.
 3. **Lock + registry + knowledge graph** — `save_issue(workflowState: "__LOCK__", command: "ralph_research")` → read `.ralph-repos.yml` if present (`research-shapes.md` § Cross-repo addendum) → knowledge-graph dispatch (`research-shapes.md` § Knowledge-graph dispatch shape); save `query_id` for Step 7.
 4. **Parallel sub-agent research** — same dispatch as default Step 3, no review picker. Wait for ALL, synthesize.
+4a. **Refine group dependencies** — skip if single-issue group. Else analyze implementation order from code findings: which issue creates foundational code, which can be parallelized. Update `add_dependency` / `remove_dependency` edges if order differs from initial triage; post a comment on the primary issue summarizing the refined order.
 5. **Write doc** — per `findings-format.md`. Required: frontmatter, Prior Work, Files Affected (hook-enforced), Detailed Findings. Optional: Pipeline History, Cross-Repo Scope.
 6. **Playwright baseline (conditional)** — per `playwright-baseline.md`, no user prompt. Commit per the autonomous-mode commit step in that reference.
 7. **Commit + push** — `git add ... && git commit -m "docs(research): GH-NNN research findings" && git push origin main`.
 8. **Artifact + advance + outcome** — `create_comment` (artifact per `findings-format.md` § Artifact comment) → `save_issue(workflowState: "__COMPLETE__", command: "ralph_research")` (advances to Ready for Plan) → `knowledge_record_outcome(event_type: "research_completed", ..., query_id: "<from Step 3>")` if available.
 9. **Report** — single block: *Research complete for #NNN: [Title] / Findings: [path] / Status: Ready for Plan / Key recommendation: [one sentence]*.
+
+**Escalation triggers (autonomous only):** advance to `workflowState: "Human Needed"` (not "Ready for Plan") when (a) issue scope is M/L/XL on inspection (needs re-estimation or splitting), (b) no relevant codebase patterns can be located after broad search, or (c) sub-agents surface conflicting implementations and you cannot determine the canonical one. State the trigger explicitly in the issue comment so the unblock pipeline has context.
 
 ## --mode prove
 

@@ -466,3 +466,32 @@ Open follow-ups (separate plans):
 - When Plan 3 ships, update SKILL.md Step 6c to drop the `/ralph-hero:research` fallback. Same for Plan 4 and `/ralph-hero:plan`.
 - Plan 7 (`/ralph:caretake`) doesn't directly affect this verb.
 - Plan 10 owns sunset of source `draft` + `form` skills.
+
+### Plan 3: `/ralph:research` (shipped 2026-05-23, branch `feature/GH-1362-research`)
+
+Final shape:
+
+- `ralph/skills/research/SKILL.md`: 183 lines (target ~170, max 200). Heavier than catch-up (137) and form (186) because the verb folds three structurally distinct sub-flows (interactive 10 steps + autonomous 9 steps + prove 5 steps) plus the `hooks:` frontmatter block declaring 5 auto-mode hooks.
+- Five flat-sibling references: `intake-routing.md` (46), `research-shapes.md` (78), `findings-format.md` (187), `playwright-baseline.md` (113), `prove-claim.md` (130). Total 554 lines of opinion content.
+- Combined: 737 lines (vs 1,089 in source research + ralph-research + prove-claim). ~32% LOC reduction; the larger structural win is collapsing 3 user-facing verbs into 1 with `--mode` dispatch.
+- Hook ports: five scripts ported verbatim from the source plugin (`research-state-gate.sh`, `research-postcondition.sh`, `doc-structure-validator.sh`, `branch-gate.sh`, `lock-release-on-failure.sh`) plus `ralph-state-machine.json` (required by lock-release). All gate on `RALPH_COMMAND` / `RALPH_TICKET_ID` env vars set by `set-skill-env.sh` on SessionStart, so they no-op outside `--mode auto`.
+- **First plan to introduce SKILL.md frontmatter `hooks:` block in the slim plugin.** Catch-up and form had no enforcement to port; research is the first verb where Hooks Own Enforcement (P6) is exercised end-to-end. The slim-plugin pattern: plugin-root `hooks.json` for cross-skill concerns (cursor advance, env setup); per-skill `hooks:` frontmatter for skill-specific enforcement (state gates, postconditions, doc validators, branch gates, lock releases). This pattern will be re-used by Plans 4 (`/ralph:plan`) and 5 (`/ralph:impl`).
+- **First plan to ship 5 reference siblings** — above Plan 2's "four is the upper end" comfort heuristic. The fifth (`prove-claim.md`) is justified by prove-mode's structural distinctness from codebase research (no Agent dispatch, knowledge-graph only, evidence-weighting opinion content with no analog in the other modes).
+- Playwright baseline content centralized: both default Step 6.5 and autonomous Step 5.5 consult the same `playwright-baseline.md`. The two source skills duplicated this block verbatim — the fold deduplicates it.
+- The autonomous-mode commit step lives in `playwright-baseline.md` rather than the SKILL.md auto-mode list because it's specific to the baseline-append path. Keeps SKILL.md auto-mode tight (one-liners per step).
+
+Real-session usage notes during the 2-week dogfooding window:
+
+- [ ] _(Add entries as you use it. Examples to watch for: hooks correctly no-op in interactive/prove modes; auto-mode state-gate behavior on out-of-band issue moves; prove-mode degradation when knowledge tools are partial; cross-repo registry lookup with newly-added repos; AskUserQuestion findings-review loop iterations.)_
+
+Inputs to feed into Plan 4 (`/ralph:plan`):
+
+- _(TBD after 2 weeks of usage.)_
+- Pattern validator note: SKILL.md frontmatter `hooks:` worked for scoping enforcement to a single mode within a multi-mode verb. Plan 4 will reuse for `/ralph:plan` (plan-state-gate + plan-postcondition).
+- Reference-count note: 5 references felt structurally justified by prove-mode's distinctness. For verbs without a structurally-distinct sub-mode, 4 stays the comfortable upper end. Plan 4 should aim for 4 references unless a comparable sub-mode emerges.
+
+Open follow-ups (separate plans):
+
+- When Plan 4 ships, drop the `/ralph-hero:plan` fallback in `/ralph:form` Step 6c (already a documented Plan 2 follow-up). `/ralph:research` Step 9 "Create issue from findings" already points at `/ralph:form` (no fallback needed since Plan 2 shipped).
+- Plan 7 (`/ralph:caretake`) doesn't directly affect this verb.
+- Plan 10 owns sunset of source `research`, `ralph-research`, `prove-claim` skills.

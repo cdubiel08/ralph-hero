@@ -33,8 +33,13 @@ case "$command" in
     ;;
 esac
 
-# Find most recently modified markdown file in artifact dir (within last 60 min)
-doc=$(find "$artifact_dir" -name "*.md" -type f -mmin -60 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
+# Find a doc CREATED today by the autonomous research flow. The slim plugin
+# scopes this hook tighter than the source ralph-hero copy (which scanned the
+# last 60 min and could block on unrelated stale edits): we only validate a
+# file whose name starts with today's YYYY-MM-DD prefix and was modified in the
+# last 15 min (matching the autonomous flow's 15-minute budget).
+today=$(date +%Y-%m-%d)
+doc=$(find "$artifact_dir" -name "${today}-*.md" -type f -mmin -15 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
 
 if [[ -z "$doc" ]]; then
   allow
@@ -44,12 +49,11 @@ errors=()
 
 case "$command" in
   research)
-    grep -qi "problem\|overview" "$doc" || errors+=("Missing: Problem statement (section with 'problem' or 'overview')")
-    grep -qi "analysis\|current state" "$doc" || errors+=("Missing: Analysis (section with 'analysis' or 'current state')")
-    grep -qi "discover\|finding" "$doc" || errors+=("Missing: Discoveries (section with 'discover' or 'finding')")
-    grep -qi "approach" "$doc" || errors+=("Missing: Approaches (section with 'approach')")
-    grep -qi "risk" "$doc" || errors+=("Missing: Risks (section with 'risk')")
-    grep -qi "next step\|recommendation" "$doc" || errors+=("Missing: Next steps (section with 'next step' or 'recommendation')")
+    # Section names match ralph/skills/research/findings-format.md § Section order.
+    grep -qiE "^## (Prior Work|Research Question)" "$doc" || errors+=("Missing: '## Prior Work' or '## Research Question' header")
+    grep -qiE "^## (Summary|Detailed Findings)" "$doc" || errors+=("Missing: '## Summary' or '## Detailed Findings' header")
+    grep -qiE "^## Files Affected" "$doc" || errors+=("Missing: '## Files Affected' header (required by --mode auto per findings-format.md)")
+    grep -qE '`[^`]+`' "$doc" || errors+=("Missing: backtick-wrapped file paths (e.g., \`src/file.ts\`) — referenced findings should use code-spans")
     ;;
   plan)
     grep -qE "^## Phase [0-9]" "$doc" || errors+=("Missing: ## Phase N: header pattern (e.g., '## Phase 1: ...')")

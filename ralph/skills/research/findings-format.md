@@ -71,6 +71,8 @@ last_updated_note: "Added follow-up research for X"     # only on follow-ups
 
 ## Open Questions
 [Areas needing further investigation]
+
+## UI Baseline                                      # optional — appended after the main flow when Playwright baseline ran (see playwright-baseline.md)
 ```
 
 ## Prior Work + evidence weighting
