@@ -89,7 +89,13 @@ _Filled by Phase 5._
 
 ## `--mode code` — code-review-and-fix loop
 
-_Filled by Phase 3._
+1. **Select issue** — arg or queue-pick (`list_issues(workflowState: "In Review", limit: 10)`, first with open PR). STOP with literal `Queue empty.` if none. Initialize `ROUND=1`, `MAX_ROUNDS=3`.
+2. **Find PR** — `gh pr list --head feature/GH-NNN --json number,url,state`. STOP `CODE REVIEW BLOCKED — no open PR` if none.
+3. **Check existing review state** — per [code-review-prompt.md §Pre-loop short-circuits](code-review-prompt.md): `APPROVED` → STOP clean; human `CHANGES_REQUESTED` → STOP blocked (human owns resolution).
+4. **Run code review (round N of 3)** — per [§Loop invariants](code-review-prompt.md): snapshot `BEFORE_COUNT` via `gh pr view PR_NUMBER --json comments --jq '.comments | length'`, invoke `Skill("code-review:code-review", "PR_NUMBER")`, re-query `AFTER_COUNT` (identical command). If equal → clean (STOP `CODE REVIEW PASSED`); else proceed.
+5. **Address feedback** — dispatch `Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback for #NNN — Address Mode")`. Wait for return.
+6. **Re-review loop** — `ROUND=$((ROUND + 1))`. If `<= MAX_ROUNDS` → return to Step 4. Else escalate per [§Escalation Protocol](code-review-prompt.md): post BOTH `## Code Review` round-by-round summary AND canonical `## Escalation` comments; `save_issue(workflowState="__ESCALATE__", command="ralph_code_review")`.
+7. **Report** — `CODE REVIEW PASSED` (clean) / `CODE REVIEW ESCALATED` (3 rounds exhausted). Record outcome via `knowledge_record_outcome(event_type="pr_review_decision", verdict, ...)`.
 
 ## `--mode merge` — merge mechanics
 
