@@ -97,13 +97,70 @@ primary_issue: NNN
 
 Each `## Phase N:` section MUST include:
 
-1. **Overview** — 1-2 sentences describing the phase's outcome.
-2. **Changes Required** — concrete file paths + what changes. Backtick-wrap each path.
-3. **Success Criteria** with TWO subsections:
+1. **`depends_on:`** — annotation immediately under the heading. Values:
+   - `null` — no dependencies, can start immediately.
+   - `[phase-N]` — blocked by another phase in this plan.
+   - `[phase-N, phase-M]` — blocked by both.
+   - `[GH-NNN]` — blocked by a specific issue (cross-plan reference).
+   - If omitted, phases are treated as sequential (Phase N depends on Phase N-1).
+   Consumed by orchestrators (hero, autopilot) to decide which phases can dispatch in parallel and by `sync_plan_graph` for graph snapshots.
+2. **Overview** — 1-2 sentences describing the phase's outcome.
+3. **Changes Required** — concrete file paths + what changes. Backtick-wrap each path.
+4. **Success Criteria** with TWO subsections:
    - **`#### Automated Verification`** — commands / tests that prove correctness without human eyes. The `doc-structure-validator.sh` hook checks for this header pattern.
    - **`#### Manual Verification`** — what the user must observe themselves (UI behavior, data integrity post-migration).
 
 File ownership rule: each phase owns a tightly-scoped file set. Phases should not stomp on each other's files. Document file ownership explicitly when a file is touched in multiple phases.
+
+## Task anatomy
+
+Phases that decompose into tasks use `#### Task N.M:` subheadings. Each task carries four YAML fields below the heading. `plan-postcondition.sh:74-84` reads these fields when emitting `sync_plan_graph` snapshots — plans authored without them produce silently incomplete graphs.
+
+```markdown
+#### Task 1.1: [descriptive name]
+- **files**: `path/to/file.ts` (create|modify|read)
+- **tdd**: true | false
+- **complexity**: low | medium | high
+- **depends_on**: null | [N.M, ...]
+- **acceptance**:
+  - [ ] [Specific verifiable criterion with concrete values]
+  - [ ] [Another criterion]
+```
+
+Field semantics:
+
+| Field | Values | Why |
+|---|---|---|
+| `files` | one or more backtick-wrapped paths with `(create\|modify\|read)` action | File ownership at task granularity — lets the parallel-dispatch graph detect write conflicts. |
+| `tdd` | `true` / `false` (default `false`) | When `true`, the implementer writes the failing test first. Honored by `/ralph:impl --mode auto`. |
+| `complexity` | `low` / `medium` / `high` | Sub-agent model-tier hint. `high` tasks dispatch at opus by default; `low`/`medium` at sonnet/haiku per the model-tier policy. |
+| `depends_on` | `null` / `[N.M, ...]` | Same shape as the per-phase annotation, scoped to sibling tasks within the phase. |
+| `acceptance` | markdown checkbox list | One verifiable criterion per checkbox. Surfaced in the implementer's context packet (`implementer-prompt.md`). |
+
+Worked example:
+
+```markdown
+#### Task 1.1: extract token parser into shared module
+- **files**: `src/lib/token-parser.ts` (create), `src/handlers/auth.ts` (modify)
+- **tdd**: true
+- **complexity**: medium
+- **depends_on**: null
+- **acceptance**:
+  - [ ] `npm test src/lib/token-parser.test.ts` passes (parser has its own test file)
+  - [ ] `src/handlers/auth.ts` imports the new module; inline parser code deleted
+  - [ ] `npm run build` exits 0
+
+#### Task 1.2: wire feature flag for new parser
+- **files**: `src/config/flags.ts` (modify), `src/handlers/auth.ts` (modify)
+- **tdd**: false
+- **complexity**: low
+- **depends_on**: [1.1]
+- **acceptance**:
+  - [ ] Flag defaults to `false`; old code path preserved for rollback
+  - [ ] `grep -r "useNewParser" src/` returns ≥1 hit in flags.ts and auth.ts
+```
+
+Tasks without the four YAML fields still parse — `plan-postcondition.sh` warns (rather than blocks) when they're missing so older plans don't break under stricter enforcement. Future plans (Wave 2 candidate) may elevate the warning to a block once the corpus is consistent.
 
 ## Plan-of-plans variant (epic mode)
 
