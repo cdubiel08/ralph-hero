@@ -4,7 +4,16 @@ Each mode body emits exactly one terminal token on its final line. The harness e
 
 Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emits no token.
 
-<!-- Phase 3 fills: ## Triage terminal tokens -->
+## Triage terminal tokens
+
+- `TRIAGED valid` — issue moved to `Research Needed` or `Ready for Plan` (the agent decided the issue is actionable).
+- `TRIAGED duplicate` — closed as duplicate; references a `## Duplicate Of` comment naming the surviving issue.
+- `TRIAGED canceled` — closed not-planned (tech changed, product direction shifted, etc.).
+- `TRIAGED needs-split` — left in Backlog with the `needs-split` label so `--mode split` picks it up on the next sweep.
+- `TRIAGED skipped — branch <name> is not main` — §Step 1 short-circuit; triage refuses to run on a feature branch.
+- `Queue empty.` — no untriaged Backlog issues remain.
+
+`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. The hook also verifies `RALPH_TRIAGE_ACTION` is set to one of `RESEARCH | SPLIT | CLOSE | KEEP | HUMAN | CANCEL | RE-ESTIMATE`.
 <!-- Phase 4 fills: ## Hygiene terminal tokens -->
 <!-- Phase 5 fills: ## Unblock terminal tokens -->
 <!-- Phase 6 fills: ## Postmortem / Retro / Trends sections -->
