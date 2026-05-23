@@ -31,7 +31,7 @@ Headline shape:
 | 7 | `/ralph:caretake` | shipped |
 | 8 | `/ralph:hero` | shipped |
 | 9 | `/ralph:setup` | shipped |
-| 10 | sunset `plugin/ralph-hero/` | Wave 1 shipped 2026-05-23 (P0/P1 parity fixes). Wave 2 (P2/P3 fixes) + Wave 3 (deletion) in progress. |
+| 10 | sunset `plugin/ralph-hero/` | Wave 1 shipped 2026-05-23 (P0/P1 fixes). Wave 2 selective shipped 2026-05-23 (5 fixes + 1 doc + 3 close-with-rationale; 3 issues deferred as `[Wave 2 deferred]`). Wave 3 (deletion) blocked on real-session dogfooding. |
 
 ## Local development
 
