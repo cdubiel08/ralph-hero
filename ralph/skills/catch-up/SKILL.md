@@ -1,9 +1,10 @@
 ---
 description: Orientation companion — catches you up on what changed since you last
-  checked, then surfaces actionable directions with a recommended default. Folds
-  the ralph-hero hello, catch-up, status, report, and cos verbs. Default flow is
-  narrative + interactive picker; --mode flag selects narrative / dashboard /
-  report sub-surfaces.
+  checked, surfaces ranked next actions with a recommended pick, renders the
+  pipeline dashboard, or composes and posts a status report. Use whenever the
+  user asks "what's going on", "what should I work on", "catch me up", "show me
+  the board", "post a status update", or starts a session wanting orientation.
+  --mode flag selects narrative / dashboard / report sub-surfaces.
 argument-hint: "[--mode {narrative,dashboard,report}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends]"
 context: inline
 allowed-tools:
@@ -103,10 +104,10 @@ Call `ralph_hero__pipeline_dashboard` with `format=<parsed>, includeHealth=true,
 
 Render per `dashboard-render.md`:
 
-- If `format == "json"`: emit `JSON.stringify(dashboard, null, 2)` inside a fenced ```json``` block. **No narration, no prose, no preamble, no postamble.** Stop.
-- If `format == "markdown"` or `format == "ascii"`: emit `dashboard.formatted` verbatim. If critical health warnings exist, surface them raw under a `### Critical Health Warnings (N)` heading. No analysis, no key findings, no recommendations.
+- If `format == "json"`: emit `JSON.stringify(dashboard, null, 2)` inside a fenced ```json``` block. Stop.
+- If `format == "markdown"` or `format == "ascii"`: emit `dashboard.formatted` verbatim. Surface critical health warnings under a `### Critical Health Warnings (N)` heading after the formatted block.
 
-The negative-constraint surface ("never prescribe, never editorialize") is load-bearing and lives in `dashboard-render.md`. Consult it before generating any output for this mode.
+The negative-constraint surface (no analyst commentary, no Key Findings, no recommendations) is load-bearing — consult `dashboard-render.md` before generating output.
 
 ## --mode report
 
