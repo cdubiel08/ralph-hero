@@ -91,11 +91,22 @@ After dispatch completes, output `Session complete.`
 
 ## --mode narrative
 
-_(Filled by Phase 3.)_
+Dispatch the same `Agent(subagent_type="ralph-hero:catch-up-agent")` as the default flow's Step 1. Return only the narrative text (or the empty-case sentence from `narrative-synthesis.md`). No picker, no dispatch.
+
+Consult `narrative-synthesis.md` for tone rules. The single output is prose or the empty-case sentence — no metadata, no headers.
 
 ## --mode dashboard
 
-_(Filled by Phase 3.)_
+Parse the trailing argument (after `--mode dashboard`) as the output format. Default to `markdown`. Valid formats: `markdown`, `ascii`, `json`.
+
+Call `ralph_hero__pipeline_dashboard` with `format=<parsed>, includeHealth=true, issuesPerPhase=5`.
+
+Render per `dashboard-render.md`:
+
+- If `format == "json"`: emit `JSON.stringify(dashboard, null, 2)` inside a fenced ```json``` block. **No narration, no prose, no preamble, no postamble.** Stop.
+- If `format == "markdown"` or `format == "ascii"`: emit `dashboard.formatted` verbatim. If critical health warnings exist, surface them raw under a `### Critical Health Warnings (N)` heading. No analysis, no key findings, no recommendations.
+
+The negative-constraint surface ("never prescribe, never editorialize") is load-bearing and lives in `dashboard-render.md`. Consult it before generating any output for this mode.
 
 ## --mode report
 
