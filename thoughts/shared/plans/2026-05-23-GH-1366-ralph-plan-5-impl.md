@@ -426,8 +426,8 @@ Append `### Plan 5: /ralph:impl (shipped YYYY-MM-DD)` subsection. Capture: hot-p
 
 #### Automated Verification
 
-- [ ] README shows Plan 5 shipped.
-- [ ] Friction-log section exists.
+- [x] README shows Plan 5 shipped.
+- [x] Friction-log section exists.
 
 #### Manual Verification
 
