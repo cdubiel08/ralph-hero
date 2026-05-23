@@ -43,15 +43,16 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-verify-doc.sh"
-  # review-state-gate and review-postcondition deliberately NOT declared here:
-  # the slim plugin can't reliably flip RALPH_COMMAND mid-session (Bash exports
-  # don't propagate to hook subprocesses), so review-mode is gated by:
-  #   - path discrimination on doc-structure-validator (auto-picks branch from
-  #     which artifact dir has the most recent today-prefixed doc),
-  #   - path discrimination on review-verify-doc + review-no-dup (already in
-  #     the script bodies — they no-op when file_path isn't under reviews/),
-  #   - the broadened valid-output set on plan-state-gate (accepts review-mode
-  #     transitions In Progress / Plan in Progress on top of plan-mode ones).
+  # review-state-gate stays unregistered (state-gate union lives on
+  # plan-state-gate; double-firing would block legitimate transitions).
+  # review-postcondition IS registered (re-added in GH-1378 fix) — it now
+  # self-gates on RALPH_SUBCOMMAND=review (set by the --mode review body
+  # entry), so it no-ops in --mode auto / default / epic / iterate. The
+  # other path-discrimination guards still hold:
+  #   - doc-structure-validator auto-picks branch from which artifact dir
+  #     has the most recent today-prefixed doc,
+  #   - review-verify-doc + review-no-dup self-no-op on file_path,
+  #   - plan-state-gate accepts the union of valid transitions across modes.
   Stop:
     - hooks:
         - type: command
@@ -60,6 +61,8 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-postcondition.sh"
 allowed-tools:
   - Read
   - Write
@@ -165,7 +168,14 @@ Surgical updates to an existing plan. No state transitions (the plan stays in wh
 
 ## --mode review
 
-Critique an existing plan and emit APPROVED / NEEDS_ITERATION. Folds `ralph-review`. Export `RALPH_COMMAND=review` and `RALPH_ARTIFACT_DIR=thoughts/shared/reviews` at the start so the review-mode hooks activate. Consult `plan-review.md`.
+Critique an existing plan and emit APPROVED / NEEDS_ITERATION. Folds `ralph-review`. Consult `plan-review.md`.
+
+0. **Scope env-vars for this mode** — set `RALPH_SUBCOMMAND=review` and `RALPH_ARTIFACT_DIR=thoughts/shared/reviews` so `review-postcondition.sh` activates on this run and looks under the reviews directory rather than plans (the default for /ralph:plan). Bash form:
+
+   ```bash
+   export RALPH_SUBCOMMAND=review
+   export RALPH_ARTIFACT_DIR=thoughts/shared/reviews
+   ```
 
 1. **Resolve plan + issue** — `ARG=#NNN` → `get_issue`; locate the `## Implementation Plan` artifact. `--plan-doc <path>` accepted as override.
 2. **Validate plan exists** — if absent, escalate the issue to "Human Needed". STOP.

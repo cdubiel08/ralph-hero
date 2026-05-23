@@ -9,6 +9,19 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
+# Scope guard: only fire when /ralph:plan is in --mode review. The mode body
+# sets RALPH_SUBCOMMAND=review on entry; the hook no-ops for any other plan
+# mode (default, auto, epic, iterate) or for non-plan commands entirely.
+#
+# Closes the registration conflict that GH-1378 documents — review-postcondition
+# was ported in Plan 4 but left unregistered because it fired unconditionally
+# when RALPH_TICKET_ID was set and would have demanded a critique doc in
+# --mode auto. This scope-guard pattern (RALPH_SUBCOMMAND discrimination) is
+# the same one caretake's per-mode hooks use, established by Plan 7.
+if [[ "${RALPH_SUBCOMMAND:-}" != "review" ]]; then
+  exit 0
+fi
+
 read_input > /dev/null
 
 COMMAND="${RALPH_COMMAND:-review}"
