@@ -214,9 +214,9 @@ Default-mode body Steps 1-4 + `worktree-setup.md` (suggestion section) + partial
 
 #### Automated Verification
 
-- [ ] `[ "$(wc -l < ralph/skills/impl/SKILL.md)" -le 200 ]`
-- [ ] `worktree-setup.md` non-stub: `[ "$(wc -l < ralph/skills/impl/worktree-setup.md)" -ge 40 ]`
-- [ ] `plan-compliance.md` non-stub: `[ "$(wc -l < ralph/skills/impl/plan-compliance.md)" -ge 40 ]`
+- [x] `[ "$(wc -l < ralph/skills/impl/SKILL.md)" -le 200 ]`
+- [x] `worktree-setup.md` non-stub: `[ "$(wc -l < ralph/skills/impl/worktree-setup.md)" -ge 40 ]`
+- [x] `plan-compliance.md` non-stub: `[ "$(wc -l < ralph/skills/impl/plan-compliance.md)" -ge 40 ]`
 
 #### Manual Verification
 

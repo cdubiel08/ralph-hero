@@ -110,19 +110,38 @@ no args                        → MODE=default, prompt for TARGET (issue/path)
 
 After parsing, export `RALPH_TICKET_ID="GH-${TARGET}"` when TARGET is an issue number.
 
-## Step 1+: Mode body
+## Default mode — interactive phase-by-phase
 
-The remaining workflow is mode-dispatched. Each mode body lives in its own section below; this skill scaffold ships with the dispatch table + Step 0 only.
+### Step 1: Resolve plan + issue
 
-> **Scaffold notice:** Phase 1 of [GH-1366](https://github.com/cdubiel08/ralph-hero/issues/1366) ships the dispatch shell, hook bindings, and reference stubs. Phases 2-6 fill in the mode bodies. Until those land, this skill no-ops with a message pointing the user at `/ralph-hero:impl`, `/ralph-hero:ralph-impl`, or `/ralph-hero:ralph-pr`.
+For `#NNN`: fetch issue, scan comments for `## Implementation Plan` (most recent if multiple), extract path from URL. Fall back to glob `thoughts/shared/plans/*GH-${NNN}*` then `*group*GH-*` (scan frontmatter for issue number). If found via glob only, self-heal by posting the missing artifact comment. STOP with "No plan found for #NNN" if no match.
 
-```
-SCAFFOLD: /ralph:impl is being built across Plan 5 phases. Mode bodies arrive
-in Phases 2-6. For now use:
-  - /ralph-hero:impl <NNN>          (interactive impl)
-  - /ralph-hero:ralph-impl <NNN>    (one-phase autonomous)
-  - /ralph-hero:ralph-pr <NNN>      (push branch + create PR)
-```
+For `<plan-path>`: verify file exists, read frontmatter for `github_issue` / `github_issues`. Proceed without issue integration if no link.
+
+### Step 2: Read plan fully
+
+Read fully (no offset/limit). Detect resumption: scan for existing `- [x]` checkmarks; the first unchecked phase is the start point. Build context: which issue(s) does the plan cover (single `github_issue` or group `github_issues`).
+
+### Step 3: Setup
+
+Optional worktree suggestion per [worktree-setup.md §Suggestion](worktree-setup.md). If the user agrees, run `scripts/create-worktree.sh GH-NNN` and `cd worktrees/GH-NNN`. Otherwise implement in place.
+
+Transition the linked issue to "In Progress" (skip if already). Post `## Implementation Started` comment.
+
+### Step 4: Implement phase by phase
+
+For each unchecked phase:
+
+1. Read phase requirements + all referenced files (FULLY).
+2. Implement changes per [plan-compliance.md §File Ownership](plan-compliance.md).
+3. Run the phase's automated verification commands; fix until they pass.
+4. Update `- [ ]` → `- [x]` for automated items that pass. Do NOT check manual items.
+5. **Pause for human verification** via AskUserQuestion: list automated checks that passed + manual items the user must run. Wait for confirmation before proceeding to next phase.
+6. If reality doesn't match the plan, STOP and surface the gap (Expected / Found / Why this matters / How should I proceed?).
+
+If instructed to execute multiple phases consecutively, skip the pause until the final phase.
+
+> Steps 5-6 (Complete + Next-steps picker) land in Phase 3 of [GH-1366](https://github.com/cdubiel08/ralph-hero/issues/1366).
 
 ## Configuration (resolved at load time)
 
