@@ -411,3 +411,31 @@ Migration is complete when:
 5. README documents the new plugin as the canonical entry point.
 
 Expected end-state surface: 9 user-facing slash commands, ~1,500 lines of SKILL.md total (down from ~14k), opinion content in flat reference siblings, enforcement in hooks, durable state in MCP.
+
+## Friction Log
+
+The dogfooding rhythm depends on capturing lessons-learned from each shipped verb to feed the next plan's design. Append per-plan entries here as the 2-week dogfooding window plays out.
+
+### Plan 1: `/ralph:catch-up` (shipped 2026-05-23, branch `feature/GH-1357-catch-up`)
+
+Final shape:
+
+- `ralph/skills/catch-up/SKILL.md`: 137 lines (target ~150, max 200).
+- Four flat-sibling references: `narrative-synthesis.md` (63), `next-action-ranking.md` (103), `dashboard-render.md` (78), `report-composition.md` (124). Total 368 lines of opinion content.
+- Combined: 505 lines (vs 580 + 65-line cos system-prompt in source). LOC reduction is modest; structural compliance with P2 is the bigger win.
+- Hook port: `cursor-advance-catch-up.sh` ported verbatim. Both plugins now fire it on the same `recent_activity` PostToolUse matcher; cursor writes are idempotent (last write wins), so the duplicate firing is benign during the migration window.
+- cos's `desk`/`remote`/`unattended` modes deliberately stayed as `ralph cos {...}` CLI subcommands. Their zero-Claude-Code-on-the-call-chain property would have inverted if absorbed into the slash skill.
+
+Real-session usage notes during the 2-week dogfooding window:
+
+- [ ] _(Add entries as you use it. Examples to watch for: edge cases in narrative synthesis, picker label truncation, dashboard JSON-mode quirks, --mode report posting permissions, cursor advance timing under multi-plugin firing.)_
+
+Inputs to feed into Plan 2 (`/ralph:form`):
+
+- _(TBD after 2 weeks of usage.)_
+- Pattern validator note: the flat-sibling reference layout (no `references/` subfolder, no nested `Skill()` dispatch) worked cleanly for a 5-skill fold. Plan 2 should follow the same shape unless friction emerges.
+
+Open follow-ups (separate plans):
+
+- Plan 7 will introduce `/ralph:caretake`. At that point, `dashboard-render.md` should retarget its "remediation belongs to" line away from `/ralph-hero:hygiene/triage/hello` to the new verb.
+- Plan 10 owns sunset of the source skills (`hello`, `catch-up`, `status`, `report`, `cos` skill body). cos's scripts under `plugin/ralph-hero/scripts/cos/` are not part of the slash-command migration and have their own kill-or-extract decision.

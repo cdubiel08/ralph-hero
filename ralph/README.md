@@ -4,7 +4,7 @@ Slim successor to `ralph-hero`. The naive hero, less ceremony.
 
 ## Status
 
-**Plan 0 of 11 (scaffold).** This plugin currently exposes zero user-facing skills. Verbs are migrated in one at a time per the plan-of-plans.
+**Plan 1 of 11 (catch-up shipped).** This plugin currently exposes one user-facing skill (`/ralph:catch-up`). Verbs are migrated in one at a time per the plan-of-plans.
 
 ## Design
 
@@ -21,8 +21,8 @@ Headline shape:
 
 | # | Verb | Status |
 |---|---|---|
-| 0 | scaffold | in progress |
-| 1 | `/ralph:catch-up` | pending |
+| 0 | scaffold | shipped |
+| 1 | `/ralph:catch-up` | shipped |
 | 2 | `/ralph:form` | pending |
 | 3 | `/ralph:research` | pending |
 | 4 | `/ralph:plan` | pending |
