@@ -358,6 +358,7 @@ This is load-bearing. The risk of "build new plugin in parallel" is that the new
 3. **Hook coverage:** no enforcement logic in skill prose — all moved to hooks or MCP validation.
 4. **Local dev works:** edit `SKILL.md`, save, next invocation picks it up without `claude plugins` commands.
 5. **Old skill stays functional** for two weeks post-merge. Sunset is its own follow-up PR.
+6. **Per-phase audit applied:** after each phase passes its automated + manual verification, dispatch `/review` (against the open PR or branch diff) and `/skill-creator:skill-creator` (against the partial skill bundle) in parallel. Apply recommended fixes — or document why not — before proceeding to the next phase. Catches P2 leakage, missing tools, picker ambiguity, and trigger gaps while they're still cheap to fix; established by Plan 1's post-impl audit and made standard in Plan 2.
 
 ### Estimated timeline (to validate)
 

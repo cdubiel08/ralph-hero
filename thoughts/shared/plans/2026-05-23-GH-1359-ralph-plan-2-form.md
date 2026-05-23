@@ -197,6 +197,10 @@ _(Filled by Phase 4.)_
 
 - [ ] After `/reload-plugins`, `/ralph:form --help` returns the mode table.
 
+#### Per-phase audit (spec criterion #6)
+
+- [ ] Dispatch `/review` (PR or branch diff) and `/skill-creator:skill-creator` (against the partial bundle under `ralph/skills/form/`) in parallel via two `Agent()` calls in a single message. Apply recommended fixes — or record why not in the friction log — before proceeding to Phase 2.
+
 ---
 
 ## Phase 2: Default flow front-half (research + context + picker)
@@ -262,6 +266,10 @@ Target ~70 lines.
 - [ ] `/ralph:form <inline description>` does the same with `INPUT_TYPE="idea"`.
 - [ ] `/ralph:form thoughts/shared/research/<some-research>.md` skips codebase-locator/analyzer and surfaces the linked-issue note when applicable.
 
+#### Per-phase audit (spec criterion #6)
+
+- [ ] Dispatch `/review` and `/skill-creator:skill-creator` in parallel against the partial bundle. Apply recommended fixes — or record why not in the friction log — before proceeding to Phase 3.
+
 ---
 
 ## Phase 3: Default flow output paths
@@ -315,6 +323,10 @@ Target ~70 lines.
 - [ ] `/ralph:form <inline description>` → pick "Implementation plan" → source file gets `status: forming` and the handoff prompt suggests the next command.
 - [ ] `/ralph:form <inline description>` → pick "Keep as refined idea" → source file is enriched with research context and tags; no GitHub mutation.
 
+#### Per-phase audit (spec criterion #6)
+
+- [ ] Dispatch `/review` and `/skill-creator:skill-creator` in parallel against the partial bundle. Apply recommended fixes — or record why not in the friction log — before proceeding to Phase 4.
+
 ---
 
 ## Phase 4: `--mode draft`
@@ -360,6 +372,10 @@ Target: +30 lines (intake-shapes.md grows to ~90 lines).
 - [ ] `/ralph:form --mode draft "feature idea X"` asks 2-3 questions, writes `thoughts/shared/ideas/YYYY-MM-DD-feature-idea-x.md`, suggests `/ralph:form <path>` as the next step. No GitHub call.
 - [ ] `/ralph:form --mode draft` (no topic) prompts "What's on your mind?" and proceeds after user input.
 - [ ] The written file matches the draft template (frontmatter with `type: idea, status: draft, github_issue: null` + the 4 prose sections).
+
+#### Per-phase audit (spec criterion #6)
+
+- [ ] Dispatch `/review` and `/skill-creator:skill-creator` in parallel against the partial bundle. Apply recommended fixes — or record why not in the friction log — before proceeding to Phase 5.
 
 ---
 
@@ -412,6 +428,10 @@ Record observations in the friction-log entry.
 - [ ] Four real `/ralph:form` invocations completed (one per intake shape + one draft).
 - [ ] Each session produces equivalent output to the corresponding old skill.
 - [ ] No regressions in `/ralph-hero:form` or `/ralph-hero:draft`.
+
+#### Per-phase audit (spec criterion #6)
+
+- [ ] Final audit against the complete bundle before opening the PR. Dispatch `/review` (now against the full PR) and `/skill-creator:skill-creator` (against the full `ralph/skills/form/` bundle) in parallel. Apply recommended fixes — or record why not in the friction log.
 
 ---
 
