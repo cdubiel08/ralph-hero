@@ -65,4 +65,11 @@ Trends is read-only — the markdown report printed to stdout is the deliverable
 - `DEBUG SKIPPED no-errors-in-window` — §Step 4; dry-run returned `errorGroups === 0`.
 - `DEBUG SKIPPED user-declined` — §Step 5; user picked `Skip` on the `AskUserQuestion` confirm prompt.
 
-<!-- Phase 8 fills: ## Split terminal tokens -->
+## Split terminal tokens
+
+- `SPLIT <N>` — `N ≥ 2` XS/S sub-issues created and linked. `split-postcondition.sh` requires N ≥ 2.
+- `SPLIT SKIPPED already-atomic` — `split-estimate-gate.sh` blocked the parent because its estimate was already XS or S.
+- `SPLIT SKIPPED <reason>` — other graceful skips (no natural decomposition boundary found, parent already fully split, decompose_feature returned no children, etc.).
+- `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed.
+
+`split-postcondition.sh` (Stop hook) greps the transcript for one of these tokens AND verifies via `list_sub_issues` that the parent has ≥ 2 children when `SPLIT <N>` is emitted.
