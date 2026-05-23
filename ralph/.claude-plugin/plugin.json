@@ -1,0 +1,21 @@
+{
+  "name": "ralph",
+  "version": "0.1.0",
+  "description": "Slim successor to ralph-hero: 9 fat skills with flat-sibling references, hooks-enforced state, MCP-driven artifacts. The naive hero, less ceremony.",
+  "author": {
+    "name": "Chad Dubiel",
+    "url": "https://github.com/cdubiel08"
+  },
+  "homepage": "https://github.com/cdubiel08/ralph-hero",
+  "repository": "https://github.com/cdubiel08/ralph-hero",
+  "license": "MIT",
+  "keywords": [
+    "autonomous",
+    "development",
+    "workflow",
+    "github",
+    "projects",
+    "ralph",
+    "slim"
+  ]
+}
