@@ -495,3 +495,37 @@ Open follow-ups (separate plans):
 - When Plan 4 ships, drop the `/ralph-hero:plan` fallback in `/ralph:form` Step 6c (already a documented Plan 2 follow-up). `/ralph:research` Step 9 "Create issue from findings" already points at `/ralph:form` (no fallback needed since Plan 2 shipped).
 - Plan 7 (`/ralph:caretake`) doesn't directly affect this verb.
 - Plan 10 owns sunset of source `research`, `ralph-research`, `prove-claim` skills.
+
+### Plan 4: `/ralph:plan` (shipped 2026-05-23, branch `feature/GH-1364-plan`)
+
+Final shape:
+
+- `ralph/skills/plan/SKILL.md`: 176 lines (under the 200 budget). Holds 5 mode bodies (default, --mode auto, --mode epic, --mode iterate, --mode review) — heaviest verb yet by mode count.
+- Six flat-sibling references: `intake-routing.md` (59), `plan-shapes.md` (150), `decomposition.md` (107), `iteration.md` (87), `plan-review.md` (131), `ui-validation-phase.md` (76). Total 610 lines of opinion content.
+- Combined: 786 lines (vs 2,777 in source plan + ralph-plan + ralph-plan-epic + iterate + ralph-review + ralph-split epic-side). ~72% LOC reduction — largest absolute reduction across plans 1-4. Each surface remains addressable; the fold is structural, not feature-cutting.
+- Hook ports: 9 new (plan-tier-validator, plan-state-gate, plan-postcondition, plan-research-required, review-state-gate, review-no-dup, review-plan-gate, review-postcondition, review-verify-doc) + reuses Plan 3's branch-gate / doc-structure-validator / lock-release-on-failure. doc-structure-validator's plan branch updated to match the slim plan-shapes section style (`#### Automated Verification` / `#### Manual Verification` instead of source's `- [ ] Automated:` flat checkbox format).
+- **First plan to ship 6 references.** Plan 3 shipped 5; the comfort-upper-bound was originally 4. Plan 4's 6 is justified by `--mode epic` and `--mode review` each having structurally distinct content with no overlap with the other modes (decomposition graphs / verdict-shape critique). The pattern: one reference per mode-with-distinct-opinion-content, plus shared opinion (plan-shapes, intake-routing, ui-validation-phase).
+- **Hook discrimination by tool-input path**, not env var. Initial design tried `Bash export RALPH_COMMAND=review` at `--mode review` entry; final-bundle audit caught that Bash-tool exports don't propagate to hook subprocesses. Re-designed to use path-based discrimination:
+  - `doc-structure-validator.sh` scans all 3 artifact dirs (plans, reviews, research) for today-prefixed docs modified in the last 15 min and picks the branch by the dir containing the freshest doc.
+  - `review-no-dup.sh` and `review-verify-doc.sh` already no-op when `tool_input.file_path` isn't under `thoughts/shared/reviews/` — no change needed.
+  - `plan-state-gate.sh` broadened to accept the union of legitimate transitions across all 5 modes (`Plan in Progress, Plan in Review, In Progress, Ready for Plan, Human Needed`).
+  - `review-state-gate.sh` + `review-postcondition.sh` dropped from SKILL.md frontmatter entirely — the union-broadened plan-state-gate + path-discriminated doc-validator + write-path-discriminated review-no-dup/verify cover the surface without env-mode-flipping.
+- **Lesson for Plan 5+**: do NOT rely on env-var flipping across hook invocations. Either set env via SessionStart (one-shot) OR discriminate inside the hook by tool-input shape (file path, target state). Bash-tool exports are session-scoped and do NOT propagate to hook subprocesses.
+
+Friction notes (populated by active use):
+
+- [ ] _(Examples to watch for: review-mode env switching reliability across Bash subprocesses; epic-mode dependency-graph cycle detection in re-decomposition; iterate-mode phase-renumbering edge cases when a plan is in-flight; auto-mode escalation-to-Human-Needed when research is missing; default-mode picker loop UX when user picks Iterate repeatedly.)_
+
+Inputs to feed into Plan 5 (`/ralph:impl`):
+
+- _(Populated by active use, not by waiting.)_
+- Pattern validator note: 6 references worked. Plan 5 should hold at ≤4-5 unless a mode is structurally distinct enough to warrant its own (worktree + plan-compliance feel like the load-bearing references; PR creation might live in a third).
+- Hooks-in-frontmatter pattern continues to scale. Plan 5 will be the heaviest hook-wise (impl carries worktree-isolation + plan-compliance gates).
+- Per-mode env switching (review-mode resetting `RALPH_COMMAND`) needs operational verification — if Bash exports do not persist across hook subprocesses, the review-mode hooks won't activate. Plan 5 should also test this pattern if it adopts a multi-RALPH_COMMAND shape.
+
+Open follow-ups (separate plans):
+
+- Plan 5 consumes plan docs produced here. Schema stability: this plan preserves the existing plan-doc shape verbatim (Phase / Success Criteria with `#### Automated/Manual Verification` subsections).
+- Plan 6 (`/ralph:review`) absorbs `ralph-code-review`, `ralph-val`, `ralph-merge`, `finish` — the code-and-merge review surface, distinct from Plan 4's `--mode review` which is plan-doc review.
+- Plan 7 (`/ralph:caretake --mode split`) absorbs the atomic-splitting side of `ralph-split`.
+- Plan 10 owns sunset of source `plan`, `ralph-plan`, `ralph-plan-epic`, `iterate`, `ralph-review` skills (`ralph-split` straddles plans 4 and 7 — both sides need to be re-homed before sunset).
