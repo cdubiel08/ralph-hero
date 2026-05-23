@@ -323,8 +323,8 @@ Finish `worktree-setup.md` with the auto-mode lifecycle.
 
 #### Automated Verification
 
-- [ ] `worktree-setup.md` ≥ 100 lines (suggestion + reuse + auto-mode + cross-repo + tilde + escalation).
-- [ ] SKILL.md references `worktree-setup.md` from default-mode (suggestion) and auto-mode (full lifecycle).
+- [x] `worktree-setup.md` ≥ 100 lines (suggestion + reuse + auto-mode + cross-repo + tilde + escalation).
+- [x] SKILL.md references `worktree-setup.md` from default-mode (suggestion) and auto-mode (full lifecycle).
 
 #### Manual Verification
 
