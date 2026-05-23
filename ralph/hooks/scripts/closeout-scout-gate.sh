@@ -73,7 +73,12 @@ fi
 
 # Parse verdict from Scout Report body. Expected shape: a line containing
 # `verdict: PASS|WARN|FAIL` (case-insensitive). The scouts skill writes this.
-VERDICT=$(echo "$REPORT_BODY" | grep -iE '^[[:space:]]*verdict[[:space:]]*:' | head -1 | sed -E 's/^[^:]+:[[:space:]]*//' | tr '[:lower:]' '[:upper:]' | awk '{print $1}')
+# `|| true` suppresses pipefail when grep finds no `verdict:` line — without
+# it, `set -euo pipefail` would kill the script with exit 1 here, never
+# reaching the conservative `*) exit 0` arm below. A malformed Scout Report
+# (no verdict: line) must fall through to "unknown verdict -> allow" per the
+# advisory-by-design contract.
+VERDICT=$(echo "$REPORT_BODY" | grep -iE '^[[:space:]]*verdict[[:space:]]*:' | head -1 | sed -E 's/^[^:]+:[[:space:]]*//' | tr '[:lower:]' '[:upper:]' | awk '{print $1}' || true)
 
 case "$VERDICT" in
   PASS|WARN)

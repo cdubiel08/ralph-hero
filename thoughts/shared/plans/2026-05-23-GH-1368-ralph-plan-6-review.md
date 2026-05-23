@@ -474,6 +474,40 @@ Per Phase 6's list, plus:
 - Code flow: 1 issue fetch + 1 PR fetch + N×(1 code-review + 1 impl-agent fix) up to N=3. Latency dominated by code-review-skill fan-out per round.
 - Merge flow: 1 PR fetch + 1 pre-merge-gates pass + 1 merge + 1 worktree-remove + 1 issue transition + (optional) cross-repo loop + 1 outcome record + 1 comment post + 1 PushNotification. Fast path.
 
+## Post-implementation Code Review Findings
+
+PR #1369's code review (commit `87f7312a..fa87cad9`) surfaced three merge-related bugs in the as-shipped Phase 1-6 work. All three are fixed inside this PR before merge; documented here so future Phase-1-style scaffold work avoids the same traps.
+
+### Finding 1: `__DONE__` is not a valid semantic intent
+
+**Symptom:** `ralph/skills/review/SKILL.md` merge-mode Step 6 and `merge-gate.md` §Parent advancement instructed `save_issue(workflowState="__DONE__", command="ralph_merge")`. `__DONE__` is **not** registered in `plugin/ralph-hero/mcp-server/src/lib/state-resolution.ts` — the registered intents are `__LOCK__`, `__COMPLETE__`, `__ESCALATE__`, `__CLOSE__`, `__CANCEL__`. Every merge-mode call would have errored at the MCP server with "Unknown semantic intent".
+
+**Fix:** Replace `__DONE__` with `__CLOSE__` (maps `"*": "Done"`). SKILL.md line 120 + merge-gate.md §Parent advancement updated to use `__CLOSE__` and to call out the registered-intent set so future authors don't re-invent the token.
+
+**Root cause:** the source `ralph-merge/SKILL.md` uses `__DONE__` in its prose for *some* call sites but the MCP server's resolution layer was renamed to `__CLOSE__` in a prior plan without back-porting the source skill's prose. Plan 6's fold lifted the source prose verbatim and inherited the rot.
+
+### Finding 2: `merge-state-gate.sh` blocks semantic-intent transitions
+
+**Symptom:** `merge-state-gate.sh` (registered PreToolUse on `save_issue|advance_issue` for /ralph:review) called `validate_state()` which does pure string comparison against `RALPH_VALID_OUTPUT_STATES`. `__ESCALATE__` / `__CLOSE__` / `__LOCK__` don't match any concrete state, so the gate would `block` with exit 2 — preventing the code-mode escalation (SKILL.md line 107) and the merge-mode completion (SKILL.md line 120) from ever reaching the MCP server. The source `ralph-merge` SKILL.md didn't hit this because the source plugin's old `merge-state-gate.sh` had no `is_semantic_intent` passthrough either, but `finish` always dispatched merge via `merge-agent` (a separate Agent context), which put the `save_issue` call outside `merge-state-gate.sh`'s hook scope. Plan 6 makes the call directly from the skill body, exposing the latent gap.
+
+**Fix:** `ralph/hooks/scripts/merge-state-gate.sh` now mirrors `impl-state-gate.sh`'s shape — (a) RALPH_COMMAND scope guard so it only fires for `/ralph:review`, (b) `is_semantic_intent()` passthrough that allows the MCP server to resolve `__*__` tokens server-side, (c) concrete-state validation falls through for non-intent transitions. Smoke-tested with `__ESCALATE__`, `__CLOSE__`, concrete `Done`, invalid `Backlog`, and out-of-scope `RALPH_COMMAND=plan`.
+
+**Root cause:** Plan 5 established the "mode-discriminated by tool-input shape" pattern but didn't articulate the semantic-intent passthrough as a separate substrate. The reuse-as-is port of `merge-state-gate.sh` skipped both substrates — the RALPH_COMMAND guard *and* the intent passthrough — because the source plugin's version was a 20-line gate that pre-dated both.
+
+### Finding 3: `closeout-scout-gate.sh` dies under `set -euo pipefail`
+
+**Symptom:** The verdict-extraction pipeline (`grep -iE 'verdict:' | head -1 | sed ... | tr ... | awk '{print $1}'`) was missing `|| true`. When a `## Scout Report` exists but has no `verdict:` line (malformed report), `grep` exits 1, `pipefail` propagates, `set -e` kills the script with exit 1 — never reaching the conservative `*) exit 0` arm. A malformed report would *block* the merge instead of allow it, contradicting the documented advisory-by-design contract.
+
+**Fix:** Append `|| true` to the verdict-extraction pipeline. Now `VERDICT=""` on no-match, the `case` falls through to `*) exit 0`, advisory-by-design contract honored.
+
+**Root cause:** `set -euo pipefail` + multi-stage pipeline + intermediate `grep` with potentially-empty match. Common bash trap. Plan 6's authoring-time smoke test only exercised the no-op paths (script not invoked, no scout trigger comment) — the malformed-report path was never exercised in the smoke test until code review caught it.
+
+### Lessons for future fold plans
+
+- **Verify semantic-intent tokens against `state-resolution.ts` before adopting prose from source skills.** Source-skill prose may have rot from a prior rename.
+- **Audit hook reuse-as-is for the same substrate gaps the new hooks address.** If new hooks add a RALPH_COMMAND guard and a semantic-intent passthrough, ported hooks should too.
+- **Smoke-test pipeline-heavy hooks under `set -euo pipefail` with the malformed/no-match path**, not just the happy path. Add the malformed-report test case to manual verification for `--mode merge`.
+
 ## Migration Notes
 
 - Source skills remain functional alongside the new verb until Plan 10 batches sunsets.

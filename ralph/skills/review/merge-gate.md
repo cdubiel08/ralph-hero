@@ -107,8 +107,10 @@ Tilde expansion: `localDir` values in the registry may use `~`; always expand to
 **Skill MUST NOT advance the parent.** Parent auto-advance is handled server-side by the `advance-parent.yml` GitHub Action when ALL children reach Done. Skills only transition the child via:
 
 ```
-save_issue(number=NNN, workflowState="__DONE__", command="ralph_merge")
+save_issue(number=NNN, workflowState="__CLOSE__", command="ralph_merge")
 ```
+
+The `__CLOSE__` semantic intent maps `"*": "Done"` per `plugin/ralph-hero/mcp-server/src/lib/state-resolution.ts`. Do NOT use `__DONE__` — it is not a registered intent and the MCP server will reject it with "Unknown semantic intent".
 
 Touching the parent from the skill would race with the Action and produce double-advances or out-of-order state changes. The boundary is firm: server owns parent, client owns child.
 
