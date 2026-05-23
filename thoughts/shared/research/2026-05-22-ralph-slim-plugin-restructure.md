@@ -529,3 +529,35 @@ Open follow-ups (separate plans):
 - Plan 6 (`/ralph:review`) absorbs `ralph-code-review`, `ralph-val`, `ralph-merge`, `finish` — the code-and-merge review surface, distinct from Plan 4's `--mode review` which is plan-doc review.
 - Plan 7 (`/ralph:caretake --mode split`) absorbs the atomic-splitting side of `ralph-split`.
 - Plan 10 owns sunset of source `plan`, `ralph-plan`, `ralph-plan-epic`, `iterate`, `ralph-review` skills (`ralph-split` straddles plans 4 and 7 — both sides need to be re-homed before sunset).
+
+### Plan 5: `/ralph:impl` (shipped 2026-05-23, branch `worktree-GH-1366-ralph-plan-5-impl`)
+
+Final shape:
+
+- `ralph/skills/impl/SKILL.md`: 199 lines (right at the 200 budget). Holds 4 mode bodies (default, --mode auto, --mode address, --mode pr). Heaviest verb yet by raw mode body count but shortest reference list since address + pr each only needed one reference apiece.
+- Five flat-sibling references: `worktree-setup.md` (141), `plan-compliance.md` (90), `phase-execution.md` (85), `address-mode.md` (53), `pr-creation.md` (127). Total 496 lines of opinion content.
+- Combined: 695 lines (vs 1,210 in source impl + ralph-impl + ralph-pr). ~43% LOC reduction — smaller than Plan 4's 72% because the source impl/pr skills already had less duplication than the plan-family.
+- Hook ports: 9 new (impl-plan-required, impl-worktree-gate, impl-state-gate, impl-staging-gate, impl-branch-gate, drift-tracker, impl-verify-commit, impl-postcondition, pr-state-gate) + reuses Plan 3's doc-structure-validator and lock-release-on-failure. **Largest hook surface of any plan so far** — confirms Plan 4's prediction.
+- **All 9 hooks scoped via `RALPH_COMMAND=impl`** at SessionStart (one-shot, no mid-flow env mutation). Three hooks (`impl-plan-required.sh`, `impl-state-gate.sh`, `impl-verify-commit.sh`) needed the gate added; one (`pr-state-gate.sh`) additionally self-limits on `tool_input.workflowState == "In Review"` to avoid double-firing with `impl-state-gate.sh`. This honors Plan 4's lesson: per-mode behavior comes from tool-input shape, not env-var flipping.
+- **`Queue empty.` literal preserved verbatim** in pr-mode body so the loop-runner sentinel keeps working unchanged.
+- **`IMPL BLOCKED model=<current> needs=opus reason=<short>` token contract preserved verbatim**. `impl-postcondition.sh` greps the JSONL transcript for unanchored `IMPL BLOCKED ` and accepts it as a non-error terminal state — the hook is unchanged from the source plugin.
+- **Reference count back at 5**, consistent with Plan 3's pattern. Plan 4 went to 6 because epic + review modes were structurally distinct; Plan 5's modes share substrate (worktree + plan-compliance + phase-execution) which gets pulled into common references, with address + pr each owning a single distinctive reference.
+- **Default mode's Step 6 picker dispatches `Skill("ralph-hero:finish", args="NNN")`** until Plan 6 ships `/ralph:review`. Single-line edit follow-up.
+
+Friction notes (populated by active use):
+
+- [ ] _(Examples to watch for: auto-mode worktree-gate firing on legitimate Write in cross-repo case; IMPL BLOCKED tier escalation re-dispatch cadence at opus; staging-gate false positives on lockfile updates; scout-trigger false positives on backend-only PRs; pr-mode queue-pick picking the wrong issue when multiple are in In Progress with worktrees.)_
+
+Inputs to feed into Plan 6 (`/ralph:review`):
+
+- _(Populated by active use, not by waiting.)_
+- Pattern validator note: 9 hooks is the new ceiling. Plan 6 should stay at or below; its surface (review + val + merge + finish) probably folds into 3-4 mode-specific hooks since most of the gate logic is already in impl-state-gate / pr-state-gate.
+- Default-mode Step 6 picker → `Skill("ralph:review")` edit is owed by Plan 6.
+- The `## Scout Trigger` advisory is wired in pr-mode — Plan 6 (`/ralph:review`) merge-gate should observe `## Scout Report` verdicts as a pre-merge condition. Spec the contract in Plan 6.
+
+Open follow-ups (separate plans):
+
+- Plan 6 owns the `Skill("ralph:review")` redirect from default-mode Step 6 picker.
+- Plan 6 (`/ralph:review`) absorbs `ralph-code-review`, `ralph-val`, `ralph-merge`, `finish` — code+merge review, distinct from Plan 4's plan-doc review.
+- Plan 8 (`/ralph:hero`) is the orchestrator that auto-dispatches `/ralph:impl --mode auto`. Plan 5 preserves the `--plan-doc` flag for orchestrator compatibility.
+- Plan 10 owns sunset of source `impl`, `ralph-impl`, `ralph-pr` skills.

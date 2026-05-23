@@ -1,0 +1,85 @@
+# Phase execution
+
+How `--mode auto` runs one phase of a plan via the task graph + sub-agent controller pattern. Default mode invokes a leaner form (no sub-agent dispatch) — most of this reference is auto-mode specific.
+
+## §Task graph
+
+A phase's `### Tasks` section contains one or more `#### Task N.M:` blocks. Each task has:
+
+- `files: <space-separated paths>` — exact ownership for the task.
+- `tdd: true | false` — whether the implementer must write tests first.
+- `complexity: low | medium | high` — selects the sub-agent model (haiku / sonnet / opus).
+- `depends_on: null | [N.M, N.M, ...]` — within-phase ordering.
+- `acceptance: <verification command>` — how to confirm the task is done.
+
+Parse the section, build the dependency graph, identify **parallel groups**: tasks whose `depends_on` is null/empty AND whose `files` lists don't overlap with any other unfinished task. Dispatch parallel groups in a single turn with multiple `Agent()` calls.
+
+Cross-phase task dependencies are informational here — the orchestrator (hero) handles cross-phase ordering by only dispatching `/ralph:impl --mode auto` once blocking phases are complete.
+
+Set `RALPH_TASK_FILES` to the space-separated union of all task `files` for the current phase. `drift-tracker.sh` reads this to decide whether a Write/Edit is in-ownership or drift.
+
+## §Controller pattern
+
+For each task group:
+
+1. **Build context packet** from `implementer-prompt.md` (re-used as-is from source plugin). Substitute `{{TASK_DEFINITION}}`, `{{SHARED_CONSTRAINTS}}`, `{{DRIFT_LOG}}`, `{{IF_TDD_TRUE/FALSE}}`.
+2. **Dispatch implementer sub-agent**: `Agent(subagent_type="general-purpose", model=<from complexity>, prompt=rendered, description="Implement task N.M")`. Parallel tasks: one `Agent()` per parallel slot in a single turn.
+3. **Handle status**:
+   - `DONE` → proceed to reviewer (Step 4).
+   - `DONE_WITH_CONCERNS` → evaluate concerns, then reviewer.
+   - `NEEDS_CONTEXT` → provide context, re-dispatch (within retry budget).
+   - `BLOCKED` → assess drift category (minor adapt+log; major pause+escalate; weak-model tier-escalate per §IMPL BLOCKED).
+4. **Dispatch reviewer sub-agent**: `Agent(subagent_type="general-purpose", model="haiku", prompt=rendered, description="Review task N.M")`.
+   - `COMPLIANT` → mark task complete, advance.
+   - `ISSUES` → implementer fixes, re-review (max 3 loops).
+
+Per-task retry budget: **3 attempts**. After three, escalate to Human Needed (`__ESCALATE__`).
+
+## §IMPL BLOCKED escalation
+
+Tier-escalation path (model-driven BLOCKED). When the implementer's internal retry budget is exhausted at the highest tier WITHIN this invocation AND the current dispatching model is NOT opus, emit a structured terminal line BEFORE stopping:
+
+```
+IMPL BLOCKED model=<current> needs=opus reason=<short-reason>
+```
+
+Do NOT call `save_issue(workflowState="__ESCALATE__")` in this path — leave the issue in "In Progress" so hero can re-dispatch with `model="opus"` once. The `impl-postcondition.sh` Stop hook greps the transcript for the unanchored `IMPL BLOCKED ` token (the marker is embedded inside a JSON `"text":"..."` field in the JSONL transcript and never appears at column 0) and accepts it as a non-error terminal state.
+
+If the current dispatching model IS already opus, fall through to the existing escalate-to-Human-Needed path (`save_issue(workflowState="__ESCALATE__")`). A double-BLOCKED at opus is a real escalation, not a tier issue.
+
+## §Phase quality review
+
+After all tasks pass the reviewer step:
+
+1. `git diff [phase-start]..HEAD` — capture the phase's net change.
+2. Dispatch reviewer at opus: `Agent(subagent_type="general-purpose", model="opus", prompt=<phase-reviewer-prompt>, description="Review phase N quality")`.
+3. `APPROVED` → proceed to Step 4. `NEEDS_FIXES` → dispatch fixer; Critical issues block, Important issues get fixed inline, Minor issues are logged.
+4. Post `## Phase N Review` comment on the issue with reviewer verdict + diff summary.
+5. If drift accumulated, post `## Drift Log — Phase N` comment summarizing off-ownership writes (read from `${TMPDIR}/ralph-drift-${RALPH_TICKET_ID}.log`).
+6. Run the phase's automated verification commands. If they fail once, attempt one fix; if still failing, commit what works and STOP for human intervention.
+
+## §Legacy plan fallback
+
+If the phase has no `### Tasks` section (older plan format, including most plans authored before the task-graph convention):
+
+1. Read the phase's "Changes Required" section directly.
+2. Implement the changes inline (no sub-agent dispatch).
+3. Run the phase's automated verification.
+4. Stage + commit + push per [plan-compliance.md §Staging Algorithm](plan-compliance.md).
+5. Skip the §Phase quality review step — there's no graph diff to review against.
+
+The fallback is for backward compatibility. New plans should always carry `### Tasks` blocks.
+
+## §Resumption
+
+`/ralph:impl --mode auto` is **resumable across context windows**. State is tracked entirely on disk:
+
+- Plan checkboxes (`- [x]`) mark completed automated verification.
+- Worktree persists at `worktrees/GH-NNN`.
+- Each phase's commits are pushed before the invocation stops.
+
+To resume, re-invoke `/ralph:impl --mode auto NNN`. The skill re-reads the plan, finds the first unblocked unchecked phase, and continues. No in-memory state to recover.
+
+## §Sub-agent isolation
+
+Sub-agents spawned via `Agent()` from this skill must NOT receive `team_name` in their dispatch parameters. Team isolation is a separate concern (handled by the team orchestrator); within-impl sub-agents are stateless workers that report back via their final message.
