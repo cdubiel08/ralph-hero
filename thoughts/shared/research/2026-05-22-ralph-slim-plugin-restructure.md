@@ -358,6 +358,7 @@ This is load-bearing. The risk of "build new plugin in parallel" is that the new
 3. **Hook coverage:** no enforcement logic in skill prose — all moved to hooks or MCP validation.
 4. **Local dev works:** edit `SKILL.md`, save, next invocation picks it up without `claude plugins` commands.
 5. **Old skill stays functional** for two weeks post-merge. Sunset is its own follow-up PR.
+6. **Per-phase audit applied:** after each phase passes its automated + manual verification, dispatch `/review` (against the open PR or branch diff) and `/skill-creator:skill-creator` (against the partial skill bundle) in parallel. Apply recommended fixes — or document why not — before proceeding to the next phase. Catches P2 leakage, missing tools, picker ambiguity, and trigger gaps while they're still cheap to fix; established by Plan 1's post-impl audit and made standard in Plan 2.
 
 ### Estimated timeline (to validate)
 
@@ -439,3 +440,29 @@ Open follow-ups (separate plans):
 
 - Plan 7 will introduce `/ralph:caretake`. At that point, `dashboard-render.md` should retarget its "remediation belongs to" line away from `/ralph-hero:hygiene/triage/hello` to the new verb.
 - Plan 10 owns sunset of the source skills (`hello`, `catch-up`, `status`, `report`, `cos` skill body). cos's scripts under `plugin/ralph-hero/scripts/cos/` are not part of the slash-command migration and have their own kill-or-extract decision.
+
+### Plan 2: `/ralph:form` (shipped 2026-05-23, branch `feature/GH-1359-form`)
+
+Final shape:
+
+- `ralph/skills/form/SKILL.md`: 186 lines (target ~150, max 200). Heavier than catch-up (137) because the default flow has a 5-option picker that branches into 4 distinct output paths (single issue / ticket tree / handoff / refined draft) plus the `--mode draft` quick-capture flow — six surfaces in one verb.
+- Three flat-sibling references: `intake-shapes.md` (103), `duplicate-detection.md` (52), `issue-template.md` (112). Total 267 lines of opinion content.
+- Combined: 453 lines (vs 510 in source draft + form). Reduction is modest; structural P2 compliance is the bigger win.
+- No hooks ported. Source draft and form had no enforcement to move; `ralph/hooks/hooks.json` unchanged from Plan 1.
+- Step 5 picker defaults change with `LINKED_ISSUE`: when intake routing detects a research doc with an existing `github_issue` in its frontmatter, the picker biases toward "Implementation plan" rather than "GitHub issue" (avoids duplicate issue creation against linked research).
+- Handoffs in Step 6c point at `/ralph:plan` and `/ralph:research` with `/ralph-hero:plan` and `/ralph-hero:research` as fallbacks. The new-verb names get unblocked when Plans 3 (research) and 4 (plan) ship — the fallbacks come out then.
+
+Real-session usage notes during the 2-week dogfooding window:
+
+- [ ] _(Add entries as you use it. Examples to watch for: research-doc auto-detection edge cases (`type: research` vs path glob), inline-description routing for very short inputs, ticket-tree estimate-default appropriateness, knowledge-search dedup false positives, frontmatter-update collisions when the source file is open in an editor.)_
+
+Inputs to feed into Plan 3 (`/ralph:research`):
+
+- _(TBD after 2 weeks of usage.)_
+- Pattern validator note: the flat-sibling reference layout worked again for a 2-skill fold with three references. Three references felt about right; four (the catch-up shape) is the upper end. If Plan 3 needs five+, that's a signal to revisit the convention.
+
+Open follow-ups (separate plans):
+
+- When Plan 3 ships, update SKILL.md Step 6c to drop the `/ralph-hero:research` fallback. Same for Plan 4 and `/ralph-hero:plan`.
+- Plan 7 (`/ralph:caretake`) doesn't directly affect this verb.
+- Plan 10 owns sunset of source `draft` + `form` skills.
