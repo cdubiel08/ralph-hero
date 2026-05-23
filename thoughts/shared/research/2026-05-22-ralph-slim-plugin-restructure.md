@@ -561,3 +561,49 @@ Open follow-ups (separate plans):
 - Plan 6 (`/ralph:review`) absorbs `ralph-code-review`, `ralph-val`, `ralph-merge`, `finish` — code+merge review, distinct from Plan 4's plan-doc review.
 - Plan 8 (`/ralph:hero`) is the orchestrator that auto-dispatches `/ralph:impl --mode auto`. Plan 5 preserves the `--plan-doc` flag for orchestrator compatibility.
 - Plan 10 owns sunset of source `impl`, `ralph-impl`, `ralph-pr` skills.
+
+### Plan 6: `/ralph:review` (shipped 2026-05-23, branch `worktree-ralph-plan-6-review`)
+
+Final shape:
+
+- `ralph/skills/review/SKILL.md`: 127 lines (well under the 200 budget). Holds 4 mode bodies (default, --mode val, --mode code, --mode merge). The 4-leaf orchestrator pattern compresses cleanly: each leaf is 7-9 numbered steps, and the default-mode body is a 7-step thread through the leaves' verdict tokens.
+- Four flat-sibling references: `plan-vs-impl-rubric.md` (149), `code-review-prompt.md` (117), `merge-gate.md` (182 — largest, owns CI watch + cross-repo + Scout Report gate + parent-advancement boundary), `auto-vs-interactive.md` (122). Total 570 lines of opinion content.
+- Combined: 697 lines (vs 1,585 in source ralph-val + ralph-code-review + ralph-merge + finish). **~56% LOC reduction** — between Plan 3's ~50% and Plan 4's 72%; the 4-source fold compresses well because three of the four sources (val, code, merge) are leaf verbs with similar verdict-token shapes that consolidate into a single Stop-hook contract.
+- **5 hooks, under the 9 ceiling**: `merge-state-gate.sh` (port from plugin/ralph-hero, registered on PreToolUse save_issue|advance_issue), `closeout-postcondition.sh` (new ~80 lines, Stop, covers all 4 modes' terminal verdicts via tool-input-shape discrimination per Plan 4's lesson), `closeout-scout-gate.sh` (new ~80 lines, PreToolUse Bash on merge command, Scout Report consumer), plus reused Plan 3 ports (`lock-release-on-failure.sh`, `doc-structure-validator.sh`). `val-postcondition.sh` ported for future reuse but NOT registered — `closeout-postcondition.sh` owns the union of all 4 mode verdicts and double-registration would block non-val terminals.
+- **Hook rename — `closeout-*` not `review-*`** — Plan 4 left orphan `review-postcondition.sh` and `review-state-gate.sh` in `ralph/hooks/scripts/` (unwired, but file-system present). Plan 6's new hooks use `closeout-` prefix to avoid name collision. The plan doc carries the rename rationale.
+- **Default-mode preserves the depth-0 fan-out for `code-review:code-review`** by invoking it inline via `Skill("code-review:code-review", "PR_NUMBER")`, NOT via `Agent()`. The runtime forbids depth-2 `Agent` dispatch, so a wrapping Agent context would silently break the parallel-reviewer + parallel-scorer fan-out. SKILL.md frontmatter declares `model: opus` for the same reason — the depth-0 leaf must be top-tier.
+- **Code-review fix-cycle bound differs by mode**: default-mode runs ONE cycle then escalates (`FINISH BLOCKED`); `--mode code` runs UP TO 3 rounds then posts the `## Code Review` summary + canonical `## Escalation` comments and transitions via `__ESCALATE__`. Boundary preserved: orchestrator does not own the multi-round loop.
+- **`## Scout Report` consumer wired** — `closeout-scout-gate.sh` parses `verdict: PASS|WARN|FAIL` from a `## Scout Report` comment when a `## Scout Trigger` is present on the PR. Closes the producer-consumer loop opened by Plan 5's `/ralph:impl --mode pr`.
+- **Pre-merge gates ALWAYS run** — even when called from default-mode. The review-decision and mergeable-status checks live in `--mode merge`'s body as a safety net for standalone callers (`just merge NNN`) that skip default-mode. Refuses unreviewed PRs even when the caller skipped validation.
+- **CI watch uses `Monitor` with literal `MERGE_SHA` substitution** — Monitor runs the command in its own subshell and does NOT inherit `$MERGE_SHA` from prior Bash calls. The substitution warning is load-bearing in `merge-gate.md` §CI Watch.
+
+Friction notes (populated by active use):
+
+- [ ] _(Examples to watch for: default-mode `code-review:code-review` invocation at depth 0 with parallel-reviewer fan-out visible in transcript; closeout-scout-gate.sh blocking on FAIL verdict; closeout-scout-gate.sh false-passing on missing report (advisory-by-design); finish-review-verdict.sh returning ERROR transiently and retry behavior; impl picker dispatching `Skill("ralph:review")` cleanly after Phase 6 wiring; cross-repo merge unblocking sibling repos correctly via `.ralph-repos.yml`.)_
+
+Post-implementation code review surfaced three merge-related bugs in the as-shipped Phase 1-6 work (fixed before merge of PR #1369); full root-cause writeup lives in [`2026-05-23-GH-1368-ralph-plan-6-review.md` §Post-implementation Code Review Findings](../plans/2026-05-23-GH-1368-ralph-plan-6-review.md). Headlines:
+
+- **`__DONE__` is not a registered semantic intent** — source `ralph-merge` prose was stale. The valid intents are `__LOCK__`, `__COMPLETE__`, `__ESCALATE__`, `__CLOSE__`, `__CANCEL__`. Use `__CLOSE__` to transition to Done.
+- **`merge-state-gate.sh` blocked `__ESCALATE__` and `__CLOSE__`** because it pure-string-compared against `RALPH_VALID_OUTPUT_STATES`. Source `finish` masked this by dispatching merge as an Agent (separate hook scope); Plan 6's body calls `save_issue(__*__)` directly. Fix: mirror `impl-state-gate.sh`'s shape — RALPH_COMMAND scope guard + `is_semantic_intent` passthrough before `validate_state`.
+- **`closeout-scout-gate.sh` died under `pipefail`** when a `## Scout Report` had no `verdict:` line (the grep stage exits 1, pipefail propagates, set -e kills the script before the conservative `*) exit 0` arm). Fix: append `|| true` to the verdict-extraction pipeline.
+
+Patterns to encode in future fold plans:
+
+- **Pre-flight: verify semantic-intent tokens against `state-resolution.ts`** before adopting prose from source skills. Source prose may have rot from a prior rename.
+- **Hook reuse-as-is must audit the same substrate gaps the new hooks address** (RALPH_COMMAND scope guard + semantic-intent passthrough). If new hooks have these, ported hooks must too.
+- **Smoke-test pipeline-heavy hooks under `set -euo pipefail` with the no-match path**, not just the happy path. Add a "malformed report" / "empty intermediate" test case to manual verification for any hook with `grep | sed | awk` chains.
+
+Inputs to feed into Plan 7 (`/ralph:caretake`):
+
+- _(Populated by active use, not by waiting.)_
+- 5 hooks is comfortable below the 9 ceiling — Plan 7 has more headroom.
+- The `closeout-` prefix convention is now established for non-review-but-review-adjacent hooks. Future plans should pick clear-scope prefixes early to avoid collision with the existing orphan `review-*.sh` scripts.
+- **Use `__CLOSE__` (not `__DONE__`) to transition issues to Done.** Source-plugin prose may still say `__DONE__`; do not propagate.
+- **Any new state gate hook must include both the RALPH_COMMAND scope guard and the `is_semantic_intent` passthrough.** The reference shape is `ralph/hooks/scripts/impl-state-gate.sh`.
+- **Any pipeline-heavy hook under `set -euo pipefail` must append `|| true`** (or wrap the assignment in `set +e`/`set -e`) on intermediate `grep`-style stages that may legitimately match nothing.
+
+Open follow-ups (separate plans):
+
+- Plan 7 (`/ralph:caretake`) folds the caretaker modes (triage, hygiene, postmortem, retro, trends, unblock, split). May reuse `merge-state-gate.sh` for the merge-adjacent caretaker actions.
+- Plan 8 (`/ralph:hero`) is the orchestrator that dispatches `/ralph:impl --mode auto` then `/ralph:review` (default) per issue. Plan 6's verdict-token contracts (`FINISHED`, `FINISH BLOCKED — <reason>`) are the boundary the hero parses to decide next action.
+- Plan 10 owns sunset of source `ralph-val`, `ralph-code-review`, `ralph-merge`, `finish` skills.

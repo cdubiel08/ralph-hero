@@ -146,7 +146,7 @@ When all phases are verified:
 
 Ask the user via AskUserQuestion what to do next:
 
-- **Run finish** — `Skill("ralph-hero:finish", args="NNN")` (until Plan 6 ships `/ralph:review`, then switch to `Skill("ralph:review", args="NNN")`).
+- **Run review (close-out)** — `Skill("ralph:review", args="NNN")` — full val → code-review → merge → CI watch pipeline.
 - **Create PR only** — already done in Step 5; re-confirm URL.
 - **Iterate on plan** — `Skill("ralph:plan", args="--mode iterate #NNN")`.
 - **Done for now** — report current state and STOP.
