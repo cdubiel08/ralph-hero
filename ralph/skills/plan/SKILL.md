@@ -26,8 +26,6 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-research-required.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-no-dup.sh"
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue"
-      hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
     - matcher: "AskUserQuestion"
