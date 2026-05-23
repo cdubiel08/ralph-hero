@@ -105,7 +105,40 @@ For `--mode review`, also export `RALPH_COMMAND=review` and `RALPH_ARTIFACT_DIR=
 
 ## Default flow
 
-_(Filled by Phase 2 and Phase 3.)_
+### Step 1: Intake
+
+Resolve `ARG` per `intake-routing.md`:
+
+- `#NNN` / `NNN` / `GH-NNNN` → `get_issue(number)`. Set `LINKED_ISSUE`. Read issue comments for `## Research Document` artifact link; if present, read the linked research doc FULLY.
+- Path to research doc (`thoughts/shared/research/*.md`) → read FULLY; extract `github_issue` from frontmatter; set `LINKED_ISSUE`.
+- Path to existing plan (`thoughts/shared/plans/*.md`) → route to `--mode iterate` automatically (warn the user once).
+- Free-form description → no linked issue; the user is planning ad-hoc.
+- No `ARG` → prompt for issue / file / description.
+
+Run the parent-plan reuse check per `intake-routing.md` § Parent-plan reuse. If the issue is a child of an epic whose plan-of-plans already covers this phase, post a `## Plan Reference` comment and advance the child to "In Progress" — STOP here.
+
+### Step 2: Research & discovery
+
+Knowledge-graph prior art (if available): `knowledge_recall(query="<topic>", role="planner", brief=true)` — planner tier policy `[reflection, wiki, doc]` surfaces synthesized + curated context.
+
+Spawn parallel sub-agents (single message, multiple `Agent()` calls):
+
+- `ralph-hero:codebase-locator` for WHERE files live.
+- `ralph-hero:codebase-analyzer` for HOW components work.
+- `ralph-hero:thoughts-locator` for prior research / plans / reviews.
+- `ralph-hero:thoughts-analyzer` on the most relevant thoughts findings.
+
+Wait for ALL. Read files identified by the locators FULLY (no offset/limit) into the main session.
+
+### Step 3: Plan structure development
+
+Propose phase shape based on research:
+
+- How many phases? (1-2 for XS, 2-5 for S, 5-10 for M.)
+- What does each phase own? (Tightly-scoped file sets; one concern per phase.)
+- Where are the verification points? (Automated commands + manual user checks.)
+
+Use `AskUserQuestion` to confirm structure with the user before drafting the full doc. Iterate on phase shape until the user approves. Consult `plan-shapes.md` § Phase-section anatomy for the shape each phase will take.
 
 ## --mode auto
 
