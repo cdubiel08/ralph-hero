@@ -37,15 +37,25 @@ The research doc already contains codebase analysis, code references, and archit
 
 This avoids re-investigating while still grounding the idea in the project context.
 
+> **Intentional enrichment vs source skill** — the source plugin's research-input branch ran `thoughts-locator` only (no analyzer). The slim plugin adds `thoughts-analyzer` because a user feeding a research doc into `/ralph:form` typically wants prior-art decisions surfaced too, not just adjacent documents — that produces a better-grounded issue. Token cost is bounded: the analyzer runs on the top-N `thoughts-locator` hits, not the corpus.
+
 ### For `INPUT_TYPE == "idea"`
 
 Run the full research suite per `duplicate-detection.md`: codebase-locator + codebase-analyzer + thoughts-locator + thoughts-analyzer + `list_issues` keyword search (and optional `knowledge_search`).
 
 ## No-args fallback
 
-If no argument is provided (and not `--mode draft`), list files from `thoughts/shared/ideas/` sorted by date (most recent first, max 10):
+If no argument is provided (and not `--mode draft`), print the help block followed by the recent-ideas file list:
 
 ```
+I'll help you crystallize an idea into something actionable.
+
+Provide one of:
+1. A path to a draft idea: `/ralph:form thoughts/shared/ideas/2026-02-21-feature.md`
+2. A research document: `/ralph:form thoughts/shared/research/2026-03-14-topic.md`
+3. A description of the idea: `/ralph:form we should add operator comparison charts`
+4. Just run `/ralph:form` and pick from recent drafts below
+
 Recent ideas:
 
 1. 2026-05-22-feature-x.md — [first sentence of "The Idea" section]
@@ -53,7 +63,7 @@ Recent ideas:
 ...
 ```
 
-Then wait for the user to pick by number, supply a path, or supply an inline description.
+List files from `thoughts/shared/ideas/` sorted by date (most recent first, max 10). Then wait for the user to pick by number, supply a path, or supply an inline description.
 
 ## Draft template
 
