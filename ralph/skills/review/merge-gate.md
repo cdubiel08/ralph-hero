@@ -174,11 +174,88 @@ done',
 | `CI SKIPPED: ...` | Last Monitor line starts with `CI SKIPPED:` (exit 0 immediately on empty array). |
 | `CI PENDING` | Monitor reached `timeout_ms` without ever emitting a terminal-prefix line. (Monitor sends SIGTERM on timeout, so the script can't reliably emit a final line itself — absence of a terminal prefix within 10 min IS the PENDING signal.) |
 
+## Autonomous mode (`RALPH_AUTO_MERGE=true`)
+
+Loop runners (`scripts/ralph-loop.sh --auto-merge` and equivalents) set `RALPH_AUTO_MERGE=true` before invoking `/ralph:review --mode merge` to opt into the autonomous gate. When the env var is unset (the standalone `just merge NNN` case), this section is skipped entirely and the interactive Pre-merge gates above own the safety net.
+
+This gate is intentionally orthogonal to `RALPH_REVIEW_MODE` (which gates code-review in default-mode Step 3). Auto-review and auto-merge are independent dials.
+
+### Criteria (ALL must hold)
+
+1. **Review approved** — `gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'` returns `APPROVED`. The carve-outs in § Carve-outs below also satisfy this criterion (XS-no-comments OR self-authored-on-solo-repo).
+2. **CI green** — `gh pr checks PR_NUMBER --json name,state,conclusion` returns every check with `state: completed` AND `conclusion: success`. Pending or failing checks block.
+3. **PR open and mergeable** — `gh pr view PR_NUMBER --json state,mergeable --jq '{state,mergeable}'` shows `state: OPEN` and `mergeable: MERGEABLE`. `CONFLICTING` or `UNKNOWN` blocks.
+
+Recommended invocation shape (all three reads parallelized into one shell block):
+
+```bash
+review_decision=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision')
+ci_status=$(gh pr checks "$PR_NUMBER" --json name,state,conclusion)
+pr_state=$(gh pr view "$PR_NUMBER" --json state,mergeable --jq '{state,mergeable}')
+```
+
+Then evaluate the three criteria together. Pending checks are explicit blockers — emit the `AUTO-MERGE BLOCKED ci-pending` form and let the next loop iteration re-evaluate.
+
+### On miss — `AUTO-MERGE BLOCKED`
+
+Emit a distinct token so callers (loop runners, hero, autopilot) can distinguish autonomous-gate failures from interactive `MERGE BLOCKED`:
+
+```
+AUTO-MERGE BLOCKED
+Issue: #NNN
+PR: #PR_NUMBER
+Review: [APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|null]
+CI: [summary — e.g., "2/5 checks pending", "1 failing: lint", "all green"]
+Reason: [first failing criterion in plain English]
+```
+
+STOP. The next loop tick re-evaluates. There is no fix cycle in autonomous mode — the gate only merges when everything is already green; it never edits code.
+
+### On pass
+
+All criteria hold. Proceed to the Scout Report gate (above), then Merge mechanics, then Worktree cleanup.
+
+## Carve-outs from the APPROVED requirement
+
+Two intentional carve-outs that the pre-merge `reviewDecision` check (interactive mode) AND the autonomous mode Criterion 1 honor. Both are enforced deterministically by `merge-review-decision-gate.sh` (Phase 4 of GH-1395) — the prose here documents what the hook accepts.
+
+### XS-no-comments
+
+Issues with `estimate: XS` AND a PR comment count of `0` may merge without a formal `APPROVED` decision. Use case: one-line typo fixes, trivial docs corrections, comment-only changes where requesting a formal review adds latency without value.
+
+```bash
+estimate=$(gh issue view ISSUE --json projectItems --jq '[.projectItems[].fieldValues[]? | select(.field.name == "Estimate") | .name] | .[0] // "null"')
+comment_count=$(gh pr view PR_NUMBER --json comments --jq '.comments | length')
+if [[ "$estimate" == "XS" && "$comment_count" == "0" ]]; then
+  # carve-out applies — treat as APPROVED-equivalent
+fi
+```
+
+Pairs with the `kind:trivial` / `kind:doc` fast-track ladder rungs (spec §Fast-Track Ladder).
+
+### Self-authored-on-solo-repo
+
+Self-authored PRs on single-contributor repos are treated as APPROVED-equivalent. GitHub blocks self-approval (`Can not approve your own pull request`), so a formal `APPROVED` review is structurally unattainable — without this carve-out, single-developer repos cannot merge anything.
+
+```bash
+pr_author=$(gh pr view PR_NUMBER --json author --jq '.author.login')
+current_user=$(gh api user --jq '.login')
+contributor_count=$(gh api "repos/$(gh repo view --json nameWithOwner --jq .nameWithOwner)/contributors" --jq 'length')
+if [[ "$pr_author" == "$current_user" && "$contributor_count" -le 1 ]]; then
+  # carve-out applies — treat as APPROVED-equivalent
+fi
+```
+
+The caller (default-mode close-out, finish-equivalent) is responsible for ensuring code review actually ran and resolved clean before invoking merge — these carve-outs only suppress the `APPROVED` gate, not the code-review-gate-in-default-mode step. See [GH-932](https://github.com/cdubiel08/ralph-hero/issues/932) for the bootstrap rationale.
+
 ## Verdict tokens (strict)
 
 | Token | Meaning |
 |---|---|
 | `MERGED` | Merge succeeded; SHA captured; issue transitioned to Done. |
-| `MERGE BLOCKED — <reason>` | Pre-merge gate failed (review/mergeable/scout). STOP without merging. |
+| `MERGE BLOCKED — <reason>` | Pre-merge gate failed (review/mergeable/scout). Emitted in BOTH interactive and autonomous modes — the Pre-merge gates section runs unconditionally per `ALWAYS RUN` at line 17. STOP without merging. |
+| `AUTO-MERGE BLOCKED — <reason>` | Autonomous-mode-specific criterion failed beyond the Pre-merge gates (CI not green, mergeable=UNKNOWN, etc.). STOP — next loop tick re-evaluates. |
 | `MERGE NOT READY` | PR not findable (no open PR on branch). STOP. |
 | `Queue empty.` | No-work short-circuit from queue-pick path. |
+
+> **Loop-runner contract.** Callers grepping for autonomous-mode failures must accept BOTH `MERGE BLOCKED — ` and `AUTO-MERGE BLOCKED — ` as block signals. The Pre-merge gates run before the autonomous-mode-only criteria, so a `MERGE BLOCKED — review required` can fire in an `RALPH_AUTO_MERGE=true` run. Only the autonomous-mode-only criteria (CI green, mergeable status from §Autonomous mode Criteria 2 and 3) emit the `AUTO-MERGE BLOCKED — ` prefix.
