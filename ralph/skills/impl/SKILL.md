@@ -159,6 +159,19 @@ Ask the user via AskUserQuestion what to do next:
 - **Iterate on plan** — `Skill("ralph:plan", args="--mode iterate #NNN")`.
 - **Done for now** — report current state and STOP.
 
+## `--mode auto` — autonomous one phase per invocation
+
+1. **Select target** — `#NNN` provided OR `list_issues(profile: "builder-active", limit: 1)` highest-priority XS/S in "In Progress".
+2. **Detect mode** — if issue is "In Review" with an open PR carrying review comments, delegate to [`--mode address`](#--mode-address--pr-review-feedback). Otherwise continue.
+3. **Read plan** — Artifact Comment Protocol with knowledge_recall shortcut (search `type=plan, role=implementer`). STOP with `Issue #NNN has no implementation plan` if neither `## Implementation Plan` nor `## Plan Reference` is found.
+4. **Build issues[] + detect phase** — frontmatter `github_issues` array (group) or single `github_issue`. Find the first **unblocked** unchecked phase per `depends_on` annotations; STOP if all remaining phases are blocked.
+5. **Lock** — for every issue in `issues[]`, `save_issue(workflowState="__LOCK__", command="ralph_impl")`. STOP if any issue is not "In Progress".
+6. **Worktree** — consult [worktree-setup.md §Auto-mode](worktree-setup.md) for epic detection, WORKTREE_ID selection (stream / epic / group / single), base-branch detection, create-or-reuse, rebase-onto-main if predecessor merged.
+7. **Execute phase** — consult [phase-execution.md](phase-execution.md) for the task graph + controller pattern + IMPL BLOCKED escalation + phase quality review. If sub-agent budget exhausts at a non-opus tier, emit `IMPL BLOCKED model=<current> needs=opus reason=<short>` and STOP (do NOT escalate to Human Needed; hero re-dispatches at opus once).
+8. **Stage + commit + push** — per [plan-compliance.md §Staging Algorithm](plan-compliance.md).
+9. **Check completion** — re-read plan. If ALL automated checkboxes are checked, continue to Step 10; otherwise STOP with `Phase [N]/[M] complete.`.
+10. **Final report** — `Implementation complete for #NNN: <Title>` + issues + branch + worktree.
+
 ## Configuration (resolved at load time)
 
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`

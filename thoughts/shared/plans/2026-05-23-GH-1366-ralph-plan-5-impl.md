@@ -293,8 +293,8 @@ Compact list — Plan 3-style:
 
 #### Automated Verification
 
-- [ ] `phase-execution.md` ≥ 80 lines.
-- [ ] SKILL.md auto-mode body references `__LOCK__`, `IMPL BLOCKED`, "In Progress", "Phase [N]/[M] complete".
+- [x] `phase-execution.md` ≥ 80 lines.
+- [x] SKILL.md auto-mode body references `__LOCK__`, `IMPL BLOCKED`, "In Progress", "Phase [N]/[M] complete".
 
 #### Manual Verification
 
