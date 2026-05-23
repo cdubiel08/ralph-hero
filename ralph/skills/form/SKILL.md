@@ -151,7 +151,33 @@ No GitHub mutations.
 
 ## --mode draft
 
-_(Filled by Phase 4.)_
+Lightweight quick-capture. No GitHub mutation, no AskUserQuestion picker, no full research suite. The goal is to get the idea into a file before it's lost.
+
+### Step 1 (draft): capture intent
+
+If a topic was provided as the argument, begin capturing. Otherwise prompt: *"What's on your mind? Describe a feature idea, a problem you've noticed, a technical concept, or a workflow improvement worth remembering."* Wait for the user.
+
+### Step 2 (draft): quick clarification
+
+Restate in one sentence, then ask 2-3 focused clarifying questions (most-important first). If the user replies "just capture it" or similar, proceed with what you have — don't block.
+
+### Step 3 (draft): optional light grounding
+
+Only if the idea references specific code areas:
+
+- One `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [idea topic]")` to confirm the relevant area exists. Don't go deep.
+
+Only if `knowledge_search` is available, run an optional dedup check (`type: "idea"`, `limit: 3`). If a close match is found, mention it: *"There's an existing idea that may overlap: `[path]` — [title]. Continue with a new idea or build on that one?"*
+
+Skip both steps entirely for purely conceptual ideas — speed over polish.
+
+### Step 4 (draft): write the file
+
+Save to `thoughts/shared/ideas/YYYY-MM-DD-description.md` using the draft template from `intake-shapes.md`.
+
+### Step 5 (draft): report + suggest next steps
+
+Report the file path. Suggest next-step verbs: `/ralph:form <path>` (crystallize into an issue / plan / research / tree), `/ralph:research` or `/ralph-hero:research` (deep dive), `/ralph:plan` or `/ralph-hero:plan` (jump straight to planning). No frontmatter mutation, no GitHub integration — drafts are pre-ticket.
 
 ## References
 

@@ -54,3 +54,50 @@ Recent ideas:
 ```
 
 Then wait for the user to pick by number, supply a path, or supply an inline description.
+
+## Draft template
+
+Used by `--mode draft` Step 4 to write `thoughts/shared/ideas/YYYY-MM-DD-description.md`. Lightweight by design — drafts are pre-ticket and should be scannable in under a minute.
+
+```markdown
+---
+date: YYYY-MM-DD
+status: draft
+type: idea
+author: user
+tags: [relevant, tags]
+github_issue: null
+---
+
+# [Idea Title]
+
+## The Idea
+
+[2-4 sentence description of the core idea, written conversationally. Preserve the user's voice and framing — don't over-formalize.]
+
+## Why This Matters
+
+[1-3 bullet points on motivation or context]
+
+## Rough Shape
+
+[Sketch of what this might look like — bullet points, not detailed spec]
+- [Key aspect 1]
+- [Key aspect 2]
+- [Key aspect 3]
+
+## Open Questions
+
+- [Things to figure out later]
+
+## Related
+
+- [Any related files, tickets, or ideas mentioned during capture]
+```
+
+Filename derivation:
+
+- `YYYY-MM-DD` — today's date in UTC.
+- `description` — 3-6 hyphen-separated lowercase words derived from the title; strip punctuation.
+
+Tag generously — tags are how `/ralph:form` will rediscover related ideas later via knowledge-search and thoughts-locator. Aim for 3-5 tags drawn from the topic, the affected area, and any cross-cutting concerns (e.g., `[performance, dashboard, mvp]`).
