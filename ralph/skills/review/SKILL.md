@@ -114,9 +114,10 @@ Export `RALPH_TICKET_ID="GH-${TARGET}"` when `TARGET` is an issue number.
 1. **Select issue** — arg or queue-pick per [merge-gate.md §Queue-pick](merge-gate.md). STOP `Queue empty.` if none.
 2. **Fetch issue + find PR** — `gh pr list --head feature/GH-NNN` or use `--pr-url`. STOP `MERGE NOT READY` if not found.
 3. **Pre-merge gates** — per [merge-gate.md §Pre-merge gates](merge-gate.md):
-   - Review decision MUST be `APPROVED` (`null`/`REVIEW_REQUIRED` → `MERGE BLOCKED — review required`).
+   - Review decision MUST be `APPROVED` (`null`/`REVIEW_REQUIRED` → `MERGE BLOCKED — review required`). Two carve-outs accept non-APPROVED PRs: XS-no-comments and self-authored-on-solo-repo (see [merge-gate.md §Carve-outs](merge-gate.md)). The deterministic gate lives in `merge-review-decision-gate.sh` PreToolUse:Bash hook.
    - Mergeable MUST be `MERGEABLE` (`CONFLICTING` → `MERGE BLOCKED — conflicts`).
    - Scout Report gate enforced by `closeout-scout-gate.sh` PreToolUse on the merge Bash command (no body duplication needed).
+   - **When `RALPH_AUTO_MERGE=true`** (loop-runner autonomous merge), the three-criterion gate in [merge-gate.md §Autonomous mode](merge-gate.md) replaces this step. Failures emit `AUTO-MERGE BLOCKED` so the next loop tick can re-evaluate without a fix cycle.
 4. **Merge** — `bash scripts/merge-pr.sh PR_NUMBER`. Capture `MERGE_SHA` via `gh pr view PR_NUMBER --json mergeCommit --jq '.mergeCommit.oid'`.
 5. **Worktree cleanup** — `git worktree remove worktrees/GH-NNN --force`. Cross-repo: remove sibling worktrees per [merge-gate.md §Cross-repo](merge-gate.md).
 6. **Transition issue to Done** — `save_issue(workflowState="__CLOSE__", command="ralph_merge")` (the `__CLOSE__` semantic intent maps `"*": "Done"` per `state-resolution.ts`). Group merges: per-child transition. Do NOT advance parent (server-side GH Action handles it — see [§Parent advancement](merge-gate.md)).

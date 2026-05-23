@@ -70,17 +70,76 @@ if [[ "$review_decision" == "APPROVED" ]]; then
   allow
 fi
 
-# Phase 4 will add fallback checks here for the XS-no-comments and
-# self-authored-on-solo-repo carve-outs that GH-1375 documents. Until
-# Phase 4 lands, this gate is strict.
+# Carve-outs from GH-1375 — both documented in
+# ralph/skills/review/merge-gate.md § Carve-outs. Pipeline-heavy reads
+# append `|| true` per the Plan 6 friction-log lesson.
 
-block "merge-review-decision-gate: PR #$pr_num has reviewDecision='$review_decision' (need APPROVED).
+is_xs_no_comments_pr() {
+  local pr="$1"
+
+  # Comment count first — cheaper read than the issue-estimate join.
+  local comment_count
+  comment_count=$(gh pr view "$pr" --json comments --jq '.comments | length' 2>/dev/null || echo "-1")
+  if [[ "$comment_count" != "0" ]]; then
+    return 1
+  fi
+
+  # Resolve the linked issue number from the PR's body (`Closes #N` / `Fixes #N`).
+  # `gh pr view --json closingIssuesReferences` is the structured way; fall back to body grep.
+  local issue_num
+  issue_num=$(gh pr view "$pr" --json closingIssuesReferences --jq '.closingIssuesReferences[0].number // empty' 2>/dev/null || echo "")
+  if [[ -z "$issue_num" ]]; then
+    return 1
+  fi
+
+  local estimate
+  estimate=$(gh issue view "$issue_num" --json projectItems \
+    --jq '[.projectItems[].fieldValues[]? | select(.field.name == "Estimate") | .name] | .[0] // "null"' \
+    2>/dev/null || echo "null")
+
+  [[ "$estimate" == "XS" ]]
+}
+
+is_self_authored_solo_repo() {
+  local pr="$1"
+
+  local pr_author current_user
+  pr_author=$(gh pr view "$pr" --json author --jq '.author.login' 2>/dev/null || echo "")
+  current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+
+  if [[ -z "$pr_author" || -z "$current_user" || "$pr_author" != "$current_user" ]]; then
+    return 1
+  fi
+
+  local repo_name contributor_count
+  repo_name=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+  if [[ -z "$repo_name" ]]; then
+    return 1
+  fi
+
+  contributor_count=$(gh api "repos/${repo_name}/contributors" --jq 'length' 2>/dev/null || echo "0")
+  [[ "$contributor_count" -le 1 ]]
+}
+
+if is_xs_no_comments_pr "$pr_num"; then
+  allow
+fi
+
+if is_self_authored_solo_repo "$pr_num"; then
+  allow
+fi
+
+block "merge-review-decision-gate: PR #$pr_num has reviewDecision='$review_decision' (need APPROVED, or matched carve-out).
 
 The slim-plugin /ralph:review --mode merge body documents this gate in
 ralph/skills/review/merge-gate.md § Pre-merge gates. The gate is now a
 deterministic hook (GH-1373) rather than model-adherence prose.
 
-To unblock:
-  1. Get a passing code review with explicit Approve (gh pr review <pr> --approve)
-  2. Or accept one of the carve-outs (see merge-gate.md § Carve-outs once Phase 4
-     of GH-1395 lands)"
+Two carve-outs accept non-APPROVED PRs (see merge-gate.md § Carve-outs):
+  1. XS-no-comments  — issue estimate=XS AND PR has zero comments
+  2. Self-authored-on-solo-repo — PR author == current user on a single-contributor repo
+
+Neither carve-out matched this PR. To unblock:
+  1. Get a passing code review with explicit approve (gh pr review $pr_num --approve)
+  2. Verify the issue's Estimate field if you expected XS to apply
+  3. For solo-repo workflows, confirm the PR was self-authored and the repo has only one contributor"
