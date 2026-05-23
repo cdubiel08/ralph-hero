@@ -21,7 +21,7 @@ The single positional argument (after `--mode draft` if present) determines `INP
 
 If `INPUT_TYPE == "research"` and the doc's frontmatter has `github_issue: NNN`, set `LINKED_ISSUE = NNN`. The research is already linked to an issue.
 
-Downstream behavior in Step 5 (output picker): when `LINKED_ISSUE` is set, default the picker to **"Implementation plan"** or **"Keep as refined idea"** rather than **"GitHub issue"** — creating a new issue would duplicate the existing link. Surface the existing issue link to the user so they can choose explicitly if they want to create a separate issue anyway.
+SKILL.md Step 5 is the source of truth for the picker default when `LINKED_ISSUE` is set — this skill is the source of truth for the routing rule (when to capture `LINKED_ISSUE`); SKILL.md is the source of truth for what the picker does with it.
 
 ## Per-input-type research routing
 

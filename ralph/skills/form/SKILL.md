@@ -3,8 +3,9 @@ description: Crystallize draft ideas, research findings, or inline descriptions 
   structured GitHub issues, implementation plans, research topics, or refined drafts.
   Use whenever the user says "form this", "turn this into an issue", "make a ticket
   from this", "shape this idea", "what should this become", or hands over an idea
-  file or research doc. --mode draft is the lightweight quick-capture variant for
-  "just write this down before I forget".
+  file or research doc. Use --mode draft (or trigger on "jot this down", "save this
+  thought", "before I forget", "capture an idea") for the lightweight quick-capture
+  variant — saves to thoughts/shared/ideas/ without touching GitHub.
 argument-hint: "[--mode draft] [<idea-path|research-doc-path|inline description>]"
 context: inline
 allowed-tools:
@@ -19,6 +20,7 @@ allowed-tools:
   - WebSearch
   - WebFetch
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
@@ -43,14 +45,9 @@ inline descriptions into structured GitHub artifacts via an interactive picker.
 
 ## Step 1: Intake routing
 
-Consult `intake-shapes.md` for the input-detection rules. Set `INPUT_TYPE` to one of:
+Read `intake-shapes.md` to set `INPUT_TYPE` (`"idea"` | `"research"`) and (if applicable) capture `LINKED_ISSUE`. If no argument and not `--mode draft`, follow the no-args fallback in `intake-shapes.md` to list recent ideas.
 
-- `"idea"` — argument is a path matching `thoughts/shared/ideas/*.md`, OR an inline description, OR no argument provided (list recent drafts and wait for input).
-- `"research"` — argument is a path matching `thoughts/shared/research/*.md`, OR a path whose frontmatter has `type: research`.
-
-If `INPUT_TYPE == "research"` and the doc's frontmatter has `github_issue`, capture `LINKED_ISSUE` — the research is already linked, and downstream steps must be aware to avoid duplicate issue creation.
-
-If no argument and not `--mode draft`: list files from `thoughts/shared/ideas/` sorted by date (most recent first, max 10), then wait for the user to pick one or supply an inline description.
+If `LINKED_ISSUE` is set, fetch the linked issue's title and current workflow state via `get_issue` — Step 4 surfaces them so the user understands why the picker default below is biased toward "Implementation plan".
 
 ## Default flow
 
@@ -83,20 +80,24 @@ Branch by `INPUT_TYPE` per `intake-shapes.md`:
 - `INPUT_TYPE == "research"`: skip codebase-locator / codebase-analyzer (the doc IS the investigation); still run thoughts-locator + thoughts-analyzer + `list_issues` keyword search.
 - `INPUT_TYPE == "idea"`: run the full suite per `duplicate-detection.md`.
 
-Spawn sub-tasks in parallel. Wait for ALL to complete before synthesizing. Do NOT pass `team_name` to any `Agent()` call.
+Spawn sub-tasks in parallel per `duplicate-detection.md` (which carries the ADR-001 team-isolation rule). Wait for ALL to complete before synthesizing.
 
 ### Step 4: Present larger context
 
 Surface to the user:
 
-- **Related existing work** — issues / plans / research that overlap or connect.
-- **Potential duplicates** — issues that cover similar ground (call out if `LINKED_ISSUE` is already set from intake).
+- **Linked issue** (only when `LINKED_ISSUE` is set) — show its number, title, and current workflow state from the `get_issue` call in Step 1. This is the issue already attached to this research; it explains why the Step 5 picker default below is biased toward "Implementation plan".
+- **Related existing work** — other issues / plans / research that overlap or connect.
+- **Potential duplicates** — issues that cover similar ground.
 - **Natural home** — where this fits in the project structure; which epic or initiative it aligns with.
 - **Complexity assessment** — XS / S / M / L / XL with key dependencies and risk areas.
 
 ### Step 5: Output picker
 
-Use `AskUserQuestion` with these 5 options. The first option is the default-selected one for ideas without `LINKED_ISSUE`; for ideas with `LINKED_ISSUE`, default to "Implementation plan" instead.
+Use `AskUserQuestion` with these 5 options. Default-selected option:
+
+- If `LINKED_ISSUE` is set → **Implementation plan** (the linked issue already exists — creating a separate one would duplicate).
+- Otherwise → **GitHub issue** (the first option; the most common path for ideas without prior linkage).
 
 | Label | Behavior |
 |---|---|
@@ -107,6 +108,8 @@ Use `AskUserQuestion` with these 5 options. The first option is the default-sele
 | **Keep as refined idea** | Update the source file with context; no GitHub mutation → Step 6d |
 
 Wait for the user's structured response, then branch to the matching Step 6 sub-step.
+
+**Source-file presence:** Steps 6a-d's frontmatter updates assume a source file exists. If the input was an inline description (no path argument), offer to write a `thoughts/shared/ideas/YYYY-MM-DD-description.md` first per the draft template in `intake-shapes.md`, then proceed using that file as the source. For Step 6d (refined draft), this file IS the output.
 
 ### Step 6a: Create GitHub issue
 
