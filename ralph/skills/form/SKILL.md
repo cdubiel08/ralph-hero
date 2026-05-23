@@ -108,9 +108,46 @@ Use `AskUserQuestion` with these 5 options. The first option is the default-sele
 
 Wait for the user's structured response, then branch to the matching Step 6 sub-step.
 
-### Step 6: Output paths
+### Step 6a: Create GitHub issue
 
-_(Filled by Phase 3.)_
+Draft the issue body per `issue-template.md` (use the research-aware variant when `INPUT_TYPE == "research"`). Show it for approval along with suggested labels, estimate, and priority. On approval:
+
+1. Call `create_issue` with the drafted title and body; set `estimate` and `workflowState: "Backlog"`.
+2. Update the source-file frontmatter per `issue-template.md` (`status: formed, github_issue: NNN` for ideas; `github_issue: NNN, github_url: https://...` for research docs).
+3. If `INPUT_TYPE == "research"`, post the `## Research Document` artifact comment on the new issue (see `issue-template.md`).
+4. Report the issue URL + suggested next steps (research / plan / iterate).
+
+### Step 6b: Create ticket tree
+
+Break the idea into a parent + 2-6 children. Show the tree for approval. On approval:
+
+1. Create the parent issue (`estimate: L`, `workflowState: "Backlog"`).
+2. For each child, `create_issue` (`estimate: XS`, `workflowState: "Backlog"`) followed by `add_sub_issue` linking it under the parent.
+3. For sequential children, add `add_dependency` edges in submission order.
+4. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
+
+See `issue-template.md` for the tree shape and estimate defaults.
+
+### Step 6c: Hand off to another skill
+
+For "Implementation plan" or "Research topic":
+
+1. Update the source file's frontmatter (`status: forming` for ideas; preserve `type: research` for research docs — no status change).
+2. Suggest the next command with the gathered context inlined:
+   - Plan: `/ralph:plan <context summary>` (or `/ralph-hero:plan` until Plan 4 ships)
+   - Research: `/ralph:research <topic>` (or `/ralph-hero:research` until Plan 3 ships)
+
+Offer to invoke it directly if the user wants.
+
+### Step 6d: Refined draft
+
+For "Keep as refined idea":
+
+1. Update the source file with the enriched content: codebase context, related issues / plans / research, refined scope, updated tags.
+2. Frontmatter: `status: refined` for ideas; preserve `type: research` for research docs (no status field).
+3. Report the path and what was added.
+
+No GitHub mutations.
 
 ## --mode draft
 
