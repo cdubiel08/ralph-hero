@@ -66,10 +66,10 @@ New hooks Plan 6 needs:
 
 | Hook | Trigger | Job |
 |---|---|---|
-| `review-postcondition.sh` | Stop | Mode-discriminated terminal-verdict gate. Verifies one of: `VALIDATION PASS\|FIX\|FAIL` (val-mode), `CODE REVIEW PASSED\|ESCALATED\|BLOCKED` (code-mode), `MERGED\|MERGE BLOCKED\|MERGE NOT READY` (merge-mode), or `FINISHED\|FINISH BLOCKED` (default mode). |
-| `review-scout-gate.sh` | PreToolUse on Bash matching `merge-pr.sh` / `gh pr merge` | When the PR has a `## Scout Trigger` comment posted (issued by `/ralph:impl --mode pr`), verify a `## Scout Report` reply exists with verdict `PASS` or `WARN`. Block merge with exit 2 if `FAIL`. Advisory-by-design: missing report passes (matches the existing scout-trigger contract). |
+| `closeout-postcondition.sh` | Stop | Mode-discriminated terminal-verdict gate. Verifies one of: `VALIDATION PASS\|FIX\|FAIL` (val-mode), `CODE REVIEW PASSED\|ESCALATED\|BLOCKED` (code-mode), `MERGED\|MERGE BLOCKED\|MERGE NOT READY` (merge-mode), or `FINISHED\|FINISH BLOCKED` (default mode). Named `closeout-` to avoid collision with Plan 4's `review-postcondition.sh` (plan-doc review). |
+| `closeout-scout-gate.sh` | PreToolUse on Bash matching `merge-pr.sh` / `gh pr merge` | When the PR has a `## Scout Trigger` comment posted (issued by `/ralph:impl --mode pr`), verify a `## Scout Report` reply exists with verdict `PASS` or `WARN`. Block merge with exit 2 if `FAIL`. Advisory-by-design: missing report passes (matches the existing scout-trigger contract). |
 
-Three hook ports + two reuses + one helper-script port + one new hook = **5 hooks under the ≤9 ceiling** (`merge-state-gate.sh`, `val-postcondition.sh`, `review-postcondition.sh`, `review-scout-gate.sh`, plus the already-ported `lock-release-on-failure.sh` and `doc-structure-validator.sh` reuses).
+Three hook ports + two reuses + one helper-script port + one new hook = **5 hooks under the ≤9 ceiling** (`merge-state-gate.sh`, `val-postcondition.sh`, `closeout-postcondition.sh`, `closeout-scout-gate.sh`, plus the already-ported `lock-release-on-failure.sh` and `doc-structure-validator.sh` reuses).
 
 ### Key Discoveries
 
@@ -77,7 +77,7 @@ Three hook ports + two reuses + one helper-script port + one new hook = **5 hook
 - **Default-mode preserves the depth-0 fan-out for `code-review:code-review`.** The `code-review:code-review` plugin spawns 5 parallel Sonnet reviewers + N parallel Haiku scorers via the `Agent` tool. Those parallel agents land at depth 1 only when the wrapping skill runs at depth 0 — so `code-review:code-review` MUST be invoked inline (via `Skill()`) from `/ralph:review`'s default mode, not via a sub-agent dispatch. The runtime's no-depth-2-Agent rule would silently break parallel reviewers if violated. SKILL.md body comment + `auto-vs-interactive.md` §Depth-0 fan-out section preserves the contract.
 - **`RALPH_REVIEW_MODE=auto|interactive` is the orchestration switch, not a verb mode.** It governs whether default-mode prompts via `AskUserQuestion` when the code-review gate returns `BLOCKED` (multi-author PR with no formal review and no self-authored fallback). Preserved verbatim in `auto-vs-interactive.md`. Distinct from `--mode val|code|merge` which selects a leaf verb.
 - **Citation Gate (val-mode) is load-bearing.** Per `ralph-val/SKILL.md:163-201`, the val-mode body MUST quote the offending file lines before claiming a file-content failure. Inferring failures from plan text alone is forbidden. Preserve verbatim in `plan-vs-impl-rubric.md` §Citation Gate. The hook can't enforce this (it's per-check reasoning) so the prose carries the constraint.
-- **`val-postcondition.sh` accepts three terminal tokens**: `VALIDATION PASS`, `VALIDATION FIX`, `VALIDATION FAIL`. Plus `Queue empty.` for the no-work path. The val-mode body MUST emit one of these as the FIRST line of the verdict block. `review-postcondition.sh` extends the contract to cover code-mode and merge-mode terminals.
+- **`val-postcondition.sh` accepts three terminal tokens**: `VALIDATION PASS`, `VALIDATION FIX`, `VALIDATION FAIL`. Plus `Queue empty.` for the no-work path. The val-mode body MUST emit one of these as the FIRST line of the verdict block. `closeout-postcondition.sh` extends the contract to cover code-mode and merge-mode terminals.
 - **Code-review escalation posts TWO comments**: a `## Code Review` round-by-round summary AND a canonical `## Escalation` comment (which `ralph-unblock` / `/ralph-hero:unblock` discovers by header prefix and parses `Originating command:`). Both comments are load-bearing for the unblock chain. Preserve verbatim in `code-review-prompt.md` §Escalation Protocol.
 - **Merge-mode refuses unreviewed PRs.** `ralph-merge/SKILL.md:40` — "Standalone callers that invoke this skill on an unreviewed PR will be rejected with `MERGE BLOCKED — review required`". The check uses `gh pr view PR_NUMBER --json reviewDecision` and rejects when `null` / `REVIEW_REQUIRED`. Preserve verbatim in `merge-gate.md` §Pre-merge gates. This is the safety net when default-mode is skipped — the gate ALWAYS runs, regardless of orchestrator.
 - **`finish` Step 6 CI watch uses `Monitor`, not a polling loop.** Per `finish/SKILL.md:252-316`, the script signature is load-bearing: stdout one-line summary per state transition, terminal verdict line `CI PASSED:` / `CI FAILED:` / `CI SKIPPED:` immediately before exit, 10-min `timeout_ms` for `CI PENDING`. **CRITICAL**: the merge SHA must be substituted into the `command` string literally — Monitor runs in its own subshell and does not inherit `$MERGE_SHA` from prior Bash calls. Preserve in `merge-gate.md` §CI Watch with the substitution warning.
@@ -87,7 +87,7 @@ Three hook ports + two reuses + one helper-script port + one new hook = **5 hook
 - **Cross-repo merge** in `ralph-merge` reads `.ralph-repos.yml` to identify sibling repos that need state advancement on merge of the primary PR. Preserve in `merge-gate.md` §Cross-repo.
 - **`knowledge_record_outcome` fires on `merged` and `pr_review_decision`.** ralph-merge records `event_type="pr_merged"` after merge; ralph-code-review records `event_type="pr_review_decision"` after each round. Preserve both calls (already in `allowed-tools` for each leaf).
 - **Default-mode Step 6 picker edit owed by Plan 6.** `ralph/skills/impl/SKILL.md` Step 6 currently dispatches `Skill("ralph-hero:finish", args="NNN")`. Update to `Skill("ralph:review", args="NNN")`. One-line edit, Phase 6 of this plan.
-- **`## Scout Report` pre-merge gate is new.** Per Plan 5's friction-log: "Plan 6 (`/ralph:review`) merge-gate should observe `## Scout Report` verdicts as a pre-merge condition." Implementation: `review-scout-gate.sh` PreToolUse on `Bash` matching the merge command — if `## Scout Trigger` comment exists on the PR, require a `## Scout Report` reply with `PASS` or `WARN`. Block on `FAIL`. Missing report passes (advisory-by-design, matches the scout-trigger contract). Spec the contract in `merge-gate.md` §Scout Report gate.
+- **`## Scout Report` pre-merge gate is new.** Per Plan 5's friction-log: "Plan 6 (`/ralph:review`) merge-gate should observe `## Scout Report` verdicts as a pre-merge condition." Implementation: `closeout-scout-gate.sh` PreToolUse on `Bash` matching the merge command — if `## Scout Trigger` comment exists on the PR, require a `## Scout Report` reply with `PASS` or `WARN`. Block on `FAIL`. Missing report passes (advisory-by-design, matches the scout-trigger contract). Spec the contract in `merge-gate.md` §Scout Report gate.
 
 ## Desired End State
 
@@ -102,7 +102,7 @@ After Plan 6 merges:
 7. Old `/ralph-hero:finish`, `/ralph-hero:ralph-val`, `/ralph-hero:ralph-code-review`, `/ralph-hero:ralph-merge` remain functional. Sunset is Plan 10.
 8. `ralph/skills/review/SKILL.md` ≤ 200 lines (target ~190).
 9. Four flat-sibling references: `plan-vs-impl-rubric.md`, `code-review-prompt.md`, `merge-gate.md`, `auto-vs-interactive.md`.
-10. SKILL.md frontmatter `hooks:` block declares 3 new hooks (`review-postcondition.sh`, `review-scout-gate.sh`, plus reused `merge-state-gate.sh`) scoped via `RALPH_COMMAND=review`.
+10. SKILL.md frontmatter `hooks:` block declares 3 new hooks (`closeout-postcondition.sh`, `closeout-scout-gate.sh`, plus reused `merge-state-gate.sh`) scoped via `RALPH_COMMAND=review`.
 11. `ralph/README.md` migration table → Plan 6 shipped.
 12. Friction-log entry appended to spec.
 
@@ -158,10 +158,10 @@ Stand up directory + frontmatter + reference stubs + three new hook ports (one h
 - `context: inline`, `model: opus` (default mode owns depth-0 fan-out — depth-0 leaf must be top-tier).
 - `allowed-tools` union covering all four modes (Read, Glob, Grep, Bash, Skill, Agent, Monitor, AskUserQuestion, PushNotification, plus the MCP tools used in any mode — `get_issue`, `list_issues`, `list_sub_issues`, `list_dependencies`, `save_issue`, `advance_issue`, `create_comment`, `knowledge_record_outcome`).
 - `hooks:` block:
-  - SessionStart → `set-skill-env.sh RALPH_COMMAND=review RALPH_VALID_OUTPUT_STATES='In Review,Done,Human Needed'` (union of leaf-mode states; per-mode tightening happens inside `review-postcondition.sh`).
+  - SessionStart → `set-skill-env.sh RALPH_COMMAND=review RALPH_VALID_OUTPUT_STATES='In Review,Done,Human Needed'` (union of leaf-mode states; per-mode tightening happens inside `closeout-postcondition.sh`).
   - PreToolUse on `save_issue|advance_issue` → `merge-state-gate.sh` (self-gates on tool-input target state — only fires when transitioning to Done).
-  - PreToolUse on `Bash` matching `merge-pr.sh|gh pr merge` → `review-scout-gate.sh`.
-  - Stop → `review-postcondition.sh`, `val-postcondition.sh` (val-mode subset), `lock-release-on-failure.sh`, `doc-structure-validator.sh` (no-ops for review-command no-artifact-dir case).
+  - PreToolUse on `Bash` matching `merge-pr.sh|gh pr merge` → `closeout-scout-gate.sh`.
+  - Stop → `closeout-postcondition.sh`, `val-postcondition.sh` (val-mode subset), `lock-release-on-failure.sh`, `doc-structure-validator.sh` (no-ops for review-command no-artifact-dir case).
 - Body: mode-dispatch table + Step 0 (arg parse).
 
 #### 2. Reference stubs
@@ -176,8 +176,8 @@ Copy from `plugin/ralph-hero/hooks/scripts/`:
 - `finish-review-verdict.sh` (helper script, not a hook — port verbatim to `ralph/hooks/scripts/finish-review-verdict.sh`; called by default-mode body).
 
 Create new:
-- `review-postcondition.sh` (~80 lines). Discriminates on `RALPH_MODE` (set per-mode at the SKILL.md body's mode-dispatch entry) — but per Plan 4's lesson, prefer tool-input-shape discrimination: parse the last 200 lines of the transcript for `VALIDATION (PASS|FIX|FAIL)|CODE REVIEW (PASSED|ESCALATED|BLOCKED)|MERGED|MERGE (BLOCKED|NOT READY)|FINISHED|FINISH BLOCKED` and exit 0 if any match. Exit 2 with a clear stderr message otherwise.
-- `review-scout-gate.sh` (~40 lines). PreToolUse on `Bash`. Parse `tool_input.command` for `merge-pr.sh` or `gh pr merge`. If no match → exit 0 (not a merge command). Otherwise, fetch the PR's comments (via `gh pr view --json comments`) and check for `## Scout Trigger`. If absent → exit 0 (advisory not requested). If present → search for a `## Scout Report` reply with verdict. `PASS` or `WARN` → exit 0. `FAIL` → exit 2. Missing report → exit 0 (advisory-by-design; matches Scout Trigger contract).
+- `closeout-postcondition.sh` (~80 lines). Discriminates on `RALPH_MODE` (set per-mode at the SKILL.md body's mode-dispatch entry) — but per Plan 4's lesson, prefer tool-input-shape discrimination: parse the last 200 lines of the transcript for `VALIDATION (PASS|FIX|FAIL)|CODE REVIEW (PASSED|ESCALATED|BLOCKED)|MERGED|MERGE (BLOCKED|NOT READY)|FINISHED|FINISH BLOCKED` and exit 0 if any match. Exit 2 with a clear stderr message otherwise.
+- `closeout-scout-gate.sh` (~40 lines). PreToolUse on `Bash`. Parse `tool_input.command` for `merge-pr.sh` or `gh pr merge`. If no match → exit 0 (not a merge command). Otherwise, fetch the PR's comments (via `gh pr view --json comments`) and check for `## Scout Trigger`. If absent → exit 0 (advisory not requested). If present → search for a `## Scout Report` reply with verdict. `PASS` or `WARN` → exit 0. `FAIL` → exit 2. Missing report → exit 0 (advisory-by-design; matches Scout Trigger contract).
 
 Apply Plan 3's scope-fix pattern: each script gates on `RALPH_COMMAND` / `RALPH_TICKET_ID` env vars and no-ops when they're unset.
 
@@ -226,7 +226,7 @@ Compact list — Plan 3-style:
 - §Drift Analysis: parse `## Drift Log — Phase N` comments; verify `DRIFT:` commit messages exist; flag undocumented changes; emit drift summary block.
 - §Cross-Phase Integration: per-phase "Creates for next phase" verification; import-path resolution between phase outputs; run plan's `## Integration Testing` section if present. Single-phase plans → skipped.
 - §Delegation: opt-in via `RALPH_DELEGATE_ENABLED`. Threshold gate (`>=2 total AND >=1 failed`). 8KB prompt cap with per-check-summary truncation fallback. Strict 3-value enum (`pass|fail|needs-review`) cross-checked against automated results. Wrapper exit codes → native fallback. (Reference `skills/shared/delegation-conventions.md` for the no-mutation rule.)
-- §Verdict tokens (strict): `VALIDATION PASS`, `VALIDATION FIX`, `VALIDATION FAIL` — these are the only acceptable prefix tokens; `val-postcondition.sh` (review-postcondition.sh's val branch) accepts no substitutes.
+- §Verdict tokens (strict): `VALIDATION PASS`, `VALIDATION FIX`, `VALIDATION FAIL` — these are the only acceptable prefix tokens; `val-postcondition.sh` (the val branch of `closeout-postcondition.sh`) accepts no substitutes.
 
 ### Success Criteria
 
@@ -302,7 +302,7 @@ Compact list:
 3. **Pre-merge gates** — per `merge-gate.md` §Pre-merge gates:
    - PR review decision required: `gh pr view --json reviewDecision` MUST be `APPROVED`. `null` / `REVIEW_REQUIRED` → `MERGE BLOCKED — review required`. (Refuses unreviewed PRs even when caller skipped default-mode.)
    - PR mergeable: `gh pr view --json mergeable` MUST be `MERGEABLE`. `CONFLICTING` → `MERGE BLOCKED — conflicts`.
-   - Scout Report gate: enforced by `review-scout-gate.sh` PreToolUse on the merge Bash command (see `merge-gate.md` §Scout Report gate). Body need not duplicate the check.
+   - Scout Report gate: enforced by `closeout-scout-gate.sh` PreToolUse on the merge Bash command (see `merge-gate.md` §Scout Report gate). Body need not duplicate the check.
 4. **Merge** — invoke `scripts/merge-pr.sh PR_NUMBER` (verbatim from `ralph-merge`). Capture merge SHA.
 5. **Worktree cleanup** — `git worktree remove worktrees/GH-NNN --force` after merge. Cross-repo: remove sibling worktrees per `.ralph-repos.yml`.
 6. **Transition issue to Done** — `save_issue(workflowState="__DONE__", command="ralph_merge")`. Group merges: per-child transition.
@@ -319,7 +319,7 @@ Compact list:
 - §Cross-repo: read `.ralph-repos.yml`; for each sibling repo with `awaits` dependency on this issue, advance / comment per `dependency-flow`. Tilde-expanded `localDir` always resolved to absolute path before `cd`.
 - §Parent advancement: handled SERVER-SIDE by `advance-parent.yml` GitHub Action when all children reach Done. Skills MUST NOT advance parent — call out the boundary.
 - §CI Watch: `Monitor` tool with stdin-line-as-notification semantics. Script signature: one-line summary per state transition, terminal verdict line (`CI PASSED:` / `CI FAILED:` / `CI SKIPPED:`) immediately before `exit 0`, `timeout_ms=600000` (10 min) for `CI PENDING`. **CRITICAL**: substitute merge SHA into the `command` string literally — Monitor runs in its own subshell, does NOT inherit `$MERGE_SHA` from prior Bash calls. Empty array → `CI SKIPPED:` immediate exit (no infinite loop when CI is unconfigured). Use `printf '%s\n'` not `echo`. Guard every `gh`/`jq` invocation with `2>/dev/null || ...`.
-- §Scout Report gate: enforced by `review-scout-gate.sh` (Phase 1). When the PR has a `## Scout Trigger` comment (issued by `/ralph:impl --mode pr` per Plan 5), require a `## Scout Report` reply with verdict `PASS` or `WARN`. Block on `FAIL`. Missing report → exit 0 (advisory-by-design; matches scout-trigger contract). Plan 5 docs the producer side; this section docs the consumer side.
+- §Scout Report gate: enforced by `closeout-scout-gate.sh` (Phase 1). When the PR has a `## Scout Trigger` comment (issued by `/ralph:impl --mode pr` per Plan 5), require a `## Scout Report` reply with verdict `PASS` or `WARN`. Block on `FAIL`. Missing report → exit 0 (advisory-by-design; matches scout-trigger contract). Plan 5 docs the producer side; this section docs the consumer side.
 - §Verdict tokens (strict): `MERGED`, `MERGE BLOCKED — <reason>`, `MERGE NOT READY`.
 
 ### Success Criteria
@@ -334,7 +334,7 @@ Compact list:
 
 - [ ] `/ralph:review --mode merge #NNN` against a real APPROVED PR: merges, cleans up worktree, posts `## Merged`, transitions to Done.
 - [ ] Same against an unreviewed PR: emits `MERGE BLOCKED — review required` and stops without merging.
-- [ ] Scout-Trigger PR with FAIL report: `review-scout-gate.sh` blocks the merge command.
+- [ ] Scout-Trigger PR with FAIL report: `closeout-scout-gate.sh` blocks the merge command.
 
 ---
 
@@ -416,10 +416,10 @@ This is a one-line edit (plus optionally a label update). Plan 5 noted it as a P
 
 Append `### Plan 6: /ralph:review (shipped YYYY-MM-DD)` subsection. Capture:
 - Stats: 4 sources (1,585 lines) → 1 SKILL.md (~190 lines) + 4 references (~460 lines) = ~650 lines total; ~59% reduction.
-- 5 hooks (under the 9 ceiling): `merge-state-gate.sh` (reuse), `val-postcondition.sh` (reuse), `review-postcondition.sh` (new), `review-scout-gate.sh` (new), plus shared `lock-release-on-failure.sh` and `doc-structure-validator.sh`.
+- 5 hooks (under the 9 ceiling): `merge-state-gate.sh` (reuse), `val-postcondition.sh` (reuse), `closeout-postcondition.sh` (new), `closeout-scout-gate.sh` (new), plus shared `lock-release-on-failure.sh` and `doc-structure-validator.sh`.
 - Design call: default-mode preserves depth-0 fan-out by invoking `code-review:code-review` via `Skill()` directly, NOT via `Agent()`. Verified by 4-session parity (Phase 6 below) with parallel-reviewer fan-out visible in the run.
 - Design call: code-review fix cycle bound differs by mode — 1 cycle in default-mode (orchestrator), 3 rounds in `--mode code` (leaf). Boundary preserved.
-- Scout Report consumer: `review-scout-gate.sh` is the first hook to consume the `## Scout Report` artifact contract produced by `/ralph:impl --mode pr` per Plan 5. Closes the producer-consumer loop.
+- Scout Report consumer: `closeout-scout-gate.sh` is the first hook to consume the `## Scout Report` artifact contract produced by `/ralph:impl --mode pr` per Plan 5. Closes the producer-consumer loop.
 - Active-use checkboxes (4 dogfood sessions per Plan 5 pattern).
 
 #### 4. Parity validation runs
@@ -450,7 +450,7 @@ Append `### Plan 6: /ralph:review (shipped YYYY-MM-DD)` subsection. Capture:
 
 ### Unit Tests
 
-None — markdown workflow. MCP tools covered by ralph-hero MCP server's existing tests. Hooks are bash scripts; coverage continues via the existing hook-gate snapshot tests (Plan 3 pattern). New hook (`review-postcondition.sh`, `review-scout-gate.sh`) should get snapshot tests under `plugin/ralph-hero/mcp-server/src/__tests__/snapshots/` if the existing test runner picks them up via `ralph/hooks/scripts/` — confirm Phase 1 coverage scope.
+None — markdown workflow. MCP tools covered by ralph-hero MCP server's existing tests. Hooks are bash scripts; coverage continues via the existing hook-gate snapshot tests (Plan 3 pattern). New hook (`closeout-postcondition.sh`, `closeout-scout-gate.sh`) should get snapshot tests under `plugin/ralph-hero/mcp-server/src/__tests__/snapshots/` if the existing test runner picks them up via `ralph/hooks/scripts/` — confirm Phase 1 coverage scope.
 
 ### Integration Tests
 
@@ -463,9 +463,9 @@ Per Phase 6's list, plus:
 1. Verify depth-0 fan-out: invoke `/ralph:review #NNN` against a PR with `BLOCKED` review state in `RALPH_REVIEW_MODE=auto`; confirm `code-review:code-review` runs inline at depth 0 and its parallel reviewers land at depth 1 (visible in transcript).
 2. Verify code-review fix-cycle bound: simulate a `NEEDS_FIX` verdict in default-mode; confirm exactly 1 fix cycle runs before `FINISH BLOCKED`. Same simulation in `--mode code`; confirm up to 3 rounds run before escalation.
 3. Verify val-mode citation gate: write a phase with a file-content automated check; run `--mode val` against a deliberately-failing implementation; confirm the verdict comment quotes the actual file content (not inferred text).
-4. Verify Scout Report gate: PR with `## Scout Trigger` + `## Scout Report` (verdict FAIL); attempt `--mode merge`; confirm `review-scout-gate.sh` blocks with exit 2. Same PR with verdict PASS; confirm merge proceeds.
+4. Verify Scout Report gate: PR with `## Scout Trigger` + `## Scout Report` (verdict FAIL); attempt `--mode merge`; confirm `closeout-scout-gate.sh` blocks with exit 2. Same PR with verdict PASS; confirm merge proceeds.
 5. Verify merge-state-gate: attempt `save_issue` to transition merge-mode back to "In Progress"; confirm gate blocks.
-6. Verify review-postcondition: terminate `--mode val` without emitting any verdict token; confirm Stop hook fires with exit 2.
+6. Verify closeout-postcondition: terminate `--mode val` without emitting any verdict token; confirm Stop hook fires with exit 2.
 
 ## Performance Considerations
 
