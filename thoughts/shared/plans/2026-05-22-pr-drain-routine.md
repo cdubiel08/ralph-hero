@@ -724,6 +724,8 @@ Expected: exactly one issue matches.
 
 ## Phase 5 — Cloud Routine setup
 
+> **BLOCKED — Anthropic cloud Routine plugin install gap.** Verified empirically 2026-05-22 with the `pr-drain-smoke` routine (now deleted): cloud Routine sessions do NOT install ralph-hero plugins from a committed `.claude/settings.json`, and `/plugin install` is not available in cloud session input. The init pane shows zero "Install plugins" step; `/ralph-hero:*` skills fail with "Unknown skill". This makes the routine prompt below ("invoke `/ralph-hero:ralph-pr-drain --pr <N>`") a no-op in every cloud-fired session. PRs #1352 (added a candidate fix) and #1353 (reverted it) capture the investigation; see also the `cloud-routines-plugin-install-gap` memory. Do not pick up this phase until Anthropic ships imperative cloud plugin install. **Phase 4 (local invocation via `/ralph-hero:ralph-pr-drain --pr <N>`) remains fully working** and is the supported path for pr-drain today. The phase content below is preserved for future re-use when the cloud gap closes.
+
 Manual configuration in the claude.ai UI. The routine prompt is short because all classification + action logic lives in the skill.
 
 ### Task 5.1: Create the routine

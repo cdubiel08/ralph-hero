@@ -33,9 +33,11 @@ Director is a pure dispatcher. It reads the project queue, classifies the top ev
 
 ## Remote-trigger contract
 
+> **DEPRECATED — `RemoteTrigger` source (Priority 1) cannot be exercised end-to-end.** Cloud Routines (the only producer surface that fires `RemoteTrigger` tool inputs) do not currently install ralph-hero plugins at session start, so a Routine that POSTs to a `/fire` endpoint starts a cloud session where Director itself is "Unknown skill" and never runs. The wire is preserved here for the day Anthropic ships imperative cloud plugin install; until then, **do not build new producers against `RemoteTrigger`**. The shipped producer in `scripts/monitoring-bridge/subscribe.py` (GH-1300, PR #1310) is similarly inert. Verified empirically 2026-05-22; see PRs #1352/#1353 and the `cloud-routines-plugin-install-gap` memory.
+
 Director accepts events from three sources in priority order:
 
-1. **`RemoteTrigger` tool inputs** — if surfaced by the harness, these arrive as structured tool arguments and take precedence over all other inputs.
+1. **`RemoteTrigger` tool inputs** *(deprecated, see callout above)* — if surfaced by the harness, these arrive as structured tool arguments and take precedence over all other inputs.
 2. **`trigger:<team>` issue labels** — checked via `get_issue` labels array after fetching the candidate issue. Consumed (removed) after dispatch.
 3. **`/schedule` heartbeat or direct CLI invocation** — no explicit input; Director reads `next_actions` and picks the top-ranked event.
 
