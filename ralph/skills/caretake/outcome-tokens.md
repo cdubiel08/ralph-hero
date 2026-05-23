@@ -14,7 +14,12 @@ Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emit
 - `Queue empty.` — no untriaged Backlog issues remain.
 
 `triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. The hook also verifies `RALPH_TRIAGE_ACTION` is set to one of `RESEARCH | SPLIT | CLOSE | KEEP | HUMAN | CANCEL | RE-ESTIMATE`.
-<!-- Phase 4 fills: ## Hygiene terminal tokens -->
+## Hygiene terminal tokens
+
+- `HYGIENE COMPLETE <N archived>` — scan ran cleanly; `N` is the archive count (0 if dry-run or threshold not exceeded).
+- `HYGIENE BLOCKED <reason>` — scan failed (project not found, MCP error, archive call failed, etc.).
+
+Hygiene has no `Stop` postcondition hook because it does not mutate semantic workflow state. The terminal token is reported for parity with other modes; no automated verification is performed against it.
 <!-- Phase 5 fills: ## Unblock terminal tokens -->
 <!-- Phase 6 fills: ## Postmortem / Retro / Trends sections -->
 
