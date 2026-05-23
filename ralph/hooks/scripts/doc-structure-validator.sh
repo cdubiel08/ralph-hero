@@ -56,8 +56,10 @@ case "$command" in
     grep -qE '`[^`]+`' "$doc" || errors+=("Missing: backtick-wrapped file paths (e.g., \`src/file.ts\`) — referenced findings should use code-spans")
     ;;
   plan)
-    grep -qE "^## Phase [0-9]" "$doc" || errors+=("Missing: ## Phase N: header pattern (e.g., '## Phase 1: ...')")
-    grep -qE "^\- \[ \] (Automated|Manual):" "$doc" || errors+=("Missing: Success criteria format '- [ ] Automated:' or '- [ ] Manual:'")
+    # Section names match ralph/skills/plan/plan-shapes.md § Section order.
+    grep -qE "^## Phase [0-9]" "$doc" || errors+=("Missing: '## Phase N:' header pattern (e.g., '## Phase 1: ...')")
+    grep -qE "^#### (Automated|Manual) Verification" "$doc" || errors+=("Missing: '#### Automated Verification' or '#### Manual Verification' subsections")
+    grep -qE "^- \[ \]" "$doc" || errors+=("Missing: success-criteria checkboxes '- [ ] ...'")
     ;;
   review)
     grep -qE "APPROVED|NEEDS_ITERATION" "$doc" || errors+=("Missing: Verdict (APPROVED or NEEDS_ITERATION)")
