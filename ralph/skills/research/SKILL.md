@@ -87,7 +87,40 @@ Capture `ARG` as the remaining positional. Capture `--playwright` /
 
 ## Default flow
 
-_(Filled by Phase 2 and Phase 3.)_
+### Step 1: Intake
+
+Resolve `ARG` per `intake-routing.md`:
+
+- `#NNN` / `NNN` / `GH-NNNN` → `get_issue(number)`, set `LINKED_ISSUE=NNN`, use the issue title/body as the research question.
+- Free-form string → treat as the research question directly.
+- No `ARG` → prompt: *"I'm ready to research the codebase. Provide a research question, an area of interest, or a `#NNN` issue number."* Wait for the user.
+
+If the user mentions specific files by path, **read them FULLY (no offset/limit) before any sub-agent dispatch**. This is load-bearing — sub-agents lack the main session's context. See `intake-routing.md` § File reading rule.
+
+### Step 2: Knowledge-graph prior art (optional)
+
+If `knowledge_recall` / `knowledge_search` / `knowledge_query_outcomes` MCP tools are available, run the brief-first prior-art dispatch per `research-shapes.md` § Knowledge-graph dispatch shape. Use results to skip dispatching `thoughts-locator` for well-documented topics and to target `thoughts-analyzer` at the highest-relevance documents.
+
+Skip silently if the tools are unavailable — degrade to `thoughts-locator` filesystem scan in Step 3.
+
+### Step 3: Parallel sub-agent dispatch
+
+Consult `research-shapes.md` for the sub-agent palette. Spawn the relevant agents in parallel via multiple `Agent()` calls in a single message:
+
+- `codebase-locator` for WHERE files live.
+- `codebase-analyzer` for HOW components work.
+- `codebase-pattern-finder` for similar implementations to model after.
+- `thoughts-locator` for prior research / plans / reviews / ideas.
+- `thoughts-analyzer` on the top thoughts-locator results.
+- `web-search-researcher` — only when the user explicitly asks for external research.
+
+If `.ralph-repos.yml` exists, read it (via `Read`, not `decompose_feature`), detect multi-repo signals from the question, and pass additional repo dirs to sub-agent prompts per `research-shapes.md` § Cross-repo addendum.
+
+Do NOT pass `team_name` to any sub-agent call. Sub-agents document what IS, not what SHOULD BE — restate the documentarian constraint when delegating in cases where the agent might drift.
+
+### Step 4: Wait + synthesize
+
+Wait for ALL sub-agents to complete before synthesizing. Prioritize live codebase findings as primary; treat thoughts-derived context as historical supplement. Hold the synthesis in the main session for Step 5 review — do not write the doc yet.
 
 ## --mode auto
 
