@@ -1,0 +1,15 @@
+{
+  "extraKnownMarketplaces": {
+    "ralph-hero": {
+      "source": {
+        "source": "github",
+        "repo": "cdubiel08/ralph-hero"
+      },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": {
+    "ralph-hero@ralph-hero": true,
+    "ralph-knowledge@ralph-hero": true
+  }
+}
