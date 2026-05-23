@@ -55,7 +55,7 @@ After implementing the phase, before committing:
 6. Commit with a message identifying the phase: `feat(component): [phase description]` body line `Phase [N] of [M]: #NNN - [Title]`.
 7. Push: `git push -u origin feature/GH-NNN`.
 
-The `impl-verify-commit.sh` hook (PostToolUse on Bash) inspects the commit's `tool_output` for `nothing to commit`, `rejected`, or `pre-commit hook ... failed` and blocks the workflow when push fails.
+The `impl-verify-commit.sh` hook (PostToolUse on Bash) inspects the commit's `tool_response.stdout` + `tool_response.stderr` for `nothing to commit`, `rejected`, or `pre-commit hook ... failed` and blocks the workflow when push fails.
 
 ## §Multi-repo Commits
 

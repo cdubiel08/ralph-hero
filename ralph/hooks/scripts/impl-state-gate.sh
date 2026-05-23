@@ -24,6 +24,13 @@ if [[ -z "$new_state" ]]; then
   allow  # Not a state update
 fi
 
+# Semantic-intent transitions (__LOCK__, __ESCALATE__, etc.) are resolved by the
+# MCP save_issue tool to concrete workflow states; the gate must not block them
+# at the intent layer.
+if is_semantic_intent "$new_state"; then
+  allow_with_context "Semantic intent '$new_state' is resolved server-side; impl-state-gate defers to MCP."
+fi
+
 valid_output="${RALPH_VALID_OUTPUT_STATES:-In Progress,In Review,Human Needed}"
 
 if ! validate_state "$new_state" "$valid_output"; then

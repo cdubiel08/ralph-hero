@@ -12,7 +12,7 @@ if [[ "${RALPH_COMMAND:-}" != "impl" ]]; then
   allow
 fi
 
-read_input
+read_input > /dev/null
 
 new_state=$(get_field ".tool_input.workflowState" 2>/dev/null || get_field ".tool_input.targetState" 2>/dev/null || echo "")
 if [[ -z "$new_state" ]]; then

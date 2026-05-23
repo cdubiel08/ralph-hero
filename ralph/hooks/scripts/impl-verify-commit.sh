@@ -25,7 +25,13 @@ if [[ "$command" != *"git commit"* ]] && [[ "$command" != *"git push"* ]]; then
   allow
 fi
 
-tool_output=$(get_field '.tool_output')
+# PostToolUse on Bash exposes the result under tool_response.{stdout,stderr,exitCode}.
+# Concatenate stdout + stderr so the pattern matches catch git output regardless of
+# which stream the failure surfaces on (push rejections typically write to stderr).
+tool_stdout=$(get_field '.tool_response.stdout')
+tool_stderr=$(get_field '.tool_response.stderr')
+tool_output="${tool_stdout}
+${tool_stderr}"
 
 if [[ "$tool_output" == *"nothing to commit"* ]]; then
   warn "Git commit had nothing to commit. Phase changes may not have been staged with 'git add'."
