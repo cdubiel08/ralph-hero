@@ -105,40 +105,13 @@ For `--mode review`, also export `RALPH_COMMAND=review` and `RALPH_ARTIFACT_DIR=
 
 ## Default flow
 
-### Step 1: Intake
-
-Resolve `ARG` per `intake-routing.md`:
-
-- `#NNN` / `NNN` / `GH-NNNN` → `get_issue(number)`. Set `LINKED_ISSUE`. Read issue comments for `## Research Document` artifact link; if present, read the linked research doc FULLY.
-- Path to research doc (`thoughts/shared/research/*.md`) → read FULLY; extract `github_issue` from frontmatter; set `LINKED_ISSUE`.
-- Path to existing plan (`thoughts/shared/plans/*.md`) → route to `--mode iterate` automatically (warn the user once).
-- Free-form description → no linked issue; the user is planning ad-hoc.
-- No `ARG` → prompt for issue / file / description.
-
-Run the parent-plan reuse check per `intake-routing.md` § Parent-plan reuse. If the issue is a child of an epic whose plan-of-plans already covers this phase, post a `## Plan Reference` comment and advance the child to "In Progress" — STOP here.
-
-### Step 2: Research & discovery
-
-Knowledge-graph prior art (if available): `knowledge_recall(query="<topic>", role="planner", brief=true)` — planner tier policy `[reflection, wiki, doc]` surfaces synthesized + curated context.
-
-Spawn parallel sub-agents (single message, multiple `Agent()` calls):
-
-- `ralph-hero:codebase-locator` for WHERE files live.
-- `ralph-hero:codebase-analyzer` for HOW components work.
-- `ralph-hero:thoughts-locator` for prior research / plans / reviews.
-- `ralph-hero:thoughts-analyzer` on the most relevant thoughts findings.
-
-Wait for ALL. Read files identified by the locators FULLY (no offset/limit) into the main session.
-
-### Step 3: Plan structure development
-
-Propose phase shape based on research:
-
-- How many phases? (1-2 for XS, 2-5 for S, 5-10 for M.)
-- What does each phase own? (Tightly-scoped file sets; one concern per phase.)
-- Where are the verification points? (Automated commands + manual user checks.)
-
-Use `AskUserQuestion` to confirm structure with the user before drafting the full doc. Iterate on phase shape until the user approves. Consult `plan-shapes.md` § Phase-section anatomy for the shape each phase will take.
+1. **Intake** — resolve `ARG` per `intake-routing.md` (issue / research-doc / plan-path / free-form / no-arg). Read mentioned files FULLY before any sub-agent dispatch. Run parent-plan reuse check — if it short-circuits, post `## Plan Reference` and STOP.
+2. **Research & discovery** — `knowledge_recall(role="planner", brief=true)` if available; dispatch codebase-locator / codebase-analyzer / thoughts-locator in parallel (one message, multiple `Agent()` calls). Wait for ALL, read identified files FULLY.
+3. **Plan structure development** — propose phase count + ownership + verification points. `AskUserQuestion` to confirm. Loop until approved. Consult `plan-shapes.md` § Phase-section anatomy.
+4. **Write the plan** — per `plan-shapes.md` (default-column required sections). Filename `thoughts/shared/plans/YYYY-MM-DD-[GH-NNNN-]description.md`.
+4a. **UI Validation Phase (conditional)** — skip if `--no-playwright`. Else consult `ui-validation-phase.md`; append `## Phase N: UI Validation` if frontend-relevant + ralph-playwright installed.
+5. **User review picker** — `AskUserQuestion` over *Approve* / *Approve with edits* / *Restart* / *Iterate*. `review-plan-gate.sh` hook enforces this picker runs before any state-advancing `save_issue`.
+6. **GitHub integration** — if `LINKED_ISSUE`: post `## Implementation Plan` artifact comment with doc URL + 1-line summary; update issue body if scope clarified; `save_issue(workflowState: "Plan in Review", command: "plan")`. Human reviews the plan; a separate `--mode review` or manual approval advances to "In Progress".
 
 ## --mode auto
 
