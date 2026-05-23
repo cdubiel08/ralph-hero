@@ -10,7 +10,17 @@ Apply in priority order — first match wins. Rules 1-4 apply to `MODE ∈ {defa
 
 2. **Research-doc path** — `ARG` is a path under `thoughts/shared/research/*.md` or has `type: research` in its frontmatter. Read FULLY. Extract `github_issue` from frontmatter; set `LINKED_ISSUE`. The research doc is the primary planning input.
 
-3. **Existing-plan path** — `ARG` is a path under `thoughts/shared/plans/*.md`. Route to `--mode iterate` automatically (warn once: *"This is an existing plan — switching to --mode iterate. Pass --mode auto explicitly to overwrite."*).
+3. **Existing-plan path** — `ARG` is a path under `thoughts/shared/plans/*.md`. Prompt explicitly via `AskUserQuestion` (do NOT auto-route — preserving vs overwriting a plan is destructive enough to warrant confirmation):
+
+   ```
+   question: "This is an existing plan. What do you want to do?"
+   header: "Existing plan detected"
+   options:
+     - "Iterate on it"        → switch to --mode iterate
+     - "Re-plan from scratch" → default flow; will overwrite
+     - "Review it"            → switch to --mode review
+     - "Cancel"               → STOP
+   ```
 
 4. **Free-form description** — anything else not starting with `--`. Treat as a one-line planning prompt. `LINKED_ISSUE` is unset. Useful for ad-hoc planning without prior issue/research.
 

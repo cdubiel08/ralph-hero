@@ -11,35 +11,35 @@ source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-command="${RALPH_COMMAND:-}"
-if [[ -z "$command" ]]; then
-  allow
-fi
-
 project_root="$(get_project_root)"
-
-case "$command" in
-  research)
-    artifact_dir="$project_root/thoughts/shared/research"
-    ;;
-  plan)
-    artifact_dir="$project_root/thoughts/shared/plans"
-    ;;
-  review)
-    artifact_dir="$project_root/thoughts/shared/reviews"
-    ;;
-  *)
-    allow
-    ;;
-esac
-
-# Find a doc CREATED today by the autonomous research flow. The slim plugin
-# scopes this hook tighter than the source ralph-hero copy (which scanned the
-# last 60 min and could block on unrelated stale edits): we only validate a
-# file whose name starts with today's YYYY-MM-DD prefix and was modified in the
-# last 15 min (matching the autonomous flow's 15-minute budget).
 today=$(date +%Y-%m-%d)
-doc=$(find "$artifact_dir" -name "${today}-*.md" -type f -mmin -15 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
+
+# Slim plugin: discriminate validator branch by file PATH, not RALPH_COMMAND
+# env. The slim ralph multi-mode verbs (e.g., /ralph:plan in --mode review)
+# can't reliably flip RALPH_COMMAND mid-session because Bash-tool exports don't
+# propagate to hook subprocesses. Path-based discrimination is robust: a doc
+# under thoughts/shared/plans/ is a plan doc regardless of the active mode.
+#
+# Scan all three artifact dirs for a today-prefixed doc modified in the last
+# 15 min. Pick the branch by which dir the doc lives in. If multiple dirs have
+# fresh docs, the most-recently-modified wins.
+
+doc=""
+command=""
+for candidate_dir in "thoughts/shared/plans" "thoughts/shared/reviews" "thoughts/shared/research"; do
+  found=$(find "$project_root/$candidate_dir" -name "${today}-*.md" -type f -mmin -15 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
+  if [[ -n "$found" ]]; then
+    # Pick the freshest across dirs.
+    if [[ -z "$doc" ]] || [[ "$found" -nt "$doc" ]]; then
+      doc="$found"
+      case "$candidate_dir" in
+        thoughts/shared/plans)    command="plan"    ;;
+        thoughts/shared/reviews)  command="review"  ;;
+        thoughts/shared/research) command="research" ;;
+      esac
+    fi
+  fi
+done
 
 if [[ -z "$doc" ]]; then
   allow

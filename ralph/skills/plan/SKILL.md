@@ -2,12 +2,15 @@
 description: Create, iterate on, or review an implementation plan. Use whenever the
   user says "plan this", "write a plan for X", "draft a spec", "decompose this
   epic", "split this into features", "iterate on the plan", "refine the plan",
-  "review the plan", "critique this plan", "approve/reject the plan", hands over
-  a plan path, or hands over a research doc to crystallize. Default flow is
-  interactive (collaborative phased plan creation with human review). --mode auto
-  is the autonomous XS/S picker. --mode epic is multi-tier strategic decomposition
-  that creates feature children. --mode iterate makes surgical updates to an
-  existing plan. --mode review produces an APPROVED/NEEDS_ITERATION verdict.
+  "tweak the plan", "update the plan", "amend the plan", "add a phase", "fix
+  phase N", "extend the plan", "the plan is missing X", "review the plan",
+  "critique this plan", "score the plan", "is this plan good?", "verdict on the
+  plan", "sign off on the plan", "approve/reject the plan", hands over a plan
+  path, or hands over a research doc to crystallize. Default is interactive
+  (collaborative phased plan creation with human review). --mode auto is the
+  autonomous XS/S picker. --mode epic is multi-tier strategic decomposition that
+  creates feature children. --mode iterate makes surgical updates to an existing
+  plan. --mode review produces an APPROVED/NEEDS_ITERATION verdict.
 argument-hint: "[--mode auto|epic|iterate|review] [<issue-number|plan-path|description>] [--playwright|--no-playwright]"
 context: inline
 model: opus
@@ -27,8 +30,6 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-state-gate.sh"
     - matcher: "AskUserQuestion"
       hooks:
         - type: command
@@ -42,12 +43,19 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-verify-doc.sh"
+  # review-state-gate and review-postcondition deliberately NOT declared here:
+  # the slim plugin can't reliably flip RALPH_COMMAND mid-session (Bash exports
+  # don't propagate to hook subprocesses), so review-mode is gated by:
+  #   - path discrimination on doc-structure-validator (auto-picks branch from
+  #     which artifact dir has the most recent today-prefixed doc),
+  #   - path discrimination on review-verify-doc + review-no-dup (already in
+  #     the script bodies — they no-op when file_path isn't under reviews/),
+  #   - the broadened valid-output set on plan-state-gate (accepts review-mode
+  #     transitions In Progress / Plan in Progress on top of plan-mode ones).
   Stop:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-postcondition.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-postcondition.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
         - type: command
@@ -101,7 +109,7 @@ critique-with-verdict.
 
 Set `MODE` ∈ `{default, auto, epic, iterate, review}` from `--mode` flag (default if absent). Capture `ARG` (remaining positional). Capture `--playwright` / `--no-playwright`. Bail with the mode table on `--help`.
 
-For `--mode review`, also export `RALPH_COMMAND=review` and `RALPH_ARTIFACT_DIR=thoughts/shared/reviews` via Bash before the first save_issue — this routes the gates (`review-state-gate.sh`, `review-postcondition.sh`, `review-verify-doc.sh`, `doc-structure-validator.sh` review branch) to the review-mode validation set.
+No env-flip is needed between modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch by which artifact dir has the most recent today-prefixed doc; plan-state-gate accepts the union of legitimate transitions across all modes).
 
 ## Default flow
 
@@ -151,8 +159,9 @@ Surgical updates to an existing plan. No state transitions (the plan stays in wh
 1. **Resolve plan** — `ARG=#NNN` → `get_issue` and follow the `## Implementation Plan` artifact comment. `ARG=<path>` → use directly. Read FULLY.
 2. **Understand feedback** — `ARG` extra positional or prompt for it. Restate the change in one sentence.
 3. **Confirm approach** — `AskUserQuestion`: *Apply as proposed* / *Adjust* / *Abort*. Loop on Adjust.
-4. **Apply surgical edits** — prefer `Edit` over `Write` per `iteration.md` § Surgical-update principle. Preserve phase numbering; add follow-up sections rather than renumbering.
-5. **Update issue** — post `## Plan Updated` comment summarizing what changed. Do NOT advance state (per `iteration.md` § State preservation).
+4. **Apply surgical edits** — prefer `Edit` over `Write` per `iteration.md` § Surgical-update principle. Preserve phase numbering; add follow-up sections rather than renumbering. Renumbering escape hatch: see `iteration.md` § Phase numbering preservation.
+5. **Update issue** — post `## Plan Updated` comment summarizing what changed. Do NOT advance state. Do NOT call `save_issue` for workflow transitions in iterate mode (`plan-state-gate.sh` validates transition legitimacy; iterate-mode workflow-body discipline keeps it out of the gate entirely).
+6. **Report** — *Plan iterated for #NNN: [Title] / Plan: [path] / Changes: [1-line summary]*.
 
 ## --mode review
 
@@ -163,7 +172,7 @@ Critique an existing plan and emit APPROVED / NEEDS_ITERATION. Folds `ralph-revi
 3. **Execute rubric** — read plan FULLY. Score against `plan-review.md` § Review rubric.
 4. **Pick mode (interactive vs auto)** — if `RALPH_REVIEW_PLAN=auto`, dispatch a sub-agent for delegated critique. Else `AskUserQuestion`: *Approve* / *Approve with edits* / *Reject* / *Need more info*.
 5. **Write critique doc** — `thoughts/shared/reviews/YYYY-MM-DD-GH-NNNN-critique.md` per `plan-review.md` § Critique-doc structure. `review-no-dup.sh` blocks if a critique already exists.
-6. **Verdict + transition** — APPROVED → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts.
+6. **Verdict + transition** — APPROVED → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts. `plan-state-gate.sh` is broad enough to accept both (see hook script header for the union-of-modes valid set).
 7. **Report** — *Plan reviewed for #NNN: [Title] / Verdict: APPROVED|NEEDS_ITERATION / Critique: [path]*.
 
 ## References

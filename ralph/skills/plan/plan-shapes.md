@@ -124,7 +124,7 @@ Epic mode writes a different shape — see `decomposition.md` § Plan-of-plans s
 | L | 7-10 phases | Multi-tier; `--mode epic` required |
 | XL | Plan of plans | Always `--mode epic` |
 
-Plan 4 default + auto modes target XS/S/M. L+ goes to epic mode. The `plan-tier-validator.sh` hook enforces the XS/S boundary for `--mode auto`.
+Plan 4 `--mode auto` targets XS/S only (enforced by `plan-tier-validator.sh`). Default and iterate modes accept M too. L+ requires `--mode epic`.
 
 ## Per-mode required-sections matrix
 
