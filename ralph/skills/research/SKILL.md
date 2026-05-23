@@ -122,6 +122,34 @@ Do NOT pass `team_name` to any sub-agent call. Sub-agents document what IS, not 
 
 Wait for ALL sub-agents to complete before synthesizing. Prioritize live codebase findings as primary; treat thoughts-derived context as historical supplement. Hold the synthesis in the main session for Step 5 review — do not write the doc yet.
 
+### Step 5: Findings review
+
+Display a concise synthesis summary with file refs. `AskUserQuestion` over: *Looks good, write it* / *Go deeper on a topic* / *Correct something*. Loop on the latter two (dispatch targeted sub-agents or incorporate corrections, re-present) until the user approves writing.
+
+### Step 6: Write doc
+
+Gather metadata (`git rev-parse HEAD`, `date +%Y-%m-%d`, `git branch --show-current`) in parallel, then write to `thoughts/shared/research/YYYY-MM-DD-[GH-NNNN-]description.md` per `findings-format.md`. Include `GH-NNNN-` only when `LINKED_ISSUE` is set.
+
+### Step 6.5: Playwright baseline (conditional)
+
+Skip if `--no-playwright`. Otherwise consult `playwright-baseline.md` — detect ralph-playwright, assess frontend relevance, optionally capture baseline and append `## UI Baseline` to the doc.
+
+### Step 7: GitHub permalinks
+
+If on `main` or the commit is pushed, convert local `path:line` references to GitHub permalinks per `findings-format.md` § Permalink format.
+
+### Step 8: Optional artifact comment
+
+If `LINKED_ISSUE` is set or the user asks to link mid-flow: rename the file to include `GH-NNNN-` (insert after the date prefix, zero-pad to 4 digits), update frontmatter (`github_issue`, `github_url`), and post a `## Research Document` comment per `findings-format.md` § Artifact comment.
+
+### Step 9: Next-steps picker
+
+`AskUserQuestion` over: *Create issue from findings* (suggest `/ralph:form <doc-path>`) / *Ask follow-up questions* (Step 10) / *Done* (STOP).
+
+### Step 10: Follow-up handling
+
+Append to the SAME doc. Update frontmatter (`last_updated`, `last_updated_note`). Add `## Follow-up Research [timestamp]` section. Dispatch targeted sub-agents per Step 3. Re-present Step 9 when done.
+
 ## --mode auto
 
 _(Filled by Phase 4.)_
