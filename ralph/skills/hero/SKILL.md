@@ -166,7 +166,59 @@ result: Hero paused at <phase> — <reason>. Resume: /ralph:hero NNN
 
 ## --mode classify
 
-(Phase 3 — filled in next.)
+Director-only mode: classify one issue and dispatch the correct verb. Does NOT implement work. Useful for iOS shortcuts and manual override paths. Full taxonomy in [event-classes.md](event-classes.md).
+
+### Step 1: Parse arguments + detect input source
+
+Parse `$ARGUMENTS` for `--issue NNN`.
+
+- If present → set `TARGET_ISSUE=NNN`, skip to Step 2b.
+- If a `RemoteTrigger` tool input is present (deprecated — see [event-classes.md](event-classes.md) §iOS-mode sentinel) → extract `issue_number` + `team`, set `TARGET_ISSUE` + `FORCED_TEAM` + `DISPATCH_REASON=RemoteTrigger`, skip to Step 4.
+- Otherwise → Step 2a.
+
+### Step 2a: Read next_actions
+
+Call `next_actions({})`. If queue empty: emit `result: Queue empty. No events to dispatch.` and STOP.
+
+Pick the top-ranked direction. Resolve `TARGET_ISSUE` per [event-classes.md](event-classes.md) (kind rules — `issue`/`tree-continue`/`lock-stale`/`human-needed-unblock` use `direction.issue.number`; `pr` uses `direction.signals.linkedIssueNumber`).
+
+### Step 2b: Fetch issue
+
+`get_issue({ number: TARGET_ISSUE })`. Store `ISSUE_WORKFLOW_STATE`, `ISSUE_LABELS[]`.
+
+### Step 3: Classify via taxonomy
+
+Read [event-classes.md](event-classes.md). Apply priority order: `trigger:*` labels → automation labels → workflow_state fallback. Set `TEAM`, `ENTRYPOINT`, `DISPATCH_REASON`, `CONSUMED_LABEL`.
+
+### Step 4: Dispatch via Skill()
+
+iOS-mode sentinel: if `DISPATCH_REASON` starts with `trigger:` OR equals `RemoteTrigger`, write the sentinel before dispatch:
+
+```bash
+touch "${TMPDIR:-/tmp}/ralph-ios-mode"
+```
+
+Workflow_state-driven dispatches (Priority 3) do NOT write the sentinel — only Priority 1 (`trigger:*`) and `RemoteTrigger` paths do.
+
+If entrypoint exists: `Skill(ENTRYPOINT, args="NNN")` and emit `Classified #NNN as <team> (reason: <DISPATCH_REASON>). Dispatching <entrypoint>.`
+
+If entrypoint does not exist (memorykeepers): emit `needs input: team <name> not yet implemented; skipping dispatch.`
+
+### Step 5: Consume trigger:* label (if applicable)
+
+If `CONSUMED_LABEL` is set: `save_issue({ number: TARGET_ISSUE, labels: ISSUE_LABELS minus CONSUMED_LABEL })`. Automation labels (`watcher-auto`, `debug-auto`, `scout-auto`, `process-improvement`) are NOT consumed — their producers manage their own lifecycle. `RemoteTrigger`-sourced events: no label to consume; skip.
+
+### Step 6: Emit result marker
+
+```
+result: Dispatched #NNN to <team> via <entrypoint>. (reason: <DISPATCH_REASON>)
+```
+
+Or, if no dispatch was made (unimplemented team):
+
+```
+result: #NNN classified as <team> (reason: <DISPATCH_REASON>). No dispatch — team not yet implemented.
+```
 
 ## --mode auto
 
