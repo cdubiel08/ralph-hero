@@ -146,11 +146,25 @@ Strategic multi-tier decomposition. Folds `ralph-plan-epic` + epic-decomposition
 
 ## --mode iterate
 
-_(Filled by Phase 6.)_
+Surgical updates to an existing plan. No state transitions (the plan stays in whatever workflow state it was in). Consult `iteration.md`.
+
+1. **Resolve plan** — `ARG=#NNN` → `get_issue` and follow the `## Implementation Plan` artifact comment. `ARG=<path>` → use directly. Read FULLY.
+2. **Understand feedback** — `ARG` extra positional or prompt for it. Restate the change in one sentence.
+3. **Confirm approach** — `AskUserQuestion`: *Apply as proposed* / *Adjust* / *Abort*. Loop on Adjust.
+4. **Apply surgical edits** — prefer `Edit` over `Write` per `iteration.md` § Surgical-update principle. Preserve phase numbering; add follow-up sections rather than renumbering.
+5. **Update issue** — post `## Plan Updated` comment summarizing what changed. Do NOT advance state (per `iteration.md` § State preservation).
 
 ## --mode review
 
-_(Filled by Phase 6.)_
+Critique an existing plan and emit APPROVED / NEEDS_ITERATION. Folds `ralph-review`. Export `RALPH_COMMAND=review` and `RALPH_ARTIFACT_DIR=thoughts/shared/reviews` at the start so the review-mode hooks activate. Consult `plan-review.md`.
+
+1. **Resolve plan + issue** — `ARG=#NNN` → `get_issue`; locate the `## Implementation Plan` artifact. `--plan-doc <path>` accepted as override.
+2. **Validate plan exists** — if absent, escalate the issue to "Human Needed". STOP.
+3. **Execute rubric** — read plan FULLY. Score against `plan-review.md` § Review rubric.
+4. **Pick mode (interactive vs auto)** — if `RALPH_REVIEW_PLAN=auto`, dispatch a sub-agent for delegated critique. Else `AskUserQuestion`: *Approve* / *Approve with edits* / *Reject* / *Need more info*.
+5. **Write critique doc** — `thoughts/shared/reviews/YYYY-MM-DD-GH-NNNN-critique.md` per `plan-review.md` § Critique-doc structure. `review-no-dup.sh` blocks if a critique already exists.
+6. **Verdict + transition** — APPROVED → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts.
+7. **Report** — *Plan reviewed for #NNN: [Title] / Verdict: APPROVED|NEEDS_ITERATION / Critique: [path]*.
 
 ## References
 
