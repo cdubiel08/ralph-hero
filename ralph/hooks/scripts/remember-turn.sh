@@ -1,5 +1,5 @@
 #!/bin/bash
-# ralph-hero/hooks/scripts/remember-turn.sh
+# ralph/hooks/scripts/remember-turn.sh
 # Stop hook: capture the last user + assistant turn from the agent transcript
 # into ~/projects/thoughts/dream-memories/agent/YYYY/MM/DD/<agent>-<hash12>.md
 # so it feeds into the next dream-loop reflection synthesis pass.
@@ -61,7 +61,7 @@ if ! [[ "$MIN_CHARS" =~ ^[0-9]+$ ]]; then
   MIN_CHARS=200
 fi
 
-AGENT_TYPE="${CLAUDE_AGENT_TYPE:-unknown}"
+AGENT_TYPE="${CLAUDE_AGENT_TYPE:-${RALPH_COMMAND:-unknown}}"
 # Strip any plugin namespace prefix (e.g., "ralph-hero:impl-agent" -> "impl-agent")
 AGENT_TYPE="${AGENT_TYPE##*:}"
 

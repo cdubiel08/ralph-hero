@@ -28,6 +28,10 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-no-dup.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
+    - matcher: "Edit"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
     - matcher: "AskUserQuestion"
       hooks:
         - type: command

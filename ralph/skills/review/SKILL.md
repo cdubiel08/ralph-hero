@@ -36,7 +36,6 @@ allowed-tools:
   - Agent
   - Monitor
   - AskUserQuestion
-  - PushNotification
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues

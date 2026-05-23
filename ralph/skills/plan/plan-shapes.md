@@ -181,7 +181,7 @@ Epic mode writes a different shape — see `decomposition.md` § Plan-of-plans s
 | L | 7-10 phases | Multi-tier; `--mode epic` required |
 | XL | Plan of plans | Always `--mode epic` |
 
-Plan 4 `--mode auto` targets XS/S only (enforced by `plan-tier-validator.sh`). Default and iterate modes accept M too. L+ requires `--mode epic`.
+Plan 4 `--mode auto` targets XS/S only — advisory in the body, no hook enforcement (the slim plugin's `plan-tier-validator.sh` only catches shape corruption, not estimate gating). Default and iterate modes accept M too. L+ requires `--mode epic`.
 
 ## Per-mode required-sections matrix
 

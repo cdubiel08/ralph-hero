@@ -32,6 +32,8 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
         - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/remember-turn.sh"
+        - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
 allowed-tools:
   - Read
