@@ -29,9 +29,9 @@ Headline shape:
 | 5 | `/ralph:impl` | shipped |
 | 6 | `/ralph:review` | shipped |
 | 7 | `/ralph:caretake` | shipped |
-| 8 | `/ralph:hero` | pending |
-| 9 | `/ralph:setup` | pending |
-| 10 | sunset `plugin/ralph-hero/` | pending |
+| 8 | `/ralph:hero` | shipped |
+| 9 | `/ralph:setup` | shipped |
+| 10 | sunset `plugin/ralph-hero/` | Wave 1 shipped 2026-05-23 (P0/P1 parity fixes). Wave 2 (P2/P3 fixes) + Wave 3 (deletion) in progress. |
 
 ## Local development
 

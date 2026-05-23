@@ -661,3 +661,32 @@ Open follow-ups (separate plans):
 
 - Plan 8 (`/ralph:hero`) is the orchestrator that dispatches `/ralph:impl --mode auto` then `/ralph:review` (default) per issue. Plan 6's verdict-token contracts (`FINISHED`, `FINISH BLOCKED — <reason>`) are the boundary the hero parses to decide next action. The Plan 7 `--mode <name>` arg surface is preserved so the hero's existing dispatch pattern keeps working.
 - Plan 10 owns sunset of source `ralph-val`, `ralph-code-review`, `ralph-merge`, `finish`, `caretake`, `ralph-triage`, `ralph-hygiene`, `ralph-postmortem`, `retro`, `trends`, `unblock`, `ralph-unblock`, `ralph-debug-collate`, `ralph-split` skills.
+
+### Plan 10 Wave 1: P0/P1 parity fixes (shipped 2026-05-23, branch `feature/ralph-plan-10-sunset-wave1`, plan [`2026-05-23-GH-1395-ralph-plan-10-sunset.md`](../plans/2026-05-23-GH-1395-ralph-plan-10-sunset.md))
+
+Plan 10 is split into three waves because the spec calls for a dogfooding gap between parity-fix closure and sunset. Wave 1 closes the six P0/P1 audit issues that block sunset; Wave 2 batches the 12 P2/P3 issues over the dogfooding window; Wave 3 deletes `plugin/ralph-hero/skills/` once parity holds and each `/ralph:*` mode has been exercised on every surface it replaces.
+
+Six audit issues closed in this PR:
+
+- **#1372 (P0)** — copied 3 sub-agent prompt files (`implementer-prompt.md`, `task-reviewer-prompt.md`, `phase-reviewer-prompt.md`) into `ralph/skills/impl/`. `/ralph:impl --mode auto` was failing on first invocation because `phase-execution.md` referenced files that were never ported.
+- **#1373 (P1)** — added `merge-review-decision-gate.sh` PreToolUse:Bash hook that runs `gh pr view --json reviewDecision` and exits 2 on non-APPROVED. Closes the P6 violation where merge-gate enforcement was prose-only.
+- **#1374 (P1)** — ported the `RALPH_AUTO_MERGE=true` autonomous merge gate (three-criterion check: review approved + CI green + PR open/mergeable) and the `AUTO-MERGE BLOCKED` terminal token into `merge-gate.md`. Orchestrators (autopilot, hero) recognize the token without code changes.
+- **#1375 (P1)** — restored the XS-no-comments and self-authored-on-solo-repo carve-outs from non-APPROVED merges. Both live in the merge-gate.md prose AND the new hook (helper functions `is_xs_no_comments_pr` / `is_self_authored_solo_repo`). Single-developer repos can merge again.
+- **#1377 (P1)** — added per-phase `depends_on:` annotation + per-task YAML schema (`files`, `tdd`, `complexity`, `depends_on`, `acceptance`) to `plan-shapes.md`. `plan-postcondition.sh` was reading these fields without them being documented; plans authored since Plan 4 were producing silently incomplete graphs.
+- **#1378 (P1)** — self-gated `review-postcondition.sh` on `RALPH_SUBCOMMAND=review` (Plan 7 caretake pattern) and re-registered it in `/ralph:plan` Stop chain. Critique-doc creation is now enforced at Stop again. `--mode review` body sets `RALPH_SUBCOMMAND=review` at body entry as Step 0.
+
+Patterns to encode in future plans:
+
+- **Audit-then-fix is its own plan shape.** Plans 1–9 were folds. Plan 10 Wave 1 is a directed-fix wave with no new structure — one phase per audit issue, single-commit per fix, scope tight. Useful template for the inevitable Wave 2 + any later parity discoveries against Plans 8/9.
+- **Carve-outs belong in BOTH the prose and the hook.** Phase 4 deliberately duplicates the XS-no-comments + self-authored-solo-repo logic across `merge-gate.md` (what users read) and `merge-review-decision-gate.sh` (what enforces). Spec P6 ("Hooks own enforcement") does not mean prose is silent — prose tells the user what the hook does. Drift between the two will surface as future audit issues, which is the right failure mode.
+- **`RALPH_SUBCOMMAND` set in the mode body propagates to hook subprocesses.** Plan 4's friction-log noted Bash exports "don't propagate" — that was specifically about flipping `RALPH_COMMAND` mid-session. New env vars set by the body (`RALPH_SUBCOMMAND=<mode>`) reach hooks correctly. Plan 7 caretake proved the pattern; Plan 10 Wave 1's review-postcondition re-registration confirms it generalizes.
+
+Friction notes (populated by active use):
+
+- [ ] _(Examples to watch for: merge-review-decision-gate.sh false-blocking on PRs with carve-out conditions that the helpers miss; per-task YAML schema authoring friction in real plans; `RALPH_SUBCOMMAND=review` propagation in unusual Bash subprocess shapes; review-postcondition.sh false-blocking when called from another verb's Stop chain by accident.)_
+
+Open follow-ups (separate plans / PRs):
+
+- **Wave 2 (each its own PR or small batch):** #1376 (iOS-mode push impl), #1379 (--mode review picker), #1381 (remember-turn.sh Stop hook port), #1384 (install-schedules.sh bootstrap), #1385 (caretake result:/needs input: tokens), #1386 (triage Step 7), #1387 (form thoughts-analyzer doc), #1380 (RALPH_PLAN_TYPE for --mode epic), #1382 (RALPH_IMPL_MODEL doc), #1383 (pr 8KB prompt-cap), #1388 (form no-args help), #1389 (knowledge_expert 3-priority rule).
+- **Wave 3 (after Wave 2 closure + ≥1 real-session pass per active `/ralph:*` mode):** Batch-delete `plugin/ralph-hero/skills/` (alphabetical), retarget `ralph-hero/CLAUDE.md` to slim plugin as canonical, update top-level README migration row to "shipped", decide whether to relocate `plugin/ralph-hero/mcp-server/` into `ralph/mcp/`.
+- **Beyond Plan 10:** Run the same completeness-audit mechanism against Plans 8 (`/ralph:hero`) and Plan 9 (`/ralph:setup`) — any gaps that surface become a Plan 11.
