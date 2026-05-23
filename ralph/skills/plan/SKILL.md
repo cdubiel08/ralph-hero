@@ -26,7 +26,9 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-research-required.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-no-dup.sh"
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
+    - matcher: "Edit"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-tier-validator.sh"
@@ -67,6 +69,8 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-postcondition.sh"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/remember-turn.sh"
 allowed-tools:
   - Read
   - Write

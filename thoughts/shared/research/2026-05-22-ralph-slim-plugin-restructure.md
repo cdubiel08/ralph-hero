@@ -690,3 +690,37 @@ Open follow-ups (separate plans / PRs):
 - **Wave 2 (each its own PR or small batch):** #1376 (iOS-mode push impl), #1379 (--mode review picker), #1381 (remember-turn.sh Stop hook port), #1384 (install-schedules.sh bootstrap), #1385 (caretake result:/needs input: tokens), #1386 (triage Step 7), #1387 (form thoughts-analyzer doc), #1380 (RALPH_PLAN_TYPE for --mode epic), #1382 (RALPH_IMPL_MODEL doc), #1383 (pr 8KB prompt-cap), #1388 (form no-args help), #1389 (knowledge_expert 3-priority rule).
 - **Wave 3 (after Wave 2 closure + ≥1 real-session pass per active `/ralph:*` mode):** Batch-delete `plugin/ralph-hero/skills/` (alphabetical), retarget `ralph-hero/CLAUDE.md` to slim plugin as canonical, update top-level README migration row to "shipped", decide whether to relocate `plugin/ralph-hero/mcp-server/` into `ralph/mcp/`.
 - **Beyond Plan 10:** Run the same completeness-audit mechanism against Plans 8 (`/ralph:hero`) and Plan 9 (`/ralph:setup`) — any gaps that surface become a Plan 11.
+
+### Plan 11 Wave 2 (selective): targeted P2/P3 fixes + scope closures (shipped 2026-05-23, branch `feature/ralph-plan-11-wave2-selective`, plan [`2026-05-23-GH-1397-ralph-plan-11-wave2-selective.md`](../plans/2026-05-23-GH-1397-ralph-plan-11-wave2-selective.md))
+
+The user triaged the 12 P2/P3 audit issues from Wave 1 into three buckets after Plan 10 shipped: implement / close-with-rationale / defer. Plan 11 executes the first two buckets in one PR.
+
+Five audit issues closed via implementation:
+
+- **#1376 (P2)** — de-scope iOS push reference from `/ralph:review` SKILL.md (iOS not first-class in slim; broken-promise prose pointing at an absent surface).
+- **#1380 (P3)** — repurpose `plan-tier-validator.sh` to self-discriminate from plan-doc shape (Feature Decomposition vs Phase N). Original env-driven design didn't map to the slim plugin's single-RALPH_COMMAND-plus-flag-modes architecture. Block only on the unambiguous corruption signal (both shapes in one doc); warn on neither.
+- **#1381 (P2)** — port `remember-turn.sh` Stop hook + register in `/ralph:plan` and `/ralph:impl` chains. Restores dream-loop raw-memory capture for every plan/impl session.
+- **#1386 (P2)** — port triage Step 7 "Find and Link Related Issues" verbatim into `caretake/modes/triage.md` (renumbered prior Step 7 to Step 8).
+- **#1388 (P3)** — restore `/ralph:form` no-args help block prefix in `intake-shapes.md` (was bare file list).
+
+One audit issue closed via documentation:
+
+- **#1387 (P2)** — confirm intentional enrichment: `/ralph:form` research-input branch dispatches `thoughts-analyzer` because users feeding a research doc want prior-art decisions surfaced too. One-line note in `intake-shapes.md` prevents future audits from re-flagging.
+
+Three audit issues closed with rationale (no code change):
+
+- **#1382 (P3)** — `RALPH_IMPL_MODEL` is documented in `/ralph:hero` (the orchestrator that reads it), not `/ralph:impl` (the dispatch target). By-design split.
+- **#1384 (P2)** — `install-schedules.sh` is infra-setup, not migration scope. Source-plugin script still works against slim verbs.
+- **#1385 (P2)** — universal `result:` / `needs input:` markers are an iOS-harness coupling; iOS is not first-class in slim. Mode-specific tokens are intentional design.
+
+Three audit issues deferred to a later wave (retitled `[Wave 2 deferred] ...` for board visibility):
+
+- **#1379** — `--mode review` picker narrowed
+- **#1383** — `--mode pr` 8 KB cap
+- **#1389** — `knowledge_expert` heuristic doc
+
+Patterns to encode in future plans:
+
+- **Shape-discriminated hooks replace env-driven hooks** when the env signal can't reach the hook subprocess (Plan 10 Wave 1.5 path mutex; Plan 11 Phase 2 plan-doc shape sniff). Both lessons trace back to the Bash-export-per-call-subshell behavior of the harness.
+- **Triage-then-bucket beats triage-then-defer-all.** The user-driven implement/confirm/close/defer split lets the spec keep moving without forcing every audit issue through the same plan ceremony. Future audit waves should re-use the four-bucket triage shape.
+- **Issue-title prefixing (`[Wave N deferred]`) is the cheapest way to keep the project board honest** about what's open-but-not-active versus open-and-ready.

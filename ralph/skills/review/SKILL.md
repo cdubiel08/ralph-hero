@@ -36,7 +36,6 @@ allowed-tools:
   - Agent
   - Monitor
   - AskUserQuestion
-  - PushNotification
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
   - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
@@ -122,7 +121,7 @@ Export `RALPH_TICKET_ID="GH-${TARGET}"` when `TARGET` is an issue number.
 5. **Worktree cleanup** — `git worktree remove worktrees/GH-NNN --force`. Cross-repo: remove sibling worktrees per [merge-gate.md §Cross-repo](merge-gate.md).
 6. **Transition issue to Done** — `save_issue(workflowState="__CLOSE__", command="ralph_merge")` (the `__CLOSE__` semantic intent maps `"*": "Done"` per `state-resolution.ts`). Group merges: per-child transition. Do NOT advance parent (server-side GH Action handles it — see [§Parent advancement](merge-gate.md)).
 7. **Cross-repo unblock** — per [§Cross-repo](merge-gate.md): identify sibling repos with `awaits` dependency on this issue; advance / comment per registry `dependency-flow`.
-8. **Post artifact comment + record outcome** — `## Merged` comment with URL + SHA. `knowledge_record_outcome(event_type="pr_merged", ...)`. `PushNotification` on `${RALPH_COS_NTFY_TOPIC}` (preserve ralph-merge Step 9c verbatim).
+8. **Post artifact comment + record outcome** — `## Merged` comment with URL + SHA. `knowledge_record_outcome(event_type="pr_merged", ...)`.
 9. **Report** — `MERGED / Issue: #NNN / PR: <url> / SHA: <sha>`. Merge-mode terminates here; default-mode continues to CI watch.
 
 ## Link Formatting

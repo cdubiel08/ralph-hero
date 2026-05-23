@@ -105,7 +105,54 @@ Valid values: `RESEARCH`, `SPLIT`, `CLOSE`, `KEEP`, `HUMAN`, `CANCEL`, `RE-ESTIM
 
 After completing any action, update labels to include `ralph-triage` while preserving existing labels. Read current labels first, then include them all plus `ralph-triage` in the `save_issue` call.
 
-## §Step 7: Emit terminal token
+## §Step 7: Find and Link Related Issues
+
+> **Best-effort within time budget**: Step 7 is optional when the overall 10-minute time budget is tight. The primary triage action (Step 5) and label application (Step 6) take priority. If the candidate query below returns more than ~30 issues to evaluate, defer grouping and note in the report that grouping was skipped due to scope size.
+
+After triage action is complete, scan for related issues in Backlog or Research Needed:
+
+**Knowledge context (optional)**: If `knowledge_search` is available, search for related research documents by issue title and key concepts (limit 5) before querying issues. Use returned documents as additional context when analyzing relatedness — surfaces conceptual relationships not visible from issue titles alone.
+
+1. **Query candidate issues** — `list_issues(profile: "analyst-triage", limit: 50)` for Backlog + `list_issues(profile: "analyst-research", limit: 50)` for Research Needed.
+
+2. **Analyze for relatedness** via LLM judgment. Issues are related if they:
+   - Touch the same **code layer** (frontend, backend, API, database, infra).
+   - Mention the same **files or directories** in their descriptions.
+   - Address the same **feature area** or **user concern**.
+   - Have the same **parent issue** (already siblings of a larger work item).
+   - Share **multiple specific labels** (not just generic ones like `ralph-triage`).
+
+3. **Set dependency relationships** to establish grouping AND phase order:
+
+   Determine implementation order based on dependencies:
+   - Infrastructure/config issues → Phase 1 (blocks others).
+   - Schema changes before API changes.
+   - API changes before frontend changes.
+   - Base components before dependent components.
+
+   For each dependency pair, call `add_dependency` to set the dependent issue as blocked by the earlier-phase issue.
+
+   Dependencies serve TWO purposes: **grouping** (issues connected via dependency chains are in one group) and **phase order** (blockers come before blocked issues). Within-group dependencies define phase order, not blocking status — the group is blocked only if any issue has dependencies pointing OUTSIDE the group.
+
+4. **Check for external blockers** — if any issue in the group is blocked by an issue NOT in the group, note it. The group cannot proceed until external blockers are Done.
+
+5. **Add a `## Grouped for Atomic Implementation` comment** documenting the grouping:
+
+   ```markdown
+   ## Grouped for Atomic Implementation
+
+   Related issues identified:
+   - #XX: [title] (this issue blocks it)
+   - #YY: [title] (blocks this issue)
+
+   Implementation order:
+   1. #AA (first — no dependencies)
+   2. #BB, #CC (after #AA completes)
+
+   Rationale: [Brief explanation of why these are related]
+   ```
+
+## §Step 8: Emit terminal token
 
 Emit exactly one of the five tokens defined in [outcome-tokens.md](../outcome-tokens.md):
 
