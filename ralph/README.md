@@ -4,7 +4,7 @@ Slim successor to `ralph-hero`. The naive hero, less ceremony.
 
 ## Status
 
-**Plan 5 of 11 (impl shipped).** This plugin currently exposes five user-facing skills (`/ralph:catch-up`, `/ralph:form`, `/ralph:research`, `/ralph:plan`, `/ralph:impl`). Verbs are migrated in one at a time per the plan-of-plans.
+**Plan 6 of 11 (review shipped).** This plugin currently exposes six user-facing skills (`/ralph:catch-up`, `/ralph:form`, `/ralph:research`, `/ralph:plan`, `/ralph:impl`, `/ralph:review`). Verbs are migrated in one at a time per the plan-of-plans.
 
 ## Design
 
@@ -27,7 +27,7 @@ Headline shape:
 | 3 | `/ralph:research` | shipped |
 | 4 | `/ralph:plan` | shipped |
 | 5 | `/ralph:impl` | shipped |
-| 6 | `/ralph:review` | pending |
+| 6 | `/ralph:review` | shipped |
 | 7 | `/ralph:caretake` | pending |
 | 8 | `/ralph:hero` | pending |
 | 9 | `/ralph:setup` | pending |
