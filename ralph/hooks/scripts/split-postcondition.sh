@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph/hooks/scripts/split-postcondition.sh
-# Stop: Verify /ralph:caretake --mode split created ≥1 sub-issue.
+# Stop: Verify /ralph:caretake --mode split created ≥2 sub-issues.
 #
 # Plan 6 hardening: scope-guarded (caretake + split).
 #
@@ -37,18 +37,21 @@ fi
 
 split_count="${RALPH_SPLIT_COUNT:-0}"
 
-if [[ "$split_count" -gt 0 ]]; then
+if [[ "$split_count" -ge 2 ]]; then
   echo "Split postcondition passed: $split_count sub-issues created for $ticket_id"
   echo "  Parent $ticket_id should remain in Backlog (preserved as epic)"
   allow
 fi
 
-block "Split postcondition failed: no sub-issues verified
+block "Split postcondition failed: fewer than 2 sub-issues verified
 
 Ticket: $ticket_id
-Expected: At least 1 sub-issue created via ralph_hero__add_sub_issue
+Expected: At least 2 sub-issues created via ralph_hero__add_sub_issue
+         (a one-child split is a re-estimate, not a decomposition)
 Found: RALPH_SPLIT_COUNT=${split_count}
 
-The /ralph:caretake --mode split body must create sub-issues before completing.
+The /ralph:caretake --mode split body must create ≥2 sub-issues before
+completing — see ralph/skills/caretake/outcome-tokens.md (\"SPLIT <N>\" requires
+N ≥ 2) and ralph/skills/caretake/split-decomposition.md.
 If this is a false positive (sub-issues were created but not tracked),
 re-run with RALPH_FORCE_STOP=true to bypass this check."

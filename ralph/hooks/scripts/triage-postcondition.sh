@@ -45,7 +45,7 @@ fi
 transcript_text=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null || true)
 
 # Match any of the documented terminal tokens.
-if echo "$transcript_text" | grep -qE '^TRIAGED (valid|duplicate|canceled|needs-split)|^Queue empty\.' ; then
+if echo "$transcript_text" | grep -qE '^TRIAGED (valid|duplicate|canceled|needs-split|skipped)|^Queue empty\.' ; then
   echo "Triage postcondition passed: terminal token found in transcript"
   allow
 fi
@@ -57,6 +57,7 @@ Expected one of:
   TRIAGED duplicate     (closed as duplicate)
   TRIAGED canceled      (closed not_planned)
   TRIAGED needs-split   (routed to split queue)
+  TRIAGED skipped …     (branch-gate short-circuit; non-main branch)
   Queue empty.          (no untriaged Backlog issues)
 
 The /ralph:caretake --mode triage body must end by emitting one of these tokens.
