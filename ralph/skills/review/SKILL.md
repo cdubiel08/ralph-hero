@@ -78,7 +78,14 @@ _Filled by Phase 5._
 
 ## `--mode val` — validate impl vs. plan
 
-_Filled by Phase 2._
+1. **Parse args + select target** — `--mode val [#NNN] [--plan-doc <path>]`. Queue-pick when no `#NNN`: `list_issues(workflowState: "In Progress", limit: 10)`, first candidate with `worktrees/GH-NNN`. STOP with `VALIDATION PASS — no work\nQueue empty.` if none (BOTH lines required — postcondition hook + loop runner).
+2. **Fetch issue + find plan + find worktree** — per [plan-vs-impl-rubric.md §Plan discovery](plan-vs-impl-rubric.md) (Artifact Comment Protocol → glob fallback). STOP with `VALIDATION FAIL` if no plan or no worktree. NEVER fall back to main (see §Worktree-or-fail anti-pattern).
+3. **Worktree freshness** — `git fetch origin main && git rev-list --count HEAD..origin/main`; staleness recorded as a substantive failure note (no auto-rebase).
+4. **Extract criteria** — parse plan for `## Desired End State` + per-phase `### Success Criteria > #### Automated Verification` checkboxes.
+5. **Run checks** — from worktree, per check: file existence / command execution / content check. Apply [§Citation Gate](plan-vs-impl-rubric.md) — quote offending file lines verbatim before claiming any content failure.
+6. **Drift + cross-phase** — per [§Drift Analysis](plan-vs-impl-rubric.md) and [§Cross-Phase Integration](plan-vs-impl-rubric.md).
+7. **Classify verdict** — optional delegation per [§Delegation](plan-vs-impl-rubric.md) (threshold gate ≥2 checks AND ≥1 failure; strict enum cross-checked against automated results).
+8. **Emit verdict** — `VALIDATION PASS` (all green) / `VALIDATION FIX` (mechanical only) / `VALIDATION FAIL` (substantive). Post a `## Validation Report` comment via `create_comment`. Record outcome via `knowledge_record_outcome(event_type="validation", verdict, ...)`.
 
 ## `--mode code` — code-review-and-fix loop
 
