@@ -36,7 +36,26 @@ Unblock has two sub-modes selected by the `--question` flag; each emits its own 
 - `Queue empty.` — no eligible Human Needed issues (none exist OR all carry a fresh `## Unblock Request`).
 
 `unblock-state-gate.sh` (interactive only) and `unblock-request-postcondition.sh` (autonomous only) each gate on `RALPH_SUBCOMMAND_VARIANT` to discriminate which path is active.
-<!-- Phase 6 fills: ## Postmortem / Retro / Trends sections -->
+## Postmortem terminal tokens
+
+- `POSTMORTEM <path>` — doc written, `<path>` absolute (e.g., `/Users/dubiel/projects/ralph-hero/thoughts/shared/reports/2026-05-23-ralph-team-foo.md`). Plan documents patched with `post_mortem::` edges; `process-improvement` issues filed for blockers.
+- `POSTMORTEM SKIPPED no-session-data` — §Step 1 short-circuit; `TaskList` unavailable or returned empty.
+- `POSTMORTEM SKIPPED <reason>` — other graceful skips (missing primary issue, MCP failures during outcome recording, etc.).
+
+`postmortem-completeness.sh` (Stop hook) greps the transcript for one of these tokens and additionally validates the doc carries the required frontmatter + section headings.
+
+## Retro terminal tokens
+
+- `RETRO <path>` — doc written, `<path>` absolute (`thoughts/shared/research/YYYY-MM-DD-retro-<slug>.md`).
+- `RETRO SKIPPED team-session-redirect` — `TaskList` non-empty and user chose `--mode postmortem` from the dedup prompt.
+- `RETRO SKIPPED no-friction-signals` — scan returned zero pain points.
+- `RETRO SKIPPED <reason>` — other graceful skips (user aborted the findings-review loop, scope hint pointed to an empty slice, etc.).
+
+Retro has no Stop postcondition hook — the mode is an artifact-writer and does not mutate GitHub state. Tokens are reported for parity.
+
+## Trends
+
+Trends is read-only — the markdown report printed to stdout is the deliverable. **No terminal token is emitted** and no postcondition hook gates this mode. The harness extractor treats the entire stdout markdown payload as the result.
 
 ## Debug terminal tokens
 
