@@ -1,24 +1,38 @@
 #!/bin/bash
 # ralph/hooks/scripts/merge-review-decision-gate.sh
-# PreToolUse:Bash — gate `gh pr merge` invocations on the PR's reviewDecision.
+# PreToolUse:Bash — gate `gh pr merge` AND `scripts/merge-pr.sh` invocations
+# on the PR's reviewDecision.
 #
 # Closes GH-1373 (P6 violation: merge-gate enforcement was prose-only). The
 # slim plugin's merge gate documented "refuse non-APPROVED" in merge-gate.md
 # but no deterministic hook actually read `gh pr view --json reviewDecision`
-# before letting the merge command through. Any agent that skipped the prose
-# could merge an unreviewed PR.
+# before letting the merge through. Any agent that skipped the prose could
+# merge an unreviewed PR.
 #
-# Phase 4 extends this gate with the XS-no-comments and self-authored-on-
-# solo-repo carve-outs that GH-1375 documents.
+# IMPORTANT — must match BOTH merge paths the slim plugin actually uses:
+#   1. `bash scripts/merge-pr.sh PR_NUMBER` (canonical, per merge-gate.md
+#      §Merge mechanics line 71)
+#   2. `gh pr merge ...` (direct gh CLI invocation)
+# Matching only `gh pr merge` literal would silently fail-open on the
+# canonical path. Mirrors closeout-scout-gate.sh's two-shape matcher.
 #
 # Scope:
-#   - Active only when RALPH_COMMAND=review (the /ralph:review verb's scope).
-#   - Self-discriminates on tool_input.command — no-op for any Bash that is
-#     not a `gh pr merge`.
+#   - Active only when RALPH_COMMAND=review.
+#   - Self-discriminates on tool_input.command — no-op for any Bash that
+#     does not invoke a merge.
+#   - Fails CLOSED on regex extraction failure (cannot determine PR number)
+#     so an unrecognized merge invocation never bypasses the gate silently.
+#
+# Carve-outs:
+#   - Only apply when reviewDecision is null/REVIEW_REQUIRED (i.e. NO review
+#     posted yet). CHANGES_REQUESTED is always a hard block — explicit
+#     reviewer rejection cannot be bypassed by carve-out. Mirrors source
+#     plugin/ralph-hero/skills/ralph-merge/SKILL.md:133-149 nesting.
 #
 # Exit codes:
 #   0 — allow (not a merge command, scope mismatch, or APPROVED-equivalent).
-#   2 — block (merge command targets a PR without APPROVED + no carve-out).
+#   2 — block (merge targets a PR without APPROVED + no carve-out, OR the
+#       hook cannot determine the PR number).
 
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
@@ -35,59 +49,128 @@ if [[ -z "$cmd" ]]; then
   allow
 fi
 
-# Only gate `gh pr merge` invocations. Tolerate flag ordering and any leading
-# env-var preamble (e.g. `GH_PROMPT_DISABLED=1 gh pr merge ...`). The grep
-# below ignores quoting differences and works for both `gh pr merge 123` and
-# `gh pr merge --pr 123` shapes that show up in practice.
-if ! echo "$cmd" | grep -qE '\bgh pr merge\b'; then
+# Detect a merge invocation in either shape. `scripts/merge-pr.sh` is the
+# canonical slim-plugin path; `gh pr merge` is the direct gh form some agents
+# use. Either matches; non-merge Bash falls through to allow.
+if ! echo "$cmd" | grep -qE '(scripts/merge-pr\.sh|gh[[:space:]]+pr[[:space:]]+merge)\b'; then
   allow
 fi
 
-# Extract the PR number. Accept:
-#   gh pr merge 123 ...
-#   gh pr merge --pr 123 ...
-#   gh pr merge https://github.com/owner/repo/pull/123
-pr_num=$(echo "$cmd" \
-  | grep -oE 'gh pr merge[[:space:]]+(--pr[[:space:]]+)?([0-9]+|https?://[^[:space:]]+/pull/[0-9]+)' \
-  | grep -oE '[0-9]+$' \
-  | head -1 \
-  || true)
+# Extract the PR number robustly. Strategy: tokenize the command, then pick
+# the first token that is either a bare positive integer OR a github PR URL.
+# This handles every common form regardless of flag ordering:
+#   bash scripts/merge-pr.sh 123
+#   gh pr merge 123 --squash
+#   gh pr merge --squash 123
+#   gh pr merge --auto --rebase 123
+#   gh pr merge https://github.com/o/r/pull/123
+pr_num=""
+for tok in $cmd; do
+  # Bare integer
+  if [[ "$tok" =~ ^[0-9]+$ ]]; then
+    pr_num="$tok"
+    break
+  fi
+  # PR URL (with optional trailing /files, /checks, /commits path segments)
+  if [[ "$tok" =~ /pull/([0-9]+) ]]; then
+    pr_num="${BASH_REMATCH[1]}"
+    break
+  fi
+done
+
+# Strip a trailing "#" prefix that some agents use (e.g. `#123`).
+if [[ -z "$pr_num" ]]; then
+  for tok in $cmd; do
+    if [[ "$tok" =~ ^#([0-9]+)$ ]]; then
+      pr_num="${BASH_REMATCH[1]}"
+      break
+    fi
+  done
+fi
 
 if [[ -z "$pr_num" ]]; then
-  # No PR number captured — let the command through. If it fails, gh's own
-  # error message will surface; we don't want to block well-formed merge
-  # variants the regex doesn't yet recognize.
-  allow
+  # Fail CLOSED — refuse to merge when we cannot determine the PR number.
+  # An agent invoking merge in an unrecognized form should surface the
+  # parse failure rather than silently bypass the review-decision gate.
+  block "merge-review-decision-gate: cannot extract PR number from command.
+
+Command: $cmd
+
+The hook recognises:
+  - bash scripts/merge-pr.sh <NUMBER>
+  - gh pr merge <NUMBER> [flags]
+  - gh pr merge [flags] <NUMBER>
+  - gh pr merge <PR_URL>
+  - gh pr merge #<NUMBER>
+
+If your merge invocation has a legitimate alternate shape, update
+ralph/hooks/scripts/merge-review-decision-gate.sh to recognize it."
 fi
 
-# Read the actual reviewDecision. `|| true` keeps the script from dying
-# under `set -euo pipefail` when the gh subcommand exits non-zero (PR
-# closed, repo unauthenticated, etc.) — we then treat the result as null
-# and let the caller surface the real error if it tries to merge anyway.
+# Read the actual reviewDecision. `|| echo` keeps the script alive under
+# `set -euo pipefail` when the gh subcommand exits non-zero. Possible
+# values: APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, null (no review),
+# "null" (gh CLI literal when missing).
 review_decision=$(gh pr view "$pr_num" --json reviewDecision --jq '.reviewDecision // "null"' 2>/dev/null || echo "null")
 
+# Happy path: explicit APPROVED.
 if [[ "$review_decision" == "APPROVED" ]]; then
   allow
 fi
 
-# Carve-outs from GH-1375 — both documented in
-# ralph/skills/review/merge-gate.md § Carve-outs. Pipeline-heavy reads
-# append `|| true` per the Plan 6 friction-log lesson.
+# Carve-outs (GH-1375) — only apply when no review has been posted yet
+# (reviewDecision is null/empty or REVIEW_REQUIRED). CHANGES_REQUESTED is
+# an explicit reviewer rejection; carve-outs must NOT override it. Mirrors
+# source plugin/ralph-hero/skills/ralph-merge/SKILL.md:133-149 nesting.
+case "$review_decision" in
+  null|""|REVIEW_REQUIRED)
+    : # eligible for carve-out evaluation below
+    ;;
+  CHANGES_REQUESTED|*)
+    block "merge-review-decision-gate: PR #$pr_num has reviewDecision='$review_decision'.
+
+Explicit reviewer rejection (CHANGES_REQUESTED) cannot be bypassed by carve-outs.
+The slim-plugin /ralph:review --mode merge body documents this gate in
+ralph/skills/review/merge-gate.md § Pre-merge gates. The gate is a
+deterministic hook (GH-1373) rather than model-adherence prose.
+
+To unblock:
+  1. Address the change requests, then have the reviewer dismiss or re-approve.
+  2. Or run 'gh pr review $pr_num --approve' if the changes have been addressed
+     and the reviewer is unavailable to re-review."
+    ;;
+esac
+
+# Helpers for the two carve-outs. Both use a FAIL-CLOSED idiom: any gh API
+# error (rate limit, auth, transient 5xx) returns 1 so the carve-out does
+# not silently fire on a multi-contributor repo or a missing-estimate issue.
 
 is_xs_no_comments_pr() {
   local pr="$1"
 
-  # Comment count first — cheaper read than the issue-estimate join.
-  local comment_count
-  comment_count=$(gh pr view "$pr" --json comments --jq '.comments | length' 2>/dev/null || echo "-1")
-  if [[ "$comment_count" != "0" ]]; then
+  # Count BOTH conversation comments AND review-thread (file-line) comments.
+  # gh pr view --json comments returns only the top-level conversation;
+  # reviewThreads carries the file-line review feedback that is the dominant
+  # review surface for substantive critique. Either source nonzero → carve-out
+  # does not apply.
+  local total_comments
+  total_comments=$(gh pr view "$pr" --json comments,reviewThreads \
+    --jq '(.comments | length) + ([.reviewThreads[]?.comments | length] | add // 0)' \
+    2>/dev/null || echo "unknown")
+
+  if [[ "$total_comments" == "unknown" ]] || [[ ! "$total_comments" =~ ^[0-9]+$ ]]; then
+    return 1  # fail-closed: API error or unparseable count → carve-out denied
+  fi
+  if [[ "$total_comments" != "0" ]]; then
     return 1
   fi
 
-  # Resolve the linked issue number from the PR's body (`Closes #N` / `Fixes #N`).
-  # `gh pr view --json closingIssuesReferences` is the structured way; fall back to body grep.
+  # Resolve the linked issue number. Prefer closingIssuesReferences (a
+  # GraphQL field; populated when the PR body has "Closes #N" / "Fixes #N").
   local issue_num
-  issue_num=$(gh pr view "$pr" --json closingIssuesReferences --jq '.closingIssuesReferences[0].number // empty' 2>/dev/null || echo "")
+  issue_num=$(gh pr view "$pr" --json closingIssuesReferences \
+    --jq '.closingIssuesReferences[0].number // empty' \
+    2>/dev/null || echo "")
   if [[ -z "$issue_num" ]]; then
     return 1
   fi
@@ -111,13 +194,24 @@ is_self_authored_solo_repo() {
     return 1
   fi
 
-  local repo_name contributor_count
+  local repo_name
   repo_name=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
   if [[ -z "$repo_name" ]]; then
     return 1
   fi
 
-  contributor_count=$(gh api "repos/${repo_name}/contributors" --jq 'length' 2>/dev/null || echo "0")
+  # FAIL-CLOSED on contributor count read. Using "unknown" sentinel (not 0)
+  # so a rate-limited / transient gh API failure does NOT grant the carve-out
+  # on a multi-contributor repo. Note: gh api .../contributors returns the
+  # first page only (≤30 entries); for the <=1 check this is benign — a real
+  # multi-contributor repo's first page always has many entries.
+  local contributor_count
+  contributor_count=$(gh api "repos/${repo_name}/contributors" --jq 'length' 2>/dev/null || echo "unknown")
+
+  if [[ "$contributor_count" == "unknown" ]] || [[ ! "$contributor_count" =~ ^[0-9]+$ ]]; then
+    return 1  # fail-closed
+  fi
+
   [[ "$contributor_count" -le 1 ]]
 }
 
@@ -132,14 +226,19 @@ fi
 block "merge-review-decision-gate: PR #$pr_num has reviewDecision='$review_decision' (need APPROVED, or matched carve-out).
 
 The slim-plugin /ralph:review --mode merge body documents this gate in
-ralph/skills/review/merge-gate.md § Pre-merge gates. The gate is now a
+ralph/skills/review/merge-gate.md § Pre-merge gates. The gate is a
 deterministic hook (GH-1373) rather than model-adherence prose.
 
-Two carve-outs accept non-APPROVED PRs (see merge-gate.md § Carve-outs):
-  1. XS-no-comments  — issue estimate=XS AND PR has zero comments
-  2. Self-authored-on-solo-repo — PR author == current user on a single-contributor repo
+Two carve-outs accept non-APPROVED PRs (only when reviewDecision is null/
+REVIEW_REQUIRED; CHANGES_REQUESTED is always blocked above):
+  1. XS-no-comments  — linked issue estimate=XS AND PR has zero comments
+     (counts BOTH conversation comments AND review-thread comments).
+  2. Self-authored-on-solo-repo — PR author == current user on a single-
+     contributor repo (GitHub blocks self-approval).
 
-Neither carve-out matched this PR. To unblock:
+Neither carve-out matched this PR (or a gh API call failed and the
+carve-out is denied on conservative grounds). To unblock:
   1. Get a passing code review with explicit approve (gh pr review $pr_num --approve)
-  2. Verify the issue's Estimate field if you expected XS to apply
-  3. For solo-repo workflows, confirm the PR was self-authored and the repo has only one contributor"
+  2. Verify the linked issue's Estimate field if you expected XS to apply
+  3. For solo-repo workflows, confirm the PR was self-authored and the repo
+     has only one contributor"

@@ -45,10 +45,14 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-verify-doc.sh"
   # review-state-gate stays unregistered (state-gate union lives on
   # plan-state-gate; double-firing would block legitimate transitions).
-  # review-postcondition IS registered (re-added in GH-1378 fix) — it now
-  # self-gates on RALPH_SUBCOMMAND=review (set by the --mode review body
-  # entry), so it no-ops in --mode auto / default / epic / iterate. The
-  # other path-discrimination guards still hold:
+  # review-postcondition IS registered (re-added in GH-1378 fix). It uses
+  # PATH-based mode discrimination: no-ops unless a fresh critique doc
+  # exists for the ticket in thoughts/shared/reviews/. plan-postcondition
+  # mirrors the pattern in reverse — it no-ops when a fresh critique
+  # exists (review-mode) and validates the plan doc otherwise. Together
+  # they form a mutex that does NOT rely on env-var propagation, which
+  # Bash exports across the per-call subshell do not reliably provide.
+  # The other path-discrimination guards still hold:
   #   - doc-structure-validator auto-picks branch from which artifact dir
   #     has the most recent today-prefixed doc,
   #   - review-verify-doc + review-no-dup self-no-op on file_path,
@@ -170,12 +174,7 @@ Surgical updates to an existing plan. No state transitions (the plan stays in wh
 
 Critique an existing plan and emit APPROVED / NEEDS_ITERATION. Folds `ralph-review`. Consult `plan-review.md`.
 
-0. **Scope env-vars for this mode** — set `RALPH_SUBCOMMAND=review` and `RALPH_ARTIFACT_DIR=thoughts/shared/reviews` so `review-postcondition.sh` activates on this run and looks under the reviews directory rather than plans (the default for /ralph:plan). Bash form:
-
-   ```bash
-   export RALPH_SUBCOMMAND=review
-   export RALPH_ARTIFACT_DIR=thoughts/shared/reviews
-   ```
+Mode discrimination is path-based: the Stop chain's `plan-postcondition.sh` no-ops when a fresh critique doc exists under `thoughts/shared/reviews/` for this ticket, and `review-postcondition.sh` activates only when one does. No env-var propagation across Bash subshells required.
 
 1. **Resolve plan + issue** — `ARG=#NNN` → `get_issue`; locate the `## Implementation Plan` artifact. `--plan-doc <path>` accepted as override.
 2. **Validate plan exists** — if absent, escalate the issue to "Human Needed". STOP.

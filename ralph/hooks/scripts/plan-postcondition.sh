@@ -40,7 +40,33 @@ if [[ -z "$ticket_id" ]]; then
   allow
 fi
 
-plans_dir="$(get_project_root)/thoughts/shared/plans"
+# Path-discriminated mode mutex: if a fresh critique doc exists for this
+# ticket under thoughts/shared/reviews/, /ralph:plan was invoked in
+# --mode review (not default / auto / epic / iterate). The sibling
+# review-postcondition.sh owns that verdict; this hook must no-op so it
+# does not hard-block on a missing plan doc when the artifact correctly
+# landed in reviews/ instead.
+#
+# Mirrors review-postcondition.sh's mode-discrimination block. Together
+# they form a path-based mutex that does not depend on env-var
+# propagation (which the Bash tool's per-call subshell breaks).
+project_root=$(get_project_root)
+reviews_dir="$project_root/thoughts/shared/reviews"
+if [[ -d "$reviews_dir" ]]; then
+  critique=$(find "$reviews_dir" -name "*${ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
+  if [[ -z "$critique" ]]; then
+    alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
+    if [[ -n "$alt_ticket_id" ]]; then
+      critique=$(find "$reviews_dir" -name "*${alt_ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
+    fi
+  fi
+  if [[ -n "$critique" ]]; then
+    echo "plan-postcondition: deferring to review-postcondition (fresh critique at $critique)"
+    exit 0
+  fi
+fi
+
+plans_dir="$project_root/thoughts/shared/plans"
 doc=$(find "$plans_dir" -name "*${ticket_id}*" -type f -mmin -30 2>/dev/null | head -1)
 
 if [[ -z "$doc" ]]; then
