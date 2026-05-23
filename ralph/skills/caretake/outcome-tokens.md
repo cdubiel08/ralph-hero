@@ -20,7 +20,22 @@ Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emit
 - `HYGIENE BLOCKED <reason>` — scan failed (project not found, MCP error, archive call failed, etc.).
 
 Hygiene has no `Stop` postcondition hook because it does not mutate semantic workflow state. The terminal token is reported for parity with other modes; no automated verification is performed against it.
-<!-- Phase 5 fills: ## Unblock terminal tokens -->
+## Unblock terminal tokens
+
+Unblock has two sub-modes selected by the `--question` flag; each emits its own tokens.
+
+### Interactive path (default — consumer)
+
+- `UNBLOCK RESOLVED` — interactive Q&A flow completed; `## Unblock Resolution` posted and issue routed back to the pipeline.
+- `UNBLOCK ESCALATED <reason>` — flow failed before resolution (wrong-state arg, missing `## Unblock Request`, user abort, etc.). Issue stays in Human Needed.
+
+### Autonomous path (`--question` — producer)
+
+- `UNBLOCK REQUEST POSTED` — `## Unblock Request` comment posted via `create_comment`; `RALPH_UNBLOCK_REQUEST_POSTED=1` exported.
+- `UNBLOCK REQUEST SKIPPED — branch <name> is not main` — §Step 1 short-circuit.
+- `Queue empty.` — no eligible Human Needed issues (none exist OR all carry a fresh `## Unblock Request`).
+
+`unblock-state-gate.sh` (interactive only) and `unblock-request-postcondition.sh` (autonomous only) each gate on `RALPH_SUBCOMMAND_VARIANT` to discriminate which path is active.
 <!-- Phase 6 fills: ## Postmortem / Retro / Trends sections -->
 
 ## Debug terminal tokens
