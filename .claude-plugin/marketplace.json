@@ -26,6 +26,11 @@
       "name": "ralph-playwright",
       "description": "Polymorphic UI testing plugin: story generation, E2E execution, a11y scanning, Storybook integration, and visual regression for ralph-hero.",
       "source": "./plugin/ralph-playwright"
+    },
+    {
+      "name": "ralph",
+      "description": "Slim successor to ralph-hero: 9 fat skills with flat-sibling references, hooks-enforced state, MCP-driven artifacts. The naive hero, less ceremony.",
+      "source": "./ralph"
     }
   ]
 }
