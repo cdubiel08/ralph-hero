@@ -113,7 +113,7 @@ After Plan 3 merges:
 - **Not** porting cross-repo dependency detection (autonomous Step 3b) into a top-level reference. It's mode-specific (auto only) and infrequent; lives as a section in `research-shapes.md` consulted conditionally.
 - **Not** adding a hook to validate prove-mode verdicts. The verdict format is opinion-content (in `prove-claim.md`); enforcing it in a hook would be P5 violation (references are content, not control flow).
 - **Not** absorbing `idea-hunt`. Per spec, `idea-hunt` is excluded from the new plugin.
-- **Not** sunsetting source skills. They remain functional for the 2-week dogfooding window. Plan 10 owns sunset.
+- **Not** sunsetting source skills. They remain functional alongside the new verb until Plan 10 batches sunsets after each new counterpart has handled the surfaces it replaces.
 
 ## Implementation Approach
 
@@ -492,7 +492,7 @@ Update the `## Status` paragraph to "Plan 3 of 11 (research shipped). This plugi
 #### 2. Friction-log entry on the spec
 
 **File**: `thoughts/shared/research/2026-05-22-ralph-slim-plugin-restructure.md`
-**Changes**: Append a `### Plan 3: /ralph:research (shipped YYYY-MM-DD)` subsection under `## Friction Log`. Capture final-shape stats, design calls (5-reference threshold, SKILL.md `hooks:` frontmatter pattern), TODO checkboxes for the 2-week dogfooding window.
+**Changes**: Append a `### Plan 3: /ralph:research (shipped YYYY-MM-DD)` subsection under `## Friction Log`. Capture final-shape stats, design calls (5-reference threshold, SKILL.md `hooks:` frontmatter pattern), TODO checkboxes for active-use observations.
 
 #### 3. Parity validation runs
 
@@ -553,7 +553,7 @@ Per Phase 6's verification list, plus:
 
 ## Migration Notes
 
-- Source skills (`research`, `ralph-research`, `prove-claim`) remain functional and unmodified for the 2-week dogfooding window. Plan 10 owns sunset.
+- Source skills (`research`, `ralph-research`, `prove-claim`) remain functional and unmodified alongside the new verb. Plan 10 batches sunsets once each new counterpart has handled the surfaces it replaces.
 - The auto-flow hooks (research-state-gate, research-postcondition, doc-structure-validator, branch-gate, lock-release-on-failure) are duplicated across the source and slim plugins during the migration window. Both ports gate on identical env vars, so duplicate firing is idempotent (each checks its own preconditions independently). Plan 10 deletes the source copies.
 - Plan 4 (`/ralph:plan`) and Plan 5 (`/ralph:impl`) will reuse the SKILL.md `hooks:` frontmatter pattern introduced here. Plan 3's friction log should record whether the pattern worked cleanly or hit harness quirks.
 - The Step 10 follow-up flow in default mode updates the SAME doc with `last_updated` frontmatter — this is the "append-only follow-up research" pattern from source. The Plan 2 `/ralph:form` handoff lands users at Plan 3's interactive flow, so the doc lifecycle here is shared with form.

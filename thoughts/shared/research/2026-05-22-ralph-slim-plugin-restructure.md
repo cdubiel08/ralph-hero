@@ -12,7 +12,7 @@ tags: [ralph, plugin-restructure, skills, references, migration, plan-of-plans]
 
 `ralph-hero` has grown to **52 skills, ~28k lines of plugin markdown, 18 active worktrees**, three overlapping orchestrators (`hero`, `team`, `autopilot`/`director`), and a documented dead code path (`RemoteTrigger` producer). Each skill invocation re-tokenizes a large prelude. The chain-prompting pattern that made sense early now duplicates work the harness (Claude Code, MCP server, hooks) already does.
 
-This document specifies a parallel-plugin restructure: a new plugin **`ralph`** (no `-hero` suffix) sitting at `ralph-hero/ralph/`, with **9 fat skills**, opinion content moved to flat reference siblings, and enforcement moved to hooks + MCP. Migration ships across **11 independent plans** over ~2-3 months with no period where the system is broken — the old plugin keeps working until each verb has been dogfooded for two weeks.
+This document specifies a parallel-plugin restructure: a new plugin **`ralph`** (no `-hero` suffix) sitting at `ralph-hero/ralph/`, with **9 fat skills**, opinion content moved to flat reference siblings, and enforcement moved to hooks + MCP. Migration ships across **11 independent plans** with no period where the system is broken — the old plugin keeps working alongside the new one, and each verb is sunset only when the new counterpart has handled the workflows it replaces.
 
 Expected outcomes: ~80% reduction in user-visible skill surface, ~3-4k lines of enforcement prose absorbed into hooks, dramatically lower per-invocation token cost, and a fast-track ladder for trivial fixes (typos, doc changes, repro-ready bugs) that skips the full research→plan→review→impl pipeline.
 
@@ -345,11 +345,11 @@ Approximately **3-4k lines of enforcement prose** disappear from skill bodies ac
 
 After each plan merges:
 
-1. Switch one real workflow to the new verb (e.g., after Plan 3 ships, do all your next research with `/ralph:research`).
-2. Friction log in the spec for the next plan — lessons from using the new verb feed the next design.
-3. Don't sunset the old skill until **two consecutive weeks without invoking it.**
+1. **Switch to the new verb immediately** for the workflows it covers. `/ralph:research` replaces `/ralph-hero:research` etc. starting the next session.
+2. **Use it, find what breaks, fix it.** Active dogfooding produces signal; passive waiting does not.
+3. **Sunset the old skill when the new counterpart has handled each surface it replaces** (not on a calendar). One real-session pass through each mode / branch of the new verb is enough.
 
-This is load-bearing. The risk of "build new plugin in parallel" is that the new plugin becomes a museum piece. The forcing function is: ship one verb → use it for two weeks → ship the next.
+The forcing function is active use, not elapsed time. The risk of "build new plugin in parallel" is that the new plugin becomes a museum piece; the mitigation is using it, not waiting.
 
 ### Acceptance criteria (consistent across all 9 verb plans)
 
@@ -357,7 +357,7 @@ This is load-bearing. The risk of "build new plugin in parallel" is that the new
 2. **Token budget:** new `SKILL.md` is ≤ 200 lines (target ~150). Opinion content lives in references.
 3. **Hook coverage:** no enforcement logic in skill prose — all moved to hooks or MCP validation.
 4. **Local dev works:** edit `SKILL.md`, save, next invocation picks it up without `claude plugins` commands.
-5. **Old skill stays functional** for two weeks post-merge. Sunset is its own follow-up PR.
+5. **Old skill stays functional** until its new counterpart has been actively used through each surface it covers. Sunset is a follow-up PR — Plan 10 batches the remaining ones.
 6. **Per-phase audit applied:** after each phase passes its automated + manual verification, dispatch `/review` (against the open PR or branch diff) and `/skill-creator:skill-creator` (against the partial skill bundle) in parallel. Apply recommended fixes — or document why not — before proceeding to the next phase. Catches P2 leakage, missing tools, picker ambiguity, and trigger gaps while they're still cheap to fix; established by Plan 1's post-impl audit and made standard in Plan 2.
 
 ### Estimated timeline (to validate)
@@ -375,8 +375,8 @@ Total elapsed: **2-3 months**, with no period of "ralph is broken." Worst case: 
 
 | Risk | Mitigation |
 |---|---|
-| New plugin becomes a museum piece you don't adopt | Dogfooding rhythm: switch one workflow per plan, sunset only after 2 weeks of disuse on old |
-| Folded skill turns out to be load-bearing in a way I missed | Old skills remain functional for the 2-week sunset window; Plan 10 is reversible |
+| New plugin becomes a museum piece you don't adopt | Switch to the new verb immediately on ship; sunset only after the new counterpart has been actively exercised on every surface it replaces |
+| Folded skill turns out to be load-bearing in a way I missed | Old skills remain functional alongside the new ones until sunset (Plan 10); a regression caught during active dogfooding is a fix on the new verb, not a rollback |
 | Local-dev symlink doesn't work cleanly with Claude Code's plugin cache | Plan 0 acceptance includes verifying the symlink mechanism. Fallback: local marketplace via `file://` URL |
 | Scope creep during migration | Each plan's acceptance #1 is "functional parity on 3 real issues" — capability additions are separate plans, post-migration |
 | Inlined shared content drifts | Accepted per P9. If drift causes a real bug, promote to top-level docs/, owned-by-one-skill, or extract |
@@ -406,7 +406,7 @@ Total elapsed: **2-3 months**, with no period of "ralph is broken." Worst case: 
 Migration is complete when:
 
 1. All 9 verbs (`/ralph:hero`, `/ralph:research`, `/ralph:plan`, `/ralph:impl`, `/ralph:review`, `/ralph:caretake`, `/ralph:catch-up`, `/ralph:form`, `/ralph:setup`) exist and meet the 5 acceptance criteria.
-2. No `/ralph-hero:*` slash command has been invoked for ≥ 2 weeks.
+2. Every `/ralph-hero:*` slash command being sunset has a `/ralph:*` counterpart that has handled at least one real-session instance of each surface it replaces.
 3. `plugin/ralph-hero/skills/` is empty or removed.
 4. The MCP server is reachable from `ralph` (either still in `plugin/ralph-hero/mcp/` or relocated to `ralph/mcp/`).
 5. README documents the new plugin as the canonical entry point.
@@ -415,7 +415,7 @@ Expected end-state surface: 9 user-facing slash commands, ~1,500 lines of SKILL.
 
 ## Friction Log
 
-The dogfooding rhythm depends on capturing lessons-learned from each shipped verb to feed the next plan's design. Append per-plan entries here as the 2-week dogfooding window plays out.
+The dogfooding rhythm depends on capturing lessons from each shipped verb to feed the next plan's design. Populate per-plan entries by *using* the verb — not by waiting for a calendar window. When you find something broken or awkward, fix it (small follow-up PR) and record what you fixed and why.
 
 ### Plan 1: `/ralph:catch-up` (shipped 2026-05-23, branch `feature/GH-1357-catch-up`)
 
@@ -427,13 +427,13 @@ Final shape:
 - Hook port: `cursor-advance-catch-up.sh` ported verbatim. Both plugins now fire it on the same `recent_activity` PostToolUse matcher; cursor writes are idempotent (last write wins), so the duplicate firing is benign during the migration window.
 - cos's `desk`/`remote`/`unattended` modes deliberately stayed as `ralph cos {...}` CLI subcommands. Their zero-Claude-Code-on-the-call-chain property would have inverted if absorbed into the slash skill.
 
-Real-session usage notes during the 2-week dogfooding window:
+Friction notes (populated by active use):
 
 - [ ] _(Add entries as you use it. Examples to watch for: edge cases in narrative synthesis, picker label truncation, dashboard JSON-mode quirks, --mode report posting permissions, cursor advance timing under multi-plugin firing.)_
 
 Inputs to feed into Plan 2 (`/ralph:form`):
 
-- _(TBD after 2 weeks of usage.)_
+- _(Populated by active use, not by waiting.)_
 - Pattern validator note: the flat-sibling reference layout (no `references/` subfolder, no nested `Skill()` dispatch) worked cleanly for a 5-skill fold. Plan 2 should follow the same shape unless friction emerges.
 
 Open follow-ups (separate plans):
@@ -452,13 +452,13 @@ Final shape:
 - Step 5 picker defaults change with `LINKED_ISSUE`: when intake routing detects a research doc with an existing `github_issue` in its frontmatter, the picker biases toward "Implementation plan" rather than "GitHub issue" (avoids duplicate issue creation against linked research).
 - Handoffs in Step 6c point at `/ralph:plan` and `/ralph:research` with `/ralph-hero:plan` and `/ralph-hero:research` as fallbacks. The new-verb names get unblocked when Plans 3 (research) and 4 (plan) ship — the fallbacks come out then.
 
-Real-session usage notes during the 2-week dogfooding window:
+Friction notes (populated by active use):
 
 - [ ] _(Add entries as you use it. Examples to watch for: research-doc auto-detection edge cases (`type: research` vs path glob), inline-description routing for very short inputs, ticket-tree estimate-default appropriateness, knowledge-search dedup false positives, frontmatter-update collisions when the source file is open in an editor.)_
 
 Inputs to feed into Plan 3 (`/ralph:research`):
 
-- _(TBD after 2 weeks of usage.)_
+- _(Populated by active use, not by waiting.)_
 - Pattern validator note: the flat-sibling reference layout worked again for a 2-skill fold with three references. Three references felt about right; four (the catch-up shape) is the upper end. If Plan 3 needs five+, that's a signal to revisit the convention.
 
 Open follow-ups (separate plans):
@@ -480,13 +480,13 @@ Final shape:
 - Playwright baseline content centralized: both default Step 6.5 and autonomous Step 5.5 consult the same `playwright-baseline.md`. The two source skills duplicated this block verbatim — the fold deduplicates it.
 - The autonomous-mode commit step lives in `playwright-baseline.md` rather than the SKILL.md auto-mode list because it's specific to the baseline-append path. Keeps SKILL.md auto-mode tight (one-liners per step).
 
-Real-session usage notes during the 2-week dogfooding window:
+Friction notes (populated by active use):
 
 - [ ] _(Add entries as you use it. Examples to watch for: hooks correctly no-op in interactive/prove modes; auto-mode state-gate behavior on out-of-band issue moves; prove-mode degradation when knowledge tools are partial; cross-repo registry lookup with newly-added repos; AskUserQuestion findings-review loop iterations.)_
 
 Inputs to feed into Plan 4 (`/ralph:plan`):
 
-- _(TBD after 2 weeks of usage.)_
+- _(Populated by active use, not by waiting.)_
 - Pattern validator note: SKILL.md frontmatter `hooks:` worked for scoping enforcement to a single mode within a multi-mode verb. Plan 4 will reuse for `/ralph:plan` (plan-state-gate + plan-postcondition).
 - Reference-count note: 5 references felt structurally justified by prove-mode's distinctness. For verbs without a structurally-distinct sub-mode, 4 stays the comfortable upper end. Plan 4 should aim for 4 references unless a comparable sub-mode emerges.
 
