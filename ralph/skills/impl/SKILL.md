@@ -86,29 +86,21 @@ Reads an approved plan from `thoughts/shared/plans/`, executes phases, and ships
 | **address** | `/ralph:impl --mode address [#NNN]` | PR review feedback handling (MUST_FIX / SHOULD_FIX / DISCUSS) |
 | **pr** | `/ralph:impl --mode pr [#NNN] [--push-drive\|--no-push-drive]` | Push branch + create PR + scout-trigger heuristic + Drive push |
 
-References (consult per mode):
-- [worktree-setup.md](worktree-setup.md) — create/reuse worktree, single + cross-repo, base-branch detection
-- [plan-compliance.md](plan-compliance.md) — File Ownership Summary, staging algorithm, drift handling
-- [phase-execution.md](phase-execution.md) — task graph, sub-agent controller, phase quality review, IMPL BLOCKED escalation
-- [address-mode.md](address-mode.md) — PR review feedback classification + reply shape
-- [pr-creation.md](pr-creation.md) — PR body template, cross-repo, Drive push, scout trigger heuristic
+References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-repo), [plan-compliance.md](plan-compliance.md) (File Ownership, staging, drift), [phase-execution.md](phase-execution.md) (task graph, controller, IMPL BLOCKED), [address-mode.md](address-mode.md) (PR feedback classification), [pr-creation.md](pr-creation.md) (body template, scout trigger, Drive push).
 
 ## Step 0: Parse arguments
 
-Resolve the invocation into `MODE`, `TARGET`, optional flags:
+Resolve `MODE`, `TARGET`, optional flags from args:
 
-```
-no args                        → MODE=default, prompt for TARGET (issue/path)
-"#NNN" or "NNN"                → MODE=default, TARGET=issue NNN
-"<plan-path>"                  → MODE=default, TARGET=plan-path
-"--mode auto [#NNN]"           → MODE=auto, TARGET=NNN or queue-pick
-"--mode address #NNN"          → MODE=address, TARGET=NNN (must be In Review)
-"--mode pr [#NNN]"             → MODE=pr, TARGET=NNN or queue-pick
-"--plan-doc <path>"            → auto-mode shortcut: bypass plan discovery
-"--push-drive|--no-push-drive" → pr-mode flag: forwarded to push-artifact.sh
-```
+- no args → `MODE=default`, prompt for TARGET
+- `#NNN` / `NNN` / `<plan-path>` → `MODE=default`, TARGET resolved
+- `--mode auto [#NNN]` → `MODE=auto`, TARGET=NNN or queue-pick
+- `--mode address #NNN` → `MODE=address`, TARGET=NNN (must be In Review)
+- `--mode pr [#NNN]` → `MODE=pr`, TARGET=NNN or queue-pick
+- `--plan-doc <path>` → auto-mode shortcut, bypass plan discovery
+- `--push-drive|--no-push-drive` → pr-mode flag, forwarded to push-artifact.sh
 
-After parsing, export `RALPH_TICKET_ID="GH-${TARGET}"` when TARGET is an issue number.
+Export `RALPH_TICKET_ID="GH-${TARGET}"` when TARGET is an issue number.
 
 ## Default mode — interactive phase-by-phase
 
@@ -171,6 +163,32 @@ Ask the user via AskUserQuestion what to do next:
 8. **Stage + commit + push** — per [plan-compliance.md §Staging Algorithm](plan-compliance.md).
 9. **Check completion** — re-read plan. If ALL automated checkboxes are checked, continue to Step 10; otherwise STOP with `Phase [N]/[M] complete.`.
 10. **Final report** — `Implementation complete for #NNN: <Title>` + issues + branch + worktree.
+
+## `--mode address` — PR review feedback
+
+1. **Verify state** — issue must be "In Review" with an open PR. STOP otherwise.
+2. **Gather feedback** — `gh pr view <NNN> --json reviews,comments` + `gh api repos/$RALPH_GH_OWNER/$RALPH_GH_REPO/pulls/<NNN>/comments`. Skip resolved/outdated.
+3. **Classify** each comment as MUST_FIX / SHOULD_FIX / DISCUSS per [address-mode.md §Classification](address-mode.md).
+4. **Reuse worktree** — `cd $GIT_ROOT/worktrees/GH-NNN && git pull origin <branch>`.
+5. **Address** items grouped by file: read, fix, verify (lint/tests). DISCUSS items get reply-only.
+6. **Stage** only modified files (PR's existing file list + reviewer-requested new files). Never `git add -A`/`.`/`--all`.
+7. **Commit** with `fix: address PR review feedback` heading + change bullets. **Push.**
+8. **Reply** to each PR comment: change + commit ref for fixed items, rationale for DISCUSS items. Post summary comment.
+9. **Report** MUST_FIX/SHOULD_FIX/DISCUSS counts. Issue stays "In Review".
+
+## `--mode pr` — push branch and create pull request
+
+1. **Parse args** — `#NNN` provided OR queue-pick: `list_issues(workflowState: "In Progress", limit: 10)`; for each candidate check `worktrees/GH-NNN` exists AND no open PR for `feature/GH-NNN`. STOP with literal `Queue empty.` if none match. (This literal is the loop-runner sentinel.)
+2. **Fetch issue + worktree** — `feature/GH-NNN` branch. Detect cross-repo per [pr-creation.md §Cross-repo](pr-creation.md) if multiple worktrees exist.
+3. **Push branch** — `git push -u origin feature/GH-NNN` from the worktree.
+4. **Compose PR body** — `## Summary` (optional delegation per [pr-creation.md §Delegated Summary](pr-creation.md)) + `## Plan` (link) + `## Test plan` (from Success Criteria) + `Closes #NNN` (one per sub-issue for groups).
+5. **Create PR** — `gh pr create --title "GH-NNN: <title>" --body-file <body> --head feature/GH-NNN --base main`. Capture URL.
+6. **Advance issues** to "In Review" via `save_issue` (standalone: own state; group: every child; never advance parent — server-side workflow handles that).
+7. **Record outcome** — `knowledge_record_outcome(event_type="pr_created", issue_number=NNN, verdict="created", payload={pr_url, branch, repo})`.
+8. **Drive push (optional)** — per [pr-creation.md §Drive push](pr-creation.md) when `--push-drive` or `RALPH_IOS_MODE`.
+9. **Evaluate UI heuristic** — per [pr-creation.md §Scout Trigger](pr-creation.md). Post `## Scout Trigger` advisory comment if any frontend glob matches.
+10. **Artifact comment** — post `## Pull Request` on the issue with PR URL (and `Drive:` line if non-empty).
+11. **Report** — `PR CREATED / Issue: #NNN / PR: <url> / State: In Review`.
 
 ## Configuration (resolved at load time)
 

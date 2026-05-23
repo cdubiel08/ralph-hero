@@ -386,10 +386,10 @@ The two short modes that don't follow the plan-phase lifecycle.
 
 #### Automated Verification
 
-- [ ] `address-mode.md` ≥ 50 lines.
-- [ ] `pr-creation.md` ≥ 100 lines.
-- [ ] SKILL.md pr-mode body references `Queue empty.` literal.
-- [ ] SKILL.md address-mode body references MUST_FIX / SHOULD_FIX / DISCUSS.
+- [x] `address-mode.md` ≥ 50 lines.
+- [x] `pr-creation.md` ≥ 100 lines.
+- [x] SKILL.md pr-mode body references `Queue empty.` literal.
+- [x] SKILL.md address-mode body references MUST_FIX / SHOULD_FIX / DISCUSS.
 
 #### Manual Verification
 
