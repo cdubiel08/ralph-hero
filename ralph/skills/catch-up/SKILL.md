@@ -1,0 +1,138 @@
+---
+description: Orientation companion — catches you up on what changed since you last
+  checked, surfaces ranked next actions with a recommended pick, renders the
+  pipeline dashboard, or composes and posts a status report. Use whenever the
+  user asks "what's going on", "what should I work on", "catch me up", "show me
+  the board", "post a status update", or starts a session wanting orientation.
+  --mode flag selects narrative / dashboard / report sub-surfaces.
+argument-hint: "[--mode {narrative,dashboard,report}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends]"
+context: inline
+allowed-tools:
+  - Read
+  - Skill
+  - Agent
+  - AskUserQuestion
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__recent_activity
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__next_actions
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_status_update
+  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__metrics_trends
+---
+
+# /ralph:catch-up — Orientation
+
+The unified orientation verb. Default flow is narrative + picker (matches the old
+`/ralph-hero:hello`). The `--mode` flag selects a single-surface alternative.
+
+## Mode dispatch
+
+| Mode | Behavior | Equivalent to |
+|---|---|---|
+| (default, no `--mode`) | Narrative paragraph + AskUserQuestion picker over `next_actions`, then Agent dispatch | `/ralph-hero:hello` |
+| `--mode narrative` | 2-4 sentence narrative only, no picker, no dispatch | `/ralph-hero:catch-up` |
+| `--mode dashboard` | Raw `pipeline_dashboard` render (markdown / ascii / json) | `/ralph-hero:status` |
+| `--mode report` | Compose status update; post via `create_status_update` (pass `--dry-run` to skip posting) | `/ralph-hero:report` |
+| `--help` / `-h` | Print this table and exit | — |
+
+> The `cos` family (`desk`, `remote`, `unattended`) is deliberately CLI-only —
+> see `ralph cos --help`. Those modes shell out to a local LLM specifically to
+> avoid spawning Claude Code (phone-friendly, scheduled, offline).
+
+## Default flow
+
+You compose three primitives:
+
+1. `narrative-synthesis.md` rules → `Agent(subagent_type="ralph-hero:catch-up-agent")` for the catch-up narrative.
+2. `ralph_hero__next_actions` MCP tool → ranks work, marks one `recommended: true`. Do NOT pass `openPRs` — the tool fetches them internally.
+3. `AskUserQuestion` picker over the ranked directions.
+
+### Step 1: Catch-up narrative
+
+Dispatch:
+
+```
+Agent(
+  subagent_type="ralph-hero:catch-up-agent",
+  description="Catch-up narrative",
+  prompt="Synthesize the catch-up narrative for this session."
+)
+```
+
+Capture the returned text. The 200-event activity payload stays in the sub-agent's context, not yours. If the sub-agent returns empty or errors, skip the narrative paragraph and proceed.
+
+### Step 2: Compute directions
+
+Call `ralph_hero__next_actions` with `limit=3, audience="human"`. Capture `directions[]`.
+
+### Step 3: Render briefing
+
+Output ≤ 40 lines total. Structure:
+
+1. The catch-up narrative verbatim (one paragraph, 2-4 sentences). If empty, skip.
+2. One synthesized sentence introducing the recommendations, naming the recommended pick. **Never quote `direction.reason` verbatim** — see `next-action-ranking.md` for synthesis rules.
+3. The picker (Step 4).
+
+**Empty directions case**: if `directions` is empty, output:
+
+> Things look calm — nothing stuck, nothing on fire.
+
+Skip the picker. Stop.
+
+### Step 4: Picker
+
+Present `AskUserQuestion` with options derived 1:1 from `directions[]`. The `recommended: true` option is FIRST (default). Per-option labels, descriptions, and the dispatch table all live in `next-action-ranking.md`. Add a final option: `{label: "Work through these in order", description: "Address each direction in order"}`.
+
+If `CLAUDE_NONINTERACTIVE` is set or `AskUserQuestion` is unavailable, skip the picker and end with: *"Recommended: [recommended action] — invoke explicitly to proceed."*
+
+### Step 5: Dispatch
+
+Based on the picked option, dispatch via `Agent()` or `Skill()` per the dispatch table in `next-action-ranking.md`. For "Work through these in order", dispatch sequentially in `directions[]` order, noting before each subsequent dispatch: *"Earlier actions may have changed board state."*
+
+After dispatch completes, output `Session complete.`
+
+## --mode narrative
+
+Dispatch the same `Agent(subagent_type="ralph-hero:catch-up-agent")` as the default flow's Step 1. Return only the narrative text (or the empty-case sentence from `narrative-synthesis.md`). No picker, no dispatch.
+
+Consult `narrative-synthesis.md` for tone rules. The single output is prose or the empty-case sentence — no metadata, no headers.
+
+## --mode dashboard
+
+Parse the trailing argument (after `--mode dashboard`) as the output format. Default to `markdown`. Valid formats: `markdown`, `ascii`, `json`.
+
+Call `ralph_hero__pipeline_dashboard` with `format=<parsed>, includeHealth=true, issuesPerPhase=5`.
+
+Render per `dashboard-render.md`:
+
+- If `format == "json"`: emit `JSON.stringify(dashboard, null, 2)` inside a fenced ```json``` block. Stop.
+- If `format == "markdown"` or `format == "ascii"`: emit `dashboard.formatted` verbatim. Surface critical health warnings under a `### Critical Health Warnings (N)` heading after the formatted block.
+
+The negative-constraint surface (no analyst commentary, no Key Findings, no recommendations) is load-bearing — consult `dashboard-render.md` before generating output.
+
+## --mode report
+
+Parse arguments:
+
+- `--dry-run`: compose but do not post
+- `--window N`: override the time window in days (default 7)
+- `--status ON_TRACK|AT_RISK|OFF_TRACK`: override auto-determined status
+- `--with-trends`: append a Trends section (sparklines + 1d/7d/30d deltas)
+
+Compose per `report-composition.md`:
+
+1. Fetch `ralph_hero__pipeline_dashboard` with `format="json", includeHealth=true, includeMetrics=true, doneWindowDays=<window>, velocityWindowDays=<window>`.
+2. Handle the metrics-absent fallback per `report-composition.md`.
+3. Compose the markdown body using the template in `report-composition.md`.
+4. If `--with-trends`, call `ralph_hero__metrics_trends` with `format="markdown"` and append under `## Trends` only when ≥2 snapshots exist.
+5. Determine final status: `--status` override > `metrics.status` > fallback.
+
+If `--dry-run`: display the composed body + determined status + `Dry run complete. No status update posted.` Stop.
+
+Otherwise: call `ralph_hero__create_status_update` with `{status, body}`. Display the response: status update ID + status + first 200 chars of body. Print `Status update posted successfully.`
+
+## References
+
+- `narrative-synthesis.md` — catch-up narrative tone rules + cursor mechanics
+- `next-action-ranking.md` — signal-cue table, picker label rules, dispatch table
+- `dashboard-render.md` — pipeline render rules + negative-constraint prose
+- `report-composition.md` — markdown template, status determination, --with-trends
