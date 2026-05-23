@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.ralph.pr-merged-poll.plist.template
+  Launchd polling fallback for the ralph-hero-pr-merged cloud Routine.
+  Runs poll-merged-prs.sh every 5 minutes to catch PRs merged while the
+  cloud Routine is unavailable or during offline periods.
+
+  Installation:
+    1. Replace __INSTALL_PATH__ below with the absolute path to the
+       poll-merged-prs.sh script. Example:
+         /Users/yourname/projects/ralph-hero/plugin/ralph-hero/scripts/routines/poll-merged-prs.sh
+
+    2. Copy to LaunchAgents:
+         cp com.ralph.pr-merged-poll.plist.template \
+            ~/Library/LaunchAgents/com.ralph.pr-merged-poll.plist
+
+    3. Load the agent:
+         launchctl load ~/Library/LaunchAgents/com.ralph.pr-merged-poll.plist
+
+    4. Verify it is registered:
+         launchctl list | grep pr-merged-poll
+
+    5. Monitor output:
+         tail -f /tmp/ralph-pr-merged-poll.out
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.ralph.pr-merged-poll.plist
+    rm ~/Library/LaunchAgents/com.ralph.pr-merged-poll.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.ralph.pr-merged-poll</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-lc</string>
+		<string>__INSTALL_PATH__</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardOutPath</key>
+	<string>/tmp/ralph-pr-merged-poll.out</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/ralph-pr-merged-poll.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+</dict>
+</plist>
