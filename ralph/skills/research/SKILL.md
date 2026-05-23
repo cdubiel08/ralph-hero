@@ -152,7 +152,17 @@ Append to the SAME doc. Update frontmatter (`last_updated`, `last_updated_note`)
 
 ## --mode auto
 
-_(Filled by Phase 4.)_
+Autonomous Research-Needed picker. No questions; one issue, locked, researched, advanced. Frontmatter `hooks:` gates the flow (branch-gate, state-gate, postcondition + doc-validator + lock-release on Stop). XS/S only, 15-minute budget.
+
+1. **Branch check** — `git branch --show-current` must be `main`; `branch-gate.sh` also blocks non-allowlisted Bash.
+2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-research", limit: 50)`, filter XS/Small + unblocked (per `intake-routing.md` § Blocker semantics — fetch each blocker, do not infer), pick highest priority. None eligible → exit cleanly.
+3. **Lock + registry + knowledge graph** — `save_issue(workflowState: "__LOCK__", command: "ralph_research")` → read `.ralph-repos.yml` if present (`research-shapes.md` § Cross-repo addendum) → knowledge-graph dispatch (`research-shapes.md` § Knowledge-graph dispatch shape); save `query_id` for Step 7.
+4. **Parallel sub-agent research** — same dispatch as default Step 3, no review picker. Wait for ALL, synthesize.
+5. **Write doc** — per `findings-format.md`. Required: frontmatter, Prior Work, Files Affected (hook-enforced), Detailed Findings. Optional: Pipeline History, Cross-Repo Scope.
+6. **Playwright baseline (conditional)** — per `playwright-baseline.md`, no user prompt. Commit per the autonomous-mode commit step in that reference.
+7. **Commit + push** — `git add ... && git commit -m "docs(research): GH-NNN research findings" && git push origin main`.
+8. **Artifact + advance + outcome** — `create_comment` (artifact per `findings-format.md` § Artifact comment) → `save_issue(workflowState: "__COMPLETE__", command: "ralph_research")` (advances to Ready for Plan) → `knowledge_record_outcome(event_type: "research_completed", ..., query_id: "<from Step 3>")` if available.
+9. **Report** — single block: *Research complete for #NNN: [Title] / Findings: [path] / Status: Ready for Plan / Key recommendation: [one sentence]*.
 
 ## --mode prove
 
