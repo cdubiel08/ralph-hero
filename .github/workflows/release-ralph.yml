@@ -1,0 +1,134 @@
+name: Release Ralph
+
+# Auto-bump ralph/.claude-plugin/plugin.json on merges to main that touch ralph/.
+#
+# The ralph plugin is pure markdown + shell scripts — no MCP server, no npm
+# package. It ships through Claude Code's marketplace via git tags only, so
+# this workflow is intentionally lighter than release.yml and
+# release-knowledge.yml (which both also publish to npm).
+#
+# Why this matters operationally: `/plugin install ralph@ralph-hero`
+# snapshots the plugin at install time and refuses to re-fetch a same-version
+# package. Without an auto-bump, every plan would require a manual
+# `chore: bump version` commit before consumers could pull the update. This
+# workflow makes the bump automatic on every meaningful merge.
+#
+# Bump policy:
+#   - default: patch (e.g., 0.1.1 → 0.1.2)
+#   - merge commit message includes "#minor" (case-insensitive, word-bounded): minor
+#   - merge commit message includes "#major" (case-insensitive, word-bounded): major
+#   - workflow_dispatch: explicit choice
+#
+# Loop prevention: the bump commit message ends with "[skip ci]" so it
+# doesn't re-trigger this workflow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ralph/**'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: release-ralph
+  cancel-in-progress: false
+
+# Top-level read-only; the release job widens to contents: write for tag + push.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Determine version bump
+        id: bump
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_BUMP: ${{ inputs.bump }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "type=$MANUAL_BUMP" >> "$GITHUB_OUTPUT"
+            echo "Bump type: $MANUAL_BUMP (workflow_dispatch)"
+          else
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            if echo "$COMMIT_MSG" | grep -qiE '\b#major\b'; then
+              echo "type=major" >> "$GITHUB_OUTPUT"
+              echo "Bump type: major (commit annotation)"
+            elif echo "$COMMIT_MSG" | grep -qiE '\b#minor\b'; then
+              echo "type=minor" >> "$GITHUB_OUTPUT"
+              echo "Bump type: minor (commit annotation)"
+            else
+              echo "type=patch" >> "$GITHUB_OUTPUT"
+              echo "Bump type: patch (default)"
+            fi
+          fi
+
+      - name: Compute next version
+        id: version
+        env:
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+        run: |
+          set -euo pipefail
+          PLUGIN_JSON="ralph/.claude-plugin/plugin.json"
+          CURRENT=$(jq -r .version "$PLUGIN_JSON")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$BUMP_TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+            *) echo "::error::Unknown bump type: $BUMP_TYPE"; exit 1 ;;
+          esac
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Current: $CURRENT  →  New: $NEW_VERSION"
+
+      - name: Write bumped version to plugin.json
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          PLUGIN_JSON="ralph/.claude-plugin/plugin.json"
+          jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json
+          mv tmp.json "$PLUGIN_JSON"
+          # Sanity: verify the write took
+          jq -e --arg v "$NEW_VERSION" '.version == $v' "$PLUGIN_JSON" > /dev/null
+
+      - name: Commit bump and tag
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ralph/.claude-plugin/plugin.json
+          git commit -m "chore(ralph): release ralph-v${NEW_VERSION} [skip ci]"
+          git tag "ralph-v${NEW_VERSION}"
+          # Use pull --rebase to handle the rare case of a concurrent push between
+          # this workflow's checkout and the commit; the concurrency group above
+          # prevents two release jobs from interleaving but not unrelated pushes.
+          git pull --rebase origin main
+          git push origin main --tags
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.version.outputs.new }}
+        run: gh release create "ralph-v${NEW_VERSION}" --generate-notes --title "ralph-v${NEW_VERSION}"
