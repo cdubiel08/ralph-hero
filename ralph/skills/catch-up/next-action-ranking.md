@@ -96,7 +96,7 @@ Based on the user's pick, dispatch via `Agent()` or `Skill()`:
 | `pr` | — | `Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR #NNN", description="Merge PR #NNN")` |
 | `tree-continue` | — | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Continue tree work on issue #NNN", description="Triage GH-NNN")` |
 | `lock-stale` | — | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Triage stalled issue #NNN", description="Triage GH-NNN")` |
-| `human-needed-unblock` | `Human Needed` | `Skill("ralph-hero:unblock", args="<NNN>")` |
+| `human-needed-unblock` | `Human Needed` | `Skill("ralph:caretake", args="--mode unblock #<NNN>")` |
 
 For the **Work through these in order** option: dispatch sequentially in `directions[]` order. Note before each subsequent dispatch: *"Earlier actions may have changed board state."*
 

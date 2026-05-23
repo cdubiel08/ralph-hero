@@ -604,6 +604,60 @@ Inputs to feed into Plan 7 (`/ralph:caretake`):
 
 Open follow-ups (separate plans):
 
-- Plan 7 (`/ralph:caretake`) folds the caretaker modes (triage, hygiene, postmortem, retro, trends, unblock, split). May reuse `merge-state-gate.sh` for the merge-adjacent caretaker actions.
 - Plan 8 (`/ralph:hero`) is the orchestrator that dispatches `/ralph:impl --mode auto` then `/ralph:review` (default) per issue. Plan 6's verdict-token contracts (`FINISHED`, `FINISH BLOCKED — <reason>`) are the boundary the hero parses to decide next action.
 - Plan 10 owns sunset of source `ralph-val`, `ralph-code-review`, `ralph-merge`, `finish` skills.
+
+### Plan 7: `/ralph:caretake` (shipped 2026-05-23, branch `worktree-ralph-plan-7-caretake`)
+
+The widest fold in the migration — 10 source skills (2,258 lines of SKILL.md prose) collapse into one verb with 8 named modes plus a default event-driven dispatcher. Only verb in the plan-of-plans that warrants a `modes/` subfolder layout (spec §Skill Layout line 148).
+
+Hot-path stats:
+
+- 10 source skills → 1 SKILL.md (166 lines) + 8 mode bodies under `modes/` (averaging ~150 lines each) + 3 flat-sibling references (`label-routing.md`, `outcome-tokens.md`, `split-decomposition.md`).
+- 9 new hook ports under `ralph/hooks/scripts/` + 3 reuses (`branch-gate.sh`, `merge-state-gate.sh`, `lock-release-on-failure.sh`).
+- 8 mode-specific terminal-token families consolidated into one `outcome-tokens.md`.
+- Modes split by execution shape: 4 board-scan (triage/hygiene/unblock/split mutate state); 3 reflection (postmortem/retro/trends produce artifacts); 1 diagnostic (debug wraps MCP tool with interactive confirm).
+
+Design calls:
+
+- **`modes/` subfolder layout justified by mode count alone.** 8 mode bodies × ~80-120 lines each ≈ 700-1000 lines of mode-specific content — inlining would push SKILL.md past 800 lines; flat siblings without the subfolder would clutter the directory listing.
+- **`RALPH_SUBCOMMAND` scope pattern.** SessionStart sets `RALPH_COMMAND=caretake`; each mode body sets `RALPH_SUBCOMMAND=<name>` at body entry. The 9 hooks all gate on the (command, subcommand) pair so the SKILL.md frontmatter declares the full union at the top and each hook self-no-ops when a different mode is active. Pattern transplants cleanly to future multi-mode folds.
+- **Sub-mode discrimination inside `--mode unblock`.** Interactive (consumer) and autonomous (producer/`--question`) paths share one mode body but split on `RALPH_SUBCOMMAND_VARIANT`. Mirrors Plan 5's `--mode auto` vs default split inside `/ralph:impl` — proves the pattern generalizes.
+- **`label-routing.md` extracted from SKILL.md.** The dispatcher's full table (10 routing rows + full-fan-out sequence + label-consumption rules) lives in the flat sibling. Future label additions are a one-row PR — SKILL.md does not need to change.
+- **Hook prefix conventions clarified.** Prefixes are now: `triage-` (2), `unblock-` (2), `split-` (4), `postmortem-` (1, renamed from source `team-postmortem-completeness.sh` since the slim plugin has no team concept), plus the plan-3 reuses. Each prefix gates on its own `RALPH_SUBCOMMAND` value so multiple modes can coexist under one SKILL.md frontmatter.
+- **`--mode trends` is the only token-less mode.** Read-only by design — markdown report IS the deliverable. No `Stop` hook, no terminal verdict. Documented explicitly in `outcome-tokens.md` so future contributors don't add a token retroactively.
+
+Friction notes (populated by active use):
+
+- [ ] _(Examples to watch for: full fan-out via `trigger:caretake` running all 8 modes serially without stalling; `RALPH_SUBCOMMAND_VARIANT` hook scoping picking the right gate for interactive vs autonomous unblock; `--mode split` correctly blocking on `split-estimate-gate.sh` PostToolUse when parent is XS/S; `--mode debug --auto-confirm` from the Watcher heartbeat skipping `AskUserQuestion` cleanly; default-event dispatch consuming `trigger:caretake` and posting `## Caretaker Action` exactly once.)_
+
+Active-use checkboxes (each mode):
+
+- [ ] `--mode triage` against a real Backlog with at least one untriaged issue — emits `TRIAGED <verdict>` or `Queue empty.`
+- [ ] `--mode hygiene` against a real project — emits `HYGIENE COMPLETE <N>`.
+- [ ] `--mode unblock` (interactive) against an issue with `## Unblock Request` — posts `## Unblock Resolution`, transitions out of Human Needed, emits `UNBLOCK RESOLVED`.
+- [ ] `--mode unblock --question` against a board with a Human Needed issue — posts `## Unblock Request`, leaves state untouched, emits `UNBLOCK REQUEST POSTED`.
+- [ ] `--mode postmortem` at end of a team session with TaskList data — writes Obsidian-ready report, patches plan with `post_mortem::`, files blocker issues, emits `POSTMORTEM <path>`.
+- [ ] `--mode retro` after a session with friction signals — writes research doc, emits `RETRO <path>`.
+- [ ] `--mode trends --since 30d` — prints markdown trend report to stdout (no terminal token).
+- [ ] `--mode debug --since 24h` against a local Langfuse with errors — dry-runs, AskUserQuestion confirms, files issues, emits `DEBUG FILED <N>`.
+- [ ] `--mode split #NNN` against a real M-estimated issue — creates ≥2 XS/S children, emits `SPLIT <N>`.
+- [ ] Default mode (`--issue NNN` with a routing label) — dispatches the right mode via `label-routing.md`, posts `## Caretaker Action`.
+
+Patterns to encode in future fold plans:
+
+- **`modes/` subfolder is the right layout when mode count × per-mode body length > ~600 lines.** Inline at 4 modes (Plan 4) is fine; inline at 5+ modes (Plan 6 was at the boundary) stops being fine; subfolder at 8 modes (Plan 7) is the right shape.
+- **Sub-mode discrimination via `RALPH_SUBCOMMAND_VARIANT`** (separate from `RALPH_SUBCOMMAND`) lets one mode body host interactive + autonomous paths without a `--mode interactive-unblock` / `--mode autonomous-unblock` split that would double the mode count.
+- **Extract any rules table that future contributors might extend** into a flat-sibling reference, not the SKILL.md body. Label routing, decomposition heuristics, terminal-token tables — each gets its own file.
+
+Inputs to feed into Plan 8 (`/ralph:hero`):
+
+- _(Populated by active use, not by waiting.)_
+- 9 new hook ports + 3 reuses = 12 total hook scope guards in Plan 7's SKILL.md frontmatter. The pattern scales but the frontmatter is dense; future plans should consider whether per-mode hook-frontmatter could be split into per-mode files if the dispatch supports it.
+- The `label-routing.md` table is the natural integration point for Director's `event-classes.md` taxonomy. Plan 8's orchestrator should reuse the same label set so triggers compose cleanly between caretaker and hero.
+- `--mode trends`'s no-terminal-token contract is the model for any future read-only verb. Future plans should NOT retrofit a terminal token onto trends — the markdown report is the deliverable.
+
+Open follow-ups (separate plans):
+
+- Plan 8 (`/ralph:hero`) is the orchestrator that dispatches `/ralph:impl --mode auto` then `/ralph:review` (default) per issue. Plan 6's verdict-token contracts (`FINISHED`, `FINISH BLOCKED — <reason>`) are the boundary the hero parses to decide next action. The Plan 7 `--mode <name>` arg surface is preserved so the hero's existing dispatch pattern keeps working.
+- Plan 10 owns sunset of source `ralph-val`, `ralph-code-review`, `ralph-merge`, `finish`, `caretake`, `ralph-triage`, `ralph-hygiene`, `ralph-postmortem`, `retro`, `trends`, `unblock`, `ralph-unblock`, `ralph-debug-collate`, `ralph-split` skills.
