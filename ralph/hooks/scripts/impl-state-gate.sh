@@ -1,0 +1,39 @@
+#!/bin/bash
+# ralph-hero/hooks/scripts/impl-state-gate.sh
+# PreToolUse (ralph_hero__save_issue): Validate impl state transitions
+#
+# Environment:
+#   RALPH_VALID_OUTPUT_STATES - Valid target states
+#
+# Exit codes:
+#   0 - Valid transition
+#   2 - Invalid transition, block
+
+set -euo pipefail
+source "$(dirname "$0")/hook-utils.sh"
+
+# Slim-plugin scope: only activate for /ralph:impl.
+if [[ "${RALPH_COMMAND:-}" != "impl" ]]; then
+  allow
+fi
+
+read_input > /dev/null
+
+new_state=$(get_field '.tool_input.workflowState')
+if [[ -z "$new_state" ]]; then
+  allow  # Not a state update
+fi
+
+valid_output="${RALPH_VALID_OUTPUT_STATES:-In Progress,In Review,Human Needed}"
+
+if ! validate_state "$new_state" "$valid_output"; then
+  block "Invalid impl state transition
+
+Command: ${RALPH_COMMAND:-impl}
+Attempted state: $new_state
+Valid output states: $valid_output
+
+This command can only transition to: $valid_output"
+fi
+
+allow
