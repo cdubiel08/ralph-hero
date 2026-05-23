@@ -59,8 +59,15 @@ Orchestration knob — **NOT** a verb mode. Governs behavior when the Code Revie
 
 | Value | Behavior |
 |---|---|
-| `auto` (`RALPH_REVIEW_MODE=auto`) | Run code review inline without prompting: `Skill("code-review:code-review", "PR_NUMBER")`. After it completes, re-read the verdict and branch again. |
-| `interactive` (default; unset or `interactive`) | Prompt via `AskUserQuestion`: "This PR has no code review yet. Would you like to run one before merging?" Options: Run code review / Merge without review. Selected "Run code review" → inline `Skill()` invocation. Selected "Merge without review" → continue to merge. |
+| `auto` (`RALPH_REVIEW_MODE=auto`) | Run code review inline without prompting: `Skill("code-review:code-review", "PR_NUMBER")`. After it completes, re-read the verdict ONCE and branch on the result. **2nd consecutive `BLOCKED` is terminal** (see below). |
+| `interactive` (default; unset or `interactive`) | Prompt via `AskUserQuestion`: "This PR has no code review yet. Would you like to run one before merging?" Options: Run code review / Merge without review. Selected "Run code review" → inline `Skill()` invocation, then re-read once with the same 2nd-`BLOCKED`-is-terminal rule. Selected "Merge without review" → continue to merge. |
+
+**Second-consecutive `BLOCKED` terminal (load-bearing, PR #1335 precedent).** After running `code-review:code-review` inline, the re-read verdict can be:
+
+- `APPROVED` → continue to merge.
+- `NEEDS_FIX` → Code Review Fix Cycle (max 1, see §Code Review Fix Cycle).
+- `BLOCKED` (still) → STOP with `FINISH BLOCKED — Code review did not produce a verdict and no self-authored fallback applies`. **Do NOT re-loop into another `code-review:code-review` invocation.** `code-review:code-review` posts comments but cannot mutate `reviewDecision`; on multi-author PRs with no formal review, the verdict will remain `BLOCKED` forever — looping would be unbounded. This matches the explicit terminal stop added to `plugin/ralph-hero/skills/finish/SKILL.md` lines 137 / 163 by PR #1335 (commit `e35a3420`).
+- `ERROR: *` → retry once. Still error → STOP with `FINISH BLOCKED <error>`.
 
 Distinct from `--mode val|code|merge` which selects a leaf verb. The switch is consumed only in default-mode's Step 3 BLOCKED branch.
 

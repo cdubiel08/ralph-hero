@@ -12,7 +12,7 @@ gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'
 
 | Value | Action |
 |---|---|
-| `APPROVED` | PR already reviewed and approved. Emit `Code review already approved.` and STOP clean. |
+| `APPROVED` | PR already reviewed and approved. Emit `CODE REVIEW PASSED` (canonical token; accepted by `closeout-postcondition.sh`) plus a short "PR already reviewed and approved." human-readable line, then STOP clean. |
 | `CHANGES_REQUESTED` (human) | Hard human block — distinct from skill-driven feedback. Emit `CODE REVIEW BLOCKED — Human reviewer requested changes` and STOP. Do NOT loop. |
 | `null` / `REVIEW_REQUIRED` / no decision | Proceed to the loop. |
 
