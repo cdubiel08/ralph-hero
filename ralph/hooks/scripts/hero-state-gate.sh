@@ -19,9 +19,14 @@ read_input > /dev/null
 # Scope guard — no-op outside /ralph:hero
 [[ "${RALPH_COMMAND:-}" == "hero" ]] || exit 0
 
+# save_issue uses `workflowState`; advance_issue uses `targetState`. Try both
+# so the hook gates BOTH MCP tools it's registered against (PR #1391 review).
 target_state=$(get_field '.tool_input.workflowState')
+if [[ -z "$target_state" ]]; then
+  target_state=$(get_field '.tool_input.targetState')
+fi
 
-# No workflowState change — allow (label-only save_issue, etc.)
+# No state change — allow (label-only save_issue, advance_issue without targetState, etc.)
 [[ -z "$target_state" ]] && exit 0
 
 # Semantic-intent passthrough — state-resolution.ts handles these
