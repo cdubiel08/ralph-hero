@@ -54,7 +54,63 @@ If no argument and not `--mode draft`: list files from `thoughts/shared/ideas/` 
 
 ## Default flow
 
-_(Filled by Phase 2 and Phase 3.)_
+### Step 2: Understand the idea
+
+Read the idea (from the file resolved in Step 1, or treat the inline argument as the idea body). Identify:
+
+- What problem does this solve?
+- Who benefits?
+- What's the scope?
+
+Present your understanding to the user and wait for confirmation:
+
+```
+Here's what I understand:
+
+**Core idea**: [one sentence]
+**Problem it solves**: [brief]
+**Scope**: [small / medium / large]
+
+Does this capture it correctly?
+```
+
+If the user corrects you, restate and re-confirm before proceeding.
+
+### Step 3: Research & contextualize
+
+Branch by `INPUT_TYPE` per `intake-shapes.md`:
+
+- `INPUT_TYPE == "research"`: skip codebase-locator / codebase-analyzer (the doc IS the investigation); still run thoughts-locator + thoughts-analyzer + `list_issues` keyword search.
+- `INPUT_TYPE == "idea"`: run the full suite per `duplicate-detection.md`.
+
+Spawn sub-tasks in parallel. Wait for ALL to complete before synthesizing. Do NOT pass `team_name` to any `Agent()` call.
+
+### Step 4: Present larger context
+
+Surface to the user:
+
+- **Related existing work** — issues / plans / research that overlap or connect.
+- **Potential duplicates** — issues that cover similar ground (call out if `LINKED_ISSUE` is already set from intake).
+- **Natural home** — where this fits in the project structure; which epic or initiative it aligns with.
+- **Complexity assessment** — XS / S / M / L / XL with key dependencies and risk areas.
+
+### Step 5: Output picker
+
+Use `AskUserQuestion` with these 5 options. The first option is the default-selected one for ideas without `LINKED_ISSUE`; for ideas with `LINKED_ISSUE`, default to "Implementation plan" instead.
+
+| Label | Behavior |
+|---|---|
+| **GitHub issue** | Create a well-scoped issue ready for the backlog → Step 6a |
+| **Implementation plan** | Hand off to `/ralph:plan` (or `/ralph-hero:plan` until Plan 4 ships) → Step 6c |
+| **Research topic** | Hand off to `/ralph:research` (or `/ralph-hero:research` until Plan 3 ships) → Step 6c |
+| **Ticket tree** | Break into parent + children sub-issues → Step 6b |
+| **Keep as refined idea** | Update the source file with context; no GitHub mutation → Step 6d |
+
+Wait for the user's structured response, then branch to the matching Step 6 sub-step.
+
+### Step 6: Output paths
+
+_(Filled by Phase 3.)_
 
 ## --mode draft
 
