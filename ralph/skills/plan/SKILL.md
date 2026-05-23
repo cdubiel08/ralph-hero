@@ -132,7 +132,17 @@ Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced.
 
 ## --mode epic
 
-_(Filled by Phase 5.)_
+Strategic multi-tier decomposition. Folds `ralph-plan-epic` + epic-decomposition side of `ralph-split`. Writes a plan-of-plans doc + creates feature children with dependency edges.
+
+1. **Lock epic** — `save_issue(workflowState: "__LOCK__", command: "plan")` on the epic.
+2. **Context gathering** — read epic body + comments + any linked research. Spawn `codebase-locator` for affected areas; spawn `thoughts-locator` for prior plans on the same epic. Wait for ALL.
+3. **Write plan-of-plans** — per `decomposition.md` § Plan-of-plans shape. Required: Strategic Context, Shared Constraints, Feature Decomposition (3-7 features), Integration Strategy, Feature Sequencing, What We're NOT Doing.
+4. **Create feature children** — per `decomposition.md` § Child creation. For each feature: `create_issue` (Backlog state, estimate from decomposition) → `add_sub_issue(parent: <epic>, child: <new>)`. Apply `add_dependency` edges per `decomposition.md` § Dependency-edge rules.
+5. **Update plan-of-plans** — annotate each `### Feature` with the assigned child issue number + URL.
+6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
+7. **Post artifact + advance** — `create_comment(## Plan of Plans ...)` on the epic; `save_issue(workflowState: "Plan in Review", command: "plan")`.
+8. **Optional orchestration** — for each child in dependency order, optionally dispatch `--mode auto` to plan that feature. The user/orchestrator picks whether to chain — this mode does not auto-cascade by default.
+9. **Report** — *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*.
 
 ## --mode iterate
 
