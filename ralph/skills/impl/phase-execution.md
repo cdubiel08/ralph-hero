@@ -29,7 +29,7 @@ For each task group:
    - `DONE_WITH_CONCERNS` → evaluate concerns, then reviewer.
    - `NEEDS_CONTEXT` → provide context, re-dispatch (within retry budget).
    - `BLOCKED` → assess drift category (minor adapt+log; major pause+escalate; weak-model tier-escalate per §IMPL BLOCKED).
-4. **Dispatch reviewer sub-agent** using the sibling `task-reviewer-prompt.md`: `Agent(subagent_type="general-purpose", model="haiku", prompt=<task-reviewer-prompt.md contents, rendered>, description="Review task N.M")`.
+4. **Dispatch reviewer sub-agent** using the sibling `task-reviewer-prompt.md`. Substitute `{{TASK_DEFINITION}}`, `{{IMPLEMENTER_REPORT}}`, `{{SHARED_CONSTRAINTS}}`, `{{IF_TDD_TRUE/FALSE}}` before dispatch: `Agent(subagent_type="general-purpose", model="haiku", prompt=<task-reviewer-prompt.md rendered>, description="Review task N.M")`.
    - `COMPLIANT` → mark task complete, advance.
    - `ISSUES` → implementer fixes, re-review (max 3 loops).
 
@@ -52,7 +52,7 @@ If the current dispatching model IS already opus, fall through to the existing e
 After all tasks pass the reviewer step:
 
 1. `git diff [phase-start]..HEAD` — capture the phase's net change.
-2. Dispatch reviewer at opus, loading the prompt from the sibling `phase-reviewer-prompt.md`: `Agent(subagent_type="general-purpose", model="opus", prompt=<phase-reviewer-prompt.md contents>, description="Review phase N quality")`.
+2. Dispatch reviewer at opus, loading the prompt from the sibling `phase-reviewer-prompt.md`. Substitute `{{PHASE_DIFF}}`, `{{PHASE_DEFINITION}}`, `{{SHARED_CONSTRAINTS}}` before dispatch: `Agent(subagent_type="general-purpose", model="opus", prompt=<phase-reviewer-prompt.md rendered>, description="Review phase N quality")`.
 3. `APPROVED` → proceed to Step 4. `NEEDS_FIXES` → dispatch fixer; Critical issues block, Important issues get fixed inline, Minor issues are logged.
 4. Post `## Phase N Review` comment on the issue with reviewer verdict + diff summary.
 5. If drift accumulated, post `## Drift Log — Phase N` comment summarizing off-ownership writes (read from `${TMPDIR}/ralph-drift-${RALPH_TICKET_ID}.log`).

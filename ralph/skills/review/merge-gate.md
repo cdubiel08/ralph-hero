@@ -253,7 +253,9 @@ The caller (default-mode close-out, finish-equivalent) is responsible for ensuri
 | Token | Meaning |
 |---|---|
 | `MERGED` | Merge succeeded; SHA captured; issue transitioned to Done. |
-| `MERGE BLOCKED — <reason>` | Pre-merge gate failed (review/mergeable/scout) in interactive mode. STOP without merging. |
-| `AUTO-MERGE BLOCKED` | One of the three autonomous-mode criteria failed (review/CI/mergeable). STOP — next loop tick re-evaluates. |
+| `MERGE BLOCKED — <reason>` | Pre-merge gate failed (review/mergeable/scout). Emitted in BOTH interactive and autonomous modes — the Pre-merge gates section runs unconditionally per `ALWAYS RUN` at line 17. STOP without merging. |
+| `AUTO-MERGE BLOCKED — <reason>` | Autonomous-mode-specific criterion failed beyond the Pre-merge gates (CI not green, mergeable=UNKNOWN, etc.). STOP — next loop tick re-evaluates. |
 | `MERGE NOT READY` | PR not findable (no open PR on branch). STOP. |
 | `Queue empty.` | No-work short-circuit from queue-pick path. |
+
+> **Loop-runner contract.** Callers grepping for autonomous-mode failures must accept BOTH `MERGE BLOCKED — ` and `AUTO-MERGE BLOCKED — ` as block signals. The Pre-merge gates run before the autonomous-mode-only criteria, so a `MERGE BLOCKED — review required` can fire in an `RALPH_AUTO_MERGE=true` run. Only the autonomous-mode-only criteria (CI green, mergeable status from §Autonomous mode Criteria 2 and 3) emit the `AUTO-MERGE BLOCKED — ` prefix.

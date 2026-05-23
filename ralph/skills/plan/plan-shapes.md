@@ -114,7 +114,7 @@ File ownership rule: each phase owns a tightly-scoped file set. Phases should no
 
 ## Task anatomy
 
-Phases that decompose into tasks use `#### Task N.M:` subheadings. Each task carries four YAML fields below the heading. `plan-postcondition.sh:74-84` reads these fields when emitting `sync_plan_graph` snapshots — plans authored without them produce silently incomplete graphs.
+Phases that decompose into tasks use `#### Task N.M:` subheadings. Each task carries four YAML fields below the heading. The per-phase `depends_on:` annotation is what `plan-postcondition.sh` greps for to detect when `sync_plan_graph` should be called (it scans for `depends_on.*\[` and warns when the dependency graph hasn't been synced). The per-task fields below are consumed by `sync_plan_graph` itself and by orchestrators (hero, autopilot) when dispatching implementer sub-agents — they are not read by `plan-postcondition.sh` directly. Plans authored without them still pass hooks but produce a less-detailed parallel-dispatch graph.
 
 ```markdown
 #### Task 1.1: [descriptive name]
@@ -160,7 +160,7 @@ Worked example:
   - [ ] `grep -r "useNewParser" src/` returns ≥1 hit in flags.ts and auth.ts
 ```
 
-Tasks without the four YAML fields still parse — `plan-postcondition.sh` warns (rather than blocks) when they're missing so older plans don't break under stricter enforcement. Future plans (Wave 2 candidate) may elevate the warning to a block once the corpus is consistent.
+Tasks without the four YAML fields still parse — no hook blocks on their absence. `plan-postcondition.sh` warns only when the per-phase `depends_on:` annotation is present but `sync_plan_graph` was not called. Wave 2 may add a doc-structure-level check for the per-task fields once the plan corpus is consistent.
 
 ## Plan-of-plans variant (epic mode)
 
