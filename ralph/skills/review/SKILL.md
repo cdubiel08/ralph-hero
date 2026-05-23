@@ -74,7 +74,17 @@ Export `RALPH_TICKET_ID="GH-${TARGET}"` when `TARGET` is an issue number.
 
 ## Default mode — full close-out
 
-_Filled by Phase 5._
+1. **Parse args + fetch issue + find PR** — same shape as merge-mode Steps 1-2. STOP `FINISH BLOCKED — wrong state` if not "In Review"; STOP `FINISH BLOCKED — no PR` if PR not found.
+2. **Validate** — `Agent(subagent_type="ralph-hero:val-agent", prompt="Validate GH-NNN. Plan doc: ...")`. Parse verdict: `VALIDATION PASS` → continue; `VALIDATION FIX` → dispatch impl-agent for mechanical fixes (1 cycle max), re-run val; `VALIDATION FAIL` → STOP `FINISH BLOCKED`.
+3. **Code Review Gate** — `verdict=$(bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/finish-review-verdict.sh PR_NUMBER)`. Branch per [auto-vs-interactive.md §Code Review Gate](auto-vs-interactive.md):
+   - `APPROVED` → continue to merge.
+   - `NEEDS_FIX` → Step 3a.
+   - `BLOCKED` → branch on `RALPH_REVIEW_MODE` per [§RALPH_REVIEW_MODE switch](auto-vs-interactive.md): `auto` invokes `Skill("code-review:code-review", "PR_NUMBER")` inline (preserves [§Depth-0 fan-out](auto-vs-interactive.md)); `interactive` (default) prompts via `AskUserQuestion`. Re-read verdict after.
+   - `ERROR: *` → retry once, then `FINISH BLOCKED`.
+4. **Step 3a: Code Review Fix Cycle (max 1)** — per [§Code Review Fix Cycle](auto-vs-interactive.md): dispatch `Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback...")`, re-invoke `Skill("code-review:code-review", "PR_NUMBER")` once, re-read verdict. Still `NEEDS_FIX` → `FINISH BLOCKED — review unresolved after 1 fix cycle`. The orchestrator does NOT loop the leaf — that's `--mode code`'s 3-round prerogative.
+5. **Merge** — `Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR for GH-NNN. PR URL: <url>")`. Parse output: `MERGED` → continue; `MERGE BLOCKED|NOT READY` → STOP and report.
+6. **CI Watch** — `Monitor` per [merge-gate.md §CI Watch](merge-gate.md). **Substitute `MERGE_SHA` literally** into the command string (Monitor subshell does NOT inherit shell vars). Parse last notification: `CI PASSED:` / `CI FAILED:` / `CI SKIPPED:` / no-terminal-line → `CI PENDING`.
+7. **Report** — `FINISHED / Issue: #NNN / PR: <url> / Validation: PASS / Merge: Done / CI: <verdict>`.
 
 ## `--mode val` — validate impl vs. plan
 
