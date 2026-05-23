@@ -1,6 +1,6 @@
 {
   "name": "ralph",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Slim successor to ralph-hero: 9 fat skills with flat-sibling references, hooks-enforced state, MCP-driven artifacts. The naive hero, less ceremony.",
   "author": {
     "name": "Chad Dubiel",
