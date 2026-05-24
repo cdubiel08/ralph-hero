@@ -27,6 +27,8 @@ This plan adds a uniform `--loop [interval]` flag to every skill+mode combinatio
 
 Skills where looping is meaningless (interactive intake, single-target one-shots, single-artifact composers) explicitly do **not** get the flag; attempts to pass it print a one-line refusal and exit cleanly. The list of suitable vs. unsuitable mode-pairs is determined up-front in Phase 1 and locked.
 
+This plan also establishes a complementary `--auto` flag as a per-verb alias for that verb's most autonomous mode (e.g., `/ralph:research --auto` ≡ `/ralph:research --mode auto`; `/ralph:caretake --auto` ≡ `/ralph:caretake --mode triage`). The two flags compose: `--loop --auto` resolves the alias first, then wraps the result in `/loop`. Together they give a uniform flag grammar across all loop-suitable verbs, replacing the muscle-memory burden of remembering each verb's autonomous-mode name. Two related cleanups travel with this scope expansion: (1) the catch-up heartbeat report defaults to `--dry-run` (with a one-line hint to re-invoke with `--post`), so cadenced loops don't generate GitHub status-update noise on every tick; and (2) the triage verdict palette swaps the "stay in Backlog" `KEEP` outcome for explicit `ROUTE-TO-<queue>` transitions, so every triage call produces forward motion or escalates to Human Needed.
+
 ## Current State Analysis
 
 ### Today's loop surface in `ralph/`
@@ -124,17 +126,18 @@ Manual:
 - **Not introducing new sentinel strings.** All terminal-detection in continuation rules uses existing `Queue empty.` / progress-line / `BLOCKED` strings. Skills whose terminal markers are inconsistent today (e.g., `caretake --mode hygiene` emits `HYGIENE COMPLETE` / `HYGIENE BLOCKED` rather than `Queue empty.`) get their existing tokens forwarded verbatim, not rewritten.
 - **Not generalizing `autopilot-enable-gate.sh`** to gate other `--loop` wraps. Autopilot is a footgun (it drives the entire pipeline end-to-end across all teams) and earns its opt-in; `/ralph:impl --mode auto --loop` is a narrow per-skill drain that does not.
 - **Not adding `ScheduleWakeup` enforcement hooks.** The autopilot research explicitly notes that no hook enforces the wakeup call today — it lives only as prose. This plan does not fix that gap (Phase 4 of `2026-05-21-autopilot-loop-handoff.md`'s recommendations is a separate concern). The risk is: a model running inside `/loop` narrates rescheduling without invoking the tool, and the loop drops silently. Accepting this risk for the same reasons autopilot does today.
+- **Not adding a new `ScheduleWakeup`-cancel hook for the broader `--loop` flag.** The existing `ralph/hooks/scripts/autopilot-wakeup-clear.sh` (PreToolUse:ScheduleWakeup) + `autopilot-stop-gate.sh` (Stop) pair already deterministically guards the only path where an inner skill could leak a `ScheduleWakeup` call (`hero --mode auto`). The generalized `--loop` flag wraps every other skill via `Skill("loop", ...)`, where `/loop` owns wakeup management and inner skills do not call `ScheduleWakeup` themselves. `ralph/CLAUDE.md`'s Phase-4 doc update states this rule explicitly so future skill authors don't reintroduce direct wakeup calls.
 - **Not changing the `/loop` skill itself.** This plan composes with `/loop`'s existing interface (`/loop [interval] /cmd` or `/loop /cmd`); no /loop changes are required.
 - **Not removing `--mode auto` in favor of `--loop`.** The two are orthogonal: `--mode auto` is "run one unit of work autonomously, no questions"; `--loop` is "wrap whatever I'm running in /loop". The composition `--mode auto --loop` is the common case but neither flag implies the other.
 - **Not adding `--loop` to `hero --mode classify`.** It's redundant with `hero --mode auto`, which is the canonical event-loop drainer.
 
 ## Implementation Approach
 
-Five phases, executed in order. Phase 1 lays the shared substrate; Phases 2-3 wire the flag into skill bodies (auto/drain skills first, heartbeat-style skills second); Phase 4 updates docs; Phase 5 adds tests + a refactor of the hero `--mode auto` body to consume the shared substrate.
+Seven phases. Phase 1 lays the shared `--loop` substrate; Phases 2-3 wire the flag into skill bodies (drain modes first, heartbeat modes second); Phase 4 updates docs; Phase 5 adds tests + refactors the hero `--mode auto` body to consume the shared substrate; Phase 6 introduces the per-verb `--auto` alias that composes with `--loop`; Phase 7 overhauls the triage verdict palette to remove `KEEP` in favor of explicit `ROUTE-TO-<queue>` outcomes.
 
-Each phase owns a tightly-scoped file set per the slim plugin's file-ownership convention. Phase 2 modifies the `--mode auto` family; Phase 3 modifies heartbeat-style entries; they do not stomp on each other. Phase 5's refactor of `hero/SKILL.md` is the only file touched in two phases (Phase 1 ships the substrate; Phase 5 retrofits the hero body); the touch points are non-overlapping (Phase 1 adds a new file, Phase 5 modifies an existing one).
+Each phase owns a tightly-scoped file set per the slim plugin's file-ownership convention. Phase 2 modifies the `--mode auto` family; Phase 3 modifies heartbeat-style entries; they do not stomp on each other. Phase 5's refactor of `hero/SKILL.md` is the only Phase-1-5 file touched twice (Phase 1 adds the substrate file; Phase 5 modifies the hero body). Phase 6 extends the Phase-2 Step-0 stanza in each per-verb SKILL.md but does not conflict — Phase 6 depends on Phase 2 + 3 and runs last among the loop-family phases. Phase 7 is fully independent of Phases 1-6 and can ship in any order relative to them.
 
-Implementation tier: S — single-concern wiring, no schema changes, ~10 files touched, no MCP-server changes. Does not need `--mode epic`.
+Implementation tier: M — adds `--auto` semantics and a triage palette overhaul on top of the original Phase-1-5 substrate. Still no MCP-server source changes, no schema changes, ~17 files touched, one hook script change (`triage-postcondition.sh`). Does not need `--mode epic`.
 
 ## Phase 1: Shared `--loop` wrapper substrate
 
@@ -268,6 +271,8 @@ Heartbeat modes vs. drain modes differ in continuation semantics: heartbeats re-
 **File**: `ralph/skills/catch-up/SKILL.md`
 **Changes**: Add a Step-0 stanza (this skill currently has no `## Step 0` heading — add one). Allowed mode-pair: `--mode report --loop`. Default interval: `1d`. Other modes (`default`, `narrative`, `dashboard`) refuse.
 
+**Heartbeat dry-run default**: when `--mode report` is invoked via `--loop` without an explicit `--post` flag, implicitly pass `--dry-run` to the wrapped child invocation. The child composes the report, writes the markdown body to stdout, appends a literal hint line `> hint: to actually post this status update, re-run with --post (or set RALPH_CATCH_UP_HEARTBEAT_POST=true).`, and exits without calling `create_status_update`. Non-loop invocations (`/ralph:catch-up --mode report`) preserve today's post-by-default behavior. The opt-in surface for heartbeat-posts: explicit `--post` on the command line OR `RALPH_CATCH_UP_HEARTBEAT_POST=true` in the environment. This change closes the noise-per-tick failure mode where a daily-cron loop generates 365 GitHub status updates per year by default.
+
 ### Success Criteria
 
 #### Automated Verification
@@ -280,7 +285,10 @@ Heartbeat modes vs. drain modes differ in continuation semantics: heartbeats re-
 
 - [ ] `/ralph:hero --mode watch --loop` re-fires every 15m (observed via `/tasks` showing a scheduled wakeup with delay ≈ 900s).
 - [ ] `/ralph:hero --mode watch --loop 30m` re-fires every 30m.
-- [ ] `/ralph:catch-up --mode report --loop 12h` posts a status update, then schedules a wakeup for ~12h later.
+- [ ] `/ralph:catch-up --mode report --loop 12h` (no `--post`) composes the report, prints to stdout, prints the `> hint:` line, schedules a wakeup for ~12h later, and does NOT call `create_status_update`.
+- [ ] `/ralph:catch-up --mode report --loop 12h --post` composes the report and DOES call `create_status_update` each tick.
+- [ ] `/ralph:catch-up --mode report` (no `--loop`) preserves today's behavior: posts by default.
+- [ ] Setting `RALPH_CATCH_UP_HEARTBEAT_POST=true` and invoking `/ralph:catch-up --mode report --loop 12h` (no `--post`) posts each tick (env-var opt-in works).
 
 ## Phase 4: Documentation
 
@@ -292,15 +300,17 @@ Update `ralph/CLAUDE.md` with a Loop-suitability table, default-interval matrix,
 
 ### Changes Required
 
-#### 1. `ralph/CLAUDE.md` — Loop-suitability table
+#### 1. `ralph/CLAUDE.md` — Loop and `--auto` suitability matrix
 
 **File**: `ralph/CLAUDE.md`
-**Changes**: Add a new top-level section (`## Loop-suitability matrix`) summarizing the Current-State table from this plan. Keep it dense — one row per skill+mode, columns: Suitable? / Default interval / Terminal sentinels / Notes. Link to `ralph/skills/shared/loop-wrapper.md` as the source of truth.
+**Changes**: Add a new top-level section (`## Loop and --auto suitability matrix`) summarizing both the loop-suitable mode table from this plan AND the `--auto` per-verb alias table from Phase 6. Keep it dense — one row per skill+mode, columns: `--loop` Suitable? / `--auto` resolves to / Default interval / Terminal sentinels / Notes. Link to both `ralph/skills/shared/loop-wrapper.md` and `ralph/skills/shared/auto-alias.md` as sources of truth.
+
+**Also add** a one-paragraph `## ScheduleWakeup rules for --loop-wrapped skills` section: "Skills wrapped via `--loop` must not call `ScheduleWakeup` themselves; `/loop` owns wakeup management. The one exception is `hero --mode auto`, where `autopilot-wakeup-clear.sh` + `autopilot-stop-gate.sh` enforce the contract deterministically. Adding a new direct `ScheduleWakeup` call from inside any other loop-suitable skill body is a bug — if you need to influence the wakeup cadence, do it via the continuation prompt in `loop-wrapper.md` instead."
 
 #### 2. SKILL.md `argument-hint` updates
 
 **Files**: `ralph/skills/{research,plan,impl,review,caretake,hero,catch-up}/SKILL.md`
-**Changes**: In each frontmatter, extend the `argument-hint` string to include `[--loop [duration]]` where applicable. Example for impl: `"[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--push-drive|--no-push-drive] [--loop [duration]]"`.
+**Changes**: In each frontmatter, extend the `argument-hint` string to include `[--loop [duration]]` and `[--auto]` where applicable. Example for impl: `"[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--push-drive|--no-push-drive] [--loop [duration]] [--auto]"`.
 
 #### 3. Outcome-tokens fragment update
 
@@ -311,8 +321,10 @@ Update `ralph/CLAUDE.md` with a Loop-suitability table, default-interval matrix,
 
 #### Automated Verification
 
-- [ ] `grep -nE '## Loop-suitability matrix' ralph/CLAUDE.md` returns one hit.
+- [ ] `grep -nE '## Loop and --auto suitability matrix' ralph/CLAUDE.md` returns one hit.
+- [ ] `grep -nE '## ScheduleWakeup rules for --loop-wrapped skills' ralph/CLAUDE.md` returns one hit.
 - [ ] `grep -nE 'argument-hint:.*--loop' ralph/skills/*/SKILL.md` returns ≥7 hits (one per loop-bearing skill).
+- [ ] `grep -nE 'argument-hint:.*--auto' ralph/skills/*/SKILL.md` returns ≥6 hits (one per auto-bearing skill).
 - [ ] `grep -nE '## Loop continuation' ralph/skills/caretake/outcome-tokens.md` returns one hit.
 
 #### Manual Verification
@@ -367,6 +379,188 @@ The existing `hero --mode auto` body inlines its continuation prose (lines 143-1
 - [ ] `/ralph:hero --mode auto --loop 5m` is honored — observed via `/tasks` showing a 300s wakeup interval (note: 300s is the cache-window anti-pattern; the user is explicitly opting in, which the wrapper allows but `loop-wrapper.md` warns about in prose).
 - [ ] After Phase 5 merges, no SKILL.md inlines `Skill("loop", args=...)` with continuation prose — every wrapped invocation references the shared template.
 
+## Phase 6: Per-verb `--auto` flag alias
+
+depends_on: [phase-2, phase-3]
+
+### Overview
+
+Each loop-suitable verb gets an `--auto` flag that aliases to its most autonomous mode: a shorthand so the user doesn't have to remember each verb's autonomous-mode name. The flag composes with `--loop`: `--loop --auto` resolves the alias first, then wraps in `/loop` via the Phase-1 substrate. Verbs without an autonomous mode refuse `--auto` with the same one-line message pattern used for unsuitable `--loop` surfaces.
+
+The alias table lives in `ralph/skills/shared/auto-alias.md` as a single canonical source. Each verb's Step 0 reads the table and rewrites `$ARGUMENTS` to include the resolved mode flags before any further processing — `--loop` detection runs after `--auto` resolves, so the wrapping prompt sees the rewritten mode flags naturally.
+
+**Loop discipline contract**: each verb's `--auto` resolution stays within that verb's scope — it does NOT cascade into other verbs via `Skill()` dispatch. Cross-verb work happens between loop ticks, not within them: if `caretake --auto` (triage) routes an issue to "Ready for Plan," the next tick of `/loop /ralph:plan --auto` picks it up. This keeps each loop iteration bounded, predictable, and observable. Phase 7 enforces this for `caretake --auto` (triage) deterministically via the `triage-no-skill-dispatch.sh` hook; other verbs' `--auto` resolutions ARE permitted to dispatch sub-agents and call MCP tools (their core work) but should not invoke `Skill()` to delegate to a different verb.
+
+### Changes Required
+
+#### 1. Shared alias table
+
+**File**: `ralph/skills/shared/auto-alias.md` (new)
+**Changes**: A markdown fragment with three sections:
+
+1. **`## Alias table`** — one row per loop-suitable verb, mapping verb → arg-rewrite:
+
+   | Verb | `--auto` rewrites to |
+   |---|---|
+   | research | `--mode auto` |
+   | plan | `--mode auto` |
+   | impl | `--mode auto` |
+   | review | (no change; default mode is already an autonomous queue-drainer) |
+   | caretake | `--mode triage` |
+   | hero | `--mode auto` |
+
+2. **`## Refusal targets`** — verbs that refuse `--auto`: `form`, `catch-up`, `setup`. Refusal text: `--auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.`
+
+3. **`## Conflict detection`** — if `$ARGUMENTS` contains both `--auto` and an explicit `--mode <something>`, emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+
+#### 2. Step-0 stanza in each loop-suitable verb
+
+**Files**: `ralph/skills/{research,plan,impl,review,caretake,hero}/SKILL.md`
+**Changes**: Extend the Phase-2 Step-0 stanza to handle `--auto` ahead of the `--loop` detection. Order of operations:
+
+1. If `--auto` is in `$ARGUMENTS` AND verb is in refusal-targets: emit refusal, STOP.
+2. If `--auto` is in `$ARGUMENTS` AND verb is in alias table: look up rewrite; if `--mode` already present in args, emit the conflict message and STOP; otherwise prepend the rewrite's mode flag(s) to `$ARGUMENTS` and remove the `--auto` token.
+3. Continue to the existing `--loop` detection (now sees the rewritten args).
+
+Net diff per file: ~5-8 lines added to the existing Step-0 stanza. Each SKILL.md must stay ≤ 165 lines per the slim plugin's 150-line guideline.
+
+#### 3. Refuse `--auto` on unsuitable verbs
+
+**Files**: `ralph/skills/{form,catch-up,setup}/SKILL.md`
+**Changes**: Add a 3-line Step-0 stanza that checks for `--auto` and emits the refusal from `auto-alias.md`'s `## Refusal targets` section. `catch-up` already gets a Step-0 stanza in Phase 3; this extends it.
+
+### Success Criteria
+
+#### Automated Verification
+
+- [ ] `test -f ralph/skills/shared/auto-alias.md && wc -l ralph/skills/shared/auto-alias.md` shows ≥20 lines, ≤80 lines.
+- [ ] `grep -nE '\-\-auto\b' ralph/skills/{research,plan,impl,review,caretake,hero}/SKILL.md` returns ≥1 hit per file.
+- [ ] `grep -nE '\-\-auto\b' ralph/skills/{form,catch-up,setup}/SKILL.md` returns ≥1 hit per file (refusal stanzas).
+- [ ] New test `ralph/skills/shared/__tests__/auto-alias.test.sh` exercises arg-rewrite for: `--auto` (bare), `--auto --loop`, `--loop --auto`, `--auto #1234`, `--auto --mode auto` (conflict), `--auto --mode prove` (conflict), and the no-`--auto` baseline. Asserts each fixture produces the expected `$ARGUMENTS` rewrite or the expected refusal/conflict message.
+- [ ] All SKILL.md files still under 165 lines after Phase 6 additions: `wc -l ralph/skills/*/SKILL.md` shows all under 165.
+
+#### Manual Verification
+
+- [ ] `/ralph:research --auto` runs `--mode auto` (drains Research Needed).
+- [ ] `/ralph:research --auto --loop` wraps `--mode auto` in `/loop`.
+- [ ] `/ralph:caretake --auto` runs `--mode triage` (picks oldest untriaged Backlog).
+- [ ] `/ralph:review --auto` runs the default mode (already autonomous).
+- [ ] `/ralph:hero --auto` runs `--mode auto` (subject to the existing `RALPH_AUTOPILOT_ENABLE` gate).
+- [ ] `/ralph:form --auto` prints the refusal and exits.
+- [ ] `/ralph:research --auto --mode prove "x"` emits the conflict message and exits.
+
+## Phase 7: Triage palette overhaul
+
+depends_on: null
+
+### Overview
+
+The current triage verdict palette includes a `KEEP` outcome that leaves the issue in Backlog with a `ralph-triage` label marking it "decided." The label excludes the issue from re-pick by future triage runs (per `ralph/skills/caretake/modes/triage.md` §Step 2 picker logic), so a KEEP'd issue stays dormant until manual label removal. This phase replaces `KEEP` with explicit `ROUTE-TO-<queue>` outcomes that produce forward state motion every time triage fires. Issues that genuinely need human input escalate via `HUMAN` (workflowState = "Human Needed") instead.
+
+The new palette: `CLOSE`, `SPLIT`, `RE-ESTIMATE`, `ROUTE-TO-Research Needed`, `ROUTE-TO-Ready for Plan`, `ROUTE-TO-In Progress`, `HUMAN`. The existing `RESEARCH` action (which today routes to "Research Needed") is renamed to `ROUTE-TO-Research Needed` for naming consistency. `CANCEL` stays as a CLOSE sub-case (close-not-planned).
+
+This phase is independent of Phases 1-6 and can ship in any order. It is included in this plan because it shares the "drive forward, don't hold in place" theme as the `--auto`/`--loop` work — a KEEP'd issue is the triage analog of a verb that loops without doing anything.
+
+### Changes Required
+
+#### 1. `ralph/skills/caretake/modes/triage.md`
+
+**File**: `ralph/skills/caretake/modes/triage.md`
+**Changes**:
+- **§Step 4 "Determine action"** — remove the `KEEP` bullet. Add three ROUTE-TO bullets:
+  - `ROUTE-TO-Research Needed` — issue is valid; needs investigation before planning.
+  - `ROUTE-TO-Ready for Plan` — issue is well-specified; skip research and queue for planning.
+  - `ROUTE-TO-In Progress` — trivial fix; assign and start.
+
+  Update the "When uncertain" line to: "When uncertain, prefer `ROUTE-TO-Research Needed` (route for investigation) or `HUMAN` (escalate) over closing valid work."
+- **§Step 5 "Take action"** — remove the `KEEP` branch. Add a unified `ROUTE-TO` branch: set `workflowState: <target>` via `save_issue(command: "ralph_triage")`, add a `## Triage Decision` comment explaining the routing choice and what downstream work is expected.
+- **§Step 5 "Before completing"** — update the valid `RALPH_TRIAGE_ACTION` allowlist: remove `KEEP`, add `ROUTE_TO_RESEARCH`, `ROUTE_TO_PLAN`, `ROUTE_TO_IMPL`. Final allowlist: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`.
+- **§Step 6 "Mark issue as triaged"** — change scope: apply the `ralph-triage` label only on `HUMAN` and `SPLIT` outcomes (the two that leave the issue in Backlog). ROUTE-TO outcomes move the issue out of Backlog and are naturally invisible to triage's Backlog query, so no label is needed.
+- **§Step 8 "Emit terminal token"** — replace the token list with the new palette:
+  - `TRIAGED routed → Research Needed`
+  - `TRIAGED routed → Ready for Plan`
+  - `TRIAGED routed → In Progress`
+  - `TRIAGED duplicate` (CLOSE)
+  - `TRIAGED canceled` (CANCEL)
+  - `TRIAGED needs-split` (SPLIT)
+  - `TRIAGED escalated` (HUMAN)
+  - `TRIAGED re-estimated` (RE-ESTIMATE)
+  - `Queue empty.`
+- **Add §Migration note** at the end of the file: existing issues with the `ralph-triage` label from prior KEEP verdicts continue to be excluded from re-pick by Step 2's query. To re-evaluate a stale KEEP'd issue, manually remove the label and re-run triage. No automated batch cleanup ships with this phase.
+
+#### 2. `ralph/hooks/scripts/triage-postcondition.sh`
+
+**File**: `ralph/hooks/scripts/triage-postcondition.sh`
+**Changes**: Update the `RALPH_TRIAGE_ACTION` allowlist regex to match the new values. Update the terminal-token transcript-grep pattern to recognize the new `TRIAGED routed → <state>` shape (regex with state capture) alongside the other new tokens. The existing pattern that recognizes `Queue empty.` stays.
+
+#### 3. `ralph/skills/caretake/outcome-tokens.md`
+
+**File**: `ralph/skills/caretake/outcome-tokens.md`
+**Changes**: Replace the triage section's token list with the new palette from §Step 8 above. Document the routing-target convention (state name appears verbatim after the `→` token, case-preserving). Also touched in Phase 4; the two edits are non-overlapping (Phase 4 adds a `## Loop continuation` section; Phase 7 modifies the existing triage section).
+
+#### 4. Triage self-containment contract — new hook
+
+**File**: `ralph/hooks/scripts/triage-no-skill-dispatch.sh` (new)
+**Changes**: A PreToolUse:Skill hook gated on `RALPH_SUBCOMMAND=triage`. Exits 2 with a clear message when triage attempts to invoke any `Skill()` call. Rationale: triage's job is to assess ONE Backlog issue and route it via state transition — that's the contract. Downstream work happens when the next loop tick picks up the routed issue via the appropriate verb's `--auto` (e.g., `/ralph:plan --auto` picks up issues that triage routed to "Ready for Plan"). Triage delegating into other verbs via `Skill()` would cascade scope, break loop discipline, and undermine the per-verb `--auto` contract established in Phase 6.
+
+This hook does NOT block `Agent()` calls (triage legitimately uses sub-agents like `codebase-locator` for assessment) or MCP tool calls (triage's core work is `get_issue` / `save_issue` / `add_dependency` / `create_comment`). It is narrowly scoped to `Skill` dispatches only.
+
+Message text on exit 2:
+```
+═══════════════════════════════════════════════════════════════
+ Triage Skill() dispatch blocked
+═══════════════════════════════════════════════════════════════
+caretake --mode triage is self-contained — it assesses ONE
+issue and routes it via state transition. Downstream work
+happens when the next loop tick picks up the routed issue via
+the appropriate verb's --auto.
+
+If you need to delegate work, route the issue (ROUTE-TO-...)
+and let the loop handle it. If you genuinely need to invoke
+another skill from triage, that's a design change — propose
+it as a plan iteration, not a runtime override.
+═══════════════════════════════════════════════════════════════
+```
+
+#### 5. Register the new hook in caretake frontmatter
+
+**File**: `ralph/skills/caretake/SKILL.md`
+**Changes**: Add the new hook to the `hooks:` frontmatter block under `PreToolUse`:
+
+```yaml
+PreToolUse:
+  # ...existing entries...
+  - matcher: "Skill"
+    hooks:
+      - type: command
+        command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-no-skill-dispatch.sh"
+```
+
+The hook self-discriminates on `RALPH_SUBCOMMAND=triage`, so it passes through silently for other caretake modes that legitimately use `Skill()` (e.g., `--mode all` fan-out, `--mode default-event` dispatch).
+
+### Success Criteria
+
+#### Automated Verification
+
+- [ ] `grep -nE '^- \*\*KEEP\*\*' ralph/skills/caretake/modes/triage.md` returns 0 hits (KEEP bullet removed).
+- [ ] `grep -nE 'ROUTE-TO-Research Needed|ROUTE-TO-Ready for Plan|ROUTE-TO-In Progress' ralph/skills/caretake/modes/triage.md` returns ≥3 hits (one per routing destination).
+- [ ] `grep -nE 'ROUTE_TO_RESEARCH|ROUTE_TO_PLAN|ROUTE_TO_IMPL' ralph/hooks/scripts/triage-postcondition.sh` returns ≥3 hits.
+- [ ] `grep -nE '\bKEEP\b' ralph/hooks/scripts/triage-postcondition.sh` returns 0 hits.
+- [ ] `grep -nE 'TRIAGED routed →' ralph/skills/caretake/outcome-tokens.md` returns ≥1 hit (routing token convention documented).
+- [ ] `test -x ralph/hooks/scripts/triage-no-skill-dispatch.sh` passes (new hook exists and is executable).
+- [ ] `grep -nE 'triage-no-skill-dispatch.sh' ralph/skills/caretake/SKILL.md` returns ≥1 hit (hook is registered in caretake frontmatter).
+- [ ] New test `ralph/hooks/scripts/__tests__/triage-postcondition-palette.test.sh` exercises each valid `RALPH_TRIAGE_ACTION` value through the hook and asserts it passes; exercises `KEEP` and an unknown value and asserts each is rejected with exit 2.
+- [ ] New test `ralph/hooks/scripts/__tests__/triage-no-skill-dispatch.test.sh` exercises the new hook with `RALPH_SUBCOMMAND=triage` (asserts exit 2 on Skill call) and without (asserts exit 0 pass-through).
+- [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes (no MCP-server changes, regression check only).
+
+#### Manual Verification
+
+- [ ] Invoking `/ralph:caretake --mode triage` on a Backlog issue that looks well-specified routes it to "Ready for Plan" with a `## Triage Decision` comment explaining the routing choice (no `ralph-triage` label applied).
+- [ ] Invoking `/ralph:caretake --mode triage` on a Backlog issue with ambiguous requirements escalates to "Human Needed" with a `## Escalation` comment and applies the `ralph-triage` label.
+- [ ] An old issue carrying the `ralph-triage` label from a prior KEEP verdict is excluded from re-pick by the next triage run (backward compat preserved).
+- [ ] Invoking triage with `RALPH_TRIAGE_ACTION=KEEP` (forced via test harness) fails the postcondition with exit 2 and a clear message.
+- [ ] Forcing triage to attempt a `Skill("ralph:plan", args="--auto")` call (test harness) is blocked by the new self-containment hook with exit 2 and the contract message — no Skill dispatch occurs.
+
 ## Testing Strategy
 
 ### Unit Tests
@@ -406,21 +600,30 @@ The continuation prompts increase the size of the args passed to `Skill("loop", 
 ## Files Affected
 
 - `ralph/skills/shared/loop-wrapper.md` (new) — Phase 1
+- `ralph/skills/shared/auto-alias.md` (new) — Phase 6
 - `ralph/skills/shared/__tests__/loop-arg-strip.test.sh` (new) — Phase 5
 - `ralph/skills/shared/__tests__/loop-refusal.test.sh` (new) — Phase 5
 - `ralph/skills/shared/__tests__/loop-continuation.test.sh` (new) — Phase 5
+- `ralph/skills/shared/__tests__/auto-alias.test.sh` (new) — Phase 6
+- `ralph/hooks/scripts/__tests__/triage-postcondition-palette.test.sh` (new) — Phase 7
 - `ralph/scripts/lint-loop-snippet.sh` (new) — Phase 1
-- `ralph/skills/research/SKILL.md` — Phase 2
-- `ralph/skills/plan/SKILL.md` — Phase 2
-- `ralph/skills/impl/SKILL.md` — Phase 2
-- `ralph/skills/review/SKILL.md` — Phase 2
-- `ralph/skills/caretake/SKILL.md` — Phases 2 + 3
-- `ralph/skills/hero/SKILL.md` — Phases 3 + 5
-- `ralph/skills/catch-up/SKILL.md` — Phase 3
-- `ralph/skills/caretake/outcome-tokens.md` — Phase 4
-- `ralph/CLAUDE.md` — Phase 4
+- `ralph/skills/research/SKILL.md` — Phases 2 + 6
+- `ralph/skills/plan/SKILL.md` — Phases 2 + 6
+- `ralph/skills/impl/SKILL.md` — Phases 2 + 6
+- `ralph/skills/review/SKILL.md` — Phases 2 + 6
+- `ralph/skills/caretake/SKILL.md` — Phases 2 + 3 + 6
+- `ralph/skills/hero/SKILL.md` — Phases 3 + 5 + 6
+- `ralph/skills/catch-up/SKILL.md` — Phases 3 + 6
+- `ralph/skills/form/SKILL.md` — Phase 6 (`--auto` refusal)
+- `ralph/skills/setup/SKILL.md` — Phase 6 (`--auto` refusal)
+- `ralph/skills/caretake/modes/triage.md` — Phase 7
+- `ralph/skills/caretake/outcome-tokens.md` — Phases 4 + 7
+- `ralph/hooks/scripts/triage-postcondition.sh` — Phase 7
+- `ralph/hooks/scripts/triage-no-skill-dispatch.sh` (new) — Phase 7 (self-containment hook)
+- `ralph/hooks/scripts/__tests__/triage-no-skill-dispatch.test.sh` (new) — Phase 7
+- `ralph/CLAUDE.md` — Phase 4 (now also documents `--auto` matrix + `ScheduleWakeup` rules + triage self-containment contract)
 
-Total: 5 new files, 9 modified files. No MCP-server source changes; no hook script changes; no schema changes.
+Total: 10 new files, 13 modified files. No MCP-server source changes; no schema changes. One existing hook script change (`triage-postcondition.sh`); one new hook script (`triage-no-skill-dispatch.sh`).
 
 ## References
 

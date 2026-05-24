@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GH-1402 orchestration decisions</title>
+<style>
+/* --- :root palette + type stacks (marine ink on cream) --- */
+:root {
+  --paper:    #f5f1e8;
+  --ink:      #1b2329;
+  --accent:   #2e5d7e;
+  --rust:     #b35a2c;
+  --moss:     #5a7847;
+  --sand:     #e6dcc4;
+  --slate:    #1f262b;
+  --gray-150: #ece7db;
+  --gray-300: #cdc6b7;
+  --gray-500: #847d6c;
+  --gray-700: #3a3a36;
+  --white:    #ffffff;
+
+  --serif: 'Iowan Old Style', Charter, ui-serif, Georgia, serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  'JetBrains Mono', 'SF Mono', Menlo, ui-monospace, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--gray-700);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  padding: 56px 32px 96px;
+}
+
+.page { max-width: 1360px; margin: 0 auto; }
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 38px;
+  line-height: 1.15;
+  color: var(--ink);
+  margin-bottom: 18px;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 40px 0 14px;
+  scroll-margin-top: 24px;
+}
+
+p { margin-bottom: 12px; max-width: 680px; }
+code { font-family: var(--mono); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+ul { padding-left: 20px; max-width: 680px; }
+li { margin-bottom: 6px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 10px;
+}
+
+.tldr {
+  border: 1.5px solid var(--gray-300);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--white);
+  padding: 16px 18px;
+  margin-bottom: 8px;
+  max-width: 760px;
+}
+.tldr b { color: var(--ink); }
+
+.callout {
+  display: flex;
+  gap: 12px;
+  border: 1.5px solid var(--sand);
+  background: rgba(230, 220, 196, 0.35);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 18px 0;
+  font-size: 14px;
+  max-width: 760px;
+}
+.callout .ico { color: var(--accent); font-weight: 600; }
+
+.card {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+details {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 14px 0;
+  overflow: hidden;
+  max-width: 760px;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 12px;
+  transition: transform 120ms;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details summary .where {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  margin-left: auto;
+}
+details .body { padding: 0 16px 16px; }
+details .body p { font-size: 14px; }
+
+.report {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 48px;
+}
+@media (max-width: 920px) {
+  .report { grid-template-columns: 1fr; }
+  .report nav { display: none; }
+}
+
+.report nav {
+  position: sticky;
+  top: 32px;
+  align-self: start;
+  font-size: 13px;
+}
+.report nav .label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 12px;
+}
+.report nav a {
+  display: block;
+  padding: 5px 0 5px 12px;
+  border-left: 2px solid var(--gray-300);
+  color: var(--gray-700);
+  text-decoration: none;
+  border-bottom: none;
+}
+.report nav a:hover { color: var(--ink); border-color: var(--ink); }
+.report nav a.l2 { padding-left: 24px; font-size: 12.5px; color: var(--gray-500); }
+.report nav .files {
+  margin-top: 28px;
+  border-top: 1px solid var(--gray-300);
+  padding-top: 16px;
+}
+.report nav .files code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  padding: 3px 0;
+}
+
+/* per-decision card with rejected-alt sub-block */
+.decision {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 18px 20px;
+  margin: 14px 0 24px;
+  max-width: 760px;
+}
+.decision .verdict {
+  font-family: var(--serif);
+  font-size: 17px;
+  color: var(--ink);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.decision .verdict b { color: var(--accent); font-weight: 600; }
+.decision .why,
+.decision .alt {
+  font-size: 14px;
+  margin-top: 10px;
+}
+.decision .alt {
+  border-top: 1px dashed var(--gray-300);
+  padding-top: 10px;
+  color: var(--gray-500);
+}
+.decision .label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-right: 6px;
+}
+.decision .alt .label { color: var(--rust); }
+
+/* compact comparison table inside decisions */
+table.compare {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 760px;
+  margin: 8px 0 4px;
+  font-size: 13px;
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 8px;
+  overflow: hidden;
+}
+table.compare th,
+table.compare td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gray-300);
+  text-align: left;
+  vertical-align: top;
+}
+table.compare th {
+  background: var(--gray-150);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink);
+  font-weight: 600;
+}
+table.compare td.before { color: var(--rust); font-family: var(--mono); font-size: 12px; }
+table.compare td.after  { color: var(--moss); font-family: var(--mono); font-size: 12px; }
+table.compare tr:last-child td { border-bottom: none; }
+
+/* small status pill */
+.pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 6px;
+  vertical-align: 1px;
+}
+.pill.locked    { background: rgba(90, 120, 71, 0.15);  color: var(--moss); }
+.pill.open      { background: rgba(179, 90, 44, 0.15);  color: var(--rust); }
+.pill.confirmed { background: rgba(46, 93, 126, 0.12); color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="report">
+  <nav>
+    <div class="label">DECISIONS</div>
+    <a href="#tldr">TL;DR</a>
+    <a href="#d1">1. <code>--auto</code> scope</a>
+    <a href="#d2">2. Heartbeat dry-run</a>
+    <a href="#d3">3. Triage palette</a>
+    <a href="#d4">4. No new wakeup hook</a>
+    <a href="#d5">5. Consolidation</a>
+    <a href="#d6">6. Triage self-containment</a>
+    <a href="#d7">7. catch-up <code>--auto</code> refusal</a>
+    <a href="#scope">Scope delta</a>
+    <div class="files">
+      <div class="label">FILES READ</div>
+      <code>ralph/skills/hero/SKILL.md</code>
+      <code>ralph/skills/caretake/SKILL.md</code>
+      <code>ralph/skills/caretake/modes/triage.md</code>
+      <code>ralph/skills/research/SKILL.md</code>
+      <code>ralph/skills/catch-up/SKILL.md</code>
+      <code>ralph/hooks/scripts/autopilot-wakeup-clear.sh</code>
+      <code>ralph/hooks/scripts/autopilot-stop-gate.sh</code>
+      <code>thoughts/shared/plans/2026-05-24-GH-1402-add-loop-flag-to-ralph-skills.md</code>
+    </div>
+  </nav>
+
+  <main>
+    <header>
+      <div class="eyebrow">Brainstorming · ralph slim plugin</div>
+      <h1>Orchestration-gap decisions for GH-1402</h1>
+      <div class="tldr" id="tldr">
+        <b>TL;DR</b> — Most of the proposed gaps already exist as functionality; the rest become four small extensions to GH-1402 plus a triage self-containment hook. Final shape: per-verb <code>--auto</code> alias (Option A), heartbeat status posts default to <code>--dry-run</code>, triage drops <code>KEEP</code> for explicit <code>ROUTE-TO-&lt;queue&gt;</code> transitions, no new <code>ScheduleWakeup</code> hook (existing autopilot pair covers it), and <code>caretake --auto</code> (triage) is hook-enforced to never dispatch <code>Skill()</code> to other verbs. All folded into GH-1402 (now 7 phases, was 5; 10 new files, 13 modified).
+      </div>
+
+      <div class="callout">
+        <span class="ico">★</span>
+        <div>The biggest surprise of the brainstorm: <code>/ralph:hero --mode auto</code> already does exactly what the user proposed in "drive the orchestrator, not the verb." The user had been running <code>/loop /ralph:caretake</code> (a heartbeat fan-out) when they wanted <code>/loop /ralph:hero --mode auto</code> (an event-driven director loop). The gap was discovery, not implementation.</div>
+      </div>
+    </header>
+
+    <h2 id="d1">1. <code>--auto</code> flag scope: per-verb alias <span class="pill confirmed">picked</span></h2>
+    <div class="decision">
+      <div class="verdict">
+        <span class="label">DECISION</span>
+        <code>--auto</code> on any loop-suitable verb is a <b>per-verb alias for that verb's most autonomous mode</b> — not a universal director-routed dispatcher.
+      </div>
+      <div class="why">
+        <span class="label">WHY</span>
+        Preserves verb semantics; <code>/ralph:hero --mode auto</code> stays the canonical "drive across all teams" path; smaller change (no new routing logic, just a per-verb alias table). The verb you typed still scopes the action.
+      </div>
+      <div class="alt">
+        <span class="label">REJECTED</span>
+        Option B — universal director-routed: <code>--auto</code> on any verb would ignore the verb and classify the top of <code>next_actions</code> via director. Would let <code>/ralph:caretake --auto</code> end up running an impl, which surprises and breaks the verb taxonomy.
+      </div>
+      <table class="compare">
+        <tr><th>Verb</th><th><code>--auto</code> resolves to</th></tr>
+        <tr><td><code>research</code></td><td><code>--mode auto</code></td></tr>
+        <tr><td><code>plan</code></td><td><code>--mode auto</code></td></tr>
+        <tr><td><code>impl</code></td><td><code>--mode auto</code></td></tr>
+        <tr><td><code>review</code></td><td>(no change; default is autonomous)</td></tr>
+        <tr><td><code>caretake</code></td><td><code>--mode triage</code></td></tr>
+        <tr><td><code>hero</code></td><td><code>--mode auto</code> (gated by <code>RALPH_AUTOPILOT_ENABLE</code>)</td></tr>
+        <tr><td><code>form</code>, <code>catch-up</code>, <code>setup</code></td><td>refuse with one-line message</td></tr>
+      </table>
+    </div>
+
+    <h2 id="d2">2. Heartbeat status posts default to dry-run <span class="pill confirmed">picked</span></h2>
+    <div class="decision">
+      <div class="verdict">
+        <span class="label">DECISION</span>
+        When <code>/ralph:catch-up --mode report</code> is invoked via <code>--loop</code>, default to <b><code>--dry-run</code></b>; print to stdout and end with a literal <code>&gt; hint: to actually post this status update, re-run with --post</code> line.
+      </div>
+      <div class="why">
+        <span class="label">WHY</span>
+        Today, a daily cron would generate 365 GitHub status updates per year — each one persistent and visible on the project's status feed. The composed body is still useful as stdout; posting should be explicit opt-in via <code>--post</code> or <code>RALPH_CATCH_UP_HEARTBEAT_POST=true</code>. Non-loop invocations preserve today's post-by-default behavior.
+      </div>
+      <div class="alt">
+        <span class="label">REJECTED</span>
+        Status quo — silently posting every tick generates noise faster than humans can read it.
+      </div>
+    </div>
+
+    <h2 id="d3">3. Triage palette: remove <code>KEEP</code>, add <code>ROUTE-TO-&lt;queue&gt;</code> <span class="pill confirmed">picked</span></h2>
+    <div class="decision">
+      <div class="verdict">
+        <span class="label">DECISION</span>
+        Drop <code>KEEP</code> as a verdict. New palette: <b><code>CLOSE</code> · <code>SPLIT</code> · <code>RE-ESTIMATE</code> · <code>ROUTE-TO-Research Needed</code> · <code>ROUTE-TO-Ready for Plan</code> · <code>ROUTE-TO-In Progress</code> · <code>HUMAN</code></b>. Every triage call produces forward motion or escalates to "Human Needed."
+      </div>
+      <div class="why">
+        <span class="label">WHY</span>
+        Today's <code>KEEP</code> applies a <code>ralph-triage</code> label that excludes the issue from re-pick, so KEEP'd items sit dormant in Backlog until manual label removal. Replacing it with explicit routing means triage always produces a state transition or asks for help — no more "decided + not acted-on" purgatory.
+      </div>
+      <div class="alt">
+        <span class="label">REJECTED</span>
+        TTL on KEEP'd items (e.g., re-pick after 14 days) — just re-creates the original triage problem after N days without adding information. Block-reason hint label — overlaps with the simpler ROUTE-TO solution.
+      </div>
+      <table class="compare">
+        <tr><th>Today</th><th>After</th></tr>
+        <tr><td class="before">KEEP → Backlog + ralph-triage label</td><td class="after">ROUTE-TO-Research Needed (most common)</td></tr>
+        <tr><td class="before">(none — no way to skip research)</td><td class="after">ROUTE-TO-Ready for Plan (well-specified)</td></tr>
+        <tr><td class="before">(none — trivial fixes still need research)</td><td class="after">ROUTE-TO-In Progress (trivial)</td></tr>
+        <tr><td class="before">HUMAN (escalation)</td><td class="after">HUMAN (unchanged)</td></tr>
+      </table>
+    </div>
+
+    <h2 id="d4">4. No new <code>ScheduleWakeup</code> hook <span class="pill confirmed">picked</span></h2>
+    <div class="decision">
+      <div class="verdict">
+        <span class="label">DECISION</span>
+        Do <b>not</b> add a new hook for <code>ScheduleWakeup</code> overwrite-cancel semantics. The existing <code>autopilot-wakeup-clear.sh</code> + <code>autopilot-stop-gate.sh</code> pair already deterministically guards the only path where an inner skill could leak a <code>ScheduleWakeup</code> call.
+      </div>
+      <div class="why">
+        <span class="label">WHY</span>
+        The generalized <code>--loop</code> flag wraps skills via <code>Skill("loop", ...)</code> — <code>/loop</code> owns wakeup management, inner skills don't call <code>ScheduleWakeup</code> themselves. The autopilot case (where inner skills could leak) is already hook-enforced. Adding more hooks would duplicate enforcement and tighten coupling for no real safety gain.
+      </div>
+      <div class="alt">
+        <span class="label">REJECTED</span>
+        New <code>PreToolUse:ScheduleWakeup</code> hook with per-turn counter — was my initial suggestion; user pushed back rightly that the existing hooks already cover the autopilot case deterministically, and other <code>--loop</code> wraps don't need it because <code>/loop</code> handles wakeup itself.
+      </div>
+      <div class="callout" style="margin-top: 12px;">
+        <span class="ico">→</span>
+        <div>Belt-and-suspenders: <code>ralph/CLAUDE.md</code> Phase-4 doc update states the rule explicitly so future skill authors don't reintroduce direct <code>ScheduleWakeup</code> calls from inside <code>--loop</code>-wrapped skill bodies.</div>
+      </div>
+    </div>
+
+    <h2 id="d5">5. Consolidation: iterate GH-1402, no new doc <span class="pill confirmed">picked</span></h2>
+    <div class="decision">
+      <div class="verdict">
+        <span class="label">DECISION</span>
+        <b>Iterate the existing GH-1402 plan in place</b> with two new phases (6 + 7) and inline updates to Phases 3 + 4. No companion design doc.
+      </div>
+      <div class="why">
+        <span class="label">WHY</span>
+        The GH-1402 plan was drafted today, is in <code>status: draft</code>, and already contains full prior-work + state analysis for the <code>--loop</code> flag. Adding three phases is iteration, not a fork. "Compress to one doc" means one source of truth, not multiple cross-referenced specs.
+      </div>
+      <div class="alt">
+        <span class="label">REJECTED</span>
+        Write a new <code>thoughts/shared/research/2026-05-24-orchestration-gap-design.md</code> spec that supersedes GH-1402 — creates a second doc that has to stay in sync with the plan. Net cost > net benefit.
+      </div>
+    </div>
+
+    <h2 id="d6">6. Triage self-containment: hook-enforced <span class="pill confirmed">picked</span></h2>
+    <div class="decision">
+      <div class="verdict">
+        <span class="label">DECISION</span>
+        <code>caretake --auto</code> (= <code>--mode triage</code>) <b>does not dispatch any <code>Skill()</code> calls</b>. Enforced deterministically by a new <code>triage-no-skill-dispatch.sh</code> PreToolUse hook (matcher: <code>Skill</code>, gated on <code>RALPH_SUBCOMMAND=triage</code>).
+      </div>
+      <div class="why">
+        <span class="label">WHY</span>
+        Triage's contract: assess ONE Backlog issue, route it via state transition. Downstream work happens between loop ticks — if triage routes to "Ready for Plan," the next tick of <code>/loop /ralph:plan --auto</code> picks it up. Within-tick cascading would break loop discipline, undermine the per-verb <code>--auto</code> contract, and make iterations unpredictable. Hook over prose because deterministic enforcement matches the same principle that ruled out a new wakeup-cancel hook in Decision 4 — when the contract is bright-line, code it.
+      </div>
+      <div class="alt">
+        <span class="label">REJECTED</span>
+        Allowlist with some Skills permitted (e.g., <code>Skill("ralph:caretake", args="--mode split #NNN")</code> for inline splitting). Today's design already defers split via the <code>needs-split</code> label and a separate <code>--mode split</code> picker tick — no need to break loop discipline for it.
+      </div>
+      <div class="callout" style="margin-top: 12px;">
+        <span class="ico">→</span>
+        <div>Hook scope is narrow: blocks <code>Skill()</code> only. <code>Agent()</code> sub-agent dispatches (codebase-locator for assessment) and MCP tool calls (<code>save_issue</code>, <code>add_dependency</code>) pass through — those are triage's core work.</div>
+      </div>
+    </div>
+
+    <h2 id="d7">7. catch-up refuses <code>--auto</code> <span class="pill confirmed">picked</span></h2>
+    <div class="decision">
+      <div class="verdict">
+        <span class="label">DECISION</span>
+        <code>/ralph:catch-up --auto</code> <b>refuses</b> with a one-line message. Already in Phase 6's refusal-targets list alongside <code>form</code> and <code>setup</code>.
+      </div>
+      <div class="why">
+        <span class="label">WHY</span>
+        <code>--auto</code> means "drive work forward autonomously." catch-up composes-and-observes rather than drives. Users who want a status-update heartbeat type <code>--mode report --loop</code> explicitly. If a caller (e.g., another skill) invokes catch-up, it must understand the contract — there is no autonomous catch-up surface.
+      </div>
+      <div class="alt">
+        <span class="label">REJECTED</span>
+        Alias <code>--auto</code> to <code>--mode report</code> for muscle-memory parity across loop-suitable verbs. User explicitly chose semantic purity over parity.
+      </div>
+    </div>
+
+    <h2 id="scope">GH-1402 scope delta <span class="pill locked">applied</span></h2>
+    <p>The iteration is on disk at <code>thoughts/shared/plans/2026-05-24-GH-1402-add-loop-flag-to-ralph-skills.md</code>. Final tallies: <b>10 new files, 13 modified files</b>; 7 phases (was 5); 1 existing hook script modified + 1 new hook script.</p>
+
+    <details>
+      <summary>Edits applied <span class="where">all phases</span></summary>
+      <div class="body">
+        <ul>
+          <li><b>Overview</b> — added paragraph on unified flag grammar (<code>--loop</code> / <code>--auto</code> / <code>--loop --auto</code>) + flagged the two related cleanups.</li>
+          <li><b>Implementation Approach</b> — bumped 5 phases → 7; tier S → M.</li>
+          <li><b>What We're NOT Doing</b> — added bullet on no new <code>ScheduleWakeup</code>-cancel hook needed.</li>
+          <li><b>Phase 3</b> — extended catch-up <code>--mode report --loop</code> to default to <code>--dry-run</code>; added 4 new Manual Verification checks.</li>
+          <li><b>Phase 4</b> — section retitled "Loop and <code>--auto</code> suitability matrix"; added <code>## ScheduleWakeup rules for --loop-wrapped skills</code> doc section.</li>
+          <li><b>New Phase 6</b> — per-verb <code>--auto</code> alias. New <code>auto-alias.md</code> substrate. Alias table for 6 verbs, refusal targets for 3 (<code>form</code>, <code>catch-up</code>, <code>setup</code>). Conflict detection for <code>--auto + --mode</code>. Loop-discipline contract: <code>--auto</code> resolutions stay within verb scope. New test file.</li>
+          <li><b>New Phase 7</b> — triage palette overhaul + self-containment hook. Remove <code>KEEP</code>; add 3 <code>ROUTE-TO</code> destinations. Update <code>triage-postcondition.sh</code> allowlist + outcome tokens. New <code>triage-no-skill-dispatch.sh</code> hook (PreToolUse:Skill, gated on <code>RALPH_SUBCOMMAND=triage</code>). Register hook in caretake frontmatter. Migration note for existing <code>ralph-triage</code>-labeled issues.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details>
+      <summary>What did NOT change from the original plan <span class="where">preserved</span></summary>
+      <div class="body">
+        <ul>
+          <li><b>Phases 1, 2, 5</b> — substrate, drain-mode wiring, hero refactor + tests. Unchanged.</li>
+          <li><b><code>RALPH_AUTOPILOT_ENABLE</code> opt-in</b> — still gates only <code>hero --mode auto</code>. Other <code>--loop</code> wraps are not opt-in-gated (their blast radius is per-skill, not per-pipeline).</li>
+          <li><b>Existing <code>RALPH_TRIAGE_ACTION=KEEP</code> labeled issues</b> — continue to be excluded from re-pick by Step 2's query. No automated batch cleanup ships with Phase 7; backward compat preserved.</li>
+          <li><b><code>/loop</code> skill itself</b> — no changes requested or required. Composes with the existing <code>/loop [interval] /cmd</code> interface.</li>
+        </ul>
+      </div>
+    </details>
+  </main>
+</div>
+</body>
+</html>
