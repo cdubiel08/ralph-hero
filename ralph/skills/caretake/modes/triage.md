@@ -63,10 +63,11 @@ Choose ONE:
 - **CLOSE** — feature already implemented, bug already fixed, duplicate, or no longer applicable.
 - **SPLIT** — issue is too large or covers multiple distinct items. Recommend XS/S sub-issues.
 - **RE-ESTIMATE** — current estimate missing or wrong; propose new value with reasoning.
-- **RESEARCH** — issue is valid but needs investigation; move to "Research Needed".
-- **KEEP** — issue is valid as-is; leave in Backlog with a clarifying comment if helpful.
+- **ROUTE-TO-Research Needed** — issue is valid but needs investigation before planning; move to "Research Needed".
+- **ROUTE-TO-Ready for Plan** — issue is well-specified; skip research and queue directly for planning.
+- **ROUTE-TO-In Progress** — trivial fix; assign and start immediately.
 
-When uncertain, prefer KEEP with a detailed comment over closing valid work.
+When uncertain, prefer `ROUTE-TO-Research Needed` (route for investigation) or `HUMAN` (escalate) over closing valid work.
 
 ## §Step 5: Take action
 
@@ -89,21 +90,27 @@ Add a comment on the parent listing sub-issues (reused and/or created). **Do NOT
 
 **RE-ESTIMATE.** Update the issue with the new estimate (XS/S/M/L/XL). Add a comment explaining the reasoning. Workflow state remains Backlog.
 
-**RESEARCH.** Set `workflowState: "Research Needed"` (`command: "ralph_triage"`). Add a comment: "Moved to Research Needed for investigation." Briefly note what needs research so downstream `/ralph:research` has actionable context.
-
-**KEEP.** Add a comment with any clarifications or context discovered. Leave workflow state as Backlog.
+**ROUTE-TO.** Set `workflowState: <target>` via `save_issue(command: "ralph_triage")` where `<target>` is one of `"Research Needed"`, `"Ready for Plan"`, or `"In Progress"`. Add a `## Triage Decision` comment explaining the routing choice and what downstream work is expected (e.g., what to investigate, what the plan should cover, or what the trivial fix is).
 
 **Before completing (REQUIRED for all branches):** export `RALPH_TRIAGE_ACTION` so `triage-postcondition.sh` can verify the action was taken:
 
 ```bash
-export RALPH_TRIAGE_ACTION=RESEARCH   # or SPLIT, CLOSE, KEEP, HUMAN, CANCEL, RE-ESTIMATE
+# Pick the value that matches your action:
+export RALPH_TRIAGE_ACTION=ROUTE_TO_RESEARCH   # routed to Research Needed
+export RALPH_TRIAGE_ACTION=ROUTE_TO_PLAN       # routed to Ready for Plan
+export RALPH_TRIAGE_ACTION=ROUTE_TO_IMPL       # routed to In Progress
+# export RALPH_TRIAGE_ACTION=SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE
 ```
 
-Valid values: `RESEARCH`, `SPLIT`, `CLOSE`, `KEEP`, `HUMAN`, `CANCEL`, `RE-ESTIMATE`. The postcondition hook blocks exit if `RALPH_TRIAGE_ACTION` is unset or holds an unrecognized value.
+Note: `CANCEL` is the close-not-planned sub-case of CLOSE (sets `issueState: CLOSED_NOT_PLANNED`, emits `TRIAGED canceled`) — a model picking `CANCEL` routes through the CLOSE action body above.
+
+Valid values: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`. `RALPH_TRIAGE_ACTION` is a self-discipline marker for the model — it is NOT validated by the postcondition hook. The postcondition hook (`triage-postcondition.sh`) enforces that a valid **terminal token** was emitted (it greps the transcript for `TRIAGED …` or `Queue empty.`); it does not read `RALPH_TRIAGE_ACTION` at all.
 
 ## §Step 6: Mark issue as triaged
 
-After completing any action, update labels to include `ralph-triage` while preserving existing labels. Read current labels first, then include them all plus `ralph-triage` in the `save_issue` call.
+Apply the `ralph-triage` label on `HUMAN`, `SPLIT`, and `RE-ESTIMATE` outcomes — every outcome that leaves the issue in Backlog. Read current labels first, then include them all plus `ralph-triage` in the `save_issue` call.
+
+Rationale: `ROUTE-TO` outcomes move the issue OUT of Backlog (the issue becomes invisible to §Step 2's Backlog query after routing, so no label is needed). `HUMAN`, `SPLIT`, and `RE-ESTIMATE` all leave the issue in Backlog — without the `ralph-triage` label, §Step 2's untriaged-Backlog picker would re-select the issue on the next triage tick, causing an infinite re-pick loop under `--loop`.
 
 ## §Step 7: Find and Link Related Issues
 
@@ -154,12 +161,16 @@ After triage action is complete, scan for related issues in Backlog or Research 
 
 ## §Step 8: Emit terminal token
 
-Emit exactly one of the five tokens defined in [outcome-tokens.md](../outcome-tokens.md):
+Emit exactly one of the tokens defined in [outcome-tokens.md](../outcome-tokens.md):
 
-- `TRIAGED valid` — moved to Research Needed or Ready for Plan.
+- `TRIAGED routed → Research Needed` — issue routed to Research Needed for investigation.
+- `TRIAGED routed → Ready for Plan` — issue routed to Ready for Plan (well-specified, skip research).
+- `TRIAGED routed → In Progress` — trivial fix; issue routed directly to In Progress.
 - `TRIAGED duplicate` — closed as duplicate; references `## Duplicate Of` comment.
 - `TRIAGED canceled` — closed not-planned.
 - `TRIAGED needs-split` — left in Backlog with `needs-split` label so `--mode split` picks it up.
+- `TRIAGED escalated` — escalated to Human Needed; `ralph-triage` label applied.
+- `TRIAGED re-estimated` — estimate updated; issue stays in Backlog.
 - `Queue empty.` — no untriaged Backlog issues (emitted at §Step 2).
 
 `triage-postcondition.sh` greps the transcript for one of these tokens. Anything else fails the Stop hook with exit 2.
@@ -168,9 +179,9 @@ Emit exactly one of the five tokens defined in [outcome-tokens.md](../outcome-to
 
 - **High** (take action automatically): feature exists in codebase (CLOSE), exact duplicate found (CLOSE), issue explicitly marked "done" in comments (CLOSE).
 - **Medium** (act + note uncertainty): similar-but-not-identical feature, possibly-outdated issue, scope seems large but doable in phases.
-- **Low** (KEEP + comment): ambiguous requirements, can't determine if feature exists, unclear relevance.
+- **Low** (ROUTE-TO-Research Needed + comment): ambiguous requirements, can't determine if feature exists, unclear relevance.
 
-When uncertain, prefer KEEP over closing.
+When uncertain, prefer `ROUTE-TO-Research Needed` over closing, or `HUMAN` when you cannot make even a routing call.
 
 ## §Escalation
 
@@ -194,3 +205,7 @@ After escalating, apply the `ralph-triage` label so the issue is not re-picked.
 - No code changes.
 - Complete within 10 minutes.
 - The `triage-state-gate.sh` hook validates state transitions; `triage-postcondition.sh` validates the terminal token.
+
+## §Migration note
+
+Existing issues carrying the `ralph-triage` label from verdicts made under the prior palette continue to be excluded from re-pick by §Step 2's query (which filters out `ralph-triage`-labeled issues). To re-evaluate a dormant issue, manually remove the `ralph-triage` label and re-run triage. No automated batch cleanup ships with this phase.

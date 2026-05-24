@@ -1,6 +1,6 @@
 ---
 description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with a human plan-approval gate by default. Five modes:default(one-shot), --mode auto (autopilot drain via /loop), --mode classify (director-only dispatch), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
-argument-hint: "[<issue-number> | --mode <auto|classify|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>]"
+argument-hint: "[<issue-number> | --mode <auto|classify|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -106,6 +106,10 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 
 ## Step 0: Parse arguments + set subcommand scope
 
+**`--auto` alias** — resolve BEFORE mode dispatch. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=hero alias row). The `RALPH_AUTOPILOT_ENABLE` gate still applies — `--mode auto` dispatches via `/loop` which is guarded by `autopilot-enable-gate.sh`.
+
 ```bash
 case "$ARGUMENTS" in
   --mode\ auto*)        export RALPH_SUBCOMMAND=auto ;;
@@ -144,26 +148,13 @@ Director-only mode: classify one event, dispatch the correct verb, stop. Full ta
 
 Autonomous backlog drain via `/loop` dynamic mode. Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message.
 
-```
-Skill("loop", args="Run /ralph:hero --mode classify on the next-most-important event on the project queue. Classify reads next_actions, picks the top-ranked event, handles trigger:<team> label consumption, and dispatches the right team.
-
-Continuation rule (LOAD-BEARING — enforced by autopilot-stop-gate.sh):
-  • classify emits 'result: Queue empty'  → end the loop, do NOT call ScheduleWakeup.
-  • classify emits ANY OTHER result line  → you MUST call ScheduleWakeup before returning.
-
-Pick delays:
-  • 60-270s when classify made forward progress (stays in prompt cache)
-  • 1200-1800s when the queue has only stuck or in-review items
-  • NEVER 300s (rejected by autopilot-wakeup-clear.sh — cache-window anti-pattern)
-
-Trust classify's decisions. Human Needed issues are filtered out automatically — run /ralph:caretake --mode unblock in a separate loop to drain them.")
-```
-
-Do not maintain your own iteration counter or termination gate — `/loop` and `--mode classify` own that. Cancel via `/tasks` → delete pending wakeup.
+Emit `Skill("loop", args="Run /ralph:hero --mode classify …\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:default manifest row>")`. Fill `{INNER_COMMAND}` = `Run /ralph:hero --mode classify on the next-most-important event on the project queue`, `{TERMINAL_SENTINELS}` = `result: Queue empty.`, delay buckets from the manifest. Do not maintain an iteration counter — `/loop` and `--mode classify` own that. Cancel via `/tasks` → delete pending wakeup.
 
 ## --mode watch
 
 Watcher team entrypoint. Full dispatch table + SOUL refusal preconditions + heartbeat shape in [watch-dispatch.md](watch-dispatch.md).
+
+**`--loop` gate** — detect `--loop [interval]` (snippet from `loop-wrapper.md` § Arg-parsing snippet). If present: default interval `15m` (see `RALPH_WATCH_HEARTBEAT_MIN`). Use `hero:watch` manifest row — heartbeat, no `Queue empty.` terminal sentinel; re-fires unless `RALPH_WATCH_DISABLE=true` or user cancels via `/tasks`. Emit `Skill("loop", args="${LOOP_INTERVAL:-15m} /ralph:hero --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
 
 ```bash
 # Argument parse: --issue NNN or bare NNN → direct mode; no arg → heartbeat mode

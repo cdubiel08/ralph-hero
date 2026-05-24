@@ -8,7 +8,7 @@ description: Investigate a codebase question, a GitHub issue, or a claim. Use wh
   lets you review findings before writing the doc). --mode auto runs the
   autonomous Research-Needed picker. --mode prove runs a 5-step knowledge-graph
   claim investigation that produces a verdict + confidence + evidence chains.
-argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-playwright]"
+argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-playwright] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -87,6 +87,14 @@ knowledge-graph claim investigation.
 Set `MODE` ∈ `{default, auto, prove}` from `--mode` flag (default if absent).
 Capture `ARG` as the remaining positional. Capture `--playwright` /
 `--no-playwright` overrides. Bail with the mode table on `--help` / `-h`.
+
+**`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=research alias row). Continue to `--loop` detection with the rewritten args.
+
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
+- MODE `auto` → `Skill("loop", …)` using the `research:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
+- MODE `default` or `prove` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
 ## Default flow
 

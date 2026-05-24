@@ -1,6 +1,6 @@
 ---
 description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "collate debug errors", "filer Langfuse errors", "split this issue", "decompose ticket". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/debug/split) each route to a dedicated mode body under `modes/`.
-argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|all>] [#NNN] [--since <window>] [--auto-confirm] [--question]"
+argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -21,6 +21,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
+    - matcher: "Skill"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-no-skill-dispatch.sh"
   PostToolUse:
     - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue"
       hooks:
@@ -106,6 +110,17 @@ References: [label-routing.md](label-routing.md) (default-mode dispatch table), 
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
 
 ## Step 0: Parse arguments + set subcommand scope
+
+**`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode triage` to `$ARGUMENTS` (verb=caretake alias row). Continue to `--loop` detection with the rewritten args.
+
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set, route by mode (all use continuation-prompt template from `loop-wrapper.md`):
+- `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row; `--mode debug` → `caretake:debug` row; `--mode split` → `caretake:split` row. Emit `Skill("loop", …)` then STOP.
+- No args (no `--issue`) → `caretake:default-event` row. Emit `Skill("loop", …)` then STOP.
+- `--issue NNN` present, `--mode postmortem`, `--mode retro`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
+- **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode all ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
+- **`--mode trends`** → periodic snapshot heartbeat; default interval `6h`. Use `caretake:trends` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-6h} /ralph:caretake --mode trends ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
 
 ```bash
 # Parse $ARGUMENTS into mode + flags. Each mode body sets RALPH_SUBCOMMAND itself

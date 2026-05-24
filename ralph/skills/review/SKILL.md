@@ -1,6 +1,6 @@
 ---
 description: Validate an implementation against its plan, run code review, merge an approved PR, or do the full close-out (val → code-review → merge → CI watch). Use whenever the user says "review this", "validate the impl", "run code review", "merge the PR", "close the loop", "ship it", "finish #NNN", "is this ready to merge", "did the plan get fulfilled". Default mode runs the full close-out and owns the depth-0 fan-out for `code-review:code-review`. --mode val validates impl vs. plan with citation gate + drift log. --mode code runs the code-review-and-fix loop (up to 3 rounds). --mode merge is merge-only mechanics (refuses unreviewed PRs).
-argument-hint: "[--mode val|code|merge] [<issue-number>] [--pr-url <url>] [--plan-doc <path>]"
+argument-hint: "[--mode val|code|merge] [<issue-number>] [--pr-url <url>] [--plan-doc <path>] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -60,6 +60,14 @@ Validates, reviews, and merges completed implementations. Four modes share subst
 References: [plan-vs-impl-rubric.md](plan-vs-impl-rubric.md) (val rubric: citation gate, drift, integration), [code-review-prompt.md](code-review-prompt.md) (code-review loop invariants + escalation), [merge-gate.md](merge-gate.md) (pre-merge gates, CI watch, cross-repo, scout report), [auto-vs-interactive.md](auto-vs-interactive.md) (depth-0 fan-out, `RALPH_REVIEW_MODE` switch, fix-cycle bound).
 
 ## Step 0: Parse arguments
+
+**`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token from `$ARGUMENTS` only (verb=review: default mode is already autonomous; no mode flag prepended). Continue to `--loop` detection with the rewritten args.
+
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). All review modes are queue-drainers — `--loop` is accepted for all. If `LOOP_RAW` is set:
+- MODE `default` → `Skill("loop", …)` via `review:default` row + continuation-prompt template from `loop-wrapper.md`, then STOP.
+- MODE `val` → `review:val` row; `code` → `review:code` row; `merge` → `review:merge` row. In each case: STOP after emitting `Skill("loop", …)`.
 
 Resolve `MODE`, `TARGET`, optional flags from args:
 

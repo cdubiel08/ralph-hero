@@ -6,14 +6,20 @@ Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emit
 
 ## Triage terminal tokens
 
-- `TRIAGED valid` — issue moved to `Research Needed` or `Ready for Plan` (the agent decided the issue is actionable).
+Routing convention: the state name appears verbatim after the `→` token, case-preserving (e.g., `TRIAGED routed → Research Needed` not `research needed`). `triage-postcondition.sh` uses `^TRIAGED routed → .+` to match the full routing family.
+
+- `TRIAGED routed → Research Needed` — issue routed to Research Needed for investigation.
+- `TRIAGED routed → Ready for Plan` — issue well-specified; routed directly to Ready for Plan (research skipped).
+- `TRIAGED routed → In Progress` — trivial fix; routed directly to In Progress.
 - `TRIAGED duplicate` — closed as duplicate; references a `## Duplicate Of` comment naming the surviving issue.
 - `TRIAGED canceled` — closed not-planned (tech changed, product direction shifted, etc.).
-- `TRIAGED needs-split` — left in Backlog with the `needs-split` label so `--mode split` picks it up on the next sweep.
+- `TRIAGED needs-split` — left in Backlog with the `needs-split` label so `--mode split` picks it up on the next sweep. `ralph-triage` label applied.
+- `TRIAGED escalated` — escalated to Human Needed; `ralph-triage` label applied so the issue is not re-picked.
+- `TRIAGED re-estimated` — estimate updated; issue stays in Backlog with the `ralph-triage` label applied (prevents re-pick under `--loop`).
 - `TRIAGED skipped — branch <name> is not main` — §Step 1 short-circuit; triage refuses to run on a feature branch.
 - `Queue empty.` — no untriaged Backlog issues remain.
 
-`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. The hook also verifies `RALPH_TRIAGE_ACTION` is set to one of `RESEARCH | SPLIT | CLOSE | KEEP | HUMAN | CANCEL | RE-ESTIMATE`.
+`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. The `RALPH_TRIAGE_ACTION` allowlist (checked by the skill body's §Step 5) is: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`.
 ## Hygiene terminal tokens
 
 - `HYGIENE COMPLETE <N archived>` — scan ran cleanly; `N` is the archive count (0 if dry-run or threshold not exceeded).
@@ -73,3 +79,13 @@ Trends is read-only — the markdown report printed to stdout is the deliverable
 - `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed.
 
 `split-postcondition.sh` (Stop hook) greps the transcript for one of these tokens AND verifies via `list_sub_issues` that the parent has ≥ 2 children when `SPLIT <N>` is emitted.
+
+## Loop continuation
+
+When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
+
+**Drain modes** (triage, unblock, debug, split, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
+
+**Heartbeat modes** (hygiene, trends, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`.
+
+**Non-loop invocations** are unaffected: all token semantics above apply to standalone caretake calls; the loop-continuation layer only activates when `--loop` was passed to the outermost invocation.

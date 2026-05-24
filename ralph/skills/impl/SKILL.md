@@ -9,7 +9,7 @@ description: Implement an approved plan, address PR review feedback, or create a
   --mode auto runs ONE phase autonomously per invocation, hook-gated. --mode
   address handles PR review feedback. --mode pr creates a pull request for a
   completed implementation.
-argument-hint: "[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--push-drive|--no-push-drive]"
+argument-hint: "[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--push-drive|--no-push-drive] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -91,6 +91,15 @@ Reads an approved plan from `thoughts/shared/plans/`, executes phases, and ships
 References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-repo), [plan-compliance.md](plan-compliance.md) (File Ownership, staging, drift), [phase-execution.md](phase-execution.md) (task graph, controller, IMPL BLOCKED), [address-mode.md](address-mode.md) (PR feedback classification), [pr-creation.md](pr-creation.md) (body template, scout trigger, Drive push).
 
 ## Step 0: Parse arguments
+
+**`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=impl alias row). Continue to `--loop` detection with the rewritten args.
+
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
+- MODE `auto` → `Skill("loop", …)` using the `impl:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
+- MODE `pr` → `Skill("loop", …)` using the `impl:pr` row, then STOP.
+- MODE `default` or `address` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
 Resolve `MODE`, `TARGET`, optional flags from args:
 
