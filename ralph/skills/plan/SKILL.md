@@ -120,6 +120,11 @@ critique-with-verdict.
 
 Set `MODE` ∈ `{default, auto, epic, iterate, review}` from `--mode` flag (default if absent). Capture `ARG` (remaining positional). Capture `--playwright` / `--no-playwright`. Bail with the mode table on `--help`.
 
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
+- MODE `auto` → `Skill("loop", …)` using the `plan:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
+- MODE `review` → `Skill("loop", …)` using the `plan:review` row, then STOP.
+- MODE `default`, `iterate`, or `epic` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
+
 No env-flip is needed between modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch by which artifact dir has the most recent today-prefixed doc; plan-state-gate accepts the union of legitimate transitions across all modes).
 
 ## Default flow

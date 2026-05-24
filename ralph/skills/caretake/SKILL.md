@@ -107,6 +107,12 @@ References: [label-routing.md](label-routing.md) (default-mode dispatch table), 
 
 ## Step 0: Parse arguments + set subcommand scope
 
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set, route by mode (all use continuation-prompt template from `loop-wrapper.md`):
+- `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row; `--mode debug` → `caretake:debug` row; `--mode split` → `caretake:split` row. Emit `Skill("loop", …)` then STOP.
+- No args (no `--issue`) → `caretake:default-event` row. Emit `Skill("loop", …)` then STOP.
+- `--issue NNN` present, `--mode postmortem`, `--mode retro`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
+- (`--mode all` and `--mode trends` are wired in Phase 3.)
+
 ```bash
 # Parse $ARGUMENTS into mode + flags. Each mode body sets RALPH_SUBCOMMAND itself
 # (so per-mode hook scope picks up the right subcommand even when the caller

@@ -92,6 +92,11 @@ References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-re
 
 ## Step 0: Parse arguments
 
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
+- MODE `auto` → `Skill("loop", …)` using the `impl:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
+- MODE `pr` → `Skill("loop", …)` using the `impl:pr` row, then STOP.
+- MODE `default` or `address` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
+
 Resolve `MODE`, `TARGET`, optional flags from args:
 
 - no args → `MODE=default`, prompt for TARGET

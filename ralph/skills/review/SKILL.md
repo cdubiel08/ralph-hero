@@ -61,6 +61,10 @@ References: [plan-vs-impl-rubric.md](plan-vs-impl-rubric.md) (val rubric: citati
 
 ## Step 0: Parse arguments
 
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). All review modes are queue-drainers — `--loop` is accepted for all. If `LOOP_RAW` is set:
+- MODE `default` → `Skill("loop", …)` via `review:default` row + continuation-prompt template from `loop-wrapper.md`, then STOP.
+- MODE `val` → `review:val` row; `code` → `review:code` row; `merge` → `review:merge` row. In each case: STOP after emitting `Skill("loop", …)`.
+
 Resolve `MODE`, `TARGET`, optional flags from args:
 
 - no args → `MODE=default`, prompt for `TARGET`

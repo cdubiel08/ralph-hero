@@ -88,6 +88,10 @@ Set `MODE` ∈ `{default, auto, prove}` from `--mode` flag (default if absent).
 Capture `ARG` as the remaining positional. Capture `--playwright` /
 `--no-playwright` overrides. Bail with the mode table on `--help` / `-h`.
 
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
+- MODE `auto` → `Skill("loop", …)` using the `research:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
+- MODE `default` or `prove` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
+
 ## Default flow
 
 ### Step 1: Intake
