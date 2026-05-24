@@ -3,6 +3,9 @@ date: 2026-05-24
 status: draft
 type: plan
 tags: [ralph-slim, loop, autopilot, skill-uniformity, dispatch-surface]
+github_issue: 1402
+github_url: https://github.com/cdubiel08/ralph-hero/issues/1402
+primary_issue: 1402
 git_commit: 3ae0d803e93f8f93370b0ca22589e2a936c4ba73
 git_branch: main
 ---
