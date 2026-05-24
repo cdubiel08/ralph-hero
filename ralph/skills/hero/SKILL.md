@@ -106,6 +106,10 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 
 ## Step 0: Parse arguments + set subcommand scope
 
+**`--auto` alias** — resolve BEFORE mode dispatch. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=hero alias row). The `RALPH_AUTOPILOT_ENABLE` gate still applies — `--mode auto` dispatches via `/loop` which is guarded by `autopilot-enable-gate.sh`.
+
 ```bash
 case "$ARGUMENTS" in
   --mode\ auto*)        export RALPH_SUBCOMMAND=auto ;;

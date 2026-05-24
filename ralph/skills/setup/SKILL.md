@@ -45,6 +45,12 @@ References: [scope-detection.md](scope-detection.md), [project-fields.md](projec
 
 ## Step 0: Parse arguments + set subcommand scope
 
+**`--auto` refusal** — if `--auto` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/auto-alias.md` § Refusal targets):
+
+```
+--auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.
+```
+
 ```bash
 case "$ARGUMENTS" in
   --mode\ project*)  export RALPH_SUBCOMMAND=project ;;

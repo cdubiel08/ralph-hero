@@ -61,6 +61,10 @@ References: [plan-vs-impl-rubric.md](plan-vs-impl-rubric.md) (val rubric: citati
 
 ## Step 0: Parse arguments
 
+**`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token from `$ARGUMENTS` only (verb=review: default mode is already autonomous; no mode flag prepended). Continue to `--loop` detection with the rewritten args.
+
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). All review modes are queue-drainers — `--loop` is accepted for all. If `LOOP_RAW` is set:
 - MODE `default` → `Skill("loop", …)` via `review:default` row + continuation-prompt template from `loop-wrapper.md`, then STOP.
 - MODE `val` → `review:val` row; `code` → `review:code` row; `merge` → `review:merge` row. In each case: STOP after emitting `Skill("loop", …)`.

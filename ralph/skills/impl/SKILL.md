@@ -92,6 +92,10 @@ References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-re
 
 ## Step 0: Parse arguments
 
+**`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
+- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=impl alias row). Continue to `--loop` detection with the rewritten args.
+
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
 - MODE `auto` → `Skill("loop", …)` using the `impl:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
 - MODE `pr` → `Skill("loop", …)` using the `impl:pr` row, then STOP.
