@@ -235,7 +235,7 @@ The refusal triggers for `--mode prove --loop` and default-mode `--loop` (both i
 - [ ] `grep -nE '\-\-loop' ralph/skills/{research,plan,impl,review,caretake}/SKILL.md` returns at least one hit per file.
 - [ ] `grep -nE 'Skill\("loop"' ralph/skills/{research,plan,impl,review,caretake}/SKILL.md` returns at least one hit per file.
 - [ ] Each modified SKILL.md still parses as YAML frontmatter + markdown body (no syntax breakage): `awk '/^---$/{c++}END{exit c==2?0:1}' <file>` passes.
-- [ ] Each SKILL.md stays ≤ 165 lines (5-line cushion above the 150-line slim plugin guideline): `wc -l ralph/skills/*/SKILL.md` shows all under 165.
+- [ ] No SKILL.md grows by more than ~5 lines from its Phase-2 Step-0 stanza (the stanza references `loop-wrapper.md` rather than inlining the prose). Baseline counts (pre-edit, 2026-05-24): research=189, plan=198, impl=201, review=129, caretake=165. Post-edit, each file is within +5 of its baseline: `wc -l ralph/skills/{research,plan,impl,review,caretake}/SKILL.md`. **Note:** the 150-line slim-plugin guideline is *already* exceeded by research/plan/impl independent of this work; this plan must not make the overage materially worse and ideally trims it by extracting opinion to the shared fragment.
 - [ ] `cd plugin/ralph-hero/mcp-server && npm test` passes (no MCP-server changes, regression check only).
 
 #### Manual Verification
@@ -259,7 +259,7 @@ Heartbeat modes vs. drain modes differ in continuation semantics: heartbeats re-
 #### 1. `ralph/skills/hero/SKILL.md` — `--mode watch`
 
 **File**: `ralph/skills/hero/SKILL.md`
-**Changes**: In the `--mode watch` section (lines 164-177), add a Step-0-equivalent stanza near the start that detects `--loop [interval]`. Default interval for watch is `15m` (per `RALPH_WATCH_HEARTBEAT_MIN` precedent in `ralph-hero/CLAUDE.md`). Continuation rule for heartbeat: never terminate on `result: …` alone — always re-fire unless `RALPH_WATCH_DISABLE=true` or the user explicitly cancels via `/tasks`. Manifest entry in `loop-wrapper.md` documents the heartbeat continuation pattern.
+**Changes**: In the `## --mode watch` section (locate by heading, not line number — the file is ~194 lines and shifts under edits), add a Step-0-equivalent stanza near the start that detects `--loop [interval]`. Default interval for watch is `15m` (per `RALPH_WATCH_HEARTBEAT_MIN` precedent in `ralph-hero/CLAUDE.md`). Continuation rule for heartbeat: never terminate on `result: …` alone — always re-fire unless `RALPH_WATCH_DISABLE=true` or the user explicitly cancels via `/tasks`. Manifest entry in `loop-wrapper.md` documents the heartbeat continuation pattern.
 
 #### 2. `ralph/skills/caretake/SKILL.md` — `--mode all` and `--mode trends`
 
@@ -345,7 +345,7 @@ The existing `hero --mode auto` body inlines its continuation prose (lines 143-1
 #### 1. Refactor hero `--mode auto`
 
 **File**: `ralph/skills/hero/SKILL.md`
-**Changes**: Replace the inlined continuation prose at lines 147-159 with a reference to `loop-wrapper.md`'s continuation-prompt template. The body shrinks from ~17 lines to ~5 lines for this section. Keep the `autopilot-enable-gate.sh` gate intact — that gate is about autopilot's footgun-ness, not about the loop substrate. The `RALPH_AUTOPILOT_ENABLE` opt-in remains the only gated `--loop` wrap.
+**Changes**: Replace the inlined continuation prose inside the `## --mode auto` section (the multi-line `Skill("loop", args=...)` block, ≈ lines 145-160 of the 194-line file — locate by the `Skill("loop"` anchor, not by line number) with a reference to `loop-wrapper.md`'s continuation-prompt template. The body shrinks from ~17 lines to ~5 lines for this section. Keep the `autopilot-enable-gate.sh` gate intact — that gate is about autopilot's footgun-ness, not about the loop substrate. The `RALPH_AUTOPILOT_ENABLE` opt-in remains the only gated `--loop` wrap.
 
 #### 2. Arg-stripping test
 
@@ -437,7 +437,7 @@ Net diff per file: ~5-8 lines added to the existing Step-0 stanza. Each SKILL.md
 - [ ] `grep -nE '\-\-auto\b' ralph/skills/{research,plan,impl,review,caretake,hero}/SKILL.md` returns ≥1 hit per file.
 - [ ] `grep -nE '\-\-auto\b' ralph/skills/{form,catch-up,setup}/SKILL.md` returns ≥1 hit per file (refusal stanzas).
 - [ ] New test `ralph/skills/shared/__tests__/auto-alias.test.sh` exercises arg-rewrite for: `--auto` (bare), `--auto --loop`, `--loop --auto`, `--auto #1234`, `--auto --mode auto` (conflict), `--auto --mode prove` (conflict), and the no-`--auto` baseline. Asserts each fixture produces the expected `$ARGUMENTS` rewrite or the expected refusal/conflict message.
-- [ ] All SKILL.md files still under 165 lines after Phase 6 additions: `wc -l ralph/skills/*/SKILL.md` shows all under 165.
+- [ ] No SKILL.md grows by more than ~8 lines total across Phases 2+6 from its 2026-05-24 baseline (research=189, plan=198, impl=201, review=129, caretake=165, hero=194, form=189, setup=113, catch-up=138): `wc -l ralph/skills/*/SKILL.md`. The `--auto`/`--loop` Step-0 stanzas reference shared fragments (`loop-wrapper.md`, `auto-alias.md`) rather than inlining, so growth stays bounded. (The 150-line guideline is pre-existingly exceeded by research/plan/impl — see Phase 2 note.)
 
 #### Manual Verification
 
@@ -491,7 +491,7 @@ This phase is independent of Phases 1-6 and can ship in any order. It is include
 #### 2. `ralph/hooks/scripts/triage-postcondition.sh`
 
 **File**: `ralph/hooks/scripts/triage-postcondition.sh`
-**Changes**: Update the `RALPH_TRIAGE_ACTION` allowlist regex to match the new values. Update the terminal-token transcript-grep pattern to recognize the new `TRIAGED routed → <state>` shape (regex with state capture) alongside the other new tokens. The existing pattern that recognizes `Queue empty.` stays.
+**Changes**: This is a Stop hook that greps the JSONL transcript for a terminal token — it has **no** `RALPH_TRIAGE_ACTION` allowlist (that allowlist lives in `triage.md` §Step 5; see §1 above). The only change here is the terminal-token transcript-grep pattern at line 48, currently `^TRIAGED (valid|duplicate|canceled|needs-split|skipped)|^Queue empty\.`. Replace it to recognize the new palette: add the `TRIAGED routed → <state>` shape (regex with state capture, e.g. `^TRIAGED routed → .+`) plus `escalated` and `re-estimated`, retire `valid`, and keep `duplicate|canceled|needs-split` — final alternation: `^TRIAGED (routed → .+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.`. Update the `block` message's "Expected one of" list (lines 53-64) to match the new tokens. The `Queue empty.` alternative stays.
 
 #### 3. `ralph/skills/caretake/outcome-tokens.md`
 
@@ -544,8 +544,10 @@ The hook self-discriminates on `RALPH_SUBCOMMAND=triage`, so it passes through s
 
 - [ ] `grep -nE '^- \*\*KEEP\*\*' ralph/skills/caretake/modes/triage.md` returns 0 hits (KEEP bullet removed).
 - [ ] `grep -nE 'ROUTE-TO-Research Needed|ROUTE-TO-Ready for Plan|ROUTE-TO-In Progress' ralph/skills/caretake/modes/triage.md` returns ≥3 hits (one per routing destination).
-- [ ] `grep -nE 'ROUTE_TO_RESEARCH|ROUTE_TO_PLAN|ROUTE_TO_IMPL' ralph/hooks/scripts/triage-postcondition.sh` returns ≥3 hits.
-- [ ] `grep -nE '\bKEEP\b' ralph/hooks/scripts/triage-postcondition.sh` returns 0 hits.
+- [ ] `grep -nE 'ROUTE_TO_RESEARCH|ROUTE_TO_PLAN|ROUTE_TO_IMPL' ralph/skills/caretake/modes/triage.md` returns ≥3 hits (the `RALPH_TRIAGE_ACTION` allowlist lives in triage.md §Step 5, not the hook).
+- [ ] `grep -nE '\bKEEP\b' ralph/skills/caretake/modes/triage.md` returns 0 hits (KEEP removed from the verdict palette).
+- [ ] `grep -nE 'TRIAGED routed → ' ralph/hooks/scripts/triage-postcondition.sh` returns ≥1 hit (Stop hook recognizes the new routing token).
+- [ ] `grep -nE '\bvalid\b' ralph/hooks/scripts/triage-postcondition.sh` no longer matches the terminal-token alternation (retired `TRIAGED valid`).
 - [ ] `grep -nE 'TRIAGED routed →' ralph/skills/caretake/outcome-tokens.md` returns ≥1 hit (routing token convention documented).
 - [ ] `test -x ralph/hooks/scripts/triage-no-skill-dispatch.sh` passes (new hook exists and is executable).
 - [ ] `grep -nE 'triage-no-skill-dispatch.sh' ralph/skills/caretake/SKILL.md` returns ≥1 hit (hook is registered in caretake frontmatter).
