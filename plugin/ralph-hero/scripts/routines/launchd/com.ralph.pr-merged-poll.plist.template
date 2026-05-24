@@ -7,9 +7,9 @@
   cloud Routine is unavailable or during offline periods.
 
   Installation:
-    1. Replace __INSTALL_PATH__ below with the absolute path to the
-       poll-merged-prs.sh script. Example:
-         /Users/yourname/projects/ralph-hero/plugin/ralph-hero/scripts/routines/poll-merged-prs.sh
+    1. Replace __REPO_ROOT__ below with the absolute path to your ralph-hero
+       repository root. Example:
+         /Users/yourname/projects/ralph-hero
 
     2. Copy to LaunchAgents:
          cp com.ralph.pr-merged-poll.plist.template \
@@ -36,7 +36,7 @@
 	<array>
 		<string>/bin/bash</string>
 		<string>-lc</string>
-		<string>__INSTALL_PATH__</string>
+		<string>cd __REPO_ROOT__ &amp;&amp; ./plugin/ralph-hero/scripts/routines/poll-merged-prs.sh</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>300</integer>
