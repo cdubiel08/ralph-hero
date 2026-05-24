@@ -111,7 +111,8 @@ References: [label-routing.md](label-routing.md) (default-mode dispatch table), 
 - `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row; `--mode debug` → `caretake:debug` row; `--mode split` → `caretake:split` row. Emit `Skill("loop", …)` then STOP.
 - No args (no `--issue`) → `caretake:default-event` row. Emit `Skill("loop", …)` then STOP.
 - `--issue NNN` present, `--mode postmortem`, `--mode retro`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
-- (`--mode all` and `--mode trends` are wired in Phase 3.)
+- **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode all ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
+- **`--mode trends`** → periodic snapshot heartbeat; default interval `6h`. Use `caretake:trends` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-6h} /ralph:caretake --mode trends ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
 
 ```bash
 # Parse $ARGUMENTS into mode + flags. Each mode body sets RALPH_SUBCOMMAND itself

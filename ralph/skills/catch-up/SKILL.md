@@ -24,6 +24,15 @@ allowed-tools:
 The unified orientation verb. Default flow is narrative + picker (matches the old
 `/ralph-hero:hello`). The `--mode` flag selects a single-surface alternative.
 
+## Step 0: `--loop` gate
+
+Use the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
+
+- **`--mode report`** → allowed. Default interval `1d`. Use `catch-up:report` manifest row — heartbeat, no `Queue empty.` terminal; re-fires on clock.
+  - Dry-run default: unless `--post` is in `$ARGUMENTS` OR `RALPH_CATCH_UP_HEARTBEAT_POST=true`, append `--dry-run` to `STRIPPED_ARGS` before wrapping (compose + print only; do NOT call `create_status_update`).
+  - Emit `Skill("loop", args="${LOOP_INTERVAL:-1d} /ralph:catch-up --mode report ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
+- **Any other mode** (default/narrative/dashboard) → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
+
 ## Mode dispatch
 
 | Mode | Behavior | Equivalent to |
@@ -125,6 +134,8 @@ Compose per `report-composition.md`:
 3. Compose the markdown body using the template in `report-composition.md`.
 4. If `--with-trends`, call `ralph_hero__metrics_trends` with `format="markdown"` and append under `## Trends` only when ≥2 snapshots exist.
 5. Determine final status: `--status` override > `metrics.status` > fallback.
+
+**Heartbeat dry-run default**: when invoked via `--loop` without an explicit `--post` flag and `RALPH_CATCH_UP_HEARTBEAT_POST` is unset, `--dry-run` is implicitly active. The skill composes the report, writes the markdown body to stdout, appends the literal hint line `> hint: to actually post this status update, re-run with --post (or set RALPH_CATCH_UP_HEARTBEAT_POST=true).`, and exits WITHOUT calling `create_status_update`. Non-loop invocations preserve post-by-default behavior. Opt-in to heartbeat-posting: explicit `--post` OR `RALPH_CATCH_UP_HEARTBEAT_POST=true`.
 
 If `--dry-run`: display the composed body + determined status + `Dry run complete. No status update posted.` Stop.
 
