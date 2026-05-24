@@ -11,7 +11,7 @@ description: Create, iterate on, or review an implementation plan. Use whenever 
   autonomous XS/S picker. --mode epic is multi-tier strategic decomposition that
   creates feature children. --mode iterate makes surgical updates to an existing
   plan. --mode review produces an APPROVED/NEEDS_ITERATION verdict.
-argument-hint: "[--mode auto|epic|iterate|review] [<issue-number|plan-path|description>] [--playwright|--no-playwright]"
+argument-hint: "[--mode auto|epic|iterate|review] [<issue-number|plan-path|description>] [--playwright|--no-playwright] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:

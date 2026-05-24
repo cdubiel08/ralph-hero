@@ -9,7 +9,7 @@ description: Implement an approved plan, address PR review feedback, or create a
   --mode auto runs ONE phase autonomously per invocation, hook-gated. --mode
   address handles PR review feedback. --mode pr creates a pull request for a
   completed implementation.
-argument-hint: "[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--push-drive|--no-push-drive]"
+argument-hint: "[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--push-drive|--no-push-drive] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:

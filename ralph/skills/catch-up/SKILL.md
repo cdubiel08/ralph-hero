@@ -5,7 +5,7 @@ description: Orientation companion — catches you up on what changed since you 
   user asks "what's going on", "what should I work on", "catch me up", "show me
   the board", "post a status update", or starts a session wanting orientation.
   --mode flag selects narrative / dashboard / report sub-surfaces.
-argument-hint: "[--mode {narrative,dashboard,report}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends]"
+argument-hint: "[--mode {narrative,dashboard,report}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends] [--loop [duration]]"
 context: inline
 allowed-tools:
   - Read

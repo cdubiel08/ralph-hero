@@ -8,7 +8,7 @@ description: Investigate a codebase question, a GitHub issue, or a claim. Use wh
   lets you review findings before writing the doc). --mode auto runs the
   autonomous Research-Needed picker. --mode prove runs a 5-step knowledge-graph
   claim investigation that produces a verdict + confidence + evidence chains.
-argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-playwright]"
+argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-playwright] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:

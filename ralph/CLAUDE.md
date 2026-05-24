@@ -23,3 +23,56 @@ The symlink at `~/.claude/plugins/cache/ralph/HEAD` points here. Edits are picke
 ## What's still in `plugin/ralph-hero/`
 
 Everything not yet migrated. The old plugin keeps working until each verb has a counterpart in `ralph` that's been dogfooded for two weeks.
+
+## Loop and --auto suitability matrix
+
+Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wrapper.md) (continuation-rules manifest) and [`ralph/skills/shared/auto-alias.md`](skills/shared/auto-alias.md) (per-verb `--auto` alias table). The table below is a summary; when there is any conflict, the source files win.
+
+| Skill / Mode | `--loop` Suitable? | `--auto` resolves to | Default interval | Terminal sentinels | Notes |
+|---|---|---|---|---|---|
+| `research --mode auto` | Yes | (this IS the auto mode) | dynamic | `Queue empty.` | drain Research Needed queue |
+| `research --mode prove` | No | — | — | — | single-claim investigation; interactive |
+| `research` default | No | `--mode auto` | — | — | interactive question intake |
+| `plan --mode auto` | Yes | (this IS the auto mode) | dynamic | `Queue empty.` | drain Ready for Plan queue |
+| `plan --mode review` | Yes | — | dynamic | `Queue empty.` | drain Plan in Review queue |
+| `plan --mode iterate` | No | — | — | — | single-plan surgical edit; interactive |
+| `plan --mode epic` | No | — | — | — | single-epic decomposition |
+| `plan` default | No | `--mode auto` | — | — | interactive phased plan creation |
+| `impl --mode auto` | Yes | (this IS the auto mode) | dynamic | `IMPL BLOCKED …` / `Queue empty.` | drain unlocked impl phases |
+| `impl --mode pr` | Yes | — | dynamic | `Queue empty.` | drain ready-for-PR queue |
+| `impl --mode address` | No | — | — | — | single PR feedback cycle |
+| `impl` default | No | `--mode auto` | — | — | interactive; pauses between phases |
+| `review` default | Yes | (no change; already autonomous) | dynamic | `Queue empty.` | drain In Review queue |
+| `review --mode val` | Yes | — | dynamic | `Queue empty.` | drain validation queue |
+| `review --mode code` | Yes | — | dynamic | `Queue empty.` | drain code-review queue |
+| `review --mode merge` | Yes | — | dynamic | `Queue empty.` | drain mergeable queue |
+| `caretake --mode triage` | Yes | (this IS the auto mode) | dynamic | `Queue empty.` | drain Backlog |
+| `caretake --mode hygiene` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic scan |
+| `caretake --mode unblock` | Yes | — | dynamic | `Queue empty.` | autonomous path only (no `--question`) |
+| `caretake --mode trends` | Yes | — | `6h` | heartbeat (no `Queue empty.`) | periodic snapshot |
+| `caretake --mode debug` | Yes | — | dynamic | `Queue empty.` | drain Langfuse errors |
+| `caretake --mode split` | Yes | — | dynamic | `Queue empty.` | drain M/L/XL queue |
+| `caretake --mode all` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic fan-out |
+| `caretake` default (event) | Yes | `--mode triage` | dynamic | `Queue empty.` | drain `trigger:*` labels |
+| `caretake --mode postmortem` | No | — | — | — | single artifact per session |
+| `caretake --mode retro` | No | — | — | — | single artifact per session |
+| `caretake --mode unblock --question` | No | — | — | — | interactive answer collection |
+| `catch-up --mode report` | Yes | — | `1d` | heartbeat (no `Queue empty.`) | periodic status post; `--dry-run` by default in loop |
+| `catch-up` default | No | — | — | — | interactive orientation |
+| `catch-up --mode narrative` | No | — | — | — | pure stdout; interactive |
+| `catch-up --mode dashboard` | No | — | — | — | pure stdout; interactive |
+| `hero` default | Yes | `--mode auto` | dynamic | `result: Queue empty.` | drain top-ranked issues |
+| `hero --mode auto` | Already wrapped | (this IS the auto mode) | dynamic | `result: Queue empty.` | uses `RALPH_AUTOPILOT_ENABLE=true` gate |
+| `hero --mode watch` | Yes | — | `15m` | heartbeat (no `Queue empty.`) | polling heartbeat |
+| `hero --mode classify` | No | — | — | — | redundant with `hero --mode auto` |
+| `hero --mode pr-drain` | No | — | — | — | single-PR action; loop would re-process same PR |
+| `form` all modes | No | — | — | — | interactive picker |
+| `setup` all modes | No | — | — | — | one-shot bootstrap |
+
+**Refusal message for unsuitable modes**: `--loop is not supported for this mode. Looping is meaningful only for autonomous queue-drainers; this surface is interactive. See ralph/CLAUDE.md § Loop suitability.`
+
+**`--auto` refusal for unsuitable verbs** (`form`, `catch-up`, `setup`): `--auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.`
+
+## ScheduleWakeup rules for --loop-wrapped skills
+
+Skills wrapped via `--loop` must not call `ScheduleWakeup` themselves; `/loop` owns wakeup management. The one exception is `hero --mode auto`, where `autopilot-wakeup-clear.sh` + `autopilot-stop-gate.sh` enforce the contract deterministically. Adding a new direct `ScheduleWakeup` call from inside any other loop-suitable skill body is a bug — if you need to influence the wakeup cadence, do it via the continuation prompt in `loop-wrapper.md` instead.

@@ -1,6 +1,6 @@
 ---
 description: Validate an implementation against its plan, run code review, merge an approved PR, or do the full close-out (val → code-review → merge → CI watch). Use whenever the user says "review this", "validate the impl", "run code review", "merge the PR", "close the loop", "ship it", "finish #NNN", "is this ready to merge", "did the plan get fulfilled". Default mode runs the full close-out and owns the depth-0 fan-out for `code-review:code-review`. --mode val validates impl vs. plan with citation gate + drift log. --mode code runs the code-review-and-fix loop (up to 3 rounds). --mode merge is merge-only mechanics (refuses unreviewed PRs).
-argument-hint: "[--mode val|code|merge] [<issue-number>] [--pr-url <url>] [--plan-doc <path>]"
+argument-hint: "[--mode val|code|merge] [<issue-number>] [--pr-url <url>] [--plan-doc <path>] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
