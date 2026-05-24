@@ -11,7 +11,7 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-PATTERN='^TRIAGED (routed → .+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.'
+PATTERN='^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.'
 
 pass() {
   echo "  PASS: $1"

@@ -15,7 +15,7 @@ Routing convention: the state name appears verbatim after the `→` token, case-
 - `TRIAGED canceled` — closed not-planned (tech changed, product direction shifted, etc.).
 - `TRIAGED needs-split` — left in Backlog with the `needs-split` label so `--mode split` picks it up on the next sweep. `ralph-triage` label applied.
 - `TRIAGED escalated` — escalated to Human Needed; `ralph-triage` label applied so the issue is not re-picked.
-- `TRIAGED re-estimated` — estimate updated; issue stays in Backlog.
+- `TRIAGED re-estimated` — estimate updated; issue stays in Backlog with the `ralph-triage` label applied (prevents re-pick under `--loop`).
 - `TRIAGED skipped — branch <name> is not main` — §Step 1 short-circuit; triage refuses to run on a feature branch.
 - `Queue empty.` — no untriaged Backlog issues remain.
 

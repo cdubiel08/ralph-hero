@@ -102,13 +102,15 @@ export RALPH_TRIAGE_ACTION=ROUTE_TO_IMPL       # routed to In Progress
 # export RALPH_TRIAGE_ACTION=SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE
 ```
 
-Valid values: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`. The postcondition hook blocks exit if `RALPH_TRIAGE_ACTION` is unset or holds an unrecognized value.
+Note: `CANCEL` is the close-not-planned sub-case of CLOSE (sets `issueState: CLOSED_NOT_PLANNED`, emits `TRIAGED canceled`) — a model picking `CANCEL` routes through the CLOSE action body above.
+
+Valid values: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`. `RALPH_TRIAGE_ACTION` is a self-discipline marker for the model — it is NOT validated by the postcondition hook. The postcondition hook (`triage-postcondition.sh`) enforces that a valid **terminal token** was emitted (it greps the transcript for `TRIAGED …` or `Queue empty.`); it does not read `RALPH_TRIAGE_ACTION` at all.
 
 ## §Step 6: Mark issue as triaged
 
-Apply the `ralph-triage` label only on `HUMAN` and `SPLIT` outcomes — the two that leave the issue in Backlog. Read current labels first, then include them all plus `ralph-triage` in the `save_issue` call.
+Apply the `ralph-triage` label on `HUMAN`, `SPLIT`, and `RE-ESTIMATE` outcomes — every outcome that leaves the issue in Backlog. Read current labels first, then include them all plus `ralph-triage` in the `save_issue` call.
 
-`ROUTE-TO` outcomes move the issue out of Backlog; the issue is naturally invisible to triage's Backlog query after routing, so no label is needed.
+Rationale: `ROUTE-TO` outcomes move the issue OUT of Backlog (the issue becomes invisible to §Step 2's Backlog query after routing, so no label is needed). `HUMAN`, `SPLIT`, and `RE-ESTIMATE` all leave the issue in Backlog — without the `ralph-triage` label, §Step 2's untriaged-Backlog picker would re-select the issue on the next triage tick, causing an infinite re-pick loop under `--loop`.
 
 ## §Step 7: Find and Link Related Issues
 

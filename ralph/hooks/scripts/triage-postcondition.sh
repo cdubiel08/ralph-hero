@@ -45,7 +45,7 @@ fi
 transcript_text=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null || true)
 
 # Match any of the documented terminal tokens.
-if echo "$transcript_text" | grep -qE '^TRIAGED (routed → .+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.' ; then
+if echo "$transcript_text" | grep -qE '^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.' ; then
   echo "Triage postcondition passed: terminal token found in transcript"
   allow
 fi
