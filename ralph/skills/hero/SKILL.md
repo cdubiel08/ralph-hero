@@ -148,22 +148,7 @@ Director-only mode: classify one event, dispatch the correct verb, stop. Full ta
 
 Autonomous backlog drain via `/loop` dynamic mode. Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message.
 
-```
-Skill("loop", args="Run /ralph:hero --mode classify on the next-most-important event on the project queue. Classify reads next_actions, picks the top-ranked event, handles trigger:<team> label consumption, and dispatches the right team.
-
-Continuation rule (LOAD-BEARING — enforced by autopilot-stop-gate.sh):
-  • classify emits 'result: Queue empty'  → end the loop, do NOT call ScheduleWakeup.
-  • classify emits ANY OTHER result line  → you MUST call ScheduleWakeup before returning.
-
-Pick delays:
-  • 60-270s when classify made forward progress (stays in prompt cache)
-  • 1200-1800s when the queue has only stuck or in-review items
-  • NEVER 300s (rejected by autopilot-wakeup-clear.sh — cache-window anti-pattern)
-
-Trust classify's decisions. Human Needed issues are filtered out automatically — run /ralph:caretake --mode unblock in a separate loop to drain them.")
-```
-
-Do not maintain your own iteration counter or termination gate — `/loop` and `--mode classify` own that. Cancel via `/tasks` → delete pending wakeup.
+Emit `Skill("loop", args="Run /ralph:hero --mode classify …\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:default manifest row>")`. Fill `{INNER_COMMAND}` = `Run /ralph:hero --mode classify on the next-most-important event on the project queue`, `{TERMINAL_SENTINELS}` = `result: Queue empty.`, delay buckets from the manifest. Do not maintain an iteration counter — `/loop` and `--mode classify` own that. Cancel via `/tasks` → delete pending wakeup.
 
 ## --mode watch
 
