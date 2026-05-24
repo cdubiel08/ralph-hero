@@ -95,6 +95,7 @@ DRAIN_MODES=(
   "caretake:split"
   "caretake:default-event"
   "hero:default"
+  "hero:auto"
 )
 
 for mode in "${DRAIN_MODES[@]}"; do

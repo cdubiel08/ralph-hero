@@ -52,6 +52,7 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 | caretake:default-event | per dispatched mode | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain trigger:* labels |
 | catch-up:report | `Status update posted successfully.` | (none — heartbeat; re-fire always) | default interval 1d; schedule accordingly | periodic status post |
 | hero:default | `result: Hero complete — …` / `result: Hero paused at …` | `result: Queue empty.` | 60-270s on progress; 1200-1800s idle | drain top-ranked issues |
+| hero:auto | `result: Dispatched #NNN to <team> via <entrypoint>` | `result: Queue empty.` | 60-270s on dispatch; 1200s when a tick dispatched nothing but queue non-terminal | classify-drain (the row `hero --mode auto` wraps — its inner command is `--mode classify`, whose success line is `Dispatched …`, NOT `Hero complete`). Pinned idle value mirrors impl:auto so a successful dispatch always registers as progress instead of falling through to idle |
 | hero:watch | `result: Watch complete — …` | (none — heartbeat; re-fire always) | default interval 15m; schedule accordingly | polling heartbeat |
 
 **Heartbeat vs. drain continuation rule**: heartbeat modes (caretake:hygiene, caretake:trends, caretake:all, catch-up:report, hero:watch) do NOT list `Queue empty.` as a terminal sentinel — they re-fire on a clock regardless of whether any work was found. Drain modes DO list `Queue empty.` as the signal to end the loop.

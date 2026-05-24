@@ -148,7 +148,9 @@ Director-only mode: classify one event, dispatch the correct verb, stop. Full ta
 
 Autonomous backlog drain via `/loop` dynamic mode. Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message.
 
-Emit `Skill("loop", args="Run /ralph:hero --mode classify …\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:default manifest row>")`. Fill `{INNER_COMMAND}` = `Run /ralph:hero --mode classify on the next-most-important event on the project queue`, `{TERMINAL_SENTINELS}` = `result: Queue empty.`, delay buckets from the manifest. Do not maintain an iteration counter — `/loop` and `--mode classify` own that. Cancel via `/tasks` → delete pending wakeup.
+Emit `Skill("loop", args="Run /ralph:hero --mode classify …\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:auto manifest row>")`. Fill `{INNER_COMMAND}` = `Run /ralph:hero --mode classify on the next-most-important event on the project queue`, `{PROGRESS_SENTINELS}` = `result: Dispatched #NNN to <team> via <entrypoint>` (the line `--mode classify` emits on every successful dispatch — see step 6 of `--mode classify` above), `{TERMINAL_SENTINELS}` = `result: Queue empty.`, delay buckets from the `hero:auto` row (60-270s on dispatch; 1200s idle). Do not maintain an iteration counter — `/loop` and `--mode classify` own that. Cancel via `/tasks` → delete pending wakeup.
+
+> **Use the `hero:auto` row, NOT `hero:default`.** `--mode auto` wraps `--mode classify`, whose success line is `result: Dispatched #NNN …` — not the `result: Hero complete …` / `result: Hero paused …` lines on the `hero:default` row. Keying the loop to `hero:default` made every successful dispatch match no progress sentinel, so the model fell through to the idle bucket (~30 min) on every productive tick. The `hero:auto` row makes a dispatch register as progress so the drain continues at 60-270s.
 
 ## --mode watch
 
