@@ -21,6 +21,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
+    - matcher: "Skill"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-no-skill-dispatch.sh"
   PostToolUse:
     - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue"
       hooks:

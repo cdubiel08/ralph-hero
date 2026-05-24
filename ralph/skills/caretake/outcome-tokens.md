@@ -6,14 +6,20 @@ Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emit
 
 ## Triage terminal tokens
 
-- `TRIAGED valid` — issue moved to `Research Needed` or `Ready for Plan` (the agent decided the issue is actionable).
+Routing convention: the state name appears verbatim after the `→` token, case-preserving (e.g., `TRIAGED routed → Research Needed` not `research needed`). `triage-postcondition.sh` uses `^TRIAGED routed → .+` to match the full routing family.
+
+- `TRIAGED routed → Research Needed` — issue routed to Research Needed for investigation.
+- `TRIAGED routed → Ready for Plan` — issue well-specified; routed directly to Ready for Plan (research skipped).
+- `TRIAGED routed → In Progress` — trivial fix; routed directly to In Progress.
 - `TRIAGED duplicate` — closed as duplicate; references a `## Duplicate Of` comment naming the surviving issue.
 - `TRIAGED canceled` — closed not-planned (tech changed, product direction shifted, etc.).
-- `TRIAGED needs-split` — left in Backlog with the `needs-split` label so `--mode split` picks it up on the next sweep.
+- `TRIAGED needs-split` — left in Backlog with the `needs-split` label so `--mode split` picks it up on the next sweep. `ralph-triage` label applied.
+- `TRIAGED escalated` — escalated to Human Needed; `ralph-triage` label applied so the issue is not re-picked.
+- `TRIAGED re-estimated` — estimate updated; issue stays in Backlog.
 - `TRIAGED skipped — branch <name> is not main` — §Step 1 short-circuit; triage refuses to run on a feature branch.
 - `Queue empty.` — no untriaged Backlog issues remain.
 
-`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. The hook also verifies `RALPH_TRIAGE_ACTION` is set to one of `RESEARCH | SPLIT | CLOSE | KEEP | HUMAN | CANCEL | RE-ESTIMATE`.
+`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. The `RALPH_TRIAGE_ACTION` allowlist (checked by the skill body's §Step 5) is: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`.
 ## Hygiene terminal tokens
 
 - `HYGIENE COMPLETE <N archived>` — scan ran cleanly; `N` is the archive count (0 if dry-run or threshold not exceeded).

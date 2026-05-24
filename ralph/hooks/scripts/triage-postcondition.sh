@@ -45,7 +45,7 @@ fi
 transcript_text=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null || true)
 
 # Match any of the documented terminal tokens.
-if echo "$transcript_text" | grep -qE '^TRIAGED (valid|duplicate|canceled|needs-split|skipped)|^Queue empty\.' ; then
+if echo "$transcript_text" | grep -qE '^TRIAGED (routed → .+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.' ; then
   echo "Triage postcondition passed: terminal token found in transcript"
   allow
 fi
@@ -53,12 +53,16 @@ fi
 block "Triage postcondition failed: no terminal token emitted
 
 Expected one of:
-  TRIAGED valid         (issue routed to Research Needed / Ready for Plan)
-  TRIAGED duplicate     (closed as duplicate)
-  TRIAGED canceled      (closed not_planned)
-  TRIAGED needs-split   (routed to split queue)
-  TRIAGED skipped …     (branch-gate short-circuit; non-main branch)
-  Queue empty.          (no untriaged Backlog issues)
+  TRIAGED routed → Research Needed   (issue routed to Research Needed)
+  TRIAGED routed → Ready for Plan    (issue routed to Ready for Plan)
+  TRIAGED routed → In Progress       (trivial fix; routed directly to In Progress)
+  TRIAGED duplicate                  (closed as duplicate)
+  TRIAGED canceled                   (closed not_planned)
+  TRIAGED needs-split                (routed to split queue)
+  TRIAGED escalated                  (escalated to Human Needed)
+  TRIAGED re-estimated               (estimate updated; stays in Backlog)
+  TRIAGED skipped …                  (branch-gate short-circuit; non-main branch)
+  Queue empty.                       (no untriaged Backlog issues)
 
 The /ralph:caretake --mode triage body must end by emitting one of these tokens.
 See ralph/skills/caretake/outcome-tokens.md for the full contract.
