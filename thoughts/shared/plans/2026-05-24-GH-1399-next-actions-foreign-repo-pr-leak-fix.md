@@ -59,11 +59,11 @@ const rawOpenPRs = await fetchOpenPRs(client, repos);
 
 ### Verification
 
-- [ ] `npx vitest run src/__tests__/directions-tools.test.ts` — passes including new closed-only-foreign-repo test.
-- [ ] `npx vitest run src/__tests__/directions.test.ts` — passes (no changes expected; pure ranker untouched).
-- [ ] `npm run build` exits 0 (TypeScript strict mode).
-- [ ] `npm test` — full suite green.
-- [ ] Manual: simulate the GH-1399 repro by mocking 1 open landcrawler-ai item + 1 closed ralph-hero item with an open ralph-hero PR in fixtures; assert PR direction does NOT appear in output.
+- [x] `npx vitest run src/__tests__/directions-tools.test.ts` — passes including new closed-only-foreign-repo test.
+- [x] `npx vitest run src/__tests__/directions.test.ts` — passes (no changes expected; pure ranker untouched).
+- [x] `npm run build` exits 0 (TypeScript strict mode).
+- [x] `npm test` — full suite green (1626 passed, 1 skipped).
+- [x] Manual: simulate the GH-1399 repro by mocking 1 open landcrawler-ai item + 1 closed ralph-hero item with an open ralph-hero PR in fixtures; assert PR direction does NOT appear in output. (See new integration test.)
 
 ## What We're NOT Doing
 
@@ -127,11 +127,11 @@ function uniqueRepos(items: DashboardItem[]): string[] {
 
 #### Automated Verification
 
-- [ ] `npx vitest run src/__tests__/directions-tools.test.ts` passes including the new regression test.
-- [ ] `npx vitest run src/__tests__/directions.test.ts` passes unchanged.
-- [ ] `npm run build` exits 0 with no TypeScript errors.
-- [ ] `npm test` full suite green.
-- [ ] `grep -n "closedAt" plugin/ralph-hero/mcp-server/src/tools/directions-tools.ts` shows the new filter wired into `uniqueRepos`.
+- [x] `npx vitest run src/__tests__/directions-tools.test.ts` passes including the new regression test.
+- [x] `npx vitest run src/__tests__/directions.test.ts` passes unchanged.
+- [x] `npm run build` exits 0 with no TypeScript errors.
+- [x] `npm test` full suite green (1626 passed).
+- [x] `grep -n "closedAt" plugin/ralph-hero/mcp-server/src/tools/directions-tools.ts` shows the new filter wired into `uniqueRepos`.
 
 #### Manual Verification
 

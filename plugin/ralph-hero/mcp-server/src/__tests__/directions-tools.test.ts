@@ -38,6 +38,13 @@ interface RawIssueFixture {
   closedAt?: string | null;
   parentNumber?: number | null;
   parentState?: string | null;
+  /**
+   * Override the `nameWithOwner` carried in the project item. Defaults to
+   * `owner/repo`. Tests that exercise multi-repo behavior (e.g. the GH-1399
+   * foreign-repo PR-leak regression) override this so item fixtures can map
+   * to distinct repos.
+   */
+  repository?: string;
 }
 
 /**
@@ -93,7 +100,13 @@ function rawIssue(fix: RawIssueFixture): unknown {
       updatedAt: fix.updatedAt ?? new Date().toISOString(),
       closedAt: fix.closedAt ?? null,
       assignees: { nodes: [] },
-      repository: { nameWithOwner: "owner/repo", name: "repo" },
+      repository: (() => {
+        const nameWithOwner = fix.repository ?? "owner/repo";
+        const name = nameWithOwner.includes("/")
+          ? nameWithOwner.split("/")[1]
+          : nameWithOwner;
+        return { nameWithOwner, name };
+      })(),
       subIssues: { totalCount: 0 },
       trackedIssues: { nodes: [] },
       trackedInIssues,
@@ -242,10 +255,21 @@ function createMockClient(
 
   // `client.query` is the repo-scoped surface. The tool calls it for the
   // internal PR search (`fetchOpenPRs`). Route by the query body so
-  // unrelated repo queries fall through to a clear error.
-  const query = vi.fn(async (q: string) => {
+  // unrelated repo queries fall through to a clear error. PRs are filtered
+  // by the `q` variable's `repo:<owner>/<repo>` clause so a per-repo search
+  // returns only that repo's fixtures — required for the GH-1399 regression
+  // to observe radius tightening rather than a global PR dump.
+  const query = vi.fn(async (q: string, vars?: { q?: string }) => {
     if (isOpenPRsSearchQuery(q)) {
-      return { search: { nodes: options.openPRs ?? [] } };
+      const searchExpr = vars?.q ?? "";
+      const repoMatch = searchExpr.match(/repo:([^\s]+)/);
+      const queriedRepo = repoMatch?.[1] ?? null;
+      const all = options.openPRs ?? [];
+      const filtered =
+        queriedRepo === null
+          ? all
+          : all.filter((pr) => pr.url.includes(queriedRepo));
+      return { search: { nodes: filtered } };
     }
     throw new Error(`Unmocked query: ${q.slice(0, 80)}`);
   });
@@ -317,6 +341,95 @@ describe("ralph_hero__next_actions", () => {
   beforeEach(() => {
     server = new McpServer({ name: "test", version: "0.0.0" });
     fieldCache = new FieldOptionCache();
+  });
+
+  // -------------------------------------------------------------------------
+  // GH-1399 regression: closed cross-repo items must not expand the PR-search
+  // radius. A stale closed item from a foreign repo on the board would
+  // otherwise pull every open PR from that repo into the directions ranking.
+  // -------------------------------------------------------------------------
+
+  it("does not search PRs from foreign repos whose only board items are closed", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const twoWeeksAgo = new Date(
+      Date.now() - 14 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+
+    // Project mix mirrors the GH-1399 repro: one open item from the
+    // "primary" repo, one closed item from a foreign repo. The foreign
+    // repo should NOT trigger an `is:pr is:open repo:owner/foreign-repo`
+    // search, regardless of whether open PRs exist there.
+    const fixtures = [
+      rawIssue({
+        number: 904,
+        title: "Primary repo open issue",
+        workflowState: "Ready for Plan",
+        priority: "P1",
+        updatedAt: oneHourAgo,
+        repository: "owner/primary-repo",
+      }),
+      rawIssue({
+        number: 731,
+        title: "Foreign repo stale closed issue",
+        workflowState: "Done",
+        priority: "P2",
+        updatedAt: twoWeeksAgo,
+        closedAt: twoWeeksAgo,
+        repository: "owner/foreign-repo",
+      }),
+    ];
+
+    const { client, query } = createMockClient(
+      { projectNumber: 3 },
+      {
+        itemsByProject: { 3: fixtures },
+        // Open PR exists in the foreign repo — would have leaked before GH-1399.
+        // Returned for any PR search; assertion below checks no foreign-repo
+        // search was issued at all.
+        openPRs: [
+          {
+            number: 1355,
+            title: "Foreign repo open PR",
+            url: "https://github.com/owner/foreign-repo/pull/1355",
+            isDraft: false,
+            reviewDecision: "REVIEW_REQUIRED",
+            headRefName: "feature/GH-1301",
+            createdAt: twoWeeksAgo,
+          },
+        ],
+      },
+    );
+
+    registerDirectionsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__next_actions");
+
+    const result = await tool.handler(
+      buildArgs({ limit: 5, audience: "agent" }),
+      {},
+    );
+    const payload = parsePayload(result) as {
+      directions: Array<{ kind: string; pr: { url: string } | null }>;
+    };
+
+    expect(result.isError).toBeUndefined();
+
+    // Observable 1: no PR direction surfaces for the foreign repo.
+    const foreignPrDirections = payload.directions.filter(
+      (d) => d.kind === "pr" && d.pr?.url.includes("owner/foreign-repo"),
+    );
+    expect(foreignPrDirections).toHaveLength(0);
+
+    // Observable 2 (load-bearing): no GraphQL search was issued against the
+    // foreign repo. Asserts the radius tightened — not just the output filter.
+    const prSearchCalls = query.mock.calls.filter(
+      (call: unknown[]) =>
+        typeof call[0] === "string" &&
+        (call[0] as string).includes("... on PullRequest"),
+    );
+    for (const call of prSearchCalls) {
+      const vars = call[1] as { q?: string } | undefined;
+      expect(vars?.q ?? "").not.toContain("owner/foreign-repo");
+    }
   });
 
   it("registers under the new name and accepts audience param", async () => {
