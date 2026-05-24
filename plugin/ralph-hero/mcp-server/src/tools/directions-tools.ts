@@ -247,13 +247,19 @@ interface RawOpenPR {
 /**
  * Derive the unique `owner/repo` set from the project items so the PR search
  * mirrors the project's repo scope. Items lacking a `repository` field (e.g.
- * draft items) are skipped. Returns deterministic order (sorted) so the
- * downstream search query is stable.
+ * draft items) are skipped. Closed items (GitHub `closedAt` set, or workflow
+ * state Done/Canceled) also do NOT expand the radius — a stale closed
+ * cross-repo item on the board would otherwise pull every open PR from that
+ * foreign repo into `next_actions` (see GH-1399). Returns deterministic order
+ * (sorted) so the downstream search query is stable.
  */
 function uniqueRepos(items: DashboardItem[]): string[] {
   const seen = new Set<string>();
   for (const item of items) {
-    if (item.repository) seen.add(item.repository);
+    if (!item.repository) continue;
+    if (item.closedAt !== null) continue;
+    if (item.workflowState === "Done" || item.workflowState === "Canceled") continue;
+    seen.add(item.repository);
   }
   return Array.from(seen).sort();
 }
