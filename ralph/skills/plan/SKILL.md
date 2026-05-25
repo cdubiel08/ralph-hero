@@ -136,7 +136,7 @@ No env-flip is needed between modes: the hooks discriminate by the file path bei
 1. **Intake** — resolve `ARG` per `intake-routing.md` (issue / research-doc / plan-path / free-form / no-arg). Read mentioned files FULLY before any sub-agent dispatch. Run parent-plan reuse check — if it short-circuits, post `## Plan Reference` and STOP.
 2. **Research & discovery** — `knowledge_recall(role="planner", brief=true)` if available; dispatch codebase-locator / codebase-analyzer / thoughts-locator in parallel (one message, multiple `Agent()` calls). Wait for ALL, read identified files FULLY.
 3. **Plan structure development** — propose phase count + ownership + verification points. `AskUserQuestion` to confirm. Loop until approved. Consult `plan-shapes.md` § Phase-section anatomy.
-4. **Write the plan** — per `plan-shapes.md` (default-column required sections). Filename `thoughts/shared/plans/YYYY-MM-DD-[GH-NNNN-]description.md`.
+4. **Write the plan** — per `plan-shapes.md` (default-column required sections). Filename `thoughts/shared/plans/YYYY-MM-DD-[GH-NNNN-]description.md`. Stamp `estimate:` into the frontmatter from the fetched issue. If the linked-research check (Step 1) ended in "plan anyway", also stamp `research_waived:`.
 4a. **UI Validation Phase (conditional)** — skip if `--no-playwright`. Else consult `ui-validation-phase.md`; append `## Phase N: UI Validation` if frontend-relevant + ralph-playwright installed.
 5. **User review picker** — `AskUserQuestion` over *Approve* / *Approve with edits* / *Restart* / *Iterate*. `review-plan-gate.sh` hook enforces this picker runs before any state-advancing `save_issue`.
 6. **GitHub integration** — if `LINKED_ISSUE`: post `## Implementation Plan` artifact comment with doc URL + 1-line summary; update issue body if scope clarified; `save_issue(workflowState: "Plan in Review", command: "plan")`. Human reviews the plan; a separate `--mode review` or manual approval advances to "In Progress".
@@ -146,17 +146,17 @@ No env-flip is needed between modes: the hooks discriminate by the file path bei
 Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced. Frontmatter `hooks:` gate the flow (tier-validator, state-gate, postcondition, doc-validator, research-required, lock-release). XS/S only, 15-minute budget.
 
 1. **Branch check** — `git branch --show-current` must be `main`.
-2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-plan", limit: 50)`, filter XS/S Ready-for-Plan + unblocked + has-linked-research, pick highest priority. None eligible → exit cleanly.
-3. **Lock + research lookup** — `save_issue(workflowState: "__LOCK__", command: "plan")`. Find linked research per `intake-routing.md` § Linked-research check. If none → escalate to "Human Needed".
+2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-plan", limit: 50)`, filter XS/S Ready-for-Plan + unblocked, pick highest priority. None eligible → exit cleanly. (XS/S no longer require linked research — the gate waives sub-threshold work.)
+3. **Lock + research lookup** — `save_issue(workflowState: "__LOCK__", command: "plan")`. Find linked research per `intake-routing.md` § Linked-research check. If none AND the issue's estimate is ≥ `RALPH_RESEARCH_REQUIRED_MIN_ESTIMATE` (default `M`) → escalate to "Human Needed". Otherwise (sub-threshold XS/S) proceed; the `estimate:` stamp in Step 6 lets the gate waive research.
 4. **Parent-plan reuse** — per `intake-routing.md` § Parent-plan reuse. If short-circuit: post `## Plan Reference`, advance child to "In Progress", report, STOP.
 5. **Knowledge graph + sub-agent research** — same dispatch as default Steps 2-3, no AskUserQuestion. Wait for ALL, synthesize.
 5a. **UI Validation Phase (conditional)** — per `ui-validation-phase.md`. No user prompt; heuristic-only.
-6. **Write plan doc** — per `plan-shapes.md` (auto-column required sections, including Files Affected). The `plan-research-required.sh` hook blocks Write if no linked research; `doc-structure-validator.sh` blocks Stop if required sections missing.
+6. **Write plan doc** — per `plan-shapes.md` (auto-column required sections, including Files Affected). Stamp `estimate:` into the frontmatter from the fetched issue. The `plan-research-required.sh` hook blocks Write if no linked research AND the estimate is ≥ threshold (the `estimate:` stamp waives sub-threshold XS/S); `doc-structure-validator.sh` blocks Stop if required sections missing.
 7. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN implementation plan" && git push origin main`.
 8. **Post artifact + advance + outcome** — `create_comment(## Implementation Plan ...)` → `save_issue(workflowState: "__COMPLETE__", command: "plan")` (advances to "Plan in Review") → `knowledge_record_outcome(event_type: "plan_completed", ...)` if available.
 9. **Report** — single block: *Plan complete for #NNN: [Title] / Plan: [path] / Status: Plan in Review*.
 
-**Escalation triggers (auto only):** advance to "Human Needed" when (a) no linked research exists, (b) issue is M/L/XL on research (suggest `--mode epic`), or (c) sub-agents surface conflicting implementations.
+**Escalation triggers (auto only):** advance to "Human Needed" when (a) no linked research exists AND the estimate is ≥ `RALPH_RESEARCH_REQUIRED_MIN_ESTIMATE` (default `M`; sub-threshold XS/S proceed without research), (b) issue is M/L/XL on research (suggest `--mode epic`), or (c) sub-agents surface conflicting implementations.
 
 ## --mode epic
 

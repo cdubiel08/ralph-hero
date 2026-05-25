@@ -33,6 +33,13 @@ Headline shape:
 | 9 | `/ralph:setup` | shipped |
 | 10 | sunset `plugin/ralph-hero/` | Wave 1 shipped 2026-05-23 (P0/P1 fixes). Wave 2 selective shipped 2026-05-23 (5 fixes + 1 doc + 3 close-with-rationale; 3 issues deferred as `[Wave 2 deferred]`). Wave 3 (deletion) blocked on real-session dogfooding. |
 
+## Environment
+
+| Variable | Default | Effect |
+|---|---|---|
+| `RALPH_REQUIRES_RESEARCH` | `true` | Global off-switch for the plan-research gate (`plan-research-required.sh`). Set to anything other than `true` to disable the gate entirely — any plan Write is allowed. |
+| `RALPH_RESEARCH_REQUIRED_MIN_ESTIMATE` | `M` | Estimate at/above which a linked research doc is required before a plan can be written. Estimates strictly below it are waived (`M` waives XS/S; `S` waives only XS; `XS` waives nothing). Lower it to require research for smaller work, or raise it to relax. A per-plan `research_waived:` frontmatter line is an explicit human override regardless of estimate. |
+
 ## Local development
 
 ```bash

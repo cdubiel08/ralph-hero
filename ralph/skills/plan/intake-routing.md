@@ -34,8 +34,8 @@ When `ARG` resolves to a path, or when the user mentions specific files in a fre
 
 If `LINKED_ISSUE` is set and the issue has no linked research doc:
 
-- **Interactive mode** — surface to the user: *"This issue has no linked research. Plan anyway, or research first via `/ralph:research #NNN`?"* If the user chooses "research first", invoke that command and exit.
-- **Auto mode** — `plan-research-required.sh` is the hook-level enforcement. If no research doc is found, the Write of the plan doc will be blocked. Auto mode should detect this upfront in Step 3 and escalate to "Human Needed" rather than failing at the hook.
+- **Interactive mode** — surface to the user: *"This issue has no linked research. Plan anyway, or research first via `/ralph:research #NNN`?"* If the user chooses "research first", invoke that command and exit. If the user chooses "plan anyway", stamp `research_waived: human-approved — <one-line reason>` into the plan frontmatter so the gate's human-override path allows the Write and the waiver is auditable.
+- **Auto mode** — `plan-research-required.sh` is the hook-level enforcement, and it is estimate-aware: research is required only at/above `RALPH_RESEARCH_REQUIRED_MIN_ESTIMATE` (default `M`). If no research doc is found AND the issue's estimate is ≥ that threshold, detect this upfront in Step 3 and escalate to "Human Needed". Otherwise (sub-threshold XS/S), stamp `estimate:` into the frontmatter and proceed — the gate waives the research requirement for sub-threshold work. Auto mode never sets `research_waived:`.
 - **Epic mode** — skipped (epics rarely have per-primary linked research; the plan-of-plans IS the research).
 - **Iterate / review modes** — skipped (these consume an existing plan; research is upstream).
 

@@ -143,7 +143,9 @@ jobs:
           # Glob both naming conventions used today (*.test.sh and test-*.sh).
           # Each file runs in its own subshell so a `set -e` exit in one test
           # cannot abort the suite. First non-zero rc propagates.
+          # Both the main plugin and the slim ralph/ plugin carry hook tests.
           find plugin/ralph-hero/hooks/scripts/__tests__ \
+               ralph/hooks/scripts/__tests__ \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \
             | sort -z \
