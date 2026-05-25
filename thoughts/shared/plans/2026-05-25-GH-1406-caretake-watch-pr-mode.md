@@ -89,11 +89,11 @@ Create `ralph/skills/caretake/modes/watch-pr.md` documenting the scan-check-act 
 **File**: `ralph/skills/caretake/modes/watch-pr.md` (create)
 **Changes**: Document, in numbered steps:
 - `export RALPH_SUBCOMMAND=watch-pr`.
-- §Step 1 — branch check (`git branch --show-current` must be `main`; else emit `WATCH-PR IDLE` + skip, matching the branch-gate convention other modes use).
+- §Step 1 — branch check (`git branch --show-current` must be `main`; else emit the dedicated `WATCH-PR SKIPPED — branch <name> is not main` token + skip, matching the house style of triage's `TRIAGED skipped — branch …` and unblock's `UNBLOCK REQUEST SKIPPED — branch …`. Do NOT reuse `WATCH-PR IDLE` for the branch-skip — IDLE means "no parked items found", a distinct outcome).
 - §Step 2 — list Backlog issues (`list_issues`), filter client-side for labels matching `^blocked:pr-([0-9]+)$`, extract the PR number.
 - §Step 3 — for each, `gh pr view <NNN> --json state,mergedAt` and branch per the outcome-branch table (merged / open / closed-not-merged).
 - §Step 4 — deferred-verdict resolution: default `PROMOTE-plan`; if a `## Deferred Verdict: <verdict>` comment exists, honor it. Document the reconciliation note (Phase 1 writes `## Triage Decision`, not `## Deferred Verdict`).
-- §Step 5 — emit `WATCH-PR ADVANCED <N>` (N = items advanced or escalated) or `WATCH-PR IDLE` (no `blocked:pr-*` items found).
+- §Step 5 — emit `WATCH-PR ADVANCED <N>` where `<N>` counts items **resolved this sweep** (merged→promoted PLUS closed-unmerged→escalated), or `WATCH-PR IDLE` (zero `blocked:pr-*` items found). Open/still-waiting items do NOT count toward `<N>`.
 - §Constraints — one sweep per invocation; only mutates `blocked:pr-*`-labelled Backlog items; no issue creation.
 
 ### Success Criteria
@@ -102,11 +102,11 @@ Create `ralph/skills/caretake/modes/watch-pr.md` documenting the scan-check-act 
 - [ ] `test -f ralph/skills/caretake/modes/watch-pr.md` exits 0.
 - [ ] `grep -qE "RALPH_SUBCOMMAND=watch-pr" ralph/skills/caretake/modes/watch-pr.md`.
 - [ ] `grep -qE "blocked:pr-" ralph/skills/caretake/modes/watch-pr.md` and the body documents all 3 PR-state branches (merged/open/closed).
-- [ ] `grep -qE "WATCH-PR (ADVANCED|IDLE)" ralph/skills/caretake/modes/watch-pr.md`.
+- [ ] `grep -qE "WATCH-PR (ADVANCED|IDLE|SKIPPED)" ralph/skills/caretake/modes/watch-pr.md` (all three tokens documented, including the branch-skip).
 - [ ] Every tool the body instructs is present in `ralph/skills/caretake/SKILL.md` `allowed-tools` (manual cross-check: `gh` via Bash, `list_issues`, `save_issue`, `create_comment`).
 
 #### Manual Verification
-- [ ] The deferred-verdict reconciliation (default `PROMOTE-plan`; no dependency on a `## Deferred Verdict` comment) reads clearly and matches what Phase 1 (#1404) actually writes.
+- [ ] The deferred-verdict reconciliation (default `PROMOTE-plan`; no dependency on a `## Deferred Verdict` comment) reads clearly and matches what Phase 1 (#1404) actually writes — verify against `ralph/skills/caretake/modes/triage.md` §Step 5 `WAIT-pr` action body (writes a `## Triage Decision` comment + `blocked:pr-NNN` label; `grep -rn "Deferred Verdict" ralph/` returns zero hits).
 
 ## Phase 2: Wire mode into SKILL.md + outcome-tokens.md
 
@@ -124,7 +124,12 @@ Register the new mode in the caretake SKILL.md mode table + dispatch note, and d
 
 #### 2. Terminal tokens
 **File**: `ralph/skills/caretake/outcome-tokens.md`
-**Changes**: Add a `## Watch-PR terminal tokens` section documenting `WATCH-PR ADVANCED <N>` (N items advanced/escalated) and `WATCH-PR IDLE` (no `blocked:pr-*` items). Note no Stop postcondition gates this mode (parity with hygiene/trends).
+**Changes**: Add a `## Watch-PR terminal tokens` section documenting:
+- `WATCH-PR ADVANCED <N>` — `<N>` = items **resolved this sweep** (merged→promoted + closed-unmerged→escalated); open items excluded.
+- `WATCH-PR IDLE` — zero `blocked:pr-*` items found.
+- `WATCH-PR SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with triage/unblock skip tokens).
+
+Note no Stop postcondition gates this mode (parity with hygiene/trends).
 
 ### Success Criteria
 
@@ -132,6 +137,7 @@ Register the new mode in the caretake SKILL.md mode table + dispatch note, and d
 - [ ] `grep -q "watch-pr" ralph/skills/caretake/SKILL.md` (mode table + dispatch + argument-hint).
 - [ ] `grep -qE "WATCH-PR ADVANCED <N>" ralph/skills/caretake/outcome-tokens.md`.
 - [ ] `grep -qE "WATCH-PR IDLE" ralph/skills/caretake/outcome-tokens.md`.
+- [ ] `grep -qE "WATCH-PR SKIPPED" ralph/skills/caretake/outcome-tokens.md`.
 - [ ] No shell/markdown lint regressions: `bash -n` is N/A (no scripts changed); markdown only.
 
 #### Manual Verification
