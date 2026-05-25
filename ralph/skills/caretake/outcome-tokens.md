@@ -89,6 +89,14 @@ Trends is read-only — the markdown report printed to stdout is the deliverable
 
 `split-postcondition.sh` (Stop hook) greps the transcript for one of these tokens AND verifies via `list_sub_issues` that the parent has ≥ 2 children when `SPLIT <N>` is emitted.
 
+## Watch-PR terminal tokens
+
+- `WATCH-PR ADVANCED <N>` — `<N>` items **resolved this sweep**: merged-PR items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS closed-unmerged items escalated (`WAIT-decision` → Human Needed). Open/still-waiting items are NOT counted.
+- `WATCH-PR IDLE` — scan ran cleanly; no Backlog items carry a `blocked:pr-*` label.
+- `WATCH-PR SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit; watch-pr refuses to mutate state from a feature branch (parity with `TRIAGED skipped …`).
+
+watch-pr has no `Stop` postcondition hook (parity with hygiene/trends) — it mutates only the `blocked:pr-*`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
+
 ## Loop continuation
 
 When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
