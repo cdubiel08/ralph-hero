@@ -13,61 +13,70 @@ estimate: S
 
 # GH-1409: Director routes `blocked:*` labels to matching watcher modes
 
+> **Iteration 1** (after critique `2026-05-25-GH-1409-critique.md`): the watcher modes are **board-wide sweeps that ignore `--issue NNN`** → dispatch drops the issue arg and is reframed as an event-driven sweep; the two `event-classes.md` copies are **not** identical (slim `ralph:` vs legacy `ralph-hero:` prefixes); the legacy `director/SKILL.md` inlines its own Priority headers + sentinel note that also need renumbering; the bare-`NNN` dispatch convention is explicitly reconciled.
+
 ## Prior Work
 
 - builds_on:: [[GH-1406]] (watch-pr) + [[GH-1407]] (watch-upstream) + [[GH-1408]] (heartbeat fan-out) — all merged. The watcher modes + heartbeat exist; this phase adds **event-driven** dispatch so a `blocked:*` item routes to its watcher immediately (e.g. on a PR-merge webhook) instead of waiting for the ~1h heartbeat.
 - builds_on:: parent epic [[GH-1417]] — Phase 5 of 6. Phase 6 (#1410) removes legacy `KEEP` and closes the epic.
-- tensions:: none material — the issue's file list matches the repo (both `event-classes.md` copies + both classify bodies exist, verified on main).
+- tensions:: the issue body passes `--issue NNN` to the watcher dispatch, but `watch-pr.md`/`watch-upstream.md` are **board-wide sweeps** (`list_issues(... limit:250)` over the whole parked set) that read no `TARGET_ISSUE` — so this plan drops `--issue NNN` and treats the dispatch as "fire the sweep now." Also the slim and legacy `event-classes.md` copies are **not** byte-identical: they diverge on the entrypoint prefix (`ralph:` vs `ralph-hero:`), so each file's new rows follow its own convention.
 
 ## Overview
 
-Teach the event classifier (slim `/ralph:hero --mode classify` and legacy `ralph-hero:director`) to dispatch `blocked:*`-labelled items to the matching caretake watcher mode: `blocked:pr-*` → `caretake --mode watch-pr`, `blocked:upstream` → `caretake --mode watch-upstream`. Insert a new priority tier **between** explicit `trigger:*` labels and automation labels, so a watched-blocker item is handled by its watcher rather than falling through to the `workflow_state` path (which would send a Backlog item to triage).
+Teach the event classifier (slim `/ralph:hero --mode classify` and legacy `ralph-hero:director`) to fire the matching caretake watcher **sweep** when it classifies a `blocked:*`-labelled item: `blocked:pr-*` → `caretake --mode watch-pr`, `blocked:upstream` → `caretake --mode watch-upstream`. Insert a new priority tier **between** explicit `trigger:*` labels and automation labels, so a watched-blocker item is handed to its watcher rather than falling through to the `workflow_state` path (which would send a Backlog item to triage).
+
+**Event-driven, not single-item.** The watcher modes sweep the whole parked set; dispatching one on a `blocked:*` event means "run the sweep now (resolving every parked item whose condition is met, including the trigger) instead of waiting for the heartbeat." The dispatch carries no issue scoping.
 
 ## Current State Analysis
 
-`event-classes.md` (the canonical classifier schema, mirrored in slim `ralph/skills/hero/` and legacy `plugin/ralph-hero/skills/director/`) defines three priority tiers: **P1 trigger:\*** → **P2 automation labels** → **P3 workflow_state**. The classify body (`SKILL.md --mode classify` step 3) applies this order to set `TEAM`/`ENTRYPOINT`/`DISPATCH_REASON`/`CONSUMED_LABEL`.
+`event-classes.md` (the classifier schema, mirrored in slim `ralph/skills/hero/` and legacy `plugin/ralph-hero/skills/director/`) defines three priority tiers: **P1 trigger:\*** → **P2 automation labels** → **P3 workflow_state**. The classify body (`SKILL.md --mode classify`) applies this order and dispatches via `Skill(ENTRYPOINT, args="NNN")` — a **bare issue number**.
 
 ### Key Discoveries
 
-- The priority numbers are referenced in **three** places that must stay in sync: the section headers (`## Priority N`), the `## Classification algorithm` numbered steps, and the `## iOS-mode sentinel` note ("Priority 3 (workflow_state-driven)…"). Inserting a tier requires renumbering all three. (`ralph/skills/hero/event-classes.md:9,21,32,64-72,82`.)
-- **`blocked:*` labels must NOT be consumed** on dispatch — unlike `trigger:*` (which classify removes after dispatch), the `blocked:pr-NNN`/`blocked:upstream` label persists until the watcher resolves the condition. So the new tier sets `CONSUMED_LABEL=none` (same as automation labels and workflow_state, which also don't consume).
-- The dispatch target is **mode-specific within the caretakers team**: `Skill("ralph:caretake", args="--mode watch-pr --issue NNN")` / `--mode watch-upstream`. The taxonomy's `team` column is `caretakers`, but the entrypoint carries the specific `--mode`, so the classify body needs a `blocked:*` → mode mapping (not just team → entrypoint).
-- **AC3 ("blocked:* does NOT advance via workflow_state while watcher is responsible") falls out of the priority ordering for free** — because the new tier is checked before workflow_state, a `blocked:*` Backlog item routes to the watcher, never to Backlog→caretakers-triage.
-- `blocked:pr-*` is a family (per-PR suffix); `blocked:upstream` is a single fixed label — the classify match logic must prefix-match `blocked:pr-` and exact-match `blocked:upstream`.
+- **The watcher modes ignore `--issue NNN`.** `watch-pr.md` §Step 2 = `list_issues(profile:"analyst-triage", workflowState:"Backlog", limit:250)` + client-side `blocked:pr-*` filter; `watch-upstream.md` = `list_issues(... label:"blocked:upstream", limit:250)`. Neither reads a target issue. So the dispatch is `--mode watch-pr` / `--mode watch-upstream` with **no** `--issue NNN` (the arg would be dead and misleading).
+- **The two `event-classes.md` copies pre-diverge** on entrypoint prefix: slim rows use `ralph:hero`/`ralph:caretake`; legacy rows use `ralph-hero:hero`/`ralph-hero:caretake`. The new `blocked:*` rows follow each file's local convention — NOT byte-identical.
+- **Priority numbers are referenced in-file in several spots** that must be renumbered consistently:
+  - **slim** `event-classes.md`: section headers (`## Priority 1/2/3`), intro prose, `## Classification algorithm` steps, `## iOS-mode sentinel` note ("Priority 3 (workflow_state-driven)"). The slim `hero/SKILL.md --mode classify` body names the order in *prose* (no numbered headers).
+  - **legacy** `director/event-classes.md`: same. **Additionally** the legacy `director/SKILL.md` **inlines** its own `**Priority 1 …**` / `**Priority 2 — Automation labels**` / `**Priority 3 — Workflow state**` headers + a sentinel note ("Priority 3 … do NOT write the sentinel") — all need insert+renumber.
+- **`blocked:*` labels must NOT be consumed** on dispatch — unlike `trigger:*` (which classify removes), the label persists until the watcher resolves the condition. New tier sets `CONSUMED_LABEL=none`.
+- **Dispatch-arg convention break (deliberate):** existing dispatch is `Skill(ENTRYPOINT, args="NNN")` (bare number); the legacy body explicitly notes "bare number `NNN` (not `--issue NNN`)". The `blocked:*` branch is the exception — it dispatches `Skill("<prefix>:caretake", args="--mode watch-pr")` (a mode arg, no issue number). Both classify bodies special-case this branch; the legacy "bare NNN" note gets a carve-out.
+- **AC3 is satisfied by the ordering** — the new tier precedes workflow_state, so a `blocked:*` Backlog item routes to its watcher, never to Backlog→triage.
+- `blocked:pr-*` is prefix-matched (per-PR family); `blocked:upstream` is exact-matched.
 
 ## Desired End State
 
-1. Both `event-classes.md` copies define a new priority tier (between trigger:* and automation) with two rows: `blocked:pr-*` → caretakers/`--mode watch-pr`, `blocked:upstream` → caretakers/`--mode watch-upstream`. Automation → P3, workflow_state → P4; algorithm + iOS-sentinel + intro prose renumbered consistently.
-2. Both classify bodies (`ralph/skills/hero/SKILL.md`, `plugin/ralph-hero/skills/director/SKILL.md`) apply the new order and dispatch `blocked:pr-*`→watch-pr / `blocked:upstream`→watch-upstream, WITHOUT consuming the label.
-3. No regression to existing trigger / automation / workflow_state routing.
+1. Both `event-classes.md` copies define a new tier (before automation) with two rows — `blocked:pr-*` → caretakers/`<prefix>:caretake --mode watch-pr`, `blocked:upstream` → caretakers/`--mode watch-upstream` — each using its file's entrypoint prefix. Automation → P3, workflow_state → P4; intro prose + algorithm + iOS-sentinel renumbered.
+2. Both classify bodies fire the watcher sweep for `blocked:*` (dispatch `--mode watch-<x>`, NO `--issue`, label NOT consumed). The legacy `director/SKILL.md` inline Priority headers + sentinel note are renumbered too.
+3. No regression to trigger / automation / workflow_state routing.
 
 ### Verification
 
-- Both `event-classes.md` contain a `blocked:pr-*` and a `blocked:upstream` row in a tier ordered before automation labels.
-- The classification algorithm step list checks `blocked:*` between `trigger:*` and automation.
-- No stale "Priority 3 (workflow_state…)" reference remains where workflow_state is now P4.
-- `grep` confirms both classify bodies reference `--mode watch-pr` / `--mode watch-upstream` dispatch for `blocked:*`.
+- Both `event-classes.md` contain `blocked:pr-*` + `blocked:upstream` rows in a tier ordered before automation.
+- No stale `Priority 3 (workflow_state` / `Priority 3 — Workflow` reference remains in either `event-classes.md` OR the legacy `director/SKILL.md`.
+- Both classify bodies dispatch `--mode watch-pr` / `--mode watch-upstream` (no `--issue NNN`); the dispatch is documented as a board-wide sweep.
 
 ## What We're NOT Doing
 
-- **No webhook plumbing** — relies on existing GH Actions routing (out of scope per issue).
-- **No watcher mode implementation** — done in #1406/#1407.
+- **No `--issue NNN` scoping** of the watcher dispatch — the modes are board-wide sweeps; the dispatch fires the whole sweep (descoped from the issue body's literal arg).
+- **No watcher mode implementation** (#1406/#1407) — including no new `--issue` scoping inside the modes (that would be a mode change, out of scope).
 - **No label consumption** for `blocked:*` — the watcher owns the label lifecycle; classify must not strip it.
-- **No change to the running autopilot loop's behavior** — it loads classify from the versioned `0.1.15` cache, not this repo source; these edits take effect on the next plugin publish, not mid-session.
+- **No `label-routing.md` change** — that file is caretake's *own* default-event dispatch table (for `/ralph:caretake --issue NNN`), a different surface from the classifier. #1409's ACs name `event-classes.md` + the classify bodies only. Adding `blocked:*` rows there would help caretake's event-driven path too, but is a reasonable **follow-up**, not this phase (noted so the omission is deliberate).
+- **No webhook plumbing** — relies on existing GH Actions routing.
+- **No change to the running autopilot loop** — it classifies from the versioned `0.1.15` cache, not this source; edits take effect on the next plugin publish.
 
 ## Implementation Approach
 
 Two phases by surface. Phase 1 = slim active path (`ralph/skills/hero/event-classes.md` + `SKILL.md`). Phase 2 = legacy parallel surface (`plugin/ralph-hero/skills/director/event-classes.md` + `SKILL.md`), copying the same tier/rows/algorithm so the two stay in sync. Phase 2 depends on Phase 1 so the tier wording is fixed once.
 
-New tier (identical in both copies):
+New tier (per-file prefix — `ralph:` slim / `ralph-hero:` legacy):
 
 ```
 ## Priority 2 — Blocked-condition labels (watcher routing)
-| workflow_state | labels | team | entrypoint |
-| any | blocked:pr-*    | caretakers | caretake --mode watch-pr --issue NNN |
-| any | blocked:upstream | caretakers | caretake --mode watch-upstream --issue NNN |
+| workflow_state | labels | team | entrypoint (not consumed) |
+| any | blocked:pr-*     | caretakers | <prefix>:caretake --mode watch-pr |
+| any | blocked:upstream | caretakers | <prefix>:caretake --mode watch-upstream |
 ```
-(automation labels → Priority 3; workflow_state → Priority 4). Label NOT consumed.
+(automation labels → Priority 3; workflow_state → Priority 4). Dispatch fires a board-wide sweep (no `--issue`); label persists.
 
 ## Phase 1: Slim active path (event-classes.md + classify body)
 
@@ -85,18 +94,19 @@ Add the `blocked:*` tier to the slim `event-classes.md` and teach the slim `--mo
 
 #### 2. Slim classify body
 **File**: `ralph/skills/hero/SKILL.md`
-**Changes**: In the `--mode classify` body's classify step (the one applying "trigger:* → automation → workflow_state" priority order), insert the `blocked:*` tier: after the `trigger:*` check and before automation, if a `blocked:pr-*` label is present set `TEAM=caretakers`, `ENTRYPOINT=ralph:caretake`, the dispatch arg `--mode watch-pr --issue NNN`, `DISPATCH_REASON=blocked:pr`, `CONSUMED_LABEL=none`; `blocked:upstream` → `--mode watch-upstream`. Ensure the dispatch step passes the `--mode` arg, and the label-consume step skips `blocked:*` (no consumption).
+**Changes**: In the `--mode classify` body's classify step, after the `trigger:*` check and before automation: if a `blocked:pr-*` label is present → `TEAM=caretakers`, `ENTRYPOINT=ralph:caretake`, dispatch arg `--mode watch-pr` (NO `--issue NNN` — the watcher is a board-wide sweep), `DISPATCH_REASON=blocked:pr`, `CONSUMED_LABEL=none`; `blocked:upstream` → `--mode watch-upstream`. Special-case the dispatch step so the `blocked:*` branch emits `Skill("ralph:caretake", args="--mode watch-pr")` (a mode arg, NOT a bare `NNN`); all other branches keep `args="NNN"`. The consume step skips `blocked:*`.
 
 ### Success Criteria
 
 #### Automated Verification
 - [ ] `grep -qE 'blocked:pr-\*' ralph/skills/hero/event-classes.md` and `grep -qE 'blocked:upstream' ralph/skills/hero/event-classes.md`.
 - [ ] `grep -qE 'Priority 4' ralph/skills/hero/event-classes.md` (workflow_state renumbered) and no remaining "Priority 3 (workflow_state" reference: `! grep -q 'Priority 3 (workflow_state' ralph/skills/hero/event-classes.md`.
-- [ ] `grep -qE 'watch-pr|watch-upstream' ralph/skills/hero/SKILL.md` in the classify body.
-- [ ] The classification algorithm lists a `blocked:*` check between trigger and automation (manual-confirmable via grep of the steps).
+- [ ] `grep -qE 'watch-pr|watch-upstream' ralph/skills/hero/SKILL.md` in the classify body, with `--mode` (not `--issue`).
+- [ ] `! grep -qE 'watch-pr --issue|watch-upstream --issue' ralph/skills/hero/SKILL.md` (no dead `--issue` arg).
+- [ ] The classification algorithm lists a `blocked:*` check between trigger and automation.
 
 #### Manual Verification
-- [ ] The new tier documents that `blocked:*` is NOT consumed, and the priority ordering guarantees a `blocked:*` Backlog item routes to its watcher (not Backlog→triage).
+- [ ] The new tier documents NOT-consumed + board-wide-sweep semantics; the ordering guarantees a `blocked:*` Backlog item routes to its watcher (not Backlog→triage).
 
 ## Phase 2: Legacy director surface (parity)
 
@@ -110,21 +120,21 @@ Mirror the Phase 1 taxonomy + classify changes into the legacy `plugin/ralph-her
 
 #### 1. Legacy taxonomy
 **File**: `plugin/ralph-hero/skills/director/event-classes.md`
-**Changes**: Apply the identical tier insertion + renumbering + algorithm/iOS-sentinel/intro updates as Phase 1 change #1.
+**Changes**: Apply the same tier insertion + renumbering + intro/algorithm/iOS-sentinel updates as Phase 1 change #1, but the new rows use the **`ralph-hero:caretake`** entrypoint (matching this file's existing `ralph-hero:` prefix convention — NOT identical to the slim copy).
 
 #### 2. Legacy director body
 **File**: `plugin/ralph-hero/skills/director/SKILL.md`
-**Changes**: Apply the identical `blocked:*` dispatch + no-consume logic as Phase 1 change #2 (adapt to the legacy body's existing classify-step wording).
+**Changes**: (a) Insert a `**Priority 2 — Blocked-condition labels**` block after the existing `**Priority 1 …**`; renumber the inline `**Priority 2 — Automation labels**` → Priority 3 and `**Priority 3 — Workflow state**` → Priority 4; fix the sentinel note ("Priority 3 … do NOT write the sentinel" → "Priority 4"). (b) Add the `blocked:*` → `Skill("ralph-hero:caretake", args="--mode watch-pr|--mode watch-upstream")` dispatch (no `--issue`, no consume), and add a carve-out to the body's "bare number `NNN` (not `--issue NNN`)" note exempting the `blocked:*` branch (which passes a `--mode` arg).
 
 ### Success Criteria
 
 #### Automated Verification
 - [ ] `grep -qE 'blocked:pr-\*' plugin/ralph-hero/skills/director/event-classes.md` and `grep -qE 'blocked:upstream' …`.
-- [ ] `grep -qE 'watch-pr|watch-upstream' plugin/ralph-hero/skills/director/SKILL.md`.
-- [ ] No remaining stale "Priority 3 (workflow_state" reference in the legacy event-classes.md.
+- [ ] `grep -qE 'watch-pr|watch-upstream' plugin/ralph-hero/skills/director/SKILL.md` (with `--mode`).
+- [ ] `! grep -qE 'Priority 3 .*([Ww]orkflow)' plugin/ralph-hero/skills/director/event-classes.md` AND `! grep -qE 'Priority 3 .*([Ww]orkflow)' plugin/ralph-hero/skills/director/SKILL.md` (no stale tier number in EITHER legacy file).
 
 #### Manual Verification
-- [ ] The legacy taxonomy tier + rows are identical to the slim copy (diff the two new sections — no drift).
+- [ ] The legacy taxonomy tier matches the slim one EXCEPT the entrypoint prefix (`ralph-hero:` vs `ralph:`) — the same divergence the other rows already have. The legacy `SKILL.md` inline Priority headers are all renumbered.
 
 ## Testing Strategy
 
@@ -136,7 +146,8 @@ Mirror the Phase 1 taxonomy + classify changes into the legacy `plugin/ralph-her
 
 ### Manual Testing Steps
 1. Read both `event-classes.md` — confirm the 4-tier order (trigger → blocked:* → automation → workflow_state) and consistent algorithm numbering.
-2. Trace a hypothetical `blocked:pr-1338` Backlog item through the classify body → confirms it dispatches `caretake --mode watch-pr --issue NNN` and does NOT consume the label or fall to the Backlog→triage path.
+2. Trace a `blocked:pr-1338` Backlog item through the classify body → confirms it dispatches `caretake --mode watch-pr` (board-wide sweep, NO `--issue`), does NOT consume the label, and does NOT fall to the Backlog→triage path.
+3. Confirm no stale "Priority 3 (workflow_state)" sentinel text remains in either surface (incl. legacy `SKILL.md`).
 
 ## Migration Notes
 
