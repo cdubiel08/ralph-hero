@@ -41,9 +41,9 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 plugin/
 ├── ralph-hero/              # Main plugin — MCP server, skills, agents, hooks
 │   ├── mcp-server/          # TypeScript MCP server (published as ralph-hero-mcp-server)
-│   ├── skills/              # 30+ skill definitions (YAML frontmatter + markdown)
-│   ├── agents/              # 10 per-phase agent definitions
-│   ├── hooks/               # 50+ lifecycle enforcement hooks
+│   ├── skills/              # 50+ skill definitions (YAML frontmatter + markdown)
+│   ├── agents/              # 12 per-phase agent definitions (+ worker/eval agents)
+│   ├── hooks/               # 70+ lifecycle enforcement hooks
 │   └── scripts/             # CLI and automation scripts
 ├── ralph-knowledge/         # Semantic search over thoughts/ documents
 │   └── src/                 # Hono MCP server, SQLite + sqlite-vec embeddings
@@ -172,6 +172,8 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `group-detection.ts` | Parent-child group analysis |
 | `dashboard.ts` | Pipeline aggregation, health scoring |
 | `repo-registry.ts` | Multi-repo YAML registry types |
+| `routing-types.ts` / `routing-config.ts` / `routing-engine.ts` | Issue routing subsystem — Zod schema for `.ralph-routing.yml`, two-phase loader/validation, and a pure deterministic rule-matching engine (repo/labels/type → actions) |
+| `lock-guard.ts` | Pure lock-conflict check for `save_issue` — blocks two agents claiming the same exclusive lock state |
 
 ### Workflow State Machine
 
@@ -321,41 +323,9 @@ The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local
 
 ### OpenTelemetry export to local Langfuse
 
-When `RALPH_DEBUG=true` is set alongside the `OTEL_*` env vars below, Claude Code exports `mcp.tool.*` spans, hook events, and session lifecycle traces over OTLP/HTTP. The MCP server (Phase 2+) attaches `ralph_hero.graphql` child spans inside the same trace context. The local Langfuse harness at `~/projects/langfuse/` (documented in `~/projects/CLAUDE.md` under "Local ADK + Langfuse testing harness") is the default ingestion target.
+When `RALPH_DEBUG=true` is set alongside the `OTEL_*` env vars, Claude Code exports `mcp.tool.*` spans, hook events, and session lifecycle traces over OTLP/HTTP to the local Langfuse harness at `~/projects/langfuse/`. `RALPH_DEBUG` is the activation switch — the four `OTEL_*` vars are no-ops without it.
 
-**`RALPH_DEBUG` is the activation switch.** All four `OTEL_*` vars are no-ops when `RALPH_DEBUG` is unset — the MCP server skips OTel SDK initialization entirely and emits zero outbound traffic to `:3100`.
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CLAUDE_CODE_ENABLE_TELEMETRY` | No | unset | Set to `"1"` to enable Claude Code's native OpenTelemetry export. Required for Claude Code to emit `mcp.tool.*` and hook spans. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | unset | OTLP/HTTP receiver URL. For the local Langfuse harness, use `http://localhost:3100/api/public/otel/v1/traces`. |
-| `OTEL_EXPORTER_OTLP_HEADERS` | No | unset | Comma-separated header list passed on every OTLP export. Use this to inject the Langfuse basic-auth header (see below). |
-| `OTEL_SERVICE_NAME` | No | unset | Logical service name attached as a resource attribute on every span. Recommended: `claude-code` for the host process, `ralph-hero` for MCP server child spans. |
-
-**Basic-auth header construction.** Langfuse's public OTLP endpoint requires basic auth with the project's public key as username and secret key as password. The default local-dev credentials are `pk-lf-local-dev:sk-lf-local-dev`. Construct the header value once:
-
-```bash
-printf '%s' "pk-lf-local-dev:sk-lf-local-dev" | base64
-# -> cGstbGYtbG9jYWwtZGV2OnNrLWxmLWxvY2FsLWRldg==
-```
-
-Then set `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic cGstbGYtbG9jYWwtZGV2OnNrLWxmLWxvY2FsLWRldg==`. The literal header value (key + `=` + base64) is what OTel SDKs expect; do not wrap the value in quotes inside the env var.
-
-**Sample `.claude/settings.local.json` snippet.** Copy-paste the `env` block into `~/.claude/settings.json` (user-scoped) or `<project>/.claude/settings.local.json` (project-scoped, gitignored). The endpoint assumes the local Langfuse harness is running on port 3100 (see `~/projects/CLAUDE.md` for stack bring-up: `cd ~/projects/langfuse && ./scripts/up.sh`).
-
-```json
-{
-  "env": {
-    "RALPH_DEBUG": "true",
-    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:3100/api/public/otel/v1/traces",
-    "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Basic cGstbGYtbG9jYWwtZGV2OnNrLWxmLWxvY2FsLWRldg==",
-    "OTEL_SERVICE_NAME": "claude-code"
-  }
-}
-```
-
-After editing the settings file, restart Claude Code so the MCP server inherits the new env. With `RALPH_DEBUG` unset (or absent from the `env` block), the MCP server bypasses OTel init regardless of the `OTEL_*` values.
+Full setup (env var table, basic-auth header construction, sample `settings.local.json` snippet): see [`plugin/ralph-hero/docs/otel-langfuse.md`](plugin/ralph-hero/docs/otel-langfuse.md).
 
 ## GitHub Actions Workflows
 
