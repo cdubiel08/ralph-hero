@@ -1,6 +1,6 @@
 ---
-description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "collate debug errors", "filer Langfuse errors", "split this issue", "decompose ticket". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/debug/split/watch-pr) each route to a dedicated mode body under `modes/`.
-argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|watch-pr|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
+description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "collate debug errors", "filer Langfuse errors", "split this issue", "decompose ticket". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/debug/split/watch-pr/watch-upstream) each route to a dedicated mode body under `modes/`.
+argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|watch-pr|watch-upstream|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -86,7 +86,7 @@ allowed-tools:
 
 # /ralph:caretake — Board steward in one verb
 
-All board maintenance flows through this one entrypoint. Nine named modes plus a default event-driven dispatcher. Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out.
+All board maintenance flows through this one entrypoint. Ten named modes plus a default event-driven dispatcher. Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out.
 
 | Mode | Trigger | Role |
 |---|---|---|
@@ -101,6 +101,7 @@ All board maintenance flows through this one entrypoint. Nine named modes plus a
 | **debug** | `/ralph:caretake --mode debug [--since 24h] [--auto-confirm]` | Collate Langfuse errors → file `debug-auto` issues |
 | **split** | `/ralph:caretake --mode split [#NNN]` | Split M/L/XL → multiple XS/S sub-issues |
 | **watch-pr** | `/ralph:caretake --mode watch-pr` | Resolve `blocked:pr-NNN` items when their PR merges (advance) or closes-unmerged (escalate) |
+| **watch-upstream** | `/ralph:caretake --mode watch-upstream` | Resolve `blocked:upstream` items when their external condition resolves (advance) or URL is dead/unparseable (escalate) |
 
 References: [label-routing.md](label-routing.md) (default-mode dispatch table), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts), [split-decomposition.md](split-decomposition.md) (split-mode strategy + hook contracts).
 
@@ -160,6 +161,7 @@ Each mode body ends by emitting its terminal token (see [outcome-tokens.md](outc
 - [modes/debug.md](modes/debug.md) — collate Langfuse errors
 - [modes/split.md](modes/split.md) — M/L/XL → XS/S sub-issues
 - [modes/watch-pr.md](modes/watch-pr.md) — resolve `blocked:pr-NNN` items on PR merge/close
+- [modes/watch-upstream.md](modes/watch-upstream.md) — resolve `blocked:upstream` items on external condition
 
 ## Per-mode terminal tokens
 
@@ -175,6 +177,7 @@ The harness reads these from the transcript; do not paraphrase. Full table in [o
 - debug: `DEBUG FILED <N>` | `DEBUG SKIPPED <reason>`
 - split: `SPLIT <N>` | `SPLIT SKIPPED <reason>`
 - watch-pr: `WATCH-PR ADVANCED <N>` | `WATCH-PR IDLE` | `WATCH-PR SKIPPED — branch <name> is not main`
+- watch-upstream: `WATCH-UPSTREAM ADVANCED <N>` | `WATCH-UPSTREAM IDLE` | `WATCH-UPSTREAM SKIPPED — branch <name> is not main`
 
 ## Notes
 
