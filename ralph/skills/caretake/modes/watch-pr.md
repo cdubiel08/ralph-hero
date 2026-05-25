@@ -59,14 +59,15 @@ If `gh pr view` errors (PR not found / inaccessible), leave the item untouched a
 **Advance (PR merged).** Strip the `blocked:pr-NNN` label and apply the deferred verdict:
 
 1. Determine the deferred verdict. **Default `PROMOTE-plan`** (the common case — the item was waiting only on the PR). If the issue carries an explicit `## Deferred Verdict: <verdict>` comment, honor that verdict instead. (Phase 1 / #1404 does not write a `## Deferred Verdict` comment — it writes `## Triage Decision`, which names the *condition* but not a machine-parseable successor verdict — so the default applies unless a later phase adds the explicit comment.)
-2. Read the issue's current labels; `save_issue(number: NNN, workflowState: <verdict target>, command: "ralph_triage", labels: <current labels minus blocked:pr-NNN, also dropping ralph-triage so the item is re-pickable in its new state>)`. For `PROMOTE-plan` the target is `"Ready for Plan"`.
-3. Post a `## Watch-PR Resolution` comment: PR #NNN merged → label stripped, verdict `<verdict>` applied.
+2. Map the verdict to its target workflow state (same mapping as triage's 8-verdict schema): `PROMOTE-plan`→`"Ready for Plan"`, `PROMOTE-research`→`"Research Needed"`, `CLOSE-done`→`"Done"`, `CLOSE-canceled`→`"Canceled"`. The default verdict is `PROMOTE-plan`→Ready for Plan. If an honored `## Deferred Verdict` is itself a `WAIT-*` verdict, leave the item parked and note it (a PR-blocked item shouldn't defer to another wait).
+3. Read the issue's current labels; `save_issue(number: NNN, workflowState: <verdict target>, command: "ralph_triage", labels: <current labels minus blocked:pr-NNN, also dropping ralph-triage so the item is re-pickable in its new state>)`. The explicit `labels` array is required (save_issue replaces the full set; omitting it leaves `blocked:pr-NNN` attached). Note: `command: "ralph_triage"` is passed for semantic parity, but `triage-state-gate.sh` does **not** gate this mode (it scopes to `RALPH_SUBCOMMAND=triage`; watch-pr's is `watch-pr`) — watch-pr's transitions are unguarded, so pass only valid target states.
+4. Post a `## Watch-PR Resolution` comment: PR #NNN merged → label stripped, verdict `<verdict>` applied.
 
 **Leave (PR open).** No mutation. The item keeps its `blocked:pr-NNN` + `ralph-triage` labels and waits for the next sweep.
 
 **Escalate (PR closed, not merged).** The watched condition can no longer resolve:
 
-1. `save_issue(number: NNN, workflowState: "Human Needed", command: "ralph_triage")` (keep `ralph-triage`; the `blocked:pr-NNN` label may be stripped or kept — strip it, since the PR is dead).
+1. Read the issue's current labels, then `save_issue(number: NNN, workflowState: "Human Needed", command: "ralph_triage", labels: <current labels minus blocked:pr-NNN, keeping ralph-triage>)`. The explicit `labels` array is **required** — `save_issue` only mutates labels when the arg is provided (it replaces the full set), so omitting it would leave the stale `blocked:pr-NNN` label attached and the next sweep would re-find and re-escalate the same dead PR (inflating `WATCH-PR ADVANCED <N>` every tick).
 2. Post a `## Escalation` comment: "Blocking PR #NNN was closed without merging. The deferred `<verdict>` can no longer auto-apply — needs a human decision (re-route, re-block on a new PR, or close)."
 
 ## §Step 5: Emit terminal token
