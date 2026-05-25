@@ -146,11 +146,18 @@ Director-only mode: classify one event, dispatch the correct verb, stop. Full ta
 
 ## --mode auto
 
-Autonomous backlog drain via `/loop` dynamic mode. Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message.
+Autonomous **never-terminating adaptive watcher** via `/loop` dynamic mode. This mode does NOT drain-and-stop: it loops until the user deliberately cancels via `/tasks`. While the queue has actionable work it re-fires on a tight cadence; when the queue is idle it backs off to a 1h ceiling and keeps watching, so new issues, merged-PR fallout, or `trigger:*` labels are picked up within at most an hour. Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message.
 
-Emit `Skill("loop", args="Run /ralph:hero --mode classify …\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:auto manifest row>")`. Fill `{INNER_COMMAND}` = `Run /ralph:hero --mode classify on the next-most-important event on the project queue`, `{PROGRESS_SENTINELS}` = `result: Dispatched #NNN to <team> via <entrypoint>` (the line `--mode classify` emits on every successful dispatch — see step 6 of `--mode classify` above), `{TERMINAL_SENTINELS}` = `result: Queue empty.`, delay buckets from the `hero:auto` row (60-270s on dispatch; 1200s idle). Do not maintain an iteration counter — `/loop` and `--mode classify` own that. Cancel via `/tasks` → delete pending wakeup.
+Emit `Skill("loop", args="Run /ralph:hero --mode classify …\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:auto manifest row>")`. Fill `{INNER_COMMAND}` = `Run /ralph:hero --mode classify on the next-most-important event on the project queue`, `{PROGRESS_SENTINELS}` = `result: Dispatched #NNN to <team> via <entrypoint>` (the line `--mode classify` emits on every successful dispatch — see step 6 of `--mode classify` above). There are **no terminal sentinels** — this loop never ends on its own.
 
-> **Use the `hero:auto` row, NOT `hero:default`.** `--mode auto` wraps `--mode classify`, whose success line is `result: Dispatched #NNN …` — not the `result: Hero complete …` / `result: Hero paused …` lines on the `hero:default` row. Keying the loop to `hero:default` made every successful dispatch match no progress sentinel, so the model fell through to the idle bucket (~30 min) on every productive tick. The `hero:auto` row makes a dispatch register as progress so the drain continues at 60-270s.
+**Continuation rules (LOAD-BEARING):**
+- `result: Dispatched #NNN …` → busy/burst → `ScheduleWakeup` 60-270s (warm-cache continuation; drains as fast as the queue produces work).
+- `result: Queue empty.` → **idle, NOT terminal** → `ScheduleWakeup` **3600s flat** (the 1h ceiling), then re-check. Do NOT end the loop.
+- **Every tick MUST call `ScheduleWakeup`** — there is no clean self-exit. `autopilot-stop-gate.sh` (keyed to `RALPH_COMMAND=hero`, armed once `Skill("loop", …--mode classify…)` is observed) blocks session exit with a loud message if a tick returns without a wakeup. Never 300s (`autopilot-wakeup-clear.sh` rejects it). Cancel only via `/tasks` → delete the pending wakeup.
+
+Do not maintain an iteration counter — `/loop` and `--mode classify` own that.
+
+> **Use the `hero:auto` row, NOT `hero:default`.** `--mode auto` wraps `--mode classify`, whose result lines are `result: Dispatched #NNN …` and `result: Queue empty.` — not the `result: Hero complete …` / `result: Hero paused …` lines on the `hero:default` row. The `hero:auto` row treats BOTH classify result lines as re-fire signals (Dispatched → tight cadence, Queue empty → 1h idle backoff) so the watcher never falls through to a terminal stop.
 
 ## --mode watch
 

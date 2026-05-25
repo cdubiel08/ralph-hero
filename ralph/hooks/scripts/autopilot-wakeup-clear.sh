@@ -1,17 +1,18 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/autopilot-wakeup-clear.sh
-# PreToolUse:ScheduleWakeup — validate the wakeup call and clear the sentinel
-# that autopilot-director-postcheck.sh wrote after a non-terminal Director
-# result. Combines the GH-1140 anti-pattern checks (delaySeconds != 300,
-# autopilot-shaped prompt) with the post-GH-1267 sentinel-clear behavior.
+# PreToolUse:ScheduleWakeup — validate the wakeup call and clear the
+# pending-wakeup sentinel that autopilot-director-postcheck.sh wrote for the
+# current `ralph:hero --mode auto` tick. Combines the GH-1140 anti-pattern
+# check (delaySeconds != 300) with the sentinel-clear behavior.
 #
 # See GH-1346 and thoughts/shared/research/2026-05-21-autopilot-loop-handoff.md.
 #
-# Self-discriminates on RALPH_COMMAND=autopilot — passes through silently
-# for any other skill that uses ScheduleWakeup().
+# Keyed to RALPH_COMMAND=hero (set reliably via CLAUDE_ENV_FILE); passes through
+# for any other session that uses ScheduleWakeup(). The legacy ralph-hero
+# plugin / Director path is deprecated and uses its own hook copies.
 #
 # Exit codes:
-#   0 - Allowed (sentinel cleared)
+#   0 - Allowed (pending mark cleared)
 #   2 - Blocked (delaySeconds=300 cache-window anti-pattern)
 
 set -euo pipefail
@@ -19,38 +20,36 @@ source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-# Pass through for non-autopilot sessions.
-# Legacy: RALPH_COMMAND=autopilot. Slim: RALPH_COMMAND=hero + RALPH_SUBCOMMAND=auto.
-if [[ "${RALPH_COMMAND:-}" != "autopilot" \
-      && ! ( "${RALPH_COMMAND:-}" == "hero" && "${RALPH_SUBCOMMAND:-}" == "auto" ) ]]; then
-  exit 0
-fi
+# Only the slim hero verb.
+[[ "${RALPH_COMMAND:-}" == "hero" ]] || exit 0
 
 delay_seconds=$(get_field '.tool_input.delaySeconds')
 
 # Cache-window anti-pattern: 300s falls outside both the warm-cache window
-# (<=270s) and the cost-amortized committed window (>=1200s). Reject loudly.
+# (<=270s) and the committed idle window. Reject loudly.
 if [[ "$delay_seconds" == "300" ]]; then
   cat >&2 <<'EOF'
 ═══════════════════════════════════════════════════════════════
- Autopilot ScheduleWakeup blocked: delaySeconds=300
+ hero --mode auto ScheduleWakeup blocked: delaySeconds=300
 
  300s is the 5-minute cache-window anti-pattern — it pays the
  prompt-cache miss without amortizing the cost across a longer
  idle period.
 
  Pick <=270s (warm-cache continuation, work likely to resume) or
- >=1200s (committed idle wait, cache miss amortized).
+ 3600s (the 1h idle ceiling when the queue is empty).
 ═══════════════════════════════════════════════════════════════
 EOF
   exit 2
 fi
 
-# The wakeup is going through. Clear the sentinel so the Stop hook lets the
-# session end cleanly. Sentinel path mirrors autopilot-director-postcheck.sh.
+# The wakeup is going through — this tick has met its obligation. Clear the
+# pending mark so the Stop hook lets the turn end (the scheduled wakeup keeps
+# the watcher alive). The autoloop sentinel is intentionally left in place so
+# enforcement persists across ticks for the lifetime of the session.
 session_id=$(get_field '.session_id')
 sentinel_dir="${TMPDIR:-/tmp}"
-sentinel="${sentinel_dir%/}/ralph-autopilot-pending-wakeup-${session_id:-$PPID}"
-rm -f -- "$sentinel" 2>/dev/null || true
+pending="${sentinel_dir%/}/ralph-hero-pending-wakeup-${session_id:-$PPID}"
+rm -f -- "$pending" 2>/dev/null || true
 
 exit 0

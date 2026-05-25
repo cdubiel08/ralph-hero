@@ -22,7 +22,7 @@ The symlink at `~/.claude/plugins/cache/ralph/HEAD` points here. Edits are picke
 
 ## What's still in `plugin/ralph-hero/`
 
-Everything not yet migrated. The old plugin keeps working until each verb has a counterpart in `ralph` that's been dogfooded for two weeks.
+Everything not yet migrated. The old plugin keeps working until each verb has a dogfooded counterpart in `ralph` — migrate a verb as soon as it works in concert, fixing issues by active dogfooding rather than waiting out a fixed window.
 
 ## Loop and --auto suitability matrix
 
@@ -62,7 +62,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `catch-up --mode narrative` | No | — | — | — | pure stdout; interactive |
 | `catch-up --mode dashboard` | No | — | — | — | pure stdout; interactive |
 | `hero` default | Yes | `--mode auto` | dynamic | `result: Queue empty.` | drain top-ranked issues |
-| `hero --mode auto` | Already wrapped | (this IS the auto mode) | dynamic | `result: Queue empty.` | uses `RALPH_AUTOPILOT_ENABLE=true` gate |
+| `hero --mode auto` | Already wrapped | (this IS the auto mode) | dynamic (adaptive) | never-terminate (no `Queue empty.` stop; `Queue empty` → 1h idle backoff) | uses `RALPH_AUTOPILOT_ENABLE=true` gate; runs until cancelled via `/tasks` |
 | `hero --mode watch` | Yes | — | `15m` | heartbeat (no `Queue empty.`) | polling heartbeat |
 | `hero --mode classify` | No | — | — | — | redundant with `hero --mode auto` |
 | `hero --mode pr-drain` | No | — | — | — | single-PR action; loop would re-process same PR |
@@ -75,4 +75,4 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 
 ## ScheduleWakeup rules for --loop-wrapped skills
 
-Skills wrapped via `--loop` must not call `ScheduleWakeup` themselves; `/loop` owns wakeup management. The one exception is `hero --mode auto`, where `autopilot-wakeup-clear.sh` + `autopilot-stop-gate.sh` enforce the contract deterministically. Adding a new direct `ScheduleWakeup` call from inside any other loop-suitable skill body is a bug — if you need to influence the wakeup cadence, do it via the continuation prompt in `loop-wrapper.md` instead.
+Skills wrapped via `--loop` must not call `ScheduleWakeup` themselves; `/loop` owns wakeup management. The one exception is `hero --mode auto`, which is a **never-terminating adaptive watcher** rather than a drain: it re-fires every tick (tight 60-270s during bursts, 3600s flat when the queue is idle) and only stops when the user cancels via `/tasks`. The three `autopilot-*` hooks enforce this contract deterministically and are keyed to `RALPH_COMMAND=hero` (the slim path) — `autopilot-director-postcheck.sh` arms the loop when it sees `Skill("loop", …--mode classify…)` and marks each tick as needing a wakeup, `autopilot-wakeup-clear.sh` clears that mark when `ScheduleWakeup` fires (and rejects the 300s cache-window anti-pattern), and `autopilot-stop-gate.sh` blocks session exit if a tick returns without a wakeup. (The legacy `ralph-hero` plugin / Director-dispatch path these hooks were originally written for is deprecated.) Adding a new direct `ScheduleWakeup` call from inside any other loop-suitable skill body is a bug — if you need to influence the wakeup cadence, do it via the continuation prompt in `loop-wrapper.md` instead.
