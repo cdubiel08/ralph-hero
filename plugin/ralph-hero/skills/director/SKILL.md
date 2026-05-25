@@ -89,6 +89,8 @@ If no `trigger:*` label matched, scan `ISSUE_LABELS[]` for a `blocked:*` label:
 
 Set `DISPATCH_REASON=blocked:<pr|upstream>` and `DISPATCH_ARG=--mode watch-<x>`. **No label consumption** — the watcher owns the `blocked:*` label lifecycle. The dispatch fires a board-wide watcher sweep (no issue scoping; the watcher modes ignore an issue number).
 
+> **Legacy caveat:** the `watch-pr`/`watch-upstream` modes ship only on the **slim** `ralph:caretake` surface (#1406/#1407); the legacy `ralph-hero:caretake` skill here implements only `hygiene|report|trends`, so this legacy routing is **nominal** — it will emit `needs input: unrecognized mode` until the modes are ported. The legacy director surface is superseded by the slim `/ralph:hero --mode classify` path (which is wired correctly end-to-end), so porting is not planned; this row exists for schema parity with the slim taxonomy.
+
 **Priority 3 — Automation labels:**
 If no `trigger:*` or `blocked:*` label matched, scan `ISSUE_LABELS[]` for automation labels:
 - `watcher-auto` → team: `watchers`, entrypoint: `ralph-hero:watch`

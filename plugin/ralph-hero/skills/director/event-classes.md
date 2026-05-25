@@ -22,6 +22,8 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 
 These labels are written by triage's `WAIT-pr`/`WAIT-upstream` verdicts and park an item against a named, watched condition. Director fires the matching caretake **watcher sweep** (board-wide — it processes every parked item of that kind, including this one) so the condition is re-evaluated immediately rather than at the next heartbeat. The label is **NOT consumed** — the watcher owns its lifecycle and strips it only when the condition resolves.
 
+> **Legacy caveat:** `watch-pr`/`watch-upstream` ship only on the slim `ralph:caretake` surface (#1406/#1407); the legacy `ralph-hero:caretake` implements only `hygiene|report|trends`, so this legacy routing is nominal/schema-parity until ported. The live, correctly-wired path is slim `/ralph:hero --mode classify`.
+
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
 | any | `blocked:pr-*` (prefix-match) | caretakers | Fire `Skill("ralph-hero:caretake", args="--mode watch-pr")` — board-wide sweep, no issue scoping. Label persists. Producer: triage `WAIT-pr` (#1404); consumer: watch-pr (#1406). |
