@@ -32,7 +32,7 @@ The plugin `triage-postcondition.sh` (`plugin/ralph-hero/hooks/scripts/triage-po
 - **Removing `KEEP` from the allowlist is NOT enough to reject it.** The `*)` catch-all calls `warn` → `exit 0` (allow-with-warning). So a bare removal would make `KEEP` *allowed with a warning*, not rejected. To **exit 2**, the fix must add an **explicit `KEEP)` branch that calls `block`** (exit 2) with the deprecation message, placed before `*)`. (`triage-postcondition.sh` `warn()` = `exit 0`; `block()` = exit 2 — verified in `hook-utils.sh`.)
 - **Scope = KEEP only** (see Prior Work tensions). Keep the other legacy values (`RESEARCH|CLOSE|HUMAN|CANCEL|RE-ESTIMATE`) in the allow arm — the ACs don't require removing them, they have successors but weren't dead-ends, and the legacy plugin surface is superseded anyway. **Reviewer decision point:** if "only the 8" is truly wanted, the other legacy values would also move to reject — flagged, not done.
 - **Slim hook unchanged.** `KEEP` was never a slim terminal token; `triage-postcondition-palette.test.sh` already asserts `KEEP` does not match. No slim-side enforcement change needed.
-- **Stale KEEP doc refs to purge** (3 files, all added/retained in #1404): `ralph/skills/caretake/modes/triage.md` (RALPH_TRIAGE_ACTION export block + valid-values line mention "KEEP … retained until Phase 6"), `plugin/ralph-hero/skills/ralph-triage/SKILL.md` (valid-values + "retired"/legacy mentions), `ralph/skills/caretake/outcome-tokens.md` (the `RALPH_TRIAGE_ACTION` allowlist line lists legacy `KEEP`).
+- **Stale KEEP doc refs to purge** (4 files): three added/retained in #1404 — `ralph/skills/caretake/modes/triage.md` (RALPH_TRIAGE_ACTION export block + valid-values line mention "KEEP … retained until Phase 6"), `plugin/ralph-hero/skills/ralph-triage/SKILL.md` (valid-values + "retired"/legacy mentions), `ralph/skills/caretake/outcome-tokens.md` (the `RALPH_TRIAGE_ACTION` allowlist line lists legacy `KEEP`) — PLUS a fourth, pre-existing one surfaced by review: **`specs/issue-lifecycle.md:137`** has a `| KEEP | *(no state change)* |` row in a normative "Triage-specific actions" table, presenting KEEP as a usable triage action with the exact dead-end (`no state change`) the epic kills. The plan's Desired End State ("no doc tells an author KEEP is usable") makes it in-scope; it is added to the Phase 2 purge.
 
 ## Desired End State
 
@@ -87,7 +87,7 @@ Add an explicit `KEEP)` → `block` branch (exit 2) and drop `KEEP` from the leg
 - [ ] `bash -n plugin/ralph-hero/hooks/scripts/triage-postcondition.sh` exits 0.
 - [ ] **Run from repo root:** `RALPH_TICKET_ID=t RALPH_TRIAGE_ACTION=KEEP bash plugin/ralph-hero/hooks/scripts/triage-postcondition.sh <<<'{}'` exits **2**.
 - [ ] `RALPH_TICKET_ID=t RALPH_TRIAGE_ACTION=PROMOTE-plan bash plugin/ralph-hero/hooks/scripts/triage-postcondition.sh <<<'{}'` exits 0; same for `WAIT-pr=1338` and a remaining legacy value (`RESEARCH`).
-- [ ] `! grep -qE 'KEEP' <(grep -A2 'Structured verdicts\|Legacy palette' plugin/ralph-hero/hooks/scripts/triage-postcondition.sh)` — KEEP not in any allow arm (manual-confirmable: KEEP appears only in the reject branch + messages).
+- [ ] KEEP is not in any `allow`-reaching case arm: extract the two allow-arm pattern lines (the structured arm + the legacy `RESEARCH|CLOSE|…` arm) and confirm neither contains `KEEP` — e.g. `grep -nE '^\s+(CLOSE-done\||RESEARCH\|)' plugin/ralph-hero/hooks/scripts/triage-postcondition.sh | grep -qv 'KEEP'` for the legacy line. (The exit-2 behavioral test above is the real guard; KEEP should appear only in the new `KEEP)` reject branch + the messages.)
 
 #### Manual Verification
 - [ ] The deprecation message lists all 8 structured verdicts and is emitted on exit 2.
@@ -114,12 +114,17 @@ Remove the "KEEP retained until Phase 6 / legacy-accepted" framing from the thre
 **File**: `ralph/skills/caretake/outcome-tokens.md`
 **Changes**: In the `RALPH_TRIAGE_ACTION` allowlist line, drop `KEEP` from the legacy set.
 
+#### 4. Issue-lifecycle spec (surfaced by review)
+**File**: `specs/issue-lifecycle.md`
+**Changes**: In the "Triage-specific actions" table (line ~137), the `| KEEP | *(no state change)* |` row presents KEEP as a usable action with the dead-end behavior the epic removes. Either delete the KEEP row or annotate it as deprecated/removed (e.g. replace with the structured successors or strike it). This keeps the normative spec consistent with the enforced postcondition.
+
 ### Success Criteria
 
 #### Automated Verification
 - [ ] `! grep -nE 'KEEP' ralph/skills/caretake/modes/triage.md` returns nothing framed as accepted/retained (a "KEEP removed/rejected" mention is acceptable; an "accepted"/"retained" one is not — manual eyeball of any remaining hit).
 - [ ] `! grep -qE 'KEEP\b' plugin/ralph-hero/skills/ralph-triage/SKILL.md` in the valid-values/export context.
 - [ ] `! grep -qE 'KEEP' ralph/skills/caretake/outcome-tokens.md` in the `RALPH_TRIAGE_ACTION` allowlist line.
+- [ ] `specs/issue-lifecycle.md` no longer has a `| KEEP | *(no state change)* |` row presenting KEEP as a usable action (`! grep -qE '\| KEEP \|' specs/issue-lifecycle.md`, or any remaining KEEP mention is framed as deprecated/removed).
 
 #### Manual Verification
 - [ ] No doc still tells an author `KEEP` is a usable value; the only KEEP mentions (if any) say it's deprecated/rejected.
