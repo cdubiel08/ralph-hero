@@ -8,7 +8,7 @@ Claude Code plugin providing autonomous GitHub Projects V2 workflow automation. 
 
 ## Build & Test
 
-All commands run from `plugin/ralph-hero/mcp-server/`:
+All commands run from `mcp-server/` (relocated to top-level in GH-1436):
 
 ```bash
 npm install          # Install dependencies
@@ -38,9 +38,9 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 ### Plugin System
 
 ```
+mcp-server/                  # TypeScript MCP server (published as ralph-hero-mcp-server; relocated to top-level in GH-1436)
 plugin/
-├── ralph-hero/              # Main plugin — MCP server, skills, agents, hooks
-│   ├── mcp-server/          # TypeScript MCP server (published as ralph-hero-mcp-server)
+├── ralph-hero/              # Main plugin — skills, agents, hooks
 │   ├── skills/              # 50+ skill definitions (YAML frontmatter + markdown)
 │   ├── agents/              # 12 per-phase agent definitions (+ worker/eval agents)
 │   ├── hooks/               # 70+ lifecycle enforcement hooks
@@ -210,7 +210,7 @@ Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead 
 Hooks write per-session activity into `~/.ralph-hero/activity/YYYY/MM/DD.jsonl` (path overridable via `RALPH_ACTIVITY_DIR`). One JSON object per line. Events are categorized as `work` (state-mutating tool calls, agent dispatches, skill invocations) or `meta` (read-only tool calls — Bash, Read, Edit, etc.) by `record-activity.sh`. The `recent_activity` MCP tool reads this log; /hello's catch-up agent filters by `category: "work"` for narrative synthesis.
 
 - **Writer**: `plugin/ralph-hero/hooks/scripts/record-activity.sh` (PostToolUse, matcher-less; also wired to SessionStart).
-- **Reader**: `plugin/ralph-hero/mcp-server/src/lib/activity.ts` + `tools/activity-tools.ts`. Pure functions; no cursor state inside the server.
+- **Reader**: `mcp-server/src/lib/activity.ts` + `tools/activity-tools.ts`. Pure functions; no cursor state inside the server.
 - **Cursor advance**: `plugin/ralph-hero/hooks/scripts/cursor-advance-catch-up.sh` (PostToolUse(`ralph_hero__recent_activity`)) writes `~/.ralph-hero/cursors/catch-up.json` from `tool_response.cursor_advanced_to`.
 - **Retention**: `plugin/ralph-hero/scripts/activity/logrotate.sh` prunes day files older than `RALPH_ACTIVITY_RETENTION_DAYS` (default 14). Optional launchd template at `scripts/activity/launchd/com.ralph.activity-rotate.plist.template`.
 - **Compact mode**: `recent_activity({ compact: true, limit: 50 })` projects events to `{ts, kind, tool, project}` for narrative consumers; ~50% byte reduction vs the full shape.

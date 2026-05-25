@@ -10,9 +10,9 @@
 version: 2
 
 updates:
-  # ---- npm: ralph-hero MCP server ----
+  # ---- npm: ralph-hero MCP server (relocated to top-level mcp-server/ in GH-1436) ----
   - package-ecosystem: "npm"
-    directory: "/plugin/ralph-hero/mcp-server"
+    directory: "/mcp-server"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
