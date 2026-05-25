@@ -110,7 +110,7 @@ Tilde expansion: `localDir` values in the registry may use `~`; always expand to
 save_issue(number=NNN, workflowState="__CLOSE__", command="ralph_merge")
 ```
 
-The `__CLOSE__` semantic intent maps `"*": "Done"` per `plugin/ralph-hero/mcp-server/src/lib/state-resolution.ts`. Do NOT use `__DONE__` — it is not a registered intent and the MCP server will reject it with "Unknown semantic intent".
+The `__CLOSE__` semantic intent maps `"*": "Done"` per `mcp-server/src/lib/state-resolution.ts`. Do NOT use `__DONE__` — it is not a registered intent and the MCP server will reject it with "Unknown semantic intent".
 
 Touching the parent from the skill would race with the Action and produce double-advances or out-of-order state changes. The boundary is firm: server owns parent, client owns child.
 

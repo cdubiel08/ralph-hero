@@ -12,7 +12,7 @@ export RALPH_SUBCOMMAND=debug
 
 Verify the local environment is wired up before doing anything else.
 
-1. **`RALPH_DEBUG=true` must be active in the MCP-server environment.** The `ralph_hero__collate_debug` tool is only registered when this env var is `"true"` — see `plugin/ralph-hero/mcp-server/src/index.ts`. If the tool is not available, instruct the user to add the following to `~/.claude/settings.json` (or `<project>/.claude/settings.local.json`) and restart Claude Code:
+1. **`RALPH_DEBUG=true` must be active in the MCP-server environment.** The `ralph_hero__collate_debug` tool is only registered when this env var is `"true"` — see `mcp-server/src/index.ts`. If the tool is not available, instruct the user to add the following to `~/.claude/settings.json` (or `<project>/.claude/settings.local.json`) and restart Claude Code:
 
    ```json
    {
