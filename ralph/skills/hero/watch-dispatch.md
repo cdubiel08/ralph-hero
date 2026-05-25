@@ -24,7 +24,7 @@ Inspect the fetched issue and route to the first matching row:
 |-----------|--------|
 | Issue body contains `<!-- gcp-policy: ... -->` marker | `Skill("gcp-incident-triage", "--issue NNN")` |
 | Issue body contains a `langfuse-trace:` URL | `Skill("ralph:caretake", "--mode debug --issue NNN")` |
-| Issue has label `watcher-investigate` | `Agent(subagent_type="ralph-hero:log-reader", prompt="Investigate issue #NNN: <title>. <body>")` |
+| Issue has label `watcher-investigate` | `Agent(subagent_type="ralph:log-reader", prompt="Investigate issue #NNN: <title>. <body>")` |
 | Issue has label `watcher-remediate` AND proposed action matches the sre-fixit allowlist | `Agent(subagent_type="ralph-hero:sre-fixit", prompt="Remediate issue #NNN: <title>. <body>")` |
 | No row matches | Escalate to `Human Needed` with a `needs input:` comment explaining which marker or label is missing |
 

@@ -31,8 +31,8 @@ Step 3 of the default flow branches research strategy:
 
 The research doc already contains codebase analysis, code references, and architectural context. Skip the codebase-locator and codebase-analyzer sub-tasks — they would re-investigate what the doc already covers. Still run:
 
-- `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans about [topic from research doc]")` — for project-management context the research doc may lack.
-- `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and prior art from documents about [topic]")` — dispatch on top thoughts-locator findings.
+- `Agent(subagent_type="ralph:thoughts-locator", prompt="Find related ideas, research, and plans about [topic from research doc]")` — for project-management context the research doc may lack.
+- `Agent(subagent_type="ralph:thoughts-analyzer", prompt="Extract key decisions and prior art from documents about [topic]")` — dispatch on top thoughts-locator findings.
 - `list_issues` keyword search — to find duplicates / overlapping work / parent epics.
 
 This avoids re-investigating while still grounding the idea in the project context.

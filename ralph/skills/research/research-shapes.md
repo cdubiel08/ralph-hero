@@ -6,12 +6,12 @@ Sub-agent palette + dispatch patterns for `/ralph:research`. Consulted by Step 3
 
 | Agent | Role | When to dispatch |
 |---|---|---|
-| `ralph-hero:codebase-locator` | Find WHERE files / components for a topic live | Always, when the question touches code |
-| `ralph-hero:codebase-analyzer` | Understand HOW a specific component works (no critique) | Always, when the question is "how does X work" |
-| `ralph-hero:codebase-pattern-finder` | Find similar implementations to model after | When researching a feature or refactor that needs precedent |
-| `ralph-hero:thoughts-locator` | Discover existing research / plans / reviews / ideas | Always — historical context matters |
-| `ralph-hero:thoughts-analyzer` | Extract key decisions / constraints / open questions from prior docs | When `thoughts-locator` returns documents worth deep-reading |
-| `ralph-hero:web-search-researcher` | External documentation, best practices, APIs | Only when the user explicitly asks for external research; instruct the agent to return LINKS |
+| `ralph:codebase-locator` | Find WHERE files / components for a topic live | Always, when the question touches code |
+| `ralph:codebase-analyzer` | Understand HOW a specific component works (no critique) | Always, when the question is "how does X work" |
+| `ralph:codebase-pattern-finder` | Find similar implementations to model after | When researching a feature or refactor that needs precedent |
+| `ralph:thoughts-locator` | Discover existing research / plans / reviews / ideas | Always — historical context matters |
+| `ralph:thoughts-analyzer` | Extract key decisions / constraints / open questions from prior docs | When `thoughts-locator` returns documents worth deep-reading |
+| `ralph:web-search-researcher` | External documentation, best practices, APIs | Only when the user explicitly asks for external research; instruct the agent to return LINKS |
 
 ## Parallel dispatch rule
 

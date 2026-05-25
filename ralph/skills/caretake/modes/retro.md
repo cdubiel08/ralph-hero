@@ -91,10 +91,10 @@ For pain points with a clear codebase anchor, ground them via sub-agents. For pa
 **Dispatch shape (no `team_name`):**
 
 ```
-Agent(subagent_type="ralph-hero:codebase-locator",
+Agent(subagent_type="ralph:codebase-locator",
       prompt="Find files related to [pain-point area]")
 
-Agent(subagent_type="ralph-hero:codebase-analyzer",
+Agent(subagent_type="ralph:codebase-analyzer",
       prompt="Analyze how [component] currently works (without critiquing)")
 ```
 
@@ -252,7 +252,7 @@ AskUserQuestion(
 Routing:
 
 - **"Create issue from findings"**: invoke `Skill("ralph:form", args="thoughts/shared/research/YYYY-MM-DD-retro-[description].md")`.
-- **"Deep-dive a specific pain point"**: ask which one, dispatch `Agent(subagent_type="ralph-hero:codebase-analyzer", ...)`, append findings to the same retro doc as `## Follow-up Investigation`.
+- **"Deep-dive a specific pain point"**: ask which one, dispatch `Agent(subagent_type="ralph:codebase-analyzer", ...)`, append findings to the same retro doc as `## Follow-up Investigation`.
 - **"Save for later — done"**: STOP.
 
 ## §Step 7: Record outcome (optional)
