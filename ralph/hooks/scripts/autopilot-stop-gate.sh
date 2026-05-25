@@ -1,73 +1,81 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/autopilot-stop-gate.sh
-# Stop — if a sentinel file exists indicating Director emitted a non-terminal
-# result without a subsequent ScheduleWakeup, block stop with a loud message
-# so the silent-drop failure mode becomes a noisy, recoverable one.
+# Stop — for the slim `ralph:hero --mode auto` never-terminating watcher, block
+# session exit when a loop tick returns without scheduling the next wakeup, so
+# the silent-drop failure mode becomes a noisy, recoverable one. `--mode auto`
+# never self-terminates — the only clean exit is the user cancelling via /tasks.
+#
+# Gated by TWO sentinels (both written by autopilot-director-postcheck.sh):
+#   autoloop  — present only inside the --mode auto watcher, so one-shot
+#               `--mode classify` and `--mode default` runs are NOT blocked.
+#   pending   — present when the current tick still owes a ScheduleWakeup
+#               (cleared by autopilot-wakeup-clear.sh when one fires).
+# Block only when BOTH are present.
+#
+# Keyed to RALPH_COMMAND=hero (set reliably via CLAUDE_ENV_FILE). The legacy
+# ralph-hero plugin / Director path is deprecated. Uses stop_hook_active for
+# re-entry safety following the pattern in team-stop-gate.sh.
 #
 # See GH-1346 and thoughts/shared/research/2026-05-21-autopilot-loop-handoff.md.
 #
-# Self-discriminates on RALPH_COMMAND=autopilot — passes through silently
-# for any other skill. Uses stop_hook_active for re-entry safety following
-# the pattern in team-stop-gate.sh.
-#
 # Exit codes:
-#   0 - No pending wakeup, allow stop
-#   2 - Pending wakeup detected, block stop and surface omission
+#   0 - Allow stop (not in the watcher, or the tick scheduled its wakeup)
+#   2 - Block stop and surface the omitted ScheduleWakeup
 
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-# Pass through for non-autopilot sessions.
-# Legacy: RALPH_COMMAND=autopilot. Slim: RALPH_COMMAND=hero + RALPH_SUBCOMMAND=auto.
-if [[ "${RALPH_COMMAND:-}" != "autopilot" \
-      && ! ( "${RALPH_COMMAND:-}" == "hero" && "${RALPH_SUBCOMMAND:-}" == "auto" ) ]]; then
-  exit 0
-fi
-
-# Re-entry safety: if we already fired once and the model still wants to stop,
-# we've made our case — let it stop. Otherwise we'd loop forever.
-stop_hook_active=$(get_field '.stop_hook_active')
-if [[ "$stop_hook_active" == "true" ]]; then
-  # Clean up the sentinel so it doesn't bleed into a future autopilot run.
-  session_id=$(get_field '.session_id')
-  sentinel_dir="${TMPDIR:-/tmp}"
-  sentinel="${sentinel_dir%/}/ralph-autopilot-pending-wakeup-${session_id:-$PPID}"
-  rm -f -- "$sentinel" 2>/dev/null || true
-  exit 0
-fi
+# Only the slim hero verb.
+[[ "${RALPH_COMMAND:-}" == "hero" ]] || exit 0
 
 session_id=$(get_field '.session_id')
 sentinel_dir="${TMPDIR:-/tmp}"
-sentinel="${sentinel_dir%/}/ralph-autopilot-pending-wakeup-${session_id:-$PPID}"
+autoloop="${sentinel_dir%/}/ralph-hero-autoloop-${session_id:-$PPID}"
+pending="${sentinel_dir%/}/ralph-hero-pending-wakeup-${session_id:-$PPID}"
 
-[[ -f "$sentinel" ]] || exit 0
+# Re-entry safety: if we already fired once and the model still wants to stop,
+# we've made our case — let it stop and clean up so sentinels don't bleed into
+# a later hero run reusing this session id.
+stop_hook_active=$(get_field '.stop_hook_active')
+if [[ "$stop_hook_active" == "true" ]]; then
+  rm -f -- "$pending" "$autoloop" 2>/dev/null || true
+  exit 0
+fi
 
-pending_result=$(cat -- "$sentinel" 2>/dev/null || echo "(unreadable)")
+# Only the armed --mode auto watcher is gated.
+[[ -f "$autoloop" ]] || exit 0
+
+# Watcher armed but this tick already scheduled its wakeup → allow (the
+# scheduled wakeup keeps the loop alive; ending this turn is correct).
+[[ -f "$pending" ]] || exit 0
+
+pending_result=$(cat -- "$pending" 2>/dev/null || echo "(unreadable)")
 
 cat >&2 <<EOF
 ═══════════════════════════════════════════════════════════════
- Autopilot stop blocked: pending ScheduleWakeup not observed
+ hero --mode auto stop blocked: pending ScheduleWakeup not observed
 
- Director returned a non-terminal result, but no ScheduleWakeup
- call followed. Without one, /loop interprets the absent wakeup
- as "task complete" and the autopilot drops silently.
+ /ralph:hero --mode auto is a NEVER-TERMINATING adaptive watcher.
+ This tick returned without calling ScheduleWakeup — without one,
+ /loop reads the absent wakeup as "task complete" and the watcher
+ drops silently.
 
- Last Director result:
+ Last tick result:
    $pending_result
 
- Required next action:
-   Call ScheduleWakeup with delaySeconds in [60,270] (warm-cache
-   continuation, work likely to resume soon) or [1200,1800] (idle
-   retry window). Avoid 300s.
+ Required next action — call ScheduleWakeup with delaySeconds:
+   • 60-270s  if the last tick dispatched work (warm cache; more
+     work is likely actionable now).
+   • 3600s    if the last result was 'Queue empty.' (idle backoff
+     to the 1h ceiling — re-check in an hour; do NOT stop).
+   Avoid 300s. Pass back the same /ralph:hero --mode auto
+   continuation prompt (or the <<autonomous-loop-dynamic>> sentinel).
 
-   prompt: pass back the same /ralph:hero --mode auto continuation
-   prompt or the <<autonomous-loop-dynamic>> sentinel.
-
- If you genuinely intend to stop (queue is drained, Director just
- hasn't said so), invoke Director once more and confirm it emits
- 'result: Queue empty' before exiting.
+ To stop the watcher entirely, cancel it via /tasks (delete the
+ pending wakeup). There is no clean self-exit — not even on an
+ empty queue.
 ═══════════════════════════════════════════════════════════════
 EOF
 
