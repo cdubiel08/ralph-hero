@@ -23,7 +23,7 @@
 |    |- PLAN (per group) -- create implementation plans              |
 |    |- PLAN REVIEW GATE                                             |
 |    |   | plan review is "auto":                                    |
-|    |   |   /ralph:review --mode plan critiques plan                |
+|    |   |   /ralph:plan --mode review critiques plan                |
 |    |   |   APPROVED -> report plan location, advance, continue     |
 |    |   |   NEEDS_ITERATION -> return critique to /ralph:plan        |
 |    |   |   ESCALATE -> move to Human Needed, STOP                  |
@@ -55,7 +55,7 @@
 | SPLIT | `SPLIT` | One or more M/L/XL issues need decomposition. Dispatch `/ralph:caretake --mode split #NNN` per issue. After all complete, re-detect. |
 | RESEARCH | `RESEARCH` | All "Research Needed" leaves run in parallel via `/ralph:research --auto NNN` |
 | PLAN | `PLAN` | After research converges, plan per primary issue via `/ralph:plan --auto NNN [--research-doc PATH]` |
-| REVIEW | `REVIEW` | Plan-review gate. When `RALPH_REVIEW_PLAN=auto`, dispatch `/ralph:review --mode plan NNN`. When `interactive`, surface AskUserQuestion picker. |
+| REVIEW | `REVIEW` | Plan-review gate. When `RALPH_REVIEW_PLAN=auto`, dispatch `/ralph:plan --mode review NNN`. When `interactive`, surface AskUserQuestion picker. |
 | HUMAN_GATE | `HUMAN_GATE` | Issue is in Human Needed. STOP and report blocker. Do not auto-dispatch unblock — that's caretake's job. |
 | IMPLEMENT | `IMPLEMENT` | Dispatch `/ralph:impl --auto NNN [--plan-doc PATH]` (one issue at a time, respecting `blockedBy` chains) |
 | INTEGRATE | `INTEGRATE` | PR + merge. PR via `/ralph:impl --mode pr NNN`; merge gate via `/ralph:review NNN` (default mode = code-review + merge). |

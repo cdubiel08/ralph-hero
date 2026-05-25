@@ -10,7 +10,7 @@
 | RESEARCH | `/ralph:research --auto` | `NNN` (or `NNN --mode prove` for claim-checks) |
 | PLAN (XS/S/M) | `/ralph:plan --auto` | `NNN [--research-doc PATH]` |
 | PLAN (L/XL epic) | `/ralph:plan --auto --mode epic` | `NNN [--research-doc PATH]` |
-| REVIEW (plan) | `/ralph:review --mode plan` | `NNN [--plan-doc PATH]` |
+| REVIEW (plan) | `/ralph:plan --mode review` | `NNN [--plan-doc PATH]` |
 | IMPLEMENT | `/ralph:impl --auto` | `NNN [--plan-doc PATH]` |
 | PR | `/ralph:impl --mode pr` | `NNN` |
 | INTEGRATE | `/ralph:review` | `NNN` |
@@ -62,7 +62,7 @@ After all plans complete, read `$RALPH_REVIEW_PLAN` (default `auto`):
 
 **`auto`:**
 
-Dispatch `Skill("ralph:review", args="NNN --mode plan --plan-doc PATH")` for each plan. Route on verdict:
+Dispatch `Skill("ralph:plan", args="NNN --mode review --plan-doc PATH")` for each plan. Route on verdict:
 
 - **ALL APPROVED** → batch update all issues in the group to "In Progress", report plan locations, continue
 - **NEEDS_ITERATION** → return critique to `/ralph:plan`, re-dispatch, re-review. Max 2 iterations before escalating
