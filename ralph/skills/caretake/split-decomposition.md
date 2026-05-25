@@ -65,6 +65,22 @@ Rules:
 
 Dependencies are orthogonal to workflow state. A child blocked by a sibling still gets `Ready for Plan` set in §Step 10 — `blockedBy` enforces ordering, not state.
 
+## §Plan-of-plans emission
+
+A multi-child split (`SPLIT <N>`, N ≥ 2) writes a **parent plan-of-plans** in [modes/split.md](modes/split.md) §Step 7.5. This is what makes split children autonomously plannable — closes GH-1416.
+
+**When it fires:** every split that creates ≥ 2 children. It does **not** fire on the re-estimate / `SPLIT SKIPPED` path (no children created, nothing to plan).
+
+**Filename:** `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md`. The `<parent>` (the issue being split) is deliberate — the parent-plan-reuse short-circuit in `ralph/skills/plan/intake-routing.md` looks up the parent plan by glob `thoughts/shared/plans/*GH-<parent>-*.md`.
+
+**Shape:** the plan-of-plans shape in [../plan/decomposition.md](../plan/decomposition.md) § Plan-of-plans shape (`type: plan-of-plans` frontmatter; `## Feature Decomposition` + `## Feature Sequencing` are the load-bearing sections). `doc-structure-validator.sh` validates this shape (it self-discriminates plan-of-plans from regular plans by `type:`/`## Feature Decomposition`, fence-stripped).
+
+**Match contract:** one `### Feature` per child, each carrying the child's **real issue number AND title** — parent-plan reuse matches a child to its section *by number or title*. Without both, the reuse short-circuit can't bind the child and it falls back to the research-required path (the deadlock GH-1416 fixes).
+
+**Consistency:** `## Feature Sequencing` must equal the `## Issue Split` comment's dependency chain (§Step 8) — same edges, same order.
+
+**Why split (not plan) writes it:** split runs in **caretake** context, where the plan skill's `plan-research-required.sh` Write gate is not armed, so it can write a `plans/` doc with no research doc. The plan skill itself cannot (its own gate blocks the write).
+
 ## §Hook contracts
 
 Four `split-*` hooks gate this mode. Each scopes on `RALPH_SUBCOMMAND=split` (or legacy `RALPH_COMMAND=split` for the parallel period).

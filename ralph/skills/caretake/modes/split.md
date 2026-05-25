@@ -126,6 +126,18 @@ Sub-issue body template:
 
 For each dependency pair, `add_dependency`: the dependent issue is blocked by the earlier-phase issue. See [split-decomposition.md](../split-decomposition.md) §Dependency wiring for rules.
 
+## §Step 7.5: Write parent plan-of-plans
+
+When the split produced **2+ children** (the normal `SPLIT <N>` path — skip on the re-estimate / `SPLIT SKIPPED` path, which creates no children), write a parent plan-of-plans so the children are autonomously plannable. Without it, `/ralph:plan --mode auto` has neither a per-child research doc nor a parent plan to consume, so each child stalls and the cluster escalates to **Human Needed** (GH-1416).
+
+Write to `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md` — the `<parent>` number is what the parent-plan-reuse glob `*GH-NNNN-*.md` keys on. Shape: [../../plan/decomposition.md](../../plan/decomposition.md) § Plan-of-plans shape — frontmatter `type: plan-of-plans`; sections `## Strategic Context`, `## Shared Constraints`, `## Feature Decomposition`, `## Integration Strategy`, `## Feature Sequencing`, `## What We're NOT Doing`. Model the wording on `/ralph:plan --mode epic` Step 3 (`ralph/skills/plan/SKILL.md`).
+
+One `### Feature` subsection per child under `## Feature Decomposition`, each embedding the child's **real issue number AND title** verbatim, plus its scope + acceptance from the body authored in §Step 6. The parent-plan-reuse short-circuit (`ralph/skills/plan/intake-routing.md`) matches a child to its section **by number or title**, so both must appear.
+
+Keep `## Feature Sequencing` **identical** to the `## Issue Split` dependency chain posted in §Step 8 — same edges, same order; the two artifacts must not diverge.
+
+This write happens in **caretake** context, where the plan skill's `plan-research-required.sh` Write gate is not armed — that is why split can emit a `plans/` doc with no research doc. The doc passes `doc-structure-validator.sh` because that hook recognizes the plan-of-plans shape (GH-1416).
+
 ## §Step 8: Update original issue
 
 Add a split-summary comment on the parent:

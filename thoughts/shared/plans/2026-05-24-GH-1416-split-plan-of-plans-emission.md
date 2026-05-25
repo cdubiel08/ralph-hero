@@ -167,10 +167,10 @@ reuse depends on, and the consistency requirement with the `## Issue Split` comm
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -nE "plan-of-plans" ralph/skills/caretake/modes/split.md` shows the new write step
-- [ ] `grep -nE "plan-of-plans" ralph/skills/caretake/split-decomposition.md` shows the documented contract
-- [ ] `grep -n "thoughts/shared/plans" ralph/skills/caretake/modes/split.md` confirms the write target path is present
-- [ ] No `^## Feature Decomposition` + `^## Phase` mixed-shape corruption introduced into any plan doc by the example text (review against `plan-tier-validator.sh`)
+- [x] `grep -nE "plan-of-plans" ralph/skills/caretake/modes/split.md` shows the new write step
+- [x] `grep -nE "plan-of-plans" ralph/skills/caretake/split-decomposition.md` shows the documented contract
+- [x] `grep -n "thoughts/shared/plans" ralph/skills/caretake/modes/split.md` confirms the write target path is present
+- [x] No `^## Feature Decomposition` + `^## Phase` mixed-shape corruption introduced (all such references in the edited files are inline backtick-wrapped, not line-start headings — `grep -nE '^## (Feature Decomposition|Phase [0-9])'` returns none)
 
 #### Manual Verification
 - [ ] Run `/ralph:caretake --mode split` on a real M/L/XL test issue: a plan-of-plans file is created, sections map 1:1 to children by number/title, and `## Feature Sequencing` matches the `## Issue Split` comment
