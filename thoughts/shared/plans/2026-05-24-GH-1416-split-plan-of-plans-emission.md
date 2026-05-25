@@ -2,6 +2,7 @@
 date: 2026-05-24
 status: ready
 type: plan
+estimate: S
 tags: [caretake-split, plan-of-plans, hooks, doc-structure-validator, autopilot]
 github_issue: 1416
 github_url: https://github.com/cdubiel08/ralph-hero/issues/1416
@@ -112,15 +113,29 @@ self-discrimination already in `plan-tier-validator.sh`.
 **File**: `ralph/hooks/scripts/doc-structure-validator.sh`
 **Changes**: In the `plan)` case, before applying the `## Phase N` checks, detect a
 plan-of-plans doc — true when the doc's frontmatter contains `type: plan-of-plans` OR the body
-has a line-start `## Feature Decomposition` heading. When detected, require the plan-of-plans
-sections (`^## Feature Decomposition`, `^## Feature Sequencing`) and skip the `## Phase N` /
-Verification / checkbox requirements. Otherwise keep the existing regular-plan checks unchanged.
+has a line-start `## Feature Decomposition` heading. **Strip fenced code blocks before that
+heading grep** (mirror the `awk` fence-toggle in `plan-tier-validator.sh`) so a doc that
+documents the sibling shape in a fenced example does not false-positive. When detected, require
+the plan-of-plans sections (`^## Feature Decomposition`, `^## Feature Sequencing`) and skip the
+`## Phase N` / Verification / checkbox requirements. Otherwise keep the existing regular-plan
+checks byte-for-byte unchanged.
 
 ### Success Criteria
 #### Automated Verification
 - [ ] `bash -n ralph/hooks/scripts/doc-structure-validator.sh` (syntax OK); `shellcheck` if available reports no new errors
-- [ ] Hook returns exit 0 when the freshest `plans/` doc is a `type: plan-of-plans` doc with `## Feature Decomposition` + `## Feature Sequencing` (verified by writing a temp fixture into `thoughts/shared/plans/` dated today, invoking the hook with an empty JSON stdin, then removing the fixture)
-- [ ] Hook still returns exit 2 for a regular plan doc missing `## Phase N`
+- [ ] **plan-of-plans passes** — using an isolated project root so freshest-wins/path selection is unambiguous:
+  ```
+  tmp=$(mktemp -d); mkdir -p "$tmp/thoughts/shared/plans"
+  printf '%s\n' '---' 'type: plan-of-plans' '---' '## Feature Decomposition' '### Feature A' '## Feature Sequencing' 'A -> B' \
+    > "$tmp/thoughts/shared/plans/$(date +%F)-GH-9999-plan-of-plans.md"
+  CLAUDE_PROJECT_DIR="$tmp" bash ralph/hooks/scripts/doc-structure-validator.sh <<< '{}'   # expect exit 0
+  ```
+- [ ] **regular plan still gated** — same isolated-dir recipe, fixture missing `## Phase N`:
+  ```
+  tmp=$(mktemp -d); mkdir -p "$tmp/thoughts/shared/plans"
+  printf '%s\n' '---' 'type: plan' '---' '## Overview' 'x' > "$tmp/thoughts/shared/plans/$(date +%F)-GH-9998-regular.md"
+  CLAUDE_PROJECT_DIR="$tmp" bash ralph/hooks/scripts/doc-structure-validator.sh <<< '{}'   # expect exit 2
+  ```
 - [ ] `npm test` in `plugin/ralph-hero/mcp-server/` still passes (no unintended breakage; hooks are out-of-tree but confirm the suite is green)
 
 #### Manual Verification
