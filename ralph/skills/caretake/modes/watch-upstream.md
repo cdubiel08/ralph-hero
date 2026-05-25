@@ -53,14 +53,14 @@ Determine whether the condition is **confidently met**. Only a confident MET adv
 - **Package-registry URL** → fetch the registry JSON (`curl -fsS`); MET only if a `version`/`tag` field satisfies the named release condition.
 - **Plain HTTP resource** → MET only if the condition names an explicit, checkable signal (e.g. "200 OK at `<url>`") and the fetch confirms it.
 - **Anything else / ambiguous** → treat as **still blocked** (leave parked).
-- **Dead URL** (404 / persistent fetch error) → **escalate** branch.
+- **Dead URL — HTTP 404/410 only** → **escalate** branch. Any *other* fetch failure (5xx, timeout, DNS) is **transient** → treat as **still blocked** (note it in the summary; retry next sweep). Never escalate on a one-off error — a flaky upstream must not prematurely push an item to Human Needed (matches watch-pr's "all fetch errors leave untouched" posture, but allows a definitive 404/410 to escalate).
 
 ## §Step 5: Act
 
 **Advance (condition confidently met).** Strip the `blocked:upstream` label and apply the deferred verdict:
 
 1. Determine the deferred verdict. **Default `PROMOTE-plan`** (the common case). If the issue carries an explicit `## Deferred Verdict: <verdict>` comment, honor it instead. (Phase 1 / #1404 writes a `## Triage Decision` comment, not a `## Deferred Verdict` comment, so the default applies unless a later phase adds the explicit comment.)
-2. Map the verdict to its target workflow state (same mapping as triage's 8-verdict schema): `PROMOTE-plan`→`"Ready for Plan"`, `PROMOTE-research`→`"Research Needed"`, `CLOSE-done`→`"Done"`, `CLOSE-canceled`→`"Canceled"`. Default `PROMOTE-plan`→Ready for Plan. If an honored `## Deferred Verdict` is itself a `WAIT-*` verdict, leave the item parked and note it.
+2. Map the verdict to its target. watch-upstream **only auto-applies the promote family**: `PROMOTE-plan`→`"Ready for Plan"`, `PROMOTE-research`→`"Research Needed"`. Default `PROMOTE-plan`→Ready for Plan. A `CLOSE-*` or `WAIT-*` deferred verdict is **NOT** auto-applied here — this watcher never closes issues (see §Constraints), and shouldn't auto-close on a speculative comment — so route those via the **escalate** branch instead (post a `## Escalation` noting the deferred verdict needs human confirmation before close/re-wait).
 3. Read the issue's current labels; `save_issue(number: NNN, workflowState: <verdict target>, command: "ralph_triage", labels: <current labels minus blocked:upstream, also dropping ralph-triage so the item is re-pickable in its new state>)`. The explicit `labels` array is required (save_issue replaces the full set; omitting it leaves `blocked:upstream` attached). Note: `command: "ralph_triage"` is passed for semantic parity, but `triage-state-gate.sh` does **not** gate this mode (it scopes to `RALPH_SUBCOMMAND=triage`; watch-upstream's is `watch-upstream`) — its transitions are unguarded, so pass only valid target states.
 4. Post a `## Watch-Upstream Resolution` comment: condition `<condition>` met at `<url>` → label stripped, verdict `<verdict>` applied.
 
