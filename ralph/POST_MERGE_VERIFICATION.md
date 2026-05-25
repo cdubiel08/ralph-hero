@@ -24,7 +24,7 @@ In Claude Code:
 /ralph:_smoke
 ```
 
-Expected behavior: the skill invokes `mcp__plugin_ralph-hero_ralph-github__get_issue` with `issue_number: 1` and returns the issue title + a "success" confirmation.
+Expected behavior: the skill invokes `mcp__plugin_ralph_ralph-github__get_issue` with `issue_number: 1` and returns the issue title + a "success" confirmation.
 
 **If the call succeeds:** cross-plugin MCP works → migration is unblocked for Plan 1.
 

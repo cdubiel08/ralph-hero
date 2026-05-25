@@ -84,8 +84,8 @@ else
 fi
 
 # Test 4: triage + MCP tool → pass through
-code=$(RALPH_SUBCOMMAND=triage RALPH_COMMAND=caretake RALPH_HOOK_INPUT='{"tool_name":"mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue","tool_input":{}}' \
-  bash "$HOOK" <<< '{"tool_name":"mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue","tool_input":{}}' 2>/dev/null; echo $?)
+code=$(RALPH_SUBCOMMAND=triage RALPH_COMMAND=caretake RALPH_HOOK_INPUT='{"tool_name":"mcp__plugin_ralph_ralph-github__ralph_hero__get_issue","tool_input":{}}' \
+  bash "$HOOK" <<< '{"tool_name":"mcp__plugin_ralph_ralph-github__ralph_hero__get_issue","tool_input":{}}' 2>/dev/null; echo $?)
 if [[ "$code" == "0" ]]; then
   pass "RALPH_SUBCOMMAND=triage + MCP get_issue tool → exit 0"
 else

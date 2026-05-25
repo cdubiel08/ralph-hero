@@ -9,7 +9,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=review RALPH_VALID_OUTPUT_STATES='In Review,Done,Human Needed'"
   PreToolUse:
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue|mcp__plugin_ralph-hero_ralph-github__ralph_hero__advance_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue|mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/merge-state-gate.sh"
@@ -36,13 +36,13 @@ allowed-tools:
   - Agent
   - Monitor
   - AskUserQuestion
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_dependencies
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__advance_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_dependencies
+  - mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
 ---
 

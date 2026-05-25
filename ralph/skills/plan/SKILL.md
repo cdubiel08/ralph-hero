@@ -36,7 +36,7 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-plan-gate.sh"
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-state-gate.sh"
@@ -82,17 +82,17 @@ allowed-tools:
   - AskUserQuestion
   - WebSearch
   - WebFetch
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_dependencies
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__decompose_feature
+  - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__remove_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_dependencies
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__decompose_feature
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome

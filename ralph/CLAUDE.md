@@ -10,7 +10,7 @@ The slim successor to `ralph-hero`. See `../thoughts/shared/research/2026-05-22-
 - **No `references/` subfolder by default.** Reference files are siblings of SKILL.md. Two named exceptions: `caretake/` uses a `modes/` subfolder, and the vendored `using-html/` utility skill keeps its upstream `references/` + `assets/` subfolders. `using-html/` is preserved byte-identical from its source so it tracks upstream cleanly — do not flatten it to match this convention.
 - **No SOUL.md files.** Substrate is the product (principle P10).
 - **Enforcement lives in hooks/, not skill prose.** If you find yourself writing "make sure to validate X" in a SKILL.md, that's a hook.
-- **Artifact state lives in the MCP server.** Skills read/write via `mcp__plugin_ralph-hero_ralph-github__*` tools (cross-plugin during migration).
+- **Artifact state lives in the MCP server.** Skills read/write via `mcp__plugin_ralph_ralph-github__*` tools (cross-plugin during migration).
 
 ## Adding a new verb
 
