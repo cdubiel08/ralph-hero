@@ -1,0 +1,116 @@
+/* ============================================================
+   INTERACTIVE-TIER CHROME (using-html v2)
+   Inline this AFTER theme.css, in the same <style> block, ONLY for
+   Interactive-tier workflows: decks, component variants, prototyping,
+   flowchart. Document-tier artifacts must not carry this weight.
+   Reuses the marine-ink palette vars defined at the top of theme.css.
+   ============================================================ */
+
+/* --- slide deck (09) --- */
+.deck { max-width: none; }
+.slide {
+  display: none;
+  min-height: calc(100vh - 152px);
+  flex-direction: column;
+  justify-content: center;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+.slide.on { display: flex; }
+.slide-inner { width: 100%; }
+.title-slide h1 { font-size: 52px; }
+.title-slide .subtitle { font-size: 22px; color: var(--gray-500); font-family: var(--serif); margin-top: 8px; }
+.title-slide .byline { font-family: var(--mono); font-size: 12px; color: var(--gray-500); margin-top: 24px; }
+
+.ship-list { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.ship-item { display: grid; grid-template-columns: 16px 1fr; gap: 14px; align-items: start; }
+.ship-item .ship-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--moss); margin-top: 7px; }
+.ship-item .ship-title { font-family: var(--serif); font-size: 19px; color: var(--ink); }
+.ship-item .ship-desc { font-size: 14px; color: var(--gray-700); }
+.ship-item .ship-ref { font-family: var(--mono); font-size: 11px; color: var(--gray-500); }
+
+.prog-list { display: flex; flex-direction: column; gap: 18px; margin-top: 12px; }
+.prog-item .prog-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.prog-item .prog-title { font-size: 15px; color: var(--ink); }
+.prog-item .prog-pct { font-family: var(--mono); font-size: 13px; color: var(--accent); }
+.prog-track { height: 10px; background: var(--gray-150); border: 1.5px solid var(--gray-300); border-radius: 999px; overflow: hidden; }
+.prog-fill { height: 100%; background: var(--accent); }
+
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-top: 12px; }
+.metric { border: 1.5px solid var(--gray-300); border-radius: 12px; background: var(--white); padding: 18px; }
+.metric .metric-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); }
+.metric .metric-value { font-family: var(--serif); font-size: 34px; color: var(--ink); line-height: 1.1; margin: 4px 0; }
+.metric .metric-delta { font-family: var(--mono); font-size: 12px; color: var(--moss); }
+.metric .metric-delta.down { color: var(--rust); }
+.sparkline-wrap { margin-top: 8px; }
+
+.decision-card { border: 1.5px solid var(--gray-300); border-left: 4px solid var(--accent); border-radius: 0 12px 12px 0; background: var(--white); padding: 22px 26px; }
+.decision-card .decision-q { font-family: var(--serif); font-size: 22px; color: var(--ink); margin-bottom: 8px; }
+.decision-card .options { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.decision-card .opt { font-family: var(--mono); font-size: 12px; border: 1.5px solid var(--gray-300); border-radius: 8px; padding: 6px 12px; }
+.decision-card .opt.lean { border-color: var(--accent); background: rgba(46,93,126,0.10); color: var(--accent); }
+
+.next-list { list-style: none; padding-left: 0; }
+.next-list li { padding: 8px 0; border-top: 1px solid var(--gray-150); font-size: 16px; }
+
+.deck-nav { position: fixed; bottom: 20px; right: 24px; font-family: var(--mono); font-size: 12px; color: var(--gray-500); background: var(--white); border: 1.5px solid var(--gray-300); border-radius: 999px; padding: 6px 14px; }
+
+/* --- toolbar / controls (component variants, prototyping) --- */
+.toolbar { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; border: 1.5px solid var(--gray-300); border-radius: 12px; background: var(--white); padding: 14px 18px; margin: 16px 0 24px; }
+.control { display: flex; flex-direction: column; gap: 5px; }
+.control .control-label { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); }
+.control .control-value { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.radio-group { display: flex; gap: 0; border: 1.5px solid var(--gray-300); border-radius: 8px; overflow: hidden; }
+.radio-group .seg { font-family: var(--mono); font-size: 12px; padding: 6px 12px; background: var(--white); color: var(--gray-700); cursor: pointer; border: none; border-right: 1px solid var(--gray-300); }
+.radio-group .seg:last-child { border-right: none; }
+.radio-group .seg.on { background: var(--accent); color: var(--white); }
+input[type=range] { accent-color: var(--accent); }
+
+/* --- component variant matrix (06) --- */
+.variant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+.variant-cell { display: flex; flex-direction: column; gap: 8px; }
+.variant-cell .variant-label { font-family: var(--mono); font-size: 11px; color: var(--gray-500); }
+.variant-cell .card { padding: 16px; }
+.card.v-flat { box-shadow: none; border-color: var(--gray-150); }
+.card.v-outlined { border-width: 1.5px; }
+.card.v-elevated { border-color: transparent; box-shadow: 0 6px 20px rgba(27,35,41,0.12); }
+.card.v-stripe { border-left: 4px solid var(--accent); }
+.card.v-inset { background: var(--gray-150); border-color: var(--gray-150); }
+.card.v-horizontal { display: grid; grid-template-columns: 48px 1fr; gap: 12px; align-items: center; }
+.snippet-panel { border: 1.5px solid var(--gray-300); border-radius: 12px; background: var(--slate); margin-top: 22px; overflow: hidden; }
+.snippet-panel .snippet-head { font-family: var(--mono); font-size: 11px; color: var(--gray-500); padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.snippet-panel pre { padding: 14px 16px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: #E8E6DE; overflow-x: auto; }
+
+/* --- prototyping bench (07, 08) --- */
+.bench { border: 1.5px solid var(--gray-300); border-radius: 16px; background: var(--white); padding: 40px; margin: 16px 0; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+.stage { display: flex; align-items: center; justify-content: center; min-height: 160px; width: 100%; }
+
+/* animation sandbox (07) */
+.ease-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.ease-btn { font-family: var(--mono); font-size: 12px; border: 1.5px solid var(--gray-300); border-radius: 8px; padding: 6px 14px; background: var(--white); color: var(--gray-700); cursor: pointer; }
+.ease-btn.active { background: var(--accent); color: var(--white); border-color: var(--accent); }
+.timeline { width: 100%; max-width: 420px; height: 4px; background: var(--gray-150); border-radius: 999px; position: relative; }
+.timeline .key { position: absolute; top: -4px; width: 12px; height: 12px; border-radius: 50%; background: var(--white); border: 2.5px solid var(--accent); transform: translateX(-50%); }
+
+/* drag-to-reorder (08) */
+.proto-list { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 8px; }
+.proto-item { display: flex; align-items: center; gap: 12px; border: 1.5px solid var(--gray-300); border-radius: 10px; background: var(--white); padding: 12px 14px; cursor: grab; }
+.proto-item .grip { color: var(--gray-300); font-size: 16px; cursor: grab; user-select: none; }
+.proto-item .count { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--gray-500); }
+.proto-item.dragging { opacity: 0.4; border-color: var(--accent); }
+.proto-item.drop-target { border-top: 2px solid var(--accent); }
+
+/* --- annotated flowchart (13) --- */
+.flow-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; margin: 16px 0; }
+@media (max-width: 860px) { .flow-layout { grid-template-columns: 1fr; } }
+.flow-canvas { border: 1.5px solid var(--gray-300); border-radius: 12px; background: var(--white); padding: 18px; overflow-x: auto; }
+.flow-canvas .node rect { fill: var(--white); stroke: var(--gray-300); stroke-width: 1.5; cursor: pointer; }
+.flow-canvas .node text { font-family: var(--sans); font-size: 12px; fill: var(--ink); }
+.flow-canvas .node.gate rect { fill: var(--gray-150); }
+.flow-canvas .node.ok rect { stroke: var(--moss); }
+.flow-canvas .node.bad rect { stroke: var(--rust); }
+.flow-canvas .node.sel rect { stroke: var(--accent); stroke-width: 2.5; }
+.flow-canvas .edge { stroke: var(--gray-500); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+.flow-legend { font-size: 13px; }
+.flow-legend .flow-hint { border: 1.5px solid var(--gray-300); border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0; background: var(--white); padding: 14px 16px; margin-top: 12px; }
+.flow-legend .flow-hint .where { font-family: var(--mono); font-size: 11px; color: var(--gray-500); }
