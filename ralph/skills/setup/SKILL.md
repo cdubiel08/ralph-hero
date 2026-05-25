@@ -15,13 +15,13 @@ allowed-tools:
   - Edit
   - Bash
   - AskUserQuestion
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__health_check
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_project
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__setup_project
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__decompose_feature
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__health_check
+  - mcp__plugin_ralph_ralph-github__ralph_hero__get_project
+  - mcp__plugin_ralph_ralph-github__ralph_hero__setup_project
+  - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__decompose_feature
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_issue
 ---
 
 # /ralph:setup — One-time setup in one verb

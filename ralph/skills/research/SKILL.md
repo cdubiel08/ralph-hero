@@ -21,7 +21,7 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=research"
   PostToolUse:
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/research-state-gate.sh"
@@ -47,12 +47,12 @@ allowed-tools:
   - AskUserQuestion
   - WebSearch
   - WebFetch
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__remove_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__remove_dependency
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse

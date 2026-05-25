@@ -13,11 +13,11 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__create_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
@@ -26,15 +26,15 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-no-skill-dispatch.sh"
   PostToolUse:
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-verify-sub-issue.sh"
-    - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-state-gate.sh"
@@ -66,19 +66,19 @@ allowed-tools:
   - TaskGet
   - AskUserQuestion
   - PushNotification
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_sub_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__pipeline_dashboard
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__project_hygiene
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__archive_items
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__capture_snapshot
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__metrics_trends
+  - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_sub_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph_ralph-github__ralph_hero__project_hygiene
+  - mcp__plugin_ralph_ralph-github__ralph_hero__archive_items
+  - mcp__plugin_ralph_ralph-github__ralph_hero__capture_snapshot
+  - mcp__plugin_ralph_ralph-github__ralph_hero__metrics_trends
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall

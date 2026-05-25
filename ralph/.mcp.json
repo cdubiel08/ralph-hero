@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ralph-github": {
+      "command": "npx",
+      "args": ["-y", "ralph-hero-mcp-server@2.5.186"],
+      "cwd": "${CLAUDE_PLUGIN_ROOT}"
+    }
+  }
+}

@@ -19,13 +19,13 @@ allowed-tools:
   - AskUserQuestion
   - WebSearch
   - WebFetch
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__list_issues
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_sub_issue
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__add_dependency
-  - mcp__plugin_ralph-hero_ralph-github__ralph_hero__create_comment
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
+  - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
 ---
 
 # /ralph:form — Intake

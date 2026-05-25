@@ -12,7 +12,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__plugin_ralph-hero_ralph-github__ralph_hero__recent_activity",
+        "matcher": "mcp__plugin_ralph_ralph-github__ralph_hero__recent_activity",
         "hooks": [
           {
             "type": "command",
