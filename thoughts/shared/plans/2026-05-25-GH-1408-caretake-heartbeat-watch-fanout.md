@@ -69,11 +69,16 @@ Insert the two watcher invocations into the SKILL.md Step 1 "No args" fan-out an
 **File**: `ralph/skills/caretake/SKILL.md`
 **Changes**: In the Step 1 "No args" path, change the 3-item serial list to the 5-item order: (1) `--mode hygiene`, (2) `--mode watch-pr`, (3) `--mode watch-upstream`, (4) catch-up `--mode report`, (5) `--mode trends`. Update the trailing note to "Report consolidated outcome (one line per child — 5 total)."
 
+#### 2. `all`-mode table row (keep consistent)
+**File**: `ralph/skills/caretake/SKILL.md`
+**Changes**: Update the `**all**` row in the `## Modes` table (the one describing "Heartbeat fan-out: hygiene + catch-up report + trends") to reflect the new 5-mode fan-out — e.g. "Heartbeat fan-out: hygiene + watch-pr + watch-upstream + catch-up report + trends". Without this, the descriptive table row contradicts the Step 1 list in the same doc.
+
 ### Success Criteria
 
 #### Automated Verification
 - [ ] `grep -A8 'No args.*--mode all.*heartbeat fan-out' ralph/skills/caretake/SKILL.md` shows 5 numbered invocations including `--mode watch-pr` and `--mode watch-upstream`.
 - [ ] `grep -c 'mode watch-pr\|mode watch-upstream' ralph/skills/caretake/SKILL.md` increased (the fan-out now references both, in addition to their mode-table/bodies rows).
+- [ ] The `**all**` mode-table row no longer reads "hygiene + catch-up report + trends" alone — it lists all 5 fan-out modes (no stale row).
 - [ ] The order in the list is hygiene → watch-pr → watch-upstream → report → trends (manual eyeball of the numbered list).
 
 #### Manual Verification
@@ -94,6 +99,8 @@ Insert the two watcher invocations into the SKILL.md Step 1 "No args" fan-out an
 ## Migration Notes
 
 - Purely additive to the fan-out; existing hygiene/report/trends behavior is unchanged. The watcher modes are no-ops (`IDLE`) when no `blocked:*` items exist.
+- **Off-main heartbeat → SKIPPED, not IDLE.** Both watch modes begin with a branch gate; when the heartbeat fires while the user is on a feature branch, the two new children report `WATCH-PR/UPSTREAM SKIPPED — branch <name> is not main` rather than `IDLE`. This is expected (the gate protects against mutating state off main), not a regression — a reviewer running the heartbeat off-main should not be surprised by SKIPPED child lines.
+- The issue body says "30-min loop"; the actual `--mode all` heartbeat default is **1h** (per SKILL.md + `loop-wrapper.md`). This plan/edit does not change the interval — the "30-min" phrasing in the issue body is stale.
 
 ## References
 
