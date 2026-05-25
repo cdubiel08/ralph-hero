@@ -93,9 +93,7 @@ The user-facing surface:
 | Scouts team | `/ralph-hero:scouts [--issue NNN]` (per-PR via `playwright-auto.yml`; nightly batch via `scout-nightly.sh` cron) |
 | Memorykeepers team | manual `dream-now` zsh function |
 | iOS trigger | add `trigger:<team>` label from GitHub mobile app |
-| iOS status | `ralph cos remote` (local LLM) / `ralph cos desk` (Streamlit via Tailscale) |
 | iOS push | ntfy (`RALPH_COS_NTFY_TOPIC`) — fires from `ralph-merge` Step 9c + morning-brief |
-| iOS artifacts | `gdrive-push` — triggered by iOS-mode sentinel `${TMPDIR}/ralph-ios-mode` |
 
 Director classifies each issue in three-priority order: `trigger:<team>` label → automation label (`watcher-auto`/`debug-auto`/`scout-auto`/`process-improvement`) → workflow state. Taxonomy lives at [`plugin/ralph-hero/skills/director/event-classes.md`](plugin/ralph-hero/skills/director/event-classes.md) — adding a new event class is a one-row PR.
 
@@ -229,7 +227,7 @@ Optional, off-by-default LLM delegation wrapper at `plugin/ralph-hero/scripts/ra
 
 Master toggle is `RALPH_DELEGATE_ENABLED` — unset (the default) means exit 126 immediately and bit-identical no-op behavior. The wrapper never throws on disabled state; callers gate on `$?` and fall back natively.
 
-Currently wired: `codebase-locator` (F4a), `pr-agent` (F4b), `val-agent` (F4c), and the reference skill `delegate-test` (F3).
+Currently wired: `codebase-locator` (F4a), `pr-agent` (F4b), `val-agent` (F4c). (The `delegate-test` reference skill was dropped in the ralph self-containment epic; the wrapper itself is flagged for a separate retirement review.)
 
 Telemetry: `ralph_hero__delegation_stats` MCP tool + `ralph status --delegation` CLI read the JSONL audit log at `~/.ralph-hero/delegate.log`. See `plugin/ralph-hero/README.md` § Delegation (optional).
 

@@ -68,7 +68,7 @@ After the broad search produces 5 or more candidate file paths, you MAY delegate
 
 Delegation is for **ranking only**. You (the agent) still compose the structured `## File Locations for [Feature/Topic]` output below. Never let the delegate's output reach the user directly — your job is to produce the documentarian's map; the delegate only suggests an order. Operators may pin a different model for this task via `RALPH_DELEGATE_LOCATOR_URL` / `RALPH_DELEGATE_LOCATOR_MODEL`.
 
-Run the following bash block. The control flow (set +e, `if OUTPUT=$(...)`, case "$rc", unconditional `rm -f`) mirrors the reference pattern in `skills/delegate-test/SKILL.md`. The one deliberate addition is a `jq -e .ranked` JSON-shape guard around the wrapper's output — the wrapper is text-in/text-out and does not validate the structured-JSON shape itself, so the agent does it inline.
+Run the following bash block. The control flow (set +e, `if OUTPUT=$(...)`, case "$rc", unconditional `rm -f`) is the standard delegation-wrapper invocation pattern shown inline below. The one deliberate addition is a `jq -e .ranked` JSON-shape guard around the wrapper's output — the wrapper is text-in/text-out and does not validate the structured-JSON shape itself, so the agent does it inline.
 
 ```bash
 # Inputs (you set these from the locate-goal context and the candidate list

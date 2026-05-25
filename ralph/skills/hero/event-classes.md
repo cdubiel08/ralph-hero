@@ -83,16 +83,6 @@ Director evaluates in this order:
 
 ---
 
-## iOS-mode sentinel (Feature H contract)
-
-Director writes the sentinel file `${TMPDIR:-/tmp}/ralph-ios-mode` immediately before `Skill()` dispatch when `DISPATCH_REASON` matches `trigger:*` or `RemoteTrigger`. Downstream producers (`ralph-pr`, `ralph-postmortem`, scout-nightly, `ralph-merge`) test for this file to decide whether `--push-drive` and ntfy completion hooks default ON.
-
-The legacy `RALPH_IOS_MODE=1` env var is also honored as a manual operator override (e.g., for desk-mode forced pushes during testing). If either the sentinel file OR `RALPH_IOS_MODE=1` is set, producers treat iOS-mode as active.
-
-Priority 4 (workflow_state-driven) dispatches do NOT write the sentinel — only Priority 1 (`trigger:*`) and `RemoteTrigger` paths do. (Priority 2 `blocked:*` and Priority 3 automation dispatches also do not write it.) The sentinel persists until `$TMPDIR` rotation or session end; no explicit cleanup is required.
-
----
-
 ## Producers
 
 This table is the canonical inventory of automated label producers as of Feature D (GH-1271). New producers should add a row here when they land.

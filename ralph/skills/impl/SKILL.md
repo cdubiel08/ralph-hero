@@ -9,7 +9,7 @@ description: Implement an approved plan, address PR review feedback, or create a
   --mode auto runs ONE phase autonomously per invocation, hook-gated. --mode
   address handles PR review feedback. --mode pr creates a pull request for a
   completed implementation.
-argument-hint: "[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--push-drive|--no-push-drive] [--loop [duration]] [--auto]"
+argument-hint: "[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -86,9 +86,9 @@ Reads an approved plan from `thoughts/shared/plans/`, executes phases, and ships
 | **default** | `/ralph:impl #NNN` or `/ralph:impl <plan-path>` | Interactive phase-by-phase implementation, paused between phases for human verification |
 | **auto** | `/ralph:impl --mode auto [#NNN] [--plan-doc <path>]` | Autonomous ONE phase per invocation, hook-gated, then STOP for resumability |
 | **address** | `/ralph:impl --mode address [#NNN]` | PR review feedback handling (MUST_FIX / SHOULD_FIX / DISCUSS) |
-| **pr** | `/ralph:impl --mode pr [#NNN] [--push-drive\|--no-push-drive]` | Push branch + create PR + scout-trigger heuristic + Drive push |
+| **pr** | `/ralph:impl --mode pr [#NNN]` | Push branch + create PR + scout-trigger heuristic |
 
-References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-repo), [plan-compliance.md](plan-compliance.md) (File Ownership, staging, drift), [phase-execution.md](phase-execution.md) (task graph, controller, IMPL BLOCKED), [address-mode.md](address-mode.md) (PR feedback classification), [pr-creation.md](pr-creation.md) (body template, scout trigger, Drive push).
+References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-repo), [plan-compliance.md](plan-compliance.md) (File Ownership, staging, drift), [phase-execution.md](phase-execution.md) (task graph, controller, IMPL BLOCKED), [address-mode.md](address-mode.md) (PR feedback classification), [pr-creation.md](pr-creation.md) (body template, scout trigger).
 
 ## Step 0: Parse arguments
 
@@ -109,7 +109,6 @@ Resolve `MODE`, `TARGET`, optional flags from args:
 - `--mode address #NNN` → `MODE=address`, TARGET=NNN (must be In Review)
 - `--mode pr [#NNN]` → `MODE=pr`, TARGET=NNN or queue-pick
 - `--plan-doc <path>` → auto-mode shortcut, bypass plan discovery
-- `--push-drive|--no-push-drive` → pr-mode flag, forwarded to push-artifact.sh
 
 Export `RALPH_TICKET_ID="GH-${TARGET}"` when TARGET is an issue number.
 
@@ -196,10 +195,9 @@ Ask the user via AskUserQuestion what to do next:
 5. **Create PR** — `gh pr create --title "GH-NNN: <title>" --body-file <body> --head feature/GH-NNN --base main`. Capture URL.
 6. **Advance issues** to "In Review" via `save_issue` (standalone: own state; group: every child; never advance parent — server-side workflow handles that).
 7. **Record outcome** — `knowledge_record_outcome(event_type="pr_created", issue_number=NNN, verdict="created", payload={pr_url, branch, repo})`.
-8. **Drive push (optional)** — per [pr-creation.md §Drive push](pr-creation.md) when `--push-drive` or `RALPH_IOS_MODE`.
-9. **Evaluate UI heuristic** — per [pr-creation.md §Scout Trigger](pr-creation.md). Post `## Scout Trigger` advisory comment if any frontend glob matches.
-10. **Artifact comment** — post `## Pull Request` on the issue with PR URL (and `Drive:` line if non-empty).
-11. **Report** — `PR CREATED / Issue: #NNN / PR: <url> / State: In Review`.
+8. **Evaluate UI heuristic** — per [pr-creation.md §Scout Trigger](pr-creation.md). Post `## Scout Trigger` advisory comment if any frontend glob matches.
+9. **Artifact comment** — post `## Pull Request` on the issue with PR URL.
+10. **Report** — `PR CREATED / Issue: #NNN / PR: <url> / State: In Review`.
 
 ## Configuration (resolved at load time)
 

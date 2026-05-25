@@ -98,20 +98,9 @@ Add a label to any issue from the GitHub mobile app:
 | `trigger:caretake` | Caretakers |
 | `trigger:memorykeepers` | Memorykeepers (no skill — Director emits `needs input:`) |
 
-Director consumes the label on its next tick. When the dispatch is trigger-driven, Director writes `${TMPDIR}/ralph-ios-mode` — downstream handlers (`ralph-pr`, `ralph-postmortem`, `ralph-merge`) read this sentinel to decide whether `--push-drive` and ntfy completion hooks default ON.
+Director consumes the label on its next tick.
 
 To fire Director immediately from Termius: `ralph director`.
-
-### Read status from your phone
-
-```bash
-ralph cos remote                 # 2-3 sentence summary via local LLM, 30 min cache
-ralph cos remote --no-cache      # bypass cache
-ralph cos remote "What is the Watchers team working on?"
-ralph cos desk                   # full Streamlit dashboard on :8502 via Tailscale
-```
-
-Both routes use the local gemma-lab `mlx-openai-server` on port 8000 — no cloud round-trip. Bring it up with `gemma-up`.
 
 ### Completion pushes (ntfy)
 
@@ -123,16 +112,6 @@ export RALPH_COS_NTFY_TOPIC=cos-briefs-<yourname>-<random16hex>
 ```
 
 `ralph-merge` (Step 9c) and `morning-brief.sh` fire pushes via `plugin/ralph-hero/scripts/lib/push-on-completion.sh`. If `ntfy` is missing or `RALPH_COS_NTFY_TOPIC` is unset, the push is silently skipped.
-
-### Drive artifacts
-
-```bash
-npm install -g @googleworkspace/cli
-gws auth login --services drive
-gws auth status
-```
-
-When the iOS-mode sentinel is active, `ralph-pr` (PR body), `ralph-postmortem` (session report), and `scout-nightly` (test results) push artifacts to the `claude-shared` Google Drive folder via the `gdrive-push` skill. Force from a desk session with `--push-drive` (or `RALPH_IOS_MODE=1`); opt out with `--no-push-drive`.
 
 ## Heartbeats (one-time install)
 

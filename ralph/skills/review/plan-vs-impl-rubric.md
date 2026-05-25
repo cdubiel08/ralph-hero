@@ -113,7 +113,7 @@ Opt-in via `RALPH_DELEGATE_ENABLED`. When enabled, the plan's `## Desired End St
 
 **Cross-check rule**: delegate is advisory, not authoritative. Inconsistency with automated-check results triggers native fallback. Never let delegated text reach the comment body or any GitHub mutation — see `skills/shared/delegation-conventions.md` for the no-mutation rule.
 
-**Wrapper invocation pattern** (mirrors `skills/delegate-test/SKILL.md` reference):
+**Wrapper invocation pattern** (the standard delegation-wrapper invocation, shown inline below):
 
 ```bash
 set +e

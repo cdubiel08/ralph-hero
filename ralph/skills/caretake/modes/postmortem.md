@@ -144,19 +144,7 @@ For each entry in `## Blockers` (skip if "None."):
 
 Update the blocker entry to include the created issue number: `[issue created: #NNN]`.
 
-## §Step 7: Drive push (iOS mode)
-
-iOS-mode is active when `${TMPDIR:-/tmp}/ralph-ios-mode` exists OR when `RALPH_IOS_MODE` is non-empty. The `push-artifact.sh` helper checks both. Best-effort:
-
-```bash
-DRIVE_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/lib/push-artifact.sh" \
-    "${REPORT_PATH}" \
-    "Postmortem: ${SESSION_SUMMARY}" 2>/dev/null || true)
-```
-
-If `DRIVE_URL` is non-empty, include a `Drive: <URL>` line in any `## Postmortem` comment posted on blocker issues.
-
-## §Step 8: Commit and push
+## §Step 7: Commit and push
 
 ```bash
 git add thoughts/shared/reports/YYYY-MM-DD-ralph-team-{team-name}.md
@@ -165,7 +153,7 @@ git commit -m "docs(report): {team-name} session post-mortem"
 git push origin main
 ```
 
-## §Step 9: Emit terminal token
+## §Step 8: Emit terminal token
 
 ```
 POSTMORTEM <path>

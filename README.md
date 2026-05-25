@@ -110,8 +110,6 @@ Human-in-the-loop skills for collaborative development:
 | `/ralph-hero:ralph-hygiene` | Identify archive candidates, stale items, and board health issues |
 | `/ralph-hero:setup` | One-time project board setup with required fields |
 | `/ralph-hero:setup-repos` | Bootstrap multi-repo portfolio management |
-| `/ralph-hero:idea-hunt` | Scout GitHub for interesting ideas, trends, and inspiration |
-| `/ralph-hero:record-demo` | Record an annotated product demo and attach to an issue |
 
 ## MCP Server
 
@@ -265,7 +263,6 @@ Quick start:
 ```bash
 gemma-up                                  # start the local Gemma server on :8000
 export RALPH_DELEGATE_ENABLED=true        # opt in for this shell
-/ralph-hero:delegate-test "hello world"   # smoke-test the wrapper end-to-end
 ```
 
 Post-setup verification: `ralph status --delegation` prints per-task call counts, fallback counts, and p50/p99 latency from the JSONL audit log.
