@@ -85,6 +85,8 @@ The verdict→token mapping used throughout:
 | `WAIT-upstream=URL` | Backlog | `TRIAGED WAIT-upstream` | `blocked:upstream` + `ralph-triage` |
 | `WAIT-decision` | Human Needed | `TRIAGED WAIT-decision` | `## Escalation` comment + `ralph-triage` |
 
+> Suffix asymmetry is intentional: `WAIT-pr=NNN` keeps the `=NNN` in the token (the PR number is short and lets loop telemetry distinguish which PR an item waits on), while `WAIT-upstream=URL` drops the URL from the token (URLs are unwieldy in a terminal token) — the `blocked:upstream` label + `## Triage Decision` comment carry the URL instead.
+
 ## Phase 1: Slim active path — schema, tokens, hook regex, test
 
 depends_on: null
@@ -117,7 +119,7 @@ Document the 8-verdict schema in the slim triage body, add the 8 verbatim termin
 - [ ] `bash ralph/hooks/scripts/__tests__/triage-postcondition-palette.test.sh` exits 0 and reports the 8 new tokens passing.
 - [ ] `bash -n ralph/hooks/scripts/triage-postcondition.sh` (syntax check) exits 0.
 - [ ] `grep -E "CLOSE-done|PROMOTE-plan|WAIT-pr" ralph/skills/caretake/outcome-tokens.md` returns ≥3 hits.
-- [ ] `grep -c "^- \`TRIAGED " ralph/skills/caretake/outcome-tokens.md` increased by 8.
+- [ ] `grep -cE '^- \`TRIAGED (CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-)' ralph/skills/caretake/outcome-tokens.md` returns `8` (the 8 new verbatim tokens; absolute count avoids baseline ambiguity).
 
 #### Manual Verification
 - [ ] §Step 4 schema table in `triage.md` matches the #1417 verdict table verbatim (verdict names, targets, consumers).
@@ -145,7 +147,7 @@ Sync the legacy plugin triage surface to the same 8-verdict vocabulary fixed in 
 
 #### Automated Verification
 - [ ] `bash -n plugin/ralph-hero/hooks/scripts/triage-postcondition.sh` exits 0.
-- [ ] `RALPH_TICKET_ID=test RALPH_TRIAGE_ACTION=PROMOTE-plan bash plugin/ralph-hero/hooks/scripts/triage-postcondition.sh <<<'{}'` exits 0 (new value accepted); same with `RALPH_TRIAGE_ACTION=KEEP` still exits 0 (legacy retained).
+- [ ] **Run from repo root** (the hook sources `hook-utils.sh` via `$(dirname "$0")`): `RALPH_TICKET_ID=test RALPH_TRIAGE_ACTION=PROMOTE-plan bash plugin/ralph-hero/hooks/scripts/triage-postcondition.sh <<<'{}'` exits 0 (new value accepted); same with `RALPH_TRIAGE_ACTION=KEEP` still exits 0 (legacy retained).
 - [ ] `cd plugin/ralph-hero/mcp-server && npm test` stays green (regression guard; no TS changes expected).
 
 #### Manual Verification
