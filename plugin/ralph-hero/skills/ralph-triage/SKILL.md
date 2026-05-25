@@ -116,38 +116,31 @@ Then STOP.
 
 ### Step 4: Determine Recommendation
 
-Choose ONE action:
+Choose ONE of the **8 structured verdicts** (#1417). Each verdict names its successor — items advance now (`PROMOTE-*`), wait on a *named, watched condition* (`WAIT-*`), close (`CLOSE-*`), or decompose (`SPLIT`). There is no bare "keep" dead-end.
 
-**CLOSE** - Issue is done, duplicate, or no longer relevant
-- Feature already implemented
-- Bug already fixed
-- Duplicate of another issue
-- No longer applicable (tech/product changed)
+| Verdict | Workflow target | Downstream consumer |
+|---|---|---|
+| `CLOSE-done` | Done | — |
+| `CLOSE-canceled` | Canceled | — |
+| `SPLIT` | (stays Backlog, children created) | `--mode split` |
+| `PROMOTE-research` | Research Needed | `/ralph-research` |
+| `PROMOTE-plan` | Ready for Plan | `/ralph-plan` |
+| `WAIT-pr=NNN` | Backlog + `blocked:pr-NNN` label | watch-pr (Phase 3, #1406) |
+| `WAIT-upstream=URL` | Backlog + `blocked:upstream` label | watch-upstream (Phase 3, #1407) |
+| `WAIT-decision` | Human Needed + `## Escalation` comment | unblock workflow |
 
-**SPLIT** - Issue is too large or contains multiple distinct items
-- Recommend specific sub-issues to create
-- Each sub-issue should be XS or Small
+`RE-ESTIMATE` remains an orthogonal field-fix (correct the estimate; issue stays in Backlog for re-triage). It composes with a verdict on a later tick rather than replacing one.
 
-**RE-ESTIMATE** - Issue needs size adjustment
-- Current estimate missing or incorrect
-- Recommend new estimate with reasoning
-
-**RESEARCH** - Issue is valid but needs investigation
-- Move to "Research Needed" workflow state
-- Ready for `/ralph-research` to pick up
-
-**KEEP** - Issue is valid as-is
-- Leave in Backlog for prioritization
-- Add clarifying comment if helpful
+> The legacy `KEEP` verdict is **retired** by this change — it was the dead-end the structured set exists to remove (it left items in Backlog with no successor). The postcondition hook still accepts `KEEP` until Phase 6 (#1410), but new triage runs MUST pick a structured verdict. This skill is the legacy parallel surface; the active path is `/ralph:caretake --mode triage`.
 
 ### Step 5: Take Action
 
 **General error handling pattern (applies to all action branches below):**
 If `save_issue`, `create_issue`, `add_sub_issue`, or `add_dependency` returns an error, read the error message — it contains valid states/intents and a specific Recovery action. Retry with the corrected parameters. If the error indicates a permanent problem (invalid permissions, missing field, etc.), escalate per the Escalation Protocol below.
 
-**If CLOSE:** Choose the destination state based on closure reason:
-- **Done** — for issues that are already implemented, already fixed, or duplicates of completed work. Use `issueState: "CLOSED"` (reason: completed).
-- **Canceled** — for issues that are no longer relevant (tech changed, product direction shifted, no longer applicable). Use `issueState: "CLOSED_NOT_PLANNED"` (reason: not planned).
+**If CLOSE-done / CLOSE-canceled:** Choose the destination state based on closure reason:
+- **`CLOSE-done`** → Done — for issues that are already implemented, already fixed, or duplicates of completed work. Use `issueState: "CLOSED"` (reason: completed).
+- **`CLOSE-canceled`** → Canceled — for issues that are no longer relevant (tech changed, product direction shifted, no longer applicable). Use `issueState: "CLOSED_NOT_PLANNED"` (reason: not planned).
 
 Update the issue workflow state accordingly (command: "ralph_triage"). Add a comment explaining why it was closed and which destination state was chosen.
 
@@ -171,21 +164,29 @@ Add a comment to the original listing sub-issues (reused and/or created).
 
 **If RE-ESTIMATE:** Update the issue with the new estimate (XS/S/M/L/XL). Add a comment explaining the estimate reasoning. Workflow state remains Backlog.
 
-**If RESEARCH:** Update the issue workflow state to "Research Needed" (command: "ralph_triage"). Add a comment: "Moved to Research Needed for investigation." The comment should also briefly note what specifically needs to be researched (e.g., "Investigate whether feature X already exists in module Y" or "Clarify scope of integration with system Z") so the downstream `/ralph-research` agent has actionable context.
+**If PROMOTE-research:** Update the issue workflow state to "Research Needed" (command: "ralph_triage"). Add a comment: "Moved to Research Needed for investigation." The comment should also briefly note what specifically needs to be researched (e.g., "Investigate whether feature X already exists in module Y" or "Clarify scope of integration with system Z") so the downstream `/ralph-research` agent has actionable context.
 
-**If KEEP:** Add a comment with any clarifications or context discovered. Leave workflow state as Backlog.
+**If PROMOTE-plan:** The issue is well-specified and can skip research. Update the workflow state to "Ready for Plan" (command: "ralph_triage"). Add a comment noting what the plan should cover.
+
+**If WAIT-pr=NNN / WAIT-upstream=URL:** The issue is valid but blocked on a *named, watched condition*. Leave it in Backlog and apply the matching `blocked:*` label so the Phase 3 watcher (#1406/#1407) can resolve it when the condition clears:
+- **`WAIT-pr=NNN`** — blocked on PR #NNN merging. Apply `blocked:pr-NNN` (e.g. `blocked:pr-1338`) + `ralph-triage`.
+- **`WAIT-upstream=URL`** — blocked on an external/upstream condition. Apply `blocked:upstream` + `ralph-triage`; record the URL in the comment (the label carries no URL).
+
+Add a comment naming the exact condition being waited on.
+
+**If WAIT-decision:** Needs a human call before it can advance. Set workflow state to "Human Needed" (command: "ralph_triage"), post a `## Escalation` comment stating the specific decision required, and apply `ralph-triage`.
 
 **Before completing (REQUIRED for all action branches):** Set the `RALPH_TRIAGE_ACTION` environment variable so the postcondition hook (`triage-postcondition.sh`) can verify the action was taken. Use Bash to export the value:
 
 ```bash
-export RALPH_TRIAGE_ACTION=RESEARCH   # or SPLIT, CLOSE, KEEP, HUMAN, CANCEL, RE-ESTIMATE
+export RALPH_TRIAGE_ACTION=PROMOTE-plan   # or CLOSE-done, CLOSE-canceled, SPLIT, PROMOTE-research, WAIT-pr, WAIT-upstream, WAIT-decision
 ```
 
-Valid values: `RESEARCH`, `SPLIT`, `CLOSE`, `KEEP`, `HUMAN` (when escalating), `CANCEL`, `RE-ESTIMATE`. The postcondition hook will block completion if `RALPH_TRIAGE_ACTION` is unset or holds an unrecognized value.
+Valid values: `CLOSE-done`, `CLOSE-canceled`, `SPLIT`, `PROMOTE-research`, `PROMOTE-plan`, `WAIT-pr[=NNN]`, `WAIT-upstream[=URL]`, `WAIT-decision` (the 8 structured verdicts), plus the orthogonal `RE-ESTIMATE` and the legacy set `RESEARCH`, `CLOSE`, `KEEP`, `HUMAN`, `CANCEL` (retained until Phase 6 / #1410). The postcondition hook will block completion if `RALPH_TRIAGE_ACTION` is unset or holds an unrecognized value.
 
 ### Step 6: Mark Issue as Triaged
 
-After completing any action (CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP), update the issue labels to include "ralph-triage" while preserving existing labels.
+After any verdict that **leaves the issue in Backlog** (`SPLIT`, `WAIT-pr`, `WAIT-upstream`, `RE-ESTIMATE`, plus legacy `HUMAN`), update the issue labels to include "ralph-triage" (and any `blocked:*` label) while preserving existing labels. `PROMOTE-*`, `CLOSE-*`, and `WAIT-decision` move the issue out of Backlog, so re-pick suppression isn't needed there.
 
 **Important**: Preserve existing labels when adding `ralph-triage`. Read the issue's current labels first, then include them all plus `ralph-triage` in the update.
 

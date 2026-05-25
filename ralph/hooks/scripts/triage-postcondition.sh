@@ -44,25 +44,31 @@ fi
 # pipeline-heavy under set -euo pipefail; append `|| true` per Plan 6 lesson.
 transcript_text=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null || true)
 
-# Match any of the documented terminal tokens.
-if echo "$transcript_text" | grep -qE '^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.' ; then
+# Match any of the documented terminal tokens. The 8 structured verdicts (#1417)
+# are matched verbatim; the legacy alternations (routed/duplicate/canceled/…) are
+# retained for back-compat so older transcripts and the parallel plugin surface
+# don't regress. WAIT-pr requires a literal "=NNN" numeric suffix (PR numbers are
+# integers) so the branch can't over-match prose or a non-numeric suffix.
+if echo "$transcript_text" | grep -qE '^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=[0-9]+|WAIT-upstream|WAIT-decision)|^Queue empty\.' ; then
   echo "Triage postcondition passed: terminal token found in transcript"
   allow
 fi
 
 block "Triage postcondition failed: no terminal token emitted
 
-Expected one of:
-  TRIAGED routed → Research Needed   (issue routed to Research Needed)
-  TRIAGED routed → Ready for Plan    (issue routed to Ready for Plan)
-  TRIAGED routed → In Progress       (trivial fix; routed directly to In Progress)
-  TRIAGED duplicate                  (closed as duplicate)
-  TRIAGED canceled                   (closed not_planned)
-  TRIAGED needs-split                (routed to split queue)
-  TRIAGED escalated                  (escalated to Human Needed)
-  TRIAGED re-estimated               (estimate updated; stays in Backlog)
-  TRIAGED skipped …                  (branch-gate short-circuit; non-main branch)
+Expected one of the 8 verdict tokens:
+  TRIAGED CLOSE-done                 (closed as done/implemented/duplicate)
+  TRIAGED CLOSE-canceled             (closed not_planned)
+  TRIAGED SPLIT                      (children created; stays in Backlog)
+  TRIAGED PROMOTE-research           (routed to Research Needed)
+  TRIAGED PROMOTE-plan               (routed to Ready for Plan)
+  TRIAGED WAIT-pr=NNN                (parked in Backlog; blocked:pr-NNN)
+  TRIAGED WAIT-upstream              (parked in Backlog; blocked:upstream)
+  TRIAGED WAIT-decision              (escalated to Human Needed)
   Queue empty.                       (no untriaged Backlog issues)
+
+Legacy tokens still accepted: TRIAGED routed → … / duplicate / canceled /
+  needs-split / escalated / re-estimated / skipped …
 
 The /ralph:caretake --mode triage body must end by emitting one of these tokens.
 See ralph/skills/caretake/outcome-tokens.md for the full contract.

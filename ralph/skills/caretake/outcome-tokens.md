@@ -6,20 +6,29 @@ Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emit
 
 ## Triage terminal tokens
 
-Routing convention: the state name appears verbatim after the `→` token, case-preserving (e.g., `TRIAGED routed → Research Needed` not `research needed`). `triage-postcondition.sh` uses `^TRIAGED routed → .+` to match the full routing family.
+The **8 structured verdicts** (#1417) each emit a verbatim `TRIAGED <verdict>` token — the verdict name appears after `TRIAGED `, case-preserving. These are the tokens new triage runs emit:
 
-- `TRIAGED routed → Research Needed` — issue routed to Research Needed for investigation.
-- `TRIAGED routed → Ready for Plan` — issue well-specified; routed directly to Ready for Plan (research skipped).
-- `TRIAGED routed → In Progress` — trivial fix; routed directly to In Progress.
-- `TRIAGED duplicate` — closed as duplicate; references a `## Duplicate Of` comment naming the surviving issue.
-- `TRIAGED canceled` — closed not-planned (tech changed, product direction shifted, etc.).
-- `TRIAGED needs-split` — left in Backlog with the `needs-split` label so `--mode split` picks it up on the next sweep. `ralph-triage` label applied.
-- `TRIAGED escalated` — escalated to Human Needed; `ralph-triage` label applied so the issue is not re-picked.
-- `TRIAGED re-estimated` — estimate updated; issue stays in Backlog with the `ralph-triage` label applied (prevents re-pick under `--loop`).
-- `TRIAGED skipped — branch <name> is not main` — §Step 1 short-circuit; triage refuses to run on a feature branch.
+- `TRIAGED CLOSE-done` — closed as done/implemented/duplicate; references a `## Duplicate Of` comment when a duplicate.
+- `TRIAGED CLOSE-canceled` — closed not-planned (tech changed, product direction shifted, etc.).
+- `TRIAGED SPLIT` — children created; issue stays in Backlog with the `ralph-triage` label so `--mode split` / the picker doesn't re-select it.
+- `TRIAGED PROMOTE-research` — routed to Research Needed for investigation.
+- `TRIAGED PROMOTE-plan` — issue well-specified; routed to Ready for Plan (research skipped).
+- `TRIAGED WAIT-pr=NNN` — parked in Backlog with `blocked:pr-NNN` + `ralph-triage`; the `=NNN` PR number is part of the token. Phase 3 (#1406) watch-pr strips the label when the PR merges.
+- `TRIAGED WAIT-upstream` — parked in Backlog with `blocked:upstream` + `ralph-triage`; the upstream URL is recorded in the `## Triage Decision` comment, not the token (URLs are unwieldy in a terminal token). Phase 3 (#1407) watch-upstream resolves it.
+- `TRIAGED WAIT-decision` — escalated to Human Needed with a `## Escalation` comment naming the decision required; `ralph-triage` applied.
 - `Queue empty.` — no untriaged Backlog issues remain.
 
-`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. The `RALPH_TRIAGE_ACTION` allowlist (checked by the skill body's §Step 5) is: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`.
+**Legacy tokens (still accepted by the postcondition for back-compat; new runs should not emit them):** Phase 6 (#1410) prunes the legacy `RALPH_TRIAGE_ACTION=KEEP` path, but these terminal tokens stay valid so older transcripts and the parallel plugin surface don't regress.
+
+- `TRIAGED routed → Research Needed` / `→ Ready for Plan` / `→ In Progress` — superseded by `PROMOTE-research` / `PROMOTE-plan` (the direct-to-In-Progress route is folded into `PROMOTE-plan`).
+- `TRIAGED duplicate` — superseded by `CLOSE-done`.
+- `TRIAGED canceled` — superseded by `CLOSE-canceled`.
+- `TRIAGED needs-split` — superseded by `SPLIT`.
+- `TRIAGED escalated` — superseded by `WAIT-decision`.
+- `TRIAGED re-estimated` — emitted by the orthogonal `RE-ESTIMATE` action; issue stays in Backlog with `ralph-triage`.
+- `TRIAGED skipped — branch <name> is not main` — §Step 1 short-circuit; triage refuses to run on a feature branch.
+
+`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens (8 verdict tokens + legacy set + `Queue empty.`). The `RALPH_TRIAGE_ACTION` allowlist (checked by the legacy plugin hook's §Step 5; the slim hook ignores the env var) is: `CLOSE-done | CLOSE-canceled | SPLIT | PROMOTE-research | PROMOTE-plan | WAIT-pr | WAIT-upstream | WAIT-decision` plus legacy `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | CLOSE | HUMAN | CANCEL | RE-ESTIMATE | KEEP`.
 ## Hygiene terminal tokens
 
 - `HYGIENE COMPLETE <N archived>` — scan ran cleanly; `N` is the archive count (0 if dry-run or threshold not exceeded).

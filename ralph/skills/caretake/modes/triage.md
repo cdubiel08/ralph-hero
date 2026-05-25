@@ -58,25 +58,33 @@ and STOP.
 
 ## §Step 4: Determine action
 
-Choose ONE:
+Choose ONE of the **8 structured verdicts**. Every verdict names its successor — items either advance now (`PROMOTE-*`), wait on a *named, watched condition* (`WAIT-*`), close (`CLOSE-*`), or decompose (`SPLIT`). There is no bare "keep" dead-end: a verdict that leaves an issue in Backlog must name what it waits on.
 
-- **CLOSE** — feature already implemented, bug already fixed, duplicate, or no longer applicable.
-- **SPLIT** — issue is too large or covers multiple distinct items. Recommend XS/S sub-issues.
-- **RE-ESTIMATE** — current estimate missing or wrong; propose new value with reasoning.
-- **ROUTE-TO-Research Needed** — issue is valid but needs investigation before planning; move to "Research Needed".
-- **ROUTE-TO-Ready for Plan** — issue is well-specified; skip research and queue directly for planning.
-- **ROUTE-TO-In Progress** — trivial fix; assign and start immediately.
+| Verdict | Workflow target | Downstream consumer |
+|---|---|---|
+| `CLOSE-done` | Done | — |
+| `CLOSE-canceled` | Canceled | — |
+| `SPLIT` | (stays Backlog, children created) | caretake `--mode split` |
+| `PROMOTE-research` | Research Needed | `/ralph:research --mode auto` |
+| `PROMOTE-plan` | Ready for Plan | `/ralph:plan --mode auto` |
+| `WAIT-pr=NNN` | Backlog + `blocked:pr-NNN` label | watch-pr (Phase 3, #1406) |
+| `WAIT-upstream=URL` | Backlog + `blocked:upstream` label | watch-upstream (Phase 3, #1407) |
+| `WAIT-decision` | Human Needed + `## Escalation` comment | unblock workflow |
 
-When uncertain, prefer `ROUTE-TO-Research Needed` (route for investigation) or `HUMAN` (escalate) over closing valid work.
+When uncertain, prefer `PROMOTE-research` (route for investigation) or `WAIT-decision` (escalate) over `CLOSE-*` on valid work.
+
+**Orthogonal action — `RE-ESTIMATE`**: if the estimate is missing or wrong, correct it (issue stays in Backlog for re-triage on the next sweep). This is a field fix, not a routing verdict, so it composes with — rather than replaces — one of the 8 verdicts on a later tick.
+
+> The `WAIT-*` verdicts only *park* the item against a labelled condition this phase (Phase 1, #1404). The watchers that strip the label and re-apply the deferred verdict ship in Phase 3 (#1406/#1407). Until then a `WAIT-*` item waits indefinitely with its `blocked:*` label.
 
 ## §Step 5: Take action
 
 If `save_issue`, `create_issue`, `add_sub_issue`, or `add_dependency` returns an error, read the error message — it contains valid states/intents and a specific recovery action. Retry with corrected parameters. If the error indicates a permanent problem (invalid permissions, missing field, etc.), escalate per §Escalation below.
 
-**CLOSE.** Choose the destination state by closure reason:
+**CLOSE-done / CLOSE-canceled.** Choose the destination state by closure reason:
 
-- **Done** — already implemented, already fixed, duplicate of completed work. Use `issueState: "CLOSED"` (reason: completed).
-- **Canceled** — no longer relevant (tech changed, product direction shifted). Use `issueState: "CLOSED_NOT_PLANNED"` (reason: not planned).
+- **`CLOSE-done`** → Done — already implemented, already fixed, duplicate of completed work. Use `issueState: "CLOSED"` (reason: completed).
+- **`CLOSE-canceled`** → Canceled — no longer relevant (tech changed, product direction shifted). Use `issueState: "CLOSED_NOT_PLANNED"` (reason: not planned).
 
 Update workflow state accordingly (`command: "ralph_triage"`). Add a comment explaining the closure reason and chosen destination state.
 
@@ -90,27 +98,40 @@ Add a comment on the parent listing sub-issues (reused and/or created). **Do NOT
 
 **RE-ESTIMATE.** Update the issue with the new estimate (XS/S/M/L/XL). Add a comment explaining the reasoning. Workflow state remains Backlog.
 
-**ROUTE-TO.** Set `workflowState: <target>` via `save_issue(command: "ralph_triage")` where `<target>` is one of `"Research Needed"`, `"Ready for Plan"`, or `"In Progress"`. Add a `## Triage Decision` comment explaining the routing choice and what downstream work is expected (e.g., what to investigate, what the plan should cover, or what the trivial fix is).
+**PROMOTE-research / PROMOTE-plan.** Set `workflowState: <target>` via `save_issue(command: "ralph_triage")` where `<target>` is `"Research Needed"` (`PROMOTE-research`) or `"Ready for Plan"` (`PROMOTE-plan`). Add a `## Triage Decision` comment explaining the routing choice and what downstream work is expected (what to investigate, or what the plan should cover).
+
+**WAIT-pr=NNN / WAIT-upstream=URL.** The issue is valid but blocked on a *named, watched condition*. Leave it in Backlog and apply the matching `blocked:*` label so the Phase 3 watcher can pick it up when the condition resolves:
+
+- **`WAIT-pr=NNN`** — blocked on PR #NNN merging. Apply `blocked:pr-NNN` (e.g. `blocked:pr-1338`) + `ralph-triage`.
+- **`WAIT-upstream=URL`** — blocked on an external/upstream condition. Apply `blocked:upstream` + `ralph-triage`. Record the URL in the `## Triage Decision` comment (the label carries no URL).
+
+Add a `## Triage Decision` comment naming the exact condition being waited on.
+
+**WAIT-decision.** Needs a human call before it can advance. Set `workflowState: "Human Needed"` (`command: "ralph_triage"`), post a `## Escalation` comment stating the specific decision required, and apply `ralph-triage`.
 
 **Before completing (REQUIRED for all branches):** export `RALPH_TRIAGE_ACTION` so `triage-postcondition.sh` can verify the action was taken:
 
 ```bash
-# Pick the value that matches your action:
-export RALPH_TRIAGE_ACTION=ROUTE_TO_RESEARCH   # routed to Research Needed
-export RALPH_TRIAGE_ACTION=ROUTE_TO_PLAN       # routed to Ready for Plan
-export RALPH_TRIAGE_ACTION=ROUTE_TO_IMPL       # routed to In Progress
-# export RALPH_TRIAGE_ACTION=SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE
+# Pick the value that matches your verdict:
+export RALPH_TRIAGE_ACTION=PROMOTE-research    # → Research Needed
+export RALPH_TRIAGE_ACTION=PROMOTE-plan        # → Ready for Plan
+export RALPH_TRIAGE_ACTION=CLOSE-done          # → Done
+export RALPH_TRIAGE_ACTION=CLOSE-canceled      # → Canceled
+export RALPH_TRIAGE_ACTION=SPLIT               # children created; stays Backlog
+export RALPH_TRIAGE_ACTION=WAIT-pr             # blocked:pr-NNN; stays Backlog
+export RALPH_TRIAGE_ACTION=WAIT-upstream       # blocked:upstream; stays Backlog
+export RALPH_TRIAGE_ACTION=WAIT-decision       # → Human Needed
+# Legacy values (still accepted by the postcondition allowlist; Phase 6 / #1410 removes them):
+# ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | CLOSE | HUMAN | CANCEL | RE-ESTIMATE | KEEP
 ```
 
-Note: `CANCEL` is the close-not-planned sub-case of CLOSE (sets `issueState: CLOSED_NOT_PLANNED`, emits `TRIAGED canceled`) — a model picking `CANCEL` routes through the CLOSE action body above.
-
-Valid values: `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | SPLIT | CLOSE | HUMAN | CANCEL | RE-ESTIMATE`. `RALPH_TRIAGE_ACTION` is a self-discipline marker for the model — it is NOT validated by the postcondition hook. The postcondition hook (`triage-postcondition.sh`) enforces that a valid **terminal token** was emitted (it greps the transcript for `TRIAGED …` or `Queue empty.`); it does not read `RALPH_TRIAGE_ACTION` at all.
+Valid values: `CLOSE-done | CLOSE-canceled | SPLIT | PROMOTE-research | PROMOTE-plan | WAIT-pr | WAIT-upstream | WAIT-decision` (the 8 structured verdicts), plus the legacy set `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | CLOSE | HUMAN | CANCEL | RE-ESTIMATE | KEEP` retained until Phase 6 (#1410). `RALPH_TRIAGE_ACTION` is a self-discipline marker for the model — the **slim** postcondition hook (`ralph/hooks/scripts/triage-postcondition.sh`) does NOT read it; it greps the transcript for a valid **terminal token** (`TRIAGED …` / `Queue empty.`). The **legacy plugin** hook (`plugin/ralph-hero/hooks/scripts/triage-postcondition.sh`) does validate this env var against its allowlist.
 
 ## §Step 6: Mark issue as triaged
 
-Apply the `ralph-triage` label on `HUMAN`, `SPLIT`, and `RE-ESTIMATE` outcomes — every outcome that leaves the issue in Backlog. Read current labels first, then include them all plus `ralph-triage` in the `save_issue` call.
+Apply the `ralph-triage` label on every verdict that **leaves the issue in Backlog**: `SPLIT`, `WAIT-pr`, `WAIT-upstream`, and the orthogonal `RE-ESTIMATE` (plus legacy `HUMAN`). Read current labels first, then include them all plus `ralph-triage` (and any `blocked:*` label from §Step 5) in the `save_issue` call.
 
-Rationale: `ROUTE-TO` outcomes move the issue OUT of Backlog (the issue becomes invisible to §Step 2's Backlog query after routing, so no label is needed). `HUMAN`, `SPLIT`, and `RE-ESTIMATE` all leave the issue in Backlog — without the `ralph-triage` label, §Step 2's untriaged-Backlog picker would re-select the issue on the next triage tick, causing an infinite re-pick loop under `--loop`.
+Rationale: `PROMOTE-*`, `CLOSE-*`, and `WAIT-decision` move the issue OUT of Backlog (it becomes invisible to §Step 2's Backlog query, so no `ralph-triage` is needed for re-pick suppression). `SPLIT`, `WAIT-pr`, `WAIT-upstream`, and `RE-ESTIMATE` all leave the issue in Backlog — without the `ralph-triage` label, §Step 2's untriaged-Backlog picker would re-select the issue on the next triage tick, causing an infinite re-pick loop under `--loop`. The `WAIT-*` items also carry a `blocked:*` label so the Phase 3 watcher (once shipped) can find and resolve them.
 
 ## §Step 7: Find and Link Related Issues
 
@@ -161,19 +182,19 @@ After triage action is complete, scan for related issues in Backlog or Research 
 
 ## §Step 8: Emit terminal token
 
-Emit exactly one of the tokens defined in [outcome-tokens.md](../outcome-tokens.md):
+Emit exactly one token, matching the verdict from §Step 4. One token per verdict (see [outcome-tokens.md](../outcome-tokens.md) for the full contract):
 
-- `TRIAGED routed → Research Needed` — issue routed to Research Needed for investigation.
-- `TRIAGED routed → Ready for Plan` — issue routed to Ready for Plan (well-specified, skip research).
-- `TRIAGED routed → In Progress` — trivial fix; issue routed directly to In Progress.
-- `TRIAGED duplicate` — closed as duplicate; references `## Duplicate Of` comment.
-- `TRIAGED canceled` — closed not-planned.
-- `TRIAGED needs-split` — left in Backlog with `needs-split` label so `--mode split` picks it up.
-- `TRIAGED escalated` — escalated to Human Needed; `ralph-triage` label applied.
-- `TRIAGED re-estimated` — estimate updated; issue stays in Backlog.
+- `TRIAGED CLOSE-done` — closed as done/implemented/duplicate (`## Duplicate Of` comment when a duplicate).
+- `TRIAGED CLOSE-canceled` — closed not-planned.
+- `TRIAGED SPLIT` — children created; issue stays in Backlog with `ralph-triage`.
+- `TRIAGED PROMOTE-research` — routed to Research Needed for investigation.
+- `TRIAGED PROMOTE-plan` — routed to Ready for Plan (well-specified, skip research).
+- `TRIAGED WAIT-pr=NNN` — parked in Backlog with `blocked:pr-NNN` (the `=NNN` is part of the token).
+- `TRIAGED WAIT-upstream` — parked in Backlog with `blocked:upstream` (URL recorded in the `## Triage Decision` comment, not the token).
+- `TRIAGED WAIT-decision` — escalated to Human Needed with a `## Escalation` comment.
 - `Queue empty.` — no untriaged Backlog issues (emitted at §Step 2).
 
-`triage-postcondition.sh` greps the transcript for one of these tokens. Anything else fails the Stop hook with exit 2.
+Legacy tokens (`TRIAGED routed → …`, `duplicate`, `canceled`, `needs-split`, `escalated`, `re-estimated`, `skipped …`) remain accepted by the postcondition for back-compat; new triage runs SHOULD emit the verdict-named tokens above. `triage-postcondition.sh` greps the transcript for one of these tokens — anything else fails the Stop hook with exit 2.
 
 ## §Confidence levels
 
