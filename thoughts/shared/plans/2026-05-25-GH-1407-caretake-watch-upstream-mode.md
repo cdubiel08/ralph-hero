@@ -61,6 +61,7 @@ Upstream conditions are fuzzier than a PR merge: a GitHub issue/PR URL has a cle
 - **No new Stop hook** — parity with watch-pr/hygiene; token by convention.
 - **No `## Blocker` or `## Deferred Verdict` comment authored** — read `## Triage Decision`; default `PROMOTE-plan`.
 - **No aggressive condition inference** — when unsure whether an upstream condition is met, leave parked. Never false-advance.
+- **No age/sweep-count escalation for stuck items** (acknowledged scoping choice). The conservative posture has a cost: an item whose URL parses fine but whose condition the mode *cannot confidently confirm* (the fuzzy non-GitHub / plain-HTTP case) lands in the "leave parked" branch **indefinitely** — there is no age-based or sweep-count escape, so it relies on a human (or manual `ralph-triage`/`blocked:upstream` label removal) to escape. This is worse than watch-pr, where an open PR is an unambiguous machine state that *will* eventually flip. Accepted for this phase to guarantee "never false-advance"; a future phase could add a sweep-count escalation to `WAIT-decision`.
 
 ## Implementation Approach
 
@@ -93,7 +94,7 @@ Create `ralph/skills/caretake/modes/watch-upstream.md`, mirroring `modes/watch-p
 - §Step 1 — branch check; not on `main` → emit `WATCH-UPSTREAM SKIPPED — branch <name> is not main` + skip (dedicated token, not IDLE).
 - §Step 2 — `list_issues(profile: "analyst-triage", workflowState: "Backlog", label: "blocked:upstream", limit: 250)`. None → `WATCH-UPSTREAM IDLE` + STOP.
 - §Step 3 — for each, read the `## Triage Decision` comment to extract the upstream URL + condition. If no URL is parseable → escalate branch.
-- §Step 4 — check the condition: GitHub issue/PR URL → `gh issue view`/`gh pr view --json state` (met = closed/merged); other URL → best-effort fetch; **conservative** — only "MET" on confident confirmation, else "still blocked".
+- §Step 4 — check the condition: GitHub issue/PR URL → `gh issue view`/`gh pr view --json state` (met = closed/merged); other URL → best-effort fetch with a **concrete confirm heuristic** so "best-effort" doesn't silently widen scope: a package-registry JSON whose `version`/`tag` field matches the named release condition → MET; an HTTP resource whose presence/status the condition names explicitly (e.g. "200 OK at <url>") → MET; **anything else → treat as still-blocked** (leave parked). Only "MET" on confident confirmation.
 - §Step 5 — act per the outcome-branch table. The advance + escalate `save_issue` calls BOTH pass an explicit `labels=` array (strip `blocked:upstream`; advance drops `ralph-triage`, escalate keeps it). Include the verdict→state mapping (`PROMOTE-plan`→Ready for Plan, `PROMOTE-research`→Research Needed, `CLOSE-*`→Done/Canceled) + the `command:"ralph_triage"` ungated note.
 - §Step 6 — emit `WATCH-UPSTREAM ADVANCED <N>` (resolved this sweep: advanced + escalated; still-parked excluded) / `IDLE` / `SKIPPED`.
 - §Constraints — one sweep; only mutates `blocked:upstream` items; conservative advance.
