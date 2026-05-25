@@ -15,7 +15,7 @@ All four `split-*` hooks gate on `RALPH_SUBCOMMAND=split`. See [split-decomposit
 **If no issue number**: find the oldest M+ issue in Research Needed or Backlog. "Oldest" means earliest `createdAt` — pass `orderBy: "CREATED_AT"` ascending. Use a sub-agent to discover candidates:
 
 ```
-Agent(subagent_type="ralph-hero:codebase-locator",
+Agent(subagent_type="ralph:codebase-locator",
       prompt="Find issues with M/L/XL estimates in Research Needed or Backlog workflow state. Return oldest first by createdAt.")
 ```
 
@@ -59,10 +59,10 @@ If children exist, add a note to the analysis: "Found [N] existing children. Wil
 Spawn parallel sub-tasks to understand the full scope (no `team_name`):
 
 ```
-Agent(subagent_type="ralph-hero:codebase-locator",
+Agent(subagent_type="ralph:codebase-locator",
       prompt="Find all files related to [issue topic]. What components are involved?")
 
-Agent(subagent_type="ralph-hero:codebase-analyzer",
+Agent(subagent_type="ralph:codebase-analyzer",
       prompt="Analyze [primary component]. What are the distinct pieces of work?")
 ```
 

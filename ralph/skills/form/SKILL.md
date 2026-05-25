@@ -176,7 +176,7 @@ Restate in one sentence, then ask 2-3 focused clarifying questions (most-importa
 
 Only if the idea references specific code areas:
 
-- One `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find files related to [idea topic]")` to confirm the relevant area exists. Don't go deep.
+- One `Agent(subagent_type="ralph:codebase-locator", prompt="Find files related to [idea topic]")` to confirm the relevant area exists. Don't go deep.
 
 Only if `knowledge_search` is available, run an optional dedup check (`type: "idea"`, `limit: 3`). If a close match is found, mention it: *"There's an existing idea that may overlap: `[path]` — [title]. Continue with a new idea or build on that one?"*
 

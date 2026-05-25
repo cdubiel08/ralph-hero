@@ -10,13 +10,13 @@ Spawn the sub-tasks below in parallel, then wait for ALL to complete before synt
 
 The research-doc input path already covers this in the doc itself; running these for research inputs duplicates work and bloats context.
 
-- `Agent(subagent_type="ralph-hero:codebase-locator", prompt="Find where [idea topic] would live in the codebase")` — pinpoints the relevant area without reading full files.
-- `Agent(subagent_type="ralph-hero:codebase-analyzer", prompt="What already exists related to [idea topic]? What patterns to build on?")` — identifies existing patterns and code to extend.
+- `Agent(subagent_type="ralph:codebase-locator", prompt="Find where [idea topic] would live in the codebase")` — pinpoints the relevant area without reading full files.
+- `Agent(subagent_type="ralph:codebase-analyzer", prompt="What already exists related to [idea topic]? What patterns to build on?")` — identifies existing patterns and code to extend.
 
 ### Existing work (always)
 
-- `Agent(subagent_type="ralph-hero:thoughts-locator", prompt="Find related ideas, research, and plans about [topic]")` — surfaces overlapping documents in `thoughts/shared/{ideas,research,plans}/`.
-- `Agent(subagent_type="ralph-hero:thoughts-analyzer", prompt="Extract key decisions and prior art from documents about [topic]")` — dispatch on the top thoughts-locator findings.
+- `Agent(subagent_type="ralph:thoughts-locator", prompt="Find related ideas, research, and plans about [topic]")` — surfaces overlapping documents in `thoughts/shared/{ideas,research,plans}/`.
+- `Agent(subagent_type="ralph:thoughts-analyzer", prompt="Extract key decisions and prior art from documents about [topic]")` — dispatch on the top thoughts-locator findings.
 
 ### Existing issues (always)
 

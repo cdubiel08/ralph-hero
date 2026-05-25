@@ -45,7 +45,7 @@ and STOP.
 2. **Dispatch parallel sub-tasks for assessment.** Use the `Agent` tool to check the codebase and GitHub concurrently:
 
    ```
-   Agent(subagent_type="ralph-hero:codebase-locator",
+   Agent(subagent_type="ralph:codebase-locator",
          prompt="Search for [keywords from issue title]. Does this feature/fix already exist?")
    ```
 
