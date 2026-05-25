@@ -29,8 +29,16 @@ github_issues: [NNN, NNN, ...]   # for multi-issue groups
 github_urls:
   - https://github.com/OWNER/REPO/issues/NNN
 primary_issue: NNN
+estimate: XS|S|M|L|XL             # optional; copied from the linked issue
+research_waived: <reason>         # optional; human override (interactive only)
 ---
 ```
+
+- `estimate:` — copied from the linked issue. Lets `plan-research-required.sh`
+  waive the research requirement for sub-threshold work (estimates below
+  `RALPH_RESEARCH_REQUIRED_MIN_ESTIMATE`, default `M`).
+- `research_waived:` — set **only** when a human explicitly approves planning
+  without research (interactive "plan anyway"). Auto mode never sets this.
 
 ## Section order (standard plan)
 
