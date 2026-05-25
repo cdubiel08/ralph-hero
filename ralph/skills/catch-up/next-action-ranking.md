@@ -85,17 +85,17 @@ If `CLAUDE_NONINTERACTIVE` is set, or `AskUserQuestion` is unavailable, skip the
 
 ## Dispatch table
 
-Based on the user's pick, dispatch via `Agent()` or `Skill()`:
+Based on the user's pick, dispatch via `Agent()` or `Skill()`. The `ralph:` worker agents are **thin shells** — they preload no skill, so each prompt must point the agent at the relevant `${CLAUDE_PLUGIN_ROOT}/skills/<verb>/` procedure prose (the same prose the corresponding verb runs inline):
 
 | `direction.kind` | Workflow State | Dispatch |
 |---|---|---|
-| `issue` | `Plan in Review` | `Agent(subagent_type="ralph-hero:review-agent", prompt="Review plan for issue #NNN", description="Review plan for GH-NNN")` |
-| `issue` | `Ready for Plan` | `Agent(subagent_type="ralph-hero:plan-agent", prompt="Plan issue #NNN", description="Plan GH-NNN")` |
-| `issue` | `Research Needed` | `Agent(subagent_type="ralph-hero:research-agent", prompt="Research issue #NNN", description="Research GH-NNN")` |
-| `issue` | `In Review` | `Agent(subagent_type="ralph-hero:review-agent", prompt="Review issue #NNN", description="Review GH-NNN")` |
-| `pr` | — | `Agent(subagent_type="ralph-hero:merge-agent", prompt="Merge PR #NNN", description="Merge PR #NNN")` |
-| `tree-continue` | — | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Continue tree work on issue #NNN", description="Triage GH-NNN")` |
-| `lock-stale` | — | `Agent(subagent_type="ralph-hero:triage-agent", prompt="Triage stalled issue #NNN", description="Triage GH-NNN")` |
+| `issue` | `Plan in Review` | `Agent(subagent_type="ralph:review-agent", prompt="Review the plan for issue #NNN. Follow the plan-review procedure in ${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-review.md exactly; emit APPROVED / NEEDS_ITERATION.", description="Review plan for GH-NNN")` |
+| `issue` | `Ready for Plan` | `Agent(subagent_type="ralph:plan-agent", prompt="Plan issue #NNN. Follow the planning procedure in ${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-shapes.md (and decomposition.md / intake-routing.md as referenced) exactly.", description="Plan GH-NNN")` |
+| `issue` | `Research Needed` | `Agent(subagent_type="ralph:research-agent", prompt="Research issue #NNN. Follow the research procedure in ${CLAUDE_PLUGIN_ROOT}/skills/research/research-shapes.md (and findings-format.md / intake-routing.md as referenced) exactly.", description="Research GH-NNN")` |
+| `issue` | `In Review` | `Agent(subagent_type="ralph:review-agent", prompt="Review issue #NNN. Follow the plan-review procedure in ${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-review.md exactly.", description="Review GH-NNN")` |
+| `pr` | — | `Agent(subagent_type="ralph:merge-agent", prompt="Merge PR #NNN. Follow the merge procedure in ${CLAUDE_PLUGIN_ROOT}/skills/review/merge-gate.md exactly; emit MERGED / MERGE BLOCKED / NOT READY.", description="Merge PR #NNN")` |
+| `tree-continue` | — | `Agent(subagent_type="ralph:triage-agent", prompt="Continue tree work on issue #NNN. Follow the triage procedure in ${CLAUDE_PLUGIN_ROOT}/skills/caretake/modes/triage.md + label-routing.md exactly.", description="Triage GH-NNN")` |
+| `lock-stale` | — | `Agent(subagent_type="ralph:triage-agent", prompt="Triage stalled issue #NNN. Follow the triage procedure in ${CLAUDE_PLUGIN_ROOT}/skills/caretake/modes/triage.md + label-routing.md exactly.", description="Triage GH-NNN")` |
 | `human-needed-unblock` | `Human Needed` | `Skill("ralph:caretake", args="--mode unblock #<NNN>")` |
 
 For the **Work through these in order** option: dispatch sequentially in `directions[]` order. Note before each subsequent dispatch: *"Earlier actions may have changed board state."*

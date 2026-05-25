@@ -42,8 +42,8 @@ Dispatch the impl-agent in Address Mode:
 
 ```
 Agent(
-  subagent_type="ralph-hero:impl-agent",
-  prompt="Address PR review feedback for issue #NNN. The issue is in 'In Review' state with an open PR (feature/GH-NNN). Run /ralph:impl in Address Mode: scan PR review comments, classify (MUST_FIX / SHOULD_FIX / DISCUSS), apply fixes in the worktree, commit, push, and reply to comments. Do NOT change the workflow state — keep it in 'In Review'.",
+  subagent_type="ralph:impl-agent",
+  prompt="Address PR review feedback for issue #NNN. The issue is in 'In Review' state with an open PR (feature/GH-NNN). Run Address Mode per ${CLAUDE_PLUGIN_ROOT}/skills/impl/address-mode.md: scan PR review comments, classify (MUST_FIX / SHOULD_FIX / DISCUSS), apply fixes in the worktree, commit, push, and reply to comments. Do NOT change the workflow state — keep it in 'In Review'.",
   description="Address code review feedback for #NNN (round ROUND/MAX_ROUNDS)"
 )
 ```

@@ -32,7 +32,7 @@ get_tool_input() {
 }
 
 # Extract agent_type from hook input (present when firing inside a sub-agent)
-# Strips plugin namespace prefix (e.g., "ralph-hero:impl-agent" → "impl-agent")
+# Strips plugin namespace prefix (e.g., "ralph:impl-agent" → "impl-agent")
 get_agent_type() {
   local raw
   raw=$(get_field '.agent_type')

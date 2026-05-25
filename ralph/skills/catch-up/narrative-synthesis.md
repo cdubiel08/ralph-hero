@@ -1,6 +1,6 @@
 # Narrative synthesis
 
-This reference is consulted by `/ralph:catch-up` (and the `ralph-hero:catch-up-agent` sub-agent it dispatches) to turn the local activity log into a 2-4 sentence prose narrative of what changed since the user last checked.
+This reference is consulted by `/ralph:catch-up` (and the `ralph:catch-up-agent` sub-agent it dispatches) to turn the local activity log into a 2-4 sentence prose narrative of what changed since the user last checked.
 
 ## Cursor mechanics
 
