@@ -25,7 +25,7 @@ All targets are skills in the same `ralph` plugin → unqualified names work in 
 | IMPLEMENT | `Skill("ralph:impl", args="NNN --auto --plan-doc PATH")` | The slim plugin uses `--auto` mode (one phase per invocation in an isolated worktree, enforced by `impl-worktree-gate.sh`). The runtime gates worktree isolation; hero does not need a separate Agent() session for this. |
 | PR (within IMPLEMENT) | `Skill("ralph:impl", args="NNN --mode pr")` | PR creation is `/ralph:impl --mode pr` — preserves the loop-runner sentinel `Queue empty.` and the queue-pick semantics from the source `ralph-pr` skill. |
 
-> Agent-based dispatch with `subagent_type=ralph-hero:impl-agent` still works against the old plugin's agent definitions in `plugin/ralph-hero/agents/` during the parallel period. The slim plugin prefers Skill() dispatch because it keeps the hero session in control of the resumability protocol. Plan 10 sunset will decide whether to relocate agent definitions into `ralph/agents/` or drop them in favor of pure Skill() dispatch.
+> Agent-based dispatch is available via the thin `subagent_type=ralph:impl-agent` shells now living in `ralph/agents/` (these preload no skill — the dispatcher passes the worker prose inline; see the `review` / `catch-up` dispatch sites). Hero itself prefers `Skill()` dispatch because it keeps the hero session in control of the resumability protocol.
 
 ## Model selection (IMPLEMENT phase)
 

@@ -77,7 +77,7 @@ Distinct from `--mode val|code|merge` which selects a leaf verb. The switch is c
 
 1. Dispatch impl-agent in Address Mode:
    ```
-   Agent(subagent_type="ralph-hero:impl-agent", prompt="Address PR review feedback for GH-NNN. The automated code review flagged issues on PR #PR_NUMBER. Fix MUST_FIX + SHOULD_FIX items, push, reply to comments.")
+   Agent(subagent_type="ralph:impl-agent", prompt="Address PR review feedback for GH-NNN. The automated code review flagged issues on PR #PR_NUMBER. Fix MUST_FIX + SHOULD_FIX items, push, reply to comments. Follow the Address Mode procedure in ${CLAUDE_PLUGIN_ROOT}/skills/impl/address-mode.md exactly.")
    ```
 2. Re-invoke code review ONCE: `Skill("code-review:code-review", "PR_NUMBER")`.
 3. Re-read the verdict via the helper.

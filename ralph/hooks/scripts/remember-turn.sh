@@ -62,7 +62,7 @@ if ! [[ "$MIN_CHARS" =~ ^[0-9]+$ ]]; then
 fi
 
 AGENT_TYPE="${CLAUDE_AGENT_TYPE:-${RALPH_COMMAND:-unknown}}"
-# Strip any plugin namespace prefix (e.g., "ralph-hero:impl-agent" -> "impl-agent")
+# Strip any plugin namespace prefix (e.g., "ralph:impl-agent" -> "impl-agent")
 AGENT_TYPE="${AGENT_TYPE##*:}"
 
 BASE_DIR="${RALPH_DREAM_MEMORIES_DIR:-$HOME/projects/thoughts/dream-memories}"

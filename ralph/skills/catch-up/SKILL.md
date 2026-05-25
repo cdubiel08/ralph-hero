@@ -57,7 +57,7 @@ The unified orientation verb. Default flow is narrative + picker (matches the ol
 
 You compose three primitives:
 
-1. `narrative-synthesis.md` rules → `Agent(subagent_type="ralph-hero:catch-up-agent")` for the catch-up narrative.
+1. `narrative-synthesis.md` rules → `Agent(subagent_type="ralph:catch-up-agent")` for the catch-up narrative.
 2. `ralph_hero__next_actions` MCP tool → ranks work, marks one `recommended: true`. Do NOT pass `openPRs` — the tool fetches them internally.
 3. `AskUserQuestion` picker over the ranked directions.
 
@@ -67,9 +67,9 @@ Dispatch:
 
 ```
 Agent(
-  subagent_type="ralph-hero:catch-up-agent",
+  subagent_type="ralph:catch-up-agent",
   description="Catch-up narrative",
-  prompt="Synthesize the catch-up narrative for this session."
+  prompt="Synthesize the catch-up narrative for this session. Follow the synthesis procedure in ${CLAUDE_PLUGIN_ROOT}/skills/catch-up/narrative-synthesis.md exactly (cursor read, recent_activity call shape, empty/populated/long-absence cases, tone rules, output contract). Return only the narrative text."
 )
 ```
 
@@ -107,7 +107,7 @@ After dispatch completes, output `Session complete.`
 
 ## --mode narrative
 
-Dispatch the same `Agent(subagent_type="ralph-hero:catch-up-agent")` as the default flow's Step 1. Return only the narrative text (or the empty-case sentence from `narrative-synthesis.md`). No picker, no dispatch.
+Dispatch the same `Agent(subagent_type="ralph:catch-up-agent")` as the default flow's Step 1 (same inline prompt pointing at `${CLAUDE_PLUGIN_ROOT}/skills/catch-up/narrative-synthesis.md`). Return only the narrative text (or the empty-case sentence from `narrative-synthesis.md`). No picker, no dispatch.
 
 Consult `narrative-synthesis.md` for tone rules. The single output is prose or the empty-case sentence — no metadata, no headers.
 
