@@ -14,7 +14,7 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 |----------------|--------|------|-------|
 | any | `trigger:builders` | builders | Manual override: force builder dispatch. Hero handles the issue. |
 | any | `trigger:watch` | watchers | Manual override: force watcher dispatch. Feature C ships `ralph:hero --mode watch`. |
-| any | `trigger:scouts` | scouts | Manual override: force scout dispatch. Routes to `/ralph-hero:scouts --issue NNN`. |
+| any | `trigger:scouts` | scouts | Manual override: force scout dispatch. Dispatches `ralph-playwright` skills (a11y-scan / test-e2e / storybook-test / visual-diff) directly for the issue. |
 | any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch. Feature G ships `ralph:caretake`. |
 | any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. |
 
@@ -35,7 +35,7 @@ These labels are written by automated producers (event shims, dream-loop classif
 |----------------|--------|------|-------|
 | any | `watcher-auto` | watchers | Label written by Cloud Monitoring → board bridge (`plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py`). Feature C ships the `ralph:hero --mode watch` entrypoint. |
 | any | `debug-auto` | watchers | Label written by `ralph-debug-collate` (invoked from Watcher heartbeat). Observability follow-ups are owned by watchers. |
-| any | `scout-auto` | scouts | Label written by `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch). Routes to `/ralph-hero:scouts`. |
+| any | `scout-auto` | scouts | Label written by `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch). Dispatches `ralph-playwright` skills directly (a11y-scan / test-e2e / storybook-test / visual-diff). |
 | any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). Feature G ships `ralph:caretake`. |
 
 ## Priority 4 — Workflow state (fallback routing)
@@ -64,7 +64,7 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 |------|-----------------|--------|
 | builders | `ralph:hero` | live |
 | watchers | `ralph:hero --mode watch` | pending Feature C (GH-1270) |
-| scouts | `ralph-hero:scouts` | live |
+| scouts | `Skill("ralph-playwright:a11y-scan")` / `Skill("ralph-playwright:test-e2e")` / `Skill("ralph-playwright:storybook-test")` / `Skill("ralph-playwright:visual-diff")` | live |
 | memorykeepers | manual `dream-now` | no skill yet; Director emits `needs input:` |
 | caretakers | `ralph:caretake` | pending Feature G (GH-1274) |
 
