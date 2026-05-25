@@ -36,11 +36,11 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-plan-gate.sh"
-  PostToolUse:
     - matcher: "mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-state-gate.sh"
+  PostToolUse:
     - matcher: "Write"
       hooks:
         - type: command

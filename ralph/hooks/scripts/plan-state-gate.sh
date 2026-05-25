@@ -12,11 +12,28 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
+# Slim-plugin scope: only activate for /ralph:plan. Without this guard the hook
+# stays registered after /ralph:plan hands off (e.g. under /ralph:hero) and fires
+# on every subsequent save_issue — including impl/merge transitions it has no
+# business adjudicating (GH-1413). Mirrors impl/merge/triage-state-gate.
+if [[ "${RALPH_COMMAND:-}" != "plan" ]]; then
+  allow
+fi
+
 read_input > /dev/null
 
 new_state=$(get_field '.tool_input.workflowState')
 if [[ -z "$new_state" ]]; then
   allow  # Not a state update
+fi
+
+# Semantic-intent transitions (__LOCK__, __COMPLETE__, __ESCALATE__, etc.) are
+# resolved by the MCP save_issue tool to concrete workflow states; the gate must
+# not block them at the intent layer. --mode auto/epic lock via __LOCK__ and
+# advance via __COMPLETE__, so without this passthrough those legitimate plan
+# transitions false-block (GH-1413).
+if is_semantic_intent "$new_state"; then
+  allow_with_context "Semantic intent '$new_state' is resolved server-side; plan-state-gate defers to MCP."
 fi
 
 # Slim-plugin /ralph:plan covers 5 modes (default + auto + epic + iterate + review).
