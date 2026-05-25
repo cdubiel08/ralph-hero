@@ -134,8 +134,9 @@ Abstract intents resolve to concrete states based on the executing skill.
 | RESEARCH | Research Needed |
 | PLAN | Ready for Plan |
 | CLOSE | Done |
-| KEEP | *(no state change)* |
 | SPLIT | *(delegates to ralph_split)* |
+
+> **`KEEP` removed (Phase 6 / #1410):** bare `KEEP` was a dead-end (`no state change`) and is now rejected by `triage-postcondition.sh` (exit 2). A "park without advancing" outcome is now expressed by the structured `WAIT-pr` / `WAIT-upstream` (stay Backlog with a `blocked:*` label) or `WAIT-decision` (Human Needed) verdicts — see the 8-verdict triage schema (#1404).
 
 | Requirement | Enablement |
 |-------------|------------|
