@@ -47,9 +47,9 @@ transcript_text=$(jq -r 'select(.type == "assistant") | .message.content[]? | se
 # Match any of the documented terminal tokens. The 8 structured verdicts (#1417)
 # are matched verbatim; the legacy alternations (routed/duplicate/canceled/…) are
 # retained for back-compat so older transcripts and the parallel plugin surface
-# don't regress. WAIT-pr requires the literal "=NNN" suffix so the branch can't
-# over-match prose.
-if echo "$transcript_text" | grep -qE '^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=.+|WAIT-upstream|WAIT-decision)|^Queue empty\.' ; then
+# don't regress. WAIT-pr requires a literal "=NNN" numeric suffix (PR numbers are
+# integers) so the branch can't over-match prose or a non-numeric suffix.
+if echo "$transcript_text" | grep -qE '^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=[0-9]+|WAIT-upstream|WAIT-decision)|^Queue empty\.' ; then
   echo "Triage postcondition passed: terminal token found in transcript"
   allow
 fi

@@ -11,7 +11,7 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-PATTERN='^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=.+|WAIT-upstream|WAIT-decision)|^Queue empty\.'
+PATTERN='^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=[0-9]+|WAIT-upstream|WAIT-decision)|^Queue empty\.'
 
 pass() {
   echo "  PASS: $1"
@@ -78,6 +78,7 @@ assert_no_match "KEEP (never a terminal token)" "KEEP"
 assert_no_match "Unknown token TRIAGED unknown" "TRIAGED unknown"
 assert_no_match "Bare TRIAGED with no verdict" "TRIAGED"
 assert_no_match "TRIAGED WAIT-pr without =NNN suffix (must name the PR)" "TRIAGED WAIT-pr"
+assert_no_match "TRIAGED WAIT-pr=abc non-numeric suffix (PR numbers are integers)" "TRIAGED WAIT-pr=abc"
 assert_matches "Queue empty. with trailing text still matches (starts with sentinel)" "Queue empty. some extra text"
 assert_no_match "Lowercase queue empty." "queue empty."
 assert_no_match "Prose description of routing (not the literal token)" "Issue was routed to Research Needed"
