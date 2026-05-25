@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Three ways to debounce search in React</title>
+<style>
+/* --- :root palette + type stacks (marine ink on cream) --- */
+:root {
+  --paper:    #f5f1e8;
+  --ink:      #1b2329;
+  --accent:   #2e5d7e;
+  --rust:     #b35a2c;
+  --moss:     #5a7847;
+  --sand:     #e6dcc4;
+  --slate:    #1f262b;
+  --gray-150: #ece7db;
+  --gray-300: #cdc6b7;
+  --gray-500: #847d6c;
+  --gray-700: #3a3a36;
+  --white:    #ffffff;
+
+  --serif: 'Iowan Old Style', Charter, ui-serif, Georgia, serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  'JetBrains Mono', 'SF Mono', Menlo, ui-monospace, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--gray-700);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  padding: 56px 32px 96px;
+}
+
+.page { max-width: 1360px; margin: 0 auto; }
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 38px;
+  line-height: 1.15;
+  color: var(--ink);
+  margin-bottom: 18px;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 40px 0 14px;
+  scroll-margin-top: 24px;
+}
+
+p { margin-bottom: 12px; max-width: 680px; }
+code { font-family: var(--mono); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+ul { padding-left: 20px; max-width: 680px; }
+li { margin-bottom: 6px; }
+
+/* --- shared components used by both workflows --- */
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 10px;
+}
+
+.tldr {
+  border: 1.5px solid var(--gray-300);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--white);
+  padding: 16px 18px;
+  margin-bottom: 8px;
+  max-width: 760px;
+}
+.tldr b { color: var(--ink); }
+
+.callout {
+  display: flex;
+  gap: 12px;
+  border: 1.5px solid var(--sand);
+  background: rgba(230, 220, 196, 0.35);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 18px 0;
+  font-size: 14px;
+  max-width: 760px;
+}
+.callout .ico { color: var(--accent); font-weight: 600; }
+
+.card {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+details {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 14px 0;
+  overflow: hidden;
+  max-width: 760px;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 12px;
+  transition: transform 120ms;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details summary .where {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  margin-left: auto;
+}
+details .body { padding: 0 16px 16px; }
+details .body p { font-size: 14px; }
+
+.tabs {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 16px 0 8px;
+  overflow: hidden;
+  max-width: 760px;
+}
+.tabs .tabbar {
+  display: flex;
+  border-bottom: 1px solid var(--gray-300);
+  background: var(--gray-150);
+}
+.tabs .tabbar button {
+  appearance: none;
+  border: none;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--gray-500);
+  padding: 10px 16px;
+  cursor: pointer;
+  border-right: 1px solid var(--gray-300);
+}
+.tabs .tabbar button.on {
+  background: var(--white);
+  color: var(--ink);
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: -1px;
+}
+.tabs pre {
+  display: none;
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-x: auto;
+}
+.tabs pre.on { display: block; }
+
+/* --- spec workflow: comparison cards --- */
+
+.prompt-box {
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 14.5px;
+  color: var(--gray-700);
+  max-width: 760px;
+}
+.prompt-box .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gray-500);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.approaches {
+  display: grid;
+  gap: 28px;
+  margin-bottom: 56px;
+}
+.approaches[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.approaches[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.approaches[data-n="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .approaches[data-n="2"],
+  .approaches[data-n="3"],
+  .approaches[data-n="4"] { grid-template-columns: 1fr; }
+}
+
+.approach {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.approach-head h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 21px;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.approach-head .num {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--sand);
+  color: var(--ink);
+  padding: 2px 8px;
+  border-radius: 8px;
+  margin-right: 8px;
+  vertical-align: 3px;
+}
+.approach-head p {
+  font-size: 14px;
+  color: var(--gray-500);
+}
+
+/* code panel inside an approach card */
+.code {
+  background: var(--slate);
+  border-radius: 12px;
+  padding: 18px 20px;
+  overflow-x: auto;
+}
+.code pre {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: #E8E6DE;
+  white-space: pre;
+}
+.code .kw  { color: var(--accent); }   /* keywords -> marine teal */
+.code .str { color: var(--moss); }     /* strings  -> moss        */
+.code .cm  { color: var(--gray-500); } /* comments -> warm gray   */
+.code .fn  { color: #c9b98a; }         /* identifiers, warm tan   */
+
+.tradeoffs {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.tradeoffs .row { display: grid; grid-template-columns: 1fr 1fr; }
+.tradeoffs .row + .row { border-top: 1.5px solid var(--gray-300); }
+.tradeoffs .cell { padding: 10px 14px; }
+.tradeoffs .cell:first-child { border-right: 1.5px solid var(--gray-300); }
+.tradeoffs .head {
+  background: var(--gray-150);
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tradeoffs .pro::before,
+.tradeoffs .con::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: 2px;
+}
+.tradeoffs .pro::before { background: var(--moss); }
+.tradeoffs .con::before { background: var(--rust); }
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  color: var(--gray-700);
+  padding: 5px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.chip strong { color: var(--ink); font-weight: 600; }
+
+.reco {
+  border-left: 4px solid var(--accent);
+  background: var(--white);
+  border-radius: 0 12px 12px 0;
+  padding: 24px 28px;
+  max-width: 860px;
+}
+.reco h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+.reco p { font-size: 15px; margin-bottom: 8px; }
+.reco code {
+  background: var(--gray-150);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* --- report workflow: sticky-nav editorial layout --- */
+
+.report {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 48px;
+}
+@media (max-width: 920px) {
+  .report { grid-template-columns: 1fr; }
+  .report nav { display: none; }
+}
+
+.report nav {
+  position: sticky;
+  top: 32px;
+  align-self: start;
+  font-size: 13px;
+}
+.report nav .label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 12px;
+}
+.report nav a {
+  display: block;
+  padding: 5px 0 5px 12px;
+  border-left: 2px solid var(--gray-300);
+  color: var(--gray-700);
+  text-decoration: none;
+  border-bottom: none;
+}
+.report nav a:hover { color: var(--ink); border-color: var(--ink); }
+.report nav a.l2 { padding-left: 24px; font-size: 12.5px; color: var(--gray-500); }
+.report nav .files {
+  margin-top: 28px;
+  border-top: 1px solid var(--gray-300);
+  padding-top: 16px;
+}
+.report nav .files code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  padding: 3px 0;
+}
+
+dl.faq { margin-top: 8px; max-width: 680px; }
+dl.faq dt {
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  margin-top: 18px;
+}
+dl.faq dd { font-size: 14px; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="page-head">
+  <div class="eyebrow">Exploration · React patterns</div>
+  <h1>Three ways to implement debounced search in a React component</h1>
+  <div class="prompt-box">
+    <span class="label">PROMPT</span>
+    Show me three ways to implement debounced search in a React component &mdash; with tradeoffs for each.
+  </div>
+</header>
+
+<section class="approaches" data-n="3" style="margin-top: 32px;">
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">01</span>Inline <code>useEffect</code> + <code>setTimeout</code></h2>
+      <p>Debounce logic lives directly inside the component that owns the input.</p>
+    </header>
+    <div class="code"><pre><span class="kw">import</span> { useState, useEffect } <span class="kw">from</span> <span class="str">'react'</span>;
+
+<span class="kw">export function</span> <span class="fn">TaskSearch</span>({ <span class="fn">onQuery</span> }) {
+  <span class="kw">const</span> [draft, setDraft] = <span class="fn">useState</span>(<span class="str">''</span>);
+
+  <span class="fn">useEffect</span>(() =&gt; {
+    <span class="kw">const</span> id = <span class="fn">setTimeout</span>(() =&gt; <span class="fn">onQuery</span>(draft), <span class="str">300</span>);
+    <span class="kw">return</span> () =&gt; <span class="fn">clearTimeout</span>(id);
+  }, [draft, onQuery]);
+
+  <span class="kw">return</span> (
+    &lt;<span class="fn">input</span>
+      value={draft}
+      onChange={(e) =&gt; <span class="fn">setDraft</span>(e.target.value)}
+      placeholder=<span class="str">"Search tasks"</span>
+    /&gt;
+  );
+}</pre></div>
+    <div class="tradeoffs">
+      <div class="row head">
+        <div class="cell">Pro</div>
+        <div class="cell">Con</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Zero new abstractions, zero deps</div>
+        <div class="cell con">Logic duplicated wherever search lives</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Cleanup colocated with the effect</div>
+        <div class="cell con">Tests must mount the whole component</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Reader needs no library knowledge</div>
+        <div class="cell con">Reaching for a leading edge or <code>maxWait</code> means rewriting it</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">Bundle: <strong>+0 kb</strong></span>
+      <span class="chip">LOC: <strong>~12</strong></span>
+      <span class="chip">Reuse: <strong>low</strong></span>
+    </div>
+  </article>
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">02</span>Custom <code>useDebounce</code> hook</h2>
+      <p>One small hook returns a delayed value; any component imports and reuses it.</p>
+    </header>
+    <div class="code"><pre><span class="cm">// hooks/useDebounce.ts</span>
+<span class="kw">import</span> { useState, useEffect } <span class="kw">from</span> <span class="str">'react'</span>;
+
+<span class="kw">export function</span> <span class="fn">useDebounce</span>&lt;T&gt;(value: T, delay = <span class="str">300</span>): T {
+  <span class="kw">const</span> [v, setV] = <span class="fn">useState</span>(value);
+  <span class="fn">useEffect</span>(() =&gt; {
+    <span class="kw">const</span> id = <span class="fn">setTimeout</span>(() =&gt; <span class="fn">setV</span>(value), delay);
+    <span class="kw">return</span> () =&gt; <span class="fn">clearTimeout</span>(id);
+  }, [value, delay]);
+  <span class="kw">return</span> v;
+}
+
+<span class="cm">// TaskSearch.tsx</span>
+<span class="kw">export function</span> <span class="fn">TaskSearch</span>({ <span class="fn">onQuery</span> }) {
+  <span class="kw">const</span> [draft, setDraft] = <span class="fn">useState</span>(<span class="str">''</span>);
+  <span class="kw">const</span> debounced = <span class="fn">useDebounce</span>(draft, <span class="str">300</span>);
+  <span class="fn">useEffect</span>(() =&gt; <span class="fn">onQuery</span>(debounced), [debounced, onQuery]);
+  <span class="kw">return</span> &lt;<span class="fn">input</span> value={draft} onChange={(e) =&gt; <span class="fn">setDraft</span>(e.target.value)} /&gt;;
+}</pre></div>
+    <div class="tradeoffs">
+      <div class="row head">
+        <div class="cell">Pro</div>
+        <div class="cell">Con</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">One implementation reused across the app</div>
+        <div class="cell con">Adds an abstraction every reader must learn</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Unit-testable in isolation with <code>act()</code></div>
+        <div class="cell con">Trailing-edge only &mdash; no leading edge, no <code>maxWait</code></div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Generic over <code>T</code>; works for any input shape</div>
+        <div class="cell con">Caller still wires the effect that consumes the value</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">Bundle: <strong>+0 kb</strong></span>
+      <span class="chip">LOC: <strong>~10 (hook) + 4 (site)</strong></span>
+      <span class="chip">Reuse: <strong>high</strong></span>
+    </div>
+  </article>
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">03</span><code>lodash.debounce</code> + <code>useMemo</code></h2>
+      <p>Wrap the production-grade lodash debouncer in a memoized callback; pay bytes, get features.</p>
+    </header>
+    <div class="code"><pre><span class="kw">import</span> { useMemo, useEffect } <span class="kw">from</span> <span class="str">'react'</span>;
+<span class="kw">import</span> debounce <span class="kw">from</span> <span class="str">'lodash.debounce'</span>;
+
+<span class="kw">export function</span> <span class="fn">TaskSearch</span>({ <span class="fn">onQuery</span> }) {
+  <span class="kw">const</span> debouncedQuery = <span class="fn">useMemo</span>(
+    () =&gt; <span class="fn">debounce</span>(onQuery, <span class="str">300</span>, { leading: <span class="kw">false</span>, maxWait: <span class="str">1000</span> }),
+    [onQuery]
+  );
+
+  <span class="fn">useEffect</span>(() =&gt; () =&gt; debouncedQuery.<span class="fn">cancel</span>(), [debouncedQuery]);
+
+  <span class="kw">return</span> (
+    &lt;<span class="fn">input</span>
+      onChange={(e) =&gt; <span class="fn">debouncedQuery</span>(e.target.value)}
+      placeholder=<span class="str">"Search tasks"</span>
+    /&gt;
+  );
+}</pre></div>
+    <div class="tradeoffs">
+      <div class="row head">
+        <div class="cell">Pro</div>
+        <div class="cell">Con</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Battle-tested implementation; edge cases handled</div>
+        <div class="cell con">~4 kb gzipped (lodash.debounce standalone)</div>
+      </div>
+      <div class="row">
+        <div class="cell pro"><code>leading</code>, <code>trailing</code>, <code>maxWait</code> all available</div>
+        <div class="cell con">Forget <code>useMemo</code> and you get a fresh debouncer per render</div>
+      </div>
+      <div class="row">
+        <div class="cell pro"><code>.cancel()</code> and <code>.flush()</code> for unmount and submit</div>
+        <div class="cell con">Cleanup is a second effect &mdash; easy to omit</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">Bundle: <strong>+4 kb gz</strong></span>
+      <span class="chip">LOC: <strong>~14</strong></span>
+      <span class="chip">Reuse: <strong>medium</strong></span>
+    </div>
+  </article>
+
+</section>
+
+<aside class="reco">
+  <h2>Recommendation</h2>
+  <p>Go with <strong>approach 02, the custom <code>useDebounce</code> hook</strong>. It removes duplication the moment a second search input appears, stays zero-dep, and the implementation is small enough to read in one sitting &mdash; everything most apps need.</p>
+  <p>Pick <strong>03 (lodash)</strong> instead when you actually need <code>maxWait</code>, leading-edge firing, or <code>.flush()</code> on submit &mdash; rebuilding those into a custom hook is how a 10-line hook becomes a 60-line one. Pick <strong>01 (inline)</strong> only if you have exactly one search input in the whole app and expect that to stay true.</p>
+</aside>
+
+</div>
+</body>
+</html>

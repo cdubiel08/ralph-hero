@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How the ralph-hero MCP server handles GitHub rate limits</title>
+<style>
+:root {
+  --paper:    #f5f1e8;
+  --ink:      #1b2329;
+  --accent:   #2e5d7e;
+  --rust:     #b35a2c;
+  --moss:     #5a7847;
+  --sand:     #e6dcc4;
+  --slate:    #1f262b;
+  --gray-150: #ece7db;
+  --gray-300: #cdc6b7;
+  --gray-500: #847d6c;
+  --gray-700: #3a3a36;
+  --white:    #ffffff;
+
+  --serif: 'Iowan Old Style', Charter, ui-serif, Georgia, serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  'JetBrains Mono', 'SF Mono', Menlo, ui-monospace, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--gray-700);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  padding: 56px 32px 96px;
+}
+
+.page { max-width: 1360px; margin: 0 auto; }
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 38px;
+  line-height: 1.15;
+  color: var(--ink);
+  margin-bottom: 18px;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 40px 0 14px;
+  scroll-margin-top: 24px;
+}
+
+p { margin-bottom: 12px; max-width: 680px; }
+code { font-family: var(--mono); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+ul { padding-left: 20px; max-width: 680px; }
+li { margin-bottom: 6px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 10px;
+}
+
+.tldr {
+  border: 1.5px solid var(--gray-300);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--white);
+  padding: 16px 18px;
+  margin-bottom: 8px;
+  max-width: 760px;
+}
+.tldr b { color: var(--ink); }
+
+.callout {
+  display: flex;
+  gap: 12px;
+  border: 1.5px solid var(--sand);
+  background: rgba(230, 220, 196, 0.35);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 18px 0;
+  font-size: 14px;
+  max-width: 760px;
+}
+.callout .ico { color: var(--accent); font-weight: 600; }
+
+.card {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+details {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 14px 0;
+  overflow: hidden;
+  max-width: 760px;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 12px;
+  transition: transform 120ms;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details summary .where {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  margin-left: auto;
+}
+details .body { padding: 0 16px 16px; }
+details .body p { font-size: 14px; }
+
+.tabs {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 16px 0 8px;
+  overflow: hidden;
+  max-width: 760px;
+}
+.tabs .tabbar {
+  display: flex;
+  border-bottom: 1px solid var(--gray-300);
+  background: var(--gray-150);
+}
+.tabs .tabbar button {
+  appearance: none;
+  border: none;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--gray-500);
+  padding: 10px 16px;
+  cursor: pointer;
+  border-right: 1px solid var(--gray-300);
+}
+.tabs .tabbar button.on {
+  background: var(--white);
+  color: var(--ink);
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: -1px;
+}
+.tabs pre {
+  display: none;
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-x: auto;
+}
+.tabs pre.on { display: block; }
+
+.prompt-box {
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 14.5px;
+  color: var(--gray-700);
+  max-width: 760px;
+}
+.prompt-box .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gray-500);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.approaches {
+  display: grid;
+  gap: 28px;
+  margin-bottom: 56px;
+}
+.approaches[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.approaches[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.approaches[data-n="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .approaches[data-n="2"],
+  .approaches[data-n="3"],
+  .approaches[data-n="4"] { grid-template-columns: 1fr; }
+}
+
+.approach {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.approach-head h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 21px;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.approach-head .num {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--sand);
+  color: var(--ink);
+  padding: 2px 8px;
+  border-radius: 8px;
+  margin-right: 8px;
+  vertical-align: 3px;
+}
+.approach-head p {
+  font-size: 14px;
+  color: var(--gray-500);
+}
+
+.code {
+  background: var(--slate);
+  border-radius: 12px;
+  padding: 18px 20px;
+  overflow-x: auto;
+}
+.code pre {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: #E8E6DE;
+  white-space: pre;
+}
+.code .kw  { color: var(--accent); }
+.code .str { color: var(--moss); }
+.code .cm  { color: var(--gray-500); }
+.code .fn  { color: #c9b98a; }
+
+.tradeoffs {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.tradeoffs .row { display: grid; grid-template-columns: 1fr 1fr; }
+.tradeoffs .row + .row { border-top: 1.5px solid var(--gray-300); }
+.tradeoffs .cell { padding: 10px 14px; }
+.tradeoffs .cell:first-child { border-right: 1.5px solid var(--gray-300); }
+.tradeoffs .head {
+  background: var(--gray-150);
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tradeoffs .pro::before,
+.tradeoffs .con::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: 2px;
+}
+.tradeoffs .pro::before { background: var(--moss); }
+.tradeoffs .con::before { background: var(--rust); }
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  color: var(--gray-700);
+  padding: 5px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.chip strong { color: var(--ink); font-weight: 600; }
+
+.reco {
+  border-left: 4px solid var(--accent);
+  background: var(--white);
+  border-radius: 0 12px 12px 0;
+  padding: 24px 28px;
+  max-width: 860px;
+}
+.reco h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+.reco p { font-size: 15px; margin-bottom: 8px; }
+.reco code {
+  background: var(--gray-150);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.report {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 48px;
+}
+@media (max-width: 920px) {
+  .report { grid-template-columns: 1fr; }
+  .report nav { display: none; }
+}
+
+.report nav {
+  position: sticky;
+  top: 32px;
+  align-self: start;
+  font-size: 13px;
+}
+.report nav .label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 12px;
+}
+.report nav a {
+  display: block;
+  padding: 5px 0 5px 12px;
+  border-left: 2px solid var(--gray-300);
+  color: var(--gray-700);
+  text-decoration: none;
+  border-bottom: none;
+}
+.report nav a:hover { color: var(--ink); border-color: var(--ink); }
+.report nav a.l2 { padding-left: 24px; font-size: 12.5px; color: var(--gray-500); }
+.report nav .files {
+  margin-top: 28px;
+  border-top: 1px solid var(--gray-300);
+  padding-top: 16px;
+}
+.report nav .files code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  padding: 3px 0;
+}
+
+dl.faq { margin-top: 8px; max-width: 680px; }
+dl.faq dt {
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  margin-top: 18px;
+}
+dl.faq dd { font-size: 14px; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+
+<div class="report">
+  <nav>
+    <div class="label">ON THIS PAGE</div>
+    <a href="#tldr">TL;DR</a>
+    <a href="#entry">Where traffic enters</a>
+    <a href="#limiter">The in-process limiter</a>
+    <a href="#limiter" class="l2">1. Pre-request check</a>
+    <a href="#limiter" class="l2">2. Auto-injected fragment</a>
+    <a href="#retry">Retry on 403</a>
+    <a href="#surface">What the caller sees</a>
+    <a href="#knobs">Configurable knobs</a>
+    <a href="#tests">Test coverage</a>
+    <a href="#gotchas">Gaps &amp; gotchas</a>
+    <div class="files">
+      <div class="label">FILES READ</div>
+      <code>mcp-server/src/github-client.ts</code>
+      <code>mcp-server/src/lib/rate-limiter.ts</code>
+      <code>mcp-server/src/tools/issue-tools.ts</code>
+      <code>mcp-server/src/index.ts</code>
+      <code>mcp-server/src/types.ts</code>
+      <code>mcp-server/src/__tests__/github-client.test.ts</code>
+    </div>
+  </nav>
+
+  <main>
+    <header>
+      <div class="eyebrow">Research · feature explainer</div>
+      <h1>How GitHub rate limits work in <code>ralph-hero/mcp-server</code></h1>
+      <div class="tldr" id="tldr">
+        <b>TL;DR</b> &mdash; A proactive in-process limiter sits in front of every GraphQL call: it reads each response's <code>rateLimit</code> field, warns at 100 points remaining, and <b>blocks for up to 60s when ≤ 50</b>. Secondary 403s with <code>retry-after</code> are caught and retried transparently. Primary 429s and every REST call have no retry path at all.
+      </div>
+    </header>
+
+    <h2 id="entry">Where GitHub traffic enters</h2>
+    <p>Two paths reach <code>api.github.com</code>. GraphQL goes through Octokit's <code>@octokit/graphql</code> client, constructed in <code>github-client.ts:109–119</code> with an injected auth header and <em>no</em> throttling plugin. REST goes through a raw <code>fetch()</code> wrapper named <code>restPost()</code> at <code>github-client.ts:363–392</code>. Only the GraphQL path runs through the limiter wrapper <code>executeGraphQL&lt;T&gt;()</code> at line 142.</p>
+
+    <div class="callout">
+      <span class="ico">★</span>
+      <div><b>The split matters.</b> Anything routed through <code>executeGraphQL()</code> &mdash; almost every issue/project read and write &mdash; gets the limiter. Anything that bypasses it (view creation, a few REST-only endpoints) hits GitHub naked.</div>
+    </div>
+
+    <h2 id="limiter">The in-process limiter</h2>
+    <p>One file, ~90 lines: <code>src/lib/rate-limiter.ts</code>. The <code>RateLimiter</code> class tracks <code>remaining</code> and <code>resetAt</code>, updated from each GraphQL response.</p>
+
+    <details open>
+      <summary>1 · Pre-request check <span class="where">rate-limiter.ts:43–67</span></summary>
+      <div class="body">
+        <p>Every call to <code>executeGraphQL()</code> first runs <code>checkBeforeRequest()</code>. If <code>remaining ≤ 50</code> (the block threshold), it sleeps until reset &mdash; <b>capped at 60 seconds</b> regardless of what GitHub's reset window says. If <code>remaining ≤ 100</code> (the warn threshold), it logs but doesn't block.</p>
+        <p>Thresholds are constructor options that <em>could</em> be wired to env vars but currently aren't &mdash; <code>index.ts</code> instantiates the class with the hard-coded defaults <code>(100, 50)</code>.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>2 · Auto-injected rateLimit fragment <span class="where">github-client.ts:149–164</span></summary>
+      <div class="body">
+        <p>Before every non-mutation query goes out, the wrapper checks whether the query contains a <code>rateLimit { remaining cost resetAt }</code> selection. If not, it splices one in via a regex against the leading <code>query &#123;</code> token. The response is parsed and pushed into the limiter so its state stays current without any explicit call by tool code.</p>
+        <div class="callout">
+          <span class="ico">★</span>
+          <div><b>The regex only matches unnamed queries.</b> A <code>query GetIssue($id: ID!) &#123; ... &#125;</code> won't receive auto-injection. If named queries exist anywhere in the codebase, the limiter silently goes stale for them.</div>
+        </div>
+      </div>
+    </details>
+
+    <h2 id="retry">Retry on secondary rate limit</h2>
+    <p>When Octokit raises a 403 carrying a <code>retry-after</code> header, the wrapper catches it, parses the header as seconds, sleeps, and <b>recursively re-invokes <code>executeGraphQL()</code></b>. The caller sees only the eventual success or a final throw.</p>
+
+    <div class="code"><pre><span class="cm">// github-client.ts:227–238 (paraphrased)</span>
+} <span class="kw">catch</span> (err) {
+  <span class="kw">if</span> (err.status === <span class="str">403</span> &amp;&amp; err.response?.headers?.[<span class="str">'retry-after'</span>]) {
+    <span class="kw">const</span> waitMs = <span class="fn">parseInt</span>(err.response.headers[<span class="str">'retry-after'</span>], <span class="str">10</span>) * <span class="str">1000</span>;
+    <span class="kw">await</span> <span class="fn">sleep</span>(waitMs);
+    <span class="kw">return</span> <span class="fn">executeGraphQL</span>(query, vars);  <span class="cm">// recursive — no max-attempts</span>
+  }
+  <span class="kw">throw</span> err;
+}</pre></div>
+
+    <p>No exponential backoff. No retry budget. One secondary-limit storm in succession could stack recursive frames.</p>
+
+    <h2 id="surface">What the caller sees</h2>
+    <p>Tool handlers don't see the limiter at all on the happy path. On failures they see the rethrown error and wrap it via <code>toolError()</code> &mdash; the LLM receives the GitHub message verbatim in the MCP response body.</p>
+
+    <ul>
+      <li><b>403 + retry-after (secondary rate limit):</b> retried once transparently; success returns, failure rethrows.</li>
+      <li><b>429 (primary rate limit):</b> not handled. Thrown straight through to the caller, surfaced to the LLM as a tool error.</li>
+      <li><b>Any REST call hitting 429 or 403:</b> thrown immediately by <code>restPost()</code>. No retry, no log.</li>
+      <li><b>Network / 5xx:</b> logged to OpenTelemetry span and console, rethrown unchanged.</li>
+    </ul>
+
+    <h2 id="knobs">Configurable knobs</h2>
+    <p>Almost none. Everything that <em>could</em> be tunable is hard-coded:</p>
+    <ul>
+      <li><b>Warn / block thresholds</b> &mdash; constructor options, never wired to env (<code>rate-limiter.ts:25–27</code>).</li>
+      <li><b>60-second sleep cap</b> &mdash; literal in <code>checkBeforeRequest()</code> (<code>rate-limiter.ts:53</code>).</li>
+      <li><b>Fragment injection regex</b> &mdash; literal at <code>github-client.ts:154</code>.</li>
+    </ul>
+    <p>No CLI flags, no env vars, no config file. The shape of the limiter is the shape you get.</p>
+
+    <h2 id="tests">Test coverage</h2>
+    <p>Three rate-limit tests live in <code>__tests__/github-client.test.ts</code>:</p>
+    <ul>
+      <li><b>Lines 332–357</b> &mdash; verifies rate-limit state is read from a successful response.</li>
+      <li><b>Lines 385–408</b> &mdash; verifies the 403 + retry-after path retries once and returns the second call's result.</li>
+      <li><b>Lines 410–426</b> &mdash; verifies that 500-class errors are rethrown without retry.</li>
+    </ul>
+
+    <h2 id="gotchas">Gaps &amp; gotchas</h2>
+    <ul>
+      <li><b>No 429 handling.</b> Octokit can raise a primary 429 if the limiter's view of <code>remaining</code> is stale or wrong. The code only retries 403. A 429 propagates as a hard error.</li>
+      <li><b>REST is unprotected.</b> View creation and any other REST-only path inherits zero retry logic. One transient 403 ends the operation.</li>
+      <li><b>Named GraphQL queries skip auto-injection.</b> The regex only catches anonymous <code>query &#123;</code> form. Named queries get no rate-limit fragment, the limiter's state stops updating for them, and the next pre-check uses stale numbers.</li>
+      <li><b>60-second cap is arbitrary.</b> If GitHub returns <code>retry-after: 3600</code> during a long outage, the limiter sleeps 60s and tries again immediately &mdash; the cap protects against indefinite hangs but throws away the server's advice.</li>
+      <li><b>Recursive retry has no ceiling.</b> Successive secondary-limit responses stack recursive <code>executeGraphQL()</code> frames. No <code>maxAttempts</code>, no exponential backoff.</li>
+    </ul>
+
+    <dl class="faq">
+      <dt>Does the limiter share state across MCP server processes?</dt>
+      <dd>No &mdash; it's in-process. Each tool invocation that spawns the server gets a fresh limiter that starts with the first GraphQL response's quota numbers.</dd>
+      <dt>What happens at server cold-start before any response has been seen?</dt>
+      <dd>The limiter initializes with no state, so <code>checkBeforeRequest()</code> on the very first call is a no-op &mdash; the first request always goes out unchecked. The response then seeds the limiter for everything after.</dd>
+      <dt>Would adding <code>octokit-plugin-throttling</code> duplicate work?</dt>
+      <dd>Partially. The plugin handles both 403 and 429, and adds exponential backoff &mdash; both gaps in the current code. The in-process pre-check would still be additive (the plugin reacts; the pre-check anticipates).</dd>
+    </dl>
+
+  </main>
+</div>
+
+</body>
+</html>

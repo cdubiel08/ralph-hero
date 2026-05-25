@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Postgres vs DynamoDB for the event-log store</title>
+<style>
+:root {
+  --paper:    #f5f1e8;
+  --ink:      #1b2329;
+  --accent:   #2e5d7e;
+  --rust:     #b35a2c;
+  --moss:     #5a7847;
+  --sand:     #e6dcc4;
+  --slate:    #1f262b;
+  --gray-150: #ece7db;
+  --gray-300: #cdc6b7;
+  --gray-500: #847d6c;
+  --gray-700: #3a3a36;
+  --white:    #ffffff;
+
+  --serif: 'Iowan Old Style', Charter, ui-serif, Georgia, serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  'JetBrains Mono', 'SF Mono', Menlo, ui-monospace, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--gray-700);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  padding: 56px 32px 96px;
+}
+
+.page { max-width: 1360px; margin: 0 auto; }
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 38px;
+  line-height: 1.15;
+  color: var(--ink);
+  margin-bottom: 18px;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 40px 0 14px;
+  scroll-margin-top: 24px;
+}
+
+p { margin-bottom: 12px; max-width: 680px; }
+code { font-family: var(--mono); font-size: 13px; }
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid currentColor; }
+ul { padding-left: 20px; max-width: 680px; }
+li { margin-bottom: 6px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 10px;
+}
+
+.tldr {
+  border: 1.5px solid var(--gray-300);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--white);
+  padding: 16px 18px;
+  margin-bottom: 8px;
+  max-width: 760px;
+}
+.tldr b { color: var(--ink); }
+
+.callout {
+  display: flex;
+  gap: 12px;
+  border: 1.5px solid var(--sand);
+  background: rgba(230, 220, 196, 0.35);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 18px 0;
+  font-size: 14px;
+  max-width: 760px;
+}
+.callout .ico { color: var(--accent); font-weight: 600; }
+
+.card {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+details {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 14px 0;
+  overflow: hidden;
+  max-width: 760px;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before {
+  content: "▸";
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 12px;
+  transition: transform 120ms;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details summary .where {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  margin-left: auto;
+}
+details .body { padding: 0 16px 16px; }
+details .body p { font-size: 14px; }
+
+.tabs {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 10px;
+  background: var(--white);
+  margin: 16px 0 8px;
+  overflow: hidden;
+  max-width: 760px;
+}
+.tabs .tabbar {
+  display: flex;
+  border-bottom: 1px solid var(--gray-300);
+  background: var(--gray-150);
+}
+.tabs .tabbar button {
+  appearance: none;
+  border: none;
+  background: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--gray-500);
+  padding: 10px 16px;
+  cursor: pointer;
+  border-right: 1px solid var(--gray-300);
+}
+.tabs .tabbar button.on {
+  background: var(--white);
+  color: var(--ink);
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: -1px;
+}
+.tabs pre {
+  display: none;
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-x: auto;
+}
+.tabs pre.on { display: block; }
+
+.prompt-box {
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 14.5px;
+  color: var(--gray-700);
+  max-width: 760px;
+}
+.prompt-box .label {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gray-500);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.approaches {
+  display: grid;
+  gap: 28px;
+  margin-bottom: 56px;
+}
+.approaches[data-n="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.approaches[data-n="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.approaches[data-n="4"] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .approaches[data-n="2"],
+  .approaches[data-n="3"],
+  .approaches[data-n="4"] { grid-template-columns: 1fr; }
+}
+
+.approach {
+  background: var(--white);
+  border: 1.5px solid var(--gray-300);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.approach-head h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 21px;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.approach-head .num {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--sand);
+  color: var(--ink);
+  padding: 2px 8px;
+  border-radius: 8px;
+  margin-right: 8px;
+  vertical-align: 3px;
+}
+.approach-head p {
+  font-size: 14px;
+  color: var(--gray-500);
+}
+
+.code {
+  background: var(--slate);
+  border-radius: 12px;
+  padding: 18px 20px;
+  overflow-x: auto;
+}
+.code pre {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: #E8E6DE;
+  white-space: pre;
+}
+.code .kw  { color: var(--accent); }
+.code .str { color: var(--moss); }
+.code .cm  { color: var(--gray-500); }
+.code .fn  { color: #c9b98a; }
+
+.tradeoffs {
+  border: 1.5px solid var(--gray-300);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.tradeoffs .row { display: grid; grid-template-columns: 1fr 1fr; }
+.tradeoffs .row + .row { border-top: 1.5px solid var(--gray-300); }
+.tradeoffs .cell { padding: 10px 14px; }
+.tradeoffs .cell:first-child { border-right: 1.5px solid var(--gray-300); }
+.tradeoffs .head {
+  background: var(--gray-150);
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tradeoffs .pro::before,
+.tradeoffs .con::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: 2px;
+}
+.tradeoffs .pro::before { background: var(--moss); }
+.tradeoffs .con::before { background: var(--rust); }
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--gray-150);
+  border: 1.5px solid var(--gray-300);
+  color: var(--gray-700);
+  padding: 5px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.chip strong { color: var(--ink); font-weight: 600; }
+
+.reco {
+  border-left: 4px solid var(--accent);
+  background: var(--white);
+  border-radius: 0 12px 12px 0;
+  padding: 24px 28px;
+  max-width: 860px;
+}
+.reco h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+.reco p { font-size: 15px; margin-bottom: 8px; }
+.reco code {
+  background: var(--gray-150);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.report {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 48px;
+}
+@media (max-width: 920px) {
+  .report { grid-template-columns: 1fr; }
+  .report nav { display: none; }
+}
+
+.report nav {
+  position: sticky;
+  top: 32px;
+  align-self: start;
+  font-size: 13px;
+}
+.report nav .label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray-500);
+  margin-bottom: 12px;
+}
+.report nav a {
+  display: block;
+  padding: 5px 0 5px 12px;
+  border-left: 2px solid var(--gray-300);
+  color: var(--gray-700);
+  text-decoration: none;
+  border-bottom: none;
+}
+.report nav a:hover { color: var(--ink); border-color: var(--ink); }
+.report nav a.l2 { padding-left: 24px; font-size: 12.5px; color: var(--gray-500); }
+.report nav .files {
+  margin-top: 28px;
+  border-top: 1px solid var(--gray-300);
+  padding-top: 16px;
+}
+.report nav .files code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--gray-500);
+  padding: 3px 0;
+}
+
+dl.faq { margin-top: 8px; max-width: 680px; }
+dl.faq dt {
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  margin-top: 18px;
+}
+dl.faq dd { font-size: 14px; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="page-head">
+  <div class="eyebrow">Decision · event-log store</div>
+  <h1>Postgres vs DynamoDB for the event-log store</h1>
+  <div class="prompt-box">
+    <span class="label">PROMPT</span>
+    Compare Postgres vs DynamoDB for our event-log store and recommend one.
+  </div>
+</header>
+
+<section class="approaches" data-n="2" style="margin-top: 32px;">
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">01</span>Postgres (append-only table, partitioned by month)</h2>
+      <p>One table keyed on <code>(aggregate_id, sequence_no)</code>, range-partitioned by <code>event_time</code>, written through a managed RDS / Aurora primary.</p>
+    </header>
+    <div class="tradeoffs">
+      <div class="row head">
+        <div class="cell">Pro</div>
+        <div class="cell">Con</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Ad-hoc SQL over the event stream &mdash; debugging is <code>SELECT</code></div>
+        <div class="cell con">Single-primary write ceiling; one node carries every <code>INSERT</code></div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Transactional appends; the optimistic-concurrency check is one row constraint</div>
+        <div class="cell con">Vacuum, bloat, and partition maintenance become real jobs past ~1&nbsp;TB</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Existing team SQL muscle and tooling apply on day one</div>
+        <div class="cell con">Multi-region active-active is a project, not a feature</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Projections / read models can live in the same database, joined to source events</div>
+        <div class="cell con">Replay throughput is bounded by sequential scan speed of one node</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">Write ceiling: <strong>~20k/s (Aurora)</strong></span>
+      <span class="chip">Read latency: <strong>1&ndash;5 ms p50</strong></span>
+      <span class="chip">Ops cost: <strong>medium</strong></span>
+      <span class="chip">$/GB-month: <strong>~$0.10 (gp3)</strong></span>
+    </div>
+  </article>
+
+  <article class="approach">
+    <header class="approach-head">
+      <h2><span class="num">02</span>DynamoDB (partition by aggregate, sort by sequence)</h2>
+      <p>Partition key <code>aggregate_id</code>, sort key <code>sequence_no</code>; GSI on <code>event_time</code> for chronological replay; on-demand capacity.</p>
+    </header>
+    <div class="tradeoffs">
+      <div class="row head">
+        <div class="cell">Pro</div>
+        <div class="cell">Con</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Horizontal write scaling is the default &mdash; no ceiling within a single table</div>
+        <div class="cell con">Access patterns are baked into the schema; new query shapes mean new GSIs</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Single-digit-ms reads on the partition + sort key at any scale</div>
+        <div class="cell con">No joins, no ad-hoc SQL; every debug session pulls items into a script</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Conditional writes give per-aggregate optimistic concurrency for free</div>
+        <div class="cell con">Hot partitions on a popular aggregate throttle the whole partition's throughput</div>
+      </div>
+      <div class="row">
+        <div class="cell pro">Streams + Lambda give a zero-ops projection pipeline</div>
+        <div class="cell con">On-demand cost climbs fast at sustained high RPS; provisioned needs forecasting</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">Write ceiling: <strong>none (per partition: 1000 WCU/s)</strong></span>
+      <span class="chip">Read latency: <strong>2&ndash;10 ms p50</strong></span>
+      <span class="chip">Ops cost: <strong>low</strong></span>
+      <span class="chip">$/GB-month: <strong>~$0.25</strong></span>
+    </div>
+  </article>
+
+</section>
+
+<aside class="reco">
+  <h2>Recommendation</h2>
+  <p>Go with <strong>approach 02, DynamoDB</strong>. Event logs are the workload DynamoDB was shaped for: high-volume appends, partition-key-driven reads (<code>aggregate_id</code>), and a Streams-based projection path that doesn't require us to operate a Kafka or build CDC. The schema constraint &mdash; access patterns up front &mdash; is fine because event-sourced reads are almost always "give me all events for aggregate X" or "give me events since timestamp Y", both of which the partition + sort layout serves natively.</p>
+  <p>Switch to <strong>01 (Postgres)</strong> if (a) sustained write throughput will stay under ~5k events/s for the foreseeable future, (b) the team needs ad-hoc SQL over the event stream for debugging or audit, or (c) projections must transactionally read from the same store as the source events. The moment writes blow past a single Aurora primary or a multi-region active-active requirement lands, the migration cost dwarfs the schema-design discomfort of going to DynamoDB now.</p>
+</aside>
+
+</div>
+</body>
+</html>
