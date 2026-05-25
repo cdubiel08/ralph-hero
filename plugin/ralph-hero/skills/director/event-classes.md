@@ -1,6 +1,6 @@
 # Director Event Classification Taxonomy
 
-This file is the **canonical schema** for Director's event classifier. The classifier performs a lookup against this table to determine which team handles a given issue. Entries are evaluated in the order listed — `trigger:*` labels take highest priority, automation labels come next, and `workflow_state` matches are the fallback.
+This file is the **canonical schema** for Director's event classifier. The classifier performs a lookup against this table to determine which team handles a given issue. Entries are evaluated in the order listed — `trigger:*` labels take highest priority, then `blocked:*` labels (watcher routing), then automation labels, and `workflow_state` matches are the fallback.
 
 **Extending this taxonomy**: Features D and F will add new rows here via PR. Each row is independent; adding a new event class requires only appending a row to the appropriate section and updating the notes column to identify the producer. No changes to Director's classifier logic are required — the lookup is table-driven.
 
@@ -18,7 +18,18 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 | any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch. Feature G ships `ralph-hero:caretake`. |
 | any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. |
 
-## Priority 2 — Automation labels (label exists, producer pending until noted)
+## Priority 2 — Blocked-condition labels (watcher routing)
+
+These labels are written by triage's `WAIT-pr`/`WAIT-upstream` verdicts and park an item against a named, watched condition. Director fires the matching caretake **watcher sweep** (board-wide — it processes every parked item of that kind, including this one) so the condition is re-evaluated immediately rather than at the next heartbeat. The label is **NOT consumed** — the watcher owns its lifecycle and strips it only when the condition resolves.
+
+> **Legacy caveat:** `watch-pr`/`watch-upstream` ship only on the slim `ralph:caretake` surface (#1406/#1407); the legacy `ralph-hero:caretake` implements only `hygiene|report|trends`, so this legacy routing is nominal/schema-parity until ported. The live, correctly-wired path is slim `/ralph:hero --mode classify`.
+
+| workflow_state | labels | team | notes |
+|----------------|--------|------|-------|
+| any | `blocked:pr-*` (prefix-match) | caretakers | Fire `Skill("ralph-hero:caretake", args="--mode watch-pr")` — board-wide sweep, no issue scoping. Label persists. Producer: triage `WAIT-pr` (#1404); consumer: watch-pr (#1406). |
+| any | `blocked:upstream` (exact-match) | caretakers | Fire `Skill("ralph-hero:caretake", args="--mode watch-upstream")` — board-wide sweep. Label persists. Producer: triage `WAIT-upstream` (#1404); consumer: watch-upstream (#1407). |
+
+## Priority 3 — Automation labels (label exists, producer pending until noted)
 
 These labels are written by automated producers (event shims, dream-loop classifier, monitoring bridges). They signal that a specific team should handle the issue without requiring a manual trigger.
 
@@ -29,9 +40,9 @@ These labels are written by automated producers (event shims, dream-loop classif
 | any | `scout-auto` | scouts | Label written by `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch). Routes to `/ralph-hero:scouts`. |
 | any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). Feature G ships `ralph-hero:caretake`. |
 
-## Priority 3 — Workflow state (fallback routing)
+## Priority 4 — Workflow state (fallback routing)
 
-When no trigger or automation labels are present, Director routes by workflow state.
+When no trigger, blocked, or automation labels are present, Director routes by workflow state.
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
@@ -67,9 +78,10 @@ Director evaluates in this order:
 
 1. Fetch the candidate issue's labels array.
 2. Check for any `trigger:*` label (Priority 1). First match wins.
-3. Check for any automation label: `watcher-auto`, `debug-auto`, `scout-auto`, `process-improvement` (Priority 2). First match wins.
-4. Fall through to `workflow_state` lookup (Priority 3).
-5. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.
+3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch-pr`; exact-match `blocked:upstream` → fire `caretake --mode watch-upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed.
+4. Check for any automation label: `watcher-auto`, `debug-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
+5. Fall through to `workflow_state` lookup (Priority 4).
+6. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.
 
 ---
 
@@ -79,7 +91,7 @@ Director writes the sentinel file `${TMPDIR:-/tmp}/ralph-ios-mode` immediately b
 
 The legacy `RALPH_IOS_MODE=1` env var is also honored as a manual operator override (e.g., for desk-mode forced pushes during testing). If either the sentinel file OR `RALPH_IOS_MODE=1` is set, producers treat iOS-mode as active.
 
-Priority 3 (workflow_state-driven) dispatches do NOT write the sentinel — only Priority 1 (`trigger:*`) and `RemoteTrigger` paths do. The sentinel persists until `$TMPDIR` rotation or session end; no explicit cleanup is required.
+Priority 4 (workflow_state-driven) dispatches do NOT write the sentinel — only Priority 1 (`trigger:*`) and `RemoteTrigger` paths do. (Priority 2 `blocked:*` and Priority 3 automation dispatches also do not write it.) The sentinel persists until `$TMPDIR` rotation or session end; no explicit cleanup is required.
 
 ---
 

@@ -82,15 +82,24 @@ Scan `ISSUE_LABELS[]` for any label matching `trigger:<team>`. First match wins.
 
 Set `DISPATCH_REASON=trigger:<label>` and `CONSUMED_LABEL=<matched label>`.
 
-**Priority 2 — Automation labels:**
-If no `trigger:*` label matched, scan `ISSUE_LABELS[]` for automation labels:
+**Priority 2 — Blocked-condition labels (watcher routing):**
+If no `trigger:*` label matched, scan `ISSUE_LABELS[]` for a `blocked:*` label:
+- `blocked:pr-*` (prefix-match) → team: `caretakers`, entrypoint: `ralph-hero:caretake`, dispatch arg `--mode watch-pr`
+- `blocked:upstream` (exact-match) → team: `caretakers`, entrypoint: `ralph-hero:caretake`, dispatch arg `--mode watch-upstream`
+
+Set `DISPATCH_REASON=blocked:<pr|upstream>` and `DISPATCH_ARG=--mode watch-<x>`. **No label consumption** — the watcher owns the `blocked:*` label lifecycle. The dispatch fires a board-wide watcher sweep (no issue scoping; the watcher modes ignore an issue number).
+
+> **Legacy caveat:** the `watch-pr`/`watch-upstream` modes ship only on the **slim** `ralph:caretake` surface (#1406/#1407); the legacy `ralph-hero:caretake` skill here implements only `hygiene|report|trends`, so this legacy routing is **nominal** — it will emit `needs input: unrecognized mode` until the modes are ported. The legacy director surface is superseded by the slim `/ralph:hero --mode classify` path (which is wired correctly end-to-end), so porting is not planned; this row exists for schema parity with the slim taxonomy.
+
+**Priority 3 — Automation labels:**
+If no `trigger:*` or `blocked:*` label matched, scan `ISSUE_LABELS[]` for automation labels:
 - `watcher-auto` → team: `watchers`, entrypoint: `ralph-hero:watch`
 - `scout-auto` → team: `scouts`, entrypoint: `ralph-hero:scouts`
 - `process-improvement` → team: `caretakers`, entrypoint: `ralph-hero:caretake`
 
 Set `DISPATCH_REASON=label:<matched-label>`. No label consumption for automation labels (they are managed by their producers).
 
-**Priority 3 — Workflow state (fallback):**
+**Priority 4 — Workflow state (fallback):**
 If no label matched, look up `ISSUE_WORKFLOW_STATE` in the taxonomy table:
 - `Backlog` → team: `caretakers`, entrypoint: `ralph-hero:caretake`
 - `Research Needed`, `Research in Progress`, `Ready for Plan`, `Plan in Progress`, `Plan in Review`, `In Progress`, `In Review` → team: `builders`, entrypoint: `ralph-hero:hero`
@@ -101,7 +110,7 @@ Set `DISPATCH_REASON=workflow_state:${ISSUE_WORKFLOW_STATE}`.
 
 ### Step 4: Dispatch via Skill()
 
-Director dispatches using `Skill()`. It does NOT call `Agent()` — Director is an orchestrator, not a worker. Team entrypoints receive the issue number as a bare number `NNN` (not `--issue NNN`).
+Director dispatches using `Skill()`. It does NOT call `Agent()` — Director is an orchestrator, not a worker. Team entrypoints receive the issue number as a bare number `NNN` (not `--issue NNN`) — **except the Priority 2 `blocked:*` branch**, which dispatches a board-wide watcher sweep with a `--mode` arg and no issue number (see below).
 
 **iOS-mode sentinel write (Feature H contract):**
 
@@ -111,7 +120,7 @@ Before the `Skill()` call, if `DISPATCH_REASON` starts with `trigger:` OR equals
 touch "${TMPDIR:-/tmp}/ralph-ios-mode"
 ```
 
-This signals downstream producers (Feature H) that the current dispatch is iOS-initiated. Workflow_state-driven dispatches (Priority 3) do NOT write the sentinel — only Priority 1 (`trigger:*`) and `RemoteTrigger` paths do. The sentinel may persist until session end; that is intentional — producers running inside the dispatched session see it. No explicit cleanup is required.
+This signals downstream producers (Feature H) that the current dispatch is iOS-initiated. Workflow_state-driven dispatches (Priority 4) do NOT write the sentinel — only Priority 1 (`trigger:*`) and `RemoteTrigger` paths do (Priority 2 `blocked:*` and Priority 3 automation dispatches also do not). The sentinel may persist until session end; that is intentional — producers running inside the dispatched session see it. No explicit cleanup is required.
 
 **Team → entrypoint mapping:**
 
@@ -128,6 +137,15 @@ This signals downstream producers (Feature H) that the current dispatch is iOS-i
 ```
 Skill("<entrypoint>", args="NNN")
 ```
+
+**Priority 2 `blocked:*` branch** — dispatch the watcher sweep with the `--mode` arg instead of a bare issue number:
+
+```
+Skill("ralph-hero:caretake", args="--mode watch-pr")        # blocked:pr-*
+Skill("ralph-hero:caretake", args="--mode watch-upstream")  # blocked:upstream
+```
+
+This is a board-wide sweep (resolves every parked item of that kind); the watcher modes ignore an issue number, so no `NNN` is passed.
 
 Emit before dispatch: `Classified #NNN as <team> (reason: <DISPATCH_REASON>). Dispatching <entrypoint>.`
 
