@@ -170,18 +170,19 @@ When the `ralph-hero-pr-merged` cloud Routine is unavailable (host offline, Rout
 | Host dependency | None — runs on Anthropic infrastructure | Mac must be on and awake |
 | Offline support | No — requires cloud connectivity | Yes — uses local `gh` CLI |
 | Subscription budget | One Routine invocation per merge | One `claude -p` call per unhandled PR per poll |
-| Setup | One-time UI plugin install | Copy plist, replace `__INSTALL_PATH__`, `launchctl load` |
+| Setup | One-time UI plugin install | Copy plist, replace `__REPO_ROOT__`, `launchctl load` |
 
 **Installation**
 
-1. Copy the plist template and replace the `__INSTALL_PATH__` placeholder:
+1. Copy the plist template and replace the `__REPO_ROOT__` placeholder:
 
 ```bash
 cp plugin/ralph-hero/scripts/routines/launchd/com.ralph.pr-merged-poll.plist.template \
    ~/Library/LaunchAgents/com.ralph.pr-merged-poll.plist
 
-# Edit: replace __INSTALL_PATH__ with the absolute path to poll-merged-prs.sh
-# Example: /Users/yourname/projects/ralph-hero/plugin/ralph-hero/scripts/routines/poll-merged-prs.sh
+# Edit: replace __REPO_ROOT__ with the absolute path to the ralph-hero repo root directory
+# Example: /Users/yourname/projects/ralph-hero
+# The plist runs: cd __REPO_ROOT__ && ./plugin/ralph-hero/scripts/routines/poll-merged-prs.sh
 $EDITOR ~/Library/LaunchAgents/com.ralph.pr-merged-poll.plist
 ```
 
