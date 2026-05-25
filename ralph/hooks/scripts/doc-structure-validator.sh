@@ -56,10 +56,22 @@ case "$command" in
     grep -qE '`[^`]+`' "$doc" || errors+=("Missing: backtick-wrapped file paths (e.g., \`src/file.ts\`) — referenced findings should use code-spans")
     ;;
   plan)
-    # Section names match ralph/skills/plan/plan-shapes.md § Section order.
-    grep -qE "^## Phase [0-9]" "$doc" || errors+=("Missing: '## Phase N:' header pattern (e.g., '## Phase 1: ...')")
-    grep -qE "^#### (Automated|Manual) Verification" "$doc" || errors+=("Missing: '#### Automated Verification' or '#### Manual Verification' subsections")
-    grep -qE "^- \[ \]" "$doc" || errors+=("Missing: success-criteria checkboxes '- [ ] ...'")
+    # Plan-of-plans (epic shape) vs regular plan: self-discriminate by shape, the
+    # same way plan-tier-validator.sh does. Strip fenced code blocks first so a
+    # plan-of-plans that documents the sibling shape in an example does not
+    # false-positive on the '## Feature Decomposition' grep.
+    plan_body=$(awk '/^```/ { f = !f; next } !f { print }' "$doc")
+    if grep -qE "^type:[[:space:]]*plan-of-plans" "$doc" \
+       || printf '%s\n' "$plan_body" | grep -qE "^## Feature Decomposition([[:space:]]|$)"; then
+      # Plan-of-plans shape — sections per ralph/skills/plan/decomposition.md § Plan-of-plans shape.
+      printf '%s\n' "$plan_body" | grep -qE "^## Feature Decomposition([[:space:]]|$)" || errors+=("Missing: '## Feature Decomposition' section (plan-of-plans shape)")
+      printf '%s\n' "$plan_body" | grep -qE "^## Feature Sequencing([[:space:]]|$)" || errors+=("Missing: '## Feature Sequencing' section (plan-of-plans shape)")
+    else
+      # Regular plan shape. Section names match ralph/skills/plan/plan-shapes.md § Section order.
+      grep -qE "^## Phase [0-9]" "$doc" || errors+=("Missing: '## Phase N:' header pattern (e.g., '## Phase 1: ...')")
+      grep -qE "^#### (Automated|Manual) Verification" "$doc" || errors+=("Missing: '#### Automated Verification' or '#### Manual Verification' subsections")
+      grep -qE "^- \[ \]" "$doc" || errors+=("Missing: success-criteria checkboxes '- [ ] ...'")
+    fi
     ;;
   review)
     grep -qE "APPROVED|NEEDS_ITERATION" "$doc" || errors+=("Missing: Verdict (APPROVED or NEEDS_ITERATION)")

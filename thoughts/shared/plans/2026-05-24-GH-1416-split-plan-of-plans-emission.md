@@ -122,21 +122,21 @@ checks byte-for-byte unchanged.
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `bash -n ralph/hooks/scripts/doc-structure-validator.sh` (syntax OK); `shellcheck` if available reports no new errors
-- [ ] **plan-of-plans passes** — using an isolated project root so freshest-wins/path selection is unambiguous:
+- [x] `bash -n ralph/hooks/scripts/doc-structure-validator.sh` (syntax OK); `shellcheck` if available reports no new errors
+- [x] **plan-of-plans passes** — using an isolated project root so freshest-wins/path selection is unambiguous (note: fixture must `mkdir -p` all three artifact dirs — `plans/ reviews/ research/` — since the validator's `find` loop runs under `set -e`):
   ```
   tmp=$(mktemp -d); mkdir -p "$tmp/thoughts/shared/plans"
   printf '%s\n' '---' 'type: plan-of-plans' '---' '## Feature Decomposition' '### Feature A' '## Feature Sequencing' 'A -> B' \
     > "$tmp/thoughts/shared/plans/$(date +%F)-GH-9999-plan-of-plans.md"
   CLAUDE_PROJECT_DIR="$tmp" bash ralph/hooks/scripts/doc-structure-validator.sh <<< '{}'   # expect exit 0
   ```
-- [ ] **regular plan still gated** — same isolated-dir recipe, fixture missing `## Phase N`:
+- [x] **regular plan still gated** — same isolated-dir recipe, fixture missing `## Phase N`:
   ```
   tmp=$(mktemp -d); mkdir -p "$tmp/thoughts/shared/plans"
   printf '%s\n' '---' 'type: plan' '---' '## Overview' 'x' > "$tmp/thoughts/shared/plans/$(date +%F)-GH-9998-regular.md"
   CLAUDE_PROJECT_DIR="$tmp" bash ralph/hooks/scripts/doc-structure-validator.sh <<< '{}'   # expect exit 2
   ```
-- [ ] `npm test` in `plugin/ralph-hero/mcp-server/` still passes (no unintended breakage; hooks are out-of-tree but confirm the suite is green)
+- [x] `npm test` in `plugin/ralph-hero/mcp-server/` still passes (1626 passed, 1 skipped — no unintended breakage; hooks are out-of-tree bash)
 
 #### Manual Verification
 - [ ] Re-read the diff: the regular-plan path is byte-for-byte unchanged when no plan-of-plans signal is present
