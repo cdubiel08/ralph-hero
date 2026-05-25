@@ -27,7 +27,7 @@
     "@opentelemetry/sdk-trace-base": "^2.7.1",
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "yaml": "^2.7.0",
-    "zod": "^3.25.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
