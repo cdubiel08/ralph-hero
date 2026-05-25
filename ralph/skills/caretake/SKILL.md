@@ -91,7 +91,7 @@ All board maintenance flows through this one entrypoint. Ten named modes plus a 
 | Mode | Trigger | Role |
 |---|---|---|
 | **default** | `/ralph:caretake --issue NNN` | Event-driven: read labels, dispatch the right mode via `Skill()` |
-| **all** | `/ralph:caretake` (no args) or `/ralph:caretake --mode all` | Heartbeat fan-out: hygiene + catch-up report + trends |
+| **all** | `/ralph:caretake` (no args) or `/ralph:caretake --mode all` | Heartbeat fan-out: hygiene + watch-pr + watch-upstream + catch-up report + trends |
 | **triage** | `/ralph:caretake --mode triage [#NNN]` | Pick oldest untriaged Backlog, assess, route |
 | **hygiene** | `/ralph:caretake --mode hygiene` | Scan for archive candidates, stale items, WIP violations |
 | **unblock** | `/ralph:caretake --mode unblock [#NNN] [--question]` | Interactive answer OR autonomous request post |
@@ -142,9 +142,11 @@ esac
 - **`--mode <name>`** → read `modes/<name>.md` and follow its body. The mode body sets `RALPH_SUBCOMMAND=<name>` and runs.
 - **No args** or **`--mode all`** → heartbeat fan-out. Invoke serially:
   1. `Skill("ralph:caretake", args="--mode hygiene")`
-  2. `Skill("ralph:catch-up", args="--mode report")`
-  3. `Skill("ralph:caretake", args="--mode trends")`
-  Report consolidated outcome (one line per child).
+  2. `Skill("ralph:caretake", args="--mode watch-pr")`
+  3. `Skill("ralph:caretake", args="--mode watch-upstream")`
+  4. `Skill("ralph:catch-up", args="--mode report")`
+  5. `Skill("ralph:caretake", args="--mode trends")`
+  Report consolidated outcome (one line per child — 5 total). The watch modes run before report/trends so the dashboards reflect post-watch board state; both no-op (`IDLE`) on an empty board, or `SKIPPED` when the heartbeat fires off `main`.
 
 ## Step 2: Emit result line
 
