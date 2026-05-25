@@ -58,10 +58,12 @@ case "$command" in
   plan)
     # Plan-of-plans (epic shape) vs regular plan: self-discriminate by shape, the
     # same way plan-tier-validator.sh does. Strip fenced code blocks first so a
-    # plan-of-plans that documents the sibling shape in an example does not
-    # false-positive on the '## Feature Decomposition' grep.
+    # doc that documents the sibling shape in a fenced example does not
+    # false-positive on EITHER discriminator — both the frontmatter `type:` grep
+    # and the '## Feature Decomposition' grep run on the fence-stripped body
+    # (real frontmatter lives above any fence, so it survives the strip).
     plan_body=$(awk '/^```/ { f = !f; next } !f { print }' "$doc")
-    if grep -qE "^type:[[:space:]]*plan-of-plans" "$doc" \
+    if printf '%s\n' "$plan_body" | grep -qE "^type:[[:space:]]*plan-of-plans" \
        || printf '%s\n' "$plan_body" | grep -qE "^## Feature Decomposition([[:space:]]|$)"; then
       # Plan-of-plans shape — sections per ralph/skills/plan/decomposition.md § Plan-of-plans shape.
       printf '%s\n' "$plan_body" | grep -qE "^## Feature Decomposition([[:space:]]|$)" || errors+=("Missing: '## Feature Decomposition' section (plan-of-plans shape)")
