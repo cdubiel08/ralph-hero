@@ -131,7 +131,7 @@ Choose ONE of the **8 structured verdicts** (#1417). Each verdict names its succ
 
 `RE-ESTIMATE` remains an orthogonal field-fix (correct the estimate; issue stays in Backlog for re-triage). It composes with a verdict on a later tick rather than replacing one.
 
-> The legacy `KEEP` verdict is **retired** by this change — it was the dead-end the structured set exists to remove (it left items in Backlog with no successor). The postcondition hook still accepts `KEEP` until Phase 6 (#1410), but new triage runs MUST pick a structured verdict. This skill is the legacy parallel surface; the active path is `/ralph:caretake --mode triage`.
+> The legacy `KEEP` verdict is **removed** — it was the dead-end the structured set exists to replace (it left items in Backlog with no successor). As of Phase 6 (#1410) the postcondition hook **rejects** bare `KEEP` (exit 2); triage runs MUST pick a structured verdict. This skill is the legacy parallel surface; the active path is `/ralph:caretake --mode triage`.
 
 ### Step 5: Take Action
 
@@ -182,7 +182,7 @@ Add a comment naming the exact condition being waited on.
 export RALPH_TRIAGE_ACTION=PROMOTE-plan   # or CLOSE-done, CLOSE-canceled, SPLIT, PROMOTE-research, WAIT-pr, WAIT-upstream, WAIT-decision
 ```
 
-Valid values: `CLOSE-done`, `CLOSE-canceled`, `SPLIT`, `PROMOTE-research`, `PROMOTE-plan`, `WAIT-pr[=NNN]`, `WAIT-upstream[=URL]`, `WAIT-decision` (the 8 structured verdicts), plus the orthogonal `RE-ESTIMATE` and the legacy set `RESEARCH`, `CLOSE`, `KEEP`, `HUMAN`, `CANCEL` (retained until Phase 6 / #1410). The postcondition hook will block completion if `RALPH_TRIAGE_ACTION` is unset or holds an unrecognized value.
+Valid values: `CLOSE-done`, `CLOSE-canceled`, `SPLIT`, `PROMOTE-research`, `PROMOTE-plan`, `WAIT-pr[=NNN]`, `WAIT-upstream[=URL]`, `WAIT-decision` (the 8 structured verdicts), plus the orthogonal `RE-ESTIMATE` and the still-accepted legacy set `RESEARCH`, `CLOSE`, `HUMAN`, `CANCEL`. Bare `KEEP` is **rejected** (exit 2) as of Phase 6 (#1410). The postcondition hook will block completion if `RALPH_TRIAGE_ACTION` is unset or holds an unrecognized value.
 
 ### Step 6: Mark Issue as Triaged
 
@@ -253,7 +253,7 @@ When running as a team worker, mark your assigned task complete via TaskUpdate. 
 ```
 Triage done for #NNN: [Title]
 
-Action: [CLOSE/SPLIT/RE-ESTIMATE/RESEARCH/KEEP]
+Action: [one of the 8 structured verdicts (CLOSE-done/CLOSE-canceled/SPLIT/PROMOTE-research/PROMOTE-plan/WAIT-pr/WAIT-upstream/WAIT-decision), or RE-ESTIMATE]
 Reason: [Brief explanation]
 Label: ralph-triage applied
 
@@ -279,12 +279,12 @@ Rationale: [Why grouped]
 - Issue seems outdated but not certain
 - Scope seems large but could be done in phases
 
-**Low confidence (KEEP and comment):**
+**Low confidence (PROMOTE-research and comment):**
 - Ambiguous requirements
 - Can't determine if feature exists
 - Unclear if still relevant
 
-When uncertain, prefer KEEP with a detailed comment over closing valid work.
+When uncertain, prefer `PROMOTE-research` (route for investigation) with a detailed comment over closing valid work. (Bare `KEEP` — the old "leave in Backlog, no successor" dead-end — is removed as of Phase 6 / #1410.)
 
 ## Escalation Protocol
 
