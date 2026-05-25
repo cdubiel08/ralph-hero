@@ -97,6 +97,14 @@ Trends is read-only — the markdown report printed to stdout is the deliverable
 
 watch-pr has no `Stop` postcondition hook (parity with hygiene/trends) — it mutates only the `blocked:pr-*`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
+## Watch-Upstream terminal tokens
+
+- `WATCH-UPSTREAM ADVANCED <N>` — `<N>` items **resolved this sweep**: condition-met items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS dead-URL/unparseable items escalated (`WAIT-decision` → Human Needed). Still-blocked / can't-confirm items are NOT counted (conservative — never false-advance).
+- `WATCH-UPSTREAM IDLE` — scan ran cleanly; no Backlog items carry a `blocked:upstream` label.
+- `WATCH-UPSTREAM SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
+
+watch-upstream has no `Stop` postcondition hook (parity with watch-pr/hygiene/trends) — it mutates only the `blocked:upstream`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
+
 ## Loop continuation
 
 When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
