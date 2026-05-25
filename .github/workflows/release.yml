@@ -44,11 +44,11 @@ on:
   push:
     branches: [main]
     paths:
-      # MCP server (existing)
-      - 'plugin/ralph-hero/mcp-server/src/**'
-      - 'plugin/ralph-hero/mcp-server/package.json'
-      - 'plugin/ralph-hero/mcp-server/package-lock.json'
-      - 'plugin/ralph-hero/mcp-server/tsconfig.json'
+      # MCP server (relocated to top-level mcp-server/ in GH-1436)
+      - 'mcp-server/src/**'
+      - 'mcp-server/package.json'
+      - 'mcp-server/package-lock.json'
+      - 'mcp-server/tsconfig.json'
       - 'plugin/ralph-hero/.claude-plugin/plugin.json'
       - 'plugin/ralph-hero/.mcp.json'
       # Plugin content (new)
@@ -81,7 +81,7 @@ permissions:
 
 defaults:
   run:
-    working-directory: plugin/ralph-hero/mcp-server
+    working-directory: mcp-server
 
 jobs:
   release:
@@ -114,7 +114,7 @@ jobs:
           echo "$DIFF"
 
           MCP_CHANGED=false
-          echo "$DIFF" | grep -qE '^plugin/ralph-hero/mcp-server/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
+          echo "$DIFF" | grep -qE '^mcp-server/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
 
           echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
           echo "Classification: mcp_changed=$MCP_CHANGED"
@@ -128,7 +128,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
-          cache-dependency-path: plugin/ralph-hero/mcp-server/package-lock.json
+          cache-dependency-path: mcp-server/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -165,7 +165,9 @@ jobs:
         run: |
           NEW_VERSION=$(npm version "$BUMP_TYPE" --no-git-tag-version | tr -d 'v')
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          PLUGIN_JSON="../.claude-plugin/plugin.json"
+          # working-directory is mcp-server/ (top-level after GH-1436); the
+          # ralph-hero plugin manifest still lives under plugin/ralph-hero/.
+          PLUGIN_JSON="../plugin/ralph-hero/.claude-plugin/plugin.json"
           jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
 
       # ── PUBLISH-FIRST GATE (only when MCP source changed) ─────────────────
@@ -215,7 +217,8 @@ jobs:
         run: |
           sed -i "s/ralph-hero-mcp-server@[0-9][0-9.]*/ralph-hero-mcp-server@${NEW_VERSION}/g" \
             plugin/ralph-hero/justfile \
-            plugin/ralph-hero/.mcp.json
+            plugin/ralph-hero/.mcp.json \
+            ralph/.mcp.json
           sed -i "s/MCP_VERSION=\"[0-9][0-9.]*\"/MCP_VERSION=\"${NEW_VERSION}\"/g" \
             plugin/ralph-hero/scripts/cli-dispatch.sh
 
@@ -227,12 +230,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add plugin/ralph-hero/mcp-server/package.json
-          git add plugin/ralph-hero/mcp-server/package-lock.json
+          git add mcp-server/package.json
+          git add mcp-server/package-lock.json
           git add plugin/ralph-hero/.claude-plugin/plugin.json
           if [ "$MCP_CHANGED" = "true" ]; then
             git add plugin/ralph-hero/justfile
             git add plugin/ralph-hero/.mcp.json
+            git add ralph/.mcp.json
             git add plugin/ralph-hero/scripts/cli-dispatch.sh
           fi
           git commit -m "chore(release): v${NEW_VERSION} [skip ci]"

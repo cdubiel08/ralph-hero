@@ -12,8 +12,11 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Walk up from src/__tests__/ to plugin/ralph-hero/
-const PLUGIN_ROOT = join(__dirname, "..", "..", "..");
+// Walk up from mcp-server/src/__tests__/ to the repo root, then into
+// plugin/ralph-hero/ (the MCP server source relocated to top-level mcp-server/
+// in GH-1436; the skills/agents it asserts against still live under the
+// ralph-hero plugin until Phase 8 deletes it).
+const PLUGIN_ROOT = join(__dirname, "..", "..", "..", "plugin", "ralph-hero");
 
 const SKILLS = [
   "ralph-impl",

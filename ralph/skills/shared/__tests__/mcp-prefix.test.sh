@@ -16,7 +16,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 RALPH_DIR="${REPO_ROOT}/ralph"
 HOOKS_JSON="${RALPH_DIR}/hooks/hooks.json"
 MCP_JSON="${RALPH_DIR}/.mcp.json"
-MCP_SERVER_SRC="${REPO_ROOT}/plugin/ralph-hero/mcp-server/src"
+MCP_SERVER_SRC="${REPO_ROOT}/mcp-server/src"
 
 ok()   { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; echo "      expected: $2"; echo "      got:      $3"; FAIL=$((FAIL + 1)); }

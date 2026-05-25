@@ -119,7 +119,7 @@ Rules:
 - `Will Read` = files this issue depends on but won't change.
 - Each path must be backtick-wrapped (`doc-structure-validator.sh` regex: `` `[^`]+` ``).
 - Both subsections required even if empty (use `None` if no files apply).
-- Cross-repo: prefix paths with repo key — `ralph-hero:plugin/ralph-hero/mcp-server/src/lib/repo-registry.ts`, `landcrawler-ai:src/api/client.ts`. Required for downstream work-stream detection.
+- Cross-repo: prefix paths with repo key — `ralph-hero:mcp-server/src/lib/repo-registry.ts`, `landcrawler-ai:src/api/client.ts`. Required for downstream work-stream detection.
 
 ## Pipeline History (optional, autonomous-only)
 

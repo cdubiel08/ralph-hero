@@ -30,3 +30,9 @@ thoughts/local/pilots/
 # Vitest coverage output (rebuilt by `npm test` / `pnpm test`)
 plugin/*/coverage/
 plugin/*/*/coverage/
+
+# Top-level MCP server build/test artifacts (source relocated here in GH-1436;
+# `dist/` is never committed — see CLAUDE.md "What This Is").
+mcp-server/dist/
+mcp-server/coverage/
+mcp-server/node_modules/
