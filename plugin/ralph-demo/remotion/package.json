@@ -11,22 +11,22 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@remotion/cli": "^4.0.460",
-    "@remotion/transitions": "^4.0.460",
+    "@remotion/cli": "^4.0.464",
+    "@remotion/transitions": "^4.0.464",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "remotion": "^4.0.460",
+    "remotion": "^4.0.464",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
-    "@types/react": "19.2.14",
+    "@types/react": "19.2.15",
     "@types/web": "0.0.349",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.7",
     "jsdom": "^25.0.0",
     "typescript": "6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "private": true,
   "pnpm": {
