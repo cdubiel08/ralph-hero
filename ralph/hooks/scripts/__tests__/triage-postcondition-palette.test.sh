@@ -11,7 +11,7 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-PATTERN='^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped)|^Queue empty\.'
+PATTERN='^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=.+|WAIT-upstream|WAIT-decision)|^Queue empty\.'
 
 pass() {
   echo "  PASS: $1"
@@ -59,12 +59,25 @@ assert_matches "TRIAGED skipped — branch feature/foo is not main" "TRIAGED ski
 assert_matches "Queue empty." "Queue empty."
 
 echo ""
+echo "--- 8 structured verdict tokens (#1417, should match) ---"
+
+assert_matches "TRIAGED CLOSE-done" "TRIAGED CLOSE-done"
+assert_matches "TRIAGED CLOSE-canceled" "TRIAGED CLOSE-canceled"
+assert_matches "TRIAGED SPLIT" "TRIAGED SPLIT"
+assert_matches "TRIAGED PROMOTE-research" "TRIAGED PROMOTE-research"
+assert_matches "TRIAGED PROMOTE-plan" "TRIAGED PROMOTE-plan"
+assert_matches "TRIAGED WAIT-pr=1338 (=NNN suffix kept)" "TRIAGED WAIT-pr=1338"
+assert_matches "TRIAGED WAIT-upstream (suffix dropped)" "TRIAGED WAIT-upstream"
+assert_matches "TRIAGED WAIT-decision" "TRIAGED WAIT-decision"
+
+echo ""
 echo "--- Retired/invalid tokens (should NOT match) ---"
 
 assert_no_match "TRIAGED valid (retired)" "TRIAGED valid"
 assert_no_match "KEEP (never a terminal token)" "KEEP"
 assert_no_match "Unknown token TRIAGED unknown" "TRIAGED unknown"
 assert_no_match "Bare TRIAGED with no verdict" "TRIAGED"
+assert_no_match "TRIAGED WAIT-pr without =NNN suffix (must name the PR)" "TRIAGED WAIT-pr"
 assert_matches "Queue empty. with trailing text still matches (starts with sentinel)" "Queue empty. some extra text"
 assert_no_match "Lowercase queue empty." "queue empty."
 assert_no_match "Prose description of routing (not the literal token)" "Issue was routed to Research Needed"
