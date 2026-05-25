@@ -88,26 +88,6 @@ BODY
 
 After creating all PRs, edit each PR body to link the others. Merge order comes from the `dependency-flow` field in the registry pattern.
 
-## §Drive push
-
-Optional artifact upload to Google Drive. Triggered by `--push-drive` flag OR by the iOS-mode sentinel (`${TMPDIR}/ralph-ios-mode` or `RALPH_IOS_MODE=true`).
-
-```bash
-PR_BODY_TMP=$(mktemp -t "ralph-pr-${ISSUE_NUMBER}-body-XXXXXX.md")
-# Write the same content submitted to gh pr create
-cat > "$PR_BODY_TMP" <<'BODY'
-<rendered PR body>
-BODY
-
-DRIVE_URL=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/lib/push-artifact.sh" \
-    "$PR_BODY_TMP" \
-    "PR for GH-${ISSUE_NUMBER}" \
-    ${PUSH_DRIVE_FLAG:+"$PUSH_DRIVE_FLAG"} 2>/dev/null || true)
-rm -f "$PR_BODY_TMP"
-```
-
-If `DRIVE_URL` is non-empty, append a `Drive: <URL>` line to the `## Pull Request` artifact comment posted on the issue. If empty (skip or failure), the comment is posted unchanged.
-
 ## §Scout Trigger
 
 Conservative heuristic — false-positive cost (backend PRs flagged) exceeds false-negative cost (UI PR slips through, recoverable via manual `/scout`).

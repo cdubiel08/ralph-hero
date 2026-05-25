@@ -49,10 +49,6 @@ The unified orientation verb. Default flow is narrative + picker (matches the ol
 | `--mode report` | Compose status update; post via `create_status_update` (pass `--dry-run` to skip posting) | `/ralph-hero:report` |
 | `--help` / `-h` | Print this table and exit | — |
 
-> The `cos` family (`desk`, `remote`, `unattended`) is deliberately CLI-only —
-> see `ralph cos --help`. Those modes shell out to a local LLM specifically to
-> avoid spawning Claude Code (phone-friendly, scheduled, offline).
-
 ## Default flow
 
 You compose three primitives:

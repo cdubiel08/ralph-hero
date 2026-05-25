@@ -241,7 +241,7 @@ Screenshots: N promoted to thoughts/local/assets/<session>/
 
 Next steps:
   - /ralph-playwright:a11y-scan for deep accessibility audit
-  - /ralph-hero:design-system-audit for component maturity assessment
+  - /ralph-playwright:design-system-audit for component maturity assessment
 ```
 
 ## Reference Files
