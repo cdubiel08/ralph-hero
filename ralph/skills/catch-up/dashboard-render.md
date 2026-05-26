@@ -41,7 +41,7 @@ In markdown/ascii mode, surface the raw warning list under a `### Critical Healt
 - Group, rank, editorialize, or contextualize warnings beyond what the dashboard payload already encodes.
 - Cross-reference issues to call out which "should" be split, closed, or archived.
 
-Remediation, triage, and follow-up analysis belong to `/ralph-hero:hygiene`, `/ralph-hero:triage`, or `/ralph-hero:hello` — NOT to `--mode dashboard`. (Plan 7 introduces `/ralph:caretake`; this reference will be updated then.) After surfacing the raw warning list, STOP.
+Remediation, triage, and follow-up analysis belong to `/ralph:caretake` — NOT to `--mode dashboard`. After surfacing the raw warning list, STOP.
 
 ## Negative example (do NOT produce output like this)
 

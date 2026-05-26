@@ -1,6 +1,6 @@
 # Plan review
 
-Critique-with-verdict for `/ralph:plan --mode review`. Folds `ralph-hero:ralph-review`. Consulted by Steps 3-5 of the review-mode body.
+Critique-with-verdict for `/ralph:plan --mode review`. Consulted by Steps 3-5 of the review-mode body.
 
 ## Purpose
 

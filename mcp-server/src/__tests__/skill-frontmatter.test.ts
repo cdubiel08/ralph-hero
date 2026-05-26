@@ -13,33 +13,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Walk up from mcp-server/src/__tests__/ to the repo root, then into
-// plugin/ralph-hero/ (the MCP server source relocated to top-level mcp-server/
-// in GH-1436; the skills/agents it asserts against still live under the
-// ralph-hero plugin until Phase 8 deletes it).
-const PLUGIN_ROOT = join(__dirname, "..", "..", "..", "plugin", "ralph-hero");
+// ralph/ (plugin/ralph-hero/ was deleted in GH-1438, Phase 8 of epic #1430;
+// ralph/ is now the sole Claude-Code-facing plugin).
+const PLUGIN_ROOT = join(__dirname, "..", "..", "..", "ralph");
 
 const SKILLS = [
-  "ralph-impl",
-  "ralph-plan",
-  "ralph-research",
-  "ralph-pr",
-  "ralph-merge",
+  "impl",
+  "plan",
+  "research",
+  "review",
+  "caretake",
 ] as const;
 
 const AGENTS = [
   "impl-agent",
   "plan-agent",
   "research-agent",
-  "pr-agent",
+  "review-agent",
   "merge-agent",
 ] as const;
 
 // Minimum GitHub MCP tool floor — every autonomous agent under test must keep these.
 // Per-agent extras (list_sub_issues, create_comment, etc.) are intentionally NOT
 // asserted to avoid drift; this guards the floor only.
+// Plugin name is now 'ralph' (not 'ralph-hero') per the marketplace.json entry.
 const REQUIRED_AGENT_TOOLS = [
-  "mcp__plugin_ralph-hero_ralph-github__ralph_hero__get_issue",
-  "mcp__plugin_ralph-hero_ralph-github__ralph_hero__save_issue",
+  "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue",
+  "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue",
 ];
 
 function readFrontmatterBlock(absPath: string): string {

@@ -75,12 +75,12 @@ knowledge-graph claim investigation.
 
 ## Mode dispatch
 
-| Mode | Behavior | Equivalent to |
-|---|---|---|
-| (default) | Interactive: question/issue intake → parallel sub-agents → findings review picker → write doc → optional artifact comment | `/ralph-hero:research` |
-| `--mode auto [#NNN]` | Autonomous: pick / lock XS/S Research-Needed issue → research → write findings → advance to Ready for Plan | `/ralph-hero:ralph-research` |
-| `--mode prove "<claim>"` | Knowledge-graph claim investigation: decompose → entities → paths → evidence → verdict | `/ralph-hero:prove-claim` |
-| `--help` / `-h` | Print this table and exit | — |
+| Mode | Behavior |
+|---|---|
+| (default) | Interactive: question/issue intake → parallel sub-agents → findings review picker → write doc → optional artifact comment |
+| `--mode auto [#NNN]` | Autonomous: pick / lock XS/S Research-Needed issue → research → write findings → advance to Ready for Plan |
+| `--mode prove "<claim>"` | Knowledge-graph claim investigation: decompose → entities → paths → evidence → verdict |
+| `--help` / `-h` | Print this table and exit |
 
 ## Step 0: Parse args
 

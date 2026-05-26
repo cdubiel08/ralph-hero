@@ -41,7 +41,7 @@ describe("RepoRegistrySchema", () => {
             assignees: ["cdubiel08"],
             estimate: "S",
           },
-          paths: ["plugin/ralph-hero/mcp-server"],
+          paths: ["mcp-server"],
         },
         frontend: {
           domain: "ui",
@@ -77,7 +77,7 @@ describe("RepoRegistrySchema", () => {
           localDir: "~/projects/ralph-hero",
           domain: "platform",
           tech: ["typescript"],
-          paths: ["plugin/ralph-hero/mcp-server"],
+          paths: ["mcp-server"],
         },
         "landcrawler-ai": {
           localDir: "~/projects/landcrawler-ai",

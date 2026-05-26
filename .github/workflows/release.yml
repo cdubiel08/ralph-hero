@@ -1,63 +1,32 @@
 name: Release
 
-# === Design note: intentional plugin / npm decoupling ===
+# === Design note: MCP-publish-only ===
 #
-# This workflow ALWAYS bumps the version (package.json + plugin.json) and tags
-# on every triggering push to main, but ONLY publishes to npm when the MCP
-# server source actually changed (see `Publish to npm` step's `if:` guard).
+# plugin/ralph-hero/ was deleted in GH-1438 (epic #1430, Phase 8).
+# This workflow now handles ONLY the MCP server distribution channel:
+#   - Triggers on mcp-server/ source changes
+#   - Bumps mcp-server/package.json + publishes to npm (with provenance)
+#   - Pins ralph/.mcp.json to the new version
 #
-# Why: ralph-hero ships through TWO distribution channels.
-#   - The plugin (skills, agents, hooks) ships via git tags / GitHub Releases.
-#     Claude Code's plugin marketplace pulls plugin content by version tag, so
-#     every meaningful merge needs a tag — even skill-only changes.
-#   - The MCP server ships via npm. Consumers pin a version in `.mcp.json` and
-#     run it via `npx`. Skill-only changes do NOT need a new npm publish
-#     because the MCP server source is unchanged.
-#
-# Consequence: `mcp-server/package.json` may sit a patch or two AHEAD of the
-# latest npm-registry version. That cosmetic drift is INTENTIONAL — not a bug
-# to "fix." Every plugin-only release bumps `package.json` so the next MCP
-# release lands on a fresh patch number, which keeps tags monotonic and
-# avoids tag-collision hazards.
-#
-# History: GH-968 (PR #973) misread the cosmetic drift as a bug and decoupled
-# the bump step from `mcp_changed`, intending to keep `package.json` in lock-
-# step with npm. That caused tag collisions when `package.json` later tried to
-# "catch up" past a plugin-only tag, and required manual recovery. The change
-# was reverted here. See thoughts/shared/plans/2026-05-03-GH-0968-*.md (now
-# tombstoned) for the full retrospective. If you're tempted to re-decouple
-# the bump from publish, read that thread first.
-# =========================================================
+# The ralph plugin versioning (ralph/.claude-plugin/plugin.json) is
+# managed separately by release-ralph.yml.
 #
 # === Design note: publish-first ordering (hardening) ===
 #
-# When mcp_changed is true, `npm publish` runs BEFORE the commit/tag/push.
+# `npm publish` runs BEFORE the commit/tag/push.
 # If publish fails the workflow exits with nothing on main, so `.mcp.json`
-# can never reference a version that doesn't exist on npm. See the matching
-# block in release-knowledge.yml for the full rationale.
-#
-# When mcp_changed is false (skill-only releases), there is no publish step
-# and the bump/commit/tag/push proceeds as before — that path is unchanged.
+# can never reference a version that doesn't exist on npm.
 # =========================================================
 
 on:
   push:
     branches: [main]
     paths:
-      # MCP server (relocated to top-level mcp-server/ in GH-1436)
+      # MCP server source (top-level mcp-server/ — relocated in GH-1436)
       - 'mcp-server/src/**'
       - 'mcp-server/package.json'
       - 'mcp-server/package-lock.json'
       - 'mcp-server/tsconfig.json'
-      - 'plugin/ralph-hero/.claude-plugin/plugin.json'
-      - 'plugin/ralph-hero/.mcp.json'
-      # Plugin content (new)
-      - 'plugin/ralph-hero/agents/**'
-      - 'plugin/ralph-hero/skills/**'
-      - 'plugin/ralph-hero/hooks/**'
-      - 'plugin/ralph-hero/scripts/**'
-      - 'plugin/ralph-hero/templates/**'
-      - 'plugin/ralph-hero/justfile'
   workflow_dispatch:
     inputs:
       bump:
@@ -93,31 +62,6 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-
-      - name: Classify changes
-        id: classify
-        working-directory: .
-        env:
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          # For workflow_dispatch or new branch push (before is all-zeros), default to mcp_changed=true
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] || echo "$BEFORE" | grep -qE '^0+$'; then
-            echo "mcp_changed=true" >> "$GITHUB_OUTPUT"
-            echo "Classification: mcp_changed=true (dispatch or new branch)"
-            exit 0
-          fi
-
-          DIFF=$(git diff --name-only "$BEFORE" "$AFTER")
-          echo "Changed files:"
-          echo "$DIFF"
-
-          MCP_CHANGED=false
-          echo "$DIFF" | grep -qE '^mcp-server/(src/|package\.json|package-lock\.json|tsconfig\.json)' && MCP_CHANGED=true
-
-          echo "mcp_changed=$MCP_CHANGED" >> "$GITHUB_OUTPUT"
-          echo "Classification: mcp_changed=$MCP_CHANGED"
 
       # Node 24 ships with npm 11.x natively, which is required for OIDC
       # trusted publishing (npm CLI >= 11.5.1). Earlier attempts with Node 22
@@ -165,24 +109,17 @@ jobs:
         run: |
           NEW_VERSION=$(npm version "$BUMP_TYPE" --no-git-tag-version | tr -d 'v')
           echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          # working-directory is mcp-server/ (top-level after GH-1436); the
-          # ralph-hero plugin manifest still lives under plugin/ralph-hero/.
-          PLUGIN_JSON="../plugin/ralph-hero/.claude-plugin/plugin.json"
-          jq --arg v "$NEW_VERSION" '.version = $v' "$PLUGIN_JSON" > tmp.json && mv tmp.json "$PLUGIN_JSON"
 
-      # ── PUBLISH-FIRST GATE (only when MCP source changed) ─────────────────
-      # Everything below depends on `npm publish` succeeding (when applicable).
-      # Skill-only releases skip publish + verify and proceed straight to the
-      # commit/tag/push path.
+      # ── PUBLISH-FIRST GATE ────────────────────────────────────────────────
+      # Publish before commit/tag so .mcp.json never references an unpublished
+      # version.
 
       - name: Publish to npm
         # Uses OIDC trusted publishing (id-token: write at job level).
         # npm CLI >= 11.5.1 auto-detects OIDC; no NODE_AUTH_TOKEN needed.
-        if: steps.classify.outputs.mcp_changed == 'true'
         run: npm publish --provenance --access public
 
       - name: Verify version on npm registry
-        if: steps.classify.outputs.mcp_changed == 'true'
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
         # Poll the registry until the just-published version is visible.
@@ -207,38 +144,26 @@ jobs:
           echo "::error::ralph-hero-mcp-server@${NEW_VERSION} not visible on npm registry after $((ATTEMPTS * DELAY))s"
           exit 1
 
-      # ── POST-PUBLISH STEPS (run for both MCP and skill-only releases) ─────
+      # ── POST-PUBLISH STEPS ────────────────────────────────────────────────
 
-      - name: Pin version in justfile and .mcp.json
-        if: steps.classify.outputs.mcp_changed == 'true'
+      - name: Pin version in ralph/.mcp.json
         working-directory: .
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
         run: |
           sed -i "s/ralph-hero-mcp-server@[0-9][0-9.]*/ralph-hero-mcp-server@${NEW_VERSION}/g" \
-            plugin/ralph-hero/justfile \
-            plugin/ralph-hero/.mcp.json \
             ralph/.mcp.json
-          sed -i "s/MCP_VERSION=\"[0-9][0-9.]*\"/MCP_VERSION=\"${NEW_VERSION}\"/g" \
-            plugin/ralph-hero/scripts/cli-dispatch.sh
 
       - name: Commit version bump and tag
         working-directory: .
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
-          MCP_CHANGED: ${{ steps.classify.outputs.mcp_changed }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add mcp-server/package.json
           git add mcp-server/package-lock.json
-          git add plugin/ralph-hero/.claude-plugin/plugin.json
-          if [ "$MCP_CHANGED" = "true" ]; then
-            git add plugin/ralph-hero/justfile
-            git add plugin/ralph-hero/.mcp.json
-            git add ralph/.mcp.json
-            git add plugin/ralph-hero/scripts/cli-dispatch.sh
-          fi
+          git add ralph/.mcp.json
           git commit -m "chore(release): v${NEW_VERSION} [skip ci]"
           git tag "v${NEW_VERSION}"
           git pull --rebase origin main

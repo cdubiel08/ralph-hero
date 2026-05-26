@@ -37,11 +37,11 @@ inline descriptions into structured GitHub artifacts via an interactive picker.
 
 ## Mode dispatch
 
-| Mode | Behavior | Equivalent to |
-|---|---|---|
-| (default) | Intake → research → dedup → picker (5 output formats) | `/ralph-hero:form` |
-| `--mode draft` | Quick capture: ask 2-3 questions → write to `thoughts/shared/ideas/` | `/ralph-hero:draft` |
-| `--help` / `-h` | Print this table and exit | — |
+| Mode | Behavior |
+|---|---|
+| (default) | Intake → research → dedup → picker (5 output formats) |
+| `--mode draft` | Quick capture: ask 2-3 questions → write to `thoughts/shared/ideas/` |
+| `--help` / `-h` | Print this table and exit |
 
 ## Step 0: Flag guard
 

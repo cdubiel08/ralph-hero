@@ -1,6 +1,6 @@
 # Iteration
 
-Surgical updates to an existing plan via `/ralph:plan --mode iterate`. Folds `ralph-hero:iterate`. Consumed by Step 4 of the iterate-mode body.
+Surgical updates to an existing plan via `/ralph:plan --mode iterate`. Consumed by Step 4 of the iterate-mode body.
 
 ## When iterate-mode applies
 

@@ -191,4 +191,4 @@ Drain a pull request that `--mode classify` cannot dispatch (Dependabot bumps, s
 
 ## Notes
 
-`RALPH_SUBCOMMAND` is set once at Step 0. Hooks discriminate against it to no-op when a different mode is active. Old `/ralph-hero:*` orchestrator skills remain functional until Plan 10 sunset; both paths can run side-by-side.
+`RALPH_SUBCOMMAND` is set once at Step 0. Hooks discriminate against it to no-op when a different mode is active. `ralph` is the sole plugin; `plugin/ralph-hero/` was deleted in GH-1438.

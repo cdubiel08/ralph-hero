@@ -1,6 +1,6 @@
 # PR creation
 
-How `/ralph:impl --mode pr` composes the PR body, decides whether to delegate the summary to a local LLM, evaluates cross-repo, optionally pushes the body to Drive, and fires the scout-trigger heuristic.
+How `/ralph:impl --mode pr` composes the PR body, evaluates cross-repo, optionally pushes the body to Drive, and fires the scout-trigger heuristic.
 
 ## §Body template
 
@@ -35,31 +35,6 @@ Closes #NNN
 Closes #NNN_child1
 Closes #NNN_child2
 ```
-
-## §Delegated Summary
-
-Opt-in via `RALPH_DELEGATE_ENABLED=true` (set in user's settings.local.json). When enabled, the `## Summary` section is composed by a local LLM via `$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh` (task name `pr_description`). Inputs: issue title + plan `## Overview` snippet + `git diff --stat origin/main..HEAD` + recent commit log.
-
-**Threshold gate.** Delegation fires only when the diff has ≥2 files OR ≥20 lines changed. Below threshold, fall back to the native one-liner `GH-NNN: <issue title>`. This is **not** a quality decision — it's a token-budget decision; small diffs don't benefit from summary delegation.
-
-**Shape validation.** After the wrapper returns, validate two guards before substituting into the body heredoc:
-
-1. `bytes(output) > 0 && bytes(output) < 1024` (1-3 sentences fit comfortably; larger means the model went off-script).
-2. `first-char(output) != "#"` (the delegate must NOT nest a Markdown heading inside the section the skill wraps).
-
-If either guard fails, log `delegation: fell back to native (rc=0, bad-shape)` and use the native one-liner.
-
-**Wrapper invocation:**
-
-```bash
-"$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh" \
-  --task pr_description \
-  --prompt-file "$PROMPT_FILE" \
-  --max-tokens 256 \
-  --temperature 0.2
-```
-
-Exit-code handling: `0` (success — validate shape), `126` (disabled — silent fallback), `127`/`124`/`1` (unreachable/timeout/other — log and fallback). The `gh pr create` invocation itself is **always native** — delegation is text-in for the `## Summary` block only.
 
 ## §Cross-repo
 

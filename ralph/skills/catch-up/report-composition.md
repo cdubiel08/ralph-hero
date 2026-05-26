@@ -1,6 +1,6 @@
 # Report composition
 
-This reference is consulted by `/ralph:catch-up --mode report`. It carries argument parsing, the pipeline-dashboard call shape, the metrics fallback path, the markdown template, the `--with-trends` append flow, and the final status determination — ported from `plugin/ralph-hero/skills/report/SKILL.md`.
+This reference is consulted by `/ralph:catch-up --mode report`. It carries argument parsing, the pipeline-dashboard call shape, the metrics fallback path, the markdown template, the `--with-trends` append flow, and the final status determination.
 
 ## Argument parsing
 

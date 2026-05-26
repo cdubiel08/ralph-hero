@@ -21,8 +21,7 @@ allowed-tools:
 
 # /ralph:catch-up — Orientation
 
-The unified orientation verb. Default flow is narrative + picker (matches the old
-`/ralph-hero:hello`). The `--mode` flag selects a single-surface alternative.
+The unified orientation verb. The `--mode` flag selects a single-surface alternative.
 
 ## Step 0: Flag guards
 
@@ -41,13 +40,13 @@ The unified orientation verb. Default flow is narrative + picker (matches the ol
 
 ## Mode dispatch
 
-| Mode | Behavior | Equivalent to |
-|---|---|---|
-| (default, no `--mode`) | Narrative paragraph + AskUserQuestion picker over `next_actions`, then Agent dispatch | `/ralph-hero:hello` |
-| `--mode narrative` | 2-4 sentence narrative only, no picker, no dispatch | `/ralph-hero:catch-up` |
-| `--mode dashboard` | Raw `pipeline_dashboard` render (markdown / ascii / json) | `/ralph-hero:status` |
-| `--mode report` | Compose status update; post via `create_status_update` (pass `--dry-run` to skip posting) | `/ralph-hero:report` |
-| `--help` / `-h` | Print this table and exit | — |
+| Mode | Behavior |
+|---|---|
+| (default, no `--mode`) | Narrative paragraph + AskUserQuestion picker over `next_actions`, then Agent dispatch |
+| `--mode narrative` | 2-4 sentence narrative only, no picker, no dispatch |
+| `--mode dashboard` | Raw `pipeline_dashboard` render (markdown / ascii / json) |
+| `--mode report` | Compose status update; post via `create_status_update` (pass `--dry-run` to skip posting) |
+| `--help` / `-h` | Print this table and exit |
 
 ## Default flow
 
