@@ -33,9 +33,9 @@ These labels are written by automated producers (event shims, dream-loop classif
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
-| any | `watcher-auto` | watchers | Label written by Cloud Monitoring → board bridge (`plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py`). Feature C ships the `ralph:hero --mode watch` entrypoint. |
-| any | `debug-auto` | watchers | Label written by `ralph-debug-collate` (invoked from Watcher heartbeat). Observability follow-ups are owned by watchers. |
-| any | `scout-auto` | scouts | Label written by `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch). Dispatches `ralph-playwright` skills directly (a11y-scan / test-e2e / storybook-test / visual-diff). |
+| any | `watcher-auto` | watchers | Label applied manually or by a custom monitoring bridge (see `ralph/hooks/` for the watcher entrypoint). `ralph:hero --mode watch` handles the team dispatch. |
+| any | `debug-auto` | watchers | Label written by `ralph:caretake --mode debug` (invoked from Watcher heartbeat). Observability follow-ups are owned by watchers. |
+| any | `scout-auto` | scouts | Label applied manually or by a custom CI step. Dispatches `ralph-playwright` skills directly (a11y-scan / test-e2e / storybook-test / visual-diff). (`playwright-auto.yml` and the nightly scout script were retired with `plugin/ralph-hero/` in GH-1438.) |
 | any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). Feature G ships `ralph:caretake`. |
 
 ## Priority 4 — Workflow state (fallback routing)
@@ -89,7 +89,7 @@ This table is the canonical inventory of automated label producers as of Feature
 
 | Label | Producer file | Trigger condition |
 |-------|---------------|-------------------|
-| `watcher-auto` | `plugin/ralph-hero/scripts/monitoring-bridge/subscribe.py` | GCP Cloud Monitoring alert delivered to the configured Pub/Sub subscription |
-| `debug-auto` | `plugin/ralph-hero/skills/ralph-debug-collate/SKILL.md` (invoked from Watcher heartbeat) | Langfuse error grouping with ≥ N occurrences in window (default: 3) |
+| `watcher-auto` | manual or custom monitoring bridge | GCP Cloud Monitoring alert (or equivalent) delivered to the board; the automated bridge was retired with `plugin/ralph-hero/` in GH-1438 |
+| `debug-auto` | `ralph:caretake --mode debug` (invoked from Watcher heartbeat) | Langfuse error grouping with ≥ N occurrences in window (default: 3) |
 | `process-improvement` | `scripts/dream/reflect.py::emit_process_improvement_issue` | Dream-loop cluster of size ≥ threshold (default: 5) with ≥ N% `tool_use_error` or `verdict: BLOCKED` signals (default: 30%) |
-| `scout-auto` | `.github/workflows/playwright-auto.yml` (per-PR) and `plugin/ralph-hero/scripts/schedule/scout-nightly.sh` (nightly batch) | PR opened/synchronized/reopened with UI-touching changes; nightly schedule |
+| `scout-auto` | manual or custom CI step | PR opened/synchronized/reopened with UI-touching changes; `playwright-auto.yml` and the nightly scout script were retired with `plugin/ralph-hero/` in GH-1438 |

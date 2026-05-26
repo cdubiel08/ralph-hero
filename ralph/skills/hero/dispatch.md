@@ -35,7 +35,7 @@ Read `${RALPH_IMPL_MODEL:-sonnet}`. Default is sonnet; override via env or shell
 impl_model="${RALPH_IMPL_MODEL:-sonnet}"
 ```
 
-Pass the resolved model explicitly to dispatched verbs that respect it. See [`docs/model-tier-policy.md`](../../../plugin/ralph-hero/docs/model-tier-policy.md) for the complexity-driven tier policy.
+Pass the resolved model explicitly to dispatched verbs that respect it. Default is `sonnet`; opus is used on BLOCKED-escalation (when impl returns `IMPL BLOCKED needs=opus`).
 
 ## BLOCKED escalation
 
