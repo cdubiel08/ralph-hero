@@ -105,36 +105,6 @@ Cross-Phase Integration:
 - Integration tests: 3/3 passing ✓
 ```
 
-## Delegation
-
-Opt-in via `RALPH_DELEGATE_ENABLED`. When enabled, the plan's `## Desired End State` snippet + per-check summary + drift summary + cross-phase result are sent to a local LLM via `$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh` (task name `val_classify`). Returns a strict 3-value enum (`pass|fail|needs-review`).
-
-**Threshold gate** (skip delegation when not worth it): `total_checks >= 2 AND failed_checks >= 1`. All-pass cases classify natively as `VALIDATION PASS`; below-threshold cases skip the wrapper call entirely.
-
-**Cross-check rule**: delegate is advisory, not authoritative. Inconsistency with automated-check results triggers native fallback. Never let delegated text reach the comment body or any GitHub mutation — see `skills/shared/delegation-conventions.md` for the no-mutation rule.
-
-**Wrapper invocation pattern** (the standard delegation-wrapper invocation, shown inline below):
-
-```bash
-set +e
-if OUTPUT=$(bash "$CLAUDE_PLUGIN_ROOT/scripts/ralph-delegate.sh" \
-              --task val_classify \
-              --max-tokens 128 --temperature 0.0 \
-              --prompt-file "$PROMPT_FILE" 2>/dev/null); then
-    CLASSIFICATION=$(echo "$OUTPUT" | jq -er '.classification' 2>/dev/null || echo "")
-    case "$CLASSIFICATION" in
-        pass)          VERDICT_PREFIX="VALIDATION PASS" ;;
-        fail)          VERDICT_PREFIX="VALIDATION FAIL" ;;
-        needs-review)  VERDICT_PREFIX="VALIDATION FAIL" ;; # conservative
-        *)             VERDICT_PREFIX="" ;; # native fallback
-    esac
-fi
-rm -f "$PROMPT_FILE"
-set -e
-```
-
-If the delegate is disabled (`RALPH_DELEGATE_ENABLED` unset), exits 126, or returns an unrecognized enum, the skill classifies natively from the per-check results. 8 KB prompt cap with per-check-summary truncation as fallback; over-cap after truncation falls back to native.
-
 ## Verdict tokens (strict)
 
 The val-mode body MUST emit exactly one of:

@@ -1,5 +1,7 @@
 # Unified Agent System (Director → Teams → Operators)
 
+> **Historical note (GH-1438):** `plugin/ralph-hero/` was deleted in Phase 8 of epic #1430. The `/ralph-hero:director`, `/ralph-hero:autopilot`, `/ralph-hero:watch`, `/ralph-hero:caretake` skill references and `plugin/ralph-hero/skills/director/` path references below are now historical. The equivalent functionality lives in `ralph/skills/hero/`, `ralph/skills/caretake/`, and `ralph/skills/catch-up/`. Treat this document as an architectural reference, not a runbook.
+
 Ralph's autonomous agent organization. Epic [#1267](https://github.com/cdubiel08/ralph-hero/issues/1267) wired the existing per-phase agents, observability skills, dream-loop, and chief-of-staff surfaces into one event-driven pipeline driven from the GitHub Projects V2 board — with first-class iOS remote control.
 
 For the full implementation deep-dive (file:line references, env vars, payload shapes, decision trees), see [`thoughts/shared/research/2026-05-17-GH-1267-unified-agent-system-usage-guide.md`](../thoughts/shared/research/2026-05-17-GH-1267-unified-agent-system-usage-guide.md).

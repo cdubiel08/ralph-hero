@@ -54,7 +54,7 @@ https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/main/thoughts/shared/rese
 Key findings: [1-3 line summary from the research doc's Summary section]
 ```
 
-This mirrors the protocol used by `/ralph:research` (and the legacy `/ralph-hero:research`) so the issue's comment history shows the artifact provenance in a consistent shape.
+This mirrors the protocol used by `/ralph:research` so the issue's comment history shows the artifact provenance in a consistent shape.
 
 ## Ticket-tree shape
 

@@ -76,4 +76,4 @@ No code change required for routing additions — the dispatcher reads this tabl
 
 - [SKILL.md](SKILL.md) — top-level dispatch, arg parsing, heartbeat fan-out.
 - [outcome-tokens.md](outcome-tokens.md) — terminal-verdict strings each mode emits.
-- Director taxonomy at `plugin/ralph-hero/skills/director/event-classes.md` — same trigger-label conventions; future cleanups should keep both in sync.
+- Event-class taxonomy at [`ralph/skills/hero/event-classes.md`](../hero/event-classes.md) — same trigger-label conventions; keep both in sync.

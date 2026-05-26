@@ -81,7 +81,9 @@ All hooks use re-entry safety — if the hook already fired once and the agent s
 - The lead should not implement, research, plan, or review anything itself.
 - All tasks are created after TeamCreate.
 
-## Relationship to ralph-hero
+## Relationship to ralph-hero (historical)
+
+> **Note (GH-1438):** `plugin/ralph-hero/` was deleted in Phase 8 of epic #1430. The `ralph-hero` orchestrator is now the `ralph` plugin at `ralph/skills/hero/`.
 
 Ralph Hero is the **solo orchestrator** — it does the same pipeline work but as a single agent using subagents (Task tool) for parallelism. Ralph Team is the **multi-agent** version using Claude Code Agent Teams for richer coordination.
 

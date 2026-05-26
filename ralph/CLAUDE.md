@@ -20,9 +20,9 @@ Each verb gets its own plan in `../thoughts/shared/plans/`. Don't add verbs ad-h
 
 The symlink at `~/.claude/plugins/cache/ralph/HEAD` points here. Edits are picked up on next skill invocation. Hooks may need a Claude Code reload.
 
-## What's still in `plugin/ralph-hero/`
+## Standalone — `plugin/ralph-hero/` is gone
 
-Everything not yet migrated. The old plugin keeps working until each verb has a dogfooded counterpart in `ralph` — migrate a verb as soon as it works in concert, fixing issues by active dogfooding rather than waiting out a fixed window.
+`ralph` is now the sole Claude-Code-facing plugin in this repo. `plugin/ralph-hero/` was deleted in GH-1438 (epic #1430, Phase 8). All 9 verbs, 16 agents, and the MCP server (`ralph-hero-mcp-server` at top-level `mcp-server/`) are self-contained here.
 
 ## Loop and --auto suitability matrix
 

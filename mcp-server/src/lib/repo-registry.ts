@@ -56,7 +56,7 @@ export const RepoDefaultsSchema = z.object({
  *     tech: [typescript, node]
  *     defaults:
  *       labels: [backend]
- *     paths: [plugin/ralph-hero/mcp-server]
+ *     paths: [mcp-server]
  */
 export const RepoEntrySchema = z.object({
   owner: z

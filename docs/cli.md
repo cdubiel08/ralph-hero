@@ -1,5 +1,7 @@
 # CLI Reference
 
+> **Note (GH-1438):** The justfile and `ralph-cli.sh` script described here were part of `plugin/ralph-hero/`, which was deleted in Phase 8 of epic #1430. These recipes are historical reference only. The primary interface is now the `ralph` plugin — use `/ralph:hero`, `/ralph:impl`, etc. from within Claude Code.
+
 Ralph Hero provides justfile recipes for workflow automation. Run recipes from the `plugin/ralph-hero/` directory (or anywhere via the global `ralph` command if installed).
 
 ## Utility Recipes

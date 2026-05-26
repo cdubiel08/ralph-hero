@@ -37,11 +37,11 @@ inline descriptions into structured GitHub artifacts via an interactive picker.
 
 ## Mode dispatch
 
-| Mode | Behavior | Equivalent to |
-|---|---|---|
-| (default) | Intake → research → dedup → picker (5 output formats) | `/ralph-hero:form` |
-| `--mode draft` | Quick capture: ask 2-3 questions → write to `thoughts/shared/ideas/` | `/ralph-hero:draft` |
-| `--help` / `-h` | Print this table and exit | — |
+| Mode | Behavior |
+|---|---|
+| (default) | Intake → research → dedup → picker (5 output formats) |
+| `--mode draft` | Quick capture: ask 2-3 questions → write to `thoughts/shared/ideas/` |
+| `--help` / `-h` | Print this table and exit |
 
 ## Step 0: Flag guard
 
@@ -110,8 +110,8 @@ Use `AskUserQuestion` with these 5 options. Default-selected option:
 | Label | Behavior |
 |---|---|
 | **GitHub issue** | Create a well-scoped issue ready for the backlog → Step 6a |
-| **Implementation plan** | Hand off to `/ralph:plan` (or `/ralph-hero:plan` until Plan 4 ships) → Step 6c |
-| **Research topic** | Hand off to `/ralph:research` (or `/ralph-hero:research` until Plan 3 ships) → Step 6c |
+| **Implementation plan** | Hand off to `/ralph:plan` → Step 6c |
+| **Research topic** | Hand off to `/ralph:research` → Step 6c |
 | **Ticket tree** | Break into parent + children sub-issues → Step 6b |
 | **Keep as refined idea** | Update the source file with context; no GitHub mutation → Step 6d |
 
@@ -145,8 +145,8 @@ For "Implementation plan" or "Research topic":
 
 1. Update the source file's frontmatter (`status: forming` for ideas; preserve `type: research` for research docs — no status change).
 2. Suggest the next command with the gathered context inlined:
-   - Plan: `/ralph:plan <context summary>` (or `/ralph-hero:plan` until Plan 4 ships)
-   - Research: `/ralph:research <topic>` (or `/ralph-hero:research` until Plan 3 ships)
+   - Plan: `/ralph:plan <context summary>`
+   - Research: `/ralph:research <topic>`
 
 Offer to invoke it directly if the user wants.
 
@@ -188,7 +188,7 @@ Save to `thoughts/shared/ideas/YYYY-MM-DD-description.md` using the draft templa
 
 ### Step 5 (draft): report + suggest next steps
 
-Report the file path. Suggest next-step verbs: `/ralph:form <path>` (crystallize into an issue / plan / research / tree), `/ralph:research` or `/ralph-hero:research` (deep dive), `/ralph:plan` or `/ralph-hero:plan` (jump straight to planning). No frontmatter mutation, no GitHub integration — drafts are pre-ticket.
+Report the file path. Suggest next-step verbs: `/ralph:form <path>` (crystallize into an issue / plan / research / tree), `/ralph:research` (deep dive), `/ralph:plan` (jump straight to planning). No frontmatter mutation, no GitHub integration — drafts are pre-ticket.
 
 ## References
 

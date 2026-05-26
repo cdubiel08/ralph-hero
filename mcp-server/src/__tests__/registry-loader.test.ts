@@ -81,7 +81,7 @@ repos:
     defaults:
       labels: [backend]
       estimate: S
-    paths: [plugin/ralph-hero/mcp-server]
+    paths: [mcp-server]
   frontend:
     domain: ui
     tech: [react]
@@ -107,7 +107,7 @@ patterns:
     expect(mcpEntry.tech).toEqual(["typescript", "node"]);
     expect(mcpEntry.defaults?.labels).toEqual(["backend"]);
     expect(mcpEntry.defaults?.estimate).toBe("S");
-    expect(mcpEntry.paths).toEqual(["plugin/ralph-hero/mcp-server"]);
+    expect(mcpEntry.paths).toEqual(["mcp-server"]);
 
     expect(registry.patterns).toBeDefined();
     const pattern = registry.patterns!["full-stack-feature"];

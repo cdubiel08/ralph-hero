@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Claude Code plugin providing autonomous GitHub Projects V2 workflow automation. The MCP server is published to npm as `ralph-hero-mcp-server` and consumed via `npx` in `.mcp.json`. The `dist/` directory is not committed to git.
+`ralph` — a Claude Code plugin for autonomous GitHub Projects V2 workflow automation. 9 fat skills (catch-up, form, research, plan, impl, review, caretake, hero, setup) backed by the `ralph-hero-mcp-server` npm package. `plugin/ralph-hero/` was deleted in GH-1438 (epic #1430, Phase 8); `ralph/` is now the sole Claude-Code-facing plugin.
 
 ## Build & Test
 
-All commands run from `mcp-server/` (relocated to top-level in GH-1436):
+All commands run from `mcp-server/`:
 
 ```bash
 npm install          # Install dependencies
@@ -27,9 +27,11 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 ## CI/CD
 
-**PR checks** (`ci.yml`): Build + test across Node 18, 20, 22 for plugins with source (hero, knowledge, demo). ralph-playwright is skills/agents-only — no build step.
+**PR checks** (`ci.yml`): Build + test for mcp-server (Node 20/22), ralph-demo, ralph-knowledge. Hook tests from `ralph/hooks/scripts/__tests__`. ShellCheck on `ralph/hooks`. Workflow lint via actionlint + zizmor. MCP pin verification.
 
-**Auto-release** (`release.yml`): Merges to `main` that touch MCP server source auto-bump version in both `mcp-server/package.json` and `.claude-plugin/plugin.json`, tag, and publish to npm with provenance. Include `#minor` or `#major` in a commit message for larger bumps.
+**Auto-release** (`release.yml`): Merges touching `mcp-server/src/**` auto-bump `mcp-server/package.json`, publish to npm (OIDC provenance), and pin `ralph/.mcp.json`. Include `#minor` or `#major` in a commit message for larger bumps.
+
+**ralph plugin release** (`release-ralph.yml`): Merges touching `ralph/**` bump `ralph/.claude-plugin/plugin.json` + tag.
 
 **Do NOT** run `npm publish` manually or push `v*` tags manually — the release workflow handles both.
 
@@ -38,88 +40,44 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 ### Plugin System
 
 ```
-mcp-server/                  # TypeScript MCP server (published as ralph-hero-mcp-server; relocated to top-level in GH-1436)
+mcp-server/              # TypeScript MCP server (published as ralph-hero-mcp-server)
+ralph/                   # Main plugin — 9 fat skills, 16 agents, hooks
+├── skills/              # 9 verb skills (catch-up, form, research, plan, impl, review, caretake, hero, setup)
+│   └── shared/          # Shared references: loop-wrapper, auto-alias, mcp-prefix guard
+├── agents/              # 16 agents (8 thin per-phase + 8 fat investigators)
+├── hooks/               # Lifecycle enforcement hooks
+└── .claude-plugin/      # Plugin manifest + .mcp.json pin
 plugin/
-├── ralph-hero/              # Main plugin — skills, agents, hooks
-│   ├── skills/              # 50+ skill definitions (YAML frontmatter + markdown)
-│   ├── agents/              # 12 per-phase agent definitions (+ worker/eval agents)
-│   ├── hooks/               # 70+ lifecycle enforcement hooks
-│   └── scripts/             # CLI and automation scripts
-├── ralph-knowledge/         # Semantic search over thoughts/ documents
-│   └── src/                 # Hono MCP server, SQLite + sqlite-vec embeddings
-├── ralph-playwright/        # Polymorphic UI testing skills (no MCP server)
-│   ├── skills/              # 7 skills (setup, story-gen, explore, test-e2e, a11y-scan, storybook-test, visual-diff)
-│   ├── agents/              # 2 agents (explorer-agent, story-runner-agent)
-│   └── schemas/             # User story YAML schema + examples
-└── ralph-demo/              # Sprint demo video generation (Remotion)
-    └── remotion/            # React-based video compositing (pnpm)
+├── ralph-knowledge/     # Semantic search over thoughts/ documents
+│   └── src/             # Hono MCP server, SQLite + sqlite-vec embeddings
+├── ralph-playwright/    # Polymorphic UI testing skills (no MCP server)
+│   ├── skills/          # 7 skills
+│   └── agents/          # 2 agents
+└── ralph-demo/          # Sprint demo video generation (Remotion)
+    └── remotion/        # React-based video compositing (pnpm)
 ```
 
-### Per-Phase Agents
+### ralph Plugin — 9 Verbs
 
-Each autonomous skill has a dedicated agent in `plugin/ralph-hero/agents/` that preloads the skill via the `skills:` field. The hero orchestrator dispatches these agents via `Agent()` calls with natural language prompts.
+| Verb | Model tier | Purpose |
+|------|-----------|---------|
+| `/ralph:catch-up` | haiku/sonnet | Orientation: narrative + picker or single-surface mode |
+| `/ralph:form` | sonnet | Issue intake: dedup, draft, tree |
+| `/ralph:research` | sonnet/opus | Research: interactive or autonomous queue-drain |
+| `/ralph:plan` | opus | Planning: interactive, auto, epic, iterate, review |
+| `/ralph:impl` | sonnet | Implementation: auto, pr, address |
+| `/ralph:review` | sonnet/opus | Review: val, code, merge |
+| `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
+| `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
+| `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
 
-| Agent | Model | Preloaded Skill | Tier | Notes |
-|-------|-------|-----------------|------|-------|
-| `research-agent` | sonnet | ralph-research | Analyst | |
-| `plan-agent` | opus | ralph-plan | Analyst | |
-| `plan-epic-agent` | opus | ralph-plan-epic | Analyst | |
-| `split-agent` | sonnet | ralph-split | Analyst | Downgraded 2026-05-13; hook-gated decomposition. Override with `RALPH_SPLIT_MODEL=opus`. |
-| `triage-agent` | sonnet | ralph-triage | Analyst | |
-| `review-agent` | opus | ralph-review | Builder | |
-| `impl-agent` | sonnet | ralph-impl | Builder | Downgraded 2026-05-13. On `IMPL BLOCKED needs=opus` verdict, hero re-dispatches once with `model="opus"`. Override with `RALPH_IMPL_MODEL=opus`. |
-| `pr-agent` | haiku | ralph-pr | Integrator | |
-| `merge-agent` | haiku | ralph-merge | Integrator | |
-| `val-agent` | sonnet | ralph-val | Integrator | Model aligned with `ralph-val/SKILL.md` in GH-1265 (2026-05-15). |
-| `unblock-agent` | sonnet | ralph-unblock | Async-loop | |
-| `scouts-agent` | sonnet | scouts | Scout | Multi-skill orchestration (a11y-scan + conditional test-e2e/storybook-test/visual-diff). Override with `RALPH_SCOUTS_MODEL=opus`. |
+### ralph Plugin — 16 Agents
 
-> **Model tier policy**: see `plugin/ralph-hero/docs/model-tier-policy.md` for
-> the complexity-driven tier rules and `RALPH_<AGENT>_MODEL` override pattern.
+**8 thin per-phase agents** (in `ralph/agents/`): `impl-agent`, `plan-agent`, `research-agent`, `review-agent`, `merge-agent`, `catch-up-agent`, `caretake-agent`, `form-agent`
 
-### Unified Agent System (Director → Teams → Operators)
+**8 fat investigators** (in `ralph/agents/`): `codebase-locator`, `plan-investigator`, `research-investigator`, `impl-investigator`, `review-investigator`, `caretake-investigator`, `hero-investigator`, `scout-agent`
 
-Epic [#1267](https://github.com/cdubiel08/ralph-hero/issues/1267) wired the per-phase agents above plus the observability skills, dream-loop, and chief-of-staff surfaces into one event-driven pipeline driven from the GitHub Projects V2 board. See [`docs/unified-agent-system.md`](docs/unified-agent-system.md) for the user-facing quickstart and [`thoughts/shared/research/2026-05-17-GH-1267-unified-agent-system-usage-guide.md`](thoughts/shared/research/2026-05-17-GH-1267-unified-agent-system-usage-guide.md) for the implementation deep-dive.
-
-The user-facing surface:
-
-| Concern | Entrypoint |
-|---------|-----------|
-| Dispatch one event | `/ralph-hero:director [--issue NNN]` |
-| Drive the queue end-to-end | `/ralph-hero:autopilot` (requires `RALPH_AUTOPILOT_ENABLE=true`) |
-| Builders team | `/ralph-hero:hero NNN` |
-| Watchers team | `/ralph-hero:watch [--issue NNN]` (heartbeat when no arg) |
-| Caretakers team | `/ralph-hero:caretake [--issue NNN \| --mode hygiene\|report\|trends]` |
-| Scouts team | `/ralph-hero:scouts [--issue NNN]` (per-PR via `playwright-auto.yml`; nightly batch via `scout-nightly.sh` cron) |
-| Memorykeepers team | manual `dream-now` zsh function |
-| iOS trigger | add `trigger:<team>` label from GitHub mobile app |
-| iOS push | ntfy (`RALPH_COS_NTFY_TOPIC`) — fires from `ralph-merge` Step 9c + morning-brief |
-
-Director classifies each issue in three-priority order: `trigger:<team>` label → automation label (`watcher-auto`/`debug-auto`/`scout-auto`/`process-improvement`) → workflow state. Taxonomy lives at [`plugin/ralph-hero/skills/director/event-classes.md`](plugin/ralph-hero/skills/director/event-classes.md) — adding a new event class is a one-row PR.
-
-Per-team voice and refusals live in `plugin/ralph-hero/skills/<team>/SOUL.md`, loaded into the orchestrator's system prompt by the `load-team-soul.sh` SessionStart hook. SOUL governs voice; `STYLE.md` governs mechanics (file paths, link formats, comment headers).
-
-Heartbeats are user-scheduled (nothing auto-installs):
-- Watcher: `Skill("schedule", "every 15m /ralph-hero:watch")` (override via `RALPH_WATCH_HEARTBEAT_MIN`)
-- Caretaker (×3): `bash plugin/ralph-hero/scripts/caretake/install-schedules.sh`
-- Scout: `/schedule create scout-nightly --cron "0 3 * * *" --script plugin/ralph-hero/scripts/schedule/scout-nightly.sh`
-- Cloud Monitoring bridge (launchd): see [`plugin/ralph-hero/scripts/monitoring-bridge/README.md`](plugin/ralph-hero/scripts/monitoring-bridge/README.md)
-
-Self-healing closure: terminal handlers call `knowledge_record_outcome` (MCP), `outcome-collector.sh` mirrors state transitions to the same SQLite `outcome_events` table, and `scripts/dream/reflect.py` clusters raw memories into `process-improvement` issues when recurring-failure signals exceed thresholds (`RALPH_DREAM_PROCESS_IMPROVEMENT_MIN_CLUSTER`, `RALPH_DREAM_PROCESS_IMPROVEMENT_SIGNAL_FRACTION`).
-
-`sre-fixit` autoremediation no longer takes `Bash`; epic [#1285](https://github.com/cdubiel08/ralph-hero/issues/1285) replaced the regex-allowlist gate with four typed MCP tools (`ralph_hero__sre__scale`, `ralph_hero__sre__rollout_restart`, `ralph_hero__sre__delete_pod`, `ralph_hero__sre__drain`) that use `child_process.execFile()` with `shell: false`.
-
-> `ralph-plan` skips writing a child plan file when invoked with `--parent-plan`
-> and the parent plan contains a phase matching the child by issue number or
-> title. The child receives a `## Plan Reference` comment and advances to
-> "In Progress" directly. See `docs/model-tier-policy.md` for the rationale and
-> `skills/ralph-plan/SKILL.md` Step 3.5 for the mapping rules.
-
-Key properties:
-- Skill content is injected into agent context with backtick preprocessing (env vars resolved at load time)
-- The agent's `tools:` field is a hard allowlist -- the runtime enforcement boundary
-- Plugin-level hooks in `hooks.json` discriminate by `agent_type` (e.g., `impl-agent` triggers worktree gates)
-- Plugin agents cannot declare `hooks`, `mcpServers`, or `permissionMode` in frontmatter -- only `name`, `description`, `model`, `tools`, `disallowedTools`, `skills`, `memory`, `background`, `isolation`, `effort`, `maxTurns`
+On `IMPL BLOCKED needs=opus` verdict, the hero re-dispatches `impl-agent` once at `model="opus"`. Override default models via `RALPH_IMPL_MODEL`, `RALPH_SPLIT_MODEL`.
 
 ### MCP Server Internals
 
@@ -154,6 +112,9 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `project-management-tools.ts` | archive_items, create_status_update |
 | `hygiene-tools.ts` | project_hygiene |
 | `decompose-tools.ts` | decompose_feature |
+| `trends-tools.ts` | capture_snapshot, metrics_trends |
+| `sre-tools.ts` | sre__scale, sre__rollout_restart, sre__delete_pod, sre__drain |
+| `activity-tools.ts` | recent_activity |
 | `debug-tools.ts` | debug tools (only registered when RALPH_DEBUG=true) |
 
 **GitHub client** (`github-client.ts`): Wraps `@octokit/graphql` with dual endpoints — `query()`/`mutate()` for repo operations, `projectQuery()`/`projectMutate()` for project operations (may use a separate token). Auto-injects `rateLimit` fragments into non-mutation queries.
@@ -170,8 +131,10 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `group-detection.ts` | Parent-child group analysis |
 | `dashboard.ts` | Pipeline aggregation, health scoring |
 | `repo-registry.ts` | Multi-repo YAML registry types |
-| `routing-types.ts` / `routing-config.ts` / `routing-engine.ts` | Issue routing subsystem — Zod schema for `.ralph-routing.yml`, two-phase loader/validation, and a pure deterministic rule-matching engine (repo/labels/type → actions) |
-| `lock-guard.ts` | Pure lock-conflict check for `save_issue` — blocks two agents claiming the same exclusive lock state |
+| `routing-types.ts` / `routing-config.ts` / `routing-engine.ts` | Issue routing subsystem |
+| `lock-guard.ts` | Pure lock-conflict check for `save_issue` |
+| `activity.ts` | Activity log reader (pure filesystem) |
+| `snapshots.ts` / `trends.ts` | Snapshot persistence + trend computation |
 
 ### Workflow State Machine
 
@@ -187,92 +150,42 @@ Key state categories defined in `workflow-states.ts`:
 
 `save_issue` automatically syncs the Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping when setting `workflowState`. The sync is best-effort and one-way.
 
-**Async unblock loop**: Hero closes its loop at Human Needed. The `ralph-hero:ralph-unblock` skill runs as a separate async loop (scheduled via launchd, fired by external trigger, or driven by human attention) and posts `## Unblock Request` comments with specific blocking questions. The interactive `ralph-hero:unblock` skill is then invoked by the human to provide answers and route the issue back into the pipeline.
+**Async unblock loop**: Hero closes its loop at Human Needed. `/ralph:caretake --mode unblock` posts `## Unblock Request` comments; the human answers via `/ralph:caretake --mode unblock --question`.
 
 ### Performance tracking over time
 
-Ralph captures point-in-time project snapshots so velocity, risk, WIP, and lead time can be trended without re-querying GitHub history.
-
-- **Capture**: `ralph_hero__capture_snapshot` (registered by `trends-tools.ts`) appends one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. Pure helpers live in `src/lib/snapshots.ts` (`appendSnapshot`, `readSnapshots`, `toSnapshot`).
-- **Schema**: `Snapshot` is schema-versioned (`SNAPSHOT_SCHEMA_VERSION`). Rows whose version does not match the current value are skipped on read with a `console.warn` so a single bad append cannot poison a file.
-- **Cycle time**: `src/lib/cycle-times.ts` rolls per-issue `TransitionRecord[]` into p50/p90 lead-time + per-phase dwell. The optional `Snapshot.cycleTime` field carries this rollup forward into trends.
-- **Trends**: `src/lib/trends.ts` exposes `computeTrends()` (1d/7d/30d deltas across `velocity`, `riskScore`, `wipTotal`, `leadTimeP50Hours`) and `renderSparkline()` (8-bucket Unicode block render). `ralph_hero__metrics_trends` returns markdown or JSON.
-- **Skill**: `/trends` (`plugin/ralph-hero/skills/trends/SKILL.md`) captures a fresh snapshot, then prints the markdown trend report. Read-only — nothing is posted to GitHub.
-- **Fixture**: `src/__tests__/fixtures/snapshots.fixture.jsonl` holds 30 synthetic schema-valid rows used by `trends.test.ts` and as a documentation example of the on-disk format.
-- **Schedule**: optional launchd template at `plugin/ralph-hero/scripts/snapshot/launchd/com.ralph.snapshot.plist.template` — captures one snapshot per day so the JSONL accumulates a daily history without manual intervention.
-
-### Autopilot
-
-`/ralph-hero:autopilot` is a thin wrapper around `/loop /ralph-hero:director`. The skill body delegates to the built-in `/loop` skill in dynamic mode (model self-paces wakeup cadence via `ScheduleWakeup`) and trusts Director for every per-event classification — Director picks the next event from `next_actions`, dispatches the correct team (builders/watchers/caretakers/scouts/memorykeepers) via `Skill()`, and drains the queue end-to-end. Opt-in via `RALPH_AUTOPILOT_ENABLE=true`, enforced deterministically by `hooks/scripts/autopilot-enable-gate.sh` (PreToolUse:Skill matcher) — the gate exits 2 with a fixed message if the env var is missing. No state machine, no audit log, no hardcoded delays in autopilot itself; `/loop` and Director own that machinery. Coexists with the out-of-process `scripts/ralph-loop.sh` for headless `claude -p` use.
+- **Capture**: `ralph_hero__capture_snapshot` appends to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`.
+- **Trends**: `ralph_hero__metrics_trends` returns 1d/7d/30d deltas via `src/lib/trends.ts`.
+- **Fixture**: `src/__tests__/fixtures/snapshots.fixture.jsonl` holds 30 synthetic schema-valid rows.
 
 ### Activity log + retention
 
-Hooks write per-session activity into `~/.ralph-hero/activity/YYYY/MM/DD.jsonl` (path overridable via `RALPH_ACTIVITY_DIR`). One JSON object per line. Events are categorized as `work` (state-mutating tool calls, agent dispatches, skill invocations) or `meta` (read-only tool calls — Bash, Read, Edit, etc.) by `record-activity.sh`. The `recent_activity` MCP tool reads this log; /hello's catch-up agent filters by `category: "work"` for narrative synthesis.
+Hooks write per-session activity into `~/.ralph-hero/activity/YYYY/MM/DD.jsonl` (path overridable via `RALPH_ACTIVITY_DIR`). Events are categorized as `work` or `meta` by `record-activity.sh`.
 
-- **Writer**: `plugin/ralph-hero/hooks/scripts/record-activity.sh` (PostToolUse, matcher-less; also wired to SessionStart).
-- **Reader**: `mcp-server/src/lib/activity.ts` + `tools/activity-tools.ts`. Pure functions; no cursor state inside the server.
-- **Cursor advance**: `plugin/ralph-hero/hooks/scripts/cursor-advance-catch-up.sh` (PostToolUse(`ralph_hero__recent_activity`)) writes `~/.ralph-hero/cursors/catch-up.json` from `tool_response.cursor_advanced_to`.
-- **Retention**: `plugin/ralph-hero/scripts/activity/logrotate.sh` prunes day files older than `RALPH_ACTIVITY_RETENTION_DAYS` (default 14). Optional launchd template at `scripts/activity/launchd/com.ralph.activity-rotate.plist.template`.
-- **Compact mode**: `recent_activity({ compact: true, limit: 50 })` projects events to `{ts, kind, tool, project}` for narrative consumers; ~50% byte reduction vs the full shape.
+- **Writer**: `ralph/hooks/scripts/record-activity.sh` (PostToolUse, matcher-less; also wired to SessionStart).
+- **Reader**: `mcp-server/src/lib/activity.ts` + `tools/activity-tools.ts`. Pure functions.
+- **Cursor advance**: `ralph/hooks/scripts/cursor-advance-catch-up.sh` writes `~/.ralph-hero/cursors/catch-up.json`.
+- **Retention**: `ralph/scripts/activity/logrotate.sh` prunes day files older than `RALPH_ACTIVITY_RETENTION_DAYS` (default 14).
 
 ### Caching Strategy
 
 Two separate caches serve different purposes:
-- **`SessionCache`**: API response cache keyed with `query:` prefix + stable node ID lookups (`issue-node-id:*`, `project-item-id:*`). Mutations invalidate `query:` entries only — node ID lookups are stable.
+- **`SessionCache`**: API response cache keyed with `query:` prefix + stable node ID lookups (`issue-node-id:*`, `project-item-id:*`). Mutations invalidate `query:` entries only.
 - **`FieldOptionCache`**: In-memory project field option IDs, populated by `fetchProjectForCache()`. Multi-project aware (keyed by project number).
-
-### Delegation
-
-Optional, off-by-default LLM delegation wrapper at `plugin/ralph-hero/scripts/ralph-delegate.sh`. Skills with narrow text-in/text-out sub-tasks (summarize, classify, rerank) can offload work to a local Gemma server or cheaper OpenRouter model via the `Bash` tool.
-
-Master toggle is `RALPH_DELEGATE_ENABLED` — unset (the default) means exit 126 immediately and bit-identical no-op behavior. The wrapper never throws on disabled state; callers gate on `$?` and fall back natively.
-
-Currently wired: `codebase-locator` (F4a), `pr-agent` (F4b), `val-agent` (F4c). (The `delegate-test` reference skill was dropped in the ralph self-containment epic; the wrapper itself is flagged for a separate retirement review.)
-
-Telemetry: `ralph_hero__delegation_stats` MCP tool + `ralph status --delegation` CLI read the JSONL audit log at `~/.ralph-hero/delegate.log`. See `plugin/ralph-hero/README.md` § Delegation (optional).
-
-When to add delegation to a new skill: read `plugin/ralph-hero/docs/delegation-authoring.md` and check the eligible/ineligible matrix in `plugin/ralph-hero/skills/shared/delegation-conventions.md` first.
 
 ### Hook Patterns
 
-Hook scripts in `plugin/ralph-hero/hooks/scripts/` are bash gates registered in skill frontmatter under `PreToolUse`, `PostToolUse`, or `Stop`. The default pattern is a single-event gate; this section documents the less-obvious **PostToolUse-for-response-inspection** pattern.
+Hook scripts in `ralph/hooks/scripts/` are bash gates registered in skill frontmatter under `PreToolUse`, `PostToolUse`, or `Stop`.
 
 **When to use PostToolUse for response inspection:**
 
-Pick PostToolUse over PreToolUse when the data the gate needs to evaluate lives in the **tool response**, not the tool args. Typical cases:
-
-- The gate needs to inspect a fetched issue's estimate, status, or relationships before allowing the next step
-- The gate needs to verify a side-effect actually produced the expected shape (e.g., `add_sub_issue` returned a real linkage)
-
-PreToolUse only sees `tool_input` — it cannot see what the tool returned. If the constraint is "block if the response shape is X," PreToolUse alone cannot enforce it.
+Pick PostToolUse over PreToolUse when the data the gate needs to evaluate lives in the **tool response**, not the tool args.
 
 **Mechanics:**
 
-1. Register both `PreToolUse` and `PostToolUse` matchers in the skill's frontmatter, pointing at the same script:
-   ```yaml
-   PreToolUse:
-     - matcher: "ralph_hero__get_issue"
-       hooks:
-         - { type: command, command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh" }
-   PostToolUse:
-     - matcher: "ralph_hero__get_issue"
-       hooks:
-         - { type: command, command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh" }
-   ```
-
-2. Discriminate inside the script via `.hook_event_name`:
-   ```bash
-   event_name=$(get_field '.hook_event_name')
-   if [[ "$event_name" == "PreToolUse" ]]; then
-     # Surface a context reminder via stderr; exit 0 to allow the call
-   else
-     # PostToolUse: parse tool_response.content[0].text, exit 2 to block
-   fi
-   ```
-
-3. **Exit codes**: `exit 0` allows the agent to continue; `exit 2` (with a clear stderr message) blocks the next step. PostToolUse cannot mutate the response — it can only allow or block subsequent skill steps.
-
-**Reference implementation:** `plugin/ralph-hero/hooks/scripts/split-estimate-gate.sh` + `plugin/ralph-hero/skills/ralph-split/SKILL.md` frontmatter. The gate surfaces an M/L/XL reminder on PreToolUse, then on PostToolUse parses `tool_response.content[0].text`, extracts the issue's estimate, and blocks with exit 2 if the estimate is XS or S — preventing the agent from proceeding to splitting an already-atomic issue.
+1. Register both `PreToolUse` and `PostToolUse` matchers in the skill's frontmatter, pointing at the same script.
+2. Discriminate inside the script via `.hook_event_name`.
+3. **Exit codes**: `exit 0` allows the agent to continue; `exit 2` blocks the next step.
 
 **Picking PreToolUse vs PostToolUse:**
 
@@ -283,14 +196,12 @@ PreToolUse only sees `tool_input` — it cannot see what the tool returned. If t
 | Validate `tool_response` shape or content | PostToolUse |
 | Verify a side-effect succeeded with the expected payload | PostToolUse |
 
-Combine both when the gate needs both behaviors (context reminder + response inspection), as `split-estimate-gate.sh` does.
-
 ## Key Implementation Gotchas
 
 - **`@octokit/graphql` v9 reserves `query`, `method`, and `url`** as option keys. Never use these as GraphQL variable names.
 - **ESM module system**: All internal imports require `.js` extensions (e.g., `import { foo } from "./bar.js"`). The project uses `"type": "module"` with `"module": "NodeNext"`.
-- **`resolveEnv()` pattern**: The MCP server inherits env vars from Claude Code's process. `resolveEnv()` in `index.ts` filters out unexpanded `${VAR}` literals that may appear when vars are unset. The `.mcp.json` has no `env` block — configuration flows through Claude Code's settings files (see Environment Variables below).
-- **Split-owner support**: Repo and project can have different owners. `resolveProjectOwner()` handles this. `fetchProjectForCache()` tries both `user` and `organization` GraphQL types.
+- **`resolveEnv()` pattern**: The MCP server inherits env vars from Claude Code's process. `resolveEnv()` in `index.ts` filters out unexpanded `${VAR}` literals that may appear when vars are unset.
+- **Split-owner support**: Repo and project can have different owners. `resolveProjectOwner()` handles this.
 - **Aliased GraphQL mutations**: Bulk operations (like `batch_update`) use GraphQL aliases (`m0:`, `m1:`, ...) to batch multiple mutations in a single request.
 - **mcptools args normalization**: `index.ts` patches `validateToolInput` to normalize `undefined` args to `{}` because mcptools 0.7.1 strips empty `{}` params.
 
@@ -301,11 +212,11 @@ The config file location depends on plugin install scope (detected from `~/.clau
 - **Project-scoped install**: Set all env vars in `<project>/.claude/settings.local.json` (gitignored)
 - **User-scoped install**: Set all env vars in `~/.claude/settings.json` — this makes the CLI work from any directory
 
-The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local.json` → repo `settings.json` → `~/.claude/settings.json`. When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth token` from the gh CLI keychain — so most users don't need to put a token in any settings file at all (just run `gh auth login -s repo,project,read:org`).
+When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth token` from the gh CLI keychain (just run `gh auth login -s repo,project,read:org`).
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `RALPH_HERO_GITHUB_TOKEN` | No (defaults to `gh auth token`) | GitHub PAT with `repo` + `project` scopes. Optional override — if unset, the MCP server falls back to the `gh` CLI keychain. |
+| `RALPH_HERO_GITHUB_TOKEN` | No (defaults to `gh auth token`) | GitHub PAT with `repo` + `project` scopes. |
 | `RALPH_GH_OWNER` | Yes | GitHub owner (user or org) |
 | `RALPH_GH_PROJECT_NUMBER` | Yes | GitHub Projects V2 number |
 | `RALPH_GH_REPO` | No | Repository name (inferred from project if omitted) |
@@ -313,24 +224,22 @@ The CLI's `resolve-env.sh` searches in order: shell env → repo `settings.local
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token, then to `gh auth token`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
-| `RALPH_IMPL_MODEL` | No | Override the model hero passes to `impl-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`; the BLOCKED-escalation path re-dispatches once at `opus` regardless. See `plugin/ralph-hero/docs/model-tier-policy.md`. |
-| `RALPH_SPLIT_MODEL` | No | Override the model hero passes to `split-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`. See `plugin/ralph-hero/docs/model-tier-policy.md`. |
-| `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging, register debug tools, and activate OpenTelemetry export (when `OTEL_*` vars are also set). Acts as the master switch for all debug surfaces. |
+| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`. |
+| `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and OpenTelemetry export. |
 
 **Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
 
 ### OpenTelemetry export to local Langfuse
 
-When `RALPH_DEBUG=true` is set alongside the `OTEL_*` env vars, Claude Code exports `mcp.tool.*` spans, hook events, and session lifecycle traces over OTLP/HTTP to the local Langfuse harness at `~/projects/langfuse/`. `RALPH_DEBUG` is the activation switch — the four `OTEL_*` vars are no-ops without it.
-
-Full setup (env var table, basic-auth header construction, sample `settings.local.json` snippet): see [`plugin/ralph-hero/docs/otel-langfuse.md`](plugin/ralph-hero/docs/otel-langfuse.md).
+When `RALPH_DEBUG=true` is set alongside the `OTEL_*` env vars, Claude Code exports `mcp.tool.*` spans over OTLP/HTTP to the local Langfuse harness. `RALPH_DEBUG` is the activation switch. Full setup: see [`docs/otel-langfuse.md`](docs/otel-langfuse.md).
 
 ## GitHub Actions Workflows
 
-Beyond CI/CD, several workflows automate project board management:
-
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
+| `ci.yml` | push/PR to main | Build, test, lint |
+| `release.yml` | mcp-server/ changes on main | Bump version, npm publish, pin ralph/.mcp.json |
+| `release-ralph.yml` | ralph/ changes on main | Bump ralph plugin version + tag |
 | `route-issues.yml` | Issue opened | Route new issues to project board |
 | `sync-issue-state.yml` | Issue state change | Sync GitHub issue state with project workflow |
 | `sync-pr-merge.yml` | PR merged | Move linked issues to Done |

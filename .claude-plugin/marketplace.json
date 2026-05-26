@@ -8,13 +8,13 @@
   },
   "plugins": [
     {
-      "name": "ralph-hero",
-      "description": "The naive hero picks tickets, does their best work, and moves on. Autonomous triage, research, planning, and implementation with GitHub Projects V2.",
-      "source": "./plugin/ralph-hero"
+      "name": "ralph",
+      "description": "The naive hero picks tickets, does their best work, and moves on. 9 fat skills with flat-sibling references, hooks-enforced state, and MCP-driven artifacts over a GitHub Projects V2 board.",
+      "source": "./ralph"
     },
     {
       "name": "ralph-knowledge",
-      "description": "Knowledge graph for ralph-hero: semantic search, relationship traversal, and document indexing across thoughts/ documents. Optional companion to ralph-hero.",
+      "description": "Knowledge graph for ralph: semantic search, relationship traversal, and document indexing across thoughts/ documents. Optional companion to the ralph plugin.",
       "source": "./plugin/ralph-knowledge"
     },
     {
@@ -24,13 +24,8 @@
     },
     {
       "name": "ralph-playwright",
-      "description": "Polymorphic UI testing plugin: story generation, E2E execution, a11y scanning, Storybook integration, and visual regression for ralph-hero.",
+      "description": "Polymorphic UI testing plugin: story generation, E2E execution, a11y scanning, Storybook integration, and visual regression. Companion to the ralph plugin.",
       "source": "./plugin/ralph-playwright"
-    },
-    {
-      "name": "ralph",
-      "description": "Slim successor to ralph-hero: 9 fat skills with flat-sibling references, hooks-enforced state, MCP-driven artifacts. The naive hero, less ceremony.",
-      "source": "./ralph"
     }
   ]
 }

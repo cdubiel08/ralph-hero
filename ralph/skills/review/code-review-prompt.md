@@ -77,7 +77,7 @@ PR: PR_URL
 Escalating to Human Needed for manual review and resolution.
 ```
 
-**Second**, the canonical `## Escalation` comment so `/ralph:caretake --mode unblock` (and the legacy `/ralph-hero:unblock` until Plan 10 sunset) can discover it by header prefix and parse `originating_command`:
+**Second**, the canonical `## Escalation` comment so `/ralph:caretake --mode unblock` can discover it by header prefix and parse `originating_command`:
 
 ```markdown
 ## Escalation

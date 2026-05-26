@@ -107,14 +107,14 @@ critique-with-verdict.
 
 ## Mode dispatch
 
-| Mode | Behavior | Equivalent to |
-|---|---|---|
-| (default) | Interactive: intake → research → structure development → user review → write doc → post artifact | `/ralph-hero:plan` |
-| `--mode auto [#NNN]` | Autonomous: pick XS/S Ready-for-Plan issue → lock → write doc → advance to Plan in Review | `/ralph-hero:ralph-plan` |
-| `--mode epic [#NNN]` | Strategic: lock epic → write plan-of-plans → create feature children + dependency edges | `/ralph-hero:ralph-plan-epic` + epic-side of `/ralph-hero:ralph-split` |
-| `--mode iterate [#NNN \| <path>] [feedback]` | Surgical: read existing plan → confirm approach → apply targeted edits | `/ralph-hero:iterate` |
-| `--mode review [#NNN]` | Critique: read plan → execute rubric → write critique doc → APPROVED / NEEDS_ITERATION | `/ralph-hero:ralph-review` |
-| `--help` / `-h` | Print this table and exit | — |
+| Mode | Behavior |
+|---|---|
+| (default) | Interactive: intake → research → structure development → user review → write doc → post artifact |
+| `--mode auto [#NNN]` | Autonomous: pick XS/S Ready-for-Plan issue → lock → write doc → advance to Plan in Review |
+| `--mode epic [#NNN]` | Strategic: lock epic → write plan-of-plans → create feature children + dependency edges |
+| `--mode iterate [#NNN \| <path>] [feedback]` | Surgical: read existing plan → confirm approach → apply targeted edits |
+| `--mode review [#NNN]` | Critique: read plan → execute rubric → write critique doc → APPROVED / NEEDS_ITERATION |
+| `--help` / `-h` | Print this table and exit |
 
 ## Step 0: Parse args
 

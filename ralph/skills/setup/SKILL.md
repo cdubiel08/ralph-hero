@@ -68,7 +68,7 @@ Route to the matching mode section below. Each mode ends by emitting a `result:`
 
 Interactive GitHub Project V2 bootstrap. Re-run with a project number to resume from an existing project (e.g., after an interrupted run).
 
-1. **Detect install scope** — read `~/.claude/plugins/installed_plugins.json`, find the `ralph` or `ralph-hero` entry, check `scope`. Sets target settings file path per [scope-detection.md](scope-detection.md).
+1. **Detect install scope** — read `~/.claude/plugins/installed_plugins.json`, find the `ralph` entry, check `scope`. Sets target settings file path per [scope-detection.md](scope-detection.md).
 2. **Health check** — `health_check` MCP tool. Display auth / repo access / project access / required fields status. On auth failure, STOP with rotation guidance from [token-setup.md](token-setup.md).
 3. **Determine project owner** — if `projectAccess` failed/skipped, ask via `AskUserQuestion` ("under org" vs "under personal account"). If owners differ, enter split-owner mode — see [token-setup.md](token-setup.md) §dual-token.
 4. **Create-or-verify project** — if arg passed: treat as resume number; `get_project` to verify; `setup_project` in extend mode to add any missing custom fields. If no arg + no `RALPH_GH_PROJECT_NUMBER`: `setup_project` to create. Field schema in [project-fields.md](project-fields.md).
@@ -90,7 +90,7 @@ result: Setup paused at <step> — <reason>. Resume: /ralph:setup [NNN]
 
 Install the global `ralph` command and shell completions. Detailed steps in [cli-install.md](cli-install.md).
 
-1. **Locate plugin** — try slim cache `~/.claude/plugins/cache/ralph/ralph/<version>/` first; fall back to legacy `~/.claude/plugins/cache/ralph-hero/ralph-hero/<version>/`. Latest version (`sort -V | tail -1`) wins.
+1. **Locate plugin** — cache at `~/.claude/plugins/cache/ralph/ralph/<version>/`. Latest version (`sort -V | tail -1`) wins.
 2. **Install binary** — copy `scripts/ralph-cli.sh` → `~/.local/bin/ralph`, `mkdir -p` + `chmod +x`.
 3. **Detect shell + install completions** — `basename "$SHELL"`. zsh → `ralph-completions.zsh`; bash → `ralph-completions.bash`; other shells skip.
 4. **Check environment** — record `PATH_OK` (is `~/.local/bin` in `$PATH`?), `COMPINIT_OK` (zsh only — `compinit` in `~/.zshrc`?), `JUST_OK` (`command -v just`).
@@ -116,4 +116,4 @@ result: Registry written — <path>. <N> repos, <M> patterns.
 
 ## Notes
 
-`RALPH_SUBCOMMAND` is set once at Step 0. SessionStart only sets `RALPH_COMMAND=setup`. No state-gate hooks — setup is not in the workflow pipeline. Old `/ralph-hero:setup{,-cli,-repos}` skills remain functional until Plan 10 sunset.
+`RALPH_SUBCOMMAND` is set once at Step 0. SessionStart only sets `RALPH_COMMAND=setup`. No state-gate hooks — setup is not in the workflow pipeline. `ralph` is the sole plugin; `plugin/ralph-hero/` was deleted in GH-1438.

@@ -185,4 +185,4 @@ The harness reads these from the transcript; do not paraphrase. Full table in [o
 
 - **`RALPH_SUBCOMMAND` is set by each mode body** (not by SessionStart). Hooks discriminate against it to no-op when a different mode is active. SessionStart only sets `RALPH_COMMAND=caretake`, which guards all caretake-prefixed hooks at the plugin level.
 - **Mode bodies port source-skill workflows verbatim** where possible. Plan 7 is a structural fold; capability changes are out of scope.
-- **Old `/ralph-hero:*` caretaker-family skills remain functional** until Plan 10 sunset. Both paths can run side-by-side during the parallel period.
+- **`ralph` is the sole plugin.** `plugin/ralph-hero/` was deleted in GH-1438.
