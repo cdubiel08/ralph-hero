@@ -44,6 +44,14 @@ Use results to:
 
 If knowledge tools return zero results, broaden search terms (remove qualifiers, drop component prefixes), then fall back to `thoughts-locator` filesystem scan. Do NOT skip sub-agent dispatch on the basis of an empty knowledge result alone — the graph may be stale or sparsely indexed.
 
+### Picking the `domain` parameter
+
+`knowledge_expert(domain=...)` (autonomous mode) needs a `domain` string. Derive it with this three-priority heuristic — first match wins:
+
+1. **Issue label match** — if the issue carries a label that maps to a known domain / component area, use that label as the `domain`.
+2. **Noun-phrase extraction** — else extract the dominant noun phrase from the issue title and use it as the `domain`.
+3. **Skip** — if neither yields a usable domain, omit the `knowledge_expert` call entirely (consistent with the "no domain extractable → skip silently" row in § Graceful degradation). The tool tolerates a loose/missing domain, but skipping is cleaner than passing noise.
+
 ## Cross-repo addendum
 
 If `.ralph-repos.yml` exists at the repo root, the issue may span multiple repos. Read the file (via `Read`, not `decompose_feature`) and parse the YAML for `localDir` paths and `pattern` definitions.

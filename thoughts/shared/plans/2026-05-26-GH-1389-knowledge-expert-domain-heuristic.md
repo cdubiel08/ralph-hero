@@ -70,9 +70,9 @@ Document the three-priority `domain` heuristic in `research-shapes.md` so the sl
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -nE 'Picking the .domain. parameter' ralph/skills/research/research-shapes.md` returns 1 match.
-- [ ] `grep -ciE 'label match|noun.?phrase|skip' ralph/skills/research/research-shapes.md` shows the three priorities present.
-- [ ] `bash ralph/skills/shared/__tests__/*.test.sh` and `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
+- [x] `grep -cE 'Picking the .domain. parameter' ralph/skills/research/research-shapes.md` returns `1`.
+- [x] `grep -cE 'Issue label match|Noun-phrase extraction' ralph/skills/research/research-shapes.md` returns `2` (falsifiable priority-presence check — replaces the original loose `|skip` count per plan-review GAP).
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` all pass; `bash ralph/skills/shared/__tests__/*.test.sh` introduces no new failures (only the unchanged pre-existing out-of-scope `hero:auto` failure in `loop-continuation.test.sh`, which this change does not touch).
 
 #### Manual Verification
 - [ ] The subsection reads naturally in context and cross-references the § Graceful degradation skip fallback.
