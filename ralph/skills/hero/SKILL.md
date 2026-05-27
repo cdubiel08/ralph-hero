@@ -120,6 +120,16 @@ case "$ARGUMENTS" in
 esac
 ```
 
+**`--loop` gate (default mode)** — `--loop` is meaningful only for the autonomous drain, which is `--mode auto` (the autopilot). The `--auto` alias above already rewrites `--auto` → `--mode auto`, so a bare `--loop` surviving into `default` mode is a misuse — refuse it rather than run the one-shot flow with a stray token. (`--mode auto` and `--mode watch` handle `--loop` in their own sections; `--mode classify` / `--mode pr-drain` are single-shot.)
+
+```bash
+if [[ "$RALPH_SUBCOMMAND" == "default" && "$ARGUMENTS" == *--loop* ]]; then
+  printf '%s\n' "--loop is not supported for this mode. Looping is meaningful only for autonomous queue-drainers; this surface is interactive. See ralph/CLAUDE.md § Loop suitability."
+  printf '%s\n' "For an autonomous drain, use: /ralph:hero --auto  (resolves to --mode auto)."
+  exit 0
+fi
+```
+
 ## Step 1: Dispatch by `RALPH_SUBCOMMAND`
 
 Route to the matching mode section below. The dispatcher does NOT rewrite terminal `result:` lines — the harness reads them directly.

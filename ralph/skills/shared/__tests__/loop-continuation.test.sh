@@ -94,7 +94,6 @@ DRAIN_MODES=(
   "caretake:debug"
   "caretake:split"
   "caretake:default-event"
-  "hero:default"
   "hero:auto"
 )
 

@@ -53,7 +53,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `caretake --mode debug` | Yes | — | dynamic | `Queue empty.` | drain Langfuse errors |
 | `caretake --mode split` | Yes | — | dynamic | `Queue empty.` | drain M/L/XL queue |
 | `caretake --mode all` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic fan-out |
-| `caretake` default (event) | Yes | `--mode triage` | dynamic | `Queue empty.` | drain `trigger:*` labels |
+| `caretake` default (event) | Yes | `--mode triage` | dynamic | `Queue empty.` | drain `trigger:*` labels (`--issue NNN` / `--auto`→triage). Bare no-arg `--loop` → heartbeat fan-out (`caretake:all`), not this drain. |
 | `caretake --mode postmortem` | No | — | — | — | single artifact per session |
 | `caretake --mode retro` | No | — | — | — | single artifact per session |
 | `caretake --mode unblock --question` | No | — | — | — | interactive answer collection |
@@ -61,7 +61,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `catch-up` default | No | — | — | — | interactive orientation |
 | `catch-up --mode narrative` | No | — | — | — | pure stdout; interactive |
 | `catch-up --mode dashboard` | No | — | — | — | pure stdout; interactive |
-| `hero` default | Yes | `--mode auto` | dynamic | `result: Queue empty.` | drain top-ranked issues |
+| `hero` default | No | `--mode auto` | — | — | one-shot orchestrator; refuses `--loop`. Use `--auto` → `--mode auto` for the autonomous drain. |
 | `hero --mode auto` | Already wrapped | (this IS the auto mode) | dynamic (adaptive) | never-terminate (no `Queue empty.` stop; `Queue empty` → 1h idle backoff) | uses `RALPH_AUTOPILOT_ENABLE=true` gate; runs until cancelled via `/tasks` |
 | `hero --mode watch` | Yes | — | `15m` | heartbeat (no `Queue empty.`) | polling heartbeat |
 | `hero --mode classify` | No | — | — | — | redundant with `hero --mode auto` |
