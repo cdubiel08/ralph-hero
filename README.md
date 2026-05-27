@@ -24,7 +24,7 @@ Each transition is enforced by hooks and validated by the MCP server. Issues flo
 ### Prerequisites
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
-- Node.js 18+
+- Node.js 20+
 - A GitHub Personal Access Token with `repo` and `project` scopes
 
 ### Install the Plugin
@@ -74,7 +74,7 @@ If you're using explicit `RALPH_GH_REPO_TOKEN` / `RALPH_GH_PROJECT_TOKEN` / `RAL
 | `/ralph:plan` | Create or review an implementation plan |
 | `/ralph:impl` | Implement an approved plan in an isolated worktree |
 | `/ralph:review` | Validate implementation or review a plan |
-| `/ralph:caretake` | Triage, hygiene, unblock, trends, split |
+| `/ralph:caretake` | Triage, hygiene, unblock, trends, split, debug, report |
 | `/ralph:catch-up` | Session orientation — narrative, dashboard, or status report |
 | `/ralph:form` | Crystallize ideas into structured GitHub issues |
 | `/ralph:setup` | One-time project board setup |
@@ -84,6 +84,8 @@ If you're using explicit `RALPH_GH_REPO_TOKEN` / `RALPH_GH_PROJECT_TOKEN` / `RAL
 The plugin bundles an MCP server ([`ralph-hero-mcp-server`](https://www.npmjs.com/package/ralph-hero-mcp-server)) that provides GitHub Projects V2 tools to Claude Code via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 ### Tools
+
+The MCP server registers ~38 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include draft-issue CRUD, `decompose_feature`, `archive_items`, `create_views`, `sync_plan_graph`, `detect_stream_positions`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
 
 | Tool | Description |
 |------|-------------|
