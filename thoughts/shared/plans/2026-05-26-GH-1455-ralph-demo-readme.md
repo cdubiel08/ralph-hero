@@ -69,13 +69,13 @@ Create a concise README for the `ralph-demo` sub-plugin.
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `test -f plugin/ralph-demo/README.md` succeeds.
-- [ ] `grep -qE 'record-demo' plugin/ralph-demo/README.md && grep -qE 'demo-video' plugin/ralph-demo/README.md && grep -qiE 'remotion' plugin/ralph-demo/README.md` (both skills + Remotion covered).
-- [ ] `grep -cE '\]\(\.\.?/' plugin/ralph-demo/README.md` returns 0 (no repo-relative links).
-- [ ] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
+- [x] `test -f plugin/ralph-demo/README.md` succeeds.
+- [x] `grep -qE 'record-demo' plugin/ralph-demo/README.md && grep -qE 'demo-video' plugin/ralph-demo/README.md && grep -qiE 'remotion' plugin/ralph-demo/README.md` (both skills + Remotion covered).
+- [x] `grep -cE '\]\(\.\.?/' plugin/ralph-demo/README.md` returns 0 (no repo-relative links).
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
 
 #### Manual Verification
-- [ ] README parallels the sibling sub-plugin READMEs and accurately describes the two skills + the Remotion pipeline.
+- [x] README parallels the sibling sub-plugin READMEs and accurately describes the two skills + the Remotion pipeline.
 
 ## Testing Strategy
 
