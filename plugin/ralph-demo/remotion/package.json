@@ -11,11 +11,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@remotion/cli": "^4.0.464",
-    "@remotion/transitions": "^4.0.464",
+    "@remotion/cli": "^4.0.468",
+    "@remotion/transitions": "^4.0.468",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "remotion": "^4.0.464",
+    "remotion": "^4.0.468",
     "zod": "^4.4.3"
   },
   "devDependencies": {
