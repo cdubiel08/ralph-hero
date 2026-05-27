@@ -53,7 +53,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `caretake --mode debug` | Yes | — | dynamic | `Queue empty.` | drain Langfuse errors |
 | `caretake --mode split` | Yes | — | dynamic | `Queue empty.` | drain M/L/XL queue |
 | `caretake --mode all` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic fan-out |
-| `caretake` default (event) | Yes | `--mode triage` | dynamic | `Queue empty.` | drain `trigger:*` labels |
+| `caretake` default (event) | Yes | `--mode triage` | dynamic | `Queue empty.` | drain `trigger:*` labels (`--issue NNN` / `--auto`→triage). Bare no-arg `--loop` → heartbeat fan-out (`caretake:all`), not this drain. |
 | `caretake --mode postmortem` | No | — | — | — | single artifact per session |
 | `caretake --mode retro` | No | — | — | — | single artifact per session |
 | `caretake --mode unblock --question` | No | — | — | — | interactive answer collection |
