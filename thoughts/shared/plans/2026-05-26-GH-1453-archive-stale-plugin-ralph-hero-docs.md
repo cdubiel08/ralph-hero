@@ -70,12 +70,12 @@ Move `docs/cli.md`, `docs/unified-agent-system.md`, `docs/agent-teams.md` into `
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `ls docs/archive/cli.md docs/archive/unified-agent-system.md docs/archive/agent-teams.md` — all exist.
-- [ ] `test ! -e docs/cli.md && test ! -e docs/unified-agent-system.md && test ! -e docs/agent-teams.md` — gone from the live tree.
-- [ ] `git log --oneline --follow docs/archive/cli.md | head -2` shows pre-move history (rename preserved).
+- [x] `ls docs/archive/cli.md docs/archive/unified-agent-system.md docs/archive/agent-teams.md` — all exist.
+- [x] `test ! -e docs/cli.md && test ! -e docs/unified-agent-system.md && test ! -e docs/agent-teams.md` — gone from the live tree.
+- [x] `git log --oneline --follow docs/archive/cli.md | head -2` shows pre-move history (rename preserved).
 
 #### Manual Verification
-- [ ] The three archived files are clearly marked as historical.
+- [x] The three archived files are clearly marked as historical.
 
 ## Phase 2: Update ralph/README.md to post-migration state
 depends_on: null
@@ -90,13 +90,13 @@ Replace the mid-migration "Plan 7 of 11" framing in `ralph/README.md` with the c
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -nE 'Plan 7 of 11|migrated in one at a time' ralph/README.md` returns no hits.
-- [ ] `grep -nE 'Migration progress' ralph/README.md` returns no hits (or only a "complete" note).
-- [ ] `grep -n 'plugin/ralph-hero' ralph/README.md` returns no live link.
-- [ ] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
+- [x] `grep -nE 'Plan 7 of 11|migrated in one at a time' ralph/README.md` returns no hits.
+- [x] `grep -nE 'Migration progress' ralph/README.md` returns no hits (or only a "complete" note).
+- [x] `grep -n 'plugin/ralph-hero' ralph/README.md` returns no live link.
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
 
 #### Manual Verification
-- [ ] `ralph/README.md` reads as describing a completed migration, not an in-progress one.
+- [x] `ralph/README.md` reads as describing a completed migration, not an in-progress one.
 
 ## Testing Strategy
 

@@ -4,7 +4,7 @@ Slim successor to `ralph-hero`. The naive hero, less ceremony.
 
 ## Status
 
-**Plan 7 of 11 (caretake shipped).** This plugin currently exposes seven user-facing skills (`/ralph:catch-up`, `/ralph:form`, `/ralph:research`, `/ralph:plan`, `/ralph:impl`, `/ralph:review`, `/ralph:caretake`). Verbs are migrated in one at a time per the plan-of-plans.
+**Migration complete (GH-1438).** `ralph` is the sole Claude-Code-facing plugin in this repo — all 9 verbs shipped (`/ralph:catch-up`, `/ralph:form`, `/ralph:research`, `/ralph:plan`, `/ralph:impl`, `/ralph:review`, `/ralph:caretake`, `/ralph:hero`, `/ralph:setup`). The legacy `plugin/ralph-hero/` was deleted in GH-1438 (epic #1430, Phase 8).
 
 ## Design
 
@@ -16,22 +16,6 @@ Headline shape:
 - Hooks own enforcement
 - MCP owns durable state
 - Local-dev via symlink, no marketplace round-trip
-
-## Migration progress
-
-| # | Verb | Status |
-|---|---|---|
-| 0 | scaffold | shipped |
-| 1 | `/ralph:catch-up` | shipped |
-| 2 | `/ralph:form` | shipped |
-| 3 | `/ralph:research` | shipped |
-| 4 | `/ralph:plan` | shipped |
-| 5 | `/ralph:impl` | shipped |
-| 6 | `/ralph:review` | shipped |
-| 7 | `/ralph:caretake` | shipped |
-| 8 | `/ralph:hero` | shipped |
-| 9 | `/ralph:setup` | shipped |
-| 10 | sunset `plugin/ralph-hero/` | Wave 1 shipped 2026-05-23 (P0/P1 fixes). Wave 2 selective shipped 2026-05-23 (5 fixes + 1 doc + 3 close-with-rationale; 3 issues deferred as `[Wave 2 deferred]`). Wave 3 (deletion) blocked on real-session dogfooding. |
 
 ## Environment
 
