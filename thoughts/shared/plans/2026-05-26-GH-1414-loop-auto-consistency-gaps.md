@@ -81,14 +81,19 @@ Make `hero` default mode refuse `--loop` (pointing users at `--auto` / `--mode a
 
 #### 3. Continuation manifest
 **File**: `ralph/skills/shared/loop-wrapper.md`
-**Changes**: Remove the `hero:default` manifest row (or convert it to a note stating hero-default is not a loop target; `--mode auto` is the loop). Ensure no other row references `hero:default`.
+**Changes**: Remove the `hero:default` manifest row entirely (hero-default is no longer a loop target; `--mode auto` is the loop). Ensure no other row references `hero:default`.
+
+#### 4. Manifest test fixture
+**File**: `ralph/skills/shared/__tests__/loop-continuation.test.sh`
+**Changes**: Remove `"hero:default"` from the `DRAIN_MODES` array (≈line 97). Do NOT move it to `NEVER_TERMINATE_MODES` — hero-default is removed as a loop target entirely, not reclassified. The test iterates `DRAIN_MODES` asserting each has a manifest row with a terminal sentinel; once the `hero:default` row is gone from `loop-wrapper.md`, leaving it in `DRAIN_MODES` fails with "manifest row exists for hero:default — not found". (This file is already `M` in the working tree from an unrelated in-flight edit that does NOT touch the `DRAIN_MODES` array — reconcile by editing only that array.)
 
 ### Success Criteria
 #### Automated Verification
 - [ ] `grep -n '\-\-loop' ralph/skills/hero/SKILL.md` shows a default-mode refusal stanza.
-- [ ] `grep -n 'hero:default' ralph/skills/shared/loop-wrapper.md` returns no loop-suitable manifest row (or only a not-a-loop-target note).
+- [ ] `grep -c '| hero:default |' ralph/skills/shared/loop-wrapper.md` returns `0` (the manifest table row is gone).
+- [ ] `grep -c 'hero:default' ralph/skills/shared/__tests__/loop-continuation.test.sh` returns `0` (removed from `DRAIN_MODES`).
 - [ ] `grep -n 'hero default' ralph/CLAUDE.md` shows `--loop` = No.
-- [ ] `bash ralph/skills/shared/__tests__/*.test.sh` passes.
+- [ ] `bash ralph/skills/shared/__tests__/*.test.sh` passes (DRAIN_MODES no longer references the removed row).
 
 #### Manual Verification
 - [ ] The refusal text in `hero/SKILL.md` matches the canonical one-liner from `loop-wrapper.md` § Refusal message verbatim.
