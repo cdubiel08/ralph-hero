@@ -74,12 +74,12 @@ Rewrite `CLAUDE.md` § "ralph Plugin — 16 Agents" + the `agents/` tree-comment
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -nE 'caretake-agent|form-agent|plan-investigator|research-investigator|impl-investigator|review-investigator|caretake-investigator|hero-investigator|scout-agent' CLAUDE.md` returns no hits.
-- [ ] `for a in triage-agent val-agent codebase-analyzer codebase-pattern-finder log-reader sre-fixit thoughts-analyzer thoughts-locator web-search-researcher; do grep -q "$a" CLAUDE.md || echo "MISSING $a"; done` prints nothing.
-- [ ] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
+- [x] `grep -nE 'caretake-agent|form-agent|plan-investigator|research-investigator|impl-investigator|review-investigator|caretake-investigator|hero-investigator|scout-agent' CLAUDE.md` returns no hits.
+- [x] `for a in triage-agent val-agent codebase-analyzer codebase-pattern-finder log-reader sre-fixit thoughts-analyzer thoughts-locator web-search-researcher; do grep -q "$a" CLAUDE.md || echo "MISSING $a"; done` prints nothing.
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
 
 #### Manual Verification
-- [ ] The roster section reads correctly and the 8/8 split matches `ls ralph/agents/`.
+- [x] The roster section reads correctly and the 8/8 split matches `ls ralph/agents/`.
 
 ## Phase 2: Correct README.md roster, Node version, caretake row, MCP table
 depends_on: null
@@ -98,12 +98,12 @@ Align `README.md` with reality: agents block, Node version, caretake skill-modes
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -n 'Node.js 18' README.md` returns no hits.
-- [ ] `grep -nE 'plan-investigator|hero-investigator|scout-agent|caretake-agent|form-agent' README.md` returns no hits.
-- [ ] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
+- [x] `grep -n 'Node.js 18' README.md` returns no hits.
+- [x] `grep -nE 'plan-investigator|hero-investigator|scout-agent|caretake-agent|form-agent' README.md` returns no hits.
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
 
 #### Manual Verification
-- [ ] README agents block, caretake-modes row, and MCP-tool table match reality (cross-checked against `ls ralph/agents/`, CLAUDE.md, and `mcp-server/src/tools/`).
+- [x] README agents block, caretake-modes row, and MCP-tool table match reality (cross-checked against `ls ralph/agents/`, CLAUDE.md, and `mcp-server/src/tools/`).
 
 ## Testing Strategy
 

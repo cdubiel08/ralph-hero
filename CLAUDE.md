@@ -44,7 +44,7 @@ mcp-server/              # TypeScript MCP server (published as ralph-hero-mcp-se
 ralph/                   # Main plugin — 9 fat skills, 16 agents, hooks
 ├── skills/              # 9 verb skills (catch-up, form, research, plan, impl, review, caretake, hero, setup)
 │   └── shared/          # Shared references: loop-wrapper, auto-alias, mcp-prefix guard
-├── agents/              # 16 agents (8 thin per-phase + 8 fat investigators)
+├── agents/              # 16 agents (8 per-phase + 8 investigators)
 ├── hooks/               # Lifecycle enforcement hooks
 └── .claude-plugin/      # Plugin manifest + .mcp.json pin
 plugin/
@@ -73,9 +73,9 @@ plugin/
 
 ### ralph Plugin — 16 Agents
 
-**8 thin per-phase agents** (in `ralph/agents/`): `impl-agent`, `plan-agent`, `research-agent`, `review-agent`, `merge-agent`, `catch-up-agent`, `caretake-agent`, `form-agent`
+**8 per-phase agents** (in `ralph/agents/`): `catch-up-agent`, `impl-agent`, `merge-agent`, `plan-agent`, `research-agent`, `review-agent`, `triage-agent`, `val-agent`
 
-**8 fat investigators** (in `ralph/agents/`): `codebase-locator`, `plan-investigator`, `research-investigator`, `impl-investigator`, `review-investigator`, `caretake-investigator`, `hero-investigator`, `scout-agent`
+**8 investigators** (in `ralph/agents/`): `codebase-analyzer`, `codebase-locator`, `codebase-pattern-finder`, `log-reader`, `sre-fixit`, `thoughts-analyzer`, `thoughts-locator`, `web-search-researcher`
 
 On `IMPL BLOCKED needs=opus` verdict, the hero re-dispatches `impl-agent` once at `model="opus"`. Override default models via `RALPH_IMPL_MODEL`, `RALPH_SPLIT_MODEL`.
 
