@@ -51,6 +51,12 @@ inline descriptions into structured GitHub artifacts via an interactive picker.
 --auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.
 ```
 
+**`--loop` refusal** — if `--loop` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/loop-wrapper.md` § Refusal message):
+
+```
+--loop is not supported for this mode. Looping is meaningful only for autonomous queue-drainers; this surface is interactive. See ralph/CLAUDE.md § Loop suitability.
+```
+
 ## Step 1: Intake routing
 
 Read `intake-shapes.md` to set `INPUT_TYPE` (`"idea"` | `"research"`) and (if applicable) capture `LINKED_ISSUE`. If no argument and not `--mode draft`, follow the no-args fallback in `intake-shapes.md` to list recent ideas.

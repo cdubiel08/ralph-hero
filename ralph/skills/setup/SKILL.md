@@ -51,6 +51,12 @@ References: [scope-detection.md](scope-detection.md), [project-fields.md](projec
 --auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.
 ```
 
+**`--loop` refusal** — if `--loop` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/loop-wrapper.md` § Refusal message):
+
+```
+--loop is not supported for this mode. Looping is meaningful only for autonomous queue-drainers; this surface is interactive. See ralph/CLAUDE.md § Loop suitability.
+```
+
 ```bash
 case "$ARGUMENTS" in
   --mode\ project*)  export RALPH_SUBCOMMAND=project ;;

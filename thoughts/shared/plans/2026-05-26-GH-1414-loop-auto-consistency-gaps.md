@@ -116,8 +116,8 @@ Resolve the contradiction so bare `/ralph:caretake --loop` uses heartbeat contin
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -n 'caretake:all\|caretake:default-event' ralph/skills/caretake/SKILL.md` shows the no-arg loop path pointing at `caretake:all`.
-- [ ] `bash ralph/skills/shared/__tests__/*.test.sh` passes.
+- [x] `grep -n 'caretake:all\|caretake:default-event' ralph/skills/caretake/SKILL.md` shows the no-arg loop path pointing at `caretake:all`.
+- [x] `bash ralph/skills/shared/__tests__/*.test.sh`: no new failures (only the pre-existing out-of-scope `hero:auto` one remains; see Phase 1 note).
 
 #### Manual Verification
 - [ ] Bare `/ralph:caretake --loop` and bare `/ralph:caretake` both describe heartbeat semantics (clock re-fire, no terminal `Queue empty.`).
@@ -139,8 +139,8 @@ Add a `--loop` refusal stanza to `form` and `setup` Step 0, mirroring their exis
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -n '\-\-loop' ralph/skills/form/SKILL.md ralph/skills/setup/SKILL.md` shows a refusal stanza in each.
-- [ ] `bash ralph/skills/shared/__tests__/*.test.sh` and `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
+- [x] `grep -n '\-\-loop' ralph/skills/form/SKILL.md ralph/skills/setup/SKILL.md` shows a refusal stanza in each.
+- [x] `bash ralph/skills/shared/__tests__/*.test.sh` (no new failures) and `bash ralph/hooks/scripts/__tests__/*.test.sh` (all pass).
 
 #### Manual Verification
 - [ ] The refusal text matches the canonical one-liner verbatim in both files.
