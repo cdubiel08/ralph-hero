@@ -51,7 +51,6 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 | caretake:all | (fan-out, no aggregated sentinel) | (none — heartbeat; re-fire always) | default interval 1h; schedule accordingly | periodic fan-out heartbeat |
 | caretake:default-event | per dispatched mode | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain trigger:* labels |
 | catch-up:report | `Status update posted successfully.` | (none — heartbeat; re-fire always) | default interval 1d; schedule accordingly | periodic status post |
-| hero:default | `result: Hero complete — …` / `result: Hero paused at …` | `result: Queue empty.` | 60-270s on progress; 1200-1800s idle | drain top-ranked issues |
 | hero:auto | `result: Dispatched #NNN to <team> via <entrypoint>` AND `result: Queue empty.` (both re-fire) | (none — never terminates; cancel via `/tasks`) | 60-270s on dispatch; **3600s flat** when the queue is idle / `Queue empty` | **NEVER-TERMINATING adaptive watcher** (not a drain). `--mode auto` wraps `--mode classify`; BOTH its result lines re-fire the loop. `result: Queue empty.` is an *idle backoff* signal (sleep at the 1h ceiling, then re-check), NOT a stop. Tight cadence during bursts, 1h floor when idle; runs until the user deletes the pending wakeup via `/tasks`. Re-fire is hook-enforced by `autopilot-stop-gate.sh` (keyed to `RALPH_COMMAND=hero`). |
 | hero:watch | `result: Watch complete — …` | (none — heartbeat; re-fire always) | default interval 15m; schedule accordingly | polling heartbeat |
 
