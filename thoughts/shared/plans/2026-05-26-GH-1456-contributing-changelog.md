@@ -69,13 +69,13 @@ Create a contributor-facing `CONTRIBUTING.md` at repo root.
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `test -f CONTRIBUTING.md` succeeds.
-- [ ] `grep -qiE '#minor|#major' CONTRIBUTING.md && grep -qE 'mcp-server' CONTRIBUTING.md && grep -qiE 'release' CONTRIBUTING.md` (release mechanics + dev setup covered).
-- [ ] `grep -cE '\]\(\.\.?/' CONTRIBUTING.md` returns 0 (no repo-relative links).
-- [ ] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
+- [x] `test -f CONTRIBUTING.md` succeeds.
+- [x] `grep -qiE '#minor|#major' CONTRIBUTING.md && grep -qE 'mcp-server' CONTRIBUTING.md && grep -qiE 'release' CONTRIBUTING.md` (release mechanics + dev setup covered).
+- [x] `grep -cE '\]\(\.\.?/' CONTRIBUTING.md` returns 0 (no repo-relative links).
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
 
 #### Manual Verification
-- [ ] Reads as a genuine contributor entry point; release/changelog relationship is clear.
+- [x] Reads as a genuine contributor entry point; release/changelog relationship is clear.
 
 ## Phase 2: Write CHANGELOG.md
 depends_on: null
@@ -90,13 +90,13 @@ Create a seeded `CHANGELOG.md` at repo root in Keep-a-Changelog format.
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `test -f CHANGELOG.md` succeeds.
-- [ ] `grep -qiE 'Unreleased' CHANGELOG.md && grep -qE '2\.5\.191|0\.1\.32' CHANGELOG.md` (Keep-a-Changelog skeleton + seeded current versions).
-- [ ] `grep -cE '\]\(\.\.?/' CHANGELOG.md` returns 0.
-- [ ] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
+- [x] `test -f CHANGELOG.md` succeeds.
+- [x] `grep -qiE 'Unreleased' CHANGELOG.md && grep -qE '2\.5\.191|0\.1\.32' CHANGELOG.md` (Keep-a-Changelog skeleton + seeded current versions).
+- [x] `grep -cE '\]\(\.\.?/' CHANGELOG.md` returns 0.
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass.
 
 #### Manual Verification
-- [ ] CHANGELOG reflects the two independent release streams and is ready to accrue future entries.
+- [x] CHANGELOG reflects the two independent release streams and is ready to accrue future entries.
 
 ## Testing Strategy
 
