@@ -74,13 +74,13 @@ Create a concise, npm-rendering README for the `ralph-hero-mcp-server` package.
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `test -f mcp-server/README.md` succeeds.
-- [ ] `grep -c 'github.com/cdubiel08/ralph-hero' mcp-server/README.md` ≥ 1; `grep -cE '\]\(\.\.?/' mcp-server/README.md` returns 0 (no repo-relative links).
-- [ ] `grep -qE 'RALPH_GH_OWNER' mcp-server/README.md && grep -qiE 'registerXyzTools|register[A-Za-z]+Tools|ralph_hero__' mcp-server/README.md` (env vars + tool pattern covered).
-- [ ] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
+- [x] `test -f mcp-server/README.md` succeeds.
+- [x] `grep -c 'github.com/cdubiel08/ralph-hero' mcp-server/README.md` ≥ 1; `grep -cE '\]\(\.\.?/' mcp-server/README.md` returns 0 (no repo-relative links).
+- [x] `grep -qE 'RALPH_GH_OWNER' mcp-server/README.md && grep -qiE 'registerXyzTools|register[A-Za-z]+Tools|ralph_hero__' mcp-server/README.md` (env vars + tool pattern covered).
+- [x] `bash ralph/hooks/scripts/__tests__/*.test.sh` pass (no regression).
 
 #### Manual Verification
-- [ ] README reads correctly as a standalone npm package page (no assumed repo-root context; all links absolute).
+- [x] README reads correctly as a standalone npm package page (no assumed repo-root context; all links absolute).
 
 ## Testing Strategy
 
