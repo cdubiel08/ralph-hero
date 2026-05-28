@@ -272,3 +272,16 @@ jobs:
           scandir: ralph/hooks
           severity: error
           format: gcc
+
+  # GH-1458: assert documented agent/skill/tool rosters in CLAUDE.md / README.md
+  # match the source files, so docs and code can't silently diverge (the failure
+  # mode GH-1452 had to fix by hand).
+  check-doc-rosters:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Run doc-roster consistency check
+        run: bash scripts/check-doc-rosters.sh
