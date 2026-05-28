@@ -27,14 +27,14 @@ Add a CI check asserting that the agent/skill/tool rosters documented in `CLAUDE
 
 Per the research doc:
 - **Documented rosters**: agents in `CLAUDE.md:76-78` (prose, backtick-delimited; README has only a tree-comment, no names); skills in `CLAUDE.md:62-72` + `README.md:70-81` (markdown tables, `/ralph:<verb>`); tools in `CLAUDE.md:104-118` + `README.md:87-113` (markdown tables, **explicitly a curated subset**).
-- **Sources**: agents = `ralph/agents/*.md` (16); skills = `ralph/skills/*/` (9 verb dirs **plus** non-verb `shared/`, `using-html/`); tools = `server.tool("ralph_hero__…")` call sites in `mcp-server/src/tools/*.ts` (38 always + 2 `RALPH_DEBUG`-only).
+- **Sources**: agents = `ralph/agents/*.md` (16); skills = `ralph/skills/*/` (9 verb dirs **plus** non-verb `shared/`, `using-html/`); tools = quoted `ralph_hero__*` literals across `mcp-server/src/**/*.ts` (excl. `__tests__`) — **38 total** (the 2 `RALPH_DEBUG`-only `collate_debug`/`debug_stats` are included in the 38, not additional). NB `ralph_hero__health_check` is registered in `src/index.ts`, so scope must NOT be limited to `src/tools/`.
 - **CI**: `.github/workflows/ci.yml` has independent jobs (no `needs:`); `verify-mcp-pins` (inline bash, `set -euo pipefail`, `FAILED` counter, `::error::` annotations) is the closest model. No doc-consistency check exists.
 
 ### Key Discoveries
 
 - **Check direction differs per roster** (the crux): agents & skills are documented exhaustively → **bidirectional** equality; tools are a curated subset → **one-directional** (documented ⊆ source) to avoid constant false failures.
 - Skill comparison must **exclude** `ralph/skills/shared/` and `ralph/skills/using-html/` (not verbs).
-- Tool extraction source of truth is `server\.tool\(\s*"(ralph_hero__[^"]+)"`; account for the 2 `RALPH_DEBUG`-only tools (`collate_debug`, `debug_stats`) so they aren't flagged as undocumented.
+- Tool extraction: scan `mcp-server/src/**/*.ts` (excluding `__tests__`) for the **literal quoted pattern** `"ralph_hero__[a-z_]+"`. Do NOT anchor on `server.tool(` — that call puts the name on the *next line*, so a line-anchored regex matches nothing. Scope MUST include `src/index.ts` (registers `ralph_hero__health_check`). Yields **38 unique** source tool names total (the 2 `RALPH_DEBUG`-only tools are already in the 38).
 - The check should **pass on current `main`** (rosters are consistent post-#1452), so it won't block existing PRs.
 
 ## Desired End State
@@ -74,7 +74,7 @@ Create `scripts/check-doc-rosters.sh` that extracts the documented agent/skill/t
 - `#!/usr/bin/env bash`, `set -euo pipefail`, `pass`/`fail` counters, `=== Results ===` summary, `exit 1` if any fail.
 - **Agents (bidirectional)**: extract backtick names under the `### ralph Plugin — 16 Agents` heading in `CLAUDE.md`; compare as a set to `ralph/agents/*.md` basenames. Report both directions (documented-but-missing, source-but-undocumented).
 - **Skills (bidirectional)**: extract `` `/ralph:<verb>` `` names from the `### ralph Plugin — 9 Verbs` table in `CLAUDE.md`; compare to `ralph/skills/*/` dir names **excluding** `shared` and `using-html`.
-- **Tools (one-directional, documented ⊆ source)**: extract short tool names from the `CLAUDE.md`/`README.md` tool tables, prepend `ralph_hero__`; extract source names via `server\.tool\(\s*"(ralph_hero__[^"]+)"` across `mcp-server/src/tools/*.ts`; assert every documented name exists in source (ignore the reverse). Account for `collate_debug`/`debug_stats` (RALPH_DEBUG-only) being present in source.
+- **Tools (one-directional, documented ⊆ source)**: extract short tool names from the `CLAUDE.md`/`README.md` tool tables, prepend `ralph_hero__`; extract source names by scanning `mcp-server/src/**/*.ts` (excluding `__tests__`) for the literal quoted pattern `"ralph_hero__[a-z_]+"` (NOT anchored on `server.tool(`, which puts the name on the next line; scope MUST include `src/index.ts`, where `ralph_hero__health_check` is registered). Yields 38 unique source names (the 2 `RALPH_DEBUG`-only tools included). Assert every documented name exists in source (ignore the reverse — docs are a curated subset). Verified: 0 missing on current main.
 - Failure messages name the specific divergence, e.g. `Documented agent 'foo-agent' not found in ralph/agents/`.
 
 ### Success Criteria

@@ -46,7 +46,7 @@ This is ~2 phases (the check script + `ci.yml` wiring) and **self-validating** �
 
 - **Agents**: `ralph/agents/*.md` — 16 files. Per-phase: catch-up-agent, impl-agent, merge-agent, plan-agent, research-agent, review-agent, triage-agent, val-agent. Investigators: codebase-analyzer, codebase-locator, codebase-pattern-finder, log-reader, sre-fixit, thoughts-analyzer, thoughts-locator, web-search-researcher.
 - **Skills**: `ralph/skills/*/` — 9 verb dirs (catch-up, form, research, plan, impl, review, caretake, hero, setup) **plus** non-verb utility dirs `shared/` and `using-html/` that must be excluded from the comparison.
-- **Tools**: `mcp-server/src/tools/*.ts` via `server.tool("ralph_hero__…", …)` call sites — the only complete, machine-parseable roster. 38 always-registered + 2 debug-only (`collate_debug`, `debug_stats`, gated on `RALPH_DEBUG=true`) = 40. Reliable extraction regex: `server\.tool\(\s*"(ralph_hero__[^"]+)"` across that directory.
+- **Tools**: quoted `ralph_hero__*` literals across `mcp-server/src/**/*.ts` (excl. `__tests__`) — the only complete, machine-parseable roster. **38 unique total** (the 2 `RALPH_DEBUG`-gated tools `collate_debug`/`debug_stats` are included in the 38, not additional). **Scope must include `src/index.ts`** — `ralph_hero__health_check` is registered there, not under `src/tools/`. Reliable extraction: scan for the literal pattern `"ralph_hero__[a-z_]+"`; do NOT anchor on `server.tool(`, which puts the name on the next line (a line-anchored regex matches nothing). [Corrected 2026-05-28 after plan-review GH-1458 caught the original anchored-regex + scope bugs.]
 
 ### Extraction patterns (the crux)
 
@@ -54,7 +54,7 @@ This is ~2 phases (the check script + `ci.yml` wiring) and **self-validating** �
 |---|---|---|---|
 | Skills | `CLAUDE.md` 9-verbs table | col-1 match `` `/ralph:([a-z-]+)` `` | bidirectional (== `ralph/skills/` dirs minus `shared`,`using-html`) |
 | Agents | `CLAUDE.md` 16-agents prose | backtick names `` `([a-z][a-z0-9-]+)` `` under the heading | bidirectional (== `ralph/agents/*.md` basenames) |
-| Tools | `CLAUDE.md`/`README.md` tool tables | short names, prepend `ralph_hero__` | **one-directional**: documented ⊆ source `server.tool()` names (account for the `RALPH_DEBUG` debug-only pair) |
+| Tools | `CLAUDE.md`/`README.md` tool tables | short names, prepend `ralph_hero__` | **one-directional**: documented ⊆ source names via literal `"ralph_hero__[a-z_]+"` over `mcp-server/src/**/*.ts` (incl. `src/index.ts`; NOT anchored on `server.tool(`); 38 unique total incl. the `RALPH_DEBUG` pair |
 
 ### CI integration
 
