@@ -1,6 +1,6 @@
 ---
 name: log-reader
-description: Read-only LQL/log-query subagent for GCP log investigation and trace retrieval. No write or mutation access.
+description: Read-only GCP log and trace investigation via LQL/log queries — pulls Cloud Logging entries and traces. Use to inspect logs or chase a trace; never writes or mutates.
 model: haiku
 tools: Read, Grep, Glob, Bash, WebFetch
 ---

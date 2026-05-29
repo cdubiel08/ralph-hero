@@ -1,6 +1,6 @@
 ---
 name: codebase-locator
-description: Locates files, directories, and components relevant to a feature or task. A "Super Grep/Glob" tool for finding where code lives.
+description: Finds WHERE code lives — locates and groups files, directories, and components for a feature or task (a "Super Grep/Glob"). Use to map where things are; not to explain how code works (use codebase-analyzer) or find patterns to copy (use codebase-pattern-finder).
 tools: Grep, Glob, Bash
 model: haiku
 color: orange

@@ -1,6 +1,6 @@
 ---
 name: codebase-pattern-finder
-description: Finds similar implementations, usage examples, and existing patterns in the codebase. Returns concrete code examples with file:line references.
+description: Finds existing patterns and usage examples to model new code after, returning concrete snippets with file:line references. Use when you want precedent to copy; not to map a feature's files (use codebase-locator) or explain one component in depth (use codebase-analyzer).
 tools: Grep, Glob, Read, Bash
 model: haiku
 color: pink
