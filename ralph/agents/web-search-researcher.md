@@ -1,6 +1,6 @@
 ---
 name: web-search-researcher
-description: Expert web research specialist for finding accurate information from web sources. Use for external API docs, best practices, and modern techniques.
+description: Researches the public web for accurate, current information — external API docs, library behavior, best practices, standards. Use when the answer isn't in this repo or the thoughts/ corpus (use codebase-* or thoughts-* agents for those).
 tools: WebSearch, WebFetch, Read, Grep, Glob, Bash
 model: sonnet
 color: cyan

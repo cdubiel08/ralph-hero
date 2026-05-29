@@ -1,6 +1,6 @@
 ---
 name: thoughts-locator
-description: Discovers relevant documents in thoughts/ directory -- research docs, plans, tickets, handoffs. Use when researching to find prior context.
+description: Finds WHERE prior context lives across the thoughts/ corpus and the ralph-knowledge graph — research docs, plans, tickets, handoffs. Use to discover what's already been written; not to distill a document's contents (use thoughts-analyzer).
 tools: Grep, Glob, Bash, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_communities, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_central, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_bridges
 model: haiku
 color: purple

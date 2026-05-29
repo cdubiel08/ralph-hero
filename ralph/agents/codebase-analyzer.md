@@ -1,6 +1,6 @@
 ---
 name: codebase-analyzer
-description: Analyzes codebase implementation details with precise file:line references. Use for understanding how specific components work.
+description: Explains HOW specific code works — traces implementation, data flow, and call paths with precise file:line references. Use once you know which files matter; not to locate them (use codebase-locator) or find reusable examples (use codebase-pattern-finder).
 tools: Read, Grep, Glob, Bash
 model: sonnet
 color: red

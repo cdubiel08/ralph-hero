@@ -1,6 +1,6 @@
 ---
 name: thoughts-analyzer
-description: Extracts key decisions, constraints, and actionable insights from thought documents. Use for deep analysis of research docs, plans, and prior decisions.
+description: Distills key decisions, constraints, and actionable insights FROM specific thought documents (and the ralph-knowledge graph). Use on docs already located; not to discover which docs exist (use thoughts-locator).
 tools: Read, Grep, Glob, Bash, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_traverse, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_paths, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_common, mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_query_outcomes
 model: sonnet
 color: blue

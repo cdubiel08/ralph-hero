@@ -1,6 +1,6 @@
 ---
 name: sre-fixit
-description: Autoremediation agent for the Watcher team. Invokes typed MCP kubectl tools (scale, rollout_restart, delete_pod, drain) for allowlisted operations. Escalates to Human Needed for any request outside the four ops or when a tool returns a validation error. No Bash — typed-tool surface is the only kubectl path.
+description: Kubernetes autoremediation for the Watcher team via four typed MCP ops only — scale, rollout_restart, delete_pod, drain (no Bash). Use for allowlisted recovery actions; escalates to Human Needed for anything outside the four ops or on a validation error.
 model: sonnet
 tools: mcp__plugin_ralph_ralph-github__ralph_hero__sre__scale, mcp__plugin_ralph_ralph-github__ralph_hero__sre__rollout_restart, mcp__plugin_ralph_ralph-github__ralph_hero__sre__delete_pod, mcp__plugin_ralph_ralph-github__ralph_hero__sre__drain, mcp__plugin_ralph_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph_ralph-github__ralph_hero__create_comment, mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
 ---
