@@ -1407,12 +1407,14 @@ describe("toDashboardItems", () => {
     expect(items[0].iterationTitle).toBeUndefined();
   });
 
-  it("maps trackedIssues nodes to blockedBy with state-to-workflowState conversion", () => {
+  it("maps blockedBy dependency connection nodes to blockedBy with state-to-workflowState conversion", () => {
+    // Uses the native GitHub blockedBy(first:N) dependency connection (added by addBlockedBy),
+    // NOT trackedIssues (task-list). See GH-1470.
     const raw = [
       makeRawItem({
         content: {
           ...makeRawItem().content,
-          trackedIssues: {
+          blockedBy: {
             nodes: [
               { number: 42, state: "OPEN" },
               { number: 99, state: "CLOSED" },
@@ -1428,7 +1430,7 @@ describe("toDashboardItems", () => {
     expect(items[0].blockedBy[1]).toEqual({ number: 99, workflowState: "Done" });
   });
 
-  it("returns empty blockedBy when trackedIssues is omitted (backward compat)", () => {
+  it("returns empty blockedBy when blockedBy dependency connection is omitted (backward compat)", () => {
     const raw = [makeRawItem()];
     const items = toDashboardItems(raw);
     expect(items).toHaveLength(1);

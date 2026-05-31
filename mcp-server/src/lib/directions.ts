@@ -855,6 +855,12 @@ export function rankDirections(
       if (item.workflowState !== "Backlog" && item.workflowState !== null) {
         continue;
       }
+      // Defense-in-depth: skip blocked items in the fallback loop so a
+      // dependency-blocked Backlog issue never enters scored even when the
+      // primary filter (step 2 below) would catch it anyway.
+      if (hasOpenBlockers(item)) {
+        continue;
+      }
       const { score, kind, tags, signals } = scoreIssue(item, items, config);
       scored.push({
         item,
