@@ -89,9 +89,9 @@ Change the `--mode classify` queue read to request `audience: "agent"`, and add 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -n 'next_actions({ audience: "agent" })' ralph/skills/hero/SKILL.md` returns the `--mode classify` line (exactly 1 hit).
-- [ ] `grep -c 'next_actions({})' ralph/skills/hero/SKILL.md` returns `1` (only the default-mode picker retains the bare call).
-- [ ] `grep -n 'next_actions' ralph/skills/hero/SKILL.md` shows both lines carry an inline audience rationale (the words `audience` / `human` / `agent` appear adjacent to each call).
+- [x] `grep -n 'next_actions({ audience: "agent" })' ralph/skills/hero/SKILL.md` returns the `--mode classify` line (exactly 1 hit).
+- [x] `grep -c 'next_actions({})' ralph/skills/hero/SKILL.md` returns `1` (only the default-mode picker retains the bare call).
+- [x] `grep -n 'next_actions' ralph/skills/hero/SKILL.md` shows both lines carry an inline audience rationale (the words `audience` / `human` / `agent` appear adjacent to each call).
 
 #### Manual Verification
 - [ ] Reading the `--mode classify` Step 2 and Default-mode Step 1, a reader can tell *why* each call site uses its audience without consulting the issue.
