@@ -56,9 +56,47 @@ and STOP.
    - Are there duplicate issues?
    - What's the realistic scope (XS/S/M/L/XL)?
 
+## §Step 4a: Picker actionable phases (authoritative)
+
+**Triage acts ONLY on items in `Backlog` (or null/unset workflow_state).** Items in any other state are OUT of triage scope — skip and log.
+
+Hard precondition: if the selected issue is NOT in Backlog (or null), emit:
+
+```
+TRIAGED skipped — <workflowState> is outside triage scope
+```
+
+and STOP. Do NOT triage, do NOT change the issue state.
+
+**States that are out of scope** (hard skip):
+
+| State | Why |
+|---|---|
+| Research Needed, Research in Progress | Already routed — awaiting or running research |
+| Ready for Plan | Already promoted — awaiting planning |
+| Plan in Progress, Plan in Review | Actively being planned |
+| In Progress | Actively being implemented |
+| In Review | Under review |
+| Human Needed | Parked for human decision |
+| Done, Canceled | Terminal — already closed |
+
+**Actionable phases (picker fallback surface):** Plan in Review / In Review / Ready for Plan / Research Needed. **`In Progress` is NOT an actionable phase** — the picker's `next_actions` Backlog-fallback activates when NO item is in these four phases, meaning In-Progress work does NOT suppress the Backlog-fallback. An item left in Backlog IS surfaced by the picker regardless of what sibling items are In Progress. The "In-Progress siblings keep the fallback dormant" reasoning is **incorrect** and must not be used to justify leaving a blocked item in Backlog.
+
+**Blocked-item decision table** (use this before choosing a verdict):
+
+| Blocker kind | Blocker state | Correct action |
+|---|---|---|
+| OPEN issue (sibling/dep) | OPEN | `WAIT-issue=NNN` → Human Needed (Backlog is unsafe — picker will re-surface; no watcher owns this yet; see Gap A cross-ref below) |
+| OPEN issue (sibling/dep) | CLOSED | Advance the item per the embedded condition — do NOT park |
+| Open PR | open/merged? | `WAIT-pr=NNN` → stays Backlog (watch-pr watcher owns it, #1406) |
+| External URL | active | `WAIT-upstream=URL` → stays Backlog (watch-upstream watcher owns it, #1407) |
+| None | — | Normal verdict flow below |
+
+**Gap A cross-reference:** once `next_actions` honors `add_dependency` edges (Gap A, #1470), a `WAIT-issue=NNN` item MAY safely stay in **Backlog with a dependency edge** (the picker will filter it out). Until Gap A ships, Human Needed is the only churn-free honest state for an OPEN-issue blocker — Backlog will re-surface it on every autopilot tick.
+
 ## §Step 4: Determine action
 
-Choose ONE of the **8 structured verdicts**. Every verdict names its successor — items either advance now (`PROMOTE-*`), wait on a *named, watched condition* (`WAIT-*`), close (`CLOSE-*`), or decompose (`SPLIT`). There is no bare "keep" dead-end: a verdict that leaves an issue in Backlog must name what it waits on.
+Choose ONE of the **9 structured verdicts**. Every verdict names its successor — items either advance now (`PROMOTE-*`), wait on a *named, watched condition* (`WAIT-*`), close (`CLOSE-*`), or decompose (`SPLIT`). There is no bare "keep" dead-end: a verdict that leaves an issue in Backlog must name what it waits on.
 
 | Verdict | Workflow target | Downstream consumer |
 |---|---|---|
@@ -69,11 +107,17 @@ Choose ONE of the **8 structured verdicts**. Every verdict names its successor �
 | `PROMOTE-plan` | Ready for Plan | `/ralph:plan --mode auto` |
 | `WAIT-pr=NNN` | Backlog + `blocked:pr-NNN` label | watch-pr (Phase 3, #1406) |
 | `WAIT-upstream=URL` | Backlog + `blocked:upstream` label | watch-upstream (Phase 3, #1407) |
+| `WAIT-issue=NNN` | Human Needed + `## Escalation` naming #NNN | unblock workflow (auto-advances when #NNN closes, via Gap C `watch-blockers`) |
 | `WAIT-decision` | Human Needed + `## Escalation` comment | unblock workflow |
+
+**`WAIT-*` verdict family — coherent design:** The three `WAIT-*` verdicts use the same parking pattern but differ in who watches them and whether Backlog is safe:
+- `WAIT-pr=NNN` — stays **Backlog** (watch-pr owns it; PR merge is machine-detectable).
+- `WAIT-upstream=URL` — stays **Backlog** (watch-upstream owns it; URL resolution is machine-detectable).
+- `WAIT-issue=NNN` — moves to **Human Needed** (no watcher owns it yet; Backlog is unsafe because the picker will re-surface it on every autopilot tick). Once Gap A (#1470) and Gap C (`watch-blockers`) ship, this target relaxes to Backlog+edge.
 
 When uncertain, prefer `PROMOTE-research` (route for investigation) or `WAIT-decision` (escalate) over `CLOSE-*` on valid work.
 
-**Orthogonal action — `RE-ESTIMATE`**: if the estimate is missing or wrong, correct it (issue stays in Backlog for re-triage on the next sweep). This is a field fix, not a routing verdict, so it composes with — rather than replaces — one of the 8 verdicts on a later tick.
+**Orthogonal action — `RE-ESTIMATE`**: if the estimate is missing or wrong, correct it (issue stays in Backlog for re-triage on the next sweep). This is a field fix, not a routing verdict, so it composes with — rather than replaces — one of the 9 verdicts on a later tick.
 
 > The `WAIT-*` verdicts only *park* the item against a labelled condition this phase (Phase 1, #1404). The watchers that strip the label and re-apply the deferred verdict ship in Phase 3 (#1406/#1407). Until then a `WAIT-*` item waits indefinitely with its `blocked:*` label.
 
@@ -107,6 +151,20 @@ Add a comment on the parent listing sub-issues (reused and/or created). **Do NOT
 
 Add a `## Triage Decision` comment naming the exact condition being waited on.
 
+**WAIT-issue=NNN.** The issue is valid but blocked by OPEN issue #NNN (a dependency edge exists or should exist). First check blocker state via `get_issue(NNN)`:
+
+- **If CLOSED**: the blocker is already resolved — do NOT park. Advance the item per whatever verdict the issue merits now (re-evaluate without the blocking constraint). Note the resolved blocker in the `## Triage Decision` comment.
+- **If OPEN**: set `workflowState: "Human Needed"` (`command: "ralph_triage"`). Then:
+  1. Ensure the `add_dependency` edge exists: call `add_dependency` with `blockedByNumber: NNN` if not already present.
+  2. Post a `## Escalation` comment naming #NNN and the machine-readable advance condition:
+     ```
+     Blocked by #NNN ([title]). Move to Ready for Plan once #NNN closes.
+     ```
+  3. Apply `ralph-triage` label.
+  4. **Do NOT leave the item in Backlog** — the picker's Backlog-fallback will re-surface it on every autopilot tick (see §Step 4a for why In-Progress siblings do not suppress this).
+
+Note: WAIT-issue stays in Human Needed (not Backlog) by design until Gap A (#1470) and Gap C (`watch-blockers`) ship. The dependency edge written here enables Gap C to auto-advance this item when #NNN closes.
+
 **WAIT-decision.** Needs a human call before it can advance. Set `workflowState: "Human Needed"` (`command: "ralph_triage"`), post a `## Escalation` comment stating the specific decision required, and apply `ralph-triage`.
 
 **Before completing (REQUIRED for all branches):** export `RALPH_TRIAGE_ACTION` so `triage-postcondition.sh` can verify the action was taken:
@@ -120,19 +178,26 @@ export RALPH_TRIAGE_ACTION=CLOSE-canceled      # → Canceled
 export RALPH_TRIAGE_ACTION=SPLIT               # children created; stays Backlog
 export RALPH_TRIAGE_ACTION=WAIT-pr             # blocked:pr-NNN; stays Backlog
 export RALPH_TRIAGE_ACTION=WAIT-upstream       # blocked:upstream; stays Backlog
+export RALPH_TRIAGE_ACTION=WAIT-issue          # → Human Needed; add_dependency edge; blocked by OPEN issue
 export RALPH_TRIAGE_ACTION=WAIT-decision       # → Human Needed
 # Legacy values still accepted by the postcondition allowlist:
 # ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | CLOSE | HUMAN | CANCEL | RE-ESTIMATE
 # (bare KEEP is REJECTED as of Phase 6 / #1410 — the legacy plugin hook exits 2 on it.)
 ```
 
-Valid values: `CLOSE-done | CLOSE-canceled | SPLIT | PROMOTE-research | PROMOTE-plan | WAIT-pr | WAIT-upstream | WAIT-decision` (the 8 structured verdicts), plus the legacy set `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | CLOSE | HUMAN | CANCEL | RE-ESTIMATE` (bare `KEEP` is **rejected** as of Phase 6 / #1410 — the legacy plugin hook exits 2 on it). `RALPH_TRIAGE_ACTION` is a self-discipline marker for the model — the **slim** postcondition hook (`ralph/hooks/scripts/triage-postcondition.sh`) does NOT read it; it greps the transcript for a valid **terminal token** (`TRIAGED …` / `Queue empty.`). The **legacy plugin** hook (`plugin/ralph-hero/hooks/scripts/triage-postcondition.sh`) does validate this env var against its allowlist.
+Valid values: `CLOSE-done | CLOSE-canceled | SPLIT | PROMOTE-research | PROMOTE-plan | WAIT-pr | WAIT-upstream | WAIT-issue | WAIT-decision` (the 9 structured verdicts), plus the legacy set `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | CLOSE | HUMAN | CANCEL | RE-ESTIMATE` (bare `KEEP` is **rejected** as of Phase 6 / #1410 — the legacy plugin hook exits 2 on it). `RALPH_TRIAGE_ACTION` is a self-discipline marker for the model — the **slim** postcondition hook (`ralph/hooks/scripts/triage-postcondition.sh`) does NOT read it; it greps the transcript for a valid **terminal token** (`TRIAGED …` / `Queue empty.`). The **legacy plugin** hook (`plugin/ralph-hero/hooks/scripts/triage-postcondition.sh`) does validate this env var against its allowlist.
 
 ## §Step 6: Mark issue as triaged
 
 Apply the `ralph-triage` label on every verdict that **leaves the issue in Backlog**: `SPLIT`, `WAIT-pr`, `WAIT-upstream`, and the orthogonal `RE-ESTIMATE` (plus legacy `HUMAN`). Read current labels first, then include them all plus `ralph-triage` (and any `blocked:*` label from §Step 5) in the `save_issue` call.
 
-Rationale: `PROMOTE-*`, `CLOSE-*`, and `WAIT-decision` move the issue OUT of Backlog (it becomes invisible to §Step 2's Backlog query, so no `ralph-triage` is needed for re-pick suppression). `SPLIT`, `WAIT-pr`, `WAIT-upstream`, and `RE-ESTIMATE` all leave the issue in Backlog — without the `ralph-triage` label, §Step 2's untriaged-Backlog picker would re-select the issue on the next triage tick, causing an infinite re-pick loop under `--loop`. The `WAIT-*` items also carry a `blocked:*` label so the Phase 3 watcher (once shipped) can find and resolve them.
+Rationale: **two distinct re-pick suppression mechanisms** are in play:
+
+1. **§Step 2 Backlog-query suppression** (via `ralph-triage` label): verdicts that leave the issue in Backlog need this label to prevent §Step 2's untriaged-Backlog picker from re-selecting the issue on the next triage tick. Affects `SPLIT`, `WAIT-pr`, `WAIT-upstream`, `RE-ESTIMATE`.
+
+2. **Workflow-state removal from Backlog** (no label needed): verdicts that move the issue OUT of Backlog are invisible to §Step 2's Backlog query. Affects `PROMOTE-*`, `CLOSE-*`, `WAIT-decision`, and `WAIT-issue=NNN` (all land in non-Backlog states).
+
+`WAIT-issue=NNN` moves to **Human Needed** (not Backlog) — it does NOT need the `ralph-triage` label for re-pick suppression because it exits the Backlog query entirely. The dependency edge ensures Gap C (`watch-blockers`) can find and auto-advance it when #NNN closes. The `WAIT-pr` and `WAIT-upstream` verdicts stay in Backlog (a watcher owns them); `WAIT-issue` does NOT stay in Backlog (no watcher owns it yet). These three are siblings in the `WAIT-*` family but differ in safe parking state.
 
 ## §Step 7: Find and Link Related Issues
 
@@ -190,8 +255,9 @@ Emit exactly one token, matching the verdict from §Step 4. One token per verdic
 - `TRIAGED SPLIT` — children created; issue stays in Backlog with `ralph-triage`.
 - `TRIAGED PROMOTE-research` — routed to Research Needed for investigation.
 - `TRIAGED PROMOTE-plan` — routed to Ready for Plan (well-specified, skip research).
-- `TRIAGED WAIT-pr=NNN` — parked in Backlog with `blocked:pr-NNN` (the `=NNN` is part of the token).
-- `TRIAGED WAIT-upstream` — parked in Backlog with `blocked:upstream` (URL recorded in the `## Triage Decision` comment, not the token).
+- `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` (the `=NNN` is part of the token; watch-pr owns it).
+- `TRIAGED WAIT-upstream` — parked in **Backlog** with `blocked:upstream` (URL recorded in the `## Triage Decision` comment, not the token; watch-upstream owns it).
+- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN and `add_dependency` edge written (the `=NNN` is part of the token; no watcher yet — will be owned by Gap C `watch-blockers`). **NOT parked in Backlog** — stays Human Needed until #NNN closes.
 - `TRIAGED WAIT-decision` — escalated to Human Needed with a `## Escalation` comment.
 - `Queue empty.` — no untriaged Backlog issues (emitted at §Step 2).
 
