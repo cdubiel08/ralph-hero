@@ -106,12 +106,20 @@ watch-pr has no `Stop` postcondition hook (parity with hygiene/trends) — it mu
 
 watch-upstream has no `Stop` postcondition hook (parity with watch-pr/hygiene/trends) — it mutates only the `blocked:upstream`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
+## Watch-Blockers terminal tokens
+
+- `WATCH-BLOCKERS <n> advanced, <m> still blocked` — `<n>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced to the embedded/default target); `<m>` items left with ≥1 open blocker. Items with no blocker signal are not counted in either.
+- `WATCH-BLOCKERS IDLE` — scan ran cleanly; no dependency-parked items found.
+- `WATCH-BLOCKERS SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
+
+watch-blockers has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/hygiene/trends) — it mutates only the dependency-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
+
 ## Loop continuation
 
 When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
 
 **Drain modes** (triage, unblock, debug, split, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
 
-**Heartbeat modes** (hygiene, trends, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`.
+**Heartbeat modes** (hygiene, trends, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. The watch modes (watch-pr, watch-upstream, watch-blockers) run as serial children of `--mode all` (not independently looped) and emit their tokens into the consolidated heartbeat report.
 
 **Non-loop invocations** are unaffected: all token semantics above apply to standalone caretake calls; the loop-continuation layer only activates when `--loop` was passed to the outermost invocation.
