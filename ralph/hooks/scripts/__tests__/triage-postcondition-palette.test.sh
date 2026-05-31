@@ -11,7 +11,7 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-PATTERN='^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=[0-9]+|WAIT-upstream|WAIT-decision)|^Queue empty\.'
+PATTERN='^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=[0-9]+|WAIT-upstream|WAIT-issue=[0-9]+|WAIT-decision)|^Queue empty\.'
 
 pass() {
   echo "  PASS: $1"
@@ -59,7 +59,7 @@ assert_matches "TRIAGED skipped — branch feature/foo is not main" "TRIAGED ski
 assert_matches "Queue empty." "Queue empty."
 
 echo ""
-echo "--- 8 structured verdict tokens (#1417, should match) ---"
+echo "--- 9 structured verdict tokens (#1417 + #1472, should match) ---"
 
 assert_matches "TRIAGED CLOSE-done" "TRIAGED CLOSE-done"
 assert_matches "TRIAGED CLOSE-canceled" "TRIAGED CLOSE-canceled"
@@ -68,6 +68,8 @@ assert_matches "TRIAGED PROMOTE-research" "TRIAGED PROMOTE-research"
 assert_matches "TRIAGED PROMOTE-plan" "TRIAGED PROMOTE-plan"
 assert_matches "TRIAGED WAIT-pr=1338 (=NNN suffix kept)" "TRIAGED WAIT-pr=1338"
 assert_matches "TRIAGED WAIT-upstream (suffix dropped)" "TRIAGED WAIT-upstream"
+assert_matches "TRIAGED WAIT-issue=512 (OPEN-issue blocker; =NNN suffix required)" "TRIAGED WAIT-issue=512"
+assert_matches "TRIAGED WAIT-issue=1472 (another numeric suffix)" "TRIAGED WAIT-issue=1472"
 assert_matches "TRIAGED WAIT-decision" "TRIAGED WAIT-decision"
 
 echo ""
@@ -79,6 +81,9 @@ assert_no_match "Unknown token TRIAGED unknown" "TRIAGED unknown"
 assert_no_match "Bare TRIAGED with no verdict" "TRIAGED"
 assert_no_match "TRIAGED WAIT-pr without =NNN suffix (must name the PR)" "TRIAGED WAIT-pr"
 assert_no_match "TRIAGED WAIT-pr=abc non-numeric suffix (PR numbers are integers)" "TRIAGED WAIT-pr=abc"
+assert_no_match "TRIAGED WAIT-issue without =NNN suffix (must name the issue)" "TRIAGED WAIT-issue"
+assert_no_match "TRIAGED WAIT-issue=abc non-numeric suffix (issue numbers are integers)" "TRIAGED WAIT-issue=abc"
+assert_no_match "Bare blocked in Backlog (no terminal token — must emit WAIT-issue=NNN instead)" "Issue is blocked by #512 in Backlog"
 assert_matches "Queue empty. with trailing text still matches (starts with sentinel)" "Queue empty. some extra text"
 assert_no_match "Lowercase queue empty." "queue empty."
 assert_no_match "Prose description of routing (not the literal token)" "Issue was routed to Research Needed"
