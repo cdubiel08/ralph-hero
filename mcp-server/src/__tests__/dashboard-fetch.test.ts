@@ -123,10 +123,11 @@ describe("toDashboardItems", () => {
     expect(item.assignees).toEqual(["alice", "bob"]);
   });
 
-  it("maps trackedIssues -> blockedBy with workflowState=Done iff source state CLOSED", () => {
+  it("maps blockedBy dependency connection -> blockedBy with workflowState=Done iff source state CLOSED", () => {
+    // Uses the native GitHub blockedBy(first:N) dependency connection, not trackedIssues.
     const raw = [
       makeRawIssue({
-        trackedIssues: {
+        blockedBy: {
           nodes: [
             { number: 50, state: "CLOSED" },
             { number: 60, state: "OPEN" },
@@ -139,6 +140,20 @@ describe("toDashboardItems", () => {
       { number: 50, workflowState: "Done" },
       { number: 60, workflowState: null },
     ]);
+  });
+
+  it("trackedIssues (task-list) does NOT populate blockedBy — only the dependency connection does", () => {
+    // An issue with trackedIssues but no blockedBy edges yields blockedBy=[].
+    const raw = [
+      makeRawIssue({
+        trackedIssues: {
+          nodes: [{ number: 70, state: "OPEN" }],
+        },
+        blockedBy: { nodes: [] },
+      }),
+    ];
+    const [item] = toDashboardItems(raw);
+    expect(item.blockedBy).toEqual([]);
   });
 
   it("sets parentNumber and parentState from trackedInIssues.nodes[0]", () => {

@@ -1196,3 +1196,57 @@ describe("rankDirections — unlinkable PR filter", () => {
     expect(prDirections).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GH-1470: Backlog fallback excludes items with open blockedBy dependency edges
+// ---------------------------------------------------------------------------
+
+describe("GH-1470: agent Backlog fallback excludes open-blocker items", () => {
+  it("excludes a Backlog item blocked by an OPEN dependency issue from the fallback queue", () => {
+    // Only item is in Backlog and has an OPEN blocker (workflowState: null =
+    // not Done/Canceled). The fallback loop should skip it and return [].
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 512,
+        workflowState: "Backlog",
+        blockedBy: [{ number: 511, workflowState: null }],
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ audience: "agent" }));
+    expect(result).toHaveLength(0);
+  });
+
+  it("surfaces the Backlog item once the blocker is Done (CLOSED)", () => {
+    // Same item but blocker is marked Done — no longer suppressed.
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 512,
+        workflowState: "Backlog",
+        blockedBy: [{ number: 511, workflowState: "Done" }],
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ audience: "agent" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].issue?.number).toBe(512);
+  });
+
+  it("surfaces unblocked Backlog items even when a blocked sibling exists", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 515,
+        workflowState: "Backlog",
+        blockedBy: [{ number: 514, workflowState: null }],
+      }),
+      makeItem({
+        number: 516,
+        workflowState: "Backlog",
+        blockedBy: [],
+      }),
+    ];
+    // Both are Backlog and scored.length is still 0 before fallback so
+    // fallback fires; #515 is skipped (open blocker), #516 is included.
+    const result = rankDirections(items, [], makeConfig({ audience: "agent" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].issue?.number).toBe(516);
+  });
+});
