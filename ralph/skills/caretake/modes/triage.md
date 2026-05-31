@@ -107,13 +107,13 @@ Choose ONE of the **9 structured verdicts**. Every verdict names its successor �
 | `PROMOTE-plan` | Ready for Plan | `/ralph:plan --mode auto` |
 | `WAIT-pr=NNN` | Backlog + `blocked:pr-NNN` label | watch-pr (Phase 3, #1406) |
 | `WAIT-upstream=URL` | Backlog + `blocked:upstream` label | watch-upstream (Phase 3, #1407) |
-| `WAIT-issue=NNN` | Human Needed + `## Escalation` naming #NNN | unblock workflow (auto-advances when #NNN closes, via Gap C `watch-blockers`) |
+| `WAIT-issue=NNN` | Human Needed + `## Escalation` naming #NNN | auto-advanced when #NNN closes by `caretake --mode watch-blockers` (#1473) |
 | `WAIT-decision` | Human Needed + `## Escalation` comment | unblock workflow |
 
 **`WAIT-*` verdict family — coherent design:** The three `WAIT-*` verdicts use the same parking pattern but differ in who watches them and whether Backlog is safe:
 - `WAIT-pr=NNN` — stays **Backlog** (watch-pr owns it; PR merge is machine-detectable).
 - `WAIT-upstream=URL` — stays **Backlog** (watch-upstream owns it; URL resolution is machine-detectable).
-- `WAIT-issue=NNN` — moves to **Human Needed** (no watcher owns it yet; Backlog is unsafe because the picker will re-surface it on every autopilot tick). Once Gap A (#1470) and Gap C (`watch-blockers`) ship, this target relaxes to Backlog+edge.
+- `WAIT-issue=NNN` — moves to **Human Needed** (`caretake --mode watch-blockers` owns it; auto-advances when #NNN closes). Once Gap A (#1470) is fully adopted, this target can relax to Backlog+edge.
 
 When uncertain, prefer `PROMOTE-research` (route for investigation) or `WAIT-decision` (escalate) over `CLOSE-*` on valid work.
 
@@ -163,7 +163,7 @@ Add a `## Triage Decision` comment naming the exact condition being waited on.
   3. Apply `ralph-triage` label.
   4. **Do NOT leave the item in Backlog** — the picker's Backlog-fallback will re-surface it on every autopilot tick (see §Step 4a for why In-Progress siblings do not suppress this).
 
-Note: WAIT-issue stays in Human Needed (not Backlog) by design until Gap A (#1470) and Gap C (`watch-blockers`) ship. The dependency edge written here enables Gap C to auto-advance this item when #NNN closes.
+Note: WAIT-issue stays in Human Needed (not Backlog) by design. The dependency edge written here enables `caretake --mode watch-blockers` (#1473) to auto-advance this item when #NNN closes.
 
 **WAIT-decision.** Needs a human call before it can advance. Set `workflowState: "Human Needed"` (`command: "ralph_triage"`), post a `## Escalation` comment stating the specific decision required, and apply `ralph-triage`.
 
@@ -197,7 +197,7 @@ Rationale: **two distinct re-pick suppression mechanisms** are in play:
 
 2. **Workflow-state removal from Backlog** (no label needed): verdicts that move the issue OUT of Backlog are invisible to §Step 2's Backlog query. Affects `PROMOTE-*`, `CLOSE-*`, `WAIT-decision`, and `WAIT-issue=NNN` (all land in non-Backlog states).
 
-`WAIT-issue=NNN` moves to **Human Needed** (not Backlog) — it does NOT need the `ralph-triage` label for re-pick suppression because it exits the Backlog query entirely. The dependency edge ensures Gap C (`watch-blockers`) can find and auto-advance it when #NNN closes. The `WAIT-pr` and `WAIT-upstream` verdicts stay in Backlog (a watcher owns them); `WAIT-issue` does NOT stay in Backlog (no watcher owns it yet). These three are siblings in the `WAIT-*` family but differ in safe parking state.
+`WAIT-issue=NNN` moves to **Human Needed** (not Backlog) — it does NOT need the `ralph-triage` label for re-pick suppression because it exits the Backlog query entirely. The dependency edge ensures `caretake --mode watch-blockers` (#1473) can find and auto-advance it when #NNN closes. The `WAIT-pr` and `WAIT-upstream` verdicts stay in Backlog (a watcher owns them); `WAIT-issue` lands in Human Needed (watch-blockers owns it). These three are siblings in the `WAIT-*` family but differ in safe parking state.
 
 ## §Step 7: Find and Link Related Issues
 
@@ -257,7 +257,7 @@ Emit exactly one token, matching the verdict from §Step 4. One token per verdic
 - `TRIAGED PROMOTE-plan` — routed to Ready for Plan (well-specified, skip research).
 - `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` (the `=NNN` is part of the token; watch-pr owns it).
 - `TRIAGED WAIT-upstream` — parked in **Backlog** with `blocked:upstream` (URL recorded in the `## Triage Decision` comment, not the token; watch-upstream owns it).
-- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN and `add_dependency` edge written (the `=NNN` is part of the token; no watcher yet — will be owned by Gap C `watch-blockers`). **NOT parked in Backlog** — stays Human Needed until #NNN closes.
+- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN and `add_dependency` edge written (the `=NNN` is part of the token; `caretake --mode watch-blockers` owns resolution — #1473). **NOT parked in Backlog** — stays Human Needed until #NNN closes.
 - `TRIAGED WAIT-decision` — escalated to Human Needed with a `## Escalation` comment.
 - `Queue empty.` — no untriaged Backlog issues (emitted at §Step 2).
 

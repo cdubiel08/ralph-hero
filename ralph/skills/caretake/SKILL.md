@@ -1,6 +1,6 @@
 ---
-description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "collate debug errors", "filer Langfuse errors", "split this issue", "decompose ticket". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/debug/split/watch-pr/watch-upstream) each route to a dedicated mode body under `modes/`.
-argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|watch-pr|watch-upstream|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
+description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "collate debug errors", "filer Langfuse errors", "split this issue", "decompose ticket". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/debug/split/watch-pr/watch-upstream/watch-blockers) each route to a dedicated mode body under `modes/`.
+argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|watch-pr|watch-upstream|watch-blockers|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
 context: inline
 model: opus
 hooks:
@@ -91,7 +91,7 @@ All board maintenance flows through this one entrypoint. Ten named modes plus a 
 | Mode | Trigger | Role |
 |---|---|---|
 | **default** | `/ralph:caretake --issue NNN` | Event-driven: read labels, dispatch the right mode via `Skill()` |
-| **all** | `/ralph:caretake` (no args) or `/ralph:caretake --mode all` | Heartbeat fan-out: hygiene + watch-pr + watch-upstream + catch-up report + trends |
+| **all** | `/ralph:caretake` (no args) or `/ralph:caretake --mode all` | Heartbeat fan-out: hygiene + watch-pr + watch-upstream + watch-blockers + catch-up report + trends |
 | **triage** | `/ralph:caretake --mode triage [#NNN]` | Pick oldest untriaged Backlog, assess, route |
 | **hygiene** | `/ralph:caretake --mode hygiene` | Scan for archive candidates, stale items, WIP violations |
 | **unblock** | `/ralph:caretake --mode unblock [#NNN] [--question]` | Interactive answer OR autonomous request post |
@@ -102,6 +102,7 @@ All board maintenance flows through this one entrypoint. Ten named modes plus a 
 | **split** | `/ralph:caretake --mode split [#NNN]` | Split M/L/XL → multiple XS/S sub-issues |
 | **watch-pr** | `/ralph:caretake --mode watch-pr` | Resolve `blocked:pr-NNN` items when their PR merges (advance) or closes-unmerged (escalate) |
 | **watch-upstream** | `/ralph:caretake --mode watch-upstream` | Resolve `blocked:upstream` items when their external condition resolves (advance) or URL is dead/unparseable (escalate) |
+| **watch-blockers** | `/ralph:caretake --mode watch-blockers` | Auto-advance items whose `blockedBy` dependency edges have all closed (resolves the `WAIT-issue=NNN` triage verdict); leave items with any open blocker |
 
 References: [label-routing.md](label-routing.md) (default-mode dispatch table), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts), [split-decomposition.md](split-decomposition.md) (split-mode strategy + hook contracts).
 
@@ -144,9 +145,10 @@ esac
   1. `Skill("ralph:caretake", args="--mode hygiene")`
   2. `Skill("ralph:caretake", args="--mode watch-pr")`
   3. `Skill("ralph:caretake", args="--mode watch-upstream")`
-  4. `Skill("ralph:catch-up", args="--mode report")`
-  5. `Skill("ralph:caretake", args="--mode trends")`
-  Report consolidated outcome (one line per child — 5 total). The watch modes run before report/trends so the dashboards reflect post-watch board state; both no-op (`IDLE`) on an empty board, or `SKIPPED` when the heartbeat fires off `main`.
+  4. `Skill("ralph:caretake", args="--mode watch-blockers")`
+  5. `Skill("ralph:catch-up", args="--mode report")`
+  6. `Skill("ralph:caretake", args="--mode trends")`
+  Report consolidated outcome (one line per child — 6 total). The watch modes run before report/trends so the dashboards reflect post-watch board state; all no-op (`IDLE`) on an empty board, or `SKIPPED` when the heartbeat fires off `main`.
 
 ## Step 2: Emit result line
 
@@ -164,6 +166,7 @@ Each mode body ends by emitting its terminal token (see [outcome-tokens.md](outc
 - [modes/split.md](modes/split.md) — M/L/XL → XS/S sub-issues
 - [modes/watch-pr.md](modes/watch-pr.md) — resolve `blocked:pr-NNN` items on PR merge/close
 - [modes/watch-upstream.md](modes/watch-upstream.md) — resolve `blocked:upstream` items on external condition
+- [modes/watch-blockers.md](modes/watch-blockers.md) — resolve dependency-parked items on blocker close
 
 ## Per-mode terminal tokens
 
@@ -180,6 +183,7 @@ The harness reads these from the transcript; do not paraphrase. Full table in [o
 - split: `SPLIT <N>` | `SPLIT SKIPPED <reason>`
 - watch-pr: `WATCH-PR ADVANCED <N>` | `WATCH-PR IDLE` | `WATCH-PR SKIPPED — branch <name> is not main`
 - watch-upstream: `WATCH-UPSTREAM ADVANCED <N>` | `WATCH-UPSTREAM IDLE` | `WATCH-UPSTREAM SKIPPED — branch <name> is not main`
+- watch-blockers: `WATCH-BLOCKERS <n> advanced, <m> still blocked` | `WATCH-BLOCKERS IDLE` | `WATCH-BLOCKERS SKIPPED — branch <name> is not main`
 
 ## Notes
 
