@@ -48,10 +48,13 @@ assert_file_contains() {
 }
 
 # Extract the body of the "## --mode classify" section (lines after the
-# header, up to but not including the next "## " heading).
+# header, up to but not including the next "## " heading). The start
+# pattern is anchored ("$") so a future sibling heading like
+# "## --mode classify-pr" cannot prefix-match and fold its body into the
+# block (which would latently false-pass assertions 3/4).
 classify_block() {
   awk '
-    /^## --mode classify/ { f=1; next }
+    /^## --mode classify[[:space:]]*$/ { f=1; next }
     /^## / { f=0 }
     f
   ' "$SKILL_FILE"
