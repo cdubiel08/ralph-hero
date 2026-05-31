@@ -24,6 +24,7 @@ import {
   LOCK_STATES,
   TERMINAL_STATES,
   WORKFLOW_STATE_TO_STATUS,
+  ISSUE_STATE_TO_TERMINAL_WORKFLOW,
 } from "../lib/workflow-states.js";
 import { buildBatchMutationQuery } from "./batch-tools.js";
 import { resolveState } from "../lib/state-resolution.js";
@@ -1188,6 +1189,7 @@ export function registerIssueTools(
       "and project field values (workflow state, estimate, priority, iteration) in a single call. " +
       "Supports semantic intents (__LOCK__, __COMPLETE__, etc.) for workflowState. " +
       "Auto-closes the GitHub issue when workflowState resolves to a terminal state (Done, Canceled) unless issueState is explicitly set. " +
+      "Reverse inference: when issueState closes the issue (CLOSED→Done, CLOSED_NOT_PLANNED→Canceled) and no workflowState is provided, the board is advanced to the matching terminal state automatically. Explicit workflowState always wins. " +
       "Set estimate, priority, or iteration to null to clear the field. Use @current/@next tokens for iteration. " +
       "Returns: number, url, changes.",
     {
@@ -1273,6 +1275,21 @@ export function registerIssueTools(
           targetState = "CLOSED";
           stateReason = resolvedWorkflowState === "Canceled" ? "NOT_PLANNED" : "COMPLETED";
           changes.autoClose = true;
+        }
+
+        // Reverse inference: if issueState closes the issue and no explicit workflowState,
+        // default the board to the matching terminal workflow state (Done or Canceled).
+        // This is the symmetric inverse of the forward auto-close path above.
+        // Explicit workflowState always wins — this only fires when args.workflowState is absent.
+        let inferredFromClose = false;
+        if (args.workflowState === undefined && targetState === "CLOSED") {
+          const key = `CLOSED:${stateReason ?? ""}`;
+          const inferred = ISSUE_STATE_TO_TERMINAL_WORKFLOW[key];
+          if (inferred) {
+            resolvedWorkflowState = inferred;
+            inferredFromClose = true;
+            changes.workflowStateInferred = inferred;
+          }
         }
 
         // 3. Issue state mutations (close/reopen) - use dedicated mutations
@@ -1409,7 +1426,8 @@ export function registerIssueTools(
         }
 
         // 4. Project-field mutations (aliased batch for workflow state + status sync + estimate + priority)
-        if (hasProjectFields) {
+        // Also fires when workflowState was inferred from issueState (reverse-close inference).
+        if (hasProjectFields || inferredFromClose) {
           const { projectNumber, projectOwner } = resolveFullConfig(client, args);
           await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 

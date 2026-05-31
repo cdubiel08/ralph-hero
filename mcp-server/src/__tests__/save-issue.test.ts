@@ -10,7 +10,7 @@ import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
 import { resolveState } from "../lib/state-resolution.js";
-import { TERMINAL_STATES } from "../lib/workflow-states.js";
+import { TERMINAL_STATES, ISSUE_STATE_TO_TERMINAL_WORKFLOW } from "../lib/workflow-states.js";
 
 // ---------------------------------------------------------------------------
 // Read source for structural tests
@@ -389,6 +389,103 @@ describe("save_issue structural", () => {
     );
     expect(iterSection).toContain("fieldsToClear.push");
     expect(iterSection).toContain("args.iteration === null");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reverse-inference logic tests (GH-1471): inferring workflowState from issueState
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure helper mirroring the reverse-inference block in save_issue.
+ * Accepts the same inputs (args.workflowState, targetState, stateReason) and
+ * returns the inferred workflowState (or undefined when inference does not apply).
+ */
+function inferWorkflowFromClose(
+  explicitWorkflowState: string | undefined,
+  targetState: "OPEN" | "CLOSED" | undefined,
+  stateReason: "COMPLETED" | "NOT_PLANNED" | undefined,
+): string | undefined {
+  if (explicitWorkflowState !== undefined) return undefined; // explicit wins
+  if (targetState !== "CLOSED") return undefined; // only closed issues
+  const key = `CLOSED:${stateReason ?? ""}`;
+  return ISSUE_STATE_TO_TERMINAL_WORKFLOW[key];
+}
+
+describe("save_issue reverse-inference (GH-1471)", () => {
+  // Acceptance criterion 1: CLOSED (no workflowState) → Done
+  it("CLOSED with no workflowState infers Done", () => {
+    const result = inferWorkflowFromClose(undefined, "CLOSED", "COMPLETED");
+    expect(result).toBe("Done");
+  });
+
+  // Acceptance criterion 2: CLOSED_NOT_PLANNED (no workflowState) → Canceled
+  it("CLOSED_NOT_PLANNED with no workflowState infers Canceled", () => {
+    const result = inferWorkflowFromClose(undefined, "CLOSED", "NOT_PLANNED");
+    expect(result).toBe("Canceled");
+  });
+
+  // Acceptance criterion 3: explicit workflowState always wins
+  it("explicit workflowState overrides close inference", () => {
+    const result = inferWorkflowFromClose("In Progress", "CLOSED", "COMPLETED");
+    expect(result).toBeUndefined();
+  });
+
+  // OPEN/reopen calls must not trigger inference
+  it("OPEN targetState does not infer a workflow state", () => {
+    const result = inferWorkflowFromClose(undefined, "OPEN", undefined);
+    expect(result).toBeUndefined();
+  });
+
+  // No targetState (metadata-only call) must not trigger inference
+  it("undefined targetState does not infer a workflow state", () => {
+    const result = inferWorkflowFromClose(undefined, undefined, undefined);
+    expect(result).toBeUndefined();
+  });
+
+  // Confirm inferred states are terminal (not lock states)
+  it("inferred Done is in TERMINAL_STATES", () => {
+    const result = inferWorkflowFromClose(undefined, "CLOSED", "COMPLETED");
+    expect(TERMINAL_STATES.includes(result!)).toBe(true);
+  });
+
+  it("inferred Canceled is in TERMINAL_STATES", () => {
+    const result = inferWorkflowFromClose(undefined, "CLOSED", "NOT_PLANNED");
+    expect(TERMINAL_STATES.includes(result!)).toBe(true);
+  });
+});
+
+describe("save_issue reverse-inference structural (GH-1471)", () => {
+  // Verify the guard line changed to also trigger on inferredFromClose
+  it("project-field block fires on inferredFromClose", () => {
+    expect(issueToolsSrc).toContain("inferredFromClose");
+    expect(issueToolsSrc).toContain("hasProjectFields || inferredFromClose");
+  });
+
+  it("ISSUE_STATE_TO_TERMINAL_WORKFLOW is exported from workflow-states", () => {
+    const wsSrc = fs.readFileSync(
+      path.resolve(__dirname, "../lib/workflow-states.ts"),
+      "utf-8",
+    );
+    expect(wsSrc).toContain("ISSUE_STATE_TO_TERMINAL_WORKFLOW");
+    expect(wsSrc).toContain('"CLOSED:COMPLETED": "Done"');
+    expect(wsSrc).toContain('"CLOSED:NOT_PLANNED": "Canceled"');
+  });
+
+  it("reverse inference block precondition checks args.workflowState === undefined", () => {
+    expect(issueToolsSrc).toContain("args.workflowState === undefined");
+  });
+
+  it("tool description mentions reverse inference direction", () => {
+    expect(issueToolsSrc).toContain("Reverse inference");
+  });
+
+  // Confirm the forward Done→auto-close path is still present and unchanged
+  it("forward auto-close path (Done/Canceled → CLOSED) still present", () => {
+    expect(issueToolsSrc).toContain("changes.autoClose = true");
+    expect(issueToolsSrc).toContain(
+      "TERMINAL_STATES.includes(resolvedWorkflowState)",
+    );
   });
 });
 
