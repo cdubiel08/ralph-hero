@@ -89,9 +89,9 @@ Change the `--mode classify` queue read to request `audience: "agent"`, and add 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -n 'next_actions({ audience: "agent" })' ralph/skills/hero/SKILL.md` returns the `--mode classify` line (exactly 1 hit).
-- [ ] `grep -c 'next_actions({})' ralph/skills/hero/SKILL.md` returns `1` (only the default-mode picker retains the bare call).
-- [ ] `grep -n 'next_actions' ralph/skills/hero/SKILL.md` shows both lines carry an inline audience rationale (the words `audience` / `human` / `agent` appear adjacent to each call).
+- [x] `grep -n 'next_actions({ audience: "agent" })' ralph/skills/hero/SKILL.md` returns the `--mode classify` line (exactly 1 hit).
+- [x] `grep -c 'next_actions({})' ralph/skills/hero/SKILL.md` returns `1` (only the default-mode picker retains the bare call).
+- [x] `grep -n 'next_actions' ralph/skills/hero/SKILL.md` shows both lines carry an inline audience rationale (the words `audience` / `human` / `agent` appear adjacent to each call).
 
 #### Manual Verification
 - [ ] Reading the `--mode classify` Step 2 and Default-mode Step 1, a reader can tell *why* each call site uses its audience without consulting the issue.
@@ -114,10 +114,10 @@ Add a bash test that asserts the `--mode classify` call site passes `audience: "
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `bash ralph/hooks/scripts/__tests__/hero-classify-audience.test.sh` exits 0 against the Phase-1 content.
-- [ ] Temporarily reverting the Phase-1 edit (classify line back to `next_actions({})`) makes the test exit 1 (proves the guard guards). Restore afterward.
-- [ ] The new test is picked up by the CI discovery glob: `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -type f` lists `hero-classify-audience.test.sh`.
-- [ ] `bash -n ralph/hooks/scripts/__tests__/hero-classify-audience.test.sh` (syntax check) passes, and ShellCheck is clean (CI runs ShellCheck on `ralph/hooks`).
+- [x] `bash ralph/hooks/scripts/__tests__/hero-classify-audience.test.sh` exits 0 against the Phase-1 content.
+- [x] Temporarily reverting the Phase-1 edit (classify line back to `next_actions({})`) makes the test exit 1 (proves the guard guards). Restore afterward.
+- [x] The new test is picked up by the CI discovery glob: `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -type f` lists `hero-classify-audience.test.sh`.
+- [x] `bash -n ralph/hooks/scripts/__tests__/hero-classify-audience.test.sh` (syntax check) passes, and ShellCheck is clean (CI runs ShellCheck on `ralph/hooks`).
 
 #### Manual Verification
 - [ ] Test output names what it guards (autonomous classify call site uses `audience: "agent"`), readable by someone who never saw this issue.
