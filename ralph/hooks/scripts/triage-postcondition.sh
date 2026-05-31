@@ -49,14 +49,14 @@ transcript_text=$(jq -r 'select(.type == "assistant") | .message.content[]? | se
 # retained for back-compat so older transcripts and the parallel plugin surface
 # don't regress. WAIT-pr requires a literal "=NNN" numeric suffix (PR numbers are
 # integers) so the branch can't over-match prose or a non-numeric suffix.
-if echo "$transcript_text" | grep -qE '^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=[0-9]+|WAIT-upstream|WAIT-decision)|^Queue empty\.' ; then
+if echo "$transcript_text" | grep -qE '^TRIAGED (routed (→ )?.+|duplicate|canceled|needs-split|escalated|re-estimated|skipped|CLOSE-done|CLOSE-canceled|SPLIT|PROMOTE-research|PROMOTE-plan|WAIT-pr=[0-9]+|WAIT-upstream|WAIT-issue=[0-9]+|WAIT-decision)|^Queue empty\.' ; then
   echo "Triage postcondition passed: terminal token found in transcript"
   allow
 fi
 
 block "Triage postcondition failed: no terminal token emitted
 
-Expected one of the 8 verdict tokens:
+Expected one of the 9 verdict tokens:
   TRIAGED CLOSE-done                 (closed as done/implemented/duplicate)
   TRIAGED CLOSE-canceled             (closed not_planned)
   TRIAGED SPLIT                      (children created; stays in Backlog)
@@ -64,6 +64,7 @@ Expected one of the 8 verdict tokens:
   TRIAGED PROMOTE-plan               (routed to Ready for Plan)
   TRIAGED WAIT-pr=NNN                (parked in Backlog; blocked:pr-NNN)
   TRIAGED WAIT-upstream              (parked in Backlog; blocked:upstream)
+  TRIAGED WAIT-issue=NNN             (moved to Human Needed; add_dependency edge; blocked by OPEN issue)
   TRIAGED WAIT-decision              (escalated to Human Needed)
   Queue empty.                       (no untriaged Backlog issues)
 
