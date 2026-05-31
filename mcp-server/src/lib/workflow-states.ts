@@ -143,3 +143,22 @@ export const WORKFLOW_STATE_TO_STATUS: Record<string, string> = {
   "Canceled": "Done",
   "Human Needed": "Todo",
 };
+
+/**
+ * Reverse-inference map (GH-1471): when a save_issue call closes the GitHub
+ * issue but provides no explicit workflowState, infer the matching terminal
+ * board state. Keyed by `CLOSED:${stateReason ?? ""}` to mirror the lookup in
+ * issue-tools.ts. This is the symmetric inverse of the forward auto-close path.
+ *
+ * - CLOSED:COMPLETED   → Done     (issue closed as completed)
+ * - CLOSED:NOT_PLANNED → Canceled (issue closed as not planned)
+ * - CLOSED:            → Done     (close with no stateReason defaults to Done)
+ *
+ * An explicit workflowState always wins — the caller only consults this map
+ * when args.workflowState is undefined.
+ */
+export const ISSUE_STATE_TO_TERMINAL_WORKFLOW: Record<string, string> = {
+  "CLOSED:COMPLETED": "Done",
+  "CLOSED:NOT_PLANNED": "Canceled",
+  "CLOSED:": "Done",
+};
