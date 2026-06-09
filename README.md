@@ -151,7 +151,7 @@ plugin/
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
-| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (`sonnet` or `opus`; default `sonnet`) |
+| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (`sonnet`, `opus`, or `fable`; default `sonnet`; BLOCKED escalation re-dispatches once at `fable`) |
 | `RALPH_DEBUG` | No | Enable JSONL debug logging + OpenTelemetry export |
 
 Set all variables in `.claude/settings.local.json` under the `"env"` key. Do not put tokens in `.mcp.json`.
