@@ -923,7 +923,10 @@ describe("knowledge_expert", () => {
   it("returns wiki + reflection buckets filtered by domain tag", async () => {
     const mod = await import("../index.js");
     const { server, db } = mod.createServer(":memory:");
-    // Seed: one wiki doc and one reflection, both tagged 'auth'
+    // Seed: one wiki doc and one reflection, both tagged 'auth'. The
+    // reflection date must be computed relative to now — the default
+    // recency_window_days is 30, so a hardcoded date ages out of the window.
+    const recentReflDate = new Date(Date.now() - 5 * 86_400_000).toISOString().slice(0, 10);
     db.upsertDocument({
       id: "wiki-auth",
       path: "thoughts/wiki/auth.md",
@@ -939,7 +942,7 @@ describe("knowledge_expert", () => {
       id: "refl-auth",
       path: "thoughts/dream-memories/2026/05/refl.md",
       title: "Auth reflection",
-      date: "2026-05-10",
+      date: recentReflDate,
       type: null,
       status: null,
       githubIssue: null,
