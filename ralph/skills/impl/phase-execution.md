@@ -37,15 +37,15 @@ Per-task retry budget: **3 attempts**. After three, escalate to Human Needed (`_
 
 ## §IMPL BLOCKED escalation
 
-Tier-escalation path (model-driven BLOCKED). When the implementer's internal retry budget is exhausted at the highest tier WITHIN this invocation AND the current dispatching model is NOT opus, emit a structured terminal line BEFORE stopping:
+Tier-escalation path (model-driven BLOCKED). When the implementer's internal retry budget is exhausted at the highest tier WITHIN this invocation AND the current dispatching model is NOT fable, emit a structured terminal line BEFORE stopping:
 
 ```
-IMPL BLOCKED model=<current> needs=opus reason=<short-reason>
+IMPL BLOCKED model=<current> needs=fable reason=<short-reason>
 ```
 
-Do NOT call `save_issue(workflowState="__ESCALATE__")` in this path — leave the issue in "In Progress" so hero can re-dispatch with `model="opus"` once. The `impl-postcondition.sh` Stop hook greps the transcript for the unanchored `IMPL BLOCKED ` token (the marker is embedded inside a JSON `"text":"..."` field in the JSONL transcript and never appears at column 0) and accepts it as a non-error terminal state.
+Do NOT call `save_issue(workflowState="__ESCALATE__")` in this path — leave the issue in "In Progress" so hero can re-dispatch with `model="fable"` once. The `impl-postcondition.sh` Stop hook greps the transcript for the unanchored `IMPL BLOCKED ` token (the marker is embedded inside a JSON `"text":"..."` field in the JSONL transcript and never appears at column 0) and accepts it as a non-error terminal state.
 
-If the current dispatching model IS already opus, fall through to the existing escalate-to-Human-Needed path (`save_issue(workflowState="__ESCALATE__")`). A double-BLOCKED at opus is a real escalation, not a tier issue.
+If the current dispatching model IS already fable, fall through to the existing escalate-to-Human-Needed path (`save_issue(workflowState="__ESCALATE__")`). A double-BLOCKED at fable is a real escalation, not a tier issue.
 
 ## §Phase quality review
 

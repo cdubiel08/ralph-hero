@@ -61,14 +61,14 @@ plugin/
 
 | Verb | Model tier | Purpose |
 |------|-----------|---------|
-| `/ralph:catch-up` | haiku/sonnet | Orientation: narrative + picker or single-surface mode |
-| `/ralph:form` | sonnet | Issue intake: dedup, draft, tree |
-| `/ralph:research` | sonnet/opus | Research: interactive or autonomous queue-drain |
-| `/ralph:plan` | opus | Planning: interactive, auto, epic, iterate, review |
-| `/ralph:impl` | sonnet | Implementation: auto, pr, address |
-| `/ralph:review` | sonnet/opus | Review: val, code, merge |
-| `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
-| `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
+| `/ralph:catch-up` | inherit (haiku narrative agent) | Orientation: narrative + picker or single-surface mode |
+| `/ralph:form` | inherit | Issue intake: dedup, draft, tree |
+| `/ralph:research` | fable | Research: interactive or autonomous queue-drain |
+| `/ralph:plan` | fable | Planning: interactive, auto, epic, iterate, review |
+| `/ralph:impl` | opus session / sonnet ladder | Implementation: auto, pr, address |
+| `/ralph:review` | opus | Review: val, code, merge |
+| `/ralph:caretake` | opus | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
+| `/ralph:hero` | fable | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
 | `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
 
 ### ralph Plugin — 16 Agents
@@ -77,7 +77,7 @@ plugin/
 
 **8 investigators** (in `ralph/agents/`): `codebase-analyzer`, `codebase-locator`, `codebase-pattern-finder`, `log-reader`, `sre-fixit`, `thoughts-analyzer`, `thoughts-locator`, `web-search-researcher`
 
-On `IMPL BLOCKED needs=opus` verdict, the hero re-dispatches `impl-agent` once at `model="opus"`. Override default models via `RALPH_IMPL_MODEL`, `RALPH_SPLIT_MODEL`.
+On `IMPL BLOCKED needs=fable` verdict, the hero re-dispatches `impl-agent` once at `model="fable"`. Override the default impl tier via `RALPH_IMPL_MODEL`. Model-tier rationale: [`docs/model-tier-policy.md`](docs/model-tier-policy.md).
 
 ### MCP Server Internals
 
@@ -224,7 +224,7 @@ When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth to
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token, then to `gh auth token`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
-| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (e.g. `sonnet`, `opus`). Defaults to `sonnet`. |
+| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (e.g. `sonnet`, `opus`, `fable`). Defaults to `sonnet`; BLOCKED escalation re-dispatches once at `fable`. |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and OpenTelemetry export. |
 
 **Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
