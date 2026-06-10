@@ -70,6 +70,7 @@ If you're using explicit `RALPH_GH_REPO_TOKEN` / `RALPH_GH_PROJECT_TOKEN` / `RAL
 | Skill | Description |
 |-------|-------------|
 | `/ralph:hero` | Drive an issue through the full lifecycle end-to-end (autonomous) |
+| `/ralph:hero-fable` | Experimental rail-free surface for Fable: outcome + boundaries + artifact contract, no prescribed phases (`/ralph:hero --model fable` forwards here) |
 | `/ralph:research` | Investigate an issue, create a research document, update issue state |
 | `/ralph:plan` | Create or review an implementation plan |
 | `/ralph:impl` | Implement an approved plan in an isolated worktree |
@@ -116,7 +117,7 @@ The MCP server registers ~38 `ralph_hero__*` tools; the table below is a curated
 ```
 mcp-server/              # TypeScript MCP server (published as ralph-hero-mcp-server)
 ralph/                   # Claude Code plugin
-├── skills/              # 9 fat verbs
+├── skills/              # 9 fat verbs + experimental hero-fable surface
 ├── agents/              # 16 agents (8 per-phase + 8 investigators)
 ├── hooks/               # Lifecycle enforcement hooks
 └── .claude-plugin/      # Plugin manifest + .mcp.json

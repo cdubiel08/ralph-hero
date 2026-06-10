@@ -66,6 +66,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `hero --mode watch` | Yes | — | `15m` | heartbeat (no `Queue empty.`) | polling heartbeat |
 | `hero --mode classify` | No | — | — | — | redundant with `hero --mode auto` |
 | `hero --mode pr-drain` | No | — | — | — | single-PR action; loop would re-process same PR |
+| `hero-fable` | No | — | — | — | experimental rail-free surface; one issue/outcome per invocation; `/ralph:hero --model fable` forwards here |
 | `form` all modes | No | — | — | — | interactive picker |
 | `setup` all modes | No | — | — | — | one-shot bootstrap |
 

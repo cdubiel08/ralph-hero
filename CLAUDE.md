@@ -71,6 +71,8 @@ plugin/
 | `/ralph:hero` | fable | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
 | `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
 
+Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable) — isolated rail-free path (no prescribed phases, no gate hooks; artifact contract instead). `/ralph:hero --model fable` forwards to it. Design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`.
+
 ### ralph Plugin — 16 Agents
 
 **8 per-phase agents** (in `ralph/agents/`): `catch-up-agent`, `impl-agent`, `merge-agent`, `plan-agent`, `research-agent`, `review-agent`, `triage-agent`, `val-agent`

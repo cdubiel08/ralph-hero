@@ -24,6 +24,7 @@ exception, justified by downstream compounding).
 | Surface | Model | Pin location |
 |---|---|---|
 | hero parent session (all modes) | fable | `ralph/skills/hero/SKILL.md` |
+| hero-fable session (experimental rail-free surface) | fable | `ralph/skills/hero-fable/SKILL.md` |
 | research skill session | fable | `ralph/skills/research/SKILL.md` |
 | plan skill session (incl. `--mode review`) | fable | `ralph/skills/plan/SKILL.md` |
 | plan-agent / review-agent (`Agent()`-forked) | fable | `ralph/agents/{plan,review}-agent.md` |
@@ -56,7 +57,7 @@ value can change without touching hooks.
 
 ## Why not preemptive Fable everywhere?
 
-From the landcrawler-ai 30-day audit (GH-1250):
+From a private downstream project's 30-day audit (GH-1250):
 
 1. Most impl phases are mechanical when the plan is detailed — sonnet handles
    them. A frontier default wastes tokens on the common case.

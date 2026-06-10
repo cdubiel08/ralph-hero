@@ -1,6 +1,6 @@
 ---
 description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with a human plan-approval gate by default. Five modes:default(one-shot), --mode auto (autopilot drain via /loop), --mode classify (director-only dispatch), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
-argument-hint: "[<issue-number> | --mode <auto|classify|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>] [--loop [duration]] [--auto]"
+argument-hint: "[<issue-number> | --mode <auto|classify|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>] [--loop [duration]] [--auto] [--model fable]"
 context: inline
 model: fable
 hooks:
@@ -105,6 +105,10 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 - Autopilot enabled: !`echo ${RALPH_AUTOPILOT_ENABLE:-unset}`
 
 ## Step 0: Parse arguments + set subcommand scope
+
+**`--model fable` alias** — resolve FIRST, before `--auto` and mode dispatch. Forwarding alias to the isolated Fable-native surface (design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`, D8):
+- If `--model fable` (or `--model=fable`) in `$ARGUMENTS` → strip the two tokens, `Skill("ralph:hero-fable", args="<stripped $ARGUMENTS>")`, then STOP. hero-fable carries its own identity guard — no availability check here.
+- Any other `--model <x>` value → emit `--model selects the fable surface only (--model fable). Model tiers are pinned in frontmatter; the impl tier is overridden via RALPH_IMPL_MODEL.` and STOP.
 
 **`--auto` alias** — resolve BEFORE mode dispatch. See `ralph/skills/shared/auto-alias.md`:
 - If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
