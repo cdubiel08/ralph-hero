@@ -164,8 +164,11 @@ find_existing_artifact() {
     return 1
   fi
 
+  # `|| true`: find exits 1 on a missing artifact dir; under the callers'
+  # `set -euo pipefail` an unguarded failure here would abort the hook with
+  # rc=1 and nothing on stderr. Missing dir means "no artifact", not a crash.
   local result
-  result=$(find "$artifact_dir" -name "*${ticket_id}*" -type f 2>/dev/null | head -1)
+  result=$(find "$artifact_dir" -name "*${ticket_id}*" -type f 2>/dev/null | head -1 || true)
   if [[ -n "$result" ]]; then
     echo "$result"
     return 0
@@ -174,7 +177,7 @@ find_existing_artifact() {
   local alt
   alt=$(ticket_id_alt_form "$ticket_id")
   if [[ -n "$alt" ]]; then
-    find "$artifact_dir" -name "*${alt}*" -type f 2>/dev/null | head -1
+    find "$artifact_dir" -name "*${alt}*" -type f 2>/dev/null | head -1 || true
   fi
 }
 

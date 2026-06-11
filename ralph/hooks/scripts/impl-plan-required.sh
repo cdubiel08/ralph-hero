@@ -47,18 +47,20 @@ alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
 plan_doc=$(find_existing_artifact "$plans_dir" "$ticket_id")
 
 # Check 2: Group plan
+# `|| true` on the find pipelines: a missing plans dir must read as "no plan
+# doc" (block below), not a pipefail+set-e silent crash with empty stderr.
 if [[ -z "$plan_doc" ]]; then
-  plan_doc=$(find "$plans_dir" -name "*group*${ticket_id}*" -type f 2>/dev/null | head -1)
+  plan_doc=$(find "$plans_dir" -name "*group*${ticket_id}*" -type f 2>/dev/null | head -1 || true)
   if [[ -z "$plan_doc" && -n "$alt_ticket_id" ]]; then
-    plan_doc=$(find "$plans_dir" -name "*group*${alt_ticket_id}*" -type f 2>/dev/null | head -1)
+    plan_doc=$(find "$plans_dir" -name "*group*${alt_ticket_id}*" -type f 2>/dev/null | head -1 || true)
   fi
 fi
 
 # Check 3: Stream plan
 if [[ -z "$plan_doc" ]]; then
-  plan_doc=$(find "$plans_dir" -name "*stream*${ticket_id}*" -type f 2>/dev/null | head -1)
+  plan_doc=$(find "$plans_dir" -name "*stream*${ticket_id}*" -type f 2>/dev/null | head -1 || true)
   if [[ -z "$plan_doc" && -n "$alt_ticket_id" ]]; then
-    plan_doc=$(find "$plans_dir" -name "*stream*${alt_ticket_id}*" -type f 2>/dev/null | head -1)
+    plan_doc=$(find "$plans_dir" -name "*stream*${alt_ticket_id}*" -type f 2>/dev/null | head -1 || true)
   fi
 fi
 
