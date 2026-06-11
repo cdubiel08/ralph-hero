@@ -27,7 +27,11 @@ today=$(date +%Y-%m-%d)
 doc=""
 command=""
 for candidate_dir in "thoughts/shared/plans" "thoughts/shared/reviews" "thoughts/shared/research"; do
-  found=$(find "$project_root/$candidate_dir" -name "${today}-*.md" -type f -mmin -15 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1)
+  # `|| true`: find exits 1 when the candidate dir is missing (most repos
+  # don't have all three), pipefail would fail the assignment, and `set -e`
+  # would kill the hook with rc=1 and nothing on stderr — on EVERY Stop for
+  # the rest of the session, since skill frontmatter hooks stay registered.
+  found=$(find "$project_root/$candidate_dir" -name "${today}-*.md" -type f -mmin -15 2>/dev/null | xargs -r ls -t 2>/dev/null | head -1 || true)
   if [[ -n "$found" ]]; then
     # Pick the freshest across dirs.
     if [[ -z "$doc" ]] || [[ "$found" -nt "$doc" ]]; then
