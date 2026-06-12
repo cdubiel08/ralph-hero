@@ -220,23 +220,41 @@ export async function reindex(
 
   for (const filePath of filesOnDisk) {
     const absPath = resolve(filePath);
-    const mtime = Math.trunc(statSync(absPath).mtimeMs);
 
-    // Check if file is unchanged since last index
-    const syncRecord = db.getSyncRecord(absPath);
-    if (syncRecord && syncRecord.mtime === mtime) {
-      skipped++;
+    // One corrupt or vanished file must not abort the whole run — the
+    // corpus spans many roots and authors. Skip it with a warning and
+    // keep indexing; the file is retried on the next reindex.
+    let mtime: number;
+    let raw: string;
+    try {
+      mtime = Math.trunc(statSync(absPath).mtimeMs);
+
+      // Check if file is unchanged since last index
+      const syncRecord = db.getSyncRecord(absPath);
+      if (syncRecord && syncRecord.mtime === mtime) {
+        skipped++;
+        continue;
+      }
+
+      raw = readFileSync(filePath, "utf-8");
+    } catch (e) {
+      console.warn(`Skipping unreadable file ${filePath}: ${(e as Error).message}`);
       continue;
     }
 
-    const raw = readFileSync(filePath, "utf-8");
     const sourceDir = dirs.find(d => absPath.startsWith(resolve(d)));
     const relPath = sourceDir
       ? relative(resolve(sourceDir, ".."), absPath)
       : filePath;
     const id = basename(filePath, ".md");
 
-    const parsed = parseDocument(id, relPath, raw);
+    let parsed: ParsedDocument;
+    try {
+      parsed = parseDocument(id, relPath, raw);
+    } catch (e) {
+      console.warn(`Skipping unparseable document ${filePath}: ${(e as Error).message}`);
+      continue;
+    }
     // GH-911: only accumulate parsed docs when `generate=true` (the rare case
     // where `generateIndexes()` runs at the end of the loop). On the live
     // corpus this avoids pinning every parsed document's content + relationships

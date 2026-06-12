@@ -98,6 +98,35 @@ describe("parseDocument", () => {
     expect(doc.content).not.toContain("---");
   });
 
+  it("falls back to empty frontmatter on invalid YAML instead of throwing", () => {
+    // Real-world breakage: an unquoted title containing a colon-space is
+    // a YAML nested-mapping error. One such doc must not abort indexing.
+    const raw = `---
+title: GH-410 — Permits API: support comma-separated state_code parameter
+date: 2026-05-07
+---
+
+# GH-410 Permits API plan
+
+Body text here.
+`;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const doc = parseDocument("test", "bad-frontmatter.md", raw);
+      // Indexed with body-derived title and forgiving defaults.
+      expect(doc.title).toBe("GH-410 Permits API plan");
+      expect(doc.date).toBeNull();
+      expect(doc.tags).toEqual([]);
+      expect(doc.memoryTier).toBe("doc");
+      expect(doc.content).toContain("Body text here.");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("bad-frontmatter.md"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("parses post_mortem relationship from Prior Work", () => {
     const raw = `---
 date: 2026-03-18

@@ -93,9 +93,28 @@ export function extractUntypedWikilinks(
   return edges;
 }
 
+/**
+ * Parse a frontmatter block, falling back to {} on invalid YAML.
+ *
+ * The corpus is hand- and agent-authored markdown from many roots; one
+ * unquoted `title: A: B` must not abort an entire reindex run. A document
+ * with broken frontmatter is still indexed — title comes from the body
+ * heading and memory_tier coerces to 'doc', per the forgiving-parser
+ * policy above.
+ */
+function parseFrontmatterForgiving(src: string, path: string): Record<string, any> {
+  try {
+    return parseYaml(src) ?? {};
+  } catch (e) {
+    const firstLine = (e as Error).message.split("\n")[0];
+    console.warn(`parseDocument: invalid YAML frontmatter in ${path} (${firstLine}); indexing with empty frontmatter`);
+    return {};
+  }
+}
+
 export function parseDocument(id: string, path: string, raw: string): ParsedDocument {
   const fmMatch = raw.match(FRONTMATTER_RE);
-  const frontmatter = fmMatch ? parseYaml(fmMatch[1]) ?? {} : {};
+  const frontmatter = fmMatch ? parseFrontmatterForgiving(fmMatch[1], path) : {};
   const body = fmMatch ? raw.slice(fmMatch[0].length).trim() : raw.trim();
   const titleMatch = body.match(TITLE_RE);
   const title = titleMatch ? titleMatch[1].trim() : id;
