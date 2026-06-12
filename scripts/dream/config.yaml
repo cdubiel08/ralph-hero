@@ -7,6 +7,9 @@
 base_dir: /Users/dubiel/projects/thoughts/dream-memories
 gemma_lab_sessions: /Users/dubiel/projects/gemma-lab/sessions
 llm_cli_db: ~/.llm/logs.db
+# Claude Code session transcripts. One distilled raw memory per session
+# (human prompts + final outcome; tool I/O is never ingested).
+claude_code_projects: ~/.claude/projects
 git_repos:
   - /Users/dubiel/projects/ralph-hero
   - /Users/dubiel/projects/ralph-engine

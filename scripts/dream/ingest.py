@@ -1,10 +1,12 @@
 """Dream-loop ingester.
 
-Pulls the last N hours of raw memories from three sources:
+Pulls the last N hours of raw memories from four sources:
 
 1. gemma-lab session JSONL files (one line per prompt/response pair)
 2. git commit logs (subject + patch summary, truncated)
 3. optional ``simonw/llm`` CLI SQLite log at ``~/.llm/logs.db``
+4. Claude Code session transcripts under ``~/.claude/projects/`` (one
+   distilled memory per session: title, human prompts, final outcome)
 
 Emits one markdown file per memory into::
 
@@ -65,6 +67,17 @@ DEFAULT_TAGS: tuple[str, ...] = ("dream", "raw")
 # chars is roughly 1000 tokens — enough to capture intent without
 # flooding the embedder with machine-generated diff noise.
 GIT_PATCH_CHAR_LIMIT = 4000
+
+# Claude Code session distillation limits. A session transcript can run to
+# megabytes of tool I/O; the memory keeps only human prompts (intent) and
+# the final assistant message (outcome), clipped so one session stays a
+# single human-scale document.
+CLAUDE_PROMPT_CHAR_LIMIT = 500
+CLAUDE_OUTCOME_CHAR_LIMIT = 1500
+CLAUDE_MAX_PROMPTS = 20
+# Sessions whose combined prompt+outcome text is below this are warmups or
+# empty shells — skip them (same threshold as remember-turn.sh).
+CLAUDE_SESSION_MIN_CHARS = 200
 
 
 @dataclass
@@ -449,6 +462,233 @@ def ingest_llm_cli_logs(
 
 
 # ---------------------------------------------------------------------------
+# Source: Claude Code session transcripts
+# ---------------------------------------------------------------------------
+
+
+# Same conservative secret shapes as ralph/hooks/scripts/remember-turn.sh —
+# the two capture paths must redact identically.
+_SECRET_PATTERNS = [
+    re.compile(r"ghp_[A-Za-z0-9]{36,}"),
+    re.compile(r"gh[ps]_[A-Za-z0-9]{20,}"),
+    re.compile(r"sk-[A-Za-z0-9]{32,}"),
+    re.compile(r"xoxb-[A-Za-z0-9-]+"),
+]
+
+_COMMAND_NAME_RE = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
+_COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+
+
+def _scrub_secrets(text: str) -> str:
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+def _clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + " …"
+
+
+def _normalize_prompt(content: str) -> str | None:
+    """Turn one user-line content string into a one-line prompt, or None.
+
+    Harness-injected lines (task notifications, local command stdout) are
+    not human intent and return None. Slash-command invocations arrive
+    wrapped in ``<command-name>``/``<command-args>`` tags — collapse those
+    to the readable ``/verb args`` form. Everything else is whitespace-
+    collapsed so a multi-line paste stays a single list entry.
+    """
+    stripped = content.strip()
+    if not stripped:
+        return None
+    if stripped.startswith("<task-notification>"):
+        return None
+    if stripped.startswith("<local-command-stdout"):
+        return None
+    name_match = _COMMAND_NAME_RE.search(stripped)
+    if name_match:
+        args_match = _COMMAND_ARGS_RE.search(stripped)
+        args = args_match.group(1).strip() if args_match else ""
+        return f"{name_match.group(1).strip()} {args}".strip()
+    return " ".join(stripped.split())
+
+
+def _distill_claude_session(
+    transcript: Path, since: datetime
+) -> RawMemory | None:
+    """Distill one session transcript JSONL into a single RawMemory.
+
+    Keeps human prompts and the final assistant text; drops sidechain
+    (sub-agent) traffic, meta lines, and all tool I/O. Returns None when
+    the session ended before ``since``, contains no human prompts, or is
+    below the minimum-content threshold.
+    """
+    prompts: list[str] = []
+    title: str | None = None
+    cwd: str | None = None
+    branch: str | None = None
+    last_ts: datetime | None = None
+    final_assistant = ""
+
+    with transcript.open("r", encoding="utf-8") as fh:
+        for line_no, raw_line in enumerate(fh, start=1):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                entry = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                log.warning(
+                    "Skipping malformed JSON at %s:%d (%s)",
+                    transcript,
+                    line_no,
+                    exc,
+                )
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("isSidechain") is True:
+                continue
+
+            etype = entry.get("type")
+            ts = _parse_ts(str(entry.get("timestamp", "") or ""))
+            if ts is not None and etype in ("user", "assistant"):
+                if last_ts is None or ts > last_ts:
+                    last_ts = ts
+
+            if etype == "ai-title":
+                title = str(entry.get("aiTitle") or "") or title
+            elif etype == "user":
+                if entry.get("isMeta"):
+                    continue
+                message = entry.get("message") or {}
+                content = message.get("content")
+                if isinstance(content, str):
+                    normalized = _normalize_prompt(content)
+                    if normalized:
+                        prompts.append(_clip(normalized, CLAUDE_PROMPT_CHAR_LIMIT))
+                        cwd = cwd or entry.get("cwd")
+                        branch = branch or entry.get("gitBranch")
+            elif etype == "assistant":
+                message = entry.get("message") or {}
+                content = message.get("content")
+                if isinstance(content, list):
+                    text = "\n".join(
+                        block.get("text", "")
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ).strip()
+                elif isinstance(content, str):
+                    text = content.strip()
+                else:
+                    text = ""
+                if text:
+                    final_assistant = text
+
+    if not prompts:
+        return None
+    if last_ts is None or last_ts < since:
+        return None
+
+    # Collapse repeated prompts (loop wakeups re-inject the same
+    # continuation prompt dozens of times per session); keep first-
+    # occurrence order with a ×N marker so the repetition still reads.
+    counts: dict[str, int] = {}
+    deduped: list[str] = []
+    for p in prompts:
+        if p in counts:
+            counts[p] += 1
+        else:
+            counts[p] = 1
+            deduped.append(p)
+    total_human_prompts = len(prompts)
+    prompts = [
+        p if counts[p] == 1 else f"(×{counts[p]}) {p}" for p in deduped
+    ]
+
+    outcome = _clip(final_assistant, CLAUDE_OUTCOME_CHAR_LIMIT)
+    if sum(len(p) for p in prompts) + len(outcome) < CLAUDE_SESSION_MIN_CHARS:
+        return None
+
+    if len(prompts) > CLAUDE_MAX_PROMPTS:
+        keep = CLAUDE_MAX_PROMPTS // 2
+        omitted = len(prompts) - 2 * keep
+        prompts = (
+            prompts[:keep]
+            + [f"… [{omitted} prompts omitted] …"]
+            + prompts[-keep:]
+        )
+
+    heading = title or _clip(prompts[0], 60)
+    meta_lines = [f"Project: {cwd or 'unknown'}"]
+    if branch:
+        meta_lines.append(f"Branch: {branch}")
+    meta_lines.append(f"Session: {transcript.stem}")
+
+    prompt_list = "\n".join(
+        f"{i}. {p}" for i, p in enumerate(prompts, start=1)
+    )
+    sections = [
+        f"# {heading}",
+        "\n".join(meta_lines),
+        f"## Prompts ({total_human_prompts})\n\n{prompt_list}",
+    ]
+    if outcome:
+        sections.append(f"## Outcome\n\n{outcome}")
+    content = _scrub_secrets("\n\n".join(sections))
+
+    return RawMemory(
+        source="claude-code",
+        source_id=transcript.stem,
+        timestamp=last_ts.isoformat(),
+        content=content,
+    )
+
+
+def ingest_claude_code_sessions(
+    since: datetime, projects_dir: Path
+) -> list[RawMemory]:
+    """Read Claude Code session transcripts newer than ``since``.
+
+    Transcripts live at ``<projects_dir>/<project-slug>/<session>.jsonl``.
+    The depth-2 glob intentionally excludes sub-agent transcripts, which
+    live deeper (``<session>/subagents/*.jsonl``). File mtime is used as a
+    cheap pre-filter before parsing; the session-end timestamp inside the
+    transcript decides inclusion.
+    """
+    projects_dir = Path(projects_dir)
+    if not projects_dir.exists():
+        log.info(
+            "claude-code projects dir not found at %s; skipping source",
+            projects_dir,
+        )
+        return []
+
+    memories: list[RawMemory] = []
+    for transcript in sorted(projects_dir.glob("*/*.jsonl")):
+        try:
+            mtime = datetime.fromtimestamp(
+                transcript.stat().st_mtime, tz=timezone.utc
+            )
+        except OSError as exc:  # pragma: no cover - fs-level fault
+            log.warning("Cannot stat %s: %s", transcript, exc)
+            continue
+        if mtime < since:
+            continue
+        try:
+            memory = _distill_claude_session(transcript, since)
+        except OSError as exc:  # pragma: no cover - fs-level fault
+            log.warning("Cannot read %s: %s", transcript, exc)
+            continue
+        if memory is not None:
+            memories.append(memory)
+
+    return memories
+
+
+# ---------------------------------------------------------------------------
 # Config + CLI plumbing
 # ---------------------------------------------------------------------------
 
@@ -608,15 +848,17 @@ def main(argv: list[str] | None = None) -> int:
 
     sessions_dir = _expand_path(cfg.get("gemma_lab_sessions"))
     llm_db = _expand_path(cfg.get("llm_cli_db"))
+    claude_projects = _expand_path(cfg.get("claude_code_projects"))
     repos_raw = args.repos if args.repos is not None else cfg.get("git_repos") or []
     repos = [Path(str(r)).expanduser() for r in repos_raw]
 
     log.info(
-        "Ingesting since %s | base_dir=%s sessions=%s llm_db=%s repos=%d",
+        "Ingesting since %s | base_dir=%s sessions=%s llm_db=%s claude=%s repos=%d",
         since.isoformat(),
         base_dir,
         sessions_dir,
         llm_db,
+        claude_projects,
         len(repos),
     )
 
@@ -628,6 +870,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "git-commit": ingest_git_commits(since, repos) if repos else [],
         "llm-cli": ingest_llm_cli_logs(since, llm_db),
+        "claude-code": (
+            ingest_claude_code_sessions(since, claude_projects)
+            if claude_projects is not None
+            else []
+        ),
     }
 
     if args.dry_run:

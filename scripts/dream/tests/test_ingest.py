@@ -359,6 +359,245 @@ class TestLlmCliIngester:
 
 
 # ---------------------------------------------------------------------------
+# ingest_claude_code_sessions
+# ---------------------------------------------------------------------------
+
+
+def _cc_user(content: str, ts: str, **extra: object) -> dict:
+    entry: dict = {
+        "type": "user",
+        "message": {"role": "user", "content": content},
+        "timestamp": ts,
+        "cwd": "/Users/test/projects/demo",
+        "gitBranch": "main",
+        "sessionId": "ignored",
+    }
+    entry.update(extra)
+    return entry
+
+
+def _cc_assistant(text: str, ts: str, **extra: object) -> dict:
+    entry: dict = {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": text}]},
+        "timestamp": ts,
+    }
+    entry.update(extra)
+    return entry
+
+
+def _write_transcript(path: Path, lines: list[dict]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+PROMPT_A = "Investigate why the cache invalidation misses project-scoped keys " * 2
+PROMPT_B = "Now fix it and add a regression test for the multi-project case " * 2
+OUTCOME = "Fixed the invalidation: query-prefix keys are now cleared per project. " * 3
+
+
+class TestClaudeCodeIngester:
+    SINCE = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+
+    def _session_lines(self) -> list[dict]:
+        return [
+            {"type": "ai-title", "aiTitle": "cache invalidation fix", "sessionId": "s"},
+            _cc_user(PROMPT_A, "2026-06-02T10:00:00Z"),
+            _cc_assistant("Looking into it.", "2026-06-02T10:01:00Z"),
+            _cc_user(PROMPT_B, "2026-06-02T10:05:00Z"),
+            _cc_assistant(OUTCOME, "2026-06-02T10:30:00Z"),
+        ]
+
+    def test_distills_one_memory_per_session(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _write_transcript(
+            projects / "-Users-test-demo" / "abc-123.jsonl", self._session_lines()
+        )
+        memories = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        assert len(memories) == 1
+        m = memories[0]
+        assert m.source == "claude-code"
+        assert m.source_id == "abc-123"
+        # timestamp is the session END
+        assert m.timestamp == "2026-06-02T10:30:00+00:00"
+        assert m.content.startswith("# cache invalidation fix")
+        assert "Project: /Users/test/projects/demo" in m.content
+        assert "Branch: main" in m.content
+        assert "Session: abc-123" in m.content
+        assert "## Prompts (2)" in m.content
+        assert "1. " + PROMPT_A.strip()[:40] in m.content
+        assert "## Outcome" in m.content
+        assert "Fixed the invalidation" in m.content
+        # Intermediate assistant text is NOT the outcome — only the last one.
+        assert "Looking into it." not in m.content
+
+    def test_skips_sidechain_meta_and_harness_lines(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        lines = self._session_lines() + [
+            _cc_user("sidechain prompt " * 20, "2026-06-02T11:00:00Z", isSidechain=True),
+            _cc_assistant("sidechain reply", "2026-06-02T11:01:00Z", isSidechain=True),
+            _cc_user("meta hook notice " * 20, "2026-06-02T11:02:00Z", isMeta=True),
+            _cc_user("<task-notification>\n<task-id>x</task-id>", "2026-06-02T11:03:00Z"),
+            _cc_user("<local-command-stdout>out</local-command-stdout>", "2026-06-02T11:04:00Z"),
+        ]
+        _write_transcript(projects / "p" / "sess.jsonl", lines)
+        memories = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        assert len(memories) == 1
+        m = memories[0]
+        assert "## Prompts (2)" in m.content
+        assert "sidechain" not in m.content
+        assert "meta hook" not in m.content
+        assert "task-notification" not in m.content
+        # Sidechain assistant text must not become the outcome.
+        assert "sidechain reply" not in m.content
+
+    def test_normalizes_slash_command_wrappers(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        wrapped = (
+            "<command-message>hero</command-message>\n"
+            "<command-name>/ralph:hero</command-name>\n"
+            "<command-args>1399 --mode auto</command-args>"
+        )
+        lines = [
+            _cc_user(wrapped, "2026-06-02T10:00:00Z"),
+            _cc_assistant(OUTCOME, "2026-06-02T10:30:00Z"),
+        ]
+        _write_transcript(projects / "p" / "cmd.jsonl", lines)
+        memories = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        assert len(memories) == 1
+        assert "1. /ralph:hero 1399 --mode auto" in memories[0].content
+        assert "<command-name>" not in memories[0].content
+
+    def test_skips_session_with_no_human_prompts(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        lines = [_cc_assistant(OUTCOME, "2026-06-02T10:30:00Z")]
+        _write_transcript(projects / "p" / "empty.jsonl", lines)
+        assert ingest.ingest_claude_code_sessions(self.SINCE, projects) == []
+
+    def test_skips_session_ended_before_since(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _write_transcript(projects / "p" / "old.jsonl", self._session_lines())
+        since = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
+        assert ingest.ingest_claude_code_sessions(since, projects) == []
+
+    def test_mtime_prefilter_skips_stale_files(self, tmp_path: Path) -> None:
+        import os
+
+        projects = tmp_path / "projects"
+        path = _write_transcript(projects / "p" / "stale.jsonl", self._session_lines())
+        old = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
+        os.utime(path, (old, old))
+        assert ingest.ingest_claude_code_sessions(self.SINCE, projects) == []
+
+    def test_skips_below_min_chars(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        lines = [
+            _cc_user("short", "2026-06-02T10:00:00Z"),
+            _cc_assistant("ok", "2026-06-02T10:01:00Z"),
+        ]
+        _write_transcript(projects / "p" / "tiny.jsonl", lines)
+        assert ingest.ingest_claude_code_sessions(self.SINCE, projects) == []
+
+    def test_scrubs_secret_shaped_tokens(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        leaked = "ghp_" + "A" * 40
+        lines = [
+            _cc_user(f"use token {leaked} for auth " + "x" * 200, "2026-06-02T10:00:00Z"),
+            _cc_assistant(OUTCOME, "2026-06-02T10:30:00Z"),
+        ]
+        _write_transcript(projects / "p" / "leak.jsonl", lines)
+        memories = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        assert len(memories) == 1
+        assert leaked not in memories[0].content
+        assert "[REDACTED]" in memories[0].content
+
+    def test_elides_middle_prompts_over_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(ingest, "CLAUDE_MAX_PROMPTS", 4)
+        projects = tmp_path / "projects"
+        lines = [
+            _cc_user(f"prompt number {i} " + "pad " * 20, f"2026-06-02T10:0{i}:00Z")
+            for i in range(6)
+        ] + [_cc_assistant(OUTCOME, "2026-06-02T10:30:00Z")]
+        _write_transcript(projects / "p" / "many.jsonl", lines)
+        memories = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        assert len(memories) == 1
+        m = memories[0]
+        assert "## Prompts (6)" in m.content
+        assert "[2 prompts omitted]" in m.content
+        assert "prompt number 0" in m.content
+        assert "prompt number 5" in m.content
+        assert "prompt number 2" not in m.content
+
+    def test_dedupes_repeated_prompts_with_count(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        loop_prompt = (
+            "/loop Run /ralph:hero --mode classify on the next event "
+            "in the queue, then schedule a wakeup per the continuation rules"
+        )
+        lines = (
+            [_cc_user(PROMPT_A, "2026-06-02T10:00:00Z")]
+            + [
+                _cc_user(loop_prompt, f"2026-06-02T10:{10 + i}:00Z")
+                for i in range(5)
+            ]
+            + [_cc_assistant(OUTCOME, "2026-06-02T10:30:00Z")]
+        )
+        _write_transcript(projects / "p" / "loopy.jsonl", lines)
+        memories = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        assert len(memories) == 1
+        m = memories[0]
+        # Header counts raw human prompts; list shows deduped entries.
+        assert "## Prompts (6)" in m.content
+        assert "(×5) /loop Run /ralph:hero" in m.content
+        assert m.content.count("/loop Run /ralph:hero") == 1
+
+    def test_excludes_subagent_transcripts(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _write_transcript(
+            projects / "p" / "main-sess" / "subagents" / "agent.jsonl",
+            self._session_lines(),
+        )
+        assert ingest.ingest_claude_code_sessions(self.SINCE, projects) == []
+
+    def test_missing_projects_dir_returns_empty(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="ralph.dream.ingest")
+        memories = ingest.ingest_claude_code_sessions(
+            datetime.now(tz=timezone.utc), tmp_path / "nope"
+        )
+        assert memories == []
+        assert any(
+            "projects dir not found" in rec.message for rec in caplog.records
+        )
+
+    def test_idempotent_re_ingest(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _write_transcript(projects / "p" / "idem.jsonl", self._session_lines())
+        first = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        second = ingest.ingest_claude_code_sessions(self.SINCE, projects)
+        assert len(first) == len(second) == 1
+        a, b = first[0], second[0]
+        assert (a.source, a.source_id, a.timestamp, a.content) == (
+            b.source,
+            b.source_id,
+            b.timestamp,
+            b.content,
+        )
+        # And the written files are byte-identical (idempotency contract).
+        path_a = ingest.write_memory(a, tmp_path / "out")
+        bytes_a = path_a.read_bytes()
+        path_b = ingest.write_memory(b, tmp_path / "out")
+        assert path_a == path_b
+        assert path_b.read_bytes() == bytes_a
+
+
+# ---------------------------------------------------------------------------
 # CLI main() integration
 # ---------------------------------------------------------------------------
 

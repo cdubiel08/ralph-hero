@@ -16,6 +16,18 @@ npm run reindex -- /path/to/roots   # CLI override, see "Configuration"
 
 A SQLite file is written to `~/.ralph-hero/knowledge.db` by default.
 
+## Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `/ralph-knowledge:setup` | First-time index build, roots configuration, optional dream-loop bootstrap. |
+| `/ralph-knowledge:capture` | In-flow memory capture — "remember this" distills the current insight/session into raw memories via `knowledge_remember`. |
+| `/ralph-knowledge:dream-loop` | On-demand memory consolidation: ingest raw activity (Gemma lab logs, git history, llm-cli transcripts, Claude Code sessions), synthesize reflections. |
+| `/ralph-knowledge:curate` | Human-gated promotion of recurring insights into the wiki tier. |
+| `/ralph-knowledge:setup-obsidian` | Configure `thoughts/` as an Obsidian vault for browsing. |
+
+The memory path is: **capture/ingest (raw) → dream-loop (reflection) → curate (wiki)**.
+
 ## Configuration
 
 ralph-knowledge reads configuration from four sources. Each source can be

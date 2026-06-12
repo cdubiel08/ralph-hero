@@ -2,9 +2,17 @@
 
 This directory contains the ralph-knowledge dream-loop: a nightly pipeline
 that ingests the last 24 hours of raw activity (Gemma lab logs, git
-history, `llm-cli` transcripts), writes them as `memory_tier=raw`
-documents, and then synthesizes reflection documents by clustering with
-HDBSCAN + asking Gemma to describe each cluster.
+history, `llm-cli` transcripts, Claude Code sessions), writes them as
+`memory_tier=raw` documents, and then synthesizes reflection documents by
+clustering with HDBSCAN + asking Gemma to describe each cluster.
+
+Claude Code sessions are distilled, not dumped: one raw memory per
+session, holding the session title, the human prompts (deduplicated,
+clipped), and the final assistant outcome. Tool I/O, file contents, and
+sub-agent transcripts are never ingested, and secret-shaped tokens are
+redacted with the same patterns as `remember-turn.sh`. Configure the
+transcript root via `claude_code_projects` in `config.yaml` (default
+`~/.claude/projects`); omit the key to disable the source.
 
 The pipeline is three scripts:
 
