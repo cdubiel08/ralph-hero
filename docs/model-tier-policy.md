@@ -1,33 +1,35 @@
 # Ralph Model-Tier Policy
 
-Adapted from superpowers/subagent-driven-development. Updated 2026-06-09 for
-the Fable 5 ladder (see thoughts/shared/research/2026-06-09-GH-1487-hero-model-pinning-per-phase.md).
+Adapted from superpowers/subagent-driven-development. Updated 2026-06-12: the
+GH-1487 fable frontmatter pins were reverted — Claude Code has no access-based
+model fallback, so a `model: fable` pin hard-errors for any user whose account
+lacks Fable entitlement. Fable is now opt-in only (see "Fable 5 opt-in
+surfaces" below). Original re-tiering research:
+thoughts/shared/research/2026-06-09-GH-1487-hero-model-pinning-per-phase.md.
 
 ## The rule
 
-Complexity drives tier, not role — with one refinement: the few steps whose
-output every downstream step inherits (orchestration, research findings, plan
-content) are pinned at the frontier tier preemptively.
+Complexity drives tier, not role. The highest tier the plugin pins by default
+is opus — every default pin must work for users without Fable access.
 
 | Signal                                                  | Tier      | Model  |
 | ------------------------------------------------------- | --------- | ------ |
 | 1-2 files, fully-specified spec, mechanical             | cheap     | haiku  |
 | Multi-file, integration, pattern matching, debugging    | standard  | sonnet |
-| Architecture, design judgment, broad-codebase review    | capable   | opus   |
-| Orchestration, research synthesis, plan author/critique | frontier  | fable  |
+| Architecture, design judgment, orchestration, research synthesis, plan author/critique | capable | opus |
+| Frontier (opt-in only — requires Fable entitlement)     | frontier  | fable  |
 
-Escalate on BLOCKED, never preemptively (frontier pins above are the
-exception, justified by downstream compounding).
+Escalate on BLOCKED, never preemptively.
 
 ## Default tier by surface
 
 | Surface | Model | Pin location |
 |---|---|---|
-| hero parent session (all modes) | fable | `ralph/skills/hero/SKILL.md` |
-| hero-fable session (experimental rail-free surface) | fable | `ralph/skills/hero-fable/SKILL.md` |
-| research skill session | fable | `ralph/skills/research/SKILL.md` |
-| plan skill session (incl. `--mode review`) | fable | `ralph/skills/plan/SKILL.md` |
-| plan-agent / review-agent (`Agent()`-forked) | fable | `ralph/agents/{plan,review}-agent.md` |
+| hero parent session (all modes) | opus | `ralph/skills/hero/SKILL.md` |
+| hero-fable session (experimental rail-free surface, opt-in; requires Fable access) | fable | `ralph/skills/hero-fable/SKILL.md` |
+| research skill session | opus | `ralph/skills/research/SKILL.md` |
+| plan skill session (incl. `--mode review`) | opus | `ralph/skills/plan/SKILL.md` |
+| plan-agent / review-agent (`Agent()`-forked) | opus | `ralph/agents/{plan,review}-agent.md` |
 | impl / review / caretake skill sessions | opus | respective `SKILL.md` |
 | research / impl / val / triage agents, sre-fixit, analyzers | sonnet | `ralph/agents/*.md` |
 | merge / catch-up agents, locators, log-reader | haiku | `ralph/agents/*.md` |
@@ -46,32 +48,45 @@ When ralph-impl's internal budget exhausts below the top tier it emits a
 verdict-prefix line and stops:
 
 ```text
-IMPL BLOCKED model=<current> needs=fable reason=<short>
+IMPL BLOCKED model=<current> needs=opus reason=<short>
 ```
 
 Hero matches the `IMPL BLOCKED ` prefix (never the full string) and
-re-dispatches ONCE with `RALPH_IMPL_MODEL=fable`. A second BLOCKED at fable
+re-dispatches ONCE with `RALPH_IMPL_MODEL=opus`. A second BLOCKED at opus
 escalates to Human Needed via `save_issue(workflowState="__ESCALATE__")`.
 `impl-postcondition.sh` also greps only the bare prefix, so the `needs=`
 value can change without touching hooks.
 
-## Why not preemptive Fable everywhere?
+## Why no default Fable pins?
 
-From a private downstream project's 30-day audit (GH-1250):
+Two reasons:
 
-1. Most impl phases are mechanical when the plan is detailed — sonnet handles
-   them. A frontier default wastes tokens on the common case.
-2. Failure cases that need a higher tier are detectable (BLOCKED). One retry
-   at the top tier costs less than always paying for it.
+1. **Entitlement (the blocker).** Claude Code resolves `model:` frontmatter
+   with no access-based fallback — `model: fable` is a hard runtime error for
+   any user whose plan lacks Fable. The GH-1487 pins broke downstream plugin
+   users and were reverted (2026-06-12). The Agent tool likewise rejects
+   unavailable tiers at input validation; `best` is not a valid value
+   anywhere (it is only a `/model` runtime alias).
+2. **Cost (the original opus rationale, GH-1250 30-day audit).** Most impl
+   phases are mechanical when the plan is detailed — sonnet handles them.
+   Failure cases that need a higher tier are detectable (BLOCKED); one retry
+   at a higher tier costs less than always paying for it.
 
-Fable 5 is pinned preemptively only where quality compounds: hero decisions,
-research findings, and plan content feed every downstream phase.
+## Fable 5 opt-in surfaces
 
-## Fable 5 operational notes
+Users WITH Fable access opt in via:
 
-- Requires Claude Code v2.1.170+.
+- `/ralph:hero-fable` (or `/ralph:hero --model fable`) — the only frontmatter
+  `model: fable` pin in the plugin, on an explicitly experimental surface.
+- `RALPH_IMPL_MODEL=fable` — per-session impl tier override.
+- Running the session itself on Fable (`/model fable`) — skills without a
+  pin inherit it.
+
+Operational notes for those surfaces:
+
+- Requires Claude Code v2.1.170+ and Fable entitlement.
 - Priced above opus-tier; its tokenizer yields ~30% more tokens for the same
-  content — expect higher per-tick cost on hero/research/plan sessions.
+  content — expect higher per-tick cost.
 - 1M context window: pinning fable on inline-`Skill()`-loaded skills never
   shrinks the parent context envelope.
 

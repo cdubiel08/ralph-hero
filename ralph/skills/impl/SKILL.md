@@ -169,7 +169,7 @@ Ask the user via AskUserQuestion what to do next:
 4. **Build issues[] + detect phase** — frontmatter `github_issues` array (group) or single `github_issue`. Find the first **unblocked** unchecked phase per `depends_on` annotations; STOP if all remaining phases are blocked.
 5. **Lock** — for every issue in `issues[]`, `save_issue(workflowState="__LOCK__", command="ralph_impl")`. STOP if any issue is not "In Progress".
 6. **Worktree** — consult [worktree-setup.md §Auto-mode](worktree-setup.md) for epic detection, WORKTREE_ID selection (stream / epic / group / single), base-branch detection, create-or-reuse, rebase-onto-main if predecessor merged.
-7. **Execute phase** — consult [phase-execution.md](phase-execution.md) for the task graph + controller pattern + IMPL BLOCKED escalation + phase quality review. If sub-agent budget exhausts at a non-fable tier, emit `IMPL BLOCKED model=<current> needs=fable reason=<short>` and STOP (do NOT escalate to Human Needed; hero re-dispatches at fable once).
+7. **Execute phase** — consult [phase-execution.md](phase-execution.md) for the task graph + controller pattern + IMPL BLOCKED escalation + phase quality review. If sub-agent budget exhausts at a non-opus tier, emit `IMPL BLOCKED model=<current> needs=opus reason=<short>` and STOP (do NOT escalate to Human Needed; hero re-dispatches at opus once).
 8. **Stage + commit + push** — per [plan-compliance.md §Staging Algorithm](plan-compliance.md).
 9. **Check completion** — re-read plan. If ALL automated checkboxes are checked, continue to Step 10; otherwise STOP with `Phase [N]/[M] complete.`.
 10. **Final report** — `Implementation complete for #NNN: <Title>` + issues + branch + worktree.

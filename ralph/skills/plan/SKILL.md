@@ -13,7 +13,7 @@ description: Create, iterate on, or review an implementation plan. Use whenever 
   plan. --mode review produces an APPROVED/NEEDS_ITERATION verdict.
 argument-hint: "[--mode auto|epic|iterate|review] [<issue-number|plan-path|description>] [--playwright|--no-playwright] [--loop [duration]] [--auto]"
 context: inline
-model: fable
+model: opus
 hooks:
   SessionStart:
     - hooks:

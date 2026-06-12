@@ -10,7 +10,7 @@ description: Investigate a codebase question, a GitHub issue, or a claim. Use wh
   claim investigation that produces a verdict + confidence + evidence chains.
 argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-playwright] [--loop [duration]] [--auto]"
 context: inline
-model: fable
+model: opus
 hooks:
   # branch-gate.sh is intentionally not declared here. In the slim plugin it's
   # patched to no-op when RALPH_REQUIRED_BRANCH is unset, and the autonomous

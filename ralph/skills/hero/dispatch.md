@@ -35,19 +35,19 @@ Read `${RALPH_IMPL_MODEL:-sonnet}`. Default is sonnet; override via env or shell
 impl_model="${RALPH_IMPL_MODEL:-sonnet}"
 ```
 
-Pass the resolved model explicitly to dispatched verbs that respect it. Default is `sonnet`; fable is used on BLOCKED-escalation (when impl returns `IMPL BLOCKED needs=fable`).
+Pass the resolved model explicitly to dispatched verbs that respect it. Default is `sonnet`; opus is used on BLOCKED-escalation (when impl returns `IMPL BLOCKED needs=opus`).
 
 ## BLOCKED escalation
 
-After `/ralph:impl --auto` returns, inspect the terminal verdict. If it contains the prefix `IMPL BLOCKED ` (full format: `IMPL BLOCKED model=<x> needs=fable reason=<short>` — match on the prefix, not the full string, so detection cannot drift from the emitted format):
+After `/ralph:impl --auto` returns, inspect the terminal verdict. If it contains the prefix `IMPL BLOCKED ` (full format: `IMPL BLOCKED model=<x> needs=opus reason=<short>` — match on the prefix, not the full string, so detection cannot drift from the emitted format):
 
-1. If this dispatch's model was NOT fable AND no prior fable retry has occurred for this issue:
-   re-dispatch the same issue with `RALPH_IMPL_MODEL=fable`:
+1. If this dispatch's model was NOT opus AND no prior opus retry has occurred for this issue:
+   re-dispatch the same issue with `RALPH_IMPL_MODEL=opus`:
    ```
    Skill("ralph:impl", args="NNN --auto --plan-doc PATH (retry after BLOCKED)")
    ```
-   Track a per-issue retry counter in TaskList metadata so a second BLOCKED at fable does not loop.
-2. If this dispatch's model was fable, OR the retry counter is already 1:
+   Track a per-issue retry counter in TaskList metadata so a second BLOCKED at opus does not loop.
+2. If this dispatch's model was opus, OR the retry counter is already 1:
    escalate via `save_issue(workflowState="__ESCALATE__", command="ralph_impl")` to Human Needed. Fire a best-effort push notification:
    ```
    PushNotification(title="Failed #NNN", body="<blocked-reason> — <issue-url>")

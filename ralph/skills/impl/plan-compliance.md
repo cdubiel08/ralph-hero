@@ -87,4 +87,4 @@ Common mismatch sources:
 - Dependency added in a prior phase that changes the API the current phase consumes.
 - Test framework upgraded; old assertion style no longer compiles.
 
-In **default mode**, the user resolves the mismatch interactively (the question becomes part of the phase pause). In **auto mode**, the mismatch is itself a BLOCKED signal — emit `IMPL BLOCKED model=<current> needs=fable reason=<mismatch>` per [phase-execution.md §IMPL BLOCKED escalation](phase-execution.md) so hero can re-dispatch at a higher tier.
+In **default mode**, the user resolves the mismatch interactively (the question becomes part of the phase pause). In **auto mode**, the mismatch is itself a BLOCKED signal — emit `IMPL BLOCKED model=<current> needs=opus reason=<mismatch>` per [phase-execution.md §IMPL BLOCKED escalation](phase-execution.md) so hero can re-dispatch at a higher tier.
