@@ -765,6 +765,24 @@ def _slugify(title: str) -> str:
     return slug[:MAX_SLUG_LEN].rstrip("-") or "reflection"
 
 
+# Length of the deterministic hash suffix appended to reflection slugs so
+# two same-theme clusters in one run cannot clobber each other (GH-1505).
+SLUG_SUFFIX_LEN = 8
+
+
+def _slug_suffix(source_ids: list[str]) -> str:
+    """Deterministic short hash of a reflection's source memory ids.
+
+    Two clusters whose titles slugify identically still land on distinct
+    filenames because their member ids differ. Sorted before hashing so a
+    re-run over the same cluster produces a byte-identical filename (the
+    idempotency the rest of the pipeline relies on). Mirrors the cluster-id
+    hashing in :func:`emit_process_improvement_issue`.
+    """
+    joined = "|".join(sorted(str(s) for s in source_ids))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:SLUG_SUFFIX_LEN]
+
+
 def _format_reflection_body(r: dict[str, Any], now_iso: str) -> str:
     """Render the full markdown document (frontmatter + body)."""
     source_ids = list(r.get("source_ids", []))
@@ -825,7 +843,15 @@ def write_reflection(
     """
     if now is None:
         now = datetime.now(tz=timezone.utc)
-    slug = _slugify(str(r.get("title", "")))
+    # GH-1505: append a deterministic per-cluster suffix so distinct
+    # clusters that slugify to the same title don't overwrite each other.
+    # Reserve room for "-<suffix>" inside MAX_SLUG_LEN so the slug-length
+    # invariant still holds for long titles.
+    base_slug = _slugify(str(r.get("title", "")))
+    base_slug = (
+        base_slug[: MAX_SLUG_LEN - SLUG_SUFFIX_LEN - 1].rstrip("-") or "reflection"
+    )
+    slug = f"{base_slug}-{_slug_suffix(list(r.get('source_ids', [])))}"
     path = (
         Path(base_dir)
         / "reflections"
@@ -867,6 +893,36 @@ def _expand_path(value: str | None) -> Path | None:
     if value is None:
         return None
     return Path(str(value)).expanduser()
+
+
+def _run_reindex(cmd: str) -> int:
+    """Shell out to the reindex command; return its exit code.
+
+    GH-1504: ``ingest.py`` reindexes BEFORE ``reflect.py`` writes, so a
+    freshly synthesized reflection is not in ``knowledge.db`` until the
+    next nightly ingest. Re-running the same reindex after we write today's
+    reflections closes that ~24h gap — the reindexer's mtime check skips the
+    already-embedded corpus, so only the new reflection files are embedded.
+
+    On failure, surface the stderr tail (mirrors ``ingest._run_reindex``) so
+    a broken reindex is visible in launchd logs rather than swallowed.
+    """
+    log.info("Running post-reflect reindex: %s", cmd)
+    try:
+        result = subprocess.run(
+            cmd, shell=True, check=False, capture_output=True, text=True
+        )
+    except OSError as exc:  # pragma: no cover - launch fault
+        log.error("Post-reflect reindex failed to launch: %s", exc)
+        return 1
+    if result.returncode != 0:
+        tail = "\n".join((result.stderr or "").splitlines()[-50:])
+        log.error(
+            "post-reflect reindex exited non-zero (rc=%d); last stderr lines:\n%s",
+            result.returncode,
+            tail or "(no stderr)",
+        )
+    return result.returncode
 
 
 def _parse_since(value: str) -> datetime:
@@ -989,6 +1045,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--no-reindex",
+        action="store_true",
+        help=(
+            "Skip the post-write reindex step. By default reflect.py "
+            "reindexes after writing reflections (GH-1504) so today's "
+            "reflections are searchable immediately; pass this to skip it."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO).",
@@ -1105,6 +1170,22 @@ def main(argv: list[str] | None = None) -> int:
             len(clusters),
         )
         return 1
+
+    # GH-1504: reindex the just-written reflections so they are searchable
+    # in this run rather than one nightly cycle later. Skipped when nothing
+    # was written, when --no-reindex is passed, or when no reindex_cmd is
+    # configured (e.g. tests). A reindex failure is surfaced as a non-zero
+    # exit so dream-now/launchd logs show it.
+    if written_paths and not args.no_reindex:
+        reindex_cmd = cfg.get("reindex_cmd")
+        if reindex_cmd:
+            rc = _run_reindex(reindex_cmd)
+            if rc != 0:
+                log.warning("Post-reflect reindex exited with code %d", rc)
+                return rc
+        else:
+            log.info("No reindex_cmd in config; skipping post-reflect reindex")
+
     return 0
 
 
