@@ -573,8 +573,10 @@ class TestWriteReflection:
         path = reflect.write_reflection(r, tmp_path, now=now)
         assert path.parent == tmp_path / "reflections" / "2026" / "04" / "19"
         assert path.suffix == ".md"
-        # Slug is kebab-case ASCII, truncated to 60 chars.
-        assert path.stem == "distributed-consensus-exploration"
+        # Slug is kebab-case ASCII title + a deterministic per-cluster hash
+        # suffix (GH-1505) so same-theme clusters can't clobber each other.
+        suffix = reflect._slug_suffix(r["source_ids"])
+        assert path.stem == f"distributed-consensus-exploration-{suffix}"
 
     def test_frontmatter_and_body(self, tmp_path: Path) -> None:
         r = self._reflection()
@@ -610,8 +612,10 @@ class TestWriteReflection:
         r = self._reflection()
         r["title"] = "Café naïveté — déjà vu"
         path = reflect.write_reflection(r, tmp_path)
-        # Characters transliterate to ASCII; separators collapse.
-        assert path.stem == "cafe-naivete-deja-vu"
+        # Characters transliterate to ASCII; separators collapse. The
+        # deterministic per-cluster suffix (GH-1505) trails the title slug.
+        suffix = reflect._slug_suffix(r["source_ids"])
+        assert path.stem == f"cafe-naivete-deja-vu-{suffix}"
 
     def test_empty_insights_still_writes(self, tmp_path: Path) -> None:
         r = self._reflection()
@@ -619,6 +623,41 @@ class TestWriteReflection:
         path = reflect.write_reflection(r, tmp_path)
         text = path.read_text(encoding="utf-8")
         assert "- (no insights returned)" in text
+
+    def test_same_title_different_clusters_do_not_collide(
+        self, tmp_path: Path
+    ) -> None:
+        """GH-1505: two clusters with an identical title but different
+        member ids must write to distinct files, not clobber each other."""
+        now = datetime(2026, 4, 19, 3, 0, tzinfo=timezone.utc)
+        a = self._reflection()
+        a["source_ids"] = ["mem-a1", "mem-a2"]
+        b = self._reflection()  # same title
+        b["source_ids"] = ["mem-b1", "mem-b2"]
+        path_a = reflect.write_reflection(a, tmp_path, now=now)
+        path_b = reflect.write_reflection(b, tmp_path, now=now)
+        assert path_a != path_b
+        assert path_a.exists() and path_b.exists()
+
+    def test_slug_suffix_is_idempotent(self, tmp_path: Path) -> None:
+        """Re-running over the same cluster yields a byte-identical path —
+        order of source_ids must not change the filename."""
+        now = datetime(2026, 4, 19, 3, 0, tzinfo=timezone.utc)
+        r1 = self._reflection()
+        r1["source_ids"] = ["abc123", "def456"]
+        r2 = self._reflection()
+        r2["source_ids"] = ["def456", "abc123"]  # reordered
+        assert (
+            reflect.write_reflection(r1, tmp_path, now=now).name
+            == reflect.write_reflection(r2, tmp_path, now=now).name
+        )
+
+    def test_long_title_plus_suffix_fits_max_slug_len(self, tmp_path: Path) -> None:
+        r = self._reflection()
+        r["title"] = "a very long title " * 20
+        path = reflect.write_reflection(r, tmp_path)
+        # Title slug + "-" + hash suffix still fits the length invariant.
+        assert len(path.stem) <= reflect.MAX_SLUG_LEN
 
 
 # ---------------------------------------------------------------------------
@@ -788,6 +827,113 @@ class TestMainExitCode:
             ]
         )
         assert rc == 0
+
+
+class TestPostReflectReindex:
+    """GH-1504: reflect.py reindexes after writing so today's reflections
+    are searchable immediately instead of one nightly cycle later."""
+
+    def _cfg(self, tmp_path: Path, db: Path, *, reindex_cmd: str | None) -> Path:
+        import yaml as _yaml
+
+        body: dict[str, Any] = {
+            "base_dir": str(tmp_path / "out"),
+            "knowledge_db": str(db),
+        }
+        if reindex_cmd is not None:
+            body["reindex_cmd"] = reindex_cmd
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(_yaml.safe_dump(body), encoding="utf-8")
+        return cfg_path
+
+    def _stub_synth(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_synth(cluster, *a, **kw):  # noqa: ANN001, ARG001
+            return {
+                "title": "Reindexed Theme",
+                "summary": "summary",
+                "insights": ["insight"],
+                "source_ids": [m.id for m in cluster],
+                "cluster_size": len(cluster),
+            }
+
+        monkeypatch.setattr(reflect, "synthesize_reflection", fake_synth)
+
+    def test_reindex_runs_after_reflections_written(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = self._cfg(tmp_path, db, reindex_cmd="echo reindexing")
+        self._stub_synth(monkeypatch)
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            reflect, "_run_reindex", lambda cmd: calls.append(cmd) or 0
+        )
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 0
+        assert calls == ["echo reindexing"]
+
+    def test_no_reindex_flag_skips_reindex(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = self._cfg(tmp_path, db, reindex_cmd="echo reindexing")
+        self._stub_synth(monkeypatch)
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            reflect, "_run_reindex", lambda cmd: calls.append(cmd) or 0
+        )
+
+        rc = reflect.main(
+            ["--config", str(cfg_path), "--since", "2026-04-18", "--no-reindex"]
+        )
+        assert rc == 0
+        assert calls == []
+
+    def test_no_reindex_cmd_configured_is_noop(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = self._cfg(tmp_path, db, reindex_cmd=None)
+        self._stub_synth(monkeypatch)
+
+        calls: list[str] = []
+        monkeypatch.setattr(
+            reflect, "_run_reindex", lambda cmd: calls.append(cmd) or 0
+        )
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 0
+        assert calls == []
+
+    def test_reindex_failure_propagates_nonzero(
+        self,
+        tmp_path: Path,
+        patch_vec_loader: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db = tmp_path / "knowledge.db"
+        _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
+        cfg_path = self._cfg(tmp_path, db, reindex_cmd="false")
+        self._stub_synth(monkeypatch)
+        monkeypatch.setattr(reflect, "_run_reindex", lambda cmd: 3)
+
+        rc = reflect.main(["--config", str(cfg_path), "--since", "2026-04-18"])
+        assert rc == 3
 
 
 class TestLlmTimeoutConfig:
