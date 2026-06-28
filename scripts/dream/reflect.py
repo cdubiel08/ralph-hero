@@ -35,7 +35,7 @@ import subprocess
 import sys
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -824,6 +824,124 @@ def _coalesce_singletons(
 
 
 # ---------------------------------------------------------------------------
+# Backfill (GH-1511, Phase 3) — idempotent re-clustering of the raw backlog
+# ---------------------------------------------------------------------------
+
+
+def _parse_iso(value: str) -> datetime | None:
+    """Best-effort ISO-8601 parse (tolerates a trailing Z). None on failure."""
+    if not value:
+        return None
+    candidate = value.replace("Z", "+00:00") if value.endswith("Z") else value
+    try:
+        dt = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _bucket_by_days(
+    memories: list[RawMemoryRow], batch_days: int
+) -> list[list[RawMemoryRow]]:
+    """Group memories into contiguous ``batch_days``-wide time buckets.
+
+    Buckets are anchored at the earliest dated memory and returned oldest
+    first. Undated/unparsable memories form a trailing bucket so they are
+    still processed rather than dropped.
+    """
+    dated: list[tuple[datetime, RawMemoryRow]] = []
+    undated: list[RawMemoryRow] = []
+    for m in memories:
+        dt = _parse_iso(m.date)
+        if dt is None:
+            undated.append(m)
+        else:
+            dated.append((dt, m))
+
+    result: list[list[RawMemoryRow]] = []
+    if dated:
+        dated.sort(key=lambda x: x[0])
+        start = dated[0][0]
+        span = max(1, batch_days)
+        buckets: dict[int, list[RawMemoryRow]] = {}
+        for dt, m in dated:
+            idx = (dt - start).days // span
+            buckets.setdefault(idx, []).append(m)
+        result.extend(buckets[k] for k in sorted(buckets))
+    if undated:
+        result.append(undated)
+    return result
+
+
+def run_backfill(
+    db_path: Path,
+    base_dir: Path,
+    llm_url: str,
+    model: str,
+    config: DreamConfig,
+    *,
+    batch_days: int = 90,
+    http_post: Any | None = None,
+) -> int:
+    """One-shot, idempotent backfill of the unreflected raw backlog.
+
+    Clusters the *entire* unreflected backlog in ``batch_days`` time buckets
+    (so each batch clusters coherently) and writes one reflection per cluster.
+    The accumulation trigger gate is intentionally bypassed — backfill's job
+    is to process everything that has no reflection yet. Idempotent and
+    re-runnable: the source_ids ledger excludes already-reflected raws, so a
+    second run writes nothing.
+
+    Returns the number of reflections written.
+    """
+    far_back = datetime.now(tz=timezone.utc) - timedelta(days=365 * 20)
+    all_memories = fetch_recent_raw_memories(db_path, far_back)
+    reflected = already_reflected_ids(base_dir)
+    candidates = [m for m in all_memories if m.id not in reflected]
+    log.info(
+        "Backfill: %d raw total, %d already reflected, %d unreflected candidates",
+        len(all_memories),
+        len(all_memories) - len(candidates),
+        len(candidates),
+    )
+    if not candidates:
+        return 0
+
+    written = 0
+    buckets = _bucket_by_days(candidates, batch_days)
+    log.info("Backfill: %d time bucket(s) of <= %d days", len(buckets), batch_days)
+    for i, bucket in enumerate(buckets, start=1):
+        clusters = dispatch_clusters(
+            bucket, config, llm_url, model, http_post=http_post
+        )
+        log.info(
+            "Backfill bucket %d/%d: %d memories -> %d clusters",
+            i,
+            len(buckets),
+            len(bucket),
+            len(clusters),
+        )
+        for cluster in clusters:
+            reflection = synthesize_reflection(
+                cluster, llm_url, model, http_post=http_post
+            )
+            if reflection is None:
+                log.warning(
+                    "Backfill: synthesis failed for a %d-member cluster; skipping",
+                    len(cluster),
+                )
+                continue
+            reflection.setdefault("source_ids", [m.id for m in cluster])
+            reflection.setdefault("cluster_size", len(cluster))
+            path = write_reflection(reflection, base_dir)
+            written += 1
+            log.info("Backfill wrote %s", path)
+    return written
+
+
+# ---------------------------------------------------------------------------
 # Process-improvement cluster classifier (Feature D, GH-1271)
 # ---------------------------------------------------------------------------
 
@@ -1536,6 +1654,21 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help=(
+            "One-shot idempotent backfill: cluster the ENTIRE unreflected raw "
+            "backlog in time buckets (bypasses the accumulation gate and the "
+            "window). Re-runnable — already-reflected raws are skipped."
+        ),
+    )
+    parser.add_argument(
+        "--backfill-batch-days",
+        type=int,
+        default=90,
+        help="Time-bucket width (days) for --backfill clustering. Default: 90.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO).",
@@ -1555,10 +1688,8 @@ def main(argv: list[str] | None = None) -> int:
     # across runs). An explicit --since only WIDENS the window — a narrow
     # value (e.g. a nightly caller's "24h") auto-widens to window_days, so
     # the fix needs no change to the caller (model-gate dream-now).
-    from datetime import timedelta as _timedelta
-
     now = datetime.now(tz=timezone.utc)
-    window_since = now - _timedelta(days=dream_cfg.window_days)
+    window_since = now - timedelta(days=dream_cfg.window_days)
     if args.since:
         since = min(_parse_since(args.since), window_since)
     else:
@@ -1574,6 +1705,36 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("base_dir must be set via --base-dir or config.yaml")
     llm_url = args.llm_url or cfg.get("llm_url") or DEFAULT_LLM_URL
     model = args.model or cfg.get("llm_model") or DEFAULT_LLM_MODEL
+
+    # --- Backfill mode (GH-1511) ---------------------------------------
+    if args.backfill:
+        log.info(
+            "Backfill mode | db=%s base_dir=%s batch_days=%d llm_url=%s model=%s",
+            db_path,
+            base_dir,
+            args.backfill_batch_days,
+            llm_url,
+            model,
+        )
+        written = run_backfill(
+            db_path,
+            base_dir,
+            llm_url,
+            model,
+            dream_cfg,
+            batch_days=args.backfill_batch_days,
+        )
+        print(f"Backfill wrote {written} reflection(s).")
+        if written and not args.no_reindex:
+            reindex_cmd = cfg.get("reindex_cmd")
+            if reindex_cmd:
+                rc = _run_reindex(reindex_cmd)
+                if rc != 0:
+                    log.warning("Post-backfill reindex exited with code %d", rc)
+                    return rc
+            else:
+                log.info("No reindex_cmd in config; skipping post-backfill reindex")
+        return 0
 
     log.info(
         "Reflecting since %s (window_days=%d) | db=%s base_dir=%s llm_url=%s model=%s",

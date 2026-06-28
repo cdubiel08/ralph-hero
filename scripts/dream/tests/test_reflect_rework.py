@@ -394,3 +394,109 @@ class TestHdbscanNoiseCapture:
         got = sorted(m.id for g in groups for m in g)
         assert got == ["raw-0", "raw-1", "raw-2"]
         assert all(len(g) == 1 for g in groups)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (GH-1511) — idempotent backfill of the raw backlog
+# ---------------------------------------------------------------------------
+
+
+def _seed_backfill_db(db_path, rows) -> None:
+    """Minimal documents+chunks+documents_vec seed (mirrors test_reflect)."""
+    import sqlite3
+    import struct
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE documents (id TEXT PRIMARY KEY, path TEXT, title TEXT,
+              date TEXT, content TEXT, memory_tier TEXT NOT NULL DEFAULT 'doc');
+            CREATE TABLE chunks (id TEXT PRIMARY KEY, document_id TEXT,
+              chunk_index INTEGER, content TEXT);
+            CREATE TABLE documents_vec (id TEXT PRIMARY KEY, embedding BLOB);
+            """
+        )
+        for r in rows:
+            conn.execute(
+                "INSERT INTO documents (id, path, date, content, memory_tier) "
+                "VALUES (?,?,?,?, 'raw')",
+                (r["id"], r.get("path", ""), r["date"], r.get("content", "")),
+            )
+            cid = f"{r['id']}#c0"
+            conn.execute(
+                "INSERT INTO chunks (id, document_id, chunk_index, content) "
+                "VALUES (?,?,0,'c')",
+                (cid, r["id"]),
+            )
+            conn.execute(
+                "INSERT INTO documents_vec (id, embedding) VALUES (?,?)",
+                (cid, struct.pack(f"<{len(r['vec'])}f", *r["vec"])),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestBackfill:
+    def _vec(self, axis: int) -> list[float]:
+        v = [0.0] * 384
+        v[axis] = 1.0
+        return v
+
+    def test_backfill_writes_per_bucket_and_is_idempotent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(reflect, "_load_sqlite_vec", lambda conn: None)
+        db = tmp_path / "k.db"
+        # Bucket A: 8 raws ~Jan; Bucket B: 8 raws ~Aug (>90d apart).
+        rows = [
+            {"id": f"git-commit-a{i:02d}", "date": "2026-01-05T10:00:00+00:00",
+             "content": "a", "vec": self._vec(0)}
+            for i in range(8)
+        ] + [
+            {"id": f"git-commit-b{i:02d}", "date": "2026-08-05T10:00:00+00:00",
+             "content": "b", "vec": self._vec(1)}
+            for i in range(8)
+        ]
+        _seed_backfill_db(db, rows)
+
+        def fake_synth(cluster, *a, **k):  # noqa: ANN001, ARG001
+            return {
+                "title": "t", "summary": "s", "insights": [],
+                "source_ids": [m.id for m in cluster], "cluster_size": len(cluster),
+            }
+
+        monkeypatch.setattr(reflect, "synthesize_reflection", fake_synth)
+        cfg = reflect.DreamConfig(algo_min=2)  # force algorithmic, no LLM
+
+        n = reflect.run_backfill(db, tmp_path / "out", "u", "m", cfg, batch_days=90)
+        assert n == 2  # one cluster per time bucket
+
+        # Re-run: every raw is now in a reflection's source_ids => 0 new.
+        n2 = reflect.run_backfill(db, tmp_path / "out", "u", "m", cfg, batch_days=90)
+        assert n2 == 0
+
+    def test_backfill_processes_small_batch_gate_would_defer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Backfill bypasses the accumulation gate: a 3-raw batch (which the
+        nightly gate defers) still produces a reflection."""
+        monkeypatch.setattr(reflect, "_load_sqlite_vec", lambda conn: None)
+        db = tmp_path / "k.db"
+        rows = [
+            {"id": f"git-commit-{i}", "date": "2026-03-01T10:00:00+00:00",
+             "content": "x", "vec": self._vec(0)}
+            for i in range(3)
+        ]
+        _seed_backfill_db(db, rows)
+        monkeypatch.setattr(
+            reflect, "synthesize_reflection",
+            lambda cluster, *a, **k: {
+                "title": "t", "summary": "s", "insights": [],
+                "source_ids": [m.id for m in cluster], "cluster_size": len(cluster),
+            },
+        )
+        cfg = reflect.DreamConfig(algo_min=2)
+        n = reflect.run_backfill(db, tmp_path / "out", "u", "m", cfg, batch_days=90)
+        assert n == 1

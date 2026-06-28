@@ -57,8 +57,24 @@ uv run reflect.py --dry-run  # preview clusters without LLM calls or writes
 ```
 
 `reflect.py --since` only *widens* the candidate window; pass e.g.
-`--since 180d` for a backfill pass. A narrow value (a nightly caller's
+`--since 180d` for a wider single pass. A narrow value (a nightly caller's
 `24h`) auto-widens to `window_days`.
+
+### Backfill the existing backlog
+
+To seed reflections from the accumulated raw backlog (e.g. after first
+enabling the loop, or after the GH-1510 rework), run a one-shot backfill —
+it clusters the **entire unreflected** backlog in time buckets, bypassing
+the accumulation gate:
+
+```bash
+uv run reflect.py --backfill                      # 90-day buckets (default)
+uv run reflect.py --backfill --backfill-batch-days 60
+```
+
+It is idempotent: every reflection records the raw `source_ids` it consumed,
+so a second `--backfill` run skips already-reflected raws and writes nothing.
+Requires the local model to be up (it calls the LLM per cluster).
 
 ## Reflection tuning
 
