@@ -114,3 +114,25 @@ to reach Gemma and the knowledge config:
 If Gemma is unreachable at fire time the pipeline fails open (empty
 reflections, single warning in stderr) per the shared constraint
 "fail-open LLM" from the group plan.
+
+## Weekly meta-reflection → wiki candidates
+
+`meta_reflect.py` is the second cadence (run weekly, not nightly). It distills
+recent **reflections** (not raws) into higher-order **wiki candidates** — the
+salient cross-cutting patterns worth promoting to the canonical personal-wiki
+tier — and stages them at `<wiki_dir>/_candidates.jsonl`:
+
+```bash
+uv run meta_reflect.py                         # last 7 days of reflections
+uv run meta_reflect.py --window-days 14 --min-reflections 8
+```
+
+It **never writes the wiki tier**. Candidates are staged for the human-gated
+`/ralph-knowledge:curate` skill (a sibling of curate's `_rejected.jsonl`),
+which reads them as pre-distilled suggestions and still runs each through its
+full gate. Idempotent: a candidate already staged (by normalized-axiom hash) is
+skipped, so weekly re-runs don't pile up. Fail-open: if the local model is
+offline it stages nothing. Knobs: `RALPH_META_WINDOW_DAYS` (7),
+`RALPH_META_MIN_REFLECTIONS` (5), `RALPH_META_MAX_CANDIDATES` (3). This is the
+hierarchy level that finally seeds the wiki tier and resolves the
+reflection→wiki catch-22.

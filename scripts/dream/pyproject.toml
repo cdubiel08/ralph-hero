@@ -23,7 +23,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
-only-include = ["ingest.py", "reflect.py"]
+only-include = ["ingest.py", "reflect.py", "meta_reflect.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

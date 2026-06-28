@@ -5,6 +5,10 @@
 # sources are not installed.
 
 base_dir: /Users/dubiel/projects/thoughts/dream-memories
+# Personal wiki dir. meta_reflect.py stages wiki CANDIDATES at
+# <wiki_dir>/_candidates.jsonl for the human-gated /ralph-knowledge:curate
+# skill; it NEVER writes wiki entries itself.
+wiki_dir: /Users/dubiel/projects/thoughts/wiki
 gemma_lab_sessions: /Users/dubiel/projects/gemma-lab/sessions
 llm_cli_db: ~/.llm/logs.db
 # Claude Code session transcripts. One distilled raw memory per session
