@@ -84,4 +84,17 @@ describe("think", () => {
     expect(r.synthesized).toBe(false);
     expect(r.gaps.toLowerCase()).toContain("unavailable");
   });
+
+  it("fails open (does not throw) when complete() rejects", async () => {
+    // think()'s fail-open guarantee must be self-contained: even if the
+    // injected completion fn throws (e.g. a future non-fail-open caller),
+    // the tool should still return the retrieved sources, not error out.
+    const complete = async () => {
+      throw new Error("connection refused");
+    };
+    const r = await think("q", SOURCES, complete);
+    expect(r.synthesized).toBe(false);
+    expect(r.gaps.toLowerCase()).toContain("unavailable");
+    expect(r.sources).toEqual(SOURCES);
+  });
 });

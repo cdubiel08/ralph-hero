@@ -178,4 +178,27 @@ describe("knowledge_think synthesis", () => {
     expect(payload.gaps.toLowerCase()).toContain("unavailable");
     expect(payload.sources.length).toBeGreaterThan(0);
   });
+
+  it("excludes out-of-policy tiers for the given role", async () => {
+    // The seeded corpus is only `reflection` (reflect-1) + `raw` (raw-1).
+    // role=implementer => policy [wiki, doc], which matches NEITHER seeded
+    // doc, so the fan-out must return zero sources. This proves the role
+    // actually BIASES the tier mix (negative case), not just that in-policy
+    // tiers are returned.
+    const { server } = await seedServer(async () =>
+      '{"answer": "should not be reached", "gaps": "none"}',
+    );
+    const result = await callTool(server, "knowledge_think", {
+      query: "clustering",
+      role: "implementer",
+      limit: 8,
+    });
+    expect(result.isError).not.toBe(true);
+    const payload = JSON.parse(result.content[0].text) as {
+      synthesized: boolean; gaps: string; sources: Array<{ id: string }>;
+    };
+    expect(payload.sources).toEqual([]);
+    expect(payload.synthesized).toBe(false);
+    expect(payload.gaps.toLowerCase()).toContain("no matching documents");
+  });
 });

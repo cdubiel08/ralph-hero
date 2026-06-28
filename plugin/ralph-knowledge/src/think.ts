@@ -107,7 +107,15 @@ export async function think(
   }
 
   const prompt = buildThinkPrompt(query, sources);
-  const completion = (await complete(prompt)) ?? "";
+  // Fail-open is self-contained: the injected completion fn is expected to
+  // return "" on failure, but we also guard a thrown rejection here so a
+  // non-fail-open caller can never turn an offline model into a tool error.
+  let completion = "";
+  try {
+    completion = (await complete(prompt)) ?? "";
+  } catch {
+    completion = "";
+  }
   if (!completion.trim()) {
     return {
       query,
