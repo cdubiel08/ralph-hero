@@ -565,6 +565,31 @@ def cluster_memories(
     return sorted(bucket.values(), key=len, reverse=True)
 
 
+def _group_labels_with_noise(
+    memories: list[RawMemoryRow], labels: list[int]
+) -> list[list[RawMemoryRow]]:
+    """Bucket memories by cluster label, emitting each HDBSCAN noise point
+    (label ``-1``) as its OWN singleton group rather than dropping it.
+
+    Dropping noise leaves those raws un-marked in the ``source_ids`` ledger,
+    so a later run re-clusters them — duplicate reflections and a
+    non-idempotent Phase 3 backfill (the ~900-doc backlog hits the >=200
+    HDBSCAN buckets, where noise is common). Returning noise as singletons
+    lets ``dispatch_clusters``' ``_coalesce_singletons`` fold >=2 of them into
+    one "assorted" reflection, so every id is still marked exactly once.
+    Pure function — no I/O.
+    """
+    bucket: dict[int, list[RawMemoryRow]] = {}
+    noise: list[list[RawMemoryRow]] = []
+    for mem, lbl in zip(memories, labels):
+        lbl_int = int(lbl)
+        if lbl_int == -1:
+            noise.append([mem])
+            continue
+        bucket.setdefault(lbl_int, []).append(mem)
+    return sorted(list(bucket.values()) + noise, key=len, reverse=True)
+
+
 def _hdbscan_cluster(
     memories: list[RawMemoryRow], config: DreamConfig
 ) -> list[list[RawMemoryRow]]:
@@ -572,8 +597,9 @@ def _hdbscan_cluster(
 
     Tuned for sparse diverse text: ``min_cluster_size``/``min_samples`` from
     config (default 2/1), ``cluster_selection_method='leaf'`` to favor many
-    fine clusters over a few giant ones. Noise points (label -1) are dropped;
-    if everything is noise the caller's degenerate fallback handles it.
+    fine clusters over a few giant ones. Noise points (label -1) are NOT
+    dropped — they are emitted as singletons (see ``_group_labels_with_noise``)
+    so every id enters the source_ids ledger and the path stays idempotent.
     """
     import numpy as np  # noqa: WPS433
     from umap import UMAP  # type: ignore[import-untyped]
@@ -598,13 +624,7 @@ def _hdbscan_cluster(
     )
     labels = clusterer.fit_predict(reduced)
 
-    bucket: dict[int, list[RawMemoryRow]] = {}
-    for mem, lbl in zip(memories, labels):
-        lbl_int = int(lbl)
-        if lbl_int == -1:
-            continue
-        bucket.setdefault(lbl_int, []).append(mem)
-    return sorted(bucket.values(), key=len, reverse=True)
+    return _group_labels_with_noise(memories, list(labels))
 
 
 # ---------------------------------------------------------------------------
@@ -1178,11 +1198,20 @@ def synthesize_reflection(
         return None
 
     insights = [str(x).strip() for x in insights_raw if str(x).strip()]
-    source_ids = [str(x).strip() for x in source_ids_raw if str(x).strip()]
-    # If the LLM forgot source_ids but we have them from the cluster,
-    # fall back to those — otherwise the builds_on:: block would be empty.
-    if not source_ids:
-        source_ids = [m.id for m in cluster]
+    # The source_ids ledger is load-bearing for idempotency: every raw fed
+    # into this synthesis MUST be recorded so it is never re-clustered. The
+    # LLM's echoed list is unreliable in both directions — a subset echo
+    # would leak the dropped raws back into the next run (duplicate
+    # reflections), and a hallucinated id would mark an unrelated raw as
+    # already-synthesized (silent loss). The cluster membership is the
+    # ground truth of what we synthesized, so it is authoritative here.
+    _echoed = [str(x).strip() for x in source_ids_raw if str(x).strip()]
+    if _echoed and set(_echoed) != {m.id for m in cluster}:
+        log.warning(
+            "LLM source_ids %s != cluster membership; using cluster ids",
+            _echoed,
+        )
+    source_ids = [m.id for m in cluster]
 
     return {
         "title": title,

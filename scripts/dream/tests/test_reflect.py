@@ -564,6 +564,57 @@ class TestSynthesizeReflection:
         assert r is not None
         assert r["source_ids"] == [m.id for m in cluster]
 
+    def test_partial_echo_still_marks_full_cluster(self) -> None:
+        """The ledger is load-bearing for idempotency: every raw fed into
+        the synthesis MUST be recorded, even if the LLM echoes only a
+        subset of the ids. A subset echo previously leaked the dropped
+        raws back into the next clustering run (duplicate reflections)."""
+        cluster = _make_cluster(n=3)  # raw-00, raw-01, raw-02
+        partial = (
+            "---\n"
+            "title: partial echo\n"
+            "summary: model echoed only one id\n"
+            "insights:\n"
+            "  - a\n"
+            "source_ids:\n"
+            "  - raw-01\n"  # only one of three
+            "---\n"
+            "# body\n"
+        )
+
+        def fake_post(url, body, timeout):  # noqa: ARG001
+            return 200, {"choices": [{"message": {"content": partial}}]}
+
+        r = reflect.synthesize_reflection(cluster, http_post=fake_post)
+        assert r is not None
+        assert r["source_ids"] == ["raw-00", "raw-01", "raw-02"]
+
+    def test_hallucinated_ids_do_not_enter_ledger(self) -> None:
+        """An id the LLM invents that is NOT a cluster member must not be
+        recorded — otherwise an unrelated unreflected raw would be marked
+        as already-synthesized and silently lost."""
+        cluster = _make_cluster(n=2)  # raw-00, raw-01
+        hallucinated = (
+            "---\n"
+            "title: hallucinated id\n"
+            "summary: model invented an id\n"
+            "insights:\n"
+            "  - a\n"
+            "source_ids:\n"
+            "  - raw-00\n"
+            "  - ghost-99\n"  # not in the cluster
+            "---\n"
+            "# body\n"
+        )
+
+        def fake_post(url, body, timeout):  # noqa: ARG001
+            return 200, {"choices": [{"message": {"content": hallucinated}}]}
+
+        r = reflect.synthesize_reflection(cluster, http_post=fake_post)
+        assert r is not None
+        assert r["source_ids"] == ["raw-00", "raw-01"]
+        assert "ghost-99" not in r["source_ids"]
+
 
 # ---------------------------------------------------------------------------
 # write_reflection

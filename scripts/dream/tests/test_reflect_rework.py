@@ -360,3 +360,37 @@ class TestSingletonCoalescing:
         clusters = reflect.dispatch_clusters(mems, cfg, "u", "m", http_post=_no_llm)
         sizes = sorted(len(c) for c in clusters)
         assert sizes == [1, 3]  # single lone singleton untouched
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — HDBSCAN noise capture (idempotency: every input id must be marked)
+# ---------------------------------------------------------------------------
+
+
+class TestHdbscanNoiseCapture:
+    """The HDBSCAN path (N >= hdbscan_min) used to DROP label -1 noise
+    points. Dropped raws never enter any reflection's source_ids ledger, so a
+    later run (esp. the Phase 3 backfill on the ~900-doc backlog, which hits
+    the >=200 HDBSCAN buckets) re-clusters them => duplicate reflections /
+    non-idempotent backfill. Noise must instead be emitted as singletons so
+    _coalesce_singletons folds them in and every id is marked."""
+
+    def test_noise_points_preserved_as_singletons(self) -> None:
+        mems = [_row(f"raw-{i}", "x") for i in range(6)]
+        # Two real 2-member clusters (labels 0,1) + two noise points (4, 5).
+        labels = [0, 0, 1, 1, -1, -1]
+        groups = reflect._group_labels_with_noise(mems, labels)
+        # Nothing dropped: every input id appears exactly once across groups.
+        got = sorted(m.id for g in groups for m in g)
+        assert got == sorted(m.id for m in mems)
+        # The two noise points are the only singleton groups.
+        singletons = sorted(g[0].id for g in groups if len(g) == 1)
+        assert singletons == ["raw-4", "raw-5"]
+
+    def test_all_noise_yields_only_singletons(self) -> None:
+        mems = [_row(f"raw-{i}", "x") for i in range(3)]
+        labels = [-1, -1, -1]
+        groups = reflect._group_labels_with_noise(mems, labels)
+        got = sorted(m.id for g in groups for m in g)
+        assert got == ["raw-0", "raw-1", "raw-2"]
+        assert all(len(g) == 1 for g in groups)
