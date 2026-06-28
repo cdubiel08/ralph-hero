@@ -121,6 +121,7 @@ hybrid search. They differ on **who decides the tier policy**:
 |------|-------------|---------------|
 | `knowledge_search` | Power-user / explicit path. You know the tier and want full control over `rerank`, `lambda`, `return_diagnostics`, chunk metadata, etc. | You pass `memory_tier` explicitly (`doc`, `raw`, `reflection`, `wiki`, or `any` — default `any`). |
 | `knowledge_recall` | Default for agents and skills. You declare your role and the tool picks the right tiers. | A role-keyed policy fans out one rerank-enabled `hybrid.search()` per tier in the role's list, then merges and re-ranks. |
+| `knowledge_think` | You want a *synthesized, sourced answer* to a question, not a result list. Retrieves the top-K excerpts, then asks the local model for a **cited** answer + an explicit **gaps** report ("what the bank does NOT know"). Optional `role` biases the tier mix. | Fail-open: returns the retrieved sources even when the local model is offline. Borrowed from the `gbrain think` idiom (GH-1512). |
 
 ### Role -> tier policy
 

@@ -346,4 +346,53 @@ describe("createLlmClient", () => {
       expect(body.model).toBe("explicit/model");
     });
   });
+
+  describe("complete()", () => {
+    it("returns trimmed content on a 200 response", async () => {
+      installFetch(
+        vi.fn(async () =>
+          makeResponse({ json: { choices: [{ message: { content: "  hi there \n" } }] } }),
+        ) as unknown as FetchFn,
+      );
+      const client = createLlmClient();
+      expect(await client.complete("prompt")).toBe("hi there");
+    });
+
+    it("returns empty string on a non-2xx response", async () => {
+      installFetch(vi.fn(async () => makeResponse({ status: 500 })) as unknown as FetchFn);
+      const client = createLlmClient();
+      expect(await client.complete("prompt")).toBe("");
+    });
+
+    it("returns empty string when content is missing/non-string", async () => {
+      installFetch(
+        vi.fn(async () => makeResponse({ json: { choices: [{ message: {} }] } })) as unknown as FetchFn,
+      );
+      const client = createLlmClient();
+      expect(await client.complete("prompt")).toBe("");
+    });
+
+    it("returns empty string on a network error (fail-open)", async () => {
+      installFetch(
+        vi.fn(async () => {
+          throw connectionRefused();
+        }) as unknown as FetchFn,
+      );
+      const client = createLlmClient();
+      expect(await client.complete("prompt")).toBe("");
+    });
+
+    it("passes the configured maxTokens in the request body", async () => {
+      const fetchMock = vi.fn(async () =>
+        makeResponse({ json: { choices: [{ message: { content: "x" } }] } }),
+      );
+      installFetch(fetchMock as unknown as FetchFn);
+      const client = createLlmClient();
+      await client.complete("prompt", { maxTokens: 256 });
+      const body = JSON.parse(fetchMock.mock.calls[0]![1]?.body as string) as {
+        max_tokens: number;
+      };
+      expect(body.max_tokens).toBe(256);
+    });
+  });
 });
