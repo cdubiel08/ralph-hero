@@ -4,7 +4,28 @@ This directory contains the ralph-knowledge dream-loop: a nightly pipeline
 that ingests the last 24 hours of raw activity (Gemma lab logs, git
 history, `llm-cli` transcripts, Claude Code sessions), writes them as
 `memory_tier=raw` documents, and then synthesizes reflection documents by
-clustering with HDBSCAN + asking Gemma to describe each cluster.
+clustering accumulated unreflected raw memories + asking the local model to
+describe each cluster.
+
+> **Reflection triggering & clustering (GH-1510).** The reflect stage no
+> longer clusters a fixed 24h window with `HDBSCAN(min_cluster_size=5)` (which
+> produced 0 clusters/day on a thin, diverse stream). It now:
+> 1. Considers all **unreflected** raws within `window_days` (default 30) —
+>    "unreflected" = not yet listed in any reflection file's `source_ids`
+>    (the authoritative, DB-rebuild-proof idempotency ledger). The window is
+>    always **at least** `window_days` wide, so a narrow `--since` from a
+>    nightly caller auto-widens (no caller change needed).
+> 2. **Accumulation-gates** the run: it synthesizes only when there are
+>    enough unreflected candidates (`count >= count_trigger` OR cumulative
+>    `importance >= importance_trigger`, above a `min_unreflected` floor),
+>    deferring quietly otherwise so signal accumulates across quiet nights.
+> 3. **Size-dispatches** clustering: LLM-as-clusterer for small batches,
+>    `AgglomerativeClustering` (cosine) by default, HDBSCAN only for very
+>    large batches. A non-empty batch always yields ≥1 group (degenerate
+>    fallback), and lone-session singletons coalesce into one "assorted"
+>    reflection rather than flooding the tier.
+>
+> Every threshold is a knob — see **Reflection tuning** below.
 
 Claude Code sessions are distilled, not dumped: one raw memory per
 session, holding the session title, the human prompts (deduplicated,
@@ -30,9 +51,33 @@ in-repo.
 ```bash
 cd /Users/dubiel/projects/ralph-hero/scripts/dream
 uv run ingest.py --since 24h
-uv run reflect.py --since 24h
+uv run reflect.py            # candidate window defaults to window_days (30)
+uv run reflect.py --dry-run  # preview clusters without LLM calls or writes
 ./logrotate.sh
 ```
+
+`reflect.py --since` only *widens* the candidate window; pass e.g.
+`--since 180d` for a backfill pass. A narrow value (a nightly caller's
+`24h`) auto-widens to `window_days`.
+
+## Reflection tuning
+
+Each knob resolves `env > config.yaml (reflection:) > built-in default`.
+
+| Env var | config.yaml key | Default | Meaning |
+|---------|-----------------|---------|---------|
+| `RALPH_DREAM_WINDOW_DAYS` | `window_days` | `30` | Candidate look-back (always ≥ this). |
+| `RALPH_DREAM_MIN_UNREFLECTED` | `min_unreflected` | `15` | Defer below this many candidates. |
+| `RALPH_DREAM_COUNT_TRIGGER` | `count_trigger` | `20` | Fire when candidate count ≥ this. |
+| `RALPH_DREAM_IMPORTANCE_TRIGGER` | `importance_trigger` | `40` | Fire when cumulative importance ≥ this. |
+| `RALPH_DREAM_CLUSTER_THRESHOLD` | `cluster_threshold` | `0.40` | Agglomerative cosine *distance* threshold. |
+| `RALPH_DREAM_ALGO_MIN` | `algo_min` | `30` | N < this → LLM-as-clusterer; ≥ → algorithmic. |
+| `RALPH_DREAM_HDBSCAN_MIN` | `hdbscan_min` | `200` | N ≥ this → HDBSCAN density path. |
+| `RALPH_DREAM_MIN_CLUSTER_SIZE` | `min_cluster_size` | `2` | HDBSCAN param (large-N path only). |
+| `RALPH_DREAM_MIN_SAMPLES` | `min_samples` | `1` | HDBSCAN param (large-N path only). |
+
+`cluster_threshold` was tuned against the live corpus: `0.40` keeps distinct
+themes sharp; ≥`0.65` over-merges everything into one giant cluster.
 
 ## Install (launchd)
 

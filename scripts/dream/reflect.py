@@ -130,6 +130,223 @@ _PROMPT_FOOTER = (
 
 
 # ---------------------------------------------------------------------------
+# Dream-loop reflection config knobs (GH-1510, Phase 0)
+# ---------------------------------------------------------------------------
+#
+# Every threshold the rework introduced is exposed here so the pipeline can
+# be re-tuned without code edits. Resolution precedence is
+# ``env > config.yaml (reflection: block) > dataclass default``. There is no
+# per-knob CLI flag — env is the operational override, config.yaml the
+# durable default (a deliberate simplification of the plan's env>CLI>config,
+# since nine CLI flags would be noise; recorded in the plan).
+
+
+@dataclass
+class DreamConfig:
+    """Tunable thresholds for accumulation-gated triggering + clustering."""
+
+    # Outer bound on the candidate query: only raws within this many days
+    # are considered. The candidate window is ALWAYS at least this wide
+    # (see ``effective_since`` in main), so a narrow ``--since`` from a
+    # nightly caller auto-widens to here.
+    window_days: int = 30
+    # Below this many unreflected candidates we defer (exit clean) — never
+    # a hard *skip* of a non-empty batch once the gate fires.
+    min_unreflected: int = 15
+    # Cosine *distance* threshold for agglomerative clustering.
+    cluster_threshold: float = 0.40
+    # HDBSCAN params (only used on the opt-in large-N path).
+    min_cluster_size: int = 2
+    min_samples: int = 1
+    # Trigger gate: fire when (n >= count_trigger) OR (importance >= importance_trigger),
+    # provided n >= min_unreflected.
+    importance_trigger: int = 40
+    count_trigger: int = 20
+    # N >= algo_min uses algorithmic clustering; below uses LLM-as-clusterer.
+    algo_min: int = 30
+    # N >= hdbscan_min uses HDBSCAN (density) instead of agglomerative.
+    hdbscan_min: int = 200
+
+
+# Knob spec: attribute -> (env var, config.yaml key, cast).
+_KNOBS: dict[str, tuple[str, str, Any]] = {
+    "window_days": ("RALPH_DREAM_WINDOW_DAYS", "window_days", int),
+    "min_unreflected": ("RALPH_DREAM_MIN_UNREFLECTED", "min_unreflected", int),
+    "cluster_threshold": ("RALPH_DREAM_CLUSTER_THRESHOLD", "cluster_threshold", float),
+    "min_cluster_size": ("RALPH_DREAM_MIN_CLUSTER_SIZE", "min_cluster_size", int),
+    "min_samples": ("RALPH_DREAM_MIN_SAMPLES", "min_samples", int),
+    "importance_trigger": ("RALPH_DREAM_IMPORTANCE_TRIGGER", "importance_trigger", int),
+    "count_trigger": ("RALPH_DREAM_COUNT_TRIGGER", "count_trigger", int),
+    "algo_min": ("RALPH_DREAM_ALGO_MIN", "algo_min", int),
+    "hdbscan_min": ("RALPH_DREAM_HDBSCAN_MIN", "hdbscan_min", int),
+}
+
+
+def resolve_dream_config(cfg: dict | None = None) -> DreamConfig:
+    """Build a :class:`DreamConfig`, applying env > config.yaml > default.
+
+    ``cfg`` is the parsed ``config.yaml`` mapping; knobs live under a
+    ``reflection:`` block. A malformed env/config value falls back to the
+    default with a warning rather than aborting the run.
+    """
+    reflection_cfg = {}
+    if isinstance(cfg, dict):
+        block = cfg.get("reflection")
+        if isinstance(block, dict):
+            reflection_cfg = block
+
+    out = DreamConfig()
+    for attr, (env_var, cfg_key, cast) in _KNOBS.items():
+        raw: Any = None
+        env_val = os.environ.get(env_var)
+        if env_val is not None:
+            raw = env_val
+        elif cfg_key in reflection_cfg:
+            raw = reflection_cfg[cfg_key]
+        if raw is None:
+            continue
+        try:
+            setattr(out, attr, cast(raw))
+        except (TypeError, ValueError):
+            log.warning(
+                "Invalid value %r for %s; using default %r",
+                raw,
+                env_var,
+                getattr(out, attr),
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Importance scoring (GH-1510, Phase 2) — pure, no LLM
+# ---------------------------------------------------------------------------
+
+# Known dream-loop sources, longest-prefix first so "git-commit" wins over a
+# hypothetical "git" prefix.
+_KNOWN_SOURCES: tuple[str, ...] = ("git-commit", "claude-code", "gemma-lab", "llm-cli")
+
+_SOURCE_BASE_WEIGHT: dict[str, int] = {
+    "claude-code": 3,
+    "git-commit": 2,
+    "gemma-lab": 1,
+    "llm-cli": 1,
+}
+
+_DECISION_KEYWORDS = ("decision", "decided", "chose", "switched", "pivot")
+_FAILURE_KEYWORDS = ("error", "exception", "failed", "failure", "blocked")
+
+
+def _source_from_id(doc_id: str) -> str:
+    """Extract the source from a raw memory id (``<source>-<hash>``)."""
+    for src in _KNOWN_SOURCES:
+        if doc_id.startswith(src + "-"):
+            return src
+    return "unknown"
+
+
+def importance_score(source: str, content: str) -> int:
+    """Lightweight heuristic importance for a raw memory (no LLM call).
+
+    Base weight by source plus a one-time +2 for a decision-signal keyword
+    and a one-time +2 for a failure-signal keyword. Park-style cumulative
+    importance is summed over the candidate set to gate triggering.
+    """
+    score = _SOURCE_BASE_WEIGHT.get(source, 1)
+    low = (content or "").lower()
+    if any(kw in low for kw in _DECISION_KEYWORDS):
+        score += 2
+    if any(kw in low for kw in _FAILURE_KEYWORDS):
+        score += 2
+    return score
+
+
+def should_reflect(
+    candidates: list["RawMemoryRow"], config: DreamConfig
+) -> tuple[bool, str]:
+    """Accumulation trigger gate (Park 2023, adapted to our volume).
+
+    Fire when ``n >= min_unreflected`` AND
+    (``n >= count_trigger`` OR ``cumulative_importance >= importance_trigger``).
+    Otherwise defer (exit clean — not a failure). Returns ``(fire, reason)``.
+    """
+    n = len(candidates)
+    importance = sum(
+        importance_score(_source_from_id(m.id), m.content) for m in candidates
+    )
+    if n < config.min_unreflected:
+        return (
+            False,
+            f"deferring: {n} unreflected < min_unreflected={config.min_unreflected} "
+            f"(importance={importance})",
+        )
+    if n >= config.count_trigger or importance >= config.importance_trigger:
+        return (
+            True,
+            f"firing: n={n} (count_trigger={config.count_trigger}), "
+            f"importance={importance} (importance_trigger={config.importance_trigger})",
+        )
+    return (
+        False,
+        f"deferring: n={n} < count_trigger={config.count_trigger} and "
+        f"importance={importance} < importance_trigger={config.importance_trigger}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Idempotency ledger (GH-1510, Phase 1)
+# ---------------------------------------------------------------------------
+#
+# The authoritative "already synthesized" marker is the set of raw ids that
+# already appear in some reflection file's ``source_ids`` frontmatter. This
+# is derived from the markdown files (the source of truth), so it survives a
+# full DB rebuild — unlike a DB-only ``reflected_at`` column would. It is the
+# single idempotency mechanism for "don't re-synthesize"; the per-cluster
+# sha256 slug remains only for filename stability (resolves plan OQ#5).
+
+
+def _parse_source_ids_frontmatter(text: str) -> list[str]:
+    """Parse ``source_ids`` (flow or block style) from a reflection file."""
+    if not text.startswith("---"):
+        return []
+    rest = text[len("---") :].lstrip("\n")
+    close_idx = rest.find("\n---")
+    if close_idx == -1:
+        return []
+    front = rest[:close_idx]
+    if yaml is None:  # pragma: no cover - import guard
+        return []
+    try:
+        data = yaml.safe_load(front) or {}
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    sids = data.get("source_ids", [])
+    if not isinstance(sids, list):
+        return []
+    return [str(s).strip() for s in sids if str(s).strip()]
+
+
+def already_reflected_ids(base_dir: Path) -> set[str]:
+    """Union of all ``source_ids`` across every reflection file on disk.
+
+    Scans ``<base_dir>/reflections/**/*.md``. A missing dir or a malformed
+    file is skipped quietly so one bad file can't strand the whole run.
+    """
+    reflections_dir = Path(base_dir) / "reflections"
+    out: set[str] = set()
+    if not reflections_dir.exists():
+        return out
+    for md in sorted(reflections_dir.rglob("*.md")):
+        try:
+            text = md.read_text(encoding="utf-8")
+        except OSError:  # pragma: no cover - fs-level fault
+            continue
+        out.update(_parse_source_ids_frontmatter(text))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Memory dataclass
 # ---------------------------------------------------------------------------
 
@@ -292,39 +509,79 @@ def fetch_recent_raw_memories(
 
 def cluster_memories(
     memories: list[RawMemoryRow],
+    config: DreamConfig | None = None,
 ) -> list[list[RawMemoryRow]]:
-    """Cluster memories via UMAP -> HDBSCAN; drop noise points.
+    """Algorithmic clustering of raw memories; returns non-empty groups.
 
-    UMAP: ``n_neighbors=15, min_dist=0.1, n_components=50``
-    HDBSCAN: ``min_cluster_size=5, min_samples=3``
+    Default path is :class:`~sklearn.cluster.AgglomerativeClustering`
+    (cosine distance, average linkage, ``distance_threshold``): it works at
+    N>=2 and never returns all-noise on a non-empty batch the way
+    ``HDBSCAN(min_cluster_size=5)`` did on our thin diverse stream (the core
+    defect). For very large N (``>= config.hdbscan_min``) we use the density
+    path (UMAP + HDBSCAN ``leaf``) which scales better.
 
-    If there are fewer than 6 memories HDBSCAN cannot form a single
-    valid cluster (``min_cluster_size=5`` + 1 for noise tolerance), so
-    we short-circuit and return ``[]``.
+    Unlike the old version there is NO hard ``< 6`` short-circuit — that was
+    the mechanic that produced 0 clusters/day.
     """
     import numpy as np  # noqa: WPS433
 
-    if len(memories) < 6:
-        log.info(
-            "Only %d raw memories; below min_cluster_size=5. "
-            "Skipping clustering.",
-            len(memories),
-        )
+    if config is None:
+        config = DreamConfig()
+
+    n = len(memories)
+    if n == 0:
         return []
+    if n == 1:
+        return [list(memories)]
+
+    if n >= config.hdbscan_min:
+        return _hdbscan_cluster(memories, config)
 
     X = np.stack([m.embedding for m in memories], axis=0)
+    from sklearn.cluster import AgglomerativeClustering  # noqa: WPS433
 
-    # Lazy imports — UMAP/HDBSCAN are heavy and only needed on the
-    # clustering path. Keeps unit tests that stub cluster_memories cheap.
+    # Cosine distance is undefined for zero-norm vectors (a corrupted or
+    # missing embedding decodes to all-zeros via _blob_to_float32). Fall back
+    # to euclidean for the whole batch rather than crash the nightly run.
+    metric = "cosine"
+    if bool(np.any(~np.any(X, axis=1))):
+        log.warning(
+            "Zero-vector embedding(s) present in batch; using euclidean "
+            "metric instead of cosine to avoid a hard failure."
+        )
+        metric = "euclidean"
+
+    clusterer = AgglomerativeClustering(
+        n_clusters=None,
+        metric=metric,
+        linkage="average",
+        distance_threshold=config.cluster_threshold,
+    )
+    labels = clusterer.fit_predict(X)
+
+    bucket: dict[int, list[RawMemoryRow]] = {}
+    for mem, lbl in zip(memories, labels):
+        bucket.setdefault(int(lbl), []).append(mem)
+    return sorted(bucket.values(), key=len, reverse=True)
+
+
+def _hdbscan_cluster(
+    memories: list[RawMemoryRow], config: DreamConfig
+) -> list[list[RawMemoryRow]]:
+    """Density-clustering path for very large batches (UMAP -> HDBSCAN leaf).
+
+    Tuned for sparse diverse text: ``min_cluster_size``/``min_samples`` from
+    config (default 2/1), ``cluster_selection_method='leaf'`` to favor many
+    fine clusters over a few giant ones. Noise points (label -1) are dropped;
+    if everything is noise the caller's degenerate fallback handles it.
+    """
+    import numpy as np  # noqa: WPS433
     from umap import UMAP  # type: ignore[import-untyped]
     import hdbscan  # type: ignore[import-untyped]
 
+    X = np.stack([m.embedding for m in memories], axis=0)
     n = X.shape[0]
-    # n_neighbors must be <= n - 1 per UMAP. With our guard above
-    # (n >= 6) the default 15 would be clipped to 5 for small inputs;
-    # make that explicit rather than rely on UMAP's internal warning.
-    n_neighbors = min(15, n - 1)
-    # n_components must be < n too, otherwise UMAP raises.
+    n_neighbors = max(2, min(5, n // 3))
     n_components = min(50, max(n - 2, 2))
     reducer = UMAP(
         n_neighbors=n_neighbors,
@@ -335,21 +592,215 @@ def cluster_memories(
     reduced = reducer.fit_transform(X)
 
     clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=5,
-        min_samples=3,
+        min_cluster_size=config.min_cluster_size,
+        min_samples=config.min_samples,
+        cluster_selection_method="leaf",
     )
     labels = clusterer.fit_predict(reduced)
 
-    # Bucket by label, drop noise (label == -1).
     bucket: dict[int, list[RawMemoryRow]] = {}
     for mem, lbl in zip(memories, labels):
         lbl_int = int(lbl)
         if lbl_int == -1:
             continue
         bucket.setdefault(lbl_int, []).append(mem)
-
-    # Sort by cluster size desc so "biggest theme" comes first in logs.
     return sorted(bucket.values(), key=len, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# LLM-as-clusterer (GH-1510, Phase 1) — small-N grouping without density math
+# ---------------------------------------------------------------------------
+
+
+def _build_cluster_prompt(memories: list[RawMemoryRow]) -> str:
+    """Prompt the local model to group memories into themes (JSON out)."""
+    lines = [
+        f"Group these {len(memories)} memories into coherent themes by shared "
+        "topic, project, or activity.",
+        'Return ONLY JSON of the form {"groups": [["id1","id2"], ["id3"]]}.',
+        "Every id must appear in exactly one group. Prefer 2-6 groups; a "
+        "singleton group is fine for an unrelated memory.",
+        "",
+    ]
+    for m in memories:
+        clipped = (m.content or "").strip()[:300]
+        lines.append(f"- id: {m.id}\n  content: {clipped}")
+    return "\n".join(lines)
+
+
+def _parse_cluster_groups(text: str) -> list[list[str]]:
+    """Extract ``groups`` (a list of id-lists) from an LLM JSON response."""
+    import json
+
+    raw = text.strip()
+    if raw.startswith("```"):
+        first_nl = raw.find("\n")
+        if first_nl != -1:
+            raw = raw[first_nl + 1 :]
+        if raw.rstrip().endswith("```"):
+            raw = raw.rstrip()[:-3].rstrip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return []
+    try:
+        data = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return []
+    groups = data.get("groups") if isinstance(data, dict) else None
+    if not isinstance(groups, list):
+        return []
+    out: list[list[str]] = []
+    for g in groups:
+        if isinstance(g, list):
+            ids = [str(x).strip() for x in g if str(x).strip()]
+            if ids:
+                out.append(ids)
+    return out
+
+
+def llm_cluster_memories(
+    memories: list[RawMemoryRow],
+    config: DreamConfig,
+    llm_url: str = DEFAULT_LLM_URL,
+    model: str = DEFAULT_LLM_MODEL,
+    *,
+    http_post: Any | None = None,
+) -> list[list[RawMemoryRow]]:
+    """Group a small batch via the local LLM. Returns ``[]`` on any failure
+    so the dispatcher can degrade to algorithmic clustering / fallback.
+
+    Memories the model omits from every group are collected into one trailing
+    leftover group so nothing is silently stranded as permanently unreflected.
+    """
+    if not memories:
+        return []
+
+    prompt = _build_cluster_prompt(memories)
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1500,
+        "temperature": 0.2,
+    }
+    url = llm_url.rstrip("/") + "/v1/chat/completions"
+
+    try:
+        if http_post is None:
+            import httpx  # type: ignore[import-untyped]
+
+            with httpx.Client(timeout=DEFAULT_LLM_TIMEOUT_S) as client:
+                resp = client.post(url, json=body)
+            status = resp.status_code
+            payload = resp.json()
+        else:
+            status, payload = http_post(url, body, DEFAULT_LLM_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 - network errors span many types
+        log.warning("LLM clusterer call to %s failed: %s", url, exc)
+        return []
+
+    if status != 200:
+        log.warning("LLM clusterer returned status %d from %s", status, url)
+        return []
+
+    try:
+        content = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        log.warning("Unexpected LLM clusterer payload shape: %s", exc)
+        return []
+
+    groups = _parse_cluster_groups(content)
+    if not groups:
+        return []
+
+    by_id = {m.id: m for m in memories}
+    seen: set[str] = set()
+    clusters: list[list[RawMemoryRow]] = []
+    for grp in groups:
+        members = [by_id[gid] for gid in grp if gid in by_id and gid not in seen]
+        seen.update(gid for gid in grp if gid in by_id)
+        if members:
+            clusters.append(members)
+
+    leftover = [m for m in memories if m.id not in seen]
+    if leftover:
+        clusters.append(leftover)
+
+    return sorted(clusters, key=len, reverse=True)
+
+
+def dispatch_clusters(
+    memories: list[RawMemoryRow],
+    config: DreamConfig,
+    llm_url: str = DEFAULT_LLM_URL,
+    model: str = DEFAULT_LLM_MODEL,
+    *,
+    http_post: Any | None = None,
+) -> list[list[RawMemoryRow]]:
+    """Size-dispatch clustering with a degenerate fallback.
+
+    - ``N < config.algo_min`` -> LLM-as-clusterer; on failure degrade to
+      algorithmic clustering.
+    - ``N >= config.algo_min`` -> algorithmic (agglomerative, or HDBSCAN for
+      huge N).
+
+    A non-empty batch ALWAYS yields >=1 group: if every strategy returns
+    nothing (only possible on the all-noise HDBSCAN path), fall back to one
+    whole-batch group so a sparse run still produces output (plan principle 7).
+    """
+    if not memories:
+        return []
+
+    n = len(memories)
+    if n < config.algo_min:
+        clusters = llm_cluster_memories(
+            memories, config, llm_url, model, http_post=http_post
+        )
+        if not clusters:
+            log.info(
+                "LLM clusterer yielded nothing for %d memories; "
+                "degrading to algorithmic clustering",
+                n,
+            )
+            clusters = cluster_memories(memories, config)
+    else:
+        clusters = cluster_memories(memories, config)
+
+    if not clusters:
+        log.warning(
+            "Clustering produced 0 groups on %d memories; "
+            "emitting one whole-batch fallback reflection",
+            n,
+        )
+        return [list(memories)]
+    return _coalesce_singletons(clusters)
+
+
+def _coalesce_singletons(
+    clusters: list[list[RawMemoryRow]],
+) -> list[list[RawMemoryRow]]:
+    """Merge >=2 singleton clusters into one "assorted activity" group.
+
+    Real-corpus tuning (GH-1510): a topically-diverse stream leaves many
+    lone sessions as size-1 clusters at any sane cosine threshold. Each raw
+    session is ALREADY a distilled summary, so synthesizing a 1-member
+    reflection per singleton would flood the reflection tier with
+    near-redundant entries and waste an LLM call each. Coalescing them into
+    one assorted reflection keeps their ids marked (no re-cluster churn — the
+    source_ids ledger covers them) while producing a single tier entry. A
+    lone singleton (only one) is left untouched.
+    """
+    singles = [c for c in clusters if len(c) == 1]
+    if len(singles) < 2:
+        return clusters
+    multi = [c for c in clusters if len(c) > 1]
+    assorted = [m for c in singles for m in c]
+    log.info(
+        "Coalescing %d singleton clusters into one assorted reflection",
+        len(singles),
+    )
+    multi.append(assorted)
+    return sorted(multi, key=len, reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -988,11 +1439,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--since",
-        default="24h",
+        default=None,
         help=(
-            "Window of raw memories to cluster. Either a relative "
-            "duration (e.g. 24h, 3d, 30m) or an ISO-8601 datetime. "
-            "Default: 24h."
+            "Lower bound of the candidate window. Either a relative duration "
+            "(e.g. 24h, 3d, 30m) or an ISO-8601 datetime. The effective window "
+            "is ALWAYS at least RALPH_DREAM_WINDOW_DAYS wide (default 30d), so "
+            "a narrow value from a nightly caller auto-widens; pass a wider "
+            "value (e.g. 180d) to look back further. Default: window-days."
         ),
     )
     parser.add_argument(
@@ -1067,8 +1520,20 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     cfg = _load_config(Path(args.config)) if args.config else {}
+    dream_cfg = resolve_dream_config(cfg)
 
-    since = _parse_since(args.since)
+    # Candidate window: always look back at least window_days (accumulate
+    # across runs). An explicit --since only WIDENS the window — a narrow
+    # value (e.g. a nightly caller's "24h") auto-widens to window_days, so
+    # the fix needs no change to the caller (model-gate dream-now).
+    from datetime import timedelta as _timedelta
+
+    now = datetime.now(tz=timezone.utc)
+    window_since = now - _timedelta(days=dream_cfg.window_days)
+    if args.since:
+        since = min(_parse_since(args.since), window_since)
+    else:
+        since = window_since
 
     db_path = _expand_path(
         args.db_path
@@ -1082,21 +1547,44 @@ def main(argv: list[str] | None = None) -> int:
     model = args.model or cfg.get("llm_model") or DEFAULT_LLM_MODEL
 
     log.info(
-        "Reflecting since %s | db=%s base_dir=%s llm_url=%s model=%s",
+        "Reflecting since %s (window_days=%d) | db=%s base_dir=%s llm_url=%s model=%s",
         since.isoformat(),
+        dream_cfg.window_days,
         db_path,
         base_dir,
         llm_url,
         model,
     )
 
-    memories = fetch_recent_raw_memories(db_path, since)
-    log.info("Loaded %d raw memories", len(memories))
+    all_memories = fetch_recent_raw_memories(db_path, since)
+    # Idempotency: exclude raws already consumed by some reflection's
+    # source_ids (the authoritative ledger; survives DB rebuilds).
+    reflected = already_reflected_ids(base_dir)
+    memories = [m for m in all_memories if m.id not in reflected]
+    log.info(
+        "Loaded %d raw memories in window; %d already reflected; %d unreflected candidates",
+        len(all_memories),
+        len(all_memories) - len(memories),
+        len(memories),
+    )
     if not memories:
         print("No raw memories in window; nothing to reflect.")
         return 0
 
-    clusters = cluster_memories(memories)
+    # Accumulation trigger gate (Phase 1). Enforced only on real runs;
+    # --dry-run always previews the clustering so operators can inspect what
+    # is accumulating below the threshold.
+    fire, gate_reason = should_reflect(memories, dream_cfg)
+    log.info("Trigger gate: %s", gate_reason)
+    if not args.dry_run and not fire:
+        print(f"Deferring reflection ({len(memories)} unreflected): {gate_reason}")
+        return 0
+
+    if args.dry_run:
+        # Preview via the algorithmic clusterer (no LLM, no gate).
+        clusters = cluster_memories(memories, dream_cfg)
+    else:
+        clusters = dispatch_clusters(memories, dream_cfg, llm_url, model)
     print(f"Found {len(clusters)} clusters (noise discarded).")
     for i, cluster in enumerate(clusters, start=1):
         ids_preview = ", ".join(m.id for m in cluster[:3])

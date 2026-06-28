@@ -769,3 +769,65 @@ class TestRunReindexStderrCapture:
 
         rc = ingest._run_reindex("fake-reindex")
         assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# GH-1510 Phase 2: SHA-256 content-hash dedup at ingest
+# ---------------------------------------------------------------------------
+
+
+class TestContentDedup:
+    def test_content_sha256_stable_and_distinct(self) -> None:
+        a = ingest.content_sha256("hello world")
+        assert a == ingest.content_sha256("hello world")
+        assert a != ingest.content_sha256("different")
+
+    def test_dedup_keeps_first_occurrence(self) -> None:
+        m1 = ingest.RawMemory("git-commit", "sha1", "2026-06-01T00:00:00+00:00", "identical body")
+        m2 = ingest.RawMemory("git-commit", "sha2", "2026-06-01T00:00:00+00:00", "identical body")
+        m3 = ingest.RawMemory("llm-cli", "3", "2026-06-01T00:00:00+00:00", "different body")
+        out = ingest.dedup_memories([m1, m2, m3])
+        # sha2 dropped (same content as sha1); first occurrence kept.
+        assert [m.source_id for m in out] == ["sha1", "3"]
+
+    def test_dedup_preserves_distinct(self) -> None:
+        mems = [
+            ingest.RawMemory("git-commit", f"s{i}", "2026-06-01T00:00:00+00:00", f"body {i}")
+            for i in range(3)
+        ]
+        assert len(ingest.dedup_memories(mems)) == 3
+
+    def test_main_dedupes_identical_content(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import yaml
+
+        cfg_path = tmp_path / "config.yaml"
+        cfg_path.write_text(
+            yaml.safe_dump(
+                {
+                    "base_dir": str(tmp_path / "dream"),
+                    # Non-None so the (monkeypatched) gemma ingester is invoked.
+                    "gemma_lab_sessions": str(tmp_path / "sessions"),
+                    "git_repos": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        dupes = [
+            ingest.RawMemory("git-commit", "sha-a", "2026-04-19T10:00:00+00:00", "DUP BODY"),
+            ingest.RawMemory("git-commit", "sha-b", "2026-04-19T10:00:00+00:00", "DUP BODY"),
+        ]
+        monkeypatch.setattr(ingest, "ingest_gemma_lab_sessions", lambda *a, **k: dupes)
+        monkeypatch.setattr(ingest, "ingest_git_commits", lambda *a, **k: [])
+        monkeypatch.setattr(ingest, "ingest_llm_cli_logs", lambda *a, **k: [])
+        monkeypatch.setattr(ingest, "ingest_claude_code_sessions", lambda *a, **k: [])
+
+        rc = ingest.main(
+            ["--config", str(cfg_path), "--since", "2026-04-18", "--no-reindex"]
+        )
+        assert rc == 0
+        out_dir = tmp_path / "dream" / "2026" / "04" / "19"
+        files = list(out_dir.glob("*.md"))
+        # Two identical-content memories collapse to a single file.
+        assert len(files) == 1

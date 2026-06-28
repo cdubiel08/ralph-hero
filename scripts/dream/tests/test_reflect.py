@@ -167,6 +167,16 @@ def patch_vec_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(reflect, "_load_sqlite_vec", lambda conn: None)
 
 
+def _force_gate_fire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lower the GH-1510 accumulation-trigger thresholds so a small fixture
+    batch clears the gate, and force the algorithmic clustering path so no
+    LLM call is attempted. Tests that pre-date the gate (reindex/exit-code
+    contracts) use this to exercise the post-gate path deterministically."""
+    monkeypatch.setenv("RALPH_DREAM_MIN_UNREFLECTED", "2")
+    monkeypatch.setenv("RALPH_DREAM_COUNT_TRIGGER", "2")
+    monkeypatch.setenv("RALPH_DREAM_ALGO_MIN", "2")
+
+
 # ---------------------------------------------------------------------------
 # fetch_recent_raw_memories
 # ---------------------------------------------------------------------------
@@ -257,12 +267,16 @@ class TestFetchRecentRawMemories:
 
 
 class TestClusterMemories:
-    def test_small_input_short_circuits(
+    def test_zero_vectors_do_not_crash(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
+        """GH-1510: the old ``< 6`` short-circuit is gone. Zero-vector
+        embeddings (a corrupted/missing embedding decodes to zeros) must not
+        crash agglomerative cosine — we fall back to a safe metric and still
+        produce >=1 group rather than returning ``[]``."""
         import numpy as np
 
-        caplog.set_level("INFO", logger="ralph.dream.reflect")
+        caplog.set_level("WARNING", logger="ralph.dream.reflect")
         memories = [
             reflect.RawMemoryRow(
                 id=f"id-{i}",
@@ -274,10 +288,9 @@ class TestClusterMemories:
             for i in range(3)
         ]
         clusters = reflect.cluster_memories(memories)
-        assert clusters == []
-        assert any(
-            "below min_cluster_size" in rec.message for rec in caplog.records
-        )
+        # No longer short-circuits to [] — a non-empty batch yields >=1 group.
+        assert len(clusters) >= 1
+        assert sum(len(c) for c in clusters) == 3
 
     def test_two_clusters_from_orthogonal_fixture(self) -> None:
         import numpy as np
@@ -762,6 +775,7 @@ class TestMainExitCode:
         """When clusters are formed but every LLM call fails to parse,
         main() must exit non-zero so dream-now sees the failure
         (mirrors the silent-failure anti-pattern called out in GH-908)."""
+        _force_gate_fire(monkeypatch)
         db = tmp_path / "knowledge.db"
         _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
 
@@ -864,6 +878,7 @@ class TestPostReflectReindex:
         patch_vec_loader: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _force_gate_fire(monkeypatch)
         db = tmp_path / "knowledge.db"
         _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
         cfg_path = self._cfg(tmp_path, db, reindex_cmd="echo reindexing")
@@ -884,6 +899,7 @@ class TestPostReflectReindex:
         patch_vec_loader: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _force_gate_fire(monkeypatch)
         db = tmp_path / "knowledge.db"
         _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
         cfg_path = self._cfg(tmp_path, db, reindex_cmd="echo reindexing")
@@ -906,6 +922,7 @@ class TestPostReflectReindex:
         patch_vec_loader: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _force_gate_fire(monkeypatch)
         db = tmp_path / "knowledge.db"
         _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
         cfg_path = self._cfg(tmp_path, db, reindex_cmd=None)
@@ -926,6 +943,7 @@ class TestPostReflectReindex:
         patch_vec_loader: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _force_gate_fire(monkeypatch)
         db = tmp_path / "knowledge.db"
         _seed_db(db, _orthogonal_cluster_fixture(n_per_cluster=8))
         cfg_path = self._cfg(tmp_path, db, reindex_cmd="false")
@@ -1223,8 +1241,11 @@ class TestMainClassifierIntegration:
             for i in range(8)
         ]
         # Stub fetch so main() doesn't short-circuit on empty DB
+        _force_gate_fire(monkeypatch)
         monkeypatch.setattr(reflect, "fetch_recent_raw_memories", lambda _db, _s: heavy)
-        monkeypatch.setattr(reflect, "cluster_memories", lambda _m: [heavy])
+        monkeypatch.setattr(
+            reflect, "dispatch_clusters", lambda _m, _cfg, *a, **k: [heavy]
+        )
         monkeypatch.setattr(reflect, "emit_process_improvement_issue", fake_emit)
         monkeypatch.setattr(reflect, "_iter_reflections", fake_iter)
         monkeypatch.setattr(reflect, "write_reflection", lambda r, base_dir, **kw: tmp_path / "fake.md")
@@ -1279,7 +1300,7 @@ class TestMainClassifierIntegration:
             for i in range(8)
         ]
         monkeypatch.setattr(reflect, "fetch_recent_raw_memories", lambda _db, _s: heavy)
-        monkeypatch.setattr(reflect, "cluster_memories", lambda _m: [heavy])
+        monkeypatch.setattr(reflect, "cluster_memories", lambda _m, _cfg=None: [heavy])
         monkeypatch.setattr(reflect.subprocess, "run", fail_if_called)
 
         rc = reflect.main(
