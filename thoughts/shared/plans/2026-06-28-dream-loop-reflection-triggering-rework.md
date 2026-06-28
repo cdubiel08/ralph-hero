@@ -275,3 +275,25 @@ are deliberate and noted with rationale.
 7. **Degenerate fallback shipped (principle 7); explicit expire/down-weight marker for
    the misc/assorted tier deferred** (OQ#4 — still a tuning follow-up).
 8. **`scikit-learn` added as a direct dependency** (was transitive via umap-learn).
+
+## Hardened after independent review (post-merge audit of GH-1509)
+
+An independent multi-agent audit (5 reviewers, one per PR + an epic-coherence
+pass) graded the shipped code against this plan. Verdict: epic COHERENT, all 3
+fatal mechanics removed, all 8 principles addressed, no GBrain pivot. It found
+two completeness gaps in the load-bearing `source_ids` idempotency ledger
+(principle 6) that could break the "re-run produces no new reflections" verify
+criterion; both fixed under GH-1510:
+
+9. **`source_ids` ledger is now authoritative = cluster membership** (was: the
+   LLM's echoed list, with a fallback only when that list was *entirely*
+   empty). A subset echo leaked the dropped raws back into the next run
+   (duplicate reflections); a hallucinated id would mark an unrelated raw as
+   reflected (silent loss). `synthesize_reflection` now records
+   `[m.id for m in cluster]` and logs any LLM/cluster mismatch.
+10. **HDBSCAN noise points are captured, not dropped** (the N≥`hdbscan_min`
+    path). `_group_labels_with_noise()` emits each `-1` point as a singleton so
+    `_coalesce_singletons` folds them in and every id is marked — without this
+    the Phase 3 backfill of the ~900-doc backlog (which hits the ≥200 buckets)
+    was not single-run idempotent. The `think()` MCP tool (Phase 4) was also
+    made self-contained fail-open against a *throwing* completion fn.
