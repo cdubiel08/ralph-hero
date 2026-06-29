@@ -56,6 +56,8 @@ Scope matters: searching unscoped over a 3000+ document corpus dilutes the signa
 
 Use `knowledge_search` (semantic) plus `knowledge_central` (find central documents in communities) to surface 5–10 candidate atomic axioms within the chosen domain.
 
+**Also read the meta-reflection staging file** `~/projects/thoughts/wiki/_candidates.jsonl` (one JSON object per line: `axiom`, `rationale`, `source_reflection_ids`, `hash`). The weekly `meta_reflect.py` pass (GH-1513) stages pre-distilled wiki candidates here from the reflection tier — treat each as a strong, already-corroborated candidate, but still run it through the full distillation + gates below (staging is a suggestion, never a promotion). Skip any whose `hash` axiom is already an existing wiki entry or already in `_rejected.jsonl`.
+
 A candidate is high-signal if it:
 - States a principle in declarative form ("X must Y", "always X", "never X", "the rule is")
 - Recurs across 3+ documents (corroboration is the strongest durability signal)
