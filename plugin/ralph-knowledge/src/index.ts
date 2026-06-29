@@ -16,6 +16,8 @@ import { Reranker } from "./reranker.js";
 import { formatSearchResults, formatTraverseResults } from "./format.js";
 import { registerGraphTools } from "./graph-tools.js";
 import { reindexPath } from "./reindex.js";
+import { createLlmClient } from "./llm-client.js";
+import { think, type ThinkSource } from "./think.js";
 
 const DEFAULT_DB_PATH = join(homedir(), ".ralph-hero", "knowledge.db");
 
@@ -155,6 +157,11 @@ export interface CreateServerOptions {
   rememberReindex?: (path: string, dbPath: string) => Promise<{ indexed: boolean }>;
   rememberNow?: () => Date;
   rememberBaseDir?: string;
+  /**
+   * Test-only seam for `knowledge_think`: the single-prompt LLM completion.
+   * Production binds this to a fail-open `createLlmClient().complete()`.
+   */
+  thinkComplete?: (prompt: string) => Promise<string>;
 }
 
 export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
@@ -184,6 +191,12 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
   const rememberBaseDir = opts.rememberBaseDir
     ?? resolveEnv("RALPH_DREAM_MEMORIES_DIR")
     ?? join(homedir(), "projects", "thoughts", "dream-memories");
+
+  // GH-1512: query-time synthesis ("knowledge_think"). Production binds the
+  // fail-open local LLM completion; tests inject a stub via `thinkComplete`.
+  const thinkComplete =
+    opts.thinkComplete ??
+    ((prompt: string) => createLlmClient().complete(prompt, { maxTokens: 1024 }));
 
   server.tool(
     "knowledge_search",
@@ -426,6 +439,80 @@ export function createServer(dbPath: string, opts: CreateServerOptions = {}) {
           args.brief ?? false,
         );
         return { content: [{ type: "text" as const, text: JSON.stringify(formatted, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
+      }
+    },
+  );
+
+  // ---------------------------------------------------------------------
+  // knowledge_think — Phase 4 (GH-1512) query-time synthesis.
+  //
+  // Retrieve the top-K grounding excerpts for a question, then ask the local
+  // model to synthesize a CITED answer + an explicit "gaps" report (what the
+  // bank does NOT know). Fail-open: returns the retrieved sources even when
+  // the local model is offline. Optional `role` biases the tier mix using the
+  // same policy as knowledge_recall.
+  // ---------------------------------------------------------------------
+  server.tool(
+    "knowledge_think",
+    "Query-time synthesis over the knowledge base. Retrieves the top-K grounding excerpts for a question, then asks the local model to synthesize a CITED answer grounded only in them, plus an explicit report of what the knowledge base does NOT contain (gaps). Use when you want a synthesized, sourced answer instead of a raw result list. Fail-open: returns retrieved sources even when the local model is offline.",
+    {
+      query: z.string().describe("The question to answer from the knowledge base"),
+      role: z
+        .enum(["researcher", "planner", "implementer", "reviewer", "triager"])
+        .optional()
+        .describe(
+          "Optional role to bias the tier mix (same policy as knowledge_recall). When omitted, searches all tiers.",
+        ),
+      limit: z.number().optional().describe("Max excerpts to ground the answer on (default: 8)"),
+    },
+    async (args) => {
+      try {
+        const limit = args.limit ?? 8;
+        type Hit = Awaited<ReturnType<typeof hybrid.search>>[number];
+        let hits: Hit[];
+        if (args.role) {
+          const tiers = ROLE_TIER_POLICY[args.role];
+          const byId = new Map<string, Hit>();
+          for (const tier of tiers) {
+            try {
+              const res = await hybrid.search(args.query, {
+                limit,
+                memoryTier: tier,
+                rerank: true,
+              });
+              for (const r of res) {
+                const existing = byId.get(r.id);
+                const candScore = r.rerankScore ?? r.score;
+                if (!existing || candScore > (existing.rerankScore ?? existing.score)) {
+                  byId.set(r.id, r);
+                }
+              }
+            } catch (e) {
+              console.error(
+                `knowledge_think: tier=${tier} sub-query failed: ${(e as Error).message}`,
+              );
+            }
+          }
+          hits = Array.from(byId.values())
+            .sort((a, b) => (b.rerankScore ?? b.score) - (a.rerankScore ?? a.score))
+            .slice(0, limit);
+        } else {
+          hits = await hybrid.search(args.query, { limit, rerank: true });
+        }
+
+        const sources: ThinkSource[] = hits.map((h) => ({
+          id: h.id,
+          title: h.title,
+          path: h.path,
+          tier: db.getMemoryTier(h.id),
+          snippet: h.snippet ?? "",
+          score: h.rerankScore ?? h.score,
+        }));
+
+        const result = await think(args.query, sources, thinkComplete);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       } catch (e) {
         return { content: [{ type: "text" as const, text: `Error: ${(e as Error).message}` }], isError: true };
       }

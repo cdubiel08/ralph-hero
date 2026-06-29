@@ -40,6 +40,15 @@ export interface LlmClient {
    * (network failure, timeout, non-2xx response, missing choices, malformed JSON).
    */
   contextualize(fullDocument: string, chunkContent: string): Promise<string>;
+
+  /**
+   * General single-prompt chat completion (used by `knowledge_think`).
+   *
+   * Returns the trimmed assistant content on success, or `""` on any error
+   * (network failure, timeout, non-2xx, missing choices, malformed JSON) so
+   * callers can fail open. `maxTokens` defaults to 1024.
+   */
+  complete(prompt: string, opts?: { maxTokens?: number }): Promise<string>;
 }
 
 const DEFAULT_BASE_URL = "http://localhost:8000";
@@ -132,5 +141,34 @@ export function createLlmClient(opts: LlmClientOptions = {}): LlmClient {
     }
   }
 
-  return { available, contextualize };
+  async function complete(
+    prompt: string,
+    completeOpts: { maxTokens?: number } = {},
+  ): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: completeOpts.maxTokens ?? 1024,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) return "";
+      const data = (await response.json()) as ChatCompletionResponse;
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content !== "string") return "";
+      return content.trim();
+    } catch {
+      return "";
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { available, contextualize, complete };
 }
