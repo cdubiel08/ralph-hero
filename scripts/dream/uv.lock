@@ -382,6 +382,7 @@ dependencies = [
     { name = "httpx" },
     { name = "numpy" },
     { name = "pyyaml" },
+    { name = "scikit-learn" },
     { name = "sqlite-vec" },
     { name = "umap-learn" },
 ]
@@ -398,6 +399,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "scikit-learn", specifier = ">=1.4" },
     { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "umap-learn", specifier = ">=0.5.6" },
 ]

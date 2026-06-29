@@ -176,6 +176,34 @@ def _memory_hash(source: str, source_id: str) -> str:
     return hashlib.sha1(f"{source}:{source_id}".encode("utf-8")).hexdigest()[:12]
 
 
+def content_sha256(content: str) -> str:
+    """SHA-256 of a memory body (GH-1510 Phase 2 content-hash dedup)."""
+    return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+
+
+def dedup_memories(memories: list[RawMemory]) -> list[RawMemory]:
+    """Drop memories whose content is byte-identical to an earlier one.
+
+    Complements the ``(source, source_id)`` filename idempotency: that
+    dedupes re-emits of the SAME memory across runs; this dedupes DISTINCT
+    source ids that happen to carry identical content (the GBrain/Cognee
+    content-hash idiom), so a wide/overlapping ingest window can't explode
+    into duplicate raws. First occurrence wins; order is preserved.
+    """
+    seen: set[str] = set()
+    out: list[RawMemory] = []
+    for m in memories:
+        h = content_sha256(m.content)
+        if h in seen:
+            log.info(
+                "Skipping duplicate-content memory %s:%s", m.source, m.source_id
+            )
+            continue
+        seen.add(h)
+        out.append(m)
+    return out
+
+
 def _memory_path(m: RawMemory, base_dir: Path) -> Path:
     """Compute the on-disk path for a memory without any side effects."""
     dt = _parse_ts(m.timestamp) or datetime.now(tz=timezone.utc)
@@ -881,12 +909,21 @@ def main(argv: list[str] | None = None) -> int:
         print(_summarize(memories_by_source) + " (dry-run, nothing written)")
         return 0
 
+    collected = dedup_memories(list(_iter_collected(memories_by_source)))
+    total_collected = sum(len(mems) for mems in memories_by_source.values())
     written = 0
-    for m in _iter_collected(memories_by_source):
+    for m in collected:
         write_memory(m, base_dir)
         written += 1
 
     print(_summarize(memories_by_source))
+    if written != total_collected:
+        log.info(
+            "Content-hash dedup: wrote %d of %d collected memories (%d duplicate(s) skipped)",
+            written,
+            total_collected,
+            total_collected - written,
+        )
 
     if args.no_reindex:
         log.info("Skipping reindex (--no-reindex)")

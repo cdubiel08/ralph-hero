@@ -19,3 +19,28 @@ git_repos:
 # Override this (or pass --no-reindex) if you want to run ingest without
 # rebuilding the knowledge index.
 reindex_cmd: npm --prefix /Users/dubiel/projects/ralph-hero/plugin/ralph-knowledge run reindex
+
+# Reflection-stage tuning (GH-1510). These are the durable defaults; each is
+# overridable per-run by the matching RALPH_DREAM_* env var (env > config >
+# built-in default). Values shown are the built-in defaults — uncomment to
+# change. See scripts/dream/README.md for the rationale behind each.
+reflection:
+  # Candidate window (days). The effective window is ALWAYS at least this
+  # wide, so a narrow --since from a nightly caller auto-widens to here.
+  window_days: 30
+  # Below this many unreflected candidates we defer (exit clean), never skip.
+  min_unreflected: 15
+  # Trigger gate: fire when count >= count_trigger OR cumulative importance
+  # >= importance_trigger (provided count >= min_unreflected).
+  count_trigger: 20
+  importance_trigger: 40
+  # Cosine *distance* threshold for agglomerative clustering (0.35-0.45 suits
+  # a topically-diverse all-MiniLM stream).
+  cluster_threshold: 0.40
+  # N < algo_min uses the LLM-as-clusterer; N >= algo_min uses algorithmic
+  # clustering; N >= hdbscan_min switches to the HDBSCAN density path.
+  algo_min: 30
+  hdbscan_min: 200
+  # HDBSCAN params (only used on the large-N density path).
+  min_cluster_size: 2
+  min_samples: 1
