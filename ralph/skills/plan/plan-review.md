@@ -88,17 +88,35 @@ The `doc-structure-validator.sh` review-branch checks for `APPROVED|NEEDS_ITERAT
 
 ## Interactive vs auto
 
-**Interactive** (default): `AskUserQuestion` after Step 3 rubric scoring:
+**Interactive** (default): after Step 3 rubric scoring, present a 4-option `AskUserQuestion` primary picker. "Open in editor" loops (it never produces a verdict); the two change-requesting branches open a follow-up multi-select to capture structured feedback before the verdict is written.
 
 ```
-question: "Plan review verdict?"
+question: "Plan review verdict for #NNN?"
 header: "Plan Review"
 options:
-  - "Approve"             → write APPROVED critique, advance to "In Progress"
-  - "Approve with edits"  → write APPROVED critique, post specific edits as a comment, advance
-  - "Reject"              → write NEEDS_ITERATION critique, return to "Plan in Progress"
-  - "Need more info"      → STOP without writing; post a question comment
+  - "Approve"            → write APPROVED critique → advance to "In Progress"
+  - "Approve with edits" → open the Adjustments sub-picker (below) → write APPROVED
+                           critique, fold the picked categories into ## Recommended
+                           Changes, post a ## Recommended Edits comment → advance to
+                           "In Progress"
+  - "Request changes"    → open the Issues sub-picker + free-text (below) → write
+                           NEEDS_ITERATION critique (free-text = primary feedback,
+                           categories = secondary tags), post it as a comment with the
+                           gap callouts → return to "Plan in Progress"
+  - "Open in editor"     → open the plan file, then re-present this picker (loop)
 ```
+
+**Open in editor** — open the plan's local path and re-present the primary picker; this branch is never a terminal verdict:
+
+```bash
+if [[ "$(uname -s)" == "Darwin" ]]; then open "<plan-local-path>"; else xdg-open "<plan-local-path>"; fi
+```
+
+**Adjustments sub-picker** (`Approve with edits`) — `multiSelect: true` over *Clarify success criteria / Add missing details / Fix technical approach / Update scope boundaries*. The picked categories become the body of the `## Recommended Edits` comment and `## Recommended Changes` in the critique.
+
+**Issues sub-picker** (`Request changes`) — `multiSelect: true` over *Insufficient research / Wrong approach / Missing requirements / Scope issues*, then a free-text prompt ("provide specifics the planner must act on; skip to use categories only"). The free-text is the primary feedback in the NEEDS_ITERATION critique + GitHub comment; the categories are a secondary tag list.
+
+> The old 5-label picker (Approve / Minor Changes / Major Changes / Reject / Open in editor) collapses to these 4 outcomes: "Major Changes" and "Reject" routed to the identical Issues sub-flow, so "Request changes" carries both. If the literal 5 labels are ever needed, split into a verdict-tier picker followed by a Minor/Major severity picker (each ≤4 options).
 
 **Auto** (`--review-plan auto` or env `RALPH_REVIEW_PLAN=auto`): dispatch a sub-agent for delegated critique:
 
@@ -118,7 +136,7 @@ The sub-agent's output IS the critique doc (with the workflow body fixing the fr
 | APPROVED | `save_issue(workflowState: "In Progress", command: "review")` | Impl can pick it up |
 | APPROVED with edits | Same as APPROVED, plus post `## Recommended Edits` comment | Impl agent should address before merge |
 | NEEDS_ITERATION | `save_issue(workflowState: "Plan in Progress", command: "review")` | Planner re-engages via `--mode iterate` |
-| Need more info | No transition; post `## Review Question` comment | Caller picks up the question |
+| Open in editor | No transition; re-loops the picker | Lets the reviewer read the full plan before deciding |
 
 The `review-state-gate.sh` hook validates that the transition matches the verdict.
 
@@ -128,4 +146,4 @@ The `review-state-gate.sh` hook validates that the transition matches the verdic
 2. **Rejecting without recommended changes** — a NEEDS_ITERATION verdict without specific edits is unactionable. Always list concrete fixes.
 3. **Reviewing without reading the plan FULLY** — common when the plan is long. Read it entirely; do not skim.
 4. **Auto-mode rubber-stamping** — the sub-agent prompt MUST emphasize the rubric. Loose prompts produce "looks good" reviews.
-5. **Letting "Need more info" loop indefinitely** — if asked twice and not resolved, escalate to "Human Needed".
+5. **Looping on "Open in editor" without ever selecting a verdict** — read the plan, then pick a real outcome. The picker exists to produce APPROVED / NEEDS_ITERATION, not to browse.
