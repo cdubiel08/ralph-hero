@@ -192,7 +192,7 @@ Mode discrimination is path-based: the Stop chain's `plan-postcondition.sh` no-o
 1. **Resolve plan + issue** — `ARG=#NNN` → `get_issue`; locate the `## Implementation Plan` artifact. `--plan-doc <path>` accepted as override.
 2. **Validate plan exists** — if absent, escalate the issue to "Human Needed". STOP.
 3. **Execute rubric** — read plan FULLY. Score against `plan-review.md` § Review rubric.
-4. **Pick mode (interactive vs auto)** — if `RALPH_REVIEW_PLAN=auto`, dispatch a sub-agent for delegated critique. Else `AskUserQuestion`: *Approve* / *Approve with edits* / *Reject* / *Need more info*.
+4. **Pick mode (interactive vs auto)** — if `RALPH_REVIEW_PLAN=auto`, dispatch a sub-agent for delegated critique. Else `AskUserQuestion`: *Approve* / *Approve with edits* / *Request changes* / *Open in editor* (the two change paths open a multi-select category sub-picker + free-text; see `plan-review.md` § Interactive vs auto).
 5. **Write critique doc** — `thoughts/shared/reviews/YYYY-MM-DD-GH-NNNN-critique.md` per `plan-review.md` § Critique-doc structure. `review-no-dup.sh` blocks if a critique already exists.
 6. **Verdict + transition** — APPROVED → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts. `plan-state-gate.sh` is broad enough to accept both (see hook script header for the union-of-modes valid set).
 7. **Report** — *Plan reviewed for #NNN: [Title] / Verdict: APPROVED|NEEDS_ITERATION / Critique: [path]*.
