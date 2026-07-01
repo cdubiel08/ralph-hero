@@ -288,7 +288,7 @@ RETRO SKIPPED <reason>
 - **Inline context is non-negotiable** — retro MUST run inline (no `context: fork`). A forked retro has no conversation to analyze.
 - **Conditional sub-agent dispatch.** Only anchored pain points dispatch `codebase-locator` / `codebase-analyzer`. Tooling/UX/conceptual friction skips sub-agents and uses `None` entries.
 - **No `team_name`** on `Agent()` calls.
-- **Opus model for extraction quality** — declared at the SKILL.md frontmatter level.
+- **Sonnet model for extraction quality** — declared at the caretake top-level `model: sonnet` in SKILL.md frontmatter (retro has no per-mode override).
 - **`## Files Affected` always present** even when no code is implicated.
 - **Long conversations are narrowed, not skipped.** Ask the user to scope or constrain.
 - **Research doc, not idea doc.** Output is `type: research` (not `idea`) so it flows through `/form`'s research-doc intake path.

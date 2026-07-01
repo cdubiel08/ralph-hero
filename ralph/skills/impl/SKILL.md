@@ -11,7 +11,7 @@ description: Implement an approved plan, address PR review feedback, or create a
   completed implementation.
 argument-hint: "[--mode auto|address|pr] [<issue-number|plan-path>] [--plan-doc <path>] [--loop [duration]] [--auto]"
 context: inline
-model: opus
+model: sonnet
 hooks:
   SessionStart:
     - hooks:
