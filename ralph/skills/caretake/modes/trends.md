@@ -45,5 +45,5 @@ The markdown report IS the terminal output. No `result:` line, no terminal token
 
 - **Read-only.** Trends never mutates GitHub state or any file outside `~/.ralph-hero/snapshots/`.
 - **No terminal token.** Postcondition hooks ignore this mode.
-- **Haiku-class workload.** The source skill declares `model: haiku` because the work is two MCP calls + a stdout print. The caretake top-level `model: opus` covers all modes; haiku would be cheaper but the slim plugin runs all modes under the same model for arg-routing simplicity.
+- **Haiku-class workload.** The source skill declares `model: haiku` because the work is two MCP calls + a stdout print. The caretake top-level `model: sonnet` covers all modes; haiku would be cheaper but the slim plugin runs all modes under the same model for arg-routing simplicity.
 - **Snapshot append is non-fatal.** If the snapshot file is missing or unreadable, `capture_snapshot` creates it; `metrics_trends` degrades to an "insufficient history" report.

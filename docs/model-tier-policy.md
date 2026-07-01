@@ -7,6 +7,22 @@ lacks Fable entitlement. Fable is now opt-in only (see "Fable 5 opt-in
 surfaces" below). Original re-tiering research:
 thoughts/shared/research/2026-06-09-GH-1487-hero-model-pinning-per-phase.md.
 
+Updated 2026-06-30: on Claude Sonnet 5's launch (which substantially narrows
+the capability gap to Opus 4.8, including matching it on some agentic tasks
+at higher effort), the `hero`, `research`, `impl`, and `caretake` skill
+sessions were re-tiered from opus to sonnet. `plan`/`plan-agent` and
+`review`/`review-agent` stay opus — they are the two surfaces where the
+tier's own output IS the artifact under judgment (a plan or a review
+verdict), with no independent mechanism to detect a bad one. `impl` already
+carried an explicit BLOCKED→opus escalation contract that made its
+sonnet-default safe (see "Escalation contract" below); `hero`, `research`,
+and `caretake` do NOT have an equivalent auto-detection mechanism today —
+this re-tier accepts that risk on the bet that Sonnet 5 needs it less often,
+rather than building the contract first. If quality regressions surface on
+these three surfaces, extending the BLOCKED-style contract to them (or
+reverting the affected surface to opus) is the fix, not silently
+compensating elsewhere.
+
 ## The rule
 
 Complexity drives tier, not role. The highest tier the plugin pins by default
@@ -25,14 +41,16 @@ Escalate on BLOCKED, never preemptively.
 
 | Surface | Model | Pin location |
 |---|---|---|
-| hero parent session (all modes) | opus | `ralph/skills/hero/SKILL.md` |
+| hero parent session (all modes) | sonnet | `ralph/skills/hero/SKILL.md` |
 | hero-fable session (experimental rail-free surface, opt-in; requires Fable access) | fable | `ralph/skills/hero-fable/SKILL.md` |
-| research skill session | opus | `ralph/skills/research/SKILL.md` |
+| research skill session | sonnet | `ralph/skills/research/SKILL.md` |
 | plan skill session (incl. `--mode review`) | opus | `ralph/skills/plan/SKILL.md` |
+| review skill session | opus | `ralph/skills/review/SKILL.md` |
 | plan-agent / review-agent (`Agent()`-forked) | opus | `ralph/agents/{plan,review}-agent.md` |
-| impl / review / caretake skill sessions | opus | respective `SKILL.md` |
+| impl / caretake skill sessions | sonnet | respective `SKILL.md` |
 | research / impl / val / triage agents, sre-fixit, analyzers | sonnet | `ralph/agents/*.md` |
 | merge / catch-up agents, locators, log-reader | haiku | `ralph/agents/*.md` |
+| impl per-phase quality reviewer (`Agent()`-dispatched inline, not a named agent file) | opus | `ralph/skills/impl/phase-execution.md` — kept opus as a review-function surface; not touched by this re-tier |
 | impl per-task sub-agents | haiku/sonnet/opus by `complexity:` | `ralph/skills/impl/phase-execution.md` |
 
 ## Per-session overrides

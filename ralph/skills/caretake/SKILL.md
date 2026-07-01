@@ -2,7 +2,7 @@
 description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "collate debug errors", "filer Langfuse errors", "split this issue", "decompose ticket". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/debug/split/watch-pr/watch-upstream/watch-blockers) each route to a dedicated mode body under `modes/`.
 argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|watch-pr|watch-upstream|watch-blockers|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
 context: inline
-model: opus
+model: sonnet
 hooks:
   SessionStart:
     - hooks:

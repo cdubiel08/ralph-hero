@@ -63,12 +63,12 @@ plugin/
 |------|-----------|---------|
 | `/ralph:catch-up` | inherit (haiku narrative agent) | Orientation: narrative + picker or single-surface mode |
 | `/ralph:form` | inherit | Issue intake: dedup, draft, tree |
-| `/ralph:research` | opus | Research: interactive or autonomous queue-drain |
+| `/ralph:research` | sonnet | Research: interactive or autonomous queue-drain |
 | `/ralph:plan` | opus | Planning: interactive, auto, epic, iterate, review |
-| `/ralph:impl` | opus session / sonnet ladder | Implementation: auto, pr, address |
+| `/ralph:impl` | sonnet session / complexity ladder (haiku-opus) | Implementation: auto, pr, address |
 | `/ralph:review` | opus | Review: val, code, merge |
-| `/ralph:caretake` | opus | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
-| `/ralph:hero` | opus | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
+| `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
+| `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
 | `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
 
 Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable; opt-in, requires Fable access — the only fable pin in the plugin) — isolated rail-free path (no prescribed phases, no gate hooks; artifact contract instead). `/ralph:hero --model fable` forwards to it. Design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`.
