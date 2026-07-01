@@ -31,8 +31,8 @@ is opus — every default pin must work for users without Fable access.
 | Signal                                                  | Tier      | Model  |
 | ------------------------------------------------------- | --------- | ------ |
 | 1-2 files, fully-specified spec, mechanical             | cheap     | haiku  |
-| Multi-file, integration, pattern matching, debugging    | standard  | sonnet |
-| Architecture, design judgment, orchestration, research synthesis, plan author/critique | capable | opus |
+| Multi-file, integration, pattern matching, debugging, orchestration, research synthesis (see 2026-06-30 update above) | standard | sonnet |
+| Architecture, design judgment, plan author/critique — no independent mechanism to detect a bad output | capable | opus |
 | Frontier (opt-in only — requires Fable entitlement)     | frontier  | fable  |
 
 Escalate on BLOCKED, never preemptively.
