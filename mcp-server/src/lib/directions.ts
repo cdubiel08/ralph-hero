@@ -32,6 +32,7 @@ import type { DashboardItem } from "./dashboard.js";
 import { LOCK_STATES, STATE_ORDER } from "./workflow-states.js";
 import {
   AGENT_BACKLOG_FALLBACK_PENALTY,
+  HUMAN_TRIAGE_DIRECTION_SCORE,
   LOCK_STALE_HOURS,
   PR_STALE_HOURS,
   RECENT_WINDOW_DAYS,
@@ -1028,18 +1029,21 @@ export function rankDirections(
     directions[0].recommended = true;
   }
 
-  // 7. Human-audience aggregate triage fallback: when the human scan yields
-  //    zero directions (nothing actionable, no PRs, no lock-stale, no
-  //    unblock signal) and at least one item on the board has a null
-  //    `workflowState`, surface a single aggregate direction pointing at
-  //    `/ralph:caretake --mode triage` instead of an empty list. This is
-  //    the human-audience counterpart to the agent-only Backlog/null-state
-  //    fallback above (step 1b) — it never fires when any real direction
-  //    exists, and it never includes Backlog items (Backlog is a
-  //    legitimate, dashboard-visible parking state).
-  if (config.audience === "human" && directions.length === 0) {
+  // 7. Human-audience aggregate triage fallback: when the human scan finds
+  //    nothing actionable (no scored issues, no PRs, no lock-stale, no
+  //    unblock signal — checked pre-slice via `merged` so a small `limit`
+  //    cannot masquerade as an empty board) and at least one OPEN item on
+  //    the board has a null `workflowState`, surface a single aggregate
+  //    direction pointing at `/ralph:caretake --mode triage` instead of an
+  //    empty list. This is the human-audience counterpart to the agent-only
+  //    Backlog/null-state fallback above (step 1b) — it never fires when
+  //    any real direction exists, never fires when the caller asked for
+  //    zero directions (`limit: 0`), skips already-closed stateless items,
+  //    and never includes Backlog items (Backlog is a legitimate,
+  //    dashboard-visible parking state).
+  if (config.audience === "human" && merged.length === 0 && config.limit > 0) {
     const statelessCount = items.filter(
-      (i) => i.workflowState === null,
+      (i) => i.workflowState === null && i.closedAt === null,
     ).length;
     if (statelessCount > 0) {
       directions.push({
@@ -1049,9 +1053,12 @@ export function rankDirections(
         issue: null,
         pr: null,
         signals: { tags: ["stateless-triage"], statelessCount },
-        reason: `${statelessCount} item(s) have no workflow state — run /ralph:caretake --mode triage`,
+        reason:
+          statelessCount === 1
+            ? "1 item has no workflow state — run /ralph:caretake --mode triage"
+            : `${statelessCount} items have no workflow state — run /ralph:caretake --mode triage`,
         tags: ["stateless-triage"],
-        score: AGENT_BACKLOG_FALLBACK_PENALTY,
+        score: HUMAN_TRIAGE_DIRECTION_SCORE,
       });
     }
   }

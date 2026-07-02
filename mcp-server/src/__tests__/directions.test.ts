@@ -214,11 +214,17 @@ describe("audience=agent Backlog fallback", () => {
 // ---------------------------------------------------------------------------
 
 describe("audience=human aggregate stateless-triage direction", () => {
-  it("Case A: null-state-only board returns exactly one triage direction", () => {
+  it("Case A: null-state-only board returns exactly one triage direction counting open items only", () => {
     const items = [
       makeItem({ number: 1, workflowState: null }),
       makeItem({ number: 2, workflowState: null }),
       makeItem({ number: 3, workflowState: null }),
+      // Closed-but-stateless item must NOT inflate the count.
+      makeItem({
+        number: 4,
+        workflowState: null,
+        closedAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      }),
     ];
     const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "human" }));
     expect(result).toHaveLength(1);
@@ -231,11 +237,24 @@ describe("audience=human aggregate stateless-triage direction", () => {
     expect(result[0].signals.tags).toContain("stateless-triage");
   });
 
-  it("Case B: Backlog-only board (no null-state items) returns no directions", () => {
+  it("Case B: board whose only stateless items are closed returns no directions", () => {
     const items = [
-      makeItem({ number: 1, workflowState: "Backlog", priority: "P0" }),
+      makeItem({
+        number: 1,
+        workflowState: null,
+        closedAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      }),
     ];
     const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "human" }));
+    expect(result).toEqual([]);
+  });
+
+  it("Case B2: limit 0 suppresses the aggregate even with open stateless items", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: null }),
+      makeItem({ number: 2, workflowState: "Research Needed", priority: "P2" }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 0, audience: "human" }));
     expect(result).toEqual([]);
   });
 

@@ -36,6 +36,7 @@ For each direction's description (used in the picker), and for the introductory 
 | `tree-continue` | `signals.parentChainNote`, `issue.title` | "sibling #809 closed 2 days ago — keep this one moving" |
 | `pr` | `pr.title`, `signals.prAgeDays`, `signals.linkedIssueNumber`, `signals.prReviewDecision` | "PR #999 (issue #42) — open 2 days awaiting review" |
 | `human-needed-unblock` | `signals.unblockRequestAgeDays`, `signals.questionCount`, `issue.title` | "issue #42 has 3 unblock questions waiting since 2 days ago" |
+| `triage` (aggregate; `issue` and `pr` both null — no title to draw on) | `signals.statelessCount` | "12 items are sitting on the board with no workflow state — a caretake triage sweep will classify them" |
 
 ## Synthesis edge cases
 

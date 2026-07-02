@@ -26,12 +26,13 @@ Triage must run from main to avoid accidental commits on feature branches.
 
 **If issue number provided as argument**: fetch the full issue details for that issue number.
 
-**If no issue number**: pick the oldest untriaged Backlog issue via two queries:
+**If no issue number**: stateless items take precedence, then the oldest untriaged Backlog issue:
 
+- **Query 0 (stateless)** — list OPEN items with no Workflow State at all (`no: ["workflowState"]`, `state: "OPEN"`, `orderBy: "CREATED_AT"`, `limit: 250`). Do NOT combine with `profile: "analyst-triage"` — its `workflowState: "Backlog"` filter contradicts the `no` filter and returns nothing. If any results, **select the oldest and skip Queries 1-2**. These are the items the picker's aggregate "N stateless items" direction (`kind: "triage"`) points at; they are in scope per §Step 4a's "Backlog (or null/unset workflow_state)" precondition, and every routing verdict assigns them a real state, so repeated invocations drain the stateless set.
 - **Query 1** — list Backlog issues that already carry the `ralph-triage` label (`profile: "analyst-triage"`, `label: "ralph-triage"`, `limit: 250`). Store the returned issue numbers as `triaged_numbers`.
 - **Query 2** — list all Backlog issues ordered by creation date ascending (`profile: "analyst-triage"`, `orderBy: "CREATED_AT"`, `limit: 250`). The ascending direction is required so the **first** result is the oldest.
 
-**Select** the first issue from Query 2 whose number is NOT in `triaged_numbers`. If no untriaged issue is found, emit:
+**Select** (when Query 0 was empty) the first issue from Query 2 whose number is NOT in `triaged_numbers`. If no untriaged issue is found, emit:
 
 ```
 Queue empty.
