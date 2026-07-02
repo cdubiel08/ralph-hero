@@ -7,17 +7,19 @@
  * defaults to `"Backlog"` (Step 5 write + Status sync both fire
  * unconditionally), and an explicit value still wins outright.
  *
- * Handler-extraction pattern from `cross-tool-consistency.test.ts:306-317`
+ * Handler-extraction pattern from `cross-tool-consistency.test.ts`
  * (`getTool` via `_registeredTools`, `parsePayload`). Mock-client pattern
- * from `auto-advance-parent.test.ts:81-139` (`FieldOptionCache.populate`).
+ * from `auto-advance-parent.test.ts` (`FieldOptionCache.populate`).
  *
  * Mock gotcha: `updateProjectItemField` (and therefore `syncStatusField`,
  * which calls it) issues its write via `client.projectMutate`, NOT
  * `client.mutate` — only `createIssue` uses `mutate`. Each client method
  * here gets its own independent response queue (rather than one shared
- * global-order queue) specifically so a future accidental method swap
- * (e.g. `updateProjectItemField` switched to `mutate`) fails loudly with
- * "no more mock responses" instead of silently reading the wrong entry.
+ * global-order queue) so a future accidental method swap (e.g.
+ * `updateProjectItemField` switched to `mutate`) is caught: the direct
+ * Workflow State write fails loudly with "no more mock responses", and the
+ * Status-sync path — whose errors `syncStatusField` swallows by design —
+ * is still caught by the `projectMutate` call-count assertions below.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -190,7 +192,11 @@ describe("create_issue Workflow State default (GH-1524)", () => {
     const payload = parsePayload(result);
 
     expect(result.isError).toBeFalsy();
-    expect(payload.fieldsSet).toMatchObject({ workflowState: "Backlog" });
+    expect(payload.fieldsSet).toEqual({
+      workflowState: "Backlog",
+      estimate: null,
+      priority: null,
+    });
 
     const projectMutateCalls = (client.projectMutate as unknown as { mock: { calls: unknown[][] } })
       .mock.calls;
@@ -236,7 +242,11 @@ describe("create_issue Workflow State default (GH-1524)", () => {
     const payload = parsePayload(result);
 
     expect(result.isError).toBeFalsy();
-    expect(payload.fieldsSet).toMatchObject({ workflowState: "In Progress" });
+    expect(payload.fieldsSet).toEqual({
+      workflowState: "In Progress",
+      estimate: null,
+      priority: null,
+    });
 
     const projectMutateCalls = (client.projectMutate as unknown as { mock: { calls: unknown[][] } })
       .mock.calls;
@@ -255,5 +265,34 @@ describe("create_issue Workflow State default (GH-1524)", () => {
     };
     expect(statusCallVars.fieldId).toBe("field-status-id");
     expect(statusCallVars.optionId).toBe("opt-status-in-progress");
+  });
+
+  it("rejects an explicit empty-string workflowState at the schema boundary", () => {
+    // "" is not nullish, so it would bypass the ?? default and reach the
+    // field write (throwing after the issue is already created). The zod
+    // .min(1) keeps that partial-failure path unreachable through the MCP
+    // boundary: empty string fails validation before any mutation runs,
+    // while omission still passes and gets the Backlog default.
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient({}, {});
+    const server = buildServer(client, fieldCache);
+
+    const inputSchema = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { inputSchema: { safeParse: (v: unknown) => { success: boolean } } }
+        >;
+      }
+    )._registeredTools["ralph_hero__create_issue"].inputSchema;
+
+    expect(
+      inputSchema.safeParse({ title: "Test issue", workflowState: "" }).success,
+    ).toBe(false);
+    expect(inputSchema.safeParse({ title: "Test issue" }).success).toBe(true);
+    expect(
+      inputSchema.safeParse({ title: "Test issue", workflowState: "Backlog" })
+        .success,
+    ).toBe(true);
   });
 });

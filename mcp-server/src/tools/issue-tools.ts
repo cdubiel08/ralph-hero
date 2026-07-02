@@ -951,6 +951,10 @@ export function registerIssueTools(
         .describe("GitHub usernames to assign"),
       workflowState: z
         .string()
+        .min(
+          1,
+          'workflowState must be a non-empty state name; omit it to default to "Backlog"',
+        )
         .optional()
         .describe('Initial Workflow State name (defaults to "Backlog")'),
       estimate: z.string().optional().describe("Estimate (XS, S, M, L, XL)"),
