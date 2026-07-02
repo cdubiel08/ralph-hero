@@ -233,6 +233,7 @@ describe("findFieldGaps", () => {
     const gaps = findFieldGaps(items, NOW);
     expect(gaps.missingEstimate).toHaveLength(1);
     expect(gaps.missingPriority).toHaveLength(0);
+    expect(gaps.missingWorkflowState).toHaveLength(0);
   });
 
   it("detects missing priority on non-terminal items", () => {
@@ -247,6 +248,23 @@ describe("findFieldGaps", () => {
     const gaps = findFieldGaps(items, NOW);
     expect(gaps.missingEstimate).toHaveLength(0);
     expect(gaps.missingPriority).toHaveLength(1);
+    expect(gaps.missingWorkflowState).toHaveLength(0);
+  });
+
+  it("detects missing workflow state on non-terminal items, independent of other buckets", () => {
+    const items = [
+      makeItem({
+        number: 1,
+        workflowState: null,
+        estimate: "S",
+        priority: "P1",
+      }),
+    ];
+    const gaps = findFieldGaps(items, NOW);
+    expect(gaps.missingWorkflowState).toHaveLength(1);
+    expect(gaps.missingWorkflowState[0].number).toBe(1);
+    expect(gaps.missingEstimate).toHaveLength(0);
+    expect(gaps.missingPriority).toHaveLength(0);
   });
 
   it("excludes Done items from field gap detection", () => {
@@ -261,6 +279,7 @@ describe("findFieldGaps", () => {
     const gaps = findFieldGaps(items, NOW);
     expect(gaps.missingEstimate).toHaveLength(0);
     expect(gaps.missingPriority).toHaveLength(0);
+    expect(gaps.missingWorkflowState).toHaveLength(0);
   });
 });
 
@@ -574,12 +593,35 @@ describe("formatHygieneMarkdown", () => {
     const items = [
       makeItem({ number: 10, workflowState: "Backlog", estimate: null }),
       makeItem({ number: 11, workflowState: "Backlog", priority: null }),
+      makeItem({ number: 12, workflowState: null, estimate: "S", priority: "P1" }),
     ];
     const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
     const md = formatHygieneMarkdown(report);
     expect(md).toContain("## Field Gaps");
     expect(md).toContain("### Missing Estimate");
     expect(md).toContain("### Missing Priority");
+    expect(md).toContain("### Missing Workflow State");
+  });
+
+  it("renders '## Field Gaps' and '### Missing Workflow State' when a stateless item is the ONLY gap on the board", () => {
+    // Regression guard: the totalGaps gate must include missingWorkflowState,
+    // or a board whose sole gap is a null-state item would render no
+    // Field Gaps section at all (the original GH-1525 incident).
+    const items = [
+      makeItem({
+        number: 20,
+        workflowState: null,
+        estimate: "S",
+        priority: "P1",
+      }),
+    ];
+    const report = buildHygieneReport(items, DEFAULT_HYGIENE_CONFIG, NOW);
+    const md = formatHygieneMarkdown(report);
+    expect(md).toContain("## Field Gaps");
+    expect(md).toContain("### Missing Workflow State");
+    expect(md).toContain("#20");
+    expect(md).not.toContain("### Missing Estimate");
+    expect(md).not.toContain("### Missing Priority");
   });
 
   it("includes duplicate candidates section when present", () => {
@@ -792,6 +834,23 @@ describe("repository field preservation", () => {
     expect(gaps.missingEstimate[0].repository).toBe("owner/repo-d");
     expect(gaps.missingPriority).toHaveLength(1);
     expect(gaps.missingPriority[0].repository).toBe("owner/repo-e");
+  });
+
+  it("findFieldGaps preserves repository on missingWorkflowState", () => {
+    const items = [
+      makeItem({
+        number: 3,
+        workflowState: null,
+        estimate: "S",
+        priority: "P1",
+        repository: "owner/repo-stateless",
+      }),
+    ];
+    const gaps = findFieldGaps(items, NOW);
+    expect(gaps.missingWorkflowState).toHaveLength(1);
+    expect(gaps.missingWorkflowState[0].repository).toBe(
+      "owner/repo-stateless",
+    );
   });
 
   it("findWipViolations preserves repository on items inside each violation", () => {

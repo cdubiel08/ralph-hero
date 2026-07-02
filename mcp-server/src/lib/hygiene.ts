@@ -62,7 +62,11 @@ export interface HygieneRepoBreakdown {
   archiveCandidates: HygieneItem[];
   staleItems: HygieneItem[];
   orphanedItems: HygieneItem[];
-  fieldGaps: { missingEstimate: HygieneItem[]; missingPriority: HygieneItem[] };
+  fieldGaps: {
+    missingEstimate: HygieneItem[];
+    missingPriority: HygieneItem[];
+    missingWorkflowState: HygieneItem[];
+  };
   wipViolations: Array<{
     state: string;
     count: number;
@@ -84,7 +88,11 @@ export interface HygieneReport {
   archiveCandidates: HygieneItem[];
   staleItems: HygieneItem[];
   orphanedItems: HygieneItem[];
-  fieldGaps: { missingEstimate: HygieneItem[]; missingPriority: HygieneItem[] };
+  fieldGaps: {
+    missingEstimate: HygieneItem[];
+    missingPriority: HygieneItem[];
+    missingWorkflowState: HygieneItem[];
+  };
   wipViolations: Array<{
     state: string;
     count: number;
@@ -180,7 +188,11 @@ export function findOrphanedItems(
 export function findFieldGaps(
   items: DashboardItem[],
   now: number,
-): { missingEstimate: HygieneItem[]; missingPriority: HygieneItem[] } {
+): {
+  missingEstimate: HygieneItem[];
+  missingPriority: HygieneItem[];
+  missingWorkflowState: HygieneItem[];
+} {
   const nonTerminal = items.filter((item) => {
     const ws = item.workflowState;
     return !ws || !TERMINAL_STATES.includes(ws);
@@ -192,6 +204,9 @@ export function findFieldGaps(
       .map((item) => toHygieneItem(item, now)),
     missingPriority: nonTerminal
       .filter((item) => item.priority === null)
+      .map((item) => toHygieneItem(item, now)),
+    missingWorkflowState: nonTerminal
+      .filter((item) => item.workflowState === null)
       .map((item) => toHygieneItem(item, now)),
   };
 }
@@ -530,7 +545,8 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
   // Field gaps
   const totalGaps =
     report.fieldGaps.missingEstimate.length +
-    report.fieldGaps.missingPriority.length;
+    report.fieldGaps.missingPriority.length +
+    report.fieldGaps.missingWorkflowState.length;
   if (totalGaps > 0) {
     lines.push("## Field Gaps");
     if (report.fieldGaps.missingEstimate.length > 0) {
@@ -547,6 +563,15 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
       lines.push("| Issue | Title | State | Age |");
       lines.push("|-------|-------|-------|-----|");
       for (const item of report.fieldGaps.missingPriority) {
+        lines.push(formatItemRow(item));
+      }
+      lines.push("");
+    }
+    if (report.fieldGaps.missingWorkflowState.length > 0) {
+      lines.push("### Missing Workflow State");
+      lines.push("| Issue | Title | State | Age |");
+      lines.push("|-------|-------|-------|-----|");
+      for (const item of report.fieldGaps.missingWorkflowState) {
         lines.push(formatItemRow(item));
       }
       lines.push("");
@@ -635,7 +660,8 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
 
       const repoTotalGaps =
         repo.fieldGaps.missingEstimate.length +
-        repo.fieldGaps.missingPriority.length;
+        repo.fieldGaps.missingPriority.length +
+        repo.fieldGaps.missingWorkflowState.length;
       if (repoTotalGaps > 0) {
         lines.push("#### Field Gaps");
         if (repo.fieldGaps.missingEstimate.length > 0) {
@@ -652,6 +678,15 @@ export function formatHygieneMarkdown(report: HygieneReport): string {
           lines.push("| Issue | Title | State | Age |");
           lines.push("|-------|-------|-------|-----|");
           for (const item of repo.fieldGaps.missingPriority) {
+            lines.push(formatItemRow(item));
+          }
+          lines.push("");
+        }
+        if (repo.fieldGaps.missingWorkflowState.length > 0) {
+          lines.push("##### Missing Workflow State");
+          lines.push("| Issue | Title | State | Age |");
+          lines.push("|-------|-------|-------|-----|");
+          for (const item of repo.fieldGaps.missingWorkflowState) {
             lines.push(formatItemRow(item));
           }
           lines.push("");
