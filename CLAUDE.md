@@ -27,7 +27,7 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 ## CI/CD
 
-**PR checks** (`ci.yml`): Build + test for mcp-server (Node 20/22), ralph-demo, ralph-knowledge. Hook tests from `ralph/hooks/scripts/__tests__`. ShellCheck on `ralph/hooks`. Workflow lint via actionlint + zizmor. MCP pin verification.
+**PR checks** (`ci.yml`): Build + test for mcp-server (Node 20/22), ralph-demo, ralph-knowledge. Hook tests from `ralph/hooks/scripts/__tests__`. ShellCheck on `ralph/hooks`. Workflow lint via actionlint + zizmor. MCP pin verification. Doc-roster consistency (`scripts/check-doc-rosters.sh`) — the agent/skill/tool rosters in this file are CI-checked against source, so update them in the same PR as roster changes.
 
 **Auto-release** (`release.yml`): Merges touching `mcp-server/src/**` auto-bump `mcp-server/package.json`, publish to npm (OIDC provenance), and pin `ralph/.mcp.json`. Include `#minor` or `#major` in a commit message for larger bumps.
 
@@ -46,13 +46,14 @@ ralph/                   # Main plugin — 9 fat skills, 16 agents, hooks
 │   └── shared/          # Shared references: loop-wrapper, auto-alias, mcp-prefix guard
 ├── agents/              # 16 agents (8 per-phase + 8 investigators)
 ├── hooks/               # Lifecycle enforcement hooks
-└── .claude-plugin/      # Plugin manifest + .mcp.json pin
+├── .claude-plugin/      # Plugin manifest (plugin.json)
+└── .mcp.json            # Pinned ralph-hero-mcp-server version (updated by release.yml)
 plugin/
 ├── ralph-knowledge/     # Semantic search over thoughts/ documents
 │   └── src/             # Hono MCP server, SQLite + sqlite-vec embeddings
 ├── ralph-playwright/    # Polymorphic UI testing skills (no MCP server)
-│   ├── skills/          # 7 skills
-│   └── agents/          # 2 agents
+│   ├── skills/          # UI testing skills (browser, a11y, storybook, visual-diff, ...)
+│   └── agents/          # explorer + story-runner agents
 └── ralph-demo/          # Sprint demo video generation (Remotion)
     └── remotion/        # React-based video compositing (pnpm)
 ```
@@ -64,14 +65,16 @@ plugin/
 | `/ralph:catch-up` | inherit (haiku narrative agent) | Orientation: narrative + picker or single-surface mode |
 | `/ralph:form` | inherit | Issue intake: dedup, draft, tree |
 | `/ralph:research` | sonnet | Research: interactive or autonomous queue-drain |
-| `/ralph:plan` | opus | Planning: interactive, auto, epic, iterate, review |
+| `/ralph:plan` | best (fable→opus) | Planning: interactive, auto, epic, iterate, review |
 | `/ralph:impl` | sonnet session / complexity ladder (haiku-opus) | Implementation: auto, pr, address |
-| `/ralph:review` | opus | Review: val, code, merge |
+| `/ralph:review` | best (fable→opus) | Review: val, code, merge |
 | `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
 | `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
 | `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
 
-Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable; opt-in, requires Fable access — the only fable pin in the plugin) — isolated rail-free path (no prescribed phases, no gate hooks; artifact contract instead). `/ralph:hero --model fable` forwards to it. Design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`.
+Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable; opt-in, requires Fable access) — isolated rail-free path (no prescribed phases, no gate hooks; artifact contract instead). `/ralph:hero --model fable` forwards to it. Design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`.
+
+The plan/review skill sessions pin `model: best` (Fable 5 where entitled, else latest Opus); `plan-agent`/`review-agent` pin `model: fable` — non-Fable accounts set `CLAUDE_CODE_SUBAGENT_MODEL=opus` as the escape hatch for the `Agent()`-fork path. Rationale: [`docs/model-tier-policy.md`](docs/model-tier-policy.md).
 
 ### ralph Plugin — 16 Agents
 
@@ -115,13 +118,16 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `hygiene-tools.ts` | project_hygiene |
 | `decompose-tools.ts` | decompose_feature |
 | `trends-tools.ts` | capture_snapshot, metrics_trends |
+| `directions-tools.ts` | next_actions |
+| `plan-graph-tools.ts` | sync_plan_graph |
+| `view-tools.ts` | create_views |
 | `sre-tools.ts` | sre__scale, sre__rollout_restart, sre__delete_pod, sre__drain |
 | `activity-tools.ts` | recent_activity |
 | `debug-tools.ts` | debug tools (only registered when RALPH_DEBUG=true) |
 
 **GitHub client** (`github-client.ts`): Wraps `@octokit/graphql` with dual endpoints — `query()`/`mutate()` for repo operations, `projectQuery()`/`projectMutate()` for project operations (may use a separate token). Auto-injects `rateLimit` fragments into non-mutation queries.
 
-**Lib modules** (in `src/lib/`):
+**Lib modules** (in `src/lib/` — curated subset; see the directory for the full set):
 
 | Module | Purpose |
 |--------|---------|
@@ -136,7 +142,10 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `routing-types.ts` / `routing-config.ts` / `routing-engine.ts` | Issue routing subsystem |
 | `lock-guard.ts` | Pure lock-conflict check for `save_issue` |
 | `activity.ts` | Activity log reader (pure filesystem) |
+| `directions.ts` | Pure ranker behind `next_actions` (session-briefing directions) |
+| `plan-graph.ts` | Plan markdown → issue dependency-edge parser (pure) |
 | `snapshots.ts` / `trends.ts` | Snapshot persistence + trend computation |
+| `telemetry.ts` / `debug-logger.ts` | OTel export + JSONL debug logging (both gated by `RALPH_DEBUG=true`) |
 
 ### Workflow State Machine
 
@@ -160,14 +169,13 @@ Key state categories defined in `workflow-states.ts`:
 - **Trends**: `ralph_hero__metrics_trends` returns 1d/7d/30d deltas via `src/lib/trends.ts`.
 - **Fixture**: `src/__tests__/fixtures/snapshots.fixture.jsonl` holds 30 synthetic schema-valid rows.
 
-### Activity log + retention
+### Activity log
 
-Hooks write per-session activity into `~/.ralph-hero/activity/YYYY/MM/DD.jsonl` (path overridable via `RALPH_ACTIVITY_DIR`). Events are categorized as `work` or `meta` by `record-activity.sh`.
+The log lives at `~/.ralph-hero/activity/YYYY/MM/DD.jsonl` (path overridable via `RALPH_ACTIVITY_DIR`), one JSON event per line, append-only.
 
-- **Writer**: `ralph/hooks/scripts/record-activity.sh` (PostToolUse, matcher-less; also wired to SessionStart).
-- **Reader**: `mcp-server/src/lib/activity.ts` + `tools/activity-tools.ts`. Pure functions.
-- **Cursor advance**: `ralph/hooks/scripts/cursor-advance-catch-up.sh` writes `~/.ralph-hero/cursors/catch-up.json`.
-- **Retention**: `ralph/scripts/activity/logrotate.sh` prunes day files older than `RALPH_ACTIVITY_RETENTION_DAYS` (default 14).
+- **Reader**: `mcp-server/src/lib/activity.ts` + `tools/activity-tools.ts` (`recent_activity`). Pure functions — read-only.
+- **Writer**: the only in-repo writer is `ralph/hooks/scripts/hero-dispatch-log.sh`, which appends one event per `/ralph:hero` → child-verb Skill dispatch. The general per-session writer (`record-activity.sh`) and the retention script were deleted with `plugin/ralph-hero/` (GH-1438).
+- **Cursor advance**: `ralph/hooks/scripts/cursor-advance-catch-up.sh` (PostToolUse on `recent_activity`) persists `~/.ralph-hero/cursors/catch-up.json`.
 
 ### Caching Strategy
 
@@ -226,14 +234,17 @@ When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth to
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token, then to `gh auth token`) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
+| `RALPH_GH_TEMPLATE_PROJECT` | No | Template project number for `setup_project` to copy fields/views from |
+| `RALPH_AUTOPILOT_ENABLE` | No | Must be `"true"` for `hero --mode auto`; enforced by `autopilot-enable-gate.sh` |
 | `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (e.g. `sonnet`, `opus`, or `fable` if your plan includes it). Defaults to `sonnet`; BLOCKED escalation re-dispatches once at `opus`. |
+| `CLAUDE_CODE_SUBAGENT_MODEL` | No (harness-native, not ralph plumbing) | Escape hatch for the `model: fable` pins on `plan-agent`/`review-agent`: set to `opus` on accounts without Fable. Top precedence in Claude Code's subagent model resolution — it overrides frontmatter AND per-invocation `model` params, so it flattens EVERY subagent tier (locators, impl ladder, BLOCKED re-dispatch). Leave unset if your account has Fable. |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and OpenTelemetry export. |
 
 **Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
 
-### OpenTelemetry export to local Langfuse
+### OpenTelemetry export (`RALPH_DEBUG=true`)
 
-When `RALPH_DEBUG=true` is set alongside the `OTEL_*` env vars, Claude Code exports `mcp.tool.*` spans over OTLP/HTTP to the local Langfuse harness. `RALPH_DEBUG` is the activation switch. Full setup: see [`docs/otel-langfuse.md`](docs/otel-langfuse.md).
+`mcp-server/src/lib/telemetry.ts` lazily initializes the OTel NodeSDK only when `RALPH_DEBUG=true` (zero overhead otherwise). It exports `ralph_hero.graphql` spans (emitted in `github-client.ts`) over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` — e.g. the local Langfuse harness at `~/projects/langfuse/`. Auto-instrumentation is off; a custom SpanProcessor redacts token-shaped attribute values (`gh[ps]_*` values, `*_TOKEN`/`authorization` keys) before export. The same env var gates JSONL debug logging (`debug-logger.ts`) and the debug tools.
 
 ## GitHub Actions Workflows
 
@@ -242,6 +253,7 @@ When `RALPH_DEBUG=true` is set alongside the `OTEL_*` env vars, Claude Code expo
 | `ci.yml` | push/PR to main | Build, test, lint |
 | `release.yml` | mcp-server/ changes on main | Bump version, npm publish, pin ralph/.mcp.json |
 | `release-ralph.yml` | ralph/ changes on main | Bump ralph plugin version + tag |
+| `release-knowledge.yml` | plugin/ralph-knowledge/ changes on main | Publish-first knowledge release: npm publish → verify on registry → pin .mcp.json → tag |
 | `route-issues.yml` | Issue opened | Route new issues to project board |
 | `sync-issue-state.yml` | Issue state change | Sync GitHub issue state with project workflow |
 | `sync-pr-merge.yml` | PR merged | Move linked issues to Done |

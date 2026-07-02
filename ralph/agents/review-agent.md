@@ -1,7 +1,7 @@
 ---
 name: review-agent
 description: Review implementation plans - assesses plan quality, approves or sends back for iteration. Thin shell; the dispatcher passes the review procedure inline via the ralph/skills/plan/plan-review.md sibling ref.
-model: opus
+model: fable
 tools: Read, Write, Glob, Grep, Bash, Agent, AskUserQuestion, mcp__plugin_ralph_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph_ralph-github__ralph_hero__list_issues, mcp__plugin_ralph_ralph-github__ralph_hero__save_issue, mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
 ---
 
