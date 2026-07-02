@@ -952,7 +952,7 @@ export function registerIssueTools(
       workflowState: z
         .string()
         .optional()
-        .describe("Initial Workflow State name"),
+        .describe('Initial Workflow State name (defaults to "Backlog")'),
       estimate: z.string().optional().describe("Estimate (XS, S, M, L, XL)"),
       priority: z.string().optional().describe("Priority (P0, P1, P2, P3)"),
     },
@@ -977,6 +977,7 @@ export function registerIssueTools(
         let effectiveLabels = args.labels;
         let effectiveAssignees = args.assignees;
         let effectiveEstimate = args.estimate;
+        const effectiveState = args.workflowState ?? "Backlog";
 
         if (registry) {
           const repoLookup = lookupRepo(registry, repo);
@@ -1121,23 +1122,21 @@ export function registerIssueTools(
           );
 
         // Step 5: Set field values
-        if (args.workflowState) {
-          await updateProjectItemField(
-            client,
-            fieldCache,
-            projectItemId,
-            "Workflow State",
-            args.workflowState,
-            projectNumber,
-          );
-          await syncStatusField(
-            client,
-            fieldCache,
-            projectItemId,
-            args.workflowState,
-            projectNumber,
-          );
-        }
+        await updateProjectItemField(
+          client,
+          fieldCache,
+          projectItemId,
+          "Workflow State",
+          effectiveState,
+          projectNumber,
+        );
+        await syncStatusField(
+          client,
+          fieldCache,
+          projectItemId,
+          effectiveState,
+          projectNumber,
+        );
 
         if (effectiveEstimate) {
           await updateProjectItemField(
@@ -1168,7 +1167,7 @@ export function registerIssueTools(
           url: issue.url,
           projectItemId,
           fieldsSet: {
-            workflowState: args.workflowState || null,
+            workflowState: effectiveState,
             estimate: effectiveEstimate || null,
             priority: args.priority || null,
           },

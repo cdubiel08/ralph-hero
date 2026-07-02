@@ -93,10 +93,10 @@ Make `create_issue` always set Workflow State (defaulting to `"Backlog"`), sync 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `effectiveState` local defaults to `"Backlog"` via `??`; explicit arg wins
-  - [ ] Step-5 Workflow State write + `syncStatusField` run unconditionally with `effectiveState`
-  - [ ] `fieldsSet.workflowState` reports `effectiveState`
-  - [ ] `npm run build` exits 0
+  - [x] `effectiveState` local defaults to `"Backlog"` via `??`; explicit arg wins
+  - [x] Step-5 Workflow State write + `syncStatusField` run unconditionally with `effectiveState`
+  - [x] `fieldsSet.workflowState` reports `effectiveState`
+  - [x] `npm run build` exits 0
 
 #### Task 1.2: unit tests for defaulted + explicit paths
 - **files**: `mcp-server/src/__tests__/create-issue-defaults.test.ts` (create)
@@ -104,15 +104,15 @@ Make `create_issue` always set Workflow State (defaulting to `"Backlog"`), sync 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] `npx vitest run src/__tests__/create-issue-defaults.test.ts` passes both cases
-  - [ ] Default case asserts the Backlog option ID was used in the field mutation, not just the response echo
+  - [x] `npx vitest run src/__tests__/create-issue-defaults.test.ts` passes both cases
+  - [x] Default case asserts the Backlog option ID was used in the field mutation, not just the response echo
 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `cd mcp-server && npm run build` exits 0
-- [ ] `cd mcp-server && npm test` passes (full suite — guards against regressions in cross-tool-consistency tests that invoke create_issue-adjacent paths)
-- [ ] `npx vitest run src/__tests__/create-issue-defaults.test.ts` passes
+- [x] `cd mcp-server && npm run build` exits 0
+- [x] `cd mcp-server && npm test` passes (full suite — guards against regressions in cross-tool-consistency tests that invoke create_issue-adjacent paths)
+- [x] `npx vitest run src/__tests__/create-issue-defaults.test.ts` passes
 
 #### Manual Verification
 - [ ] A direct MCP `create_issue` call without `workflowState` lands on the board in Backlog/Todo (observable on the project board after release)
@@ -137,6 +137,7 @@ Two extra GraphQL mutations per formerly-stateless create (field write + status 
 
 - Behavior change is additive-by-default: callers that previously produced stateless items now get Backlog items. Callers relying on statelessness (none known; it was the bug) would need to pass an explicit state.
 - Projects whose Workflow State field lacks a `"Backlog"` option will now get `toolError` on plain creates (issue is still created — pre-existing partial-failure shape, `issue-tools.ts:1176-1178`). Standard `setup_project` boards are unaffected; this is the accepted strict-semantics decision.
+- Explicit empty-string `workflowState: ""` now errors (it flows through to the Step-5 field write and throws, since `""` is not a valid option name) instead of being silently skipped as before (the old `if (args.workflowState)` gate treated `""` as falsy). Callers that want the Backlog default must omit the field rather than pass an empty string.
 - No schema/DB migration. Release flows through the normal `release.yml` auto-bump on merge.
 
 ## References
