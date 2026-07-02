@@ -101,10 +101,10 @@ Emit the aggregate direction for the human audience on otherwise-empty results; 
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `"triage"` in the kind union; `statelessCount?` on DirectionSignals
-  - [ ] Aggregate emitted post-`recommended`, human-only, empty-result-only, null-state-count > 0 only; both `issue` and `pr` null
-  - [ ] Tool description amended accurately
-  - [ ] `cd mcp-server && npm run build` exits 0
+  - [x] `"triage"` in the kind union; `statelessCount?` on DirectionSignals
+  - [x] Aggregate emitted post-`recommended`, human-only, empty-result-only, null-state-count > 0 only; both `issue` and `pr` null
+  - [x] Tool description amended accurately
+  - [x] `cd mcp-server && npm run build` exits 0
 
 #### Task 1.2: unit tests
 - **files**: `mcp-server/src/__tests__/directions.test.ts` (modify)
@@ -112,11 +112,11 @@ Emit the aggregate direction for the human audience on otherwise-empty results; 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Case A: human + null-state-only board → exactly one direction, `kind: "triage"`, `recommended: true`, `issue === null && pr === null`, `signals.statelessCount` equals fixture count
-  - [ ] Case B: human + Backlog-only (all states non-null) → `[]` (existing `:199-209` test still green)
-  - [ ] Case C: human + one actionable item + null-state items → normal directions only, no `triage` entry
-  - [ ] Case D: agent + null-state-only board → per-item fallback unchanged (no `triage` entry)
-  - [ ] `npx vitest run src/__tests__/directions.test.ts` passes
+  - [x] Case A: human + null-state-only board → exactly one direction, `kind: "triage"`, `recommended: true`, `issue === null && pr === null`, `signals.statelessCount` equals fixture count
+  - [x] Case B: human + Backlog-only (all states non-null) → `[]` (existing `:199-209` test still green)
+  - [x] Case C: human + one actionable item + null-state items → normal directions only, no `triage` entry
+  - [x] Case D: agent + null-state-only board → per-item fallback unchanged (no `triage` entry)
+  - [x] `npx vitest run src/__tests__/directions.test.ts` passes
 
 #### Task 1.3: catch-up ranking doc rows
 - **files**: `ralph/skills/catch-up/next-action-ranking.md` (modify)
@@ -124,14 +124,14 @@ Emit the aggregate direction for the human audience on otherwise-empty results; 
 - **complexity**: low
 - **depends_on**: [1.1]
 - **acceptance**:
-  - [ ] Picker label row, title-rule carve-out, and dispatch row present and consistent with the emitted shape
+  - [x] Picker label row, title-rule carve-out, and dispatch row present and consistent with the emitted shape
 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `cd mcp-server && npm run build` exits 0
-- [ ] `cd mcp-server && npm test` passes (full suite)
-- [ ] `npx vitest run src/__tests__/directions.test.ts` passes
+- [x] `cd mcp-server && npm run build` exits 0
+- [x] `cd mcp-server && npm test` passes (full suite)
+- [x] `npx vitest run src/__tests__/directions.test.ts` passes
 
 #### Manual Verification
 - [ ] Post-release, `/ralph:catch-up` over a board with stateless items surfaces "Triage N stateless items" instead of the calm message (observable on a live board)
@@ -157,6 +157,7 @@ One extra `.filter().length` over already-fetched items, only on the empty-resul
 - Additive: a new `kind` value and optional signal field. In-repo consumers are updated in the same PR; external JSON consumers switching on `kind` see a new value only in the previously-empty case (they showed nothing before; unknown-kind fallthrough should be tolerated — noted in the tool description).
 - Touches `ralph/**` (ranking doc) → merge triggers the ralph plugin version bump alongside the mcp-server release. Expected.
 - The deprecated `reason`/`tags` fields are populated for the new kind to keep the 2.7.0 deprecation window contract.
+- Hero default-mode carve-out (from the APPROVED critique's Recommended Change 1): `ralph/skills/hero/SKILL.md`'s default-mode picker step (`next_actions({})` → `AskUserQuestion` → `get_issue({ number: TARGET })`) now short-circuits on `kind: "triage"` — it dispatches `Skill("ralph:caretake", args="--mode triage")` board-wide instead of resolving a `TARGET` issue number, since a `triage` direction has no `issue`/`pr`.
 
 ## References
 

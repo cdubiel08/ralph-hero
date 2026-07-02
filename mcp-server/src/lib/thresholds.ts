@@ -50,3 +50,10 @@ export const SIMILARITY_THRESHOLD = 0.8;
 // Phase 1 fallback penalty — keeps Backlog items below actionable items
 // when the audience="agent" fallback fires.
 export const AGENT_BACKLOG_FALLBACK_PENALTY = 100;
+
+// Score stamped on the human-audience aggregate stateless-triage direction.
+// The aggregate only fires when it is the sole direction, so the value never
+// participates in ranking — it exists to keep the Direction shape complete
+// and is deliberately decoupled from AGENT_BACKLOG_FALLBACK_PENALTY so
+// retuning the agent fallback cannot alter the human surface.
+export const HUMAN_TRIAGE_DIRECTION_SCORE = 100;
