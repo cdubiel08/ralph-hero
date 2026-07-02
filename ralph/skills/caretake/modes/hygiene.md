@@ -31,7 +31,7 @@ The tool returns seven categories in one response:
 - **Archive candidates** — Done/Canceled items stale beyond `archiveAgeDays`.
 - **Stale items** — non-terminal items not updated within `staleDays`.
 - **Orphaned items** — Backlog-only, no assignees, older than `orphanDays`.
-- **Field gaps** — non-terminal items missing `estimate` or `priority`.
+- **Field gaps** — non-terminal items missing `estimate`, `priority`, or `workflowState`. (`fieldCoveragePercent` in Summary stats tracks estimate/priority only — a board can read 100% coverage while stateless items sit in the workflow-state gap bucket.)
 - **WIP violations** — states exceeding caller-supplied `wipLimits` (empty unless provided).
 - **Duplicate candidates** — non-terminal item pairs with title similarity ≥ 0.8.
 - **Summary stats** — aggregate counts + `fieldCoveragePercent`.
@@ -54,8 +54,9 @@ Stale Items: N items (no update in > 7 days)
 Orphaned Items: N items (Backlog, unassigned, > 14 days old)
   #60 - Investigate cache thrash (Backlog, 21 days)
 
-Field Gaps: N items missing estimate/priority
+Field Gaps: N items missing estimate/priority/workflow state
   #62 - Add settings page (missing: estimate, priority)
+  #63 - Imported from UI (missing: workflow state)
 
 WIP Violations: N (or "skipped — RALPH_HYGIENE_WIP_LIMITS not set")
   In Progress: 5 items (limit: 3)
