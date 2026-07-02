@@ -66,12 +66,14 @@ Each `AskUserQuestion` option's `label` is `"<verb> #<NNN> · <title fragment>"`
 | `kind: "tree-continue"` | `Continue tree #NNN` |
 | `kind: "lock-stale"` | `Unstick #NNN` |
 | `kind: "human-needed-unblock"` | `Unblock #NNN` |
+| `kind: "triage"` | `Triage N stateless items` (N from `signals.statelessCount`; no `#NNN`) |
 
 ### Title fragment truncation
 
 1. If `title.length <= 30`, use the title as-is. No ellipsis.
 2. Otherwise, slice to 30 chars. Drop trailing whitespace. If a clean word boundary (a space) exists within the last 5 chars of the slice, cut at that boundary instead — so the fragment never ends mid-word when a word boundary is nearby. Append `…`.
 3. Example: title `"Skill audit phase 2 — deep individual audits for remaining skills"` (64 chars) → fragment `"Skill audit phase 2 — deep…"`.
+4. Carve-out: `kind: "triage"` directions have no `issue.title`/`pr.title` (both `issue` and `pr` are null) — the label from the per-kind table stands alone with no title fragment appended.
 
 ### Picker structure
 
@@ -97,6 +99,7 @@ Based on the user's pick, dispatch via `Agent()` or `Skill()`. The `ralph:` work
 | `tree-continue` | — | `Agent(subagent_type="ralph:triage-agent", prompt="Continue tree work on issue #NNN. Follow the triage procedure in ${CLAUDE_PLUGIN_ROOT}/skills/caretake/modes/triage.md + label-routing.md exactly.", description="Triage GH-NNN")` |
 | `lock-stale` | — | `Agent(subagent_type="ralph:triage-agent", prompt="Triage stalled issue #NNN. Follow the triage procedure in ${CLAUDE_PLUGIN_ROOT}/skills/caretake/modes/triage.md + label-routing.md exactly.", description="Triage GH-NNN")` |
 | `human-needed-unblock` | `Human Needed` | `Skill("ralph:caretake", args="--mode unblock #<NNN>")` |
+| `triage` | — | `Skill("ralph:caretake", args="--mode triage")` (board-wide — no issue argument; `direction.issue` and `direction.pr` are both null for this kind) |
 
 For the **Work through these in order** option: dispatch sequentially in `directions[]` order. Note before each subsequent dispatch: *"Earlier actions may have changed board state."*
 

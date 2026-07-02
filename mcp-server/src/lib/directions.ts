@@ -109,6 +109,11 @@ export interface DirectionSignals {
    * (`^\d+\.\s`) in the most recent `## Unblock Request` comment body.
    */
   questionCount?: number;
+  /**
+   * For `kind: "triage"` aggregate directions only: count of items on the
+   * board with a null `workflowState`.
+   */
+  statelessCount?: number;
 }
 
 export interface Direction {
@@ -119,7 +124,13 @@ export interface Direction {
    * orchestrators dispatch on it.
    */
   recommended: boolean;
-  kind: "issue" | "pr" | "tree-continue" | "lock-stale" | "human-needed-unblock";
+  kind:
+    | "issue"
+    | "pr"
+    | "tree-continue"
+    | "lock-stale"
+    | "human-needed-unblock"
+    | "triage";
   issue: {
     number: number;
     title: string;
@@ -1015,6 +1026,34 @@ export function rankDirections(
   // orchestrators dispatch on it.
   if (directions.length > 0) {
     directions[0].recommended = true;
+  }
+
+  // 7. Human-audience aggregate triage fallback: when the human scan yields
+  //    zero directions (nothing actionable, no PRs, no lock-stale, no
+  //    unblock signal) and at least one item on the board has a null
+  //    `workflowState`, surface a single aggregate direction pointing at
+  //    `/ralph:caretake --mode triage` instead of an empty list. This is
+  //    the human-audience counterpart to the agent-only Backlog/null-state
+  //    fallback above (step 1b) — it never fires when any real direction
+  //    exists, and it never includes Backlog items (Backlog is a
+  //    legitimate, dashboard-visible parking state).
+  if (config.audience === "human" && directions.length === 0) {
+    const statelessCount = items.filter(
+      (i) => i.workflowState === null,
+    ).length;
+    if (statelessCount > 0) {
+      directions.push({
+        rank: 1,
+        recommended: true,
+        kind: "triage",
+        issue: null,
+        pr: null,
+        signals: { tags: ["stateless-triage"], statelessCount },
+        reason: `${statelessCount} item(s) have no workflow state — run /ralph:caretake --mode triage`,
+        tags: ["stateless-triage"],
+        score: AGENT_BACKLOG_FALLBACK_PENALTY,
+      });
+    }
   }
 
   return directions;

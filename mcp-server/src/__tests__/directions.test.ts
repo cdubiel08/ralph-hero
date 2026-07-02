@@ -210,6 +210,63 @@ describe("audience=agent Backlog fallback", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 0b3. audience=human aggregate stateless-triage direction (GH-1526)
+// ---------------------------------------------------------------------------
+
+describe("audience=human aggregate stateless-triage direction", () => {
+  it("Case A: null-state-only board returns exactly one triage direction", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: null }),
+      makeItem({ number: 2, workflowState: null }),
+      makeItem({ number: 3, workflowState: null }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "human" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe("triage");
+    expect(result[0].recommended).toBe(true);
+    expect(result[0].rank).toBe(1);
+    expect(result[0].issue).toBeNull();
+    expect(result[0].pr).toBeNull();
+    expect(result[0].signals.statelessCount).toBe(3);
+    expect(result[0].signals.tags).toContain("stateless-triage");
+  });
+
+  it("Case B: Backlog-only board (no null-state items) returns no directions", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Backlog", priority: "P0" }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "human" }));
+    expect(result).toEqual([]);
+  });
+
+  it("Case C: one actionable item plus null-state items returns normal directions only", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: "Research Needed", priority: "P2" }),
+      makeItem({ number: 2, workflowState: null }),
+      makeItem({ number: 3, workflowState: null }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "human" }));
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).not.toBe("triage");
+    expect(result[0].issue?.number).toBe(1);
+    expect(result.some((d) => d.kind === "triage")).toBe(false);
+  });
+
+  it("Case D: agent audience null-state-only board keeps the per-item fallback (no aggregate)", () => {
+    const items = [
+      makeItem({ number: 1, workflowState: null, priority: "P2" }),
+      makeItem({ number: 2, workflowState: null, priority: "P2" }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 3, audience: "agent" }));
+    expect(result.some((d) => d.kind === "triage")).toBe(false);
+    expect(result.length).toBeGreaterThan(0);
+    for (const d of result) {
+      expect(d.kind).toBe("issue");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 0c. Differentiated stale reasons (Phase 2.3)
 // ---------------------------------------------------------------------------
 
