@@ -16,8 +16,8 @@
 # Mirrors plugin/ralph-hero/hooks/scripts/set-skill-env.sh. The earlier
 # slim version omitted the CLAUDE_ENV_FILE write, which silently broke
 # every hook in ralph/hooks/scripts/ that gated on RALPH_COMMAND
-# (impl-state-gate, plan-state-gate, merge-state-gate, triage-state-gate,
-# review-postcondition path mutex, etc.) — they all hit their scope-guard
+# (state-gate.sh scope args, plan-postcondition mode branch, etc.) —
+# they all hit their scope-guard
 # `if [[ "${RALPH_COMMAND:-}" != "<verb>" ]]; then allow` and exited 0
 # without ever running their validation. Surfaced by Plan 11 PR #1398
 # code review.

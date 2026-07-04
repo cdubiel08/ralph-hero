@@ -71,8 +71,8 @@ allow() {
 
 # Short-circuit a Stop hook when the harness is already inside a stop_hook_active
 # pass. Requires read_input to have been called first (so RALPH_HOOK_INPUT is set).
-# Mirrors the inline guard at val-postcondition.sh:19-22 — promoted here so every
-# Stop hook can opt in with a single call instead of copy-pasting the four-liner.
+# Promoted here so every Stop hook can opt in with a single call instead of
+# copy-pasting the four-liner.
 check_stop_hook_active() {
   local stop_active
   stop_active=$(get_field '.stop_hook_active')
@@ -136,6 +136,82 @@ validate_state() {
     fi
   done
   return 1
+}
+
+# --- Session-scoped state ---------------------------------------------------
+# Concurrent Claude sessions share thoughts/shared/ and /tmp, so "which doc
+# did this skill run just write" must never be answered by directory mtime
+# (see doc-structure-validator.sh history: a Stop hook once blocked on a doc
+# a DIFFERENT session was mid-writing). These helpers key state by the
+# harness-provided .session_id from the hook input instead.
+
+# Directory for state private to the current session. Requires read_input to
+# have been called (get_field reads RALPH_HOOK_INPUT). Falls back to PPID
+# keying when .session_id is absent so a missing field degrades to
+# per-parent-process, not global.
+ralph_session_dir() {
+  local sid
+  sid=$(get_field '.session_id')
+  [[ -n "$sid" ]] || sid="ppid-$PPID"
+  local dir="${TMPDIR:-/tmp}/ralph-session-${sid}"
+  mkdir -p "$dir" 2>/dev/null || true
+  echo "$dir"
+}
+
+# Path of the per-session list of thoughts/shared artifacts, appended by
+# artifact-write-tracker.sh (PostToolUse on Write|Edit).
+session_artifact_list() {
+  echo "$(ralph_session_dir)/artifacts.list"
+}
+
+# Print artifacts THIS session wrote, in write order (last line = most
+# recent), optionally filtered by a path substring and/or a ticket id
+# (padding-tolerant). Skips entries whose file no longer exists. Prints
+# nothing when the tracker never recorded a matching write.
+session_artifacts() {
+  local dir_filter="${1:-}" ticket="${2:-}"
+  local list
+  list=$(session_artifact_list)
+  [[ -f "$list" ]] || return 0
+  local alt=""
+  [[ -n "$ticket" ]] && alt=$(ticket_id_alt_form "$ticket")
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" && -f "$path" ]] || continue
+    if [[ -n "$dir_filter" && "$path" != *"$dir_filter"* ]]; then
+      continue
+    fi
+    if [[ -n "$ticket" ]]; then
+      if [[ "$path" != *"$ticket"* ]] && { [[ -z "$alt" ]] || [[ "$path" != *"$alt"* ]]; }; then
+        continue
+      fi
+    fi
+    printf '%s\n' "$path"
+  done < "$list"
+}
+
+# find_existing_artifact plus a freshness window (minutes, default 30).
+# Fallback for postconditions when the session artifact list has no entry
+# (e.g. the doc was written by a dispatched sub-agent in a context where
+# the tracker hook was not registered).
+find_fresh_artifact() {
+  local artifact_dir="$1" ticket_id="$2" mmin="${3:-30}"
+  if [[ -z "$ticket_id" ]]; then
+    return 1
+  fi
+  # `|| true`: find exits 1 on a missing dir; under callers' set -euo
+  # pipefail that would abort the hook with rc=1 and nothing on stderr.
+  local result
+  result=$(find "$artifact_dir" -name "*${ticket_id}*" -type f -mmin "-${mmin}" 2>/dev/null | head -1 || true)
+  if [[ -n "$result" ]]; then
+    echo "$result"
+    return 0
+  fi
+  local alt
+  alt=$(ticket_id_alt_form "$ticket_id")
+  if [[ -n "$alt" ]]; then
+    find "$artifact_dir" -name "*${alt}*" -type f -mmin "-${mmin}" 2>/dev/null | head -1 || true
+  fi
 }
 
 # Returns the zero-padded 4-digit form of a ticket ID (GH-NNN -> GH-0NNN),
@@ -209,9 +285,3 @@ is_semantic_intent() {
   esac
 }
 
-# Get valid output states for command
-get_valid_output_states() {
-  local command="$1"
-  local state_machine="${2:-$SCRIPT_DIR/ralph-state-machine.json}"
-  jq -r --arg cmd "$command" '.commands[$cmd].valid_output_states | join(",")' "$state_machine"
-}

@@ -1,6 +1,20 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/plan-postcondition.sh
-# Stop: Verify plan completed successfully
+# Stop: Verify /ralph:plan completed successfully — in ANY mode.
+#
+# Mode discrimination is by artifact path, not env var (Bash-tool exports
+# don't propagate to hook subprocesses):
+#   - critique doc written under thoughts/shared/reviews/  → review-mode run
+#   - plan doc written under thoughts/shared/plans/        → plan-mode run
+# Both branches live in THIS script. (Historically they were two scripts —
+# plan-postcondition.sh + review-postcondition.sh — coordinating via a
+# mirror-image "path mutex"; merging them made the mutex an if/else.)
+#
+# Artifact discovery is session-scoped first (artifact-write-tracker.sh via
+# hook-utils.sh::session_artifacts) so concurrent sessions sharing
+# thoughts/shared/ can't cross-trigger, and long sessions don't fall out of
+# a freshness window. find_fresh_artifact remains as fallback for docs
+# written where the tracker wasn't registered.
 #
 # Exit codes:
 #   0 - Postconditions met
@@ -18,17 +32,11 @@ check_stop_hook_active
 
 # Accept PLAN REUSED as a non-error terminal state so ralph-plan can short-
 # circuit child plan generation when the parent plan already covers the
-# phase (Step 3.5 in ralph-plan/SKILL.md). Mirrors impl-postcondition.sh:25-37
-# transcript-inspection pattern — read transcript_path from stdin JSON, grep
-# the raw transcript for the marker. Runs BEFORE the ticket/plan-doc check
-# so a REUSED early-exit (which does NOT write a plan file) does not trip the
-# missing-plan-doc block.
+# phase (Step 3.5 in the plan skill). Mirrors impl-postcondition.sh's
+# transcript-inspection pattern — the marker appears inside a JSON
+# "text":"..." content field, never at column 0, so no anchor.
 TRANSCRIPT_PATH=$(get_field '.transcript_path')
 if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
-  # Match the marker anywhere in the transcript file (mirrors
-  # impl-postcondition.sh:33 which also greps the JSONL transcript without
-  # anchoring — the marker appears inside a JSON "text":"..." content field,
-  # never at column 0, so a "^PLAN REUSED " anchor would never fire).
   if grep -qE 'PLAN REUSED ' "$TRANSCRIPT_PATH"; then
     echo "plan-postcondition: PLAN REUSED terminal accepted (no new plan file written)"
     exit 0
@@ -40,42 +48,29 @@ if [[ -z "$ticket_id" ]]; then
   allow
 fi
 
-# Path-discriminated mode mutex: if a fresh critique doc exists for this
-# ticket under thoughts/shared/reviews/, /ralph:plan was invoked in
-# --mode review (not default / auto / epic / iterate). The sibling
-# review-postcondition.sh owns that verdict; this hook must no-op so it
-# does not hard-block on a missing plan doc when the artifact correctly
-# landed in reviews/ instead.
-#
-# Mirrors review-postcondition.sh's mode-discrimination block. Together
-# they form a path-based mutex that does not depend on env-var
-# propagation (which the Bash tool's per-call subshell breaks).
 project_root=$(get_project_root)
-reviews_dir="$project_root/thoughts/shared/reviews"
-if [[ -d "$reviews_dir" ]]; then
-  critique=$(find "$reviews_dir" -name "*${ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
-  if [[ -z "$critique" ]]; then
-    alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
-    if [[ -n "$alt_ticket_id" ]]; then
-      critique=$(find "$reviews_dir" -name "*${alt_ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
-    fi
-  fi
-  if [[ -n "$critique" ]]; then
-    echo "plan-postcondition: deferring to review-postcondition (fresh critique at $critique)"
-    exit 0
-  fi
+reviews_dir="$project_root/${RALPH_ARTIFACT_DIR:-thoughts/shared/reviews}"
+plans_dir="$project_root/thoughts/shared/plans"
+
+# --- Review-mode branch: fresh critique for this ticket ---------------------
+critique=$(session_artifacts "thoughts/shared/reviews" "$ticket_id" | tail -1)
+if [[ -z "$critique" ]]; then
+  critique=$(find_fresh_artifact "$reviews_dir" "$ticket_id" 30)
 fi
 
-plans_dir="$project_root/thoughts/shared/plans"
-# `|| true`: a missing plans dir must mean "no doc" (block below), not a
-# pipefail+set-e silent crash. Same guard as the reviews find above.
-doc=$(find "$plans_dir" -name "*${ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
-
-if [[ -z "$doc" ]]; then
-  alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
-  if [[ -n "$alt_ticket_id" ]]; then
-    doc=$(find "$plans_dir" -name "*${alt_ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
+if [[ -n "$critique" ]]; then
+  echo "plan-postcondition (review mode): critique found: $critique"
+  uncommitted=$(cd "$project_root" && git status --porcelain "${RALPH_ARTIFACT_DIR:-thoughts/shared/reviews}" 2>/dev/null | head -5 || true)
+  if [[ -n "$uncommitted" ]]; then
+    echo "WARNING: Uncommitted changes in reviews dir — commit before stopping for graph snapshot accuracy" >&2
   fi
+  exit 0
+fi
+
+# --- Plan-mode branch --------------------------------------------------------
+doc=$(session_artifacts "thoughts/shared/plans" "$ticket_id" | tail -1)
+if [[ -z "$doc" ]]; then
+  doc=$(find_fresh_artifact "$plans_dir" "$ticket_id" 30)
 fi
 
 if [[ -z "$doc" ]]; then
@@ -90,26 +85,6 @@ fi
 
 if ! git log --oneline -1 --all -- "$doc" 2>/dev/null | grep -q .; then
   warn "Plan doc exists but may not be committed: $doc"
-fi
-
-# Check for artifact comment marker (Gap 3: discovery sequence)
-marker_dir="/tmp/ralph-artifact-markers"
-issue_number=$(echo "$ticket_id" | grep -oE '[0-9]+' | head -1)
-if [[ -n "$issue_number" ]] && [[ ! -f "$marker_dir/artifact-comment-${issue_number}" ]]; then
-  echo "WARNING: Artifact comment marker absent for #${issue_number} — '## Implementation Plan' comment may not have been posted." >&2
-fi
-
-# --- Dependency graph sync check ---
-# If the plan has depends_on annotations, verify sync_plan_graph was called.
-# We check for a marker file that the sync_plan_graph tool creates on success,
-# since the hook runs in bash without MCP access.
-if grep -q 'depends_on.*\[' "$doc" 2>/dev/null; then
-  log_file="/tmp/ralph-plan-sync-${ticket_id}"
-  if [[ ! -f "$log_file" ]]; then
-    echo "WARNING: Plan has depends_on annotations but sync_plan_graph may not have been called." >&2
-    echo "   Run: ralph_hero__sync_plan_graph({ planPath: \"$doc\" })" >&2
-    # Non-blocking warning for now — upgrade to block once proven reliable
-  fi
 fi
 
 echo "Plan postcondition passed: $doc"

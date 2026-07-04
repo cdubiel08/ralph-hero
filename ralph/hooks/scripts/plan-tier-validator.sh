@@ -73,17 +73,18 @@ if [[ -z "$content" ]]; then
     old_string=$(get_field '.tool_input.old_string' || true)
     if [[ -n "$old_string" ]]; then
       # Use python for safe string replacement (avoids shell-escape
-      # nightmares with arbitrary content). Falls back to allow if
-      # python is unavailable — Edit support is best-effort.
+      # nightmares with arbitrary content). old/new travel as env vars and
+      # the path as argv — no shell interpolation into the source, and no
+      # in-band sentinel that document content could collide with. Falls
+      # back to allow if python is unavailable — Edit support is
+      # best-effort.
       if command -v python3 >/dev/null 2>&1; then
-        content=$(python3 -c "
-import sys
-with open('$file_path', 'r') as f:
+        content=$(PTV_OLD="$old_string" PTV_NEW="$new_string" python3 -c '
+import os, sys
+with open(sys.argv[1], "r") as f:
     src = f.read()
-old = sys.stdin.read().split('---OLD-NEW-SEP---')[0]
-new = sys.stdin.read().split('---OLD-NEW-SEP---')[1] if '---OLD-NEW-SEP---' in (old + new) else ''
-print(src.replace(old, new))
-" <<< "${old_string}---OLD-NEW-SEP---${new_string}" 2>/dev/null || true)
+print(src.replace(os.environ["PTV_OLD"], os.environ["PTV_NEW"]))
+' "$file_path" 2>/dev/null || true)
       fi
     fi
   fi

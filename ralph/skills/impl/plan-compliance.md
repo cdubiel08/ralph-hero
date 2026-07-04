@@ -16,8 +16,8 @@ The hook does NOT enforce the positive case (you must enumerate). It enforces th
 Example staged-add session:
 
 ```bash
-# Plan's File Ownership table lists: ralph/skills/impl/SKILL.md, ralph/hooks/scripts/impl-state-gate.sh
-git add ralph/skills/impl/SKILL.md ralph/hooks/scripts/impl-state-gate.sh
+# Plan's File Ownership table lists: ralph/skills/impl/SKILL.md, ralph/hooks/scripts/state-gate.sh
+git add ralph/skills/impl/SKILL.md ralph/hooks/scripts/state-gate.sh
 git commit -m "feat(ralph): Plan 5 Phase 1 — /ralph:impl scaffold + hook ports"
 ```
 

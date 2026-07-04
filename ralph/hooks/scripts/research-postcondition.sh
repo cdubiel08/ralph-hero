@@ -17,17 +17,13 @@ if [[ -z "$ticket_id" ]]; then
 fi
 
 research_dir="$(get_project_root)/thoughts/shared/research"
-# `|| true`: find exits 1 on a missing dir (stderr suppressed) and pipefail
-# would fail the assignment, making `set -e` kill the hook with rc=1 and
-# nothing on stderr. Missing dir must mean "no doc" (block below), not a
-# silent crash. Same guard as review-postcondition.sh.
-doc=$(find "$research_dir" -name "*${ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
-
+# Session-scoped discovery first (artifact-write-tracker.sh): immune to
+# concurrent sessions writing the same ticket's docs and to sessions that
+# outlive a freshness window. find_fresh_artifact is the fallback for docs
+# written where the tracker wasn't registered.
+doc=$(session_artifacts "thoughts/shared/research" "$ticket_id" | tail -1)
 if [[ -z "$doc" ]]; then
-  alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
-  if [[ -n "$alt_ticket_id" ]]; then
-    doc=$(find "$research_dir" -name "*${alt_ticket_id}*" -type f -mmin -30 2>/dev/null | head -1 || true)
-  fi
+  doc=$(find_fresh_artifact "$research_dir" "$ticket_id" 30)
 fi
 
 if [[ -z "$doc" ]]; then
@@ -53,13 +49,6 @@ fi
 
 if ! git log --oneline -1 --all -- "$doc" 2>/dev/null | grep -q .; then
   warn "Research doc exists but may not be committed: $doc"
-fi
-
-# Check for artifact comment marker (Gap 3: discovery sequence)
-marker_dir="/tmp/ralph-artifact-markers"
-issue_number=$(echo "$ticket_id" | grep -oE '[0-9]+' | head -1)
-if [[ -n "$issue_number" ]] && [[ ! -f "$marker_dir/artifact-comment-${issue_number}" ]]; then
-  echo "WARNING: Artifact comment marker absent for #${issue_number} — '## Research Document' comment may not have been posted." >&2
 fi
 
 echo "Research postcondition passed: $doc"

@@ -20,11 +20,16 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=research"
-  PostToolUse:
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
+  PreToolUse:
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/research-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh research research"
+  PostToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/artifact-write-tracker.sh"
   Stop:
     - hooks:
         - type: command

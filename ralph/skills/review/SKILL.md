@@ -7,18 +7,23 @@ hooks:
   SessionStart:
     - hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=review RALPH_VALID_OUTPUT_STATES='In Review,Done,Human Needed'"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=review"
   PreToolUse:
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue|mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/merge-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh review merge code_review"
     - matcher: "Bash"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/closeout-scout-gate.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/merge-review-decision-gate.sh"
+  PostToolUse:
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/artifact-write-tracker.sh"
   Stop:
     - hooks:
         - type: command

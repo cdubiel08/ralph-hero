@@ -97,7 +97,7 @@ Produce a split-plan summary:
 **Create new** — three-step pattern:
 
 1. **`create_issue`** with descriptive title, scoped body (scope + references + acceptance criteria), labels inherited from parent.
-2. **`add_sub_issue`** to link under the parent. The `split-verify-sub-issue.sh` hook (PostToolUse on `add_sub_issue`) verifies the linkage took effect — if it didn't, retry once; if still failing, document the orphan in a comment on the parent.
+2. **`add_sub_issue`** to link under the parent. Verify the linkage took effect (the tool response echoes the parent link) — if it didn't, retry once; if still failing, document the orphan in a comment on the parent.
 3. **Set estimate** per the sizing rubric. The `split-size-gate.sh` hook (PreToolUse on `create_issue`) blocks `M`/`L`/`XL` here — children MUST be XS or S.
 4. **Set initial workflow state**: advance to `Ready for Plan` (`command: "ralph_split"`) unless §Step 10's gating applies. Uniform across all children — including those blocked by a sibling via dependency.
 

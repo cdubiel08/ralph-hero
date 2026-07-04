@@ -107,11 +107,18 @@ If your merge invocation has a legitimate alternate shape, update
 ralph/hooks/scripts/merge-review-decision-gate.sh to recognize it."
 fi
 
-# Read the actual reviewDecision. `|| echo` keeps the script alive under
-# `set -euo pipefail` when the gh subcommand exits non-zero. Possible
-# values: APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, null (no review),
-# "null" (gh CLI literal when missing).
-review_decision=$(gh pr view "$pr_num" --json reviewDecision --jq '.reviewDecision // "null"' 2>/dev/null || echo "null")
+# Fetch every PR field the gate and both carve-outs need in ONE gh call
+# (reviewDecision for the gate; comments/reviewThreads/closingIssuesReferences
+# for the XS carve-out; author for the solo-repo carve-out). Previously each
+# consumer made its own gh pr view call — up to 4 round-trips for the same PR.
+# `|| echo ""` keeps the script alive under `set -euo pipefail` when gh exits
+# non-zero; every downstream jq extraction then resolves to its fail-closed
+# default.
+pr_json=$(gh pr view "$pr_num" --json reviewDecision,comments,reviewThreads,closingIssuesReferences,author 2>/dev/null || echo "")
+
+# Possible values: APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, null (no
+# review), "null" (literal when missing or when the fetch failed).
+review_decision=$(jq -r '.reviewDecision // "null"' <<<"$pr_json" 2>/dev/null || echo "null")
 
 # Happy path: explicit APPROVED.
 if [[ "$review_decision" == "APPROVED" ]]; then
@@ -146,31 +153,25 @@ esac
 # not silently fire on a multi-contributor repo or a missing-estimate issue.
 
 is_xs_no_comments_pr() {
-  local pr="$1"
-
-  # Count BOTH conversation comments AND review-thread (file-line) comments.
-  # gh pr view --json comments returns only the top-level conversation;
-  # reviewThreads carries the file-line review feedback that is the dominant
-  # review surface for substantive critique. Either source nonzero → carve-out
-  # does not apply.
+  # Count BOTH conversation comments AND review-thread (file-line) comments
+  # from the batched $pr_json. reviewThreads carries the file-line review
+  # feedback that is the dominant review surface for substantive critique.
+  # Either source nonzero → carve-out does not apply.
   local total_comments
-  total_comments=$(gh pr view "$pr" --json comments,reviewThreads \
-    --jq '(.comments | length) + ([.reviewThreads[]?.comments | length] | add // 0)' \
-    2>/dev/null || echo "unknown")
+  total_comments=$(jq -r '(.comments | length) + ([.reviewThreads[]?.comments | length] | add // 0)' \
+    <<<"$pr_json" 2>/dev/null || echo "unknown")
 
   if [[ "$total_comments" == "unknown" ]] || [[ ! "$total_comments" =~ ^[0-9]+$ ]]; then
-    return 1  # fail-closed: API error or unparseable count → carve-out denied
+    return 1  # fail-closed: fetch error or unparseable count → carve-out denied
   fi
   if [[ "$total_comments" != "0" ]]; then
     return 1
   fi
 
-  # Resolve the linked issue number. Prefer closingIssuesReferences (a
-  # GraphQL field; populated when the PR body has "Closes #N" / "Fixes #N").
+  # Resolve the linked issue number from closingIssuesReferences (populated
+  # when the PR body has "Closes #N" / "Fixes #N").
   local issue_num
-  issue_num=$(gh pr view "$pr" --json closingIssuesReferences \
-    --jq '.closingIssuesReferences[0].number // empty' \
-    2>/dev/null || echo "")
+  issue_num=$(jq -r '.closingIssuesReferences[0].number // empty' <<<"$pr_json" 2>/dev/null || echo "")
   if [[ -z "$issue_num" ]]; then
     return 1
   fi
@@ -184,10 +185,8 @@ is_xs_no_comments_pr() {
 }
 
 is_self_authored_solo_repo() {
-  local pr="$1"
-
   local pr_author current_user
-  pr_author=$(gh pr view "$pr" --json author --jq '.author.login' 2>/dev/null || echo "")
+  pr_author=$(jq -r '.author.login // empty' <<<"$pr_json" 2>/dev/null || echo "")
   current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
 
   if [[ -z "$pr_author" || -z "$current_user" || "$pr_author" != "$current_user" ]]; then
@@ -215,11 +214,11 @@ is_self_authored_solo_repo() {
   [[ "$contributor_count" -le 1 ]]
 }
 
-if is_xs_no_comments_pr "$pr_num"; then
+if is_xs_no_comments_pr; then
   allow
 fi
 
-if is_self_authored_solo_repo "$pr_num"; then
+if is_self_authored_solo_repo; then
   allow
 fi
 

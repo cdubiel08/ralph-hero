@@ -12,8 +12,8 @@
 # session, so interactive /ralph:research + /ralph:plan sessions in any repo
 # without the full thoughts/ layout hit this on EVERY Stop.
 #
-# review-postcondition.sh:44 already guards this with `|| true`; these tests
-# pin the same contract onto the sibling hooks.
+# hook-utils.sh's find_existing_artifact/find_fresh_artifact guard this with
+# `|| true`; these tests pin the same contract onto the Stop hooks.
 #
 # Run: bash ralph/hooks/scripts/__tests__/stop-hook-pipefail-guard.test.sh
 

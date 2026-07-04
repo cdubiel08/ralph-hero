@@ -6,7 +6,7 @@ Pick ONE Backlog issue, assess its validity, and route it. Autonomous — no hum
 export RALPH_SUBCOMMAND=triage
 ```
 
-`triage-state-gate.sh` (PostToolUse on `save_issue`) gates state transitions on `RALPH_SUBCOMMAND=triage`. `triage-postcondition.sh` (Stop) verifies the transcript carries a `TRIAGED <verdict>` or `Queue empty.` line before allowing exit.
+`state-gate.sh caretake:triage triage` (PostToolUse on `save_issue`) gates state transitions on `RALPH_SUBCOMMAND=triage`. `triage-postcondition.sh` (Stop) verifies the transcript carries a `TRIAGED <verdict>` or `Queue empty.` line before allowing exit.
 
 ## §Step 1: Verify branch
 
@@ -293,7 +293,7 @@ After escalating, apply the `ralph-triage` label so the issue is not re-picked.
 - May close/split/update issues (unlike other ralph commands).
 - No code changes.
 - Complete within 10 minutes.
-- The `triage-state-gate.sh` hook validates state transitions; `triage-postcondition.sh` validates the terminal token.
+- The `state-gate.sh` hook validates state transitions; `triage-postcondition.sh` validates the terminal token.
 
 ## §Migration note
 
