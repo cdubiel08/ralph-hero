@@ -138,7 +138,7 @@ The sub-agent's output IS the critique doc (with the workflow body fixing the fr
 | NEEDS_ITERATION | `save_issue(workflowState: "Plan in Progress", command: "review")` | Planner re-engages via `--mode iterate` |
 | Open in editor | No transition; re-loops the picker | Lets the reviewer read the full plan before deciding |
 
-The `review-state-gate.sh` hook validates that the transition matches the verdict.
+The `state-gate.sh` hook (registered on `save_issue` with the plan/plan_epic/review command keys) validates the transition against ralph-state-machine.json.
 
 ## Anti-patterns
 

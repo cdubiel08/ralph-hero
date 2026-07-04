@@ -24,13 +24,13 @@ hooks:
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hero-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh hero hero"
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pr-drain-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh hero:pr-drain pr_drain"
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/hero-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh hero hero"
   PostToolUse:
     - matcher: "Skill"
       hooks:

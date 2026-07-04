@@ -39,26 +39,31 @@ hooks:
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh plan plan plan_epic review"
   PostToolUse:
     - matcher: "Write"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-verify-doc.sh"
-  # review-state-gate stays unregistered (state-gate union lives on
-  # plan-state-gate; double-firing would block legitimate transitions).
-  # review-postcondition IS registered (re-added in GH-1378 fix). It uses
-  # PATH-based mode discrimination: no-ops unless a fresh critique doc
-  # exists for the ticket in thoughts/shared/reviews/. plan-postcondition
-  # mirrors the pattern in reverse — it no-ops when a fresh critique
-  # exists (review-mode) and validates the plan doc otherwise. Together
-  # they form a mutex that does NOT rely on env-var propagation, which
-  # Bash exports across the per-call subshell do not reliably provide.
+    - matcher: "Write|Edit"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/artifact-write-tracker.sh"
+  # state-gate.sh carries the union of valid transitions across all five
+  # plan modes via its command keys (plan + plan_epic + review), read from
+  # ralph-state-machine.json.
+  # plan-postcondition owns BOTH plan-mode and review-mode Stop checks,
+  # discriminating by which artifact path this session wrote (critique
+  # under reviews/ → review mode; plan doc under plans/ → plan mode).
+  # Artifact discovery is session-scoped via artifact-write-tracker.sh
+  # (PostToolUse Write|Edit below), NOT env vars — Bash exports across the
+  # per-call subshell do not reliably reach hook subprocesses — and NOT
+  # directory mtime, which raced against concurrent sessions.
   # The other path-discrimination guards still hold:
-  #   - doc-structure-validator auto-picks branch from which artifact dir
-  #     has the most recent today-prefixed doc,
+  #   - doc-structure-validator picks its branch from each session-written
+  #     doc's artifact dir,
   #   - review-verify-doc + review-no-dup self-no-op on file_path,
-  #   - plan-state-gate accepts the union of valid transitions across modes.
+  #   - state-gate.sh accepts the union of valid transitions across modes.
   Stop:
     - hooks:
         - type: command
@@ -67,8 +72,6 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-postcondition.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/remember-turn.sh"
 allowed-tools:
@@ -129,7 +132,7 @@ Set `MODE` ∈ `{default, auto, epic, iterate, review}` from `--mode` flag (defa
 - MODE `review` → `Skill("loop", …)` using the `plan:review` row, then STOP.
 - MODE `default`, `iterate`, or `epic` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
-No env-flip is needed between modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch by which artifact dir has the most recent today-prefixed doc; plan-state-gate accepts the union of legitimate transitions across all modes).
+No env-flip is needed between modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch from each session-written doc's artifact dir; state-gate.sh accepts the union of legitimate transitions across all modes).
 
 ## Default flow
 
@@ -180,21 +183,21 @@ Surgical updates to an existing plan. No state transitions (the plan stays in wh
 2. **Understand feedback** — `ARG` extra positional or prompt for it. Restate the change in one sentence.
 3. **Confirm approach** — `AskUserQuestion`: *Apply as proposed* / *Adjust* / *Abort*. Loop on Adjust.
 4. **Apply surgical edits** — prefer `Edit` over `Write` per `iteration.md` § Surgical-update principle. Preserve phase numbering; add follow-up sections rather than renumbering. Renumbering escape hatch: see `iteration.md` § Phase numbering preservation.
-5. **Update issue** — post `## Plan Updated` comment summarizing what changed. Do NOT advance state. Do NOT call `save_issue` for workflow transitions in iterate mode (`plan-state-gate.sh` validates transition legitimacy; iterate-mode workflow-body discipline keeps it out of the gate entirely).
+5. **Update issue** — post `## Plan Updated` comment summarizing what changed. Do NOT advance state. Do NOT call `save_issue` for workflow transitions in iterate mode (`state-gate.sh` validates transition legitimacy; iterate-mode workflow-body discipline keeps it out of the gate entirely).
 6. **Report** — *Plan iterated for #NNN: [Title] / Plan: [path] / Changes: [1-line summary]*.
 
 ## --mode review
 
 Critique an existing plan and emit APPROVED / NEEDS_ITERATION. Folds `ralph-review`. Consult `plan-review.md`.
 
-Mode discrimination is path-based: the Stop chain's `plan-postcondition.sh` no-ops when a fresh critique doc exists under `thoughts/shared/reviews/` for this ticket, and `review-postcondition.sh` activates only when one does. No env-var propagation across Bash subshells required.
+Mode discrimination is path-based: the Stop chain's `plan-postcondition.sh` branches on which artifact this session wrote — a critique under `thoughts/shared/reviews/` selects the review-mode checks, a plan doc under `thoughts/shared/plans/` the plan-mode checks (session writes recorded by `artifact-write-tracker.sh`). No env-var propagation across Bash subshells required.
 
 1. **Resolve plan + issue** — `ARG=#NNN` → `get_issue`; locate the `## Implementation Plan` artifact. `--plan-doc <path>` accepted as override.
 2. **Validate plan exists** — if absent, escalate the issue to "Human Needed". STOP.
 3. **Execute rubric** — read plan FULLY. Score against `plan-review.md` § Review rubric.
 4. **Pick mode (interactive vs auto)** — if `RALPH_REVIEW_PLAN=auto`, dispatch a sub-agent for delegated critique. Else `AskUserQuestion`: *Approve* / *Approve with edits* / *Request changes* / *Open in editor* (the two change paths open a multi-select category sub-picker + free-text; see `plan-review.md` § Interactive vs auto).
 5. **Write critique doc** — `thoughts/shared/reviews/YYYY-MM-DD-GH-NNNN-critique.md` per `plan-review.md` § Critique-doc structure. `review-no-dup.sh` blocks if a critique already exists.
-6. **Verdict + transition** — APPROVED → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts. `plan-state-gate.sh` is broad enough to accept both (see hook script header for the union-of-modes valid set).
+6. **Verdict + transition** — APPROVED → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts. `state-gate.sh` is broad enough to accept both (its plan/plan_epic/review command keys union the valid sets from ralph-state-machine.json).
 7. **Report** — *Plan reviewed for #NNN: [Title] / Verdict: APPROVED|NEEDS_ITERATION / Critique: [path]*.
 
 ## References

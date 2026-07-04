@@ -27,9 +27,7 @@ hooks:
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-state-gate.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pr-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh impl impl pr"
     - matcher: "Bash"
       hooks:
         - type: command
@@ -41,6 +39,8 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/drift-tracker.sh"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/artifact-write-tracker.sh"
     - matcher: "Bash"
       hooks:
         - type: command

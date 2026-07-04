@@ -30,14 +30,10 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-verify-sub-issue.sh"
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-state-gate.sh"
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh caretake:triage triage"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/unblock-state-gate.sh"
   Stop:

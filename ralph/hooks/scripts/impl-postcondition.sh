@@ -18,17 +18,17 @@ check_stop_hook_active
 
 # Accept IMPL BLOCKED as a non-error terminal state so hero can re-dispatch
 # the same issue at a higher model tier without the Stop hook treating the
-# tier-escalation handoff as a failure. Mirrors val-postcondition.sh:28-37 —
+# tier-escalation handoff as a failure. Transcript-inspection pattern (shared
+# with plan-postcondition.sh's PLAN REUSED escape and closeout-postcondition) —
 # read transcript_path from stdin JSON, grep the raw transcript for the
 # marker. Runs BEFORE the worktree check so a BLOCKED early-exit (which can
 # happen before the worktree is fully populated) does not trip the
 # missing-worktree block.
 TRANSCRIPT_PATH=$(get_field '.transcript_path')
 if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
-  # Match the marker anywhere in the transcript file (mirrors
-  # val-postcondition.sh:30 which also greps the JSONL transcript without
-  # anchoring — the marker appears inside a JSON "text":"..." content field,
-  # never at column 0, so a "^IMPL BLOCKED " anchor would never fire).
+  # Match the marker anywhere in the transcript file — it appears inside a
+  # JSON "text":"..." content field, never at column 0, so a
+  # "^IMPL BLOCKED " anchor would never fire.
   # The "IMPL " prefix and "BLOCKED " token together are unique enough that
   # collision risk is negligible.
   if grep -qE 'IMPL BLOCKED ' "$TRANSCRIPT_PATH"; then

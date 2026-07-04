@@ -88,7 +88,7 @@
     "ralph_triage": {
       "description": "Assess and route backlog tickets",
       "valid_input_states": ["Backlog"],
-      "valid_output_states": ["Research Needed", "Ready for Plan", "Done", "Canceled", "Human Needed"],
+      "valid_output_states": ["Research Needed", "Ready for Plan", "Done", "Canceled", "Human Needed", "Backlog"],
       "can_create_tickets": true,
       "can_modify_blocks": true,
       "preconditions": [
@@ -213,7 +213,7 @@
     "ralph_hero": {
       "description": "Orchestrate full ticket lifecycle",
       "valid_input_states": ["Backlog", "Research Needed", "Ready for Plan", "Plan in Review", "In Progress"],
-      "valid_output_states": ["In Review", "Human Needed"],
+      "valid_output_states": ["Research Needed", "Research in Progress", "Ready for Plan", "Plan in Progress", "Plan in Review", "In Progress", "In Review", "Done", "Human Needed"],
       "delegates_to": ["ralph_split", "ralph_research", "ralph_plan", "ralph_review", "ralph_impl"],
       "uses_task_system": true,
       "preconditions": [
@@ -285,6 +285,14 @@
       "postconditions": [
         "Autonomous mode: ## Unblock Request comment posted, ticket remains Human Needed",
         "Interactive mode: ## Unblock Resolution comment posted, ticket transitioned to one of the 4 valid re-entry states"
+      ]
+    },
+    "ralph_pr_drain": {
+      "description": "Drain external PRs via synth issues (/ralph:hero --mode pr-drain, kind:pr-drain label)",
+      "valid_input_states": ["In Progress"],
+      "valid_output_states": ["In Progress", "Done", "Human Needed"],
+      "postconditions": [
+        "Synth issue reached Done (terminal-success) or Human Needed (needs-human / merge-failed)"
       ]
     }
   },
