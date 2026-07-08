@@ -89,7 +89,7 @@ When `LINKED_ISSUE` is set and the issue is a child of a parent issue:
    No separate child plan needed.
    ```
 
-   For a **group-plan** match, additionally append the child to the plan's `github_issues:` frontmatter if absent — the child joins the group's PR train and ships in the group's single PR (one more `Closes #` line at PR time).
+   For a **group-plan** match, additionally append the child to the plan's `github_issues:` frontmatter if absent — the child joins the group's PR train and ships in the group's single PR (one more `Closes #` line at PR time). If the group's PR is ALREADY open, also append `Closes #<child>` to the PR body now (`gh pr edit <N> --body ...`) — `sync-pr-merge.yml` reads `closingIssuesReferences` at merge time, so a body line added before merge still closes the child.
 
    Advance the child issue from "Ready for Plan" → "In Progress" directly (skipping "Plan in Review"). STOP — no more steps.
 
