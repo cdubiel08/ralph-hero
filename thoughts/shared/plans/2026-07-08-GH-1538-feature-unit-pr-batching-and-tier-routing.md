@@ -259,8 +259,8 @@ assumes exactly one `save_issue` target per session.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep + shellcheck pass
-- [ ] `doc-structure-validator.sh` accepts a fixture group plan (add fixture to its test if one exists)
+- [x] Hook test sweep + shellcheck pass
+- [x] `doc-structure-validator.sh` accepts a fixture group plan (add fixture to its test if one exists)
 
 #### Manual Verification
 - [ ] Dogfood: split an M issue into 2-3 children on this repo's board, run `/ralph:plan --auto`, observe ONE plan doc with `github_issues:` covering all children and all children in "Plan in Review"

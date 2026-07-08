@@ -170,6 +170,29 @@ Worked example:
 
 Tasks without the four YAML fields still parse — no hook blocks on their absence. `plan-postcondition.sh` warns only when the per-phase `depends_on:` annotation is present but `sync_plan_graph` was not called. Wave 2 may add a doc-structure-level check for the per-task fields once the plan corpus is consistent.
 
+## Group plans (feature = PR unit)
+
+A group plan covers a set of sibling issues that ship as ONE PR (GH-1538).
+It is a **standard plan** — same required sections, same
+`doc-structure-validator.sh` branch — distinguished only by frontmatter and
+the phase↔member convention:
+
+- **Frontmatter**: `github_issues: [NNN, NNN, ...]` (every member),
+  `primary_issue:` (lowest member number — keys the worktree
+  `GH-[primary]` and branch `feature/GH-[primary]`), `estimate:` set to the
+  HIGHEST member estimate (drives the research-required gate honestly).
+- **Phase↔member mapping**: one `## Phase N: GH-NNN — <name>` per member,
+  in dependency order. Phase `depends_on:` mirrors the members' `blockedBy`
+  edges (intra-group edges become phase ordering; they do NOT keep members
+  out of the group).
+- **Downstream**: `/ralph:impl --mode auto` executes phases in the shared
+  worktree; `--mode pr` emits one `Closes #NNN` per member;
+  `sync-pr-merge.yml` advances every member on merge.
+
+Authored by `--mode auto` Step 2a (sibling-group detection, see
+`intake-routing.md` § Sibling-group planning) or by hand. Late-arriving
+siblings are appended to `github_issues:` by the parent-plan-reuse path.
+
 ## Plan-of-plans variant (epic mode)
 
 Epic mode writes a different shape — see `decomposition.md` § Plan-of-plans shape. Key differences:
