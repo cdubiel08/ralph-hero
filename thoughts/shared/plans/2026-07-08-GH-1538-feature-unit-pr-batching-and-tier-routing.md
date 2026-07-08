@@ -461,7 +461,7 @@ verification).
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep passes (no gate regressions on the extended review flow)
+- [x] Hook test sweep passes (no gate regressions on the extended review flow)
 - [x] `bash scripts/check-doc-rosters.sh`
 
 #### Manual Verification
