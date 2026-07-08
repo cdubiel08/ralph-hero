@@ -70,6 +70,43 @@ Escalate on BLOCKED, never preemptively.
 | merge / catch-up agents, locators, log-reader | haiku | `ralph/agents/*.md` |
 | impl per-phase quality reviewer (`Agent()`-dispatched inline, not a named agent file) | opus | `ralph/skills/impl/phase-execution.md` — kept opus as a review-function surface; not touched by this re-tier |
 | impl per-task sub-agents | haiku/sonnet/opus by `complexity:` | `ralph/skills/impl/phase-execution.md` |
+| impl deterministic test-runner (per-phase Automated Verification) | haiku | `ralph/skills/impl/phase-execution.md` §Phase quality review step 6 |
+| behavior verification (feature close-out, UI-surface PRs only) | opus | `ralph/skills/review/behavior-verification.md` |
+
+The frontmatter pins above are STATIC defaults. The autonomous paths
+additionally route tiers per unit size — see the next section.
+
+## Tier routing by unit size (GH-1538)
+
+The unit of work — single issue vs feature group vs epic — drives which
+tier the judgment bookends run at. Mechanism: **per-invocation
+`Agent(model=...)` params at the dispatch sites only** — zero frontmatter
+changes, so the GH-1487 entitlement failure (a bare `model: fable` pin
+hard-erroring for non-Fable accounts) cannot recur; every fable use below
+is a fork whose frontmatter or param a non-Fable account neutralizes with
+`CLAUDE_CODE_SUBAGENT_MODEL=opus`.
+
+| Unit | Research | Plan author | Plan critique | Impl | Deterministic tests | Behavior (UI) | Plan-vs-delivery val |
+|---|---|---|---|---|---|---|---|
+| Single XS/S (no group) | sonnet (inline) | **sonnet** (plan-agent fork, `model="sonnet"`) | **opus** (review-agent fork, `model="opus"`) | sonnet (+BLOCKED→opus) | haiku | skipped | sonnet (val-agent default) |
+| Feature group (`github_issues:` plan) or M single | **fable** (research-agent fork, `model="fable"`) | **fable** (inline in the `best` plan session) | **fable** (review-agent frontmatter default) | sonnet (+BLOCKED→opus) | haiku | opus (blocking) | **fable** (val-agent fork, `model="fable"`) |
+| Epic (plan-of-plans) | **fable** | **fable** (epic decomposition in the `best` session) | **fable** | per-feature cycles | per-feature | per-feature | **fable** epic close-out validation |
+
+Dispatch sites implementing this routing:
+
+- `ralph/skills/hero/dispatch.md` §Skill() vs Agent() — RESEARCH fork row.
+- `ralph/skills/plan/SKILL.md` `--mode auto` Step 6 — singles fork
+  plan-agent at sonnet; groups author inline.
+- `ralph/skills/plan/plan-review.md` §Interactive vs auto — review-agent
+  fork, `model="opus"` for singles, frontmatter fable for groups/epics.
+- `ralph/skills/review/SKILL.md` default Step 2 — val-agent fork,
+  `model="fable"` for group plans / plan-of-plans.
+
+Rationale: fable spend concentrates on the four judgment bookends of
+feature/epic cycles (research, plan, critique, final validation) where a
+bad output has no independent detector; singles are small enough that
+sonnet/opus + the deterministic gates catch failures, and their volume is
+exactly where per-issue fable spend was the cost leak.
 
 ## Per-session overrides
 

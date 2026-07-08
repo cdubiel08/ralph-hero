@@ -196,9 +196,9 @@ Model the harness on the existing gate tests in `__tests__/`.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] New test file passes standalone: `bash ralph/hooks/scripts/__tests__/merge-review-decision-gate-group.test.sh`
-- [ ] Full hook test sweep passes
-- [ ] `shellcheck -S error ralph/hooks/scripts/merge-review-decision-gate.sh`
+- [x] New test file passes standalone: `bash ralph/hooks/scripts/__tests__/merge-review-decision-gate-group.test.sh`
+- [x] Full hook test sweep passes
+- [x] `shellcheck -S error ralph/hooks/scripts/merge-review-decision-gate.sh`
 
 #### Manual Verification
 - [ ] On a real group PR (Phase 2+ dogfood), the carve-out decision reflects the highest member estimate
@@ -259,8 +259,8 @@ assumes exactly one `save_issue` target per session.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep + shellcheck pass
-- [ ] `doc-structure-validator.sh` accepts a fixture group plan (add fixture to its test if one exists)
+- [x] Hook test sweep + shellcheck pass
+- [x] `doc-structure-validator.sh` accepts a fixture group plan (add fixture to its test if one exists)
 
 #### Manual Verification
 - [ ] Dogfood: split an M issue into 2-3 children on this repo's board, run `/ralph:plan --auto`, observe ONE plan doc with `github_issues:` covering all children and all children in "Plan in Review"
@@ -304,7 +304,7 @@ phases of one plan.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `bash scripts/check-doc-rosters.sh` (docs consistency)
+- [x] `bash scripts/check-doc-rosters.sh` (docs consistency)
 
 #### Manual Verification
 - [ ] A fresh `/ralph:caretake --mode split` on an M issue produces children only at genuinely independent boundaries (spot-check reasoning in the split comment)
@@ -350,7 +350,7 @@ that per-child `__CLOSE__` transitions cover all `github_issues` members.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep passes (impl-postcondition, merge gates)
+- [x] Hook test sweep passes (impl-postcondition, merge gates)
 
 #### Manual Verification
 - [ ] Dogfood continuation from Phase 2: `/ralph:impl --auto` executes phases in ONE worktree `GH-[primary]`; `/ralph:impl --mode pr` creates ONE PR with N `Closes #` lines; merge moves all children to Done and parent auto-advances
@@ -412,8 +412,8 @@ Update the 9-verb table's plan/review/hero rows to mention unit-size routing
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `bash scripts/check-doc-rosters.sh`
-- [ ] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` (no frontmatter drift)
+- [x] `bash scripts/check-doc-rosters.sh`
+- [x] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` (no frontmatter drift)
 
 #### Manual Verification
 - [ ] `/ralph:plan --auto` on a single XS issue shows a sonnet plan-agent fork (transcript check); on a group, inline fable authoring
@@ -461,8 +461,8 @@ verification).
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep passes (no gate regressions on the extended review flow)
-- [ ] `bash scripts/check-doc-rosters.sh`
+- [x] Hook test sweep passes (no gate regressions on the extended review flow)
+- [x] `bash scripts/check-doc-rosters.sh`
 
 #### Manual Verification
 - [ ] Dogfood a UI-touching feature group: behavior-verification stage runs, produces screenshots, and its verdict gates the merge
@@ -502,7 +502,7 @@ opus behavior → one PR) → fable epic close-out validation.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep + doc-roster check pass
+- [x] Hook test sweep + doc-roster check pass
 
 #### Manual Verification
 - [ ] Dogfood: complete a 2-feature epic; observe the close-out validation comment on the epic and correct verdict routing

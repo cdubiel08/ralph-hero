@@ -91,6 +91,14 @@ ec=$(run_hook s-review)
 [[ "$ec" == "0" ]] && pass "session-written valid critique passes" \
   || fail "valid critique — expected 0, got $ec"
 
+# --- Group plan (github_issues frontmatter) validates as a standard plan (GH-1538) --
+doc="$SBX/proj/thoughts/shared/plans/${TODAY}-GH-8-group.md"
+printf '%s' $'---\ntype: plan\ngithub_issues: [101, 102, 103]\nprimary_issue: 101\nestimate: S\n---\n\n## Phase 1: GH-101 — first member\n\n#### Automated Verification\n\n- [ ] tests pass\n\n## Phase 2: GH-102 — second member\n\n#### Automated Verification\n\n- [ ] tests pass' > "$doc"
+record s-group "$doc"
+ec=$(run_hook s-group)
+[[ "$ec" == "0" ]] && pass "group plan (github_issues) validates via the standard plan branch" \
+  || fail "group plan — expected 0, got $ec"
+
 # --- Multiple session docs: one invalid blocks -------------------------------------
 good="$SBX/proj/thoughts/shared/plans/${TODAY}-GH-5-good.md"
 bad="$SBX/proj/thoughts/shared/research/${TODAY}-GH-5-bad.md"

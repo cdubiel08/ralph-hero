@@ -118,11 +118,15 @@ if [[ "$(uname -s)" == "Darwin" ]]; then open "<plan-local-path>"; else xdg-open
 
 > The old 5-label picker (Approve / Minor Changes / Major Changes / Reject / Open in editor) collapses to these 4 outcomes: "Major Changes" and "Reject" routed to the identical Issues sub-flow, so "Request changes" carries both. If the literal 5 labels are ever needed, split into a verdict-tier picker followed by a Minor/Major severity picker (each ≤4 options).
 
-**Auto** (`--review-plan auto` or env `RALPH_REVIEW_PLAN=auto`): dispatch a sub-agent for delegated critique:
+**Auto** (`--review-plan auto` or env `RALPH_REVIEW_PLAN=auto`): dispatch a sub-agent for delegated critique, tier-routed by unit size (GH-1538):
+
+- **Single XS/S plan** — `Agent(subagent_type="ralph:review-agent", model="opus", prompt=...)`. Singles skip fable; opus covers a small plan's rubric pass.
+- **Group plan (`github_issues:`), M single, or plan-of-plans** — same call with NO `model` param, so the agent's frontmatter `model: fable` applies (the independent critique of a feature/epic plan is a judgment bookend). Non-Fable accounts rescue via `CLAUDE_CODE_SUBAGENT_MODEL=opus` (it flattens the singles route too — acceptable).
 
 ```
 Agent(
-  subagent_type="general-purpose",
+  subagent_type="ralph:review-agent",
+  model="opus",   # single XS/S only — OMIT for group / M / plan-of-plans units
   prompt="Review the implementation plan at <path> against the rubric in plan-review.md. Produce a verdict (APPROVED / NEEDS_ITERATION) with per-dimension scoring. Be specific about gaps."
 )
 ```

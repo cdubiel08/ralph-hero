@@ -188,9 +188,9 @@ Ask the user via AskUserQuestion what to do next:
 
 ## `--mode pr` — push branch and create pull request
 
-1. **Parse args** — `#NNN` provided OR queue-pick: `list_issues(workflowState: "In Progress", limit: 10)`; for each candidate check `worktrees/GH-NNN` exists AND no open PR for `feature/GH-NNN`. STOP with literal `Queue empty.` if none match. (This literal is the loop-runner sentinel.)
-2. **Fetch issue + worktree** — `feature/GH-NNN` branch. Detect cross-repo per [pr-creation.md §Cross-repo](pr-creation.md) if multiple worktrees exist.
-3. **Push branch** — `git push -u origin feature/GH-NNN` from the worktree.
+1. **Parse args** — `#NNN` provided OR queue-pick: `list_issues(workflowState: "In Progress", limit: 10)`; **resolve each candidate to its plan's WORKTREE_ID first** (locate the plan per the Artifact Comment Protocol; group plan → `GH-[primary_issue]`, single → `GH-NNN`), then check `worktrees/<WORKTREE_ID>` exists AND no open PR for `feature/<WORKTREE_ID>`. De-duplicate candidates sharing a plan — group members resolve to the SAME worktree ID; the first wins and the one PR closes every member (GH-1538). STOP with literal `Queue empty.` if none match. (This literal is the loop-runner sentinel.)
+2. **Fetch issue + worktree** — `feature/<WORKTREE_ID>` branch. Detect cross-repo per [pr-creation.md §Cross-repo](pr-creation.md) if multiple worktrees exist.
+3. **Push branch** — `git push -u origin feature/<WORKTREE_ID>` from the worktree.
 4. **Compose PR body** — `## Summary` (optional delegation per [pr-creation.md §Delegated Summary](pr-creation.md)) + `## Plan` (link) + `## Test plan` (from Success Criteria) + `Closes #NNN` (one per sub-issue for groups).
 5. **Create PR** — `gh pr create --title "GH-NNN: <title>" --body-file <body> --head feature/GH-NNN --base main`. Capture URL.
 6. **Advance issues** to "In Review" via `save_issue` (standalone: own state; group: every child; never advance parent — server-side workflow handles that).

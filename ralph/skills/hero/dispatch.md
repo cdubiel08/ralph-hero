@@ -17,11 +17,14 @@
 
 All targets are skills in the same `ralph` plugin → unqualified names work in `Skill()` calls.
 
+**Group unit (GH-1538):** PLAN, IMPLEMENT, PR, and INTEGRATE operate on the *plan group*, not the individual leaf. Once a sibling group plan exists (frontmatter `github_issues`), hero treats all members as one pipeline unit: one plan task, one worktree/branch, one PR closing every member. On the classify/auto path, SKIP any issue whose group is already in flight — a sibling group plan covering it exists and its train (plan → phases → PR) is the vehicle; dispatching the member separately would fork a duplicate PR.
+
 ## Skill() vs Agent()
 
 | Phase | Dispatch | Why |
 |---|---|---|
-| SPLIT, RESEARCH, PLAN, REVIEW (plan), INTEGRATE | `Skill("ralph:<verb>", args="NNN ...")` | Inline — these read/write durable state via MCP and need to share hero's context for resumability |
+| SPLIT, RESEARCH (XS/S single), PLAN, REVIEW (plan), INTEGRATE | `Skill("ralph:<verb>", args="NNN ...")` | Inline — these read/write durable state via MCP and need to share hero's context for resumability |
+| RESEARCH (feature/epic unit: estimate M+ or `kind:epic`/`kind:feature`) | `Agent(subagent_type="ralph:research-agent", model="fable", prompt="Research GH-NNN ... follow ${CLAUDE_PLUGIN_ROOT}/skills/research/*.md refs; write findings doc; advance to Ready for Plan")` | Tier routing by unit size (GH-1538): feature/epic research is a fable bookend — the findings doc steers every downstream phase. XS/S singles keep the cheap inline sonnet path. `CLAUDE_CODE_SUBAGENT_MODEL=opus` is the non-Fable rescue (flattens all forks — documented in docs/model-tier-policy.md). |
 | IMPLEMENT | `Skill("ralph:impl", args="NNN --auto --plan-doc PATH")` | The slim plugin uses `--auto` mode (one phase per invocation in an isolated worktree, enforced by `impl-worktree-gate.sh`). The runtime gates worktree isolation; hero does not need a separate Agent() session for this. |
 | PR (within IMPLEMENT) | `Skill("ralph:impl", args="NNN --mode pr")` | PR creation is `/ralph:impl --mode pr` — preserves the loop-runner sentinel `Queue empty.` and the queue-pick semantics from the source `ralph-pr` skill. |
 
@@ -83,7 +86,7 @@ After all PRs created, read `$RALPH_REVIEW_MODE` (default `interactive`):
 
 **`interactive`:** report PR URLs, STOP. Human must re-run `/ralph:hero NNN` or `/ralph:review NNN`.
 
-**`auto`:** dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics (it's Plan 6's verb).
+**`auto`:** dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics (it's Plan 6's verb) — including the epic close-out validation when the merge closes an epic's last child (fable val-agent, `ralph/skills/review/merge-gate.md` § Epic close-out validation).
 
 ## Error handling
 

@@ -15,6 +15,7 @@ Do NOT split when:
 - The work is genuinely atomic (one file, one PR, one acceptance criterion).
 - The scope is unclear (route to `--mode triage` → Research Needed instead).
 - The parent is already fully split (children exist that cover the entire scope).
+- The children would merge in one PR anyway (single surface, shared revert scope) — that's a multi-phase plan, not a split (GH-1538). Splitting is for work that must ship independently: separate PR/revert scope, different surfaces or repos, or genuinely parallel implementation streams. Sub-deliverables that land together are plan phases.
 
 ## §Decomposition heuristics
 
@@ -49,6 +50,8 @@ Pick from the rubric — do NOT default every child to XS. The `split-size-gate.
 
 When the strategy table maps to a per-artifact decomposition where each child owns multiple authored files (skill audits, fragment extractions, multi-file content updates), pick **S**. Reserve **XS** for genuinely single-file or one-edit children.
 
+Note (GH-1538): XS/S children of one split parent are batch-planned downstream as ONE group plan (`plan --mode auto` § Sibling-group planning) and ship as ONE PR — per-child estimates therefore size *phases* of that plan, not separate PR-sized deliverables.
+
 ## §Dependency wiring
 
 `add_dependency` sets `blockedBy` between sub-issues. Two patterns:
@@ -80,6 +83,8 @@ A multi-child split (`SPLIT <N>`, N ≥ 2) writes a **parent plan-of-plans** in 
 **Consistency:** `## Feature Sequencing` must equal the `## Issue Split` comment's dependency chain (§Step 8) — same edges, same order.
 
 **Why split (not plan) writes it:** split runs in **caretake** context, where the plan skill's `plan-research-required.sh` Write gate is not armed, so it can write a `plans/` doc with no research doc. The plan skill itself cannot (its own gate blocks the write).
+
+**Group-plan handoff (GH-1538):** the plan-of-plans is a sequencing/traceability artifact, not the executable plan. Downstream, `plan --mode auto` detects the split siblings via § Sibling-group planning (`ralph/skills/plan/intake-routing.md`) and authors ONE group plan covering every open Ready-for-Plan child — the children converge on one worktree, one branch, one PR.
 
 ## §Hook contracts
 

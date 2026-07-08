@@ -32,7 +32,7 @@
 |    |   |   APPROVED -> advance, continue                           |
 |    |   |   REJECTED -> STOP                                        |
 |    |- IMPLEMENT (sequential) -- execute plan phases                |
-|    |- PR (per issue)                                               |
+|    |- PR (per feature plan; one PR closes all group members)       |
 |    v                                                               |
 |  MERGE GATE                                                        |
 |    | merge review is "interactive" (default):                      |
@@ -42,10 +42,29 @@
 |    v                                                               |
 |  INTEGRATOR PHASE                                                  |
 |    |- /ralph:review GH-[PRIMARY] (validate, merge, CI watch)       |
+|    |- EPIC CLOSE-OUT (last child merged): fable val-agent judges   |
+|    |   delivered-vs-intent vs the plan-of-plans; GAPS -> parent to |
+|    |   Human Needed (see merge-gate.md § Epic close-out validation)|
 |    v                                                               |
 |  COMPLETE                                                          |
 +-------------------------------------------------------------------+
 ```
+
+## The epic outer cycle (GH-1538)
+
+Feature/epic work runs as two nested cycles with fable bookends:
+
+- **Epic cycle**: fable research + decomposition (plan-of-plans) → one
+  feature cycle per child → fable epic close-out validation
+  (delivered-vs-intent, `merge-gate.md` § Epic close-out validation).
+- **Feature cycle**: fable group plan + fable independent critique →
+  sonnet impl (one phase per tick, haiku deterministic test-runner per
+  phase) → opus behavior verification when the diff has UI surface →
+  ONE PR closing every member → fable plan-vs-delivery val at close-out.
+
+Single XS/S issues outside any group skip the fable bookends entirely
+(sonnet plan, opus critique, sonnet val) — see
+`docs/model-tier-policy.md` § Tier routing by unit size.
 
 ## Phases
 

@@ -64,17 +64,17 @@ plugin/
 |------|-----------|---------|
 | `/ralph:catch-up` | inherit (haiku narrative agent) | Orientation: narrative + picker or single-surface mode |
 | `/ralph:form` | inherit | Issue intake: dedup, draft, tree |
-| `/ralph:research` | sonnet | Research: interactive or autonomous queue-drain |
-| `/ralph:plan` | best (fable→opus) | Planning: interactive, auto, epic, iterate, review |
-| `/ralph:impl` | sonnet session / complexity ladder (haiku-opus) | Implementation: auto, pr, address |
-| `/ralph:review` | best (fable→opus) | Review: val, code, merge |
+| `/ralph:research` | sonnet (feature/epic units: fable fork) | Research: interactive or autonomous queue-drain |
+| `/ralph:plan` | best (fable→opus); single XS/S auto-plans fork sonnet | Planning: interactive, auto, epic, iterate, review |
+| `/ralph:impl` | sonnet session / complexity ladder (haiku-opus) + haiku test-runner | Implementation: auto, pr, address |
+| `/ralph:review` | best (fable→opus); singles reviewed at opus, group val at fable | Review: val, code, merge, behavior verification |
 | `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
 | `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
 | `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
 
 Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable; opt-in, requires Fable access) — isolated rail-free path (no prescribed phases, no gate hooks; artifact contract instead). `/ralph:hero --model fable` forwards to it. Design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`.
 
-The plan/review skill sessions pin `model: best` (Fable 5 where entitled, else latest Opus); `plan-agent`/`review-agent` pin `model: fable` — non-Fable accounts set `CLAUDE_CODE_SUBAGENT_MODEL=opus` as the escape hatch for the `Agent()`-fork path. Rationale: [`docs/model-tier-policy.md`](docs/model-tier-policy.md).
+The plan/review skill sessions pin `model: best` (Fable 5 where entitled, else latest Opus); `plan-agent`/`review-agent` pin `model: fable` — non-Fable accounts set `CLAUDE_CODE_SUBAGENT_MODEL=opus` as the escape hatch for the `Agent()`-fork path. Autonomous paths additionally route tiers by unit size — feature/epic cycles get fable bookends (research, plan, critique, plan-vs-delivery val); single XS/S issue-PR pairs skip fable entirely. Rationale + routing table: [`docs/model-tier-policy.md`](docs/model-tier-policy.md).
 
 ### ralph Plugin — 16 Agents
 
