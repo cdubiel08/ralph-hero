@@ -502,7 +502,7 @@ opus behavior → one PR) → fable epic close-out validation.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep + doc-roster check pass
+- [x] Hook test sweep + doc-roster check pass
 
 #### Manual Verification
 - [ ] Dogfood: complete a 2-feature epic; observe the close-out validation comment on the epic and correct verdict routing

@@ -112,6 +112,46 @@ save_issue(number=NNN, workflowState="__CLOSE__", command="ralph_merge")
 
 Group merges (plan frontmatter `github_issues`, PR body with multiple `Closes #N`): one `__CLOSE__` call **per member**. `sync-pr-merge.yml` also advances every linked issue server-side; the per-member calls are the belt to its suspenders and keep the board correct even when Actions lag.
 
+## Epic close-out validation (GH-1538)
+
+After a merge whose closed issue(s) have an epic parent, check whether it
+was the LAST open child: `list_sub_issues(parent)` — if every child is now
+CLOSED, dispatch the fable epic-validation bookend BEFORE reporting:
+
+```
+Agent(
+  subagent_type="ralph:val-agent",
+  model="fable",
+  prompt="Epic close-out validation for GH-<parent>.
+    Inputs: the epic plan-of-plans at <path>, every feature plan under it,
+    and the merged PR list <urls>.
+    Question: does the delivered WHOLE satisfy the plan-of-plans'
+    Strategic Context and Integration Strategy — not each feature in
+    isolation, but their composition? Check the Integration Strategy's
+    contracts actually hold across the merged features.
+    Return exactly one verdict line first:
+    EPIC VALIDATED | EPIC GAPS: <bullet list>
+    then the evidence."
+)
+```
+
+- `EPIC VALIDATED` → post `## Epic Close-Out Validation` comment (verdict
+  + evidence) on the epic. Do not touch the epic's state — server-side
+  `advance-parent.yml` owns the Done transition.
+- `EPIC GAPS` → post the comment with the gap list AND
+  `save_issue(number=<parent>, workflowState="Human Needed", command="ralph_merge")`
+  so the epic does not silently stand as Done with unmet intent. This is
+  the one sanctioned parent touch — a corrective override, not an
+  advancement. **Race note:** `advance-parent.yml` (triggered by the last
+  child's closure) has NO Human Needed guard and may set the parent to
+  Done before or after this call. Apply Human Needed, then re-read the
+  parent's state once; if the Action overwrote it back to Done, re-assert
+  Human Needed once (with `issueState: "OPEN"` if the Action also closed
+  the issue). The validation comment is the durable record either way.
+
+Skip silently when the merged issue has no parent, the parent has no
+plan-of-plans, or open children remain.
+
 The `__CLOSE__` semantic intent maps `"*": "Done"` per `mcp-server/src/lib/state-resolution.ts`. Do NOT use `__DONE__` — it is not a registered intent and the MCP server will reject it with "Unknown semantic intent".
 
 Touching the parent from the skill would race with the Action and produce double-advances or out-of-order state changes. The boundary is firm: server owns parent, client owns child.
