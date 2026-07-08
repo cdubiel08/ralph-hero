@@ -7,7 +7,7 @@ How `/ralph:review --mode merge` (and default-mode's Step 5) merge an approved P
 When called with no `#NNN`:
 
 1. `list_issues(workflowState: "In Review", limit: 10)` — first candidate.
-2. For each, `gh pr list --head feature/GH-NNN --json number,state --jq '.[0]'`. First with `state: OPEN` is selected.
+2. For each, resolve the candidate's plan branch first (group plan → `feature/GH-[primary_issue]`, single → `feature/GH-NNN`; see `ralph/skills/impl/worktree-setup.md` § Auto-mode Step 2), then `gh pr list --head <branch> --json number,state --jq '.[0]'`. First with `state: OPEN` is selected. Group members share one PR — de-duplicate candidates resolving to the same branch (GH-1538).
 3. STOP `Queue empty.` if none match. Loop runner greps for this literal.
 
 Queue-pick does NOT pre-filter unreviewed PRs — downstream pre-merge gates catch them. This keeps the queue logic simple (state + open-PR) and lets the safety net (§Pre-merge gates) own the review-required check.
@@ -104,11 +104,13 @@ Tilde expansion: `localDir` values in the registry may use `~`; always expand to
 
 ## Parent advancement
 
-**Skill MUST NOT advance the parent.** Parent auto-advance is handled server-side by the `advance-parent.yml` GitHub Action when ALL children reach Done. Skills only transition the child via:
+**Skill MUST NOT advance the parent.** Parent auto-advance is handled server-side by the `advance-parent.yml` GitHub Action when ALL children reach Done. Skills only transition the child(ren) via:
 
 ```
 save_issue(number=NNN, workflowState="__CLOSE__", command="ralph_merge")
 ```
+
+Group merges (plan frontmatter `github_issues`, PR body with multiple `Closes #N`): one `__CLOSE__` call **per member**. `sync-pr-merge.yml` also advances every linked issue server-side; the per-member calls are the belt to its suspenders and keep the board correct even when Actions lag.
 
 The `__CLOSE__` semantic intent maps `"*": "Done"` per `mcp-server/src/lib/state-resolution.ts`. Do NOT use `__DONE__` — it is not a registered intent and the MCP server will reject it with "Unknown semantic intent".
 
@@ -221,7 +223,7 @@ Two intentional carve-outs that the pre-merge `reviewDecision` check (interactiv
 
 ### XS-no-comments
 
-Issues with `estimate: XS` AND a PR comment count of `0` may merge without a formal `APPROVED` decision. Use case: one-line typo fixes, trivial docs corrections, comment-only changes where requesting a formal review adds latency without value.
+PRs whose linked issues are ALL `estimate: XS` AND whose comment count is `0` may merge without a formal `APPROVED` decision. Use case: one-line typo fixes, trivial docs corrections, comment-only changes where requesting a formal review adds latency without value. Group PRs qualify only when EVERY member is XS — the hook evaluates all `closingIssuesReferences`, fail-closed on empty refs or estimate-fetch errors (GH-1538).
 
 ```bash
 estimate=$(gh issue view ISSUE --json projectItems --jq '[.projectItems[].fieldValues[]? | select(.field.name == "Estimate") | .name] | .[0] // "null"')

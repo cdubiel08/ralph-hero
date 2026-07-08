@@ -55,11 +55,11 @@ If `git pull` fails with a merge conflict, do NOT attempt to resolve — escalat
 | Condition | WORKTREE_ID |
 |-----------|-------------|
 | Stream member (plan frontmatter has `stream_id`) | `GH-[EPIC_NUMBER]-stream-[SORTED-ISSUES]` |
-| Epic member (no stream) | `GH-[EPIC_NUMBER]` |
-| Group plan (not epic) | `GH-[primary_issue]` from plan frontmatter |
+| Group plan (frontmatter declares `github_issues`) | `GH-[primary_issue]` from plan frontmatter |
+| Epic member (no stream, no group plan) | `GH-[EPIC_NUMBER]` |
 | Single issue | `GH-[issue-number]` |
 
-Stream rows take precedence over epic-member rows. Group rows take precedence over single-issue when plan frontmatter declares `github_issues`.
+Precedence is the table order: stream > **group plan** > epic member > single. The group row outranks the epic-member row (GH-1538) — a sibling group plan is the authoritative shipping unit, and its `GH-[primary_issue]` ID is what `--mode pr` queue-pick resolves, so both halves agree on one worktree, one branch, one PR per group. The epic-member row applies only when NO group plan declares the member.
 
 **Step 3: Base-branch detection.** If plan frontmatter or task description contains `base_branch: feature/GH-XX`, use that as the worktree's base. Otherwise default to `origin/main`.
 

@@ -67,6 +67,13 @@ After all plans are written, read each plan's `## Phase N:` headings and their `
 
 This replaces default sequential ordering with a graph-driven ordering that enables parallel dispatch of independent phases.
 
+## PR-task cardinality (GH-1538)
+
+Exactly ONE `Create PR GH-[PRIMARY]` task per plan group. Member issues
+NEVER get their own PR task — their work ships in the group's single PR
+(one `Closes #` line each). If a resumed task list contains per-member PR
+tasks, collapse them to the primary's before re-entering the loop.
+
 ## Task creation pattern (two-step)
 
 ```

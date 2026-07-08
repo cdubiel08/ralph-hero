@@ -350,7 +350,7 @@ that per-child `__CLOSE__` transitions cover all `github_issues` members.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test sweep passes (impl-postcondition, merge gates)
+- [x] Hook test sweep passes (impl-postcondition, merge gates)
 
 #### Manual Verification
 - [ ] Dogfood continuation from Phase 2: `/ralph:impl --auto` executes phases in ONE worktree `GH-[primary]`; `/ralph:impl --mode pr` creates ONE PR with N `Closes #` lines; merge moves all children to Done and parent auto-advances
