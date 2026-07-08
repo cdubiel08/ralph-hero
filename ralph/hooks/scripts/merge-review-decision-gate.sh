@@ -168,20 +168,29 @@ is_xs_no_comments_pr() {
     return 1
   fi
 
-  # Resolve the linked issue number from closingIssuesReferences (populated
-  # when the PR body has "Closes #N" / "Fixes #N").
-  local issue_num
-  issue_num=$(jq -r '.closingIssuesReferences[0].number // empty' <<<"$pr_json" 2>/dev/null || echo "")
-  if [[ -z "$issue_num" ]]; then
+  # Resolve ALL linked issue numbers from closingIssuesReferences (populated
+  # when the PR body has "Closes #N" / "Fixes #N"). A group PR closes several
+  # issues in one merge; the carve-out requires EVERY one to be estimated XS.
+  # Judging by [0] alone let a mixed-estimate group PR slip through on its
+  # first-listed member (GH-1538 Phase 1).
+  local issue_nums
+  issue_nums=$(jq -r '.closingIssuesReferences[]?.number // empty' <<<"$pr_json" 2>/dev/null || echo "")
+  if [[ -z "$issue_nums" ]]; then
     return 1
   fi
 
-  local estimate
-  estimate=$(gh issue view "$issue_num" --json projectItems \
-    --jq '[.projectItems[].fieldValues[]? | select(.field.name == "Estimate") | .name] | .[0] // "null"' \
-    2>/dev/null || echo "null")
+  local issue_num estimate
+  while IFS= read -r issue_num; do
+    [[ -z "$issue_num" ]] && continue
+    estimate=$(gh issue view "$issue_num" --json projectItems \
+      --jq '[.projectItems[].fieldValues[]? | select(.field.name == "Estimate") | .name] | .[0] // "null"' \
+      2>/dev/null || echo "null")
+    if [[ "$estimate" != "XS" ]]; then
+      return 1  # fail-closed: any non-XS member or estimate-fetch error denies
+    fi
+  done <<<"$issue_nums"
 
-  [[ "$estimate" == "XS" ]]
+  return 0
 }
 
 is_self_authored_solo_repo() {
@@ -230,8 +239,10 @@ deterministic hook (GH-1373) rather than model-adherence prose.
 
 Two carve-outs accept non-APPROVED PRs (only when reviewDecision is null/
 REVIEW_REQUIRED; CHANGES_REQUESTED is always blocked above):
-  1. XS-no-comments  — linked issue estimate=XS AND PR has zero comments
-     (counts BOTH conversation comments AND review-thread comments).
+  1. XS-no-comments  — EVERY linked issue estimate=XS AND PR has zero
+     comments (counts BOTH conversation comments AND review-thread
+     comments). Group PRs (multiple Closes #N) qualify only when all
+     members are XS.
   2. Self-authored-on-solo-repo — PR author == current user on a single-
      contributor repo (GitHub blocks self-approval).
 

@@ -196,9 +196,9 @@ Model the harness on the existing gate tests in `__tests__/`.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] New test file passes standalone: `bash ralph/hooks/scripts/__tests__/merge-review-decision-gate-group.test.sh`
-- [ ] Full hook test sweep passes
-- [ ] `shellcheck -S error ralph/hooks/scripts/merge-review-decision-gate.sh`
+- [x] New test file passes standalone: `bash ralph/hooks/scripts/__tests__/merge-review-decision-gate-group.test.sh`
+- [x] Full hook test sweep passes
+- [x] `shellcheck -S error ralph/hooks/scripts/merge-review-decision-gate.sh`
 
 #### Manual Verification
 - [ ] On a real group PR (Phase 2+ dogfood), the carve-out decision reflects the highest member estimate
