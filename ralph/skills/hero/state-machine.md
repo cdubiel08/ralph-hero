@@ -32,7 +32,7 @@
 |    |   |   APPROVED -> advance, continue                           |
 |    |   |   REJECTED -> STOP                                        |
 |    |- IMPLEMENT (sequential) -- execute plan phases                |
-|    |- PR (per issue)                                               |
+|    |- PR (per feature plan; one PR closes all group members)       |
 |    v                                                               |
 |  MERGE GATE                                                        |
 |    | merge review is "interactive" (default):                      |

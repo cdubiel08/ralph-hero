@@ -304,7 +304,7 @@ phases of one plan.
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `bash scripts/check-doc-rosters.sh` (docs consistency)
+- [x] `bash scripts/check-doc-rosters.sh` (docs consistency)
 
 #### Manual Verification
 - [ ] A fresh `/ralph:caretake --mode split` on an M issue produces children only at genuinely independent boundaries (spot-check reasoning in the split comment)
