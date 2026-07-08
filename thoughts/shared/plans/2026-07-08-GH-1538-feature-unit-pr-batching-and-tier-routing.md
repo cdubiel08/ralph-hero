@@ -412,8 +412,8 @@ Update the 9-verb table's plan/review/hero rows to mention unit-size routing
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `bash scripts/check-doc-rosters.sh`
-- [ ] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` (no frontmatter drift)
+- [x] `bash scripts/check-doc-rosters.sh`
+- [x] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` (no frontmatter drift)
 
 #### Manual Verification
 - [ ] `/ralph:plan --auto` on a single XS issue shows a sonnet plan-agent fork (transcript check); on a group, inline fable authoring
@@ -462,7 +462,7 @@ verification).
 
 #### Automated Verification
 - [ ] Hook test sweep passes (no gate regressions on the extended review flow)
-- [ ] `bash scripts/check-doc-rosters.sh`
+- [x] `bash scripts/check-doc-rosters.sh`
 
 #### Manual Verification
 - [ ] Dogfood a UI-touching feature group: behavior-verification stage runs, produces screenshots, and its verdict gates the merge
