@@ -63,7 +63,7 @@ Explicit env vars **always take precedence over `gh auth`.** To rotate, regenera
 
 - **Not in `.mcp.json`** — that file has no `env` block; the MCP server inherits from Claude Code's process.
 - **Not in `~/.bashrc`/`.zshrc` below the interactive guard** — non-interactive Claude Code MCP child processes won't see them.
-- **Not in git** — `settings.local.json` is gitignored; never check it in.
+- **Not in git** — tokens live only in the keychain or the gitignored `settings.local.json`; never check a token in. (The non-secret scope vars `RALPH_GH_OWNER`/`RALPH_GH_REPO`/`RALPH_GH_PROJECT_NUMBER` are the opposite — they *belong* in the tracked `.claude/settings.json` so worktrees inherit them; see [scope-detection.md](scope-detection.md) § Project scope.)
 - **Not in `RALPH_HERO_GITHUB_TOKEN` for split-owner setups** — that single token will only have access to one side. Use the dual-token variables instead.
 
 ## Recovery from a bad rotation
