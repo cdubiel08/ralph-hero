@@ -1,11 +1,21 @@
 ---
-description: Run the dream-loop — the nightly memory-consolidation pipeline that ingests the last window of raw activity (Gemma lab logs, git history, llm-cli transcripts, Claude Code sessions) as memory_tier=raw documents, then clusters them and synthesizes one memory_tier=reflection per cluster. This is the memorykeepers surface that orchestrates the existing scripts/dream/ infra (ingest.py + reflect.py + logrotate.sh) on demand. Use when the user mentions "dream", "dream-loop", "consolidate memories", "run reflection", "memorykeepers", "ingest raw memories", or wants to manually trigger the memory tiers (raw to reflection) without waiting for the 03:00 launchd fire. The launchd nightly schedule and the model-gate dream-now zsh function are separate; this skill is the in-session manual entrypoint.
-argument-hint: "[--since 24h]"
+description: Run, bootstrap, or verify the dream-loop — the nightly memory-consolidation pipeline that ingests the last window of raw activity (Gemma lab logs, git history, llm-cli transcripts, Claude Code sessions) as memory_tier=raw documents, then clusters them and synthesizes one memory_tier=reflection per cluster. This is the memorykeepers surface that orchestrates the existing scripts/dream/ infra (ingest.py + reflect.py + logrotate.sh). Use when the user mentions "dream", "dream-loop", "dream-now", "consolidate memories", "run reflection", "memorykeepers", "ingest raw memories", or wants to manually trigger the memory tiers (raw to reflection) without waiting for the 03:00 launchd fire. Also use for machine wiring and health checks — "bootstrap the dream loop", "set up dream-loop", "install the nightly schedule", "check dream-loop status", "verify the dream loop ran", "did the dream loop ingest anything" — via --mode bootstrap and --mode verify.
+argument-hint: "[--since 24h | --mode bootstrap|verify]"
 ---
 
 # Dream-Loop — Memory Consolidation (memorykeepers)
 
-The dream-loop is the memory-consolidation pipeline for ralph-knowledge. It pulls raw activity into `memory_tier=raw` documents, then clusters them (UMAP/HDBSCAN) and asks a local model to synthesize one `memory_tier=reflection` per cluster. This skill is the in-session manual entrypoint that the memorykeepers team owns.
+The dream-loop is the memory-consolidation pipeline for ralph-knowledge. It pulls raw activity into `memory_tier=raw` documents, then clusters them (UMAP/HDBSCAN) and asks a local model to synthesize one `memory_tier=reflection` per cluster. This skill is the memorykeepers surface for the pipeline: a manual run entrypoint by default, plus `--mode bootstrap` (first-time machine wiring) and `--mode verify` (post-run health checks).
+
+## Modes
+
+| Mode | When | What it does |
+|------|------|--------------|
+| *(default)* run | "run the dream loop", "consolidate memories" | Steps 1–6 below: ingest → reflect → logrotate → report |
+| `--mode bootstrap` | first run on a machine, "bootstrap the dream loop" | Delegates to `scripts/dream/bootstrap.sh`; see **Bootstrap** |
+| `--mode verify` | "did it run?", "check dream-loop status" | Read-only health checks; see **Verify** |
+
+Resolve the mode from intent, not just the flag — "set up the dream loop on this machine" is bootstrap, "did last night's run work?" is verify, even without `--mode`.
 
 ## How you talk
 
@@ -25,7 +35,7 @@ You refuse to:
 3. **`~/.ralph/knowledge.config.json` authored** with the `roots` to scan and `dbPath`.
 4. **A local model reachable** at `RALPH_LLM_URL` (default `http://localhost:8000`) for the reflection synthesis step. If the model is unreachable, the pipeline fails open: empty reflections and a single stderr warning — raw ingest still succeeds.
 
-If `scripts/dream/` is absent, surface a clear error and stop: the dream-loop infra has not been set up. Direct the user to `/ralph-knowledge:setup` (which installs the launchd schedule and can bootstrap the scripts).
+If any prerequisite is missing, that is a bootstrap problem, not a run problem — switch to **Bootstrap** below rather than surfacing a bare error.
 
 ## Workflow
 
@@ -70,8 +80,47 @@ State, as facts with paths and tiers:
 - any clusters that crossed the recurring-failure thresholds and would warrant a `process-improvement` follow-up
 - whether the local model was reachable, or whether the run failed open
 
+## Bootstrap (`--mode bootstrap`)
+
+`scripts/dream/bootstrap.sh` is the single source of truth for machine wiring — it idempotently provisions `~/.ralph/knowledge.config.json`, renders + loads the templated launchd plist for the 03:00 nightly fire, and smoke-tests ingest. Never re-implement its steps inline; when wiring logic changes, it changes in `bootstrap.sh`.
+
+```bash
+cd <repo>/scripts/dream && uv sync          # python deps (one-time)
+cd <repo>/plugin/ralph-knowledge && npm install && npm run build   # indexer (one-time)
+bash <repo>/scripts/dream/bootstrap.sh      # config + launchd + smoke ingest
+```
+
+After it completes, run the **Verify** checks to confirm the wiring took. `/ralph-knowledge:setup` Step 4 invokes the same script — either surface is fine; they cannot drift because both delegate.
+
+**Machine conventions (optional):** if the machine has a model-gate checkout (`~/projects/model-gate`), prefer its surfaces for anything model-adjacent: `model-up <name>` to load the reflection model safely (stop-before-start on :8000), and the gate-aware `dream-now` zsh function as the shell-side equivalent of a full run. Registry of valid model names: `~/projects/models.yml`; setup details: `model-gate/README.md`. Absent model-gate, any OpenAI-compatible server at `RALPH_LLM_URL` works.
+
+## Verify (`--mode verify`)
+
+Read-only. Run what applies, report as facts with counts and paths:
+
+```bash
+# DB schema + tier breakdown
+sqlite3 ~/.ralph-hero/knowledge.db "SELECT * FROM meta WHERE key='schema_version'"
+sqlite3 ~/.ralph-hero/knowledge.db "SELECT memory_tier, COUNT(*) FROM documents GROUP BY memory_tier"
+
+# Files on disk vs indexed (stale index if these diverge)
+echo "On disk:  $(find ~/projects/thoughts/dream-memories -name '*.md' | wc -l)"
+echo "Indexed:  $(sqlite3 ~/.ralph-hero/knowledge.db 'SELECT COUNT(*) FROM documents WHERE path LIKE "%dream-memories%"')"
+
+# Local model reachability
+curl -fsS http://localhost:8000/v1/models | jq '.data[].id'
+
+# launchd nightly job (if installed): PID "-" when idle, exit status 0 after a clean run
+launchctl list | grep dream-loop
+```
+
+Interpretation notes:
+- `schema_version=3` is **correct, not stale** — the `wiki`-tier CHECK-constraint change is labeled "Migration v4" in `db.ts` but deliberately does not bump the meta stamp.
+- Four tiers exist: `doc` (curated), `raw` (dream ingest), `reflection` (synthesized), `wiki` (human-curated via `/ralph-knowledge:curate`; not writable by the record tool). A healthy post-run breakdown shows raw and reflection counts growing.
+- Zero reflections with nonzero raws usually means the model was unreachable at run time (the pipeline fails open) — check reachability above, then re-run reflect for the window.
+
 ## Relationship to other surfaces
 
-- **Nightly schedule** — `scripts/dream/launchd/com.dubiel.dream-loop.plist.template`, installed by `/ralph-knowledge:setup` (or `bootstrap.sh`). Fires at 03:00 daily. This skill is the manual on-demand counterpart.
-- **`dream-now`** — a model-gate zsh function that is gate-aware (loads the model first, then ingest + reflect + logrotate). Owned by model-gate, not this plugin. This skill does not call `dream-now`; it invokes the scripts directly.
+- **Nightly schedule** — `scripts/dream/launchd/com.dubiel.dream-loop.plist.template`, installed by `bootstrap.sh` (directly or via `/ralph-knowledge:setup`). Fires at 03:00 daily. This skill is the manual on-demand counterpart.
+- **`dream-now`** — a model-gate zsh function that is gate-aware (loads the model first, then ingest + reflect + logrotate). Owned by model-gate, not this plugin. The default run mode here invokes the scripts directly; point users at `dream-now` when they want the gate-managed shell path.
 - **`/ralph-knowledge:curate`** — the human-gated promotion of reflections into the personal wiki tier. The dream-loop produces reflections; curate (not this skill) decides what becomes canonical.
