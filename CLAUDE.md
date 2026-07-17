@@ -219,7 +219,7 @@ Pick PostToolUse over PreToolUse when the data the gate needs to evaluate lives 
 
 The config file location depends on plugin install scope (detected from `~/.claude/plugins/installed_plugins.json`):
 
-- **Project-scoped install**: Set all env vars in `<project>/.claude/settings.local.json` (gitignored)
+- **Project-scoped install**: non-secret scope vars (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`, `RALPH_GH_PROJECT_OWNER`) go in the **tracked** `<project>/.claude/settings.json` so worktree/bridge sessions and fresh clones inherit them; tokens and machine-local toggles go in the **gitignored** `<project>/.claude/settings.local.json` (local wins on conflict). Scope vars living only in the gitignored file leave every worktree session board-blind (`owner is required`) — see `ralph/skills/setup/scope-detection.md` § Worktrees and bridge sessions.
 - **User-scoped install**: Set all env vars in `~/.claude/settings.json` — this makes the CLI work from any directory
 
 When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth token` from the gh CLI keychain (just run `gh auth login -s repo,project,read:org`).
