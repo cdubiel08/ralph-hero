@@ -72,11 +72,11 @@ Dispatch `Skill("ralph:plan", args="NNN --mode review --plan-doc PATH")` for eac
 - **`PLAN AWAITING DECISION`** → the plan is APPROVED but holds in Plan in Review on open `#### Decision:` blocks. Report the `## Decision Request` comment URL and STOP this issue's pipeline. This is NOT an escalation — do NOT move to Human Needed; the human answers on the issue (or via `/ralph:plan --mode review NNN` interactively) and the next review dispatch advances it.
 - **ESCALATE** → move issues to Human Needed, STOP with the critique
 
-**`interactive`:** (mechanics unchanged; the picker surface is now decisions-first — one `Decision:` picker per open block, then the confirm picker — per `plan-review.md` § Interactive vs auto)
+**`interactive`:**
 
 Report planned groups with plan URLs and current state. All issues are in "Plan in Review".
 
-Use `AskUserQuestion`:
+Decisions-first (per `plan-review.md` § Interactive vs auto): present one `Decision:`-header `AskUserQuestion` per open `#### Decision:` block, folding answers into the plan. Then the confirm picker:
 - "Approve and implement" → batch update to "In Progress", continue
 - "Open plan in editor" → `open` / `xdg-open` the plan file, then re-present the picker
 - "Stop here" → mark gate task completed and STOP with plan URL + resume command
