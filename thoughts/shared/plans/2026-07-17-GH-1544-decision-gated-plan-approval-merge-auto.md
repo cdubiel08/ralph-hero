@@ -207,9 +207,9 @@ Flip the merge-review default to autonomous and reconcile every place the old de
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -rn "RALPH_REVIEW_MODE:-interactive" ralph/ docs/ CLAUDE.md README.md` returns nothing
-- [ ] `grep -c "human plan-approval gate by default" ralph/skills/hero/SKILL.md` returns 0 (old claim gone)
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `grep -rn "RALPH_REVIEW_MODE:-interactive" ralph/ docs/ CLAUDE.md README.md` returns nothing
+- [x] `grep -c "human plan-approval gate by default" ralph/skills/hero/SKILL.md` returns 0 (old claim gone)
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] `/ralph:hero <scratch-issue>` (default one-shot, decision-free plan) runs plan → impl → PR → val → code-review → merge → CI watch with no AskUserQuestion after planning and no "re-run /ralph:hero" stop

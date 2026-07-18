@@ -1,5 +1,5 @@
 ---
-description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with a human plan-approval gate by default. Five modes:default(one-shot), --mode auto (autopilot drain via /loop), --mode classify (director-only dispatch), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
+description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with decision-gated human plan approval (open design decisions route to the human; decision-free plans flow through) and autonomous merge by default. Five modes:default(one-shot), --mode auto (autopilot drain via /loop), --mode classify (director-only dispatch), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
 argument-hint: "[<issue-number> | --mode <auto|classify|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>] [--loop [duration]] [--auto] [--model fable]"
 context: inline
 model: sonnet
@@ -100,7 +100,7 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
 - Plan review: !`echo ${RALPH_REVIEW_PLAN:-auto}`
-- Merge review: !`echo ${RALPH_REVIEW_MODE:-interactive}`
+- Merge review: !`echo ${RALPH_REVIEW_MODE:-auto}`
 - Impl model: !`echo ${RALPH_IMPL_MODEL:-sonnet}`
 - Autopilot enabled: !`echo ${RALPH_AUTOPILOT_ENABLE:-unset}`
 

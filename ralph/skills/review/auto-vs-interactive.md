@@ -59,8 +59,8 @@ Orchestration knob — **NOT** a verb mode. Governs behavior when the Code Revie
 
 | Value | Behavior |
 |---|---|
-| `auto` (`RALPH_REVIEW_MODE=auto`) | Run code review inline without prompting: `Skill("code-review:code-review", "PR_NUMBER")`. After it completes, re-read the verdict ONCE and branch on the result. **2nd consecutive `BLOCKED` is terminal** (see below). |
-| `interactive` (default; unset or `interactive`) | Prompt via `AskUserQuestion`: "This PR has no code review yet. Would you like to run one before merging?" Options: Run code review / Merge without review. Selected "Run code review" → inline `Skill()` invocation, then re-read once with the same 2nd-`BLOCKED`-is-terminal rule. Selected "Merge without review" → continue to merge. |
+| `auto` (default; unset or `auto`) | Run code review inline without prompting: `Skill("code-review:code-review", "PR_NUMBER")`. After it completes, re-read the verdict ONCE and branch on the result. **2nd consecutive `BLOCKED` is terminal** (see below). |
+| `interactive` (explicit opt-in: `RALPH_REVIEW_MODE=interactive`) | Prompt via `AskUserQuestion`: "This PR has no code review yet. Would you like to run one before merging?" Options: Run code review / Merge without review. Selected "Run code review" → inline `Skill()` invocation, then re-read once with the same 2nd-`BLOCKED`-is-terminal rule. Selected "Merge without review" → continue to merge. |
 
 **Second-consecutive `BLOCKED` terminal (load-bearing, PR #1335 precedent).** After running `code-review:code-review` inline, the re-read verdict can be:
 

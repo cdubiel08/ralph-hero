@@ -236,6 +236,8 @@ When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth to
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_GH_TEMPLATE_PROJECT` | No | Template project number for `setup_project` to copy fields/views from |
 | `RALPH_AUTOPILOT_ENABLE` | No | Must be `"true"` for `hero --mode auto`; enforced by `autopilot-enable-gate.sh` |
+| `RALPH_REVIEW_PLAN` | No | Plan-review gate mode. Default `auto` with decision-driven semantics: APPROVED plans with open `#### Decision:` blocks hold in Plan in Review with a `## Decision Request` comment; decision-free plans auto-advance. `interactive` opts into the whole-plan picker flow. |
+| `RALPH_REVIEW_MODE` | No | Merge-gate mode. Default `auto`: hero runs val → code-review → merge → CI watch unattended (`CHANGES_REQUESTED` on a PR still unconditionally blocks). `interactive` opts into the old report-PR-URLs-and-STOP behavior. |
 | `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (e.g. `sonnet`, `opus`, or `fable` if your plan includes it). Defaults to `sonnet`; BLOCKED escalation re-dispatches once at `opus`. |
 | `CLAUDE_CODE_SUBAGENT_MODEL` | No (harness-native, not ralph plumbing) | Escape hatch for the `model: fable` pins on `plan-agent`/`review-agent`: set to `opus` on accounts without Fable. Top precedence in Claude Code's subagent model resolution — it overrides frontmatter AND per-invocation `model` params, so it flattens EVERY subagent tier (locators, impl ladder, BLOCKED re-dispatch). Leave unset if your account has Fable. |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and OpenTelemetry export. |
