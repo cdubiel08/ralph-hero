@@ -244,10 +244,10 @@ Deterministic coverage for the new gate behavior and documentation consistency, 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -print0 | xargs -0 -n1 bash` — all pass including the new files
-- [ ] `shellcheck -S error ralph/hooks/scripts/*.sh` exits 0
-- [ ] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` passes
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -print0 | xargs -0 -n1 bash` — all pass including the new files
+- [x] `shellcheck -S error ralph/hooks/scripts/*.sh` exits 0
+- [x] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` passes
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] Fresh-eyes read of `plan-shapes.md § Design decisions anatomy` + `plan-review.md` — the contract is followable without this plan as context
