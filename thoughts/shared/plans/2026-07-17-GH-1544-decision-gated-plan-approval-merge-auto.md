@@ -115,9 +115,9 @@ Define the `## Design Decisions & Open Ambiguities` section in the plan shapes a
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `shellcheck -S error ralph/hooks/scripts/doc-structure-validator.sh` exits 0
-- [ ] New validator fixtures: plan missing the section → exit 2; plan with sentinel → exit 0; plan with one `#### Decision:` block and no sentinel → exit 0; section only inside a fenced example → exit 2 (fence-strip respected)
-- [ ] Existing hook tests still pass
+- [x] `shellcheck -S error ralph/hooks/scripts/doc-structure-validator.sh` exits 0
+- [x] New validator fixtures: plan missing the section → exit 2; plan with sentinel → exit 0; plan with one `#### Decision:` block and no sentinel → exit 0; section only inside a fenced example → exit 2 (fence-strip respected)
+- [x] Existing hook tests still pass
 
 #### Manual Verification
 - [ ] This plan doc itself passes the updated validator (it models the contract)

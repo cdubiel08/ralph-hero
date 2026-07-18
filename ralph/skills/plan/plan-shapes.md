@@ -66,6 +66,10 @@ research_waived: <reason>         # optional; human override (interactive only)
 ## What We're NOT Doing
 [Bullet list — scope boundaries]
 
+## Design Decisions & Open Ambiguities
+[Resolved decisions as bullets; open items as `#### Decision:` blocks;
+sentinel line when no open items — see § Design decisions anatomy]
+
 ## Implementation Approach
 [1-2 paragraphs — high-level shape, phase count, file ownership intent]
 
@@ -100,6 +104,38 @@ research_waived: <reason>         # optional; human override (interactive only)
 
 ## References
 ```
+
+## Design decisions anatomy
+
+The `## Design Decisions & Open Ambiguities` section is the plan's human-interface contract: every judgment call the planner made or could not settle lives here, authored at the moment of uncertainty — never buried in phase prose. `doc-structure-validator.sh` enforces the section's presence (all plan shapes) and requires EITHER ≥1 open `#### Decision:` block OR the literal sentinel.
+
+**Resolved decisions** — bullets, one per settled judgment call:
+
+```markdown
+- **<Decision title>** — options: <option A>; <option B>; <option C>. **Decided: <choice>.** <1-2 sentence rationale>
+```
+
+**Open decisions** — one `#### Decision:` block per unsettled judgment call. The agent's recommendation is listed FIRST among the options and marked:
+
+```markdown
+#### Decision: <short title>
+
+- **Context**: <why this must be decided — what the plan cannot settle from research alone>
+- **Options**:
+  1. <recommended option> *(agent recommendation)*
+  2. <alternative>
+  3. <alternative>
+- **Recommendation**: <option 1 restated + 1-2 sentence rationale>
+- **Blocked without it**: <which phases/files cannot proceed or would embed a guess>
+```
+
+**Sentinel** — when there are NO open `#### Decision:` blocks, the section MUST end with the literal line (it may follow resolved-decision bullets):
+
+```markdown
+None — no open design decisions.
+```
+
+Downstream contract: `/ralph:plan --mode review` presents open blocks to the human (decision pickers in interactive mode; a `## Decision Request` comment in auto mode) and auto-advances sentinel-only plans. Auto-mode planners: unresolved judgment calls that research cannot settle become `#### Decision:` blocks instead of silent assumptions or `__ESCALATE__` (escalation remains for missing-research / conflicting-implementation triggers).
 
 ## Phase-section anatomy
 
@@ -201,6 +237,7 @@ Epic mode writes a different shape — see `decomposition.md` § Plan-of-plans s
 - `## Strategic Context` replaces `## Current State Analysis`.
 - `## Feature Sequencing` replaces phase ordering.
 - `## Integration Strategy` describes how features compose.
+- `## Design Decisions & Open Ambiguities` is required here too (§ Design decisions anatomy) — epic decomposition is decision-dense by nature; author it alongside Feature Decomposition.
 
 ## Estimate / complexity decision guide
 
@@ -224,6 +261,7 @@ Plan 4 `--mode auto` targets XS/S only — advisory in the body, no hook enforce
 | Current State Analysis | required | required | replaced by Strategic Context |
 | Desired End State | required | required | replaced by Integration Strategy |
 | What We're NOT Doing | required | required | required |
+| Design Decisions & Open Ambiguities | required | required | required |
 | Implementation Approach | required | required | replaced by Feature Decomposition |
 | Phase N sections | required | required | n/a (no phases) |
 | Feature Decomposition | n/a | n/a | required |

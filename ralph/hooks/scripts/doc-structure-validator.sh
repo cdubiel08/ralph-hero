@@ -65,6 +65,14 @@ validate_doc() {
         grep -qE "^#### (Automated|Manual) Verification" "$doc" || doc_errors+=("Missing: '#### Automated Verification' or '#### Manual Verification' subsections")
         grep -qE "^- \[ \]" "$doc" || doc_errors+=("Missing: success-criteria checkboxes '- [ ] ...'")
       fi
+      # Decisions contract (GH-1544) — both plan shapes, fence-stripped body so
+      # docs that show the format in fenced examples don't false-positive.
+      if ! printf '%s\n' "$plan_body" | grep -qE "^## Design Decisions"; then
+        doc_errors+=("Missing: '## Design Decisions & Open Ambiguities' section (see plan-shapes.md § Design decisions anatomy)")
+      elif ! printf '%s\n' "$plan_body" | grep -qE "^#### Decision:" \
+           && ! printf '%s\n' "$plan_body" | grep -qF "None — no open design decisions."; then
+        doc_errors+=("Missing: decisions section needs either a '#### Decision:' block or the sentinel 'None — no open design decisions.' (see plan-shapes.md § Design decisions anatomy)")
+      fi
       ;;
     review)
       grep -qE "APPROVED|NEEDS_ITERATION" "$doc" || doc_errors+=("Missing: Verdict (APPROVED or NEEDS_ITERATION)")

@@ -44,7 +44,7 @@ run_hook() {
 
 VALID_RESEARCH=$'## Research Question\n\nQ?\n\n## Summary\n\nVia `src/x.ts`.\n\n## Files Affected\n\n### Will Modify\n- `src/x.ts`'
 INVALID_RESEARCH=$'## Research Question\n\nQ?\n\n## Summary\n\nVia `src/x.ts`.'
-VALID_PLAN=$'## Phase 1: Do it\n\n#### Automated Verification\n\n- [ ] tests pass'
+VALID_PLAN=$'## Design Decisions & Open Ambiguities\n\nNone — no open design decisions.\n\n## Phase 1: Do it\n\n#### Automated Verification\n\n- [ ] tests pass'
 VALID_REVIEW=$'## Verdict\n\n**Verdict**: APPROVED'
 
 echo "=== doc-structure-validator (session-scoped) tests ==="
@@ -93,7 +93,7 @@ ec=$(run_hook s-review)
 
 # --- Group plan (github_issues frontmatter) validates as a standard plan (GH-1538) --
 doc="$SBX/proj/thoughts/shared/plans/${TODAY}-GH-8-group.md"
-printf '%s' $'---\ntype: plan\ngithub_issues: [101, 102, 103]\nprimary_issue: 101\nestimate: S\n---\n\n## Phase 1: GH-101 — first member\n\n#### Automated Verification\n\n- [ ] tests pass\n\n## Phase 2: GH-102 — second member\n\n#### Automated Verification\n\n- [ ] tests pass' > "$doc"
+printf '%s' $'---\ntype: plan\ngithub_issues: [101, 102, 103]\nprimary_issue: 101\nestimate: S\n---\n\n## Design Decisions & Open Ambiguities\n\nNone — no open design decisions.\n\n## Phase 1: GH-101 — first member\n\n#### Automated Verification\n\n- [ ] tests pass\n\n## Phase 2: GH-102 — second member\n\n#### Automated Verification\n\n- [ ] tests pass' > "$doc"
 record s-group "$doc"
 ec=$(run_hook s-group)
 [[ "$ec" == "0" ]] && pass "group plan (github_issues) validates via the standard plan branch" \
