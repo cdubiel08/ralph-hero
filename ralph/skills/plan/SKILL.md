@@ -83,6 +83,7 @@ allowed-tools:
   - Bash
   - Agent
   - AskUserQuestion
+  - PushNotification
   - WebSearch
   - WebFetch
   - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue

@@ -162,9 +162,9 @@ Make the decisions section the unit of human review: interactive mode presents d
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test: review-plan-gate blocks a picker with header "Plan Review" under `RALPH_REVIEW_PLAN=auto` AND allows one with header "Decision: park location"
-- [ ] `shellcheck -S error ralph/hooks/scripts/review-plan-gate.sh` exits 0
-- [ ] `grep -q "PLAN AWAITING DECISION" ralph/skills/shared/loop-wrapper.md` (manifest row updated)
+- [x] Hook test: review-plan-gate blocks a picker with header "Plan Review" under `RALPH_REVIEW_PLAN=auto` AND allows one with header "Decision: park location"
+- [x] `shellcheck -S error ralph/hooks/scripts/review-plan-gate.sh` exits 0
+- [x] `grep -q "PLAN AWAITING DECISION" ralph/skills/shared/loop-wrapper.md` (manifest row updated)
 
 #### Manual Verification
 - [ ] On a scratch issue: auto review of a plan with one open decision posts exactly one `## Decision Request` + one notification; immediate re-invocation emits `PLAN AWAITING DECISION` without duplicates

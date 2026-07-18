@@ -35,7 +35,7 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 |---|---|---|---|---|
 | research:auto | `Research complete for #NNN` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Research Needed queue |
 | plan:auto | `Plan complete for #NNN` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Ready for Plan queue |
-| plan:review | `Plan reviewed for #NNN` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Plan in Review queue |
+| plan:review | `Plan reviewed for #NNN` / `PLAN AWAITING DECISION` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Plan in Review queue; AWAITING DECISION is progress (held plan), NOT terminal |
 | impl:auto | `Phase N/M complete.` / `Implementation complete for #NNN` | `IMPL BLOCKED …` / `Queue empty.` | 60-270s on progress; 1200s on no-op | drain unlocked impl phases |
 | impl:pr | `PR CREATED / …` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain ready-for-PR queue |
 | review:default | `FINISHED / …` / `FINISH BLOCKED — …` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain In Review queue |
