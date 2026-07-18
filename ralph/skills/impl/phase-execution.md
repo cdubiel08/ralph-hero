@@ -75,7 +75,7 @@ The fallback is for backward compatibility. New plans should always carry `### T
 `/ralph:impl --mode auto` is **resumable across context windows**. State is tracked entirely on disk:
 
 - Plan checkboxes (`- [x]`) mark completed automated verification.
-- Worktree persists at `worktrees/GH-NNN`.
+- Worktree persists at the path recorded when it was created (see [worktree-setup.md](worktree-setup.md) — `EnterWorktree({name})` reports it; do not assume a literal `worktrees/GH-NNN`).
 - Each phase's commits are pushed before the invocation stops.
 
 To resume, re-invoke `/ralph:impl --mode auto NNN`. The skill re-reads the plan, finds the first unblocked unchecked phase, and continues. No in-memory state to recover.

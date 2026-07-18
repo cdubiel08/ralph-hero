@@ -126,7 +126,7 @@ Read fully (no offset/limit). Detect resumption: scan for existing `- [x]` check
 
 ### Step 3: Setup
 
-Optional worktree suggestion per [worktree-setup.md §Suggestion](worktree-setup.md). If the user agrees, run `scripts/create-worktree.sh GH-NNN` and `cd worktrees/GH-NNN`. Otherwise implement in place.
+Optional worktree suggestion per [worktree-setup.md §Suggestion](worktree-setup.md). If the user agrees, `EnterWorktree({name: "GH-NNN"})` — this fires the consuming repo's `WorktreeCreate` hook (env symlinks + package builds land automatically where the repo configures that hook) and returns the created path; `cd` into the tool-reported path (do not assume a literal `worktrees/GH-NNN`). Otherwise implement in place.
 
 Transition the linked issue to "In Progress" (skip if already). Post `## Implementation Started` comment.
 
@@ -179,7 +179,7 @@ Ask the user via AskUserQuestion what to do next:
 1. **Verify state** — issue must be "In Review" with an open PR. STOP otherwise.
 2. **Gather feedback** — `gh pr view <NNN> --json reviews,comments` + `gh api repos/$RALPH_GH_OWNER/$RALPH_GH_REPO/pulls/<NNN>/comments`. Skip resolved/outdated.
 3. **Classify** each comment as MUST_FIX / SHOULD_FIX / DISCUSS per [address-mode.md §Classification](address-mode.md).
-4. **Reuse worktree** — `cd $GIT_ROOT/worktrees/GH-NNN && git pull origin <branch>`.
+4. **Reuse worktree** — `EnterWorktree({path: "<recorded WORKTREE_ID path>"})` (the path captured when the worktree was created — see [worktree-setup.md §Reuse path](worktree-setup.md)) then `git pull origin <branch>`.
 5. **Address** items grouped by file: read, fix, verify (lint/tests). DISCUSS items get reply-only.
 6. **Stage** only modified files (PR's existing file list + reviewer-requested new files). Never `git add -A`/`.`/`--all`.
 7. **Commit** with `fix: address PR review feedback` heading + change bullets. **Push.**
@@ -188,7 +188,7 @@ Ask the user via AskUserQuestion what to do next:
 
 ## `--mode pr` — push branch and create pull request
 
-1. **Parse args** — `#NNN` provided OR queue-pick: `list_issues(workflowState: "In Progress", limit: 10)`; **resolve each candidate to its plan's WORKTREE_ID first** (locate the plan per the Artifact Comment Protocol; group plan → `GH-[primary_issue]`, single → `GH-NNN`), then check `worktrees/<WORKTREE_ID>` exists AND no open PR for `feature/<WORKTREE_ID>`. De-duplicate candidates sharing a plan — group members resolve to the SAME worktree ID; the first wins and the one PR closes every member (GH-1538). STOP with literal `Queue empty.` if none match. (This literal is the loop-runner sentinel.)
+1. **Parse args** — `#NNN` provided OR queue-pick: `list_issues(workflowState: "In Progress", limit: 10)`; **resolve each candidate to its plan's WORKTREE_ID first** (locate the plan per the Artifact Comment Protocol; group plan → `GH-[primary_issue]`, single → `GH-NNN`), then check the WORKTREE_ID's worktree exists (recorded path from creation — `.claude/worktrees/<WORKTREE_ID>` when created via `EnterWorktree`; the fallback script's reported path otherwise) AND no open PR for `feature/<WORKTREE_ID>`. De-duplicate candidates sharing a plan — group members resolve to the SAME worktree ID; the first wins and the one PR closes every member (GH-1538). STOP with literal `Queue empty.` if none match. (This literal is the loop-runner sentinel.)
 2. **Fetch issue + worktree** — `feature/<WORKTREE_ID>` branch. Detect cross-repo per [pr-creation.md §Cross-repo](pr-creation.md) if multiple worktrees exist.
 3. **Push branch** — `git push -u origin feature/<WORKTREE_ID>` from the worktree.
 4. **Compose PR body** — `## Summary` (optional delegation per [pr-creation.md §Delegated Summary](pr-creation.md)) + `## Plan` (link) + `## Test plan` (from Success Criteria) + `Closes #NNN` (one per sub-issue for groups).

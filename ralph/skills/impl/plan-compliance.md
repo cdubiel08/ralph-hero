@@ -64,7 +64,7 @@ When the plan spans multiple repos (research doc has a "Cross-Repo Scope" sectio
 1. **Commit and push separately in each repo's worktree.** Each repo gets its own PR.
 2. Stage specific files only — never `git add -A`/`.`/`--all` in any repo.
 3. Commit messages identify the repo: `feat(ralph-hero): [change]` vs `feat(landcrawler-ai): [change]`.
-4. Push each branch separately: `cd <repo>/worktrees/GH-NNN && git push -u origin feature/GH-NNN`.
+4. Push each branch separately: `cd <repo's recorded worktree path> && git push -u origin feature/GH-NNN` (the tool-reported path from [worktree-setup.md §Cross-repo](worktree-setup.md), e.g. `<repo>/.claude/worktrees/GH-NNN`).
 
 The `impl-staging-gate.sh` hook gates `Bash` calls across all worktrees uniformly via `RALPH_COMMAND=impl`; no per-repo configuration needed.
 
