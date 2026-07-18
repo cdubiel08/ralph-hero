@@ -6,7 +6,7 @@ The slim successor to `ralph-hero`. See `../thoughts/shared/research/2026-05-22-
 
 ## Conventions
 
-- **SKILL.md ≤ ~150 lines.** Opinion content goes in flat sibling .md files, not the skill body.
+- **SKILL.md is dispatch + step skeleton only.** Opinion and reference content goes in flat sibling .md files, not the skill body. If a SKILL.md grows past ~200 lines, move prose to a sibling.
 - **No `references/` subfolder by default.** Reference files are siblings of SKILL.md. Two named exceptions: `caretake/` uses a `modes/` subfolder, and the vendored `using-html/` utility skill keeps its upstream `references/` + `assets/` subfolders. `using-html/` is preserved byte-identical from its source so it tracks upstream cleanly — do not flatten it to match this convention.
 - **No SOUL.md files.** Substrate is the product (principle P10).
 - **Enforcement lives in hooks/, not skill prose.** If you find yourself writing "make sure to validate X" in a SKILL.md, that's a hook.
@@ -17,13 +17,31 @@ The slim successor to `ralph-hero`. See `../thoughts/shared/research/2026-05-22-
 
 Each verb gets its own plan in `../thoughts/shared/plans/`. Don't add verbs ad-hoc — follow the plan-of-plans.
 
-## Local dev
+## Install model & local dev
 
-The symlink at `~/.claude/plugins/cache/ralph/HEAD` points here. Edits are picked up on next skill invocation. Hooks may need a Claude Code reload.
+There is **no symlink and no live-edit path**. Claude Code installs `ralph` from the `ralph-hero` marketplace (a git clone at `~/.claude/plugins/marketplaces/ralph-hero`) as an **immutable versioned copy** at `~/.claude/plugins/cache/ralph-hero/ralph/<version>/` — that copy is what `${CLAUDE_PLUGIN_ROOT}` resolves to; `~/.claude/plugins/installed_plugins.json` records the active installPath/version/gitCommitSha. The MCP server ships separately: `ralph/.mcp.json` pins `ralph-hero-mcp-server@<version>`, resolved via npx.
+
+Edits in this working tree reach a running Claude Code only after: merge to main → `release-ralph.yml` bumps `ralph/.claude-plugin/plugin.json` + tags → marketplace clone updates → plugin update installs the new version dir.
+
+Pre-merge, verify locally what CI verifies (run from repo root):
+
+```bash
+# Hook tests (CI: test-hooks — globs *.test.sh and test-*.sh)
+find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -print0 | xargs -0 -n1 bash
+
+# ShellCheck (CI: shellcheck-hooks, severity=error)
+shellcheck -S error ralph/hooks/scripts/*.sh
+
+# Doc rosters — CLAUDE.md/README.md agent/skill/tool tables vs source (CI: check-doc-rosters)
+bash scripts/check-doc-rosters.sh
+
+# Skill frontmatter contract
+cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts
+```
 
 ## Standalone — `plugin/ralph-hero/` is gone
 
-`ralph` is now the sole Claude-Code-facing plugin in this repo. `plugin/ralph-hero/` was deleted in GH-1438 (epic #1430, Phase 8). All 9 verbs, 16 agents, and the MCP server (`ralph-hero-mcp-server` at top-level `mcp-server/`) are self-contained here.
+`ralph` is the sole Claude-Code-facing plugin in this repo; `plugin/ralph-hero/` was deleted in GH-1438 (see root CLAUDE.md). All 9 verbs, 16 agents, and the MCP server (top-level `mcp-server/`) are self-contained here. An untracked `plugin/ralph-hero/` dir may linger on disk locally — it is gone from git; ignore it.
 
 ## Loop and --auto suitability matrix
 
@@ -53,7 +71,10 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `caretake --mode trends` | Yes | — | `6h` | heartbeat (no `Queue empty.`) | periodic snapshot |
 | `caretake --mode debug` | Yes | — | dynamic | `Queue empty.` | drain Langfuse errors |
 | `caretake --mode split` | Yes | — | dynamic | `Queue empty.` | drain M/L/XL queue |
-| `caretake --mode all` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic fan-out |
+| `caretake --mode watch-pr` | Yes | — | — | heartbeat (no `Queue empty.`) | sweep `blocked:pr-NNN` items; usually runs inside the `--mode all` fan-out |
+| `caretake --mode watch-upstream` | Yes | — | — | heartbeat (no `Queue empty.`) | sweep `blocked:upstream` items; usually runs inside the `--mode all` fan-out |
+| `caretake --mode watch-blockers` | Yes | — | — | heartbeat (no `Queue empty.`) | advance items whose `blockedBy` edges all closed; usually runs inside the `--mode all` fan-out |
+| `caretake --mode all` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic fan-out: hygiene + watch-* + report + trends |
 | `caretake` default (event) | Yes | `--mode triage` | dynamic | `Queue empty.` | drain `trigger:*` labels (`--issue NNN` / `--auto`→triage). Bare no-arg `--loop` → heartbeat fan-out (`caretake:all`), not this drain. |
 | `caretake --mode postmortem` | No | — | — | — | single artifact per session |
 | `caretake --mode retro` | No | — | — | — | single artifact per session |
@@ -77,4 +98,4 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 
 ## ScheduleWakeup rules for --loop-wrapped skills
 
-Skills wrapped via `--loop` must not call `ScheduleWakeup` themselves; `/loop` owns wakeup management. The one exception is `hero --mode auto`, which is a **never-terminating adaptive watcher** rather than a drain: it re-fires every tick (tight 60-270s during bursts, 3600s flat when the queue is idle) and only stops when the user cancels via `/tasks`. The three `autopilot-*` hooks enforce this contract deterministically and are keyed to `RALPH_COMMAND=hero` (the slim path) — `autopilot-director-postcheck.sh` arms the loop when it sees `Skill("loop", …--mode classify…)` and marks each tick as needing a wakeup, `autopilot-wakeup-clear.sh` clears that mark when `ScheduleWakeup` fires (and rejects the 300s cache-window anti-pattern), and `autopilot-stop-gate.sh` blocks session exit if a tick returns without a wakeup. (The legacy `ralph-hero` plugin / Director-dispatch path these hooks were originally written for is deprecated.) Adding a new direct `ScheduleWakeup` call from inside any other loop-suitable skill body is a bug — if you need to influence the wakeup cadence, do it via the continuation prompt in `loop-wrapper.md` instead.
+Skills wrapped via `--loop` must not call `ScheduleWakeup` themselves; `/loop` owns wakeup management. The one exception is `hero --mode auto`, which is a **never-terminating adaptive watcher** rather than a drain: it re-fires every tick (tight 60-270s during bursts, 3600s flat when the queue is idle) and only stops when the user cancels via `/tasks`. Four `autopilot-*` hooks enforce this contract deterministically and are keyed to `RALPH_COMMAND=hero` (the slim path) — `autopilot-enable-gate.sh` refuses to dispatch the inner `/loop` unless `RALPH_AUTOPILOT_ENABLE=true`, `autopilot-director-postcheck.sh` arms the loop when it sees `Skill("loop", …--mode classify…)` and marks each tick as needing a wakeup, `autopilot-wakeup-clear.sh` clears that mark when `ScheduleWakeup` fires (and rejects the 300s cache-window anti-pattern), and `autopilot-stop-gate.sh` blocks session exit if a tick returns without a wakeup. (The legacy `ralph-hero` plugin / Director-dispatch path these hooks were originally written for is deprecated.) Adding a new direct `ScheduleWakeup` call from inside any other loop-suitable skill body is a bug — if you need to influence the wakeup cadence, do it via the continuation prompt in `loop-wrapper.md` instead.

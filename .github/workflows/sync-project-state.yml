@@ -17,7 +17,9 @@ on:
     types: [project-item-workflow-state-changed]
 
 # Least-privilege permissions: GITHUB_TOKEN is read-only.
-# All writes (Workflow State propagation) go through ROUTING_PAT.
+# All writes (Workflow State propagation) go through ROUTING_PAT: classic PAT
+# with repo + project scopes. Create with "No expiration" — GitHub Apps and
+# fine-grained PATs lack write access to a personal-account Projects V2 board (2026-07).
 permissions:
   contents: read
 
