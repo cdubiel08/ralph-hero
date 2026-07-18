@@ -37,11 +37,11 @@
       "is_lock_state": true
     },
     "Plan in Review": {
-      "description": "Plan awaiting human approval or split into children",
+      "description": "Plan under review (decision-gated, GH-1544): decision-free plans auto-advance to In Progress; plans with open design decisions hold here with a ## Decision Request comment until the human replies",
       "allowed_transitions": ["In Progress", "Ready for Plan", "Human Needed"],
       "required_by_commands": ["ralph_review", "ralph_split"],
       "produces_for_commands": ["ralph_plan", "ralph_review"],
-      "requires_human_action": true
+      "requires_human_action": false
     },
     "In Progress": {
       "description": "Implementation actively underway or children being worked",
@@ -201,7 +201,7 @@
       "creates_artifacts": ["Worktree", "Feature branch", "PR"],
       "preconditions": [
         "Plan document must be attached",
-        "For Plan in Review: human must have approved",
+        "For Plan in Review: plan must be approved (agent critique for decision-free plans, or a human decision reply for held plans)",
         "Worktree must be available (create or reuse)"
       ],
       "postconditions": [
@@ -254,21 +254,19 @@
       ]
     },
     "ralph_review": {
-      "description": "Review implementation plans before execution",
+      "description": "Review implementation plans before execution (decision-gated, any estimate)",
       "valid_input_states": ["Plan in Review"],
       "valid_output_states": ["In Progress", "Ready for Plan", "Human Needed"],
-      "valid_input_estimates": ["XS", "S"],
       "creates_artifacts": ["thoughts/shared/reviews/YYYY-MM-DD-GH-NNN-critique.md"],
       "optional": true,
       "modes": ["interactive", "auto"],
       "preconditions": [
         "Must be on main branch",
         "Ticket must be in Plan in Review state",
-        "Ticket estimate must be XS/S",
         "Plan document must be attached"
       ],
       "postconditions": [
-        "Ticket state changed to In Progress (approved) or Ready for Plan (needs-iteration)",
+        "Ticket state changed to In Progress (approved, decision-free), returned to Ready for Plan (needs-iteration), or left in Plan in Review (held on open decisions — PLAN AWAITING DECISION)",
         "If AUTO mode: critique document created and committed",
         "If rejected: needs-iteration label added"
       ]

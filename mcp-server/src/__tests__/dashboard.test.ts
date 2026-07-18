@@ -386,7 +386,10 @@ describe("detectHealthIssues", () => {
     expect(warnings.filter((w) => w.type === "stuck_issue").length).toBe(0);
   });
 
-  it("stuck_issue: does not flag Plan in Review (human action expected)", () => {
+  // GH-1546: Plan in Review is no longer human-exempt — auto review means
+  // long dwell there is a real bottleneck (review never ran, or a decision
+  // hold the human is ignoring) and MUST be flagged.
+  it("stuck_issue: flags Plan in Review dwell (decision-gated review is autonomous)", () => {
     const phases: PhaseSnapshot[] = [
       {
         state: "Plan in Review",
@@ -395,6 +398,31 @@ describe("detectHealthIssues", () => {
           {
             number: 10,
             title: "Awaiting review",
+            priority: null,
+            estimate: null,
+            assignees: [],
+            ageHours: 200,
+            isLocked: false,
+            blockedBy: [],
+            subIssueCount: 0,
+          },
+        ],
+      },
+    ];
+
+    const warnings = detectHealthIssues(phases);
+    expect(warnings.filter((w) => w.type === "stuck_issue").length).toBe(1);
+  });
+
+  it("stuck_issue: still does not flag Human Needed (human action expected)", () => {
+    const phases: PhaseSnapshot[] = [
+      {
+        state: "Human Needed",
+        count: 1,
+        issues: [
+          {
+            number: 11,
+            title: "Escalated",
             priority: null,
             estimate: null,
             assignees: [],

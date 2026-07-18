@@ -82,10 +82,29 @@ const REMAINING_PHASES: Record<PipelinePhase, string[]> = {
   REVIEW: ["review", "implement", "pr"],
   IMPLEMENT: ["implement", "pr"],
   INTEGRATE: ["integrate"],
-  COMPLETE: ["pr"],
+  COMPLETE: [],
   HUMAN_GATE: [],
   TERMINAL: [],
 };
+
+// ---------------------------------------------------------------------------
+// Split eligibility
+// ---------------------------------------------------------------------------
+
+/**
+ * States in which an oversized estimate still warrants decomposition.
+ * Once planning has begun (Plan in Progress and beyond), an M/L/XL
+ * estimate no longer routes to SPLIT — the plan is the unit of work and
+ * the state-based phase wins. GH-1546: the previous state-blind check
+ * sent an M issue sitting in Plan in Review (approved plan attached)
+ * back to decomposition.
+ */
+const SPLIT_ELIGIBLE_STATES: ReadonlySet<string> = new Set([
+  "Backlog",
+  "Research Needed",
+  "Research in Progress",
+  "Ready for Plan",
+]);
 
 // ---------------------------------------------------------------------------
 // Oversized estimate detection
@@ -101,24 +120,19 @@ export const OVERSIZED_ESTIMATES = new Set(["M", "L", "XL"]);
  * Detect the pipeline position for a set of issues.
  *
  * The logic follows this priority order (first match wins):
- * 1. Any M/L/XL estimates -> SPLIT
+ * 1. Any M/L/XL estimates in a pre-plan state -> SPLIT
  * 2. Any issues without workflow state -> TRIAGE
  * 3. Any issues in Research Needed or Research in Progress -> RESEARCH
  * 4. All issues in Ready for Plan -> PLAN (convergence met)
  * 5. Mixed with some Ready for Plan and some earlier -> RESEARCH (convergence not met)
- * 6. Any issues in Plan in Progress or Plan in Review -> REVIEW
- * 7. All issues in Plan in Review -> HUMAN_GATE (plans awaiting human approval)
+ * 6. Any issues in Plan in Progress -> REVIEW (plans still being written)
+ * 7. Any issues in Plan in Review -> REVIEW (dispatch plan review; the
+ *    gate is decision-driven per GH-1544 — no state-level human gate)
  * 8. Any issues in In Progress -> IMPLEMENT
  * 9. Any issues in In Review (with rest Done/Canceled) -> INTEGRATE
- * 9b. All issues Done/Canceled -> TERMINAL
- * 10. Any issues in Human Needed -> TERMINAL (need human)
+ * 9b. All Done -> COMPLETE; any Canceled among all-terminal -> TERMINAL
+ * 10. Any issues in Human Needed -> HUMAN_GATE (escalated; hero stops)
  * 11. Fallback -> TRIAGE
- *
- * Note: The HUMAN_GATE check (step 7) comes AFTER the general REVIEW check
- * (step 6) to handle the case where some plans are still in progress while
- * others are in review. When ALL plans are in review (none in progress),
- * that's when we hit the HUMAN_GATE. This addresses the ordering bug noted
- * in the plan critique.
  */
 export function detectPipelinePosition(
   issues: IssueState[],
@@ -142,9 +156,17 @@ export function detectPipelinePosition(
     );
   }
 
-  // Step 1: Check for oversized issues needing split (skip already-split issues)
+  // Step 1: Check for oversized issues needing split (skip already-split
+  // issues AND issues already past the planning threshold — an oversized
+  // estimate discovered mid-flight falls through to the state-based phase).
   const oversized = issues.filter(
-    (i) => i.estimate !== null && OVERSIZED_ESTIMATES.has(i.estimate) && i.subIssueCount === 0,
+    (i) =>
+      i.estimate !== null &&
+      OVERSIZED_ESTIMATES.has(i.estimate) &&
+      i.subIssueCount === 0 &&
+      (!i.workflowState ||
+        i.workflowState === "unknown" ||
+        SPLIT_ELIGIBLE_STATES.has(i.workflowState)),
   );
   if (oversized.length > 0) {
     return buildResult(
@@ -254,24 +276,16 @@ export function detectPipelinePosition(
     );
   }
 
-  // Step 7: All issues in Plan in Review -> HUMAN_GATE (all plans awaiting approval)
-  if (planInReview.length === issues.length) {
-    return buildResult(
-      "HUMAN_GATE",
-      "All plans awaiting human approval",
-      issues,
-      isGroup,
-      groupPrimary,
-      { required: false, met: true, blocking: [] },
-      options.streamCount,
-    );
-  }
-
-  // Some in Plan in Review (but not all, and none in Plan in Progress) -> REVIEW
+  // Step 7: Any issues in Plan in Review (none in Plan in Progress) -> REVIEW.
+  // Under decision-gated approval (GH-1544) the plan-review gate is
+  // dispatchable by default (RALPH_REVIEW_PLAN=auto): decision-free plans
+  // auto-advance; held plans re-emit PLAN AWAITING DECISION idempotently.
+  // "Awaiting human approval" is no longer a state-level fact, so this is
+  // REVIEW — HUMAN_GATE is reserved for Human Needed (step 10).
   if (planInReview.length > 0) {
     return buildResult(
       "REVIEW",
-      `${planInReview.length} plan(s) in review`,
+      `${planInReview.length} plan(s) in review — dispatch plan review`,
       issues,
       isGroup,
       groupPrimary,
@@ -308,7 +322,19 @@ export function detectPipelinePosition(
         options.streamCount,
       );
     }
-    // All Done/Canceled — truly terminal
+    // All Done (no Canceled) -> COMPLETE (report final status).
+    // Any Canceled present -> TERMINAL (dead/skip).
+    if (done.length === issues.length) {
+      return buildResult(
+        "COMPLETE",
+        `All ${done.length} issue(s) done`,
+        issues,
+        isGroup,
+        groupPrimary,
+        { required: false, met: true, blocking: [] },
+        options.streamCount,
+      );
+    }
     return buildResult(
       "TERMINAL",
       `All issues done or canceled (${done.length} done, ${canceled.length} canceled)`,
@@ -320,11 +346,13 @@ export function detectPipelinePosition(
     );
   }
 
-  // Step 10: Any issues need human intervention -> TERMINAL
+  // Step 10: Any issues in Human Needed -> HUMAN_GATE (escalated, waiting
+  // on the human; hero STOPs and reports the blocker). TERMINAL is for
+  // dead work, not escalated work.
   if (humanNeeded.length > 0) {
     return buildResult(
-      "TERMINAL",
-      `${humanNeeded.length} issue(s) need human intervention`,
+      "HUMAN_GATE",
+      `${humanNeeded.length} issue(s) in Human Needed — human required`,
       issues,
       isGroup,
       groupPrimary,
@@ -416,8 +444,9 @@ function computeSuggestedRoster(
   issues: IssueState[],
   streamCount?: number,
 ): SuggestedRoster {
-  // TERMINAL: no workers needed
-  if (phase === 'TERMINAL') {
+  // TERMINAL / COMPLETE / HUMAN_GATE: no workers needed (dead, done, or
+  // waiting on the human)
+  if (phase === 'TERMINAL' || phase === 'COMPLETE' || phase === 'HUMAN_GATE') {
     return { analyst: 0, builder: 0, integrator: 0 };
   }
   // INTEGRATE: only integrator needed

@@ -161,7 +161,7 @@ Key state categories defined in `workflow-states.ts`:
 
 `save_issue` automatically syncs the Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping when setting `workflowState`. The sync is best-effort and one-way.
 
-**Async unblock loop**: Hero closes its loop at Human Needed. `/ralph:caretake --mode unblock` posts `## Unblock Request` comments; the human answers via `/ralph:caretake --mode unblock --question`.
+**Async unblock loop**: Hero closes its loop at Human Needed. `/ralph:caretake --mode unblock` posts `## Unblock Request` comments; the human answers via `/ralph:caretake --mode unblock --question`. Sibling loop for held plans (GH-1544): plan review posts `## Decision Request` on Plan in Review issues with open `#### Decision:` blocks; the human replies on the issue (or runs `/ralph:plan --mode review NNN` interactively) and the next review dispatch folds the answers.
 
 ### Performance tracking over time
 

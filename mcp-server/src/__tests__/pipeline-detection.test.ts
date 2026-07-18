@@ -88,9 +88,9 @@ describe("detectPipelinePosition - single issue", () => {
     expect(result.phase).toBe("REVIEW");
   });
 
-  it("returns HUMAN_GATE for Plan in Review (single issue = all in review)", () => {
+  it("returns REVIEW for Plan in Review (decision-gated review is dispatchable)", () => {
     const result = detectSingle(makeIssue(1, "Plan in Review"));
-    expect(result.phase).toBe("HUMAN_GATE");
+    expect(result.phase).toBe("REVIEW");
   });
 
   it("returns IMPLEMENT for In Progress", () => {
@@ -103,14 +103,19 @@ describe("detectPipelinePosition - single issue", () => {
     expect(result.phase).toBe("INTEGRATE");
   });
 
-  it("returns TERMINAL for Done", () => {
+  it("returns COMPLETE for Done (report final status, not dead)", () => {
     const result = detectSingle(makeIssue(1, "Done"));
+    expect(result.phase).toBe("COMPLETE");
+  });
+
+  it("returns TERMINAL for Canceled", () => {
+    const result = detectSingle(makeIssue(1, "Canceled"));
     expect(result.phase).toBe("TERMINAL");
   });
 
-  it("returns TERMINAL for Human Needed", () => {
+  it("returns HUMAN_GATE for Human Needed (escalated, not dead)", () => {
     const result = detectSingle(makeIssue(1, "Human Needed"));
-    expect(result.phase).toBe("TERMINAL");
+    expect(result.phase).toBe("HUMAN_GATE");
   });
 
   it("returns TRIAGE for unknown/missing workflow state", () => {
@@ -159,13 +164,13 @@ describe("detectPipelinePosition - groups", () => {
     expect(result.phase).toBe("REVIEW");
   });
 
-  it("returns HUMAN_GATE when ALL plans in review", () => {
+  it("returns REVIEW when ALL plans in review (decision-gated, dispatchable)", () => {
     const result = detectGroup([
       makeIssue(1, "Plan in Review"),
       makeIssue(2, "Plan in Review"),
       makeIssue(3, "Plan in Review"),
     ]);
-    expect(result.phase).toBe("HUMAN_GATE");
+    expect(result.phase).toBe("REVIEW");
   });
 
   it("returns IMPLEMENT when some issues in progress", () => {
@@ -202,25 +207,30 @@ describe("detectPipelinePosition - groups", () => {
     expect(result.reason).toContain("#2=M");
   });
 
-  it("returns TERMINAL when any issue needs human intervention", () => {
+  it("mixed In Progress + Human Needed stays IMPLEMENT (In Progress has priority)", () => {
     const result = detectGroup([
       makeIssue(1, "In Progress"),
       makeIssue(2, "Human Needed"),
     ]);
-    // Human Needed is checked after In Progress, but let's verify:
-    // Actually, In Progress check comes first in the logic, so IMPLEMENT
-    // Wait -- the plan says Human Needed -> TERMINAL. Let me verify the order:
-    // Step 8 is In Progress -> IMPLEMENT, Step 10 is Human Needed -> TERMINAL
-    // So if mixed In Progress + Human Needed, it's IMPLEMENT (In Progress takes priority)
+    // Step 8 (In Progress -> IMPLEMENT) precedes step 10 (Human Needed ->
+    // HUMAN_GATE), so active work wins over the escalation.
     expect(result.phase).toBe("IMPLEMENT");
   });
 
-  it("returns TERMINAL for pure Human Needed group", () => {
+  it("returns HUMAN_GATE for pure Human Needed group", () => {
     const result = detectGroup([
       makeIssue(1, "Human Needed"),
       makeIssue(2, "Human Needed"),
     ]);
-    expect(result.phase).toBe("TERMINAL");
+    expect(result.phase).toBe("HUMAN_GATE");
+  });
+
+  it("returns COMPLETE for pure Done group", () => {
+    const result = detectGroup([
+      makeIssue(1, "Done"),
+      makeIssue(2, "Done"),
+    ]);
+    expect(result.phase).toBe("COMPLETE");
   });
 });
 
@@ -268,14 +278,24 @@ describe("detectPipelinePosition - remaining phases", () => {
     expect(result.remainingPhases).toEqual(["implement", "pr"]);
   });
 
-  it("TERMINAL has no remaining phases", () => {
+  it("COMPLETE has no remaining phases", () => {
     const result = detectSingle(makeIssue(1, "Done"));
     expect(result.remainingPhases).toEqual([]);
   });
 
-  it("HUMAN_GATE has no remaining phases", () => {
-    const result = detectSingle(makeIssue(1, "Plan in Review"));
+  it("TERMINAL has no remaining phases", () => {
+    const result = detectSingle(makeIssue(1, "Canceled"));
     expect(result.remainingPhases).toEqual([]);
+  });
+
+  it("HUMAN_GATE (Human Needed) has no remaining phases", () => {
+    const result = detectSingle(makeIssue(1, "Human Needed"));
+    expect(result.remainingPhases).toEqual([]);
+  });
+
+  it("REVIEW (Plan in Review) has review/implement/pr remaining", () => {
+    const result = detectSingle(makeIssue(1, "Plan in Review"));
+    expect(result.remainingPhases).toEqual(["review", "implement", "pr"]);
   });
 });
 
@@ -394,6 +414,57 @@ describe("detectPipelinePosition - sub-issue count (SPLIT skip)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Workflow-state guard: SPLIT only fires in pre-plan states (GH-1546).
+// The state-blind check misfired live on issue #1544: an M issue in
+// Plan in Review with an approved plan attached was told to split.
+// ---------------------------------------------------------------------------
+
+describe("detectPipelinePosition - SPLIT state guard", () => {
+  it("M issue in Plan in Review is REVIEW, not SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "Plan in Review", "M", 0));
+    expect(result.phase).toBe("REVIEW");
+  });
+
+  it("M issue in Plan in Progress is REVIEW, not SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "Plan in Progress", "M", 0));
+    expect(result.phase).toBe("REVIEW");
+  });
+
+  it("L issue in In Progress is IMPLEMENT, not SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "In Progress", "L", 0));
+    expect(result.phase).toBe("IMPLEMENT");
+  });
+
+  it("XL issue in In Review is INTEGRATE, not SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "In Review", "XL", 0));
+    expect(result.phase).toBe("INTEGRATE");
+  });
+
+  it("M issue in Human Needed is HUMAN_GATE, not SPLIT", () => {
+    const result = detectSingle(makeIssue(1, "Human Needed", "M", 0));
+    expect(result.phase).toBe("HUMAN_GATE");
+  });
+
+  it("M issue in Ready for Plan still SPLITs (pre-plan state)", () => {
+    const result = detectSingle(makeIssue(1, "Ready for Plan", "M", 0));
+    expect(result.phase).toBe("SPLIT");
+  });
+
+  it("M issue with no workflow state still SPLITs (split precedes triage)", () => {
+    const result = detectSingle(makeIssue(1, "unknown", "M", 0));
+    expect(result.phase).toBe("SPLIT");
+  });
+
+  it("group: M in Plan in Review does not drag group to SPLIT", () => {
+    const result = detectGroup([
+      makeIssue(1, "Plan in Review", "M", 0),
+      makeIssue(2, "Plan in Review", "S", 0),
+    ]);
+    expect(result.phase).toBe("REVIEW");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Stream-level pipeline detection
 // ---------------------------------------------------------------------------
 
@@ -498,12 +569,12 @@ describe("detectPipelinePosition - auto mode (RALPH_HERO_AUTO)", () => {
     expect(result.phase).toBe("INTEGRATE");
   });
 
-  it("returns TERMINAL for all Done even in auto mode", () => {
+  it("returns COMPLETE for all Done even in auto mode", () => {
     const result = detectGroup([
       makeIssue(1, "Done"),
       makeIssue(2, "Done"),
     ], auto);
-    expect(result.phase).toBe("TERMINAL");
+    expect(result.phase).toBe("COMPLETE");
   });
 
   it("returns TERMINAL for Done + Canceled (no In Review) in auto mode", () => {

@@ -19,6 +19,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   registerDirectionsTools,
   extractUnblockSignal,
+  extractDecisionSignal,
 } from "../tools/directions-tools.js";
 import type { GitHubClient } from "../github-client.js";
 import type { GitHubClientConfig } from "../types.js";
@@ -567,6 +568,109 @@ describe("extractUnblockSignal", () => {
     const signal = extractUnblockSignal(comments, NOW);
     expect(signal).not.toBeNull();
     expect(signal?.questionCount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractDecisionSignal — comment parsing for `plan-decision` (GH-1546)
+// ---------------------------------------------------------------------------
+
+describe("extractDecisionSignal", () => {
+  const NOW = new Date("2026-07-18T12:00:00Z");
+  const HOUR_MS = 60 * 60 * 1000;
+  const DAY_MS = 24 * HOUR_MS;
+
+  it("returns null when there is no `## Decision Request` comment", () => {
+    const comments = [
+      {
+        body: "## Implementation Plan\n\nPlan: thoughts/shared/plans/x.md",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    expect(extractDecisionSignal(comments, NOW)).toBeNull();
+  });
+
+  it("returns signal with decision count from ### section headers", () => {
+    const comments = [
+      {
+        body: [
+          "## Decision Request",
+          "",
+          "### Park location",
+          "- **Context**: ...",
+          "",
+          "### Skip scope",
+          "- **Context**: ...",
+          "",
+          "Reply here, or run /ralph:plan --mode review 123",
+        ].join("\n"),
+        createdAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractDecisionSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.decisionCount).toBe(2);
+    expect(signal?.decisionRequestAgeDays).toBe(2);
+  });
+
+  it("returns null when ANY comment is newer than the request (answered)", () => {
+    const comments = [
+      {
+        body: "## Decision Request\n\n### Park location",
+        createdAt: new Date(NOW.getTime() - 3 * DAY_MS).toISOString(),
+      },
+      {
+        body: "Go with option 1 — Plan in Review + comment.",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    expect(extractDecisionSignal(comments, NOW)).toBeNull();
+  });
+
+  it("uses the most recent Decision Request when multiple exist", () => {
+    const comments = [
+      {
+        body: "## Decision Request\n\n### Old A\n\n### Old B",
+        createdAt: new Date(NOW.getTime() - 6 * DAY_MS).toISOString(),
+      },
+      {
+        body: "## Decision Request\n\n### Remaining",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractDecisionSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.decisionCount).toBe(1);
+    expect(signal?.decisionRequestAgeDays).toBe(1);
+  });
+
+  it("floors decisionCount at 1 when the body has no ### sections", () => {
+    const comments = [
+      {
+        body: "## Decision Request\n\nFreeform — which storage backend?",
+        createdAt: new Date(NOW.getTime() - 5 * HOUR_MS).toISOString(),
+      },
+    ];
+    const signal = extractDecisionSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.decisionCount).toBe(1);
+    expect(signal?.decisionRequestAgeDays).toBe(0);
+  });
+
+  it("comments OLDER than the request do not count as answers", () => {
+    const comments = [
+      {
+        body: "## Implementation Plan\n\nPlan: ...",
+        createdAt: new Date(NOW.getTime() - 4 * DAY_MS).toISOString(),
+      },
+      {
+        body: "## Decision Request\n\n### Park location",
+        createdAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractDecisionSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.decisionRequestAgeDays).toBe(2);
   });
 });
 

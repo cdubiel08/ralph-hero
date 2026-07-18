@@ -67,6 +67,7 @@ Each `AskUserQuestion` option's `label` is `"<verb> #<NNN> · <title fragment>"`
 | `kind: "tree-continue"` | `Continue tree #NNN` |
 | `kind: "lock-stale"` | `Unstick #NNN` |
 | `kind: "human-needed-unblock"` | `Unblock #NNN` |
+| `kind: "plan-decision"` | `Answer decision #NNN` (plan held on `signals.decisionCount` open decision(s) — the action is ANSWERING the `## Decision Request`, not re-reviewing) |
 | `kind: "triage"` | `Triage N stateless items` (N from `signals.statelessCount`; no `#NNN`) |
 
 ### Title fragment truncation
@@ -92,7 +93,8 @@ Based on the user's pick, dispatch via `Agent()` or `Skill()`. The `ralph:` work
 
 | `direction.kind` | Workflow State | Dispatch |
 |---|---|---|
-| `issue` | `Plan in Review` | `Agent(subagent_type="ralph:review-agent", prompt="Review the plan for issue #NNN. Follow the plan-review procedure in ${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-review.md exactly; emit APPROVED / NEEDS_ITERATION.", description="Review plan for GH-NNN")` |
+| `issue` | `Plan in Review` | `Agent(subagent_type="ralph:review-agent", prompt="Review the plan for issue #NNN. Follow the plan-review procedure in ${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-review.md exactly; emit APPROVED / NEEDS_ITERATION / PLAN AWAITING DECISION.", description="Review plan for GH-NNN")` |
+| `plan-decision` | `Plan in Review` | Interactive surface, not a dispatch: open the issue's `## Decision Request` comment (issue URL from `direction.issue`), present each `### <decision>` to the user via the decisions pickers in `${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-review.md` § Interactive vs auto (via `Skill("ralph:plan", args="NNN --mode review")` under `RALPH_REVIEW_PLAN=interactive`), or tell the user to reply on the issue. Do NOT dispatch review-agent — the hold re-emits `PLAN AWAITING DECISION` until a human answers. |
 | `issue` | `Ready for Plan` | `Agent(subagent_type="ralph:plan-agent", prompt="Plan issue #NNN. Follow the planning procedure in ${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-shapes.md (and decomposition.md / intake-routing.md as referenced) exactly.", description="Plan GH-NNN")` |
 | `issue` | `Research Needed` | `Agent(subagent_type="ralph:research-agent", prompt="Research issue #NNN. Follow the research procedure in ${CLAUDE_PLUGIN_ROOT}/skills/research/research-shapes.md (and findings-format.md / intake-routing.md as referenced) exactly.", description="Research GH-NNN")` |
 | `issue` | `In Review` | `Agent(subagent_type="ralph:review-agent", prompt="Review issue #NNN. Follow the plan-review procedure in ${CLAUDE_PLUGIN_ROOT}/skills/plan/plan-review.md exactly.", description="Review GH-NNN")` |
