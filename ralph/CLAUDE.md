@@ -11,6 +11,7 @@ The slim successor to `ralph-hero`. See `../thoughts/shared/research/2026-05-22-
 - **No SOUL.md files.** Substrate is the product (principle P10).
 - **Enforcement lives in hooks/, not skill prose.** If you find yourself writing "make sure to validate X" in a SKILL.md, that's a hook.
 - **Artifact state lives in the MCP server.** Skills read/write via `mcp__plugin_ralph_ralph-github__*` tools (resolved via ralph's own `.mcp.json`; the package is still published as `ralph-hero-mcp-server` from top-level `mcp-server/`).
+- **The decisions section is the plan's human-interface contract.** Every plan carries `## Design Decisions & Open Ambiguities` (`plan-shapes.md` § Design decisions anatomy, hook-enforced): open `#### Decision:` blocks are what the human reviews — plan review holds on them and auto-advances without them. Author judgment calls there, at the moment of uncertainty, not buried in phase prose.
 
 ## Adding a new verb
 
@@ -34,7 +35,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `research --mode prove` | No | — | — | — | single-claim investigation; interactive |
 | `research` default | No | `--mode auto` | — | — | interactive question intake |
 | `plan --mode auto` | Yes | (this IS the auto mode) | dynamic | `Queue empty.` | drain Ready for Plan queue |
-| `plan --mode review` | Yes | — | dynamic | `Queue empty.` | drain Plan in Review queue |
+| `plan --mode review` | Yes | — | dynamic | `Queue empty.` | drain Plan in Review queue; `PLAN AWAITING DECISION` is a progress sentinel (held plan, re-fire), not terminal |
 | `plan --mode iterate` | No | — | — | — | single-plan surgical edit; interactive |
 | `plan --mode epic` | No | — | — | — | single-epic decomposition |
 | `plan` default | No | `--mode auto` | — | — | interactive phased plan creation |

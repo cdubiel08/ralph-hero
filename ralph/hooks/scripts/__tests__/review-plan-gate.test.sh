@@ -36,6 +36,10 @@ run_case() {
 REVIEW_PICKER='[{"question":"Plan review verdict for #123?","header":"Plan Review","options":[{"label":"Approve"},{"label":"Approve with edits"},{"label":"Request changes"},{"label":"Open in editor"}]}]'
 ITERATE_PROMPT='[{"question":"Apply the surgical edit to Phase 2?","header":"Approach","options":[{"label":"Yes, edit Phase 2"},{"label":"No, add a new phase"}]}]'
 HEADERLESS_PICKER='[{"question":"Verdict?","header":"Verdict","options":[{"label":"Approve"},{"label":"Request changes"}]}]'
+# Decisions-picker naming contract (GH-1544): Decision:-prefixed header, no
+# Approve/Request-changes label pair — must pass untouched under auto.
+DECISION_PICKER='[{"question":"Where should plans awaiting a decision park?","header":"Decision: park location","options":[{"label":"Plan in Review + comment"},{"label":"Human Needed escalation"}]}]'
+CONFIRM_PICKER='[{"question":"Plan review verdict for #123?","header":"Plan Review","options":[{"label":"Approve"},{"label":"Request changes"},{"label":"Open in editor"}]}]'
 
 echo "=== review-plan-gate tests ==="
 echo ""
@@ -45,6 +49,9 @@ run_case "interactive mode allows the review picker" 0 "$REVIEW_PICKER" RALPH_RE
 run_case "auto mode blocks the review picker (header match)" 2 "$REVIEW_PICKER" RALPH_REVIEW_PLAN=auto
 run_case "auto mode blocks an Approve/Request-changes picker without the header" 2 "$HEADERLESS_PICKER" RALPH_REVIEW_PLAN=auto
 run_case "auto mode ALLOWS an unrelated question (iterate confirm-approach)" 0 "$ITERATE_PROMPT" RALPH_REVIEW_PLAN=auto
+run_case "auto mode ALLOWS a Decision:-header picker (naming contract)" 0 "$DECISION_PICKER" RALPH_REVIEW_PLAN=auto
+run_case "auto mode blocks the 3-option confirm picker (Plan Review header)" 2 "$CONFIRM_PICKER" RALPH_REVIEW_PLAN=auto
+run_case "unset RALPH_REVIEW_PLAN allows the decision picker too" 0 "$DECISION_PICKER"
 
 # Malformed input fails open
 set +e

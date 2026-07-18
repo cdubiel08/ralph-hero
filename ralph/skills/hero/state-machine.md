@@ -22,23 +22,25 @@
 |  BUILDER PHASE                                                     |
 |    |- PLAN (per group) -- create implementation plans              |
 |    |- PLAN REVIEW GATE                                             |
-|    |   | plan review is "auto":                                    |
+|    |   | plan review is "auto" (decision-driven):                  |
 |    |   |   /ralph:plan --mode review critiques plan                |
-|    |   |   APPROVED -> report plan location, advance, continue     |
+|    |   |   APPROVED, no open decisions -> advance, continue        |
+|    |   |   APPROVED + open decisions -> Decision Request comment,  |
+|    |   |     hold in Plan in Review, STOP (not Human Needed)       |
 |    |   |   NEEDS_ITERATION -> return critique to /ralph:plan        |
 |    |   |   ESCALATE -> move to Human Needed, STOP                  |
 |    |   | plan review is "interactive":                              |
-|    |   |   report plan location, ask human for approval            |
+|    |   |   decision pickers per open block, then confirm picker    |
 |    |   |   APPROVED -> advance, continue                           |
 |    |   |   REJECTED -> STOP                                        |
 |    |- IMPLEMENT (sequential) -- execute plan phases                |
 |    |- PR (per feature plan; one PR closes all group members)       |
 |    v                                                               |
 |  MERGE GATE                                                        |
-|    | merge review is "interactive" (default):                      |
-|    |   report PR URLs, STOP -- human must request merge            |
-|    | merge review is "auto":                                       |
+|    | merge review is "auto" (default):                             |
 |    |   proceed to /ralph:review (validate, merge, CI watch)        |
+|    | merge review is "interactive" (opt-in):                       |
+|    |   report PR URLs, STOP -- human must request merge            |
 |    v                                                               |
 |  INTEGRATOR PHASE                                                  |
 |    |- /ralph:review GH-[PRIMARY] (validate, merge, CI watch)       |

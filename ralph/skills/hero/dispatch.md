@@ -65,28 +65,29 @@ After all plans complete, read `$RALPH_REVIEW_PLAN` (default `auto`):
 
 **`auto`:**
 
-Dispatch `Skill("ralph:plan", args="NNN --mode review --plan-doc PATH")` for each plan. Route on verdict:
+Dispatch `Skill("ralph:plan", args="NNN --mode review --plan-doc PATH")` for each plan. Route on the review outcome:
 
-- **ALL APPROVED** → batch update all issues in the group to "In Progress", report plan locations, continue
+- **ALL APPROVED** (decision-free plans — the review advances them) → batch update all issues in the group to "In Progress", report plan locations, continue
 - **NEEDS_ITERATION** → return critique to `/ralph:plan`, re-dispatch, re-review. Max 2 iterations before escalating
+- **`PLAN AWAITING DECISION`** → the plan is APPROVED but holds in Plan in Review on open `#### Decision:` blocks. Report the `## Decision Request` comment URL and STOP this issue's pipeline. This is NOT an escalation — do NOT move to Human Needed; the human answers on the issue (or via `/ralph:plan --mode review NNN` interactively) and the next review dispatch advances it.
 - **ESCALATE** → move issues to Human Needed, STOP with the critique
 
 **`interactive`:**
 
 Report planned groups with plan URLs and current state. All issues are in "Plan in Review".
 
-Use `AskUserQuestion`:
+Decisions-first (per `plan-review.md` § Interactive vs auto): present one `Decision:`-header `AskUserQuestion` per open `#### Decision:` block, folding answers into the plan. Then the confirm picker:
 - "Approve and implement" → batch update to "In Progress", continue
 - "Open plan in editor" → `open` / `xdg-open` the plan file, then re-present the picker
 - "Stop here" → mark gate task completed and STOP with plan URL + resume command
 
 ## Merge gate
 
-After all PRs created, read `$RALPH_REVIEW_MODE` (default `interactive`):
+After all PRs created, read `$RALPH_REVIEW_MODE` (default `auto`):
 
-**`interactive`:** report PR URLs, STOP. Human must re-run `/ralph:hero NNN` or `/ralph:review NNN`.
+**`auto`** (default; unset or `auto`): dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics (it's Plan 6's verb) — including the epic close-out validation when the merge closes an epic's last child (fable val-agent, `ralph/skills/review/merge-gate.md` § Epic close-out validation). `CHANGES_REQUESTED` on the PR remains the unconditional human veto (`merge-review-decision-gate.sh` runs regardless of this dial).
 
-**`auto`:** dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics (it's Plan 6's verb) — including the epic close-out validation when the merge closes an epic's last child (fable val-agent, `ralph/skills/review/merge-gate.md` § Epic close-out validation).
+**`interactive`** (opt-out): report PR URLs, STOP. Human must re-run `/ralph:hero NNN` or `/ralph:review NNN`.
 
 ## Error handling
 

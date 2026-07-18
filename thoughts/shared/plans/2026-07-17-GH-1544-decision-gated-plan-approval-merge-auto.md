@@ -115,9 +115,9 @@ Define the `## Design Decisions & Open Ambiguities` section in the plan shapes a
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `shellcheck -S error ralph/hooks/scripts/doc-structure-validator.sh` exits 0
-- [ ] New validator fixtures: plan missing the section → exit 2; plan with sentinel → exit 0; plan with one `#### Decision:` block and no sentinel → exit 0; section only inside a fenced example → exit 2 (fence-strip respected)
-- [ ] Existing hook tests still pass
+- [x] `shellcheck -S error ralph/hooks/scripts/doc-structure-validator.sh` exits 0
+- [x] New validator fixtures: plan missing the section → exit 2; plan with sentinel → exit 0; plan with one `#### Decision:` block and no sentinel → exit 0; section only inside a fenced example → exit 2 (fence-strip respected)
+- [x] Existing hook tests still pass
 
 #### Manual Verification
 - [ ] This plan doc itself passes the updated validator (it models the contract)
@@ -162,9 +162,9 @@ Make the decisions section the unit of human review: interactive mode presents d
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Hook test: review-plan-gate blocks a picker with header "Plan Review" under `RALPH_REVIEW_PLAN=auto` AND allows one with header "Decision: park location"
-- [ ] `shellcheck -S error ralph/hooks/scripts/review-plan-gate.sh` exits 0
-- [ ] `grep -q "PLAN AWAITING DECISION" ralph/skills/shared/loop-wrapper.md` (manifest row updated)
+- [x] Hook test: review-plan-gate blocks a picker with header "Plan Review" under `RALPH_REVIEW_PLAN=auto` AND allows one with header "Decision: park location"
+- [x] `shellcheck -S error ralph/hooks/scripts/review-plan-gate.sh` exits 0
+- [x] `grep -q "PLAN AWAITING DECISION" ralph/skills/shared/loop-wrapper.md` (manifest row updated)
 
 #### Manual Verification
 - [ ] On a scratch issue: auto review of a plan with one open decision posts exactly one `## Decision Request` + one notification; immediate re-invocation emits `PLAN AWAITING DECISION` without duplicates
@@ -207,9 +207,9 @@ Flip the merge-review default to autonomous and reconcile every place the old de
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -rn "RALPH_REVIEW_MODE:-interactive" ralph/ docs/ CLAUDE.md README.md` returns nothing
-- [ ] `grep -c "human plan-approval gate by default" ralph/skills/hero/SKILL.md` returns 0 (old claim gone)
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `grep -rn "RALPH_REVIEW_MODE:-interactive" ralph/ docs/ CLAUDE.md README.md` returns nothing
+- [x] `grep -c "human plan-approval gate by default" ralph/skills/hero/SKILL.md` returns 0 (old claim gone)
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] `/ralph:hero <scratch-issue>` (default one-shot, decision-free plan) runs plan → impl → PR → val → code-review → merge → CI watch with no AskUserQuestion after planning and no "re-run /ralph:hero" stop
@@ -244,10 +244,10 @@ Deterministic coverage for the new gate behavior and documentation consistency, 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -print0 | xargs -0 -n1 bash` — all pass including the new files
-- [ ] `shellcheck -S error ralph/hooks/scripts/*.sh` exits 0
-- [ ] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` passes
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -print0 | xargs -0 -n1 bash` — all pass including the new files
+- [x] `shellcheck -S error ralph/hooks/scripts/*.sh` exits 0
+- [x] `cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts` passes
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] Fresh-eyes read of `plan-shapes.md § Design decisions anatomy` + `plan-review.md` — the contract is followable without this plan as context

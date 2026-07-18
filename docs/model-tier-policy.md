@@ -76,6 +76,8 @@ Escalate on BLOCKED, never preemptively.
 The frontmatter pins above are STATIC defaults. The autonomous paths
 additionally route tiers per unit size — see the next section.
 
+> **Decision-gated plan approval (GH-1544).** Tier routing below is unchanged by the gate flip: the same critique tiers run for the same unit sizes. What changed is the *human* gate — it is now decision-conditional, not size-conditional: an APPROVED plan holds in Plan in Review only when it carries open `#### Decision:` blocks (see `ralph/skills/plan/plan-shapes.md` § Design decisions anatomy); decision-free plans advance at any size, and the merge gate defaults to autonomous (`RALPH_REVIEW_MODE=auto`).
+
 ## Tier routing by unit size (GH-1538)
 
 The unit of work — single issue vs feature group vs epic — drives which

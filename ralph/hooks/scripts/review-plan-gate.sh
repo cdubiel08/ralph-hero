@@ -16,6 +16,12 @@
 #   - the option labels contain both an "Approve..." and a "Request changes"
 #     entry (the primary picker's signature per plan-review.md).
 #
+# Decisions-picker naming contract (GH-1544): the decision pickers introduced
+# by plan-review.md § Interactive vs auto use `Decision:`-prefixed headers and
+# never pair "Approve"/"Request changes" labels, so they pass this detection
+# untouched — by design, no bypass logic needed here. The contract lives in
+# plan-review.md; this hook's detection is intentionally unchanged.
+#
 # If RALPH_REVIEW_PLAN is unset, allows (skill hasn't declared a review plan mode).
 #
 # Exit codes:
@@ -46,6 +52,8 @@ fi
 [[ "$is_review_picker" == "true" ]] || allow
 
 block "Review plan gate: plan review is auto — use automated review, not a human verdict picker.
+
+Decision pickers (\`Decision:\`-prefixed headers) are allowed — see plan-review.md § Interactive vs auto.
 
 If this is an escalation (architecture, permissions, scope), use the escalation protocol instead:
   ralph_hero__save_issue(number=N, workflowState=\"__ESCALATE__\", command=\"...\")

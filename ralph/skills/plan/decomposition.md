@@ -46,6 +46,12 @@ Filename: `thoughts/shared/plans/YYYY-MM-DD-GH-NNNN-epic-<short-name>.md`. Front
 ## What We're NOT Doing
 [Scope boundaries — what's deferred to a later epic]
 
+## Design Decisions & Open Ambiguities
+[REQUIRED — see plan-shapes.md § Design decisions anatomy. Epic decomposition
+is decision-dense: journal resolved decomposition calls as bullets; unsettled
+judgment calls become #### Decision: blocks. Sentinel line when none open:]
+None — no open design decisions.
+
 ## References
 ```
 

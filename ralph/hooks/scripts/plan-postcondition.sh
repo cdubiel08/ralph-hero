@@ -41,6 +41,13 @@ if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
     echo "plan-postcondition: PLAN REUSED terminal accepted (no new plan file written)"
     exit 0
   fi
+  # Held-plan re-fire (GH-1544): a --mode review pass over an already-held
+  # plan writes NO artifacts by design (no re-critique, no re-post) and
+  # emits this sentinel instead. Accept it as a non-error terminal.
+  if grep -qE 'PLAN AWAITING DECISION' "$TRANSCRIPT_PATH"; then
+    echo "plan-postcondition: PLAN AWAITING DECISION terminal accepted (held plan, no new artifacts)"
+    exit 0
+  fi
 fi
 
 ticket_id="${RALPH_TICKET_ID:-}"
