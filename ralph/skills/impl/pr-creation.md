@@ -40,10 +40,10 @@ Closes #NNN_child2
 
 When the issue has multiple worktrees (cross-repo scope), create one PR per repo and cross-reference them via PR body links.
 
-For each repo with a worktree:
+For each repo with a worktree (the tool-reported path from [worktree-setup.md §Cross-repo](worktree-setup.md), e.g. `<repo>/.claude/worktrees/GH-NNN`):
 
 ```bash
-cd <repo>/worktrees/GH-NNN
+cd <repo's recorded worktree path>
 git push -u origin feature/GH-NNN
 gh pr create \
   --repo <owner>/<repo> \
