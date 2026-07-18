@@ -131,11 +131,11 @@ if [[ "$(uname -s)" == "Darwin" ]]; then open "<plan-local-path>"; else xdg-open
 
 **Auto** (`--review-plan auto` or env `RALPH_REVIEW_PLAN=auto`):
 
-**Held-plan idempotency check — BEFORE any critique dispatch.** The autopilot classify tick re-dispatches review for every Plan in Review issue on every pass; without this pre-check a held plan burns a fresh critique sub-agent per tick. Scan the issue's comments for an existing `## Decision Request`:
+**Held-plan idempotency check — BEFORE the full plan read, rubric pass, or any critique dispatch.** The autopilot classify tick re-dispatches review for every Plan in Review issue on every pass; without this pre-check a held plan burns a full-plan read and a fresh critique sub-agent per tick. Scan the issue's comments for an existing `## Decision Request`:
 
 - Present, with NO later human comment → emit `PLAN AWAITING DECISION` and STOP. No critique dispatch, no re-post, no re-notify.
-- Present, with a later human comment → treat the reply as answers: fold into the plan (as in the interactive flow — resolved-decisions list, `human-decided YYYY-MM-DD`, sentinel restored), then proceed with the APPROVED transition to In Progress (the held plan already passed its critique).
-- Absent → proceed to the critique dispatch below.
+- Present, with a later human comment → check the reply against each open `#### Decision:` block. It counts as answers ONLY if it actually addresses them (names a choice, picks an option, or gives direction for each open block — a bump, question, or unrelated note does NOT). Answers → fold into the plan (as in the interactive flow — resolved-decisions list, `human-decided YYYY-MM-DD`, sentinel restored when none remain), and only when NO open blocks remain proceed with the APPROVED transition to In Progress (the held plan already passed its critique); partially answered → fold what was answered, re-emit `PLAN AWAITING DECISION` (no re-post). Not answers → emit `PLAN AWAITING DECISION` and STOP.
+- Absent → before dispatching a fresh critique, check for an existing critique doc for this issue under `thoughts/shared/reviews/` with `decisions_open > 0` (the comment may have been edited or deleted — `review-no-dup.sh` would block a duplicate critique write anyway). If found, re-post the `## Decision Request` from the plan's open blocks WITHOUT re-critiquing, then emit `PLAN AWAITING DECISION`. Otherwise proceed to the critique dispatch below.
 
 Dispatch a sub-agent for delegated critique, tier-routed by unit size (GH-1538):
 

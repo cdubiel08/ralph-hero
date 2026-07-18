@@ -84,6 +84,43 @@ run_case d-empty "GH-5-empty.md" "# P
 Some prose but neither a Decision block nor the sentinel.${PLAN_TAIL}" 2 \
   "section present but with neither block nor sentinel blocks"
 
+# --- Scoping + tolerance (code-review hardening) --------------------------------
+run_case d-scope "GH-9-scope.md" "# P
+
+## Notes
+
+The sentinel is: None — no open design decisions.
+
+## Design Decisions & Open Ambiguities
+
+TODO fill in later.${PLAN_TAIL}" 2 \
+  "sentinel outside the decisions section does not satisfy an empty section"
+run_case d-ascii "GH-10-ascii.md" "# P
+
+## Design Decisions & Open Ambiguities
+
+None - no open design decisions.${PLAN_TAIL}" 0 \
+  "ASCII-hyphen sentinel variant passes (dash tolerance)"
+run_case d-nested "GH-11-nested.md" '# P
+
+````markdown
+example with inner fence
+```
+inner
+```
+````'"
+
+${SECTION_SENTINEL}${PLAN_TAIL}" 0 \
+  "section after a 4-backtick fence containing bare \`\`\` still seen (no desync)"
+run_case d-indent "GH-12-indent.md" "# P
+
+- example:
+  \`\`\`markdown
+${SECTION_SENTINEL}
+  \`\`\`
+${PLAN_TAIL}" 2 \
+  "section only inside an indented fenced example blocks"
+
 # --- Plan-of-plans shape -------------------------------------------------------
 run_case d-pop-missing "GH-6-pop-missing.md" "${POP_HEAD}" 2 \
   "plan-of-plans missing the decisions section blocks"

@@ -52,8 +52,19 @@ validate_doc() {
       # false-positive on EITHER discriminator — both the frontmatter `type:` grep
       # and the '## Feature Decomposition' grep run on the fence-stripped body
       # (real frontmatter lives above any fence, so it survives the strip).
+      # Fence semantics (CommonMark-ish): fences may be indented, and a
+      # fenced block only closes on a fence at least as long as its opener —
+      # so a bare ``` inside a ````-fenced example stays content, and
+      # list-indented fenced examples are stripped too.
       local plan_body
-      plan_body=$(awk '/^```/ { f = !f; next } !f { print }' "$doc")
+      plan_body=$(awk '
+        /^[[:space:]]*```/ {
+          match($0, /`+/); len = RLENGTH
+          if (!f) { f = 1; open = len }
+          else if (len >= open) { f = 0 }
+          next
+        }
+        !f { print }' "$doc")
       if printf '%s\n' "$plan_body" | grep -qE "^type:[[:space:]]*plan-of-plans" \
          || printf '%s\n' "$plan_body" | grep -qE "^## Feature Decomposition([[:space:]]|$)"; then
         # Plan-of-plans shape — sections per ralph/skills/plan/decomposition.md § Plan-of-plans shape.
@@ -67,11 +78,18 @@ validate_doc() {
       fi
       # Decisions contract (GH-1544) — both plan shapes, fence-stripped body so
       # docs that show the format in fenced examples don't false-positive.
+      # The block/sentinel check is scoped to the section itself (sentinel
+      # text quoted elsewhere in the doc must not satisfy it), and the
+      # sentinel tolerates dash variants (em/en/hyphen) and spacing.
       if ! printf '%s\n' "$plan_body" | grep -qE "^## Design Decisions"; then
         doc_errors+=("Missing: '## Design Decisions & Open Ambiguities' section (see plan-shapes.md § Design decisions anatomy)")
-      elif ! printf '%s\n' "$plan_body" | grep -qE "^#### Decision:" \
-           && ! printf '%s\n' "$plan_body" | grep -qF "None — no open design decisions."; then
-        doc_errors+=("Missing: decisions section needs either a '#### Decision:' block or the sentinel 'None — no open design decisions.' (see plan-shapes.md § Design decisions anatomy)")
+      else
+        local decisions_section
+        decisions_section=$(printf '%s\n' "$plan_body" | awk '/^## Design Decisions/ { f = 1; next } /^## / { f = 0 } f { print }')
+        if ! printf '%s\n' "$decisions_section" | grep -qE "^#### Decision:" \
+           && ! printf '%s\n' "$decisions_section" | grep -qiE "None[[:space:]]*(—|–|-)[[:space:]]*no open design decisions\."; then
+          doc_errors+=("Missing: decisions section needs either a '#### Decision:' block or the sentinel 'None — no open design decisions.' inside the section itself (see plan-shapes.md § Design decisions anatomy)")
+        fi
       fi
       ;;
     review)
