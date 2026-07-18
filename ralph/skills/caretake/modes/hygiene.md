@@ -29,7 +29,7 @@ Call `ralph_hero__project_hygiene` with:
 The tool returns seven categories in one response:
 
 - **Archive candidates** — Done/Canceled items stale beyond `archiveAgeDays`.
-- **Stale items** — non-terminal items not updated within `staleDays`.
+- **Stale items** — non-terminal items not updated within `staleDays`. Caveat (GH-1544): a Plan in Review item whose latest comment is an unanswered `## Decision Request` is HELD on a design decision, not abandoned — annotate it as `(held — awaiting decision)` in the report instead of implying it needs unsticking; the human answers on the issue.
 - **Orphaned items** — Backlog-only, no assignees, older than `orphanDays`.
 - **Field gaps** — non-terminal items missing `estimate`, `priority`, or `workflowState`. (`fieldCoveragePercent` in Summary stats tracks estimate/priority only — a board can read 100% coverage while stateless items sit in the workflow-state gap bucket.)
 - **WIP violations** — states exceeding caller-supplied `wipLimits` (empty unless provided).

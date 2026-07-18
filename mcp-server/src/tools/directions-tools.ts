@@ -44,6 +44,8 @@ import {
   type RankConfig,
   type UnblockSignal,
   type UnblockSignalMap,
+  type DecisionSignal,
+  type DecisionSignalMap,
 } from "../lib/directions.js";
 import {
   toolSuccess,
@@ -179,6 +181,59 @@ export function extractUnblockSignal(
 }
 
 /**
+ * Parse a list of comments and return the decision signal for a Plan in
+ * Review issue, or `null` if the issue should NOT produce a
+ * `plan-decision` direction (GH-1544 decision-gated approval).
+ *
+ * Rules:
+ *   1. Find the most recent comment whose body starts with
+ *      `## Decision Request`. If none exists, return null (the plan is a
+ *      plain review candidate, not held).
+ *   2. If ANY comment is newer than that request, return null — the reply
+ *      is treated as answers and the next review dispatch folds them, so
+ *      the ball is back in the agent's court, not the human's.
+ *   3. Compute `decisionRequestAgeDays` from the request's createdAt.
+ *   4. Compute `decisionCount` from `^### ` section lines in the request
+ *      body (one per open decision block; floor 1).
+ */
+export function extractDecisionSignal(
+  comments: IssueCommentNode[],
+  now: Date,
+): DecisionSignal | null {
+  let latestRequest: IssueCommentNode | null = null;
+  for (const c of comments) {
+    if (c.body.startsWith("## Decision Request")) {
+      if (
+        latestRequest === null ||
+        new Date(c.createdAt).getTime() >
+          new Date(latestRequest.createdAt).getTime()
+      ) {
+        latestRequest = c;
+      }
+    }
+  }
+  if (latestRequest === null) return null;
+
+  // Any later comment counts as an answer -> not a human-attention hold.
+  const reqTs = new Date(latestRequest.createdAt).getTime();
+  for (const c of comments) {
+    if (c === latestRequest) continue;
+    const ts = new Date(c.createdAt).getTime();
+    if (!Number.isNaN(ts) && ts > reqTs) return null;
+  }
+
+  const ageMs = Number.isNaN(reqTs) ? 0 : Math.max(0, now.getTime() - reqTs);
+  const decisionRequestAgeDays = Math.floor(ageMs / DAY_MS);
+
+  const decisionCount = Math.max(
+    1,
+    latestRequest.body.split("\n").filter((line) => /^### /.test(line)).length,
+  );
+
+  return { decisionRequestAgeDays, decisionCount };
+}
+
+/**
  * Parse "owner/repo" into its parts. Returns null on malformed input.
  */
 function splitOwnerRepo(
@@ -219,6 +274,40 @@ async function buildUnblockSignalMap(
       item.number,
     );
     const signal = extractUnblockSignal(comments, now);
+    if (signal !== null) {
+      map[item.number] = signal;
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Build the decision signal map for all Plan in Review candidates in
+ * `items` (GH-1544). Same boundary pattern as the unblock map: sequential
+ * per-issue comment fetch, typically 0-5 candidates.
+ */
+async function buildDecisionSignalMap(
+  client: GitHubClient,
+  items: DashboardItem[],
+  now: Date,
+): Promise<DecisionSignalMap> {
+  const map: Record<number, DecisionSignal> = {};
+  const candidates = items.filter(
+    (item) => item.workflowState === "Plan in Review",
+  );
+  if (candidates.length === 0) return map;
+
+  for (const item of candidates) {
+    const ownerRepo = splitOwnerRepo(item.repository);
+    if (!ownerRepo) continue;
+    const comments = await fetchIssueCommentsForUnblock(
+      client,
+      ownerRepo.owner,
+      ownerRepo.repo,
+      item.number,
+    );
+    const signal = extractDecisionSignal(comments, now);
     if (signal !== null) {
       map[item.number] = signal;
     }
@@ -408,6 +497,15 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
       // fetched at the boundary; the ranker stays pure.
       const unblockSignals = await buildUnblockSignalMap(client, allItems, now);
 
+      // Compute decision signals for any Plan in Review candidates holding
+      // on an unanswered `## Decision Request` (GH-1544): human audience
+      // surfaces them as `plan-decision`; agent audience excludes them.
+      const decisionSignals = await buildDecisionSignalMap(
+        client,
+        allItems,
+        now,
+      );
+
       // Build the RankConfig from args + defaults + injected `now`.
       const config: RankConfig = {
         limit: args.limit ?? DEFAULT_RANK_CONFIG.limit,
@@ -422,6 +520,7 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
         audience: args.audience,
         now,
         unblockSignals,
+        decisionSignals,
       };
 
       // Fetch open PRs internally for the unique repo set covered by the
@@ -480,7 +579,7 @@ export function registerDirectionsTools(
 
   server.tool(
     "ralph_hero__next_actions",
-    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Fetches all project items (full project scan, no silent 500-cap) so candidate selection covers every item regardless of board position. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items) — callers no longer pass an `openPRs` argument. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the per-item fallback never fires for `audience='human'`. However, when `audience='human'` and the scan yields zero directions (nothing actionable, no PRs, no lock-stale, no unblock signal) and at least one item has a null Workflow State, a single aggregate `kind: 'triage'` direction (`issue`/`pr` both null, `signals.statelessCount` set) is returned instead of an empty list — callers switching on `kind` should tolerate unknown values. Returns `{ directions, fetchedAt, boardItems }` where `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools); the returned `directions` array is bounded by `limit`.",
+    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Fetches all project items (full project scan, no silent 500-cap) so candidate selection covers every item regardless of board position. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items) — callers no longer pass an `openPRs` argument. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. Plan in Review issues holding on an unanswered `## Decision Request` comment (GH-1544 decision-gated approval) surface as `kind: 'plan-decision'` for `audience='human'` (signals carry decisionRequestAgeDays + decisionCount; the right action is ANSWERING the request, not re-reviewing) and are EXCLUDED for `audience='agent'` (an agent cannot answer a design decision). The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the per-item fallback never fires for `audience='human'`. However, when `audience='human'` and the scan yields zero directions (nothing actionable, no PRs, no lock-stale, no unblock signal) and at least one item has a null Workflow State, a single aggregate `kind: 'triage'` direction (`issue`/`pr` both null, `signals.statelessCount` set) is returned instead of an empty list — callers switching on `kind` should tolerate unknown values. Returns `{ directions, fetchedAt, boardItems }` where `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools); the returned `directions` array is bounded by `limit`.",
     {
       owner: z
         .string()

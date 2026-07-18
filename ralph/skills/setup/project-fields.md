@@ -40,11 +40,14 @@ When called with a project number that already exists:
 1. **New view** → Board
 2. Name: `Ralph Kanban`
 3. Column field → **Workflow State**
-4. Filter: `-workflow-state:Canceled,Done,"Research in Progress","Plan in Progress","Plan in Review"`
+4. Filter: `-workflow-state:Canceled,Done,"Research in Progress","Plan in Progress"`
+   (Plan in Review stays VISIBLE — under decision-gated approval (GH-1544) a
+   held plan waits there with a `## Decision Request` comment for the human;
+   filtering it out would hide the pipeline's primary decision surface.)
 5. Save
 
 ## Result
 
 Two complementary views:
 - **Ralph Table** — priority-grouped hierarchy of top-level issues with expandable sub-issues.
-- **Ralph Kanban** — board with only the actionable workflow columns (Backlog, Research Needed, Ready for Plan, In Progress, In Review, Human Needed).
+- **Ralph Kanban** — board with only the actionable workflow columns (Backlog, Research Needed, Ready for Plan, Plan in Review, In Progress, In Review, Human Needed). Plan in Review is included so decision-held plans (unanswered `## Decision Request`) surface next to Human Needed.

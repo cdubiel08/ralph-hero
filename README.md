@@ -13,7 +13,7 @@ Backlog → Research Needed → Research in Progress → Ready for Plan
        → Plan in Progress → Plan in Review → In Progress → In Review → Done
 ```
 
-Each transition is enforced by hooks and validated by the MCP server. Issues flow through phases — triage, research, planning, review, implementation, and merge — with human checkpoints at plan review and code review.
+Each transition is enforced by hooks and validated by the MCP server. Issues flow through phases — triage, research, planning, review, implementation, and merge — autonomous by default, with a human checkpoint only when a plan raises an open design decision (it holds in Plan in Review with a `## Decision Request` comment until you answer) or a reviewer requests changes on the PR (`CHANGES_REQUESTED` always blocks merge).
 
 **Autonomous mode** (`/ralph:hero`): Ralph drives an issue tree end-to-end, splitting large tickets, researching each sub-issue, creating plans, and implementing them.
 
@@ -153,6 +153,9 @@ plugin/
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (`sonnet`, `opus`, or `fable`; default `sonnet`; BLOCKED escalation re-dispatches once at `opus`) |
+| `RALPH_REVIEW_PLAN` | No | Plan-review gate (default `auto`, decision-driven: decision-free APPROVED plans auto-advance; plans with open `#### Decision:` blocks hold with a `## Decision Request` comment). `interactive` opts into the whole-plan picker. |
+| `RALPH_REVIEW_MODE` | No | Merge gate (default `auto`: val → code-review → merge → CI watch unattended; `CHANGES_REQUESTED` always blocks). `interactive` opts into report-PR-URLs-and-stop. |
+| `RALPH_AUTOPILOT_ENABLE` | No | Must be `"true"` for `/ralph:hero --mode auto` (enforced by `autopilot-enable-gate.sh`) |
 | `RALPH_DEBUG` | No | Enable JSONL debug logging + OpenTelemetry export |
 
 Set all variables in `.claude/settings.local.json` under the `"env"` key. Do not put tokens in `.mcp.json`.

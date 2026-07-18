@@ -21,7 +21,7 @@ T-1..K: Split GH-NNN (for each M/L/XL issue)  → unblocked
 T-1..N: Research GH-AAA … GH-ZZZ              → unblocked (parallel)
 T-N+1:  Plan group GH-[PRIMARY]               → blockedBy: [all research task IDs]
 T-N+2:  Review plan GH-[PRIMARY] (if auto)     → blockedBy: [plan task]
-    OR  Human gate (if interactive)            → blockedBy: [plan task]
+    OR  Present decisions (if interactive)     → blockedBy: [plan task]
 T-N+3..M: Implement GH-AAA … GH-ZZZ           → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-M+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
 T-M+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
@@ -32,7 +32,7 @@ T-M+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 T-1:  Plan group GH-[PRIMARY]                 → unblocked
 T-2:  Review plan GH-[PRIMARY] (if auto)       → blockedBy: [plan task]
-   OR Human gate (if interactive)              → blockedBy: [plan task]
+   OR Present decisions (if interactive)       → blockedBy: [plan task]
 T-3..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
 T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
@@ -41,11 +41,20 @@ T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 **Starting from REVIEW/HUMAN_GATE:**
 
 ```
-T-1:  Review plan / Human gate                → unblocked
+T-1:  Review plan / Present decisions         → unblocked
 T-2..N: Implement GH-AAA … GH-ZZZ             → blockedBy: [review/gate task], each impl blockedBy prior impl
 T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
 T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
+
+> **Decision hold (GH-1544):** under the default `RALPH_REVIEW_PLAN=auto`, a
+> "Review plan" task can terminate in `PLAN AWAITING DECISION` — the plan is
+> APPROVED but holds in Plan in Review on open `#### Decision:` blocks. The
+> downstream impl tasks stay `blockedBy` the review task and the pipeline
+> halts for the human's reply. This is NOT an escalation: do not move the
+> issue to Human Needed; report the `## Decision Request` comment URL and
+> stop. The next review dispatch (after a human reply) folds the answers and
+> completes the task.
 
 **Starting from IMPLEMENT:**
 

@@ -58,7 +58,7 @@ const WORKFLOW_STATE_OPTIONS: FieldOption[] = [
   {
     name: "Plan in Review",
     color: "BLUE",
-    description: "Plan awaiting approval",
+    description: "Plan review pending, or held on open design decisions",
   },
   {
     name: "In Progress",

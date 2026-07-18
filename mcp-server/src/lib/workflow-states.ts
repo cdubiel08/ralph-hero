@@ -37,10 +37,16 @@ export const LOCK_STATES: readonly string[] = [
 
 /**
  * States requiring human intervention.
+ *
+ * "Plan in Review" was removed in GH-1546: under decision-gated approval
+ * (GH-1544) plan review runs autonomously by default and decision-free
+ * plans auto-advance, so Plan-in-Review dwell is no longer human-gated —
+ * prolonged dwell there now indicates review never ran or a decision hold
+ * the human is ignoring, which stuck-detection SHOULD surface. Held-plan
+ * status is a comment-level signal (## Decision Request), not a state.
  */
 export const HUMAN_STATES: readonly string[] = [
   "Human Needed",
-  "Plan in Review",
 ] as const;
 
 /**

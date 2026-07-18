@@ -111,6 +111,16 @@ export interface DirectionSignals {
    */
   questionCount?: number;
   /**
+   * For `kind: "plan-decision"`: age of the most recent unanswered
+   * `## Decision Request` comment, in days, rounded down (min 0).
+   */
+  decisionRequestAgeDays?: number;
+  /**
+   * For `kind: "plan-decision"`: count of `### <decision title>` sections
+   * in the most recent `## Decision Request` comment body (min 1).
+   */
+  decisionCount?: number;
+  /**
    * For `kind: "triage"` aggregate directions only: count of items on the
    * board with a null `workflowState`.
    */
@@ -131,6 +141,7 @@ export interface Direction {
     | "tree-continue"
     | "lock-stale"
     | "human-needed-unblock"
+    | "plan-decision"
     | "triage";
   issue: {
     number: number;
@@ -196,6 +207,30 @@ export interface UnblockSignal {
  */
 export type UnblockSignalMap = Readonly<Record<number, UnblockSignal>>;
 
+/**
+ * Per-issue decision signal derived from the most recent `## Decision Request`
+ * comment on a Plan in Review issue (GH-1544 decision-gated approval: an
+ * APPROVED plan with open `#### Decision:` blocks holds in Plan in Review
+ * with that comment until the human answers). The tool layer fetches
+ * comments for Plan in Review candidates and computes these signals at the
+ * boundary so the ranker stays pure.
+ *
+ * Only present when the `## Decision Request` is UNANSWERED (no later
+ * comment). An answered request means the ball is back in the agent's
+ * court — the next review dispatch folds the answers — so the issue ranks
+ * as a plain Plan in Review item again.
+ */
+export interface DecisionSignal {
+  decisionRequestAgeDays: number;
+  decisionCount: number;
+}
+
+/**
+ * Map of issue number -> decision signal, populated for Plan in Review
+ * candidates holding on an unanswered `## Decision Request`.
+ */
+export type DecisionSignalMap = Readonly<Record<number, DecisionSignal>>;
+
 export interface RankConfig {
   /** Max directions to return. Default 3. */
   limit: number;
@@ -222,6 +257,16 @@ export interface RankConfig {
    * Default: empty (no Human Needed issue produces an unblock direction).
    */
   unblockSignals?: UnblockSignalMap;
+  /**
+   * Optional per-issue decision signals (number -> DecisionSignal) computed
+   * by the tool layer for Plan in Review candidates holding on an
+   * unanswered `## Decision Request` comment (GH-1544). When present:
+   * human audience surfaces the issue as `kind: "plan-decision"` (answer
+   * the request); agent audience EXCLUDES it entirely (an agent cannot
+   * answer a design decision — re-dispatching review would churn).
+   * Default: empty.
+   */
+  decisionSignals?: DecisionSignalMap;
 }
 
 export const DEFAULT_RANK_CONFIG: Omit<RankConfig, "now"> = {
@@ -269,6 +314,15 @@ const PR_REVIEW_REQUIRED_BOOST = -200;
  * waiting for the human's attention.
  */
 const HUMAN_NEEDED_UNBLOCK_BOOST = -150;
+
+/**
+ * Boost applied to a Plan in Review issue holding on an unanswered
+ * `## Decision Request` comment (GH-1544 decision-gated approval). Same
+ * magnitude as the unblock boost — both are "explicitly waiting on the
+ * human" surfaces, and decisions are the plan gate's primary human
+ * interface. Human audience only; agent audience excludes these items.
+ */
+const PLAN_DECISION_BOOST = -150;
 
 /**
  * Per-estimate penalty applied when audience === "agent". Larger items
@@ -482,7 +536,8 @@ function buildParentChainNote(
  * Score a single dashboard item. Returns the winning kind for this candidate
  * in precedence order:
  *
- *   has unblock signal (Human Needed) -> kind: "human-needed-unblock"
+ *   has decision signal (Plan in Review) -> kind: "plan-decision"
+ *   else has unblock signal (Human Needed) -> kind: "human-needed-unblock"
  *   else detectLockStale(item) -> kind: "lock-stale"
  *   else detectTreeContinue(item) -> kind: "tree-continue"
  *   else -> kind: "issue"
@@ -514,6 +569,36 @@ export function scoreIssue(
   // down for "agent" so autonomous loops favor XS/S work).
   const estPenalty = audiencePenalty(item, config.audience);
   score += estPenalty;
+
+  // Plan in Review + unanswered `## Decision Request` comment -> the plan
+  // is held on open design decisions (GH-1544). Human-attention surface,
+  // same precedence tier as the unblock signal (states are mutually
+  // exclusive so the two branches never compete). Agent-audience callers
+  // never reach here — rankDirections excludes held plans for "agent".
+  const decisionSignal =
+    item.workflowState === "Plan in Review"
+      ? config.decisionSignals?.[item.number]
+      : undefined;
+
+  if (decisionSignal !== undefined) {
+    score += PLAN_DECISION_BOOST;
+    tags.push("decision-needed");
+    if (item.priority === "P0" || item.priority === "P1") {
+      tags.push("high-priority");
+    }
+    if (hasOpenBlockers(item)) {
+      tags.push("blocked");
+    }
+    const signals: DirectionSignals = {
+      tags: [...tags],
+      decisionRequestAgeDays: decisionSignal.decisionRequestAgeDays,
+      decisionCount: decisionSignal.decisionCount,
+    };
+    if (estPenalty > 0) {
+      signals.estimateWeight = estPenalty;
+    }
+    return { score, kind: "plan-decision", tags, signals };
+  }
 
   // Human Needed + fresh `## Unblock Request` comment takes precedence over
   // every other detection. The signal is computed at the tool boundary.
@@ -743,6 +828,17 @@ export function buildReason(
     return `Human Needed — ${qCount} unblock ${qLabel} waiting since ${days} ${dayLabel} ago`;
   }
 
+  if (kind === "plan-decision") {
+    const days = signals.decisionRequestAgeDays ?? 0;
+    const dayLabel = days === 1 ? "day" : "days";
+    const dCount = signals.decisionCount ?? 1;
+    const dLabel = dCount === 1 ? "design decision" : "design decisions";
+    if (days === 0) {
+      return `Plan held — ${dCount} ${dLabel} awaiting your answer (asked today)`;
+    }
+    return `Plan held — ${dCount} ${dLabel} awaiting your answer since ${days} ${dayLabel} ago`;
+  }
+
   if (kind === "lock-stale") {
     const hours = Math.round(ageHours(issue.updatedAt, config.now));
     const days = Math.max(1, Math.floor(hours / 24));
@@ -847,6 +943,16 @@ export function rankDirections(
       item.workflowState === "Human Needed" &&
       config.unblockSignals !== undefined &&
       config.unblockSignals[item.number] !== undefined;
+    // A plan held on an unanswered `## Decision Request` (GH-1544) is not
+    // agent-actionable: the agent cannot answer a design decision, and
+    // re-dispatching review would just re-emit PLAN AWAITING DECISION.
+    // Exclude for the agent audience; the human audience surfaces it as
+    // `kind: "plan-decision"` via scoreIssue.
+    const hasDecisionSignal =
+      item.workflowState === "Plan in Review" &&
+      config.decisionSignals !== undefined &&
+      config.decisionSignals[item.number] !== undefined;
+    if (hasDecisionSignal && config.audience === "agent") continue;
     const passesPhaseFilter =
       isCandidatePhase(item.workflowState) || isLockStale || hasUnblockSignal;
     if (!passesPhaseFilter) continue;

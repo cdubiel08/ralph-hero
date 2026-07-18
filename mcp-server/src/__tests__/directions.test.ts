@@ -1237,6 +1237,130 @@ describe("rankDirections — human-needed-unblock", () => {
 });
 
 // ---------------------------------------------------------------------------
+// plan-decision — Plan in Review held on an unanswered ## Decision Request
+// (GH-1544 / GH-1546)
+// ---------------------------------------------------------------------------
+
+describe("plan-decision directions", () => {
+  it("surfaces a held plan as kind plan-decision for the human audience", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 4000,
+        title: "Held plan",
+        workflowState: "Plan in Review",
+        priority: "P2",
+      }),
+      makeItem({
+        number: 4001,
+        title: "Plain review candidate",
+        workflowState: "Plan in Review",
+        priority: "P2",
+      }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({
+        limit: 5,
+        decisionSignals: {
+          4000: { decisionRequestAgeDays: 1, decisionCount: 2 },
+        },
+      }),
+    );
+
+    const decisionDirections = result.filter((d) => d.kind === "plan-decision");
+    expect(decisionDirections).toHaveLength(1);
+    expect(decisionDirections[0].issue?.number).toBe(4000);
+    expect(decisionDirections[0].signals.decisionCount).toBe(2);
+    expect(decisionDirections[0].signals.decisionRequestAgeDays).toBe(1);
+    expect(decisionDirections[0].tags).toContain("decision-needed");
+
+    // The plain candidate stays an ordinary issue direction.
+    const plain = result.find((d) => d.issue?.number === 4001);
+    expect(plain?.kind).toBe("issue");
+  });
+
+  it("held plan outranks an identical plain Plan in Review issue", () => {
+    const items: DashboardItem[] = [
+      makeItem({ number: 4100, workflowState: "Plan in Review", priority: "P1" }),
+      makeItem({ number: 4101, workflowState: "Plan in Review", priority: "P1" }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({
+        limit: 2,
+        decisionSignals: {
+          4101: { decisionRequestAgeDays: 0, decisionCount: 1 },
+        },
+      }),
+    );
+    expect(result[0].issue?.number).toBe(4101);
+    expect(result[0].kind).toBe("plan-decision");
+  });
+
+  it("EXCLUDES held plans entirely for the agent audience", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 4200,
+        title: "Held plan",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        estimate: "S",
+      }),
+      makeItem({
+        number: 4201,
+        title: "Reviewable plan",
+        workflowState: "Plan in Review",
+        priority: "P2",
+        estimate: "S",
+      }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({
+        limit: 5,
+        audience: "agent",
+        decisionSignals: {
+          4200: { decisionRequestAgeDays: 3, decisionCount: 1 },
+        },
+      }),
+    );
+
+    // The held P0 must NOT appear at all — the agent cannot answer it.
+    expect(result.find((d) => d.issue?.number === 4200)).toBeUndefined();
+    expect(result.find((d) => d.issue?.number === 4201)).toBeDefined();
+  });
+
+  it("does not surface plan-decision when decisionSignals is empty", () => {
+    const items: DashboardItem[] = [
+      makeItem({ number: 4300, workflowState: "Plan in Review", priority: "P0" }),
+    ];
+    const result = rankDirections(items, [], makeConfig({ limit: 5 }));
+    expect(result.find((d) => d.kind === "plan-decision")).toBeUndefined();
+    expect(result[0]?.kind).toBe("issue");
+  });
+
+  it("decision signal on a non-Plan-in-Review state is ignored", () => {
+    const items: DashboardItem[] = [
+      makeItem({ number: 4400, workflowState: "In Review", priority: "P1" }),
+    ];
+    const result = rankDirections(
+      items,
+      [],
+      makeConfig({
+        limit: 5,
+        decisionSignals: {
+          4400: { decisionRequestAgeDays: 1, decisionCount: 1 },
+        },
+      }),
+    );
+    expect(result.find((d) => d.kind === "plan-decision")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // PR filter — drop unlinkable PRs (no feature/GH-NNNN head-ref)
 // ---------------------------------------------------------------------------
 
