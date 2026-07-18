@@ -72,6 +72,8 @@ jobs:
         env:
           # ROUTING_PAT: via workflow_call secret (routing-pat) or direct repo secret (ROUTING_PAT).
           # Required scopes: repo + project (GITHUB_TOKEN cannot write to Projects V2).
+          # Create with "No expiration" — GitHub Apps and fine-grained PATs also lack
+          # write access to a personal-account-owned Projects V2 board (2026-07).
           ROUTING_PAT: ${{ secrets.routing-pat || secrets.ROUTING_PAT }}
           GH_OWNER: ${{ github.repository_owner }}
           GH_REPO: ${{ github.event.repository.name }}

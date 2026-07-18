@@ -145,7 +145,7 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
         "  Generate a token at: https://github.com/settings/tokens\n" +
         "  Required scopes: repo, project\n" +
         "\n" +
-        "For advanced setups (dual tokens, org projects), run /ralph-hero:setup.",
+        "For advanced setups (dual tokens, org projects), run /ralph:setup.",
     );
     process.exit(1);
   }
@@ -170,7 +170,7 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
   if (!owner) {
     console.error(
       "[ralph-hero] Warning: RALPH_GH_OWNER not set.\n" +
-        "Most tools require this. Set in your environment or .claude/ralph-hero.local.md",
+        "Most tools require this. Set in your environment or run /ralph:setup.",
     );
   }
 
@@ -178,7 +178,7 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
     console.error(
       "[ralph-hero] Warning: RALPH_GH_PROJECT_NUMBER not set.\n" +
         "Project-level tools (workflow state, field updates) will not work.\n" +
-        "Run /ralph-hero:setup to configure your GitHub Project.",
+        "Run /ralph:setup to configure your GitHub Project.",
     );
   }
 
@@ -324,7 +324,7 @@ function registerCoreTools(server: McpServer, client: GitHubClient): void {
             } else {
               checks.requiredFields = {
                 status: "fail",
-                detail: `Missing fields: ${missing.join(", ")}. Run /ralph-hero:setup.`,
+                detail: `Missing fields: ${missing.join(", ")}. Run /ralph:setup.`,
               };
             }
           } else {

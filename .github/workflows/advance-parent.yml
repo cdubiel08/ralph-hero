@@ -9,6 +9,8 @@
 # (set atomically on close) to avoid race conditions with sync-issue-state.yml.
 #
 # Requires ROUTING_PAT secret: classic PAT with repo + project scopes.
+# Create with "No expiration" — GITHUB_TOKEN, GitHub Apps, and fine-grained PATs
+# all lack write access to a personal-account-owned Projects V2 board (2026-07).
 
 name: Advance Parent on Child Completion
 

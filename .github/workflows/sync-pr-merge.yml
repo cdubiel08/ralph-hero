@@ -14,6 +14,8 @@
 #
 # Requires ROUTING_PAT secret: classic PAT with repo + project scopes.
 # GITHUB_TOKEN cannot access Projects V2.
+# Create with "No expiration" — GitHub Apps and fine-grained PATs also lack
+# write access to a personal-account-owned Projects V2 board (2026-07).
 
 name: Advance Linked Issues on PR Merge
 
