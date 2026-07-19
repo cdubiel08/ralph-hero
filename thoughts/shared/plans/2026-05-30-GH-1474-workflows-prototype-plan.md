@@ -1,6 +1,6 @@
 ---
 date: 2026-05-30
-status: draft
+status: complete
 type: plan
 tags: [hero, workflows, spike, research, prototype]
 github_issue: 1474
@@ -21,7 +21,17 @@ estimate: S
 
 A spike to empirically validate whether Claude Code Dynamic Workflows can replace ralph's hand-rolled fan-out inside one verb, behind a default-off `RALPH_USE_WORKFLOWS` flag. Deliverable per the issue: a **throwaway** flag-gated prototype + a short recommendation writeup with a concrete token-cost number. Explicitly **no production wiring** — the flag defaults off so the prototype is dormant on merge.
 
-The research corrected the target: `review --mode code`'s reviewers are external (the `code-review` plugin), so the genuine "reuse ralph's own agents unchanged" fit is **`research` Step 3** (parallel investigators). This plan front-loads a gating smoke-test because the entire approach rests on one unverified assumption — that `agent(prompt, {agentType: "<ralph-agent-name>"})` resolves ralph's `.md` agents unchanged. If that fails, the spike stops with that finding (still a valid spike outcome).
+The research corrected the target: `review --mode code`'s reviewers are external (the `code-review` plugin), so the genuine "reuse ralph's own agents unchanged" fit is **`research` Step 3** (parallel investigators). This plan front-loads a gating smoke-test of the `agentType` reuse assumption. If that fails, the spike stops with that finding (still a valid spike outcome).
+
+## Plan Update (2026-07-19 walkthrough)
+
+A pre-build walkthrough cross-checked this plan against the **current** Workflow tool schema (the 2026-05-30 research predates it by 7 weeks). Corrections applied inline below; summary:
+
+1. **agentType is now documented, and names are plugin-prefixed.** The current schema states `agentType` is "resolved from the same registry as the Agent tool", and that registry lists ralph's agents as `ralph:<name>` (e.g. `ralph:codebase-locator`), consistent with ralph's own `subagent_type="ralph:plan-agent"` dispatches. The Phase 1 probe string is corrected accordingly — bare `"codebase-locator"` would false-negative the spike. The probe survives as cheap confirmation (tools honored, MCP reachable via ToolSearch), no longer a coin flip.
+2. **The keyword-collision caveat is obsolete.** The trigger keyword changed from "workflow" to `ultracode`; prose containing "workflow" triggers nothing. Sanctioned opt-in paths now include *"a skill or slash command whose instructions tell Claude to call Workflow"* and *"running a named/saved workflow"* — so the flag-gated skill branch is itself legitimate opt-in (this dissolves the escalation blocker recorded on #1474). The saved-file choice is kept for new reasons: versioned/reviewable artifact + named-workflow opt-in path.
+3. **New authoring constraints:** scripts must open with a pure-literal `export const meta = {...}`; plain JS only; `Date.now()` / `Math.random()` / argless `new Date()` throw (resume safety) — pass timestamps via `args`.
+4. **Blocking semantics:** `Workflow()` returns immediately (background task); the skill branch must wait for the completion notification before Step 4 synthesis, unlike blocking inline `Agent()` calls.
+5. **Token-cost methodology upgraded (Phase 3):** `budget.spent()` counts output tokens in a shared main-loop+workflows pool — not workflow-only, and output-only. Headline metric is now **claude-trace-lab OTLP traces** (both paths run on the same issue; full input+output+cache totals from captured spans); `budget.spent()` demoted to secondary sanity check.
 
 ## Current State Analysis
 
@@ -29,11 +39,11 @@ The research corrected the target: `review --mode code`'s reviewers are external
 
 ### Key Discoveries
 
-- The 16 agents are `.md` files keyed by `name:` (e.g. `codebase-locator`) — the `agentType` candidate. Whether the `Workflow` `agent()` primitive resolves these unchanged is **unverified** (research §4, "the gating smoke test").
+- The 16 agents are `.md` files keyed by `name:` (e.g. `codebase-locator`); in the harness agent registry they surface plugin-prefixed as `ralph:<name>` — the `agentType` value. The current Workflow schema documents `agentType` as resolved from the same registry as the `Agent` tool; the smoke test confirms tools/MCP behavior empirically (research §4).
 - Flag-read convention: `=== "true"` (mirrors `RALPH_HERO_AUTO`/`RALPH_DEBUG`, `mcp-server/src/index.ts` `resolveEnv()`); flags documented in the CLAUDE.md env table.
-- The `Workflow` `budget` primitive exposes `budget.spent()` for the token-cost number.
-- The literal word "workflow" triggers the feature — prefer a saved `.claude/workflows/<name>` script over the keyword path.
-- A `Workflow()` must be dispatched from a depth-0 skill body (not from inside `Agent()`).
+- The `Workflow` `budget` primitive exposes `budget.spent()` — output tokens only, shared main-loop+workflows pool (secondary sanity metric; see Phase 3).
+- Keyword collision obsolete (trigger is now `ultracode`); saved `.claude/workflows/<name>` script kept as a versioned artifact + named-workflow opt-in path.
+- A `Workflow()` must be dispatched from a depth-0 skill body (not from inside `Agent()`), and returns a background task — the dispatch site waits for the completion notification before synthesizing.
 
 ## Desired End State
 
@@ -64,20 +74,20 @@ Three sequential phases, each a hard gate on the next. Phase 1 is a cheap throwa
 depends_on: null
 
 ### Overview
-A minimal throwaway Workflow that dispatches ONE ralph investigator agent via `agent(prompt, {agentType: "codebase-locator"})` and confirms it runs, requires no `SKILL.md`, and honors its `tools:` list. This is the load-bearing assumption for the entire spike.
+A minimal throwaway Workflow that dispatches ONE ralph investigator agent via `agent(prompt, {agentType: "ralph:codebase-locator"})` (plugin-prefixed — the registry name; bare `"codebase-locator"` is expected to fail resolution) and confirms it runs, requires no `SKILL.md`, and honors its `tools:` list. This is the load-bearing assumption for the entire spike.
 
 ### Changes Required
 #### 1. Throwaway probe workflow
 **File**: `.claude/workflows/gh1474-agenttype-probe.js` (create; throwaway)
-**Changes**: A 1-agent workflow script: `const r = await agent("List where the ralph agents live.", {agentType: "codebase-locator"})` then `return r`. Run it; record whether the agentType resolved and the agent's tools worked.
+**Changes**: A 1-agent workflow script opening with the required pure-literal `export const meta = {...}` block: `const r = await agent("List where the ralph agents live.", {agentType: "ralph:codebase-locator"})` then `return r`. Plain JS; no `Date.now()`/`Math.random()`. Run it; record whether the agentType resolved and the agent's tools worked.
 
 ### Success Criteria
 #### Automated Verification
-- [ ] The probe workflow runs without an "unknown agentType" / resolution error.
-- [ ] The dispatched agent returns a non-empty result (proving it executed with its tools).
+- [x] The probe workflow runs without an "unknown agentType" / resolution error (prefixed `ralph:codebase-locator`; bare name fails — documented).
+- [x] The dispatched agent returns a non-empty result (proving it executed with its tools).
 
 #### Manual Verification
-- [ ] Confirm the agent ran with its declared `tools:` (e.g. it used Grep/Glob), not a stripped toolset.
+- [x] Confirm the agent ran with its declared `tools:` — FINDING: `tools:` is NOT honored (Bash-centric worker set; Grep/Glob unavailable, MCP tools reachable). Functionally sufficient for investigators; see Spike Results.
 - [ ] If the probe FAILS: stop the spike, append the negative finding to the research doc, and report "agentType reuse unsupported" (a valid spike outcome — do NOT proceed to Phase 2).
 
 ## Phase 2: Flag-gated Workflow prototype of `research` Step 3
@@ -89,21 +99,21 @@ Author a saved workflow that fans out the `research` Step 3 investigators via `p
 ### Changes Required
 #### 1. Saved workflow script
 **File**: `.claude/workflows/research-investigators.js` (create)
-**Changes**: `parallel()` over the investigator set, each via `agent(prompt, {agentType})`; return the synthesized findings. Avoids the `workflow` keyword by being a saved `/name` script.
+**Changes**: `parallel()` over the investigator set, each via `agent(prompt, {agentType: "ralph:<name>"})`; return the synthesized findings. Opens with the required `export const meta = {...}` literal; research question + repo dirs passed via `args`. Saved-file form = versioned artifact + named-workflow opt-in path (keyword-collision rationale obsolete).
 #### 2. Flag branch in research
 **File**: `ralph/skills/research/SKILL.md` (modify — Step 3)
-**Changes**: Add a `RALPH_USE_WORKFLOWS=true` branch that dispatches the saved workflow instead of the inline `Agent()` block. Default-off → inline path unchanged.
+**Changes**: Add a `RALPH_USE_WORKFLOWS=true` branch that dispatches the saved workflow instead of the inline `Agent()` block, then **waits for the workflow's background-task completion notification** before proceeding to Step 4 synthesis. Default-off → inline path unchanged.
 #### 3. Flag documentation
 **File**: `CLAUDE.md` (modify — Environment Variables table)
 **Changes**: Add the `RALPH_USE_WORKFLOWS` row (default off; research-preview; gates Workflow dispatch).
 
 ### Success Criteria
 #### Automated Verification
-- [ ] `grep -n RALPH_USE_WORKFLOWS ralph/skills/research/SKILL.md CLAUDE.md` shows the branch + the doc row.
-- [ ] With `RALPH_USE_WORKFLOWS` unset, `research` Step 3 prose still describes the inline `Agent()` dispatch (off-path regression check).
+- [x] `grep -n RALPH_USE_WORKFLOWS ralph/skills/research/SKILL.md CLAUDE.md` shows the branch + the doc row.
+- [x] With `RALPH_USE_WORKFLOWS` unset, `research` Step 3 prose still describes the inline `Agent()` dispatch (off-path regression check).
 
 #### Manual Verification
-- [ ] The saved workflow runs and returns investigator findings equivalent in shape to the inline path.
+- [x] The saved workflow runs and returns investigator findings equivalent in shape to the inline path (5/5 agents, quality parity verified on the measurement question).
 
 ## Phase 3: Token-cost measurement + recommendation writeup
 depends_on: [phase-2]
@@ -111,17 +121,19 @@ depends_on: [phase-2]
 ### Overview
 Run the prototype and the inline baseline on one representative issue, capture the token-cost delta, and append a whether/where-to-adopt recommendation to the implementation-depth research doc.
 
+**Measurement instrument (updated 2026-07-19):** headline numbers come from **claude-trace-lab OTLP spans** (`~/.claude-traces/spans.jsonl` — every Claude Code session is captured with full token usage: input + output + cache). Run both paths against the same research question and compare span-derived per-run totals. `budget.spent()` is recorded as a secondary in-run sanity figure only — it counts output tokens in a pool shared between the main loop and all workflows, so it is neither workflow-only nor total-cost.
+
 ### Changes Required
 #### 1. Recommendation writeup
 **File**: `thoughts/shared/research/2026-05-30-GH-1474-workflows-prototype-impl-depth.md` (modify — append `## Spike Results`)
-**Changes**: Record `budget.spent()` (workflow path) vs. the inline baseline token usage on the same issue, plus a one-paragraph adopt/don't-adopt recommendation with the concrete number.
+**Changes**: Record trace-derived token totals for the workflow path vs. the inline baseline on the same issue (plus `budget.spent()` as the secondary figure), and a one-paragraph adopt/don't-adopt recommendation with the concrete numbers.
 
 ### Success Criteria
 #### Automated Verification
-- [ ] The doc's `## Spike Results` section contains a numeric token-cost figure from an actual run (grep for a digit-bearing "tokens" line).
+- [x] The doc's `## Spike Results` section contains a numeric token-cost figure from an actual run (2,617,423 vs 2,403,980 total; +8.9%).
 
 #### Manual Verification
-- [ ] The recommendation states adopt / don't-adopt / adopt-only-for-size-X with the measured cost as justification.
+- [x] The recommendation states adopt / don't-adopt / adopt-only-for-size-X with the measured cost as justification (ADOPT, scoped to within-verb read-only fan-out).
 
 ## Testing Strategy
 

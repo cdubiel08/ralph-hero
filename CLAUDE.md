@@ -241,6 +241,7 @@ When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth to
 | `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (e.g. `sonnet`, `opus`, or `fable` if your plan includes it). Defaults to `sonnet`; BLOCKED escalation re-dispatches once at `opus`. |
 | `CLAUDE_CODE_SUBAGENT_MODEL` | No (harness-native, not ralph plumbing) | Escape hatch for the `model: fable` pins on `plan-agent`/`review-agent`: set to `opus` on accounts without Fable. Top precedence in Claude Code's subagent model resolution — it overrides frontmatter AND per-invocation `model` params, so it flattens EVERY subagent tier (locators, impl ladder, BLOCKED re-dispatch). Leave unset if your account has Fable. |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and OpenTelemetry export. |
+| `RALPH_USE_WORKFLOWS` | No | Research-preview prototype flag (GH-1474). Set to `"true"` to route `research` Step 3's investigator fan-out through the saved `research-investigators` Dynamic Workflow (`.claude/workflows/`) instead of inline `Agent()` dispatch. Default off — inline path unchanged. |
 
 **Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
 

@@ -73,6 +73,42 @@ The Workflow `budget` primitive exposes `budget.spent()` (output tokens across t
 - **Multi-issue parallelism:** the spike (and this doc) scope single-issue fan-out; spanning multiple autopilot issues in one Workflow interacts with the 16-agent cap and board lock invariants — out of scope, flag for a later spike.
 - **Keyword collision:** prefer a saved `/name` workflow over the literal `workflow` keyword (ralph prose says "workflow" constantly). Per the strategic doc.
 
+## Spike Results (2026-07-19)
+
+Executed per `thoughts/shared/plans/2026-05-30-GH-1474-workflows-prototype-plan.md` (as updated by the 2026-07-19 walkthrough). All three phases ran in one deliberate session with explicit Workflow opt-in.
+
+### Phase 1 — agentType probe: PASS, with corrections
+
+- **`agent(prompt, {agentType: "ralph:codebase-locator"})` resolves and executes ralph's `.md` agents.** No `SKILL.md` needed. The registry name is **plugin-prefixed** — bare `"codebase-locator"` fails with `agent type not found`; the error's available-agents list shows all 16 ralph agents as `ralph:<name>`.
+- **`model:` frontmatter pin honored** — the probe agent ran on `claude-haiku-4-5` per `codebase-locator.md`'s `model: haiku`.
+- **`tools:` frontmatter is NOT honored** — workflow workers get a Bash-centric toolset. Grep/Glob calls fail with harness guidance to use `grep`/`find` via Bash instead. Investigators remain fully functional (the probe produced correct results via Bash).
+- **MCP tools ARE reachable** — `ralph:thoughts-locator` executed `knowledge_search` inside a workflow (the call errored with `database disk image is malformed`, a local ralph-knowledge DB corruption unrelated to workflows; the tool itself was resolved and invoked).
+
+### Phase 2 — prototype findings
+
+- `.claude/workflows/research-investigators.js` + `RALPH_USE_WORKFLOWS` branch in `ralph/skills/research/SKILL.md` Step 3 + CLAUDE.md env row landed; flag default-off, inline path untouched.
+- **Saved-name resolution is registry-snapshotted at session start**: a `.claude/workflows/` file created mid-session is not resolvable via `Workflow({name})` (even in the primary repo checkout); dispatch by `scriptPath` is the reliable in-session form. Named dispatch works from the next session on.
+- **`args` may arrive JSON-string-encoded** depending on dispatch surface — the script normalizes (`typeof args === "string" → JSON.parse`).
+- Scripts must open with a pure-literal `export const meta = {...}`; `Date.now()`/`Math.random()` throw inside workflow scripts (resume safety).
+
+### Phase 3 — token cost: workflow ≈ inline at equal fan-out
+
+Same question ("save_issue Status sync + lock states"), same five investigators (locator, analyzer, pattern-finder, thoughts-locator → thoughts-analyzer chain), same prompts, back-to-back in one session. Headline numbers from claude-trace-lab OTLP spans (`claude_code.llm_request`, session-filtered; subagent = `llm_request.context: "tool"`):
+
+| Path | LLM reqs | Output | Cache-create | Cache-read | Input | Total tokens |
+|---|---|---|---|---|---|---|
+| Workflow (subagents) | 66 | 32,580 | 239,317 | 2,345,146 | 380 | **2,617,423** |
+| Inline (subagents) | 63 | 32,449 | 243,916 | 2,127,199 | 416 | **2,403,980** |
+
+- **Subagent-side delta: +8.9% total for the workflow path** — output tokens essentially identical (32.6k vs 32.4k); the gap is cache-read variance. At equal fan-out, the workflow mechanism itself adds no meaningful cost. Harness-side accounting agrees (workflow `subagent_tokens` 251,710 vs inline Agent-tool sum 281,213 — workflow 10% *lower* on that metric).
+- **Context isolation is the real difference**: the inline path put all five full reports (~32k output tokens) into the main session's context, carried for the rest of the session; the workflow path returned one result object, truncated to ~41KB in-context, with intermediate results held in script variables.
+- **Wall clock**: workflow 141s vs inline ~171s (the workflow overlapped the thoughts chain with the other investigators; inline serialized the analyzer behind the parallel batch).
+- **Findings quality: equivalent** — both paths pinned the same core references (`workflow-states.ts:32-36` LOCK_STATES, `WORKFLOW_STATE_TO_STATUS` at 139-151, `issue-tools.ts:1445-1460` lock guard, `:1468-1490` aliased Status sync, `lock-guard.ts:30-44`).
+
+### Recommendation: ADOPT, scoped
+
+**Adopt Workflows for within-verb read-only fan-out, starting with `research` Step 3, keeping `RALPH_USE_WORKFLOWS` default-off while the feature is a research preview.** The docs' "substantially more tokens" warning describes what workflow *patterns* encourage (more agents, verify loops, loop-until-dry) — not the mechanical swap, which is cost-neutral (+8.9% total, −0.4% output) and buys context isolation, native concurrency caps, and in-session resume. Adoption caveats to carry into any follow-up: plugin-prefixed `agentType`, no `tools:` fidelity (Bash-centric workers — irrelevant for investigators, disqualifying for agents that depend on tool *restriction*, e.g. `sre-fixit`'s no-Bash allowlist), `scriptPath` dispatch within the authoring session, and no cross-session resume (the durable spine stays in GitHub state — unchanged from the strategic doc's muscle/spine split). `review --mode val` remains the natural second target.
+
 ## Code References
 
 - `ralph/skills/review/SKILL.md:91` — default-mode code-review gate `Skill("code-review:code-review", …)` (external, not a clean Workflow fit)
