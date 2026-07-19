@@ -23,7 +23,7 @@ if [[ -z "$ticket_id" ]]; then
   allow
 fi
 
-project_root=$(get_project_root)
+project_root=$(resolve_root_from_path "$file_path")
 existing=$(find_existing_artifact "$project_root/thoughts/shared/reviews" "$ticket_id")
 
 if [[ -n "$existing" ]]; then
