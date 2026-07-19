@@ -138,10 +138,9 @@ Draft the issue body per `issue-template.md` (use the research-aware variant whe
 
 Break the idea into a parent + 2-6 children. Show the tree for approval. On approval:
 
-1. Create the parent issue (`estimate: L`, `workflowState: "Backlog"`).
-2. For each child, `create_issue` (`estimate: XS`, `workflowState: "Backlog"`) followed by `add_sub_issue` linking it under the parent.
-3. For sequential children, add `add_dependency` edges in submission order.
-4. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
+1. Create the parent issue (`create_issue`, `estimate: L`, `workflowState: "Backlog"`).
+2. Create all children in ONE `create_sub_issues(parentNumber: <parent-number>, children: [{title, body, estimate: "XS", workflowState: "Backlog", dependsOn: [...]}, ...])` call — for sequential children, give the later entry `dependsOn: [<earlier sibling's index>]` so the dependency edge is wired in the same call (a `dependsOn` value below the children array length is a sibling index; at or above it is an existing issue number). Check the response's per-child status for `error` and repair only the failed children.
+3. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
 
 See `issue-template.md` for the tree shape and estimate defaults.
 

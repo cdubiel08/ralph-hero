@@ -94,12 +94,11 @@ Produce a split-plan summary:
 
 **Reuse**: update the existing child's body and/or estimate if the scope or sizing has been refined.
 
-**Create new** — three-step pattern:
+**Create new** — one batch call for every net-new child:
 
-1. **`create_issue`** with descriptive title, scoped body (scope + references + acceptance criteria), labels inherited from parent.
-2. **`add_sub_issue`** to link under the parent. Verify the linkage took effect (the tool response echoes the parent link) — if it didn't, retry once; if still failing, document the orphan in a comment on the parent.
-3. **Set estimate** per the sizing rubric. The `split-size-gate.sh` hook (PreToolUse on `create_issue`) blocks `M`/`L`/`XL` here — children MUST be XS or S.
-4. **Set initial workflow state**: advance to `Ready for Plan` (`command: "ralph_split"`) unless §Step 10's gating applies. Uniform across all children — including those blocked by a sibling via dependency.
+1. **`create_sub_issues(parentNumber: <parent-number>, children: [...])`** — one entry per net-new child: descriptive `title`, scoped `body` (scope + references + acceptance criteria, per the template below), `estimate` per the sizing rubric, and `workflowState: "Ready for Plan"` when §Step 10's gating already calls the scope clear at proposal time (§Step 5) — omit `workflowState` for children that need more research or are blocked by an issue outside this split; those get set explicitly in §Step 10. Labels inherited from parent are not part of this tool's schema — apply them via a follow-up `save_issue` per child if the parent's labels must propagate.
+2. **`split-size-gate.sh`** (PreToolUse on `create_sub_issues`) blocks the whole call if ANY child's estimate is `M`/`L`/`XL` — every child MUST be XS or S.
+3. **Verify** via the response's per-child status report (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`) instead of a per-child `add_sub_issue` echo. **On partial failure, repair only the failed children** — re-run the specific failed stage (link / fields / edges) for those indices; do not re-create children that already report `created: true`. If a child still can't be linked after retry, document the orphan in a comment on the parent.
 
 Sub-issue body template:
 
@@ -124,7 +123,9 @@ Sub-issue body template:
 
 ## §Step 7: Establish dependencies
 
-For each dependency pair, `add_dependency`: the dependent issue is blocked by the earlier-phase issue. See [split-decomposition.md](../split-decomposition.md) §Dependency wiring for rules.
+**New children** (created together in §Step 6): wire each dependency pair inline via the dependent child's `dependsOn` array in the SAME `create_sub_issues` call — no separate step needed. A `dependsOn` value less than the children array length is a sibling index into that call's children array; a value at or above it is an existing GitHub issue number (used when a new child depends on a pre-existing one, e.g. a reused sibling from §Step 5).
+
+**Edges to pre-existing issues** (reused children from §Step 5, or a dependency discovered after §Step 6 already ran): use `add_dependency` — the dependent issue is blocked by the earlier-phase issue. See [split-decomposition.md](../split-decomposition.md) §Dependency wiring for rules.
 
 ## §Step 7.5: Write parent plan-of-plans
 

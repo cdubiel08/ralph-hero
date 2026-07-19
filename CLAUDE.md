@@ -117,6 +117,7 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `project-management-tools.ts` | archive_items, create_status_update |
 | `hygiene-tools.ts` | project_hygiene |
 | `decompose-tools.ts` | decompose_feature |
+| `tree-tools.ts` | create_sub_issues |
 | `trends-tools.ts` | capture_snapshot, metrics_trends |
 | `directions-tools.ts` | next_actions |
 | `plan-graph-tools.ts` | sync_plan_graph |

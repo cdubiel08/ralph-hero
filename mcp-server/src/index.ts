@@ -23,6 +23,7 @@ import { detectOrphanRepoIssues, type OrphanRepoIssuesResult } from "./lib/healt
 import { registerProjectTools } from "./tools/project-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
+import { registerTreeTools } from "./tools/tree-tools.js";
 import { registerDashboardTools } from "./tools/dashboard-tools.js";
 import { registerDirectionsTools } from "./tools/directions-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
@@ -512,6 +513,9 @@ async function main(): Promise<void> {
 
   // Phase 4: Relationship tools (sub-issues, dependencies, group detection)
   registerRelationshipTools(server, client, fieldCache);
+
+  // Batch sub-issue tree creation (create_sub_issues)
+  registerTreeTools(server, client, fieldCache);
 
   // Dashboard and pipeline visualization tools
   registerDashboardTools(server, client, fieldCache);
