@@ -12,6 +12,8 @@ The slim successor to `ralph-hero`. See `../thoughts/shared/research/2026-05-22-
 - **Enforcement lives in hooks/, not skill prose.** If you find yourself writing "make sure to validate X" in a SKILL.md, that's a hook.
 - **Artifact state lives in the MCP server.** Skills read/write via `mcp__plugin_ralph_ralph-github__*` tools (resolved via ralph's own `.mcp.json`; the package is still published as `ralph-hero-mcp-server` from top-level `mcp-server/`).
 - **The decisions section is the plan's human-interface contract.** Every plan carries `## Design Decisions & Open Ambiguities` (`plan-shapes.md` § Design decisions anatomy, hook-enforced): open `#### Decision:` blocks are what the human reviews — plan review holds on them and auto-advances without them. Author judgment calls there, at the moment of uncertainty, not buried in phase prose.
+- **Plan docs must keep ≥1 unchecked `- [ ]`.** `doc-structure-validator.sh` (Stop gate) requires it. Check off Automated Verification results only; Manual Verification boxes stay unchecked for human sign-off.
+- **Hooks that look up artifacts keyed on `tool_input.file_path` root via `resolve_root_from_path "$file_path"`** (hook-utils.sh), not `get_project_root`. New hook tests copy `plan-research-required.test.sh`'s harness (SBX/REPO/NOGIT sandboxes + `run_case`). Gotchas: run cases from a CWD with no `GH-NNN` substring (worktree paths leak into ticket-ID fallbacks), and keep fixture filenames token-free when a case targets a later lookup branch — a `GH-NNN` in the filename satisfies the direct-artifact check first and masks it.
 
 ## Adding a new verb
 

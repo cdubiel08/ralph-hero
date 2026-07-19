@@ -35,6 +35,8 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 **Do NOT** run `npm publish` manually or push `v*` tags manually — the release workflow handles both.
 
+**Verify release fired after merging `ralph/**` changes** — push-event workflows (CI, release-ralph) have silently not fired for some PR-merge commits (observed 2026-07-19). Check `gh run list --commit <merge-sha>`; if absent, `release-ralph.yml` has `workflow_dispatch` as the manual backup.
+
 ## Architecture
 
 ### Plugin System
@@ -220,6 +222,7 @@ Pick PostToolUse over PreToolUse when the data the gate needs to evaluate lives 
 The config file location depends on plugin install scope (detected from `~/.claude/plugins/installed_plugins.json`):
 
 - **Project-scoped install**: non-secret scope vars (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`, `RALPH_GH_PROJECT_OWNER`) go in the **tracked** `<project>/.claude/settings.json` so worktree/bridge sessions and fresh clones inherit them; tokens and machine-local toggles go in the **gitignored** `<project>/.claude/settings.local.json` (local wins on conflict). Scope vars living only in the gitignored file leave every worktree session board-blind (`owner is required`) — see `ralph/skills/setup/scope-detection.md` § Worktrees and bridge sessions.
+- **Creating impl worktrees from a bridge/worktree session**: `EnterWorktree({name})` refuses when the session is already in a worktree. Create manually — `git worktree add -b feature/GH-NNN .claude/worktrees/GH-NNN origin/main` — then `EnterWorktree({path: ...})` to switch in.
 - **User-scoped install**: Set all env vars in `~/.claude/settings.json` — this makes the CLI work from any directory
 
 When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth token` from the gh CLI keychain (just run `gh auth login -s repo,project,read:org`).
