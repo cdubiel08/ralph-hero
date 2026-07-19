@@ -5,6 +5,8 @@ type: research
 tags: [ways-of-working, action-surfaces, daily-brief, intake, catch-up, form, decision-queue, human-attention]
 git_commit: f5b629db5cdb1cf285cc097f031c1d4675641143
 branch: main
+github_issue: 1550
+github_url: https://github.com/cdubiel08/ralph-hero/issues/1550
 ---
 
 # Research: Ways-of-working action surfaces — brain dump, in-progress detail, daily brief
