@@ -40,7 +40,8 @@ if [[ -z "$ticket_id" ]]; then
   allow  # Can't validate without ticket ID
 fi
 
-plans_dir="$(get_project_root)/thoughts/shared/plans"
+project_root="$(resolve_root_from_path "$file_path")"
+plans_dir="$project_root/thoughts/shared/plans"
 alt_ticket_id=$(ticket_id_alt_form "$ticket_id")
 
 # Check 1: Direct plan
@@ -69,8 +70,8 @@ if [[ -z "$plan_doc" ]]; then
   plan_ref="${RALPH_PLAN_REFERENCE:-}"
   if [[ -n "$plan_ref" ]]; then
     local_path=$(echo "$plan_ref" | sed 's|https://github.com/[^/]*/[^/]*/blob/main/||')
-    if [[ -f "$(get_project_root)/$local_path" ]]; then
-      plan_doc="$(get_project_root)/$local_path"
+    if [[ -f "$project_root/$local_path" ]]; then
+      plan_doc="$project_root/$local_path"
     fi
   fi
 fi
