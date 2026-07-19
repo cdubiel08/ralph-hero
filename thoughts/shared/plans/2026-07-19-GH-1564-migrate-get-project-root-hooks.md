@@ -152,7 +152,7 @@ No other lines change — `file_path` is already extracted at line 22 (well befo
 **Deviation found during implementation**: a "no ticket_id resolvable anywhere" case was not covered — the hook's CWD-grep ticket_id fallback (`grep -oE 'GH-[0-9]+' | head -1` with no `|| true`, when `RALPH_TICKET_ID` is unset) crashes under `set -euo pipefail` when no match is found, rather than falling through to `allow`. Pre-existing bug, unrelated to this migration's root-resolution scope — filed as a follow-up rather than fixed inline here.
 
 #### Manual Verification
-- [x] From a shell CWD'd outside any repo with `CLAUDE_PROJECT_DIR` unset, invoke the hook directly with a crafted PreToolUse JSON whose `file_path` points into a real repo checkout's source tree for a ticket with an existing plan doc under that repo's `thoughts/shared/plans/` — confirm exit 0
+- [ ] From a shell CWD'd outside any repo with `CLAUDE_PROJECT_DIR` unset, invoke the hook directly with a crafted PreToolUse JSON whose `file_path` points into a real repo checkout's source tree for a ticket with an existing plan doc under that repo's `thoughts/shared/plans/` — confirm exit 0 (agent-run repro already confirmed this in the implementation session; box left for human sign-off per convention)
 
 ## Phase 2: Migrate review-no-dup.sh
 
@@ -198,7 +198,7 @@ No other lines change — `file_path` is already extracted at line 14, and the e
 **Deviation found during implementation**: the "reviews/ path with no GH-NNN token allows" early-allow case was not covered — the hook's ticket_id regex extraction (`grep -oE 'GH-[0-9]+' | head -1` with no `|| true`) crashes the same way under `set -euo pipefail` when no match is found. Same class of pre-existing bug as Phase 1's finding, unrelated to this migration's root-resolution scope — filed as the same follow-up.
 
 #### Manual Verification
-- [x] From a shell CWD'd outside any repo with `CLAUDE_PROJECT_DIR` unset, invoke the hook directly with a crafted PreToolUse JSON whose `file_path` points into a real repo checkout's `thoughts/shared/reviews/` tree for a ticket with no existing critique there (even if an unrelated stray critique for the same ticket number exists elsewhere) — confirm exit 0
+- [ ] From a shell CWD'd outside any repo with `CLAUDE_PROJECT_DIR` unset, invoke the hook directly with a crafted PreToolUse JSON whose `file_path` points into a real repo checkout's `thoughts/shared/reviews/` tree for a ticket with no existing critique there (even if an unrelated stray critique for the same ticket number exists elsewhere) — confirm exit 0 (agent-run repro already confirmed this in the implementation session; box left for human sign-off per convention)
 
 ## Testing Strategy
 
