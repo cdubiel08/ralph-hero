@@ -98,6 +98,15 @@ run_case "target file's repo root wins over CLAUDE_PROJECT_DIR (workspace-root r
 # get_project_root() (CLAUDE_PROJECT_DIR), preserving old behavior — expect block.
 run_case "no .git ancestor falls back to CLAUDE_PROJECT_DIR root (blocks)" 2 \
   "$NOGIT/thoughts/shared/plans/2026-07-19-GH-7-x.md" $'---\nestimate: M\n---'
+# Positive fallback control: no .git ancestor, but the GH-1 research doc DOES
+# exist under $SBX — proves the fallback returns CLAUDE_PROJECT_DIR itself
+# (a wrong fallback root would block; only $SBX-rooting allows).
+run_case "no .git ancestor + doc under CLAUDE_PROJECT_DIR allows (fallback-positive)" 0 \
+  "$NOGIT/thoughts/shared/plans/2026-07-19-GH-1-x.md" $'---\nestimate: M\n---'
+# Relative file_path: no walkable ancestry — must fall back to
+# CLAUDE_PROJECT_DIR (pre-helper behavior), not hang. GH-1 doc exists → allow.
+run_case "relative file_path falls back to CLAUDE_PROJECT_DIR (no hang)" 0 \
+  "thoughts/shared/plans/2026-07-19-GH-1-x.md" $'---\nestimate: M\n---'
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

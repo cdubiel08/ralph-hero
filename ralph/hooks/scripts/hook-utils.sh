@@ -46,20 +46,22 @@ get_project_root() {
 
 # Walk up from a file path to the nearest ancestor containing a .git entry
 # (file or directory — linked worktrees use a .git FILE, not a directory).
-# Falls back to get_project_root() when no repo marker is found or the path
-# is empty, so this is additive: sessions whose CWD already equals the repo
-# root see identical behavior.
+# Only absolute paths are walked: a relative path has no walkable ancestry
+# (dirname bottoms out at ".", a fixed point that would loop forever), so
+# relative and empty targets fall back to get_project_root() — the exact
+# pre-helper behavior. The walk uses parameter expansion, not dirname, to
+# avoid a subprocess per ancestor; "$dir" empties at the filesystem root,
+# which (like the old "/" bound) is deliberately not checked for .git.
 resolve_root_from_path() {
   local target="${1:-}"
-  if [[ -n "$target" ]]; then
-    local dir
-    dir=$(dirname "$target")
-    while [[ "$dir" != "/" && -n "$dir" ]]; do
+  if [[ "$target" == /* ]]; then
+    local dir="${target%/*}"
+    while [[ -n "$dir" ]]; do
       if [[ -e "$dir/.git" ]]; then
         echo "$dir"
         return
       fi
-      dir=$(dirname "$dir")
+      dir="${dir%/*}"
     done
   fi
   get_project_root
