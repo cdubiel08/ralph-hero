@@ -49,7 +49,7 @@ if [[ -z "$ticket_id" ]]; then
   allow
 fi
 
-research_dir="$(get_project_root)/thoughts/shared/research"
+research_dir="$(resolve_root_from_path "$file_path")/thoughts/shared/research"
 research_doc=$(find_existing_artifact "$research_dir" "$ticket_id")
 
 if [[ -n "$research_doc" ]]; then
