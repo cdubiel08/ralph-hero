@@ -99,10 +99,14 @@ run_case "no .git ancestor + no matching plan blocks (fallback negative control)
 # No direct/group/stream plan doc for GH-405 anywhere, but RALPH_PLAN_REFERENCE
 # points at a blob URL whose local_path resolves under $REPO's own tree. The
 # check must also root off the target file's own repo, not CLAUDE_PROJECT_DIR.
-touch "$REPO/thoughts/shared/plans/2026-07-19-GH-405-referenced-plan.md"
+# The fixture filename deliberately carries NO "GH-405" token: Checks 1-3 match
+# on the ticket id in filenames, so a token-bearing name would satisfy Check 1
+# (direct plan) and mask Check 4 — this case must fall through to the
+# Plan-Reference branch to actually exercise its project_root usage.
+touch "$REPO/thoughts/shared/plans/2026-07-19-parent-epic-plan.md"
 run_case "Plan Reference existence check roots off file's own repo" 0 \
   "$REPO/src/foo.ts" RALPH_COMMAND=impl RALPH_TICKET_ID=GH-405 \
-  RALPH_PLAN_REFERENCE="https://github.com/o/r/blob/main/thoughts/shared/plans/2026-07-19-GH-405-referenced-plan.md"
+  RALPH_PLAN_REFERENCE="https://github.com/o/r/blob/main/thoughts/shared/plans/2026-07-19-parent-epic-plan.md"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
