@@ -6,9 +6,9 @@ How `/ralph:plan` resolves `ARG` into a planning target. Consulted by Step 1 of 
 
 Apply in priority order — first match wins. Rules 1-4 apply to `MODE ∈ {default, auto, epic, iterate}`. In `--mode review`, the rules narrow to issue-number / plan-path only.
 
-1. **Issue-number form** — `ARG` matches `#NNN`, `NNN` (digits-only), or `GH-NNNN`. Strip prefix. `get_issue(number, includeGroup: true)` to fetch context (title, body, comments, current workflow state, group data). Set `LINKED_ISSUE=NNN`. Read issue body + comments for any `## Research Document` artifact link and pull that research doc FULLY into the main session.
+1. **Issue-number form** — `ARG` matches `#NNN`, `NNN` (digits-only), or `GH-NNNN`. Strip prefix. `get_issue(number, includeGroup: true)` to fetch context (title, body, comments, current workflow state, group data). Set `LINKED_ISSUE=NNN`. Read issue body + comments for any `## Research Document` artifact link and pull that research doc FULLY into the main session (consumed under § Research-as-evidence rule).
 
-2. **Research-doc path** — `ARG` is a path under `thoughts/shared/research/*.md` or has `type: research` in its frontmatter. Read FULLY. Extract `github_issue` from frontmatter; set `LINKED_ISSUE`. The research doc is the primary planning input.
+2. **Research-doc path** — `ARG` is a path under `thoughts/shared/research/*.md` or has `type: research` in its frontmatter. Read FULLY. Extract `github_issue` from frontmatter; set `LINKED_ISSUE`. The research doc is the primary planning input — consumed under § Research-as-evidence rule.
 
 3. **Existing-plan path** — `ARG` is a path under `thoughts/shared/plans/*.md`. Prompt explicitly via `AskUserQuestion` (do NOT auto-route — preserving vs overwriting a plan is destructive enough to warrant confirmation):
 
@@ -29,6 +29,16 @@ Apply in priority order — first match wins. Rules 1-4 apply to `MODE ∈ {defa
 ## File reading rule
 
 When `ARG` resolves to a path, or when the user mentions specific files in a free-form description, **read those files FULLY (no `offset` / `limit`) before any sub-agent dispatch**. Sub-agents do not see the main session's prior reads. Reading in the main session also lets you sharpen the sub-agent prompts.
+
+## Research-as-evidence rule
+
+Applies whenever a research doc enters the session (rules 1-2 above, or a group member's linked research). The doc is often authored at a lower tier than the plan session (sonnet reconnaissance vs `best` planning — `docs/model-tier-policy.md`), so treat it as **evidence, not the frame**:
+
+- **Verify before load-bearing.** Any claim a phase will rest on (a file:line reference, an "X works like Y" assertion) gets spot-checked against the current code before it shapes the plan. Verification is cheap; a phase built on a stale or wrong claim is not.
+- **Opinions are non-binding.** The doc's Summary and any "Key recommendation" are the researcher's take, not a constraint. Re-derive the approach from the Detailed Findings and Code References yourself; agreeing with the researcher is fine, inheriting their conclusion without deriving it is not.
+- **Run a bounded gap pass.** Before authoring, ask: *what would I have investigated that this doc didn't?* If the answer names something concrete — a subsystem the doc never opened, an alternative it never weighed, a failure mode it never probed — spend one short exploration pass there. Do not re-run research wholesale.
+
+This targets anchoring, the failure mode verification can't catch: a research doc implicitly defines the option space by what it chose to look at, and omissions are invisible unless deliberately hunted.
 
 ## Linked-research check
 
