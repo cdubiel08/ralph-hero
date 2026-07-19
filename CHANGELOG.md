@@ -18,7 +18,29 @@ to a version heading when that artifact next releases. Full tag history:
 
 ### Added
 
+- `create_sub_issues` — batch tree-creation MCP tool; one call creates a
+  parent's children, links each as a sub-issue, and wires dependency edges
+  between them (GH-1565).
+
 ### Changed
+
+- `batch_update` is now wired into `/ralph:caretake --mode split` Step 10,
+  replacing per-child workflow-state updates with grouped batch calls
+  (GH-1565).
+- Tree-creation call sites (`caretake --mode split` §Step 6) now use
+  `create_sub_issues` instead of per-child creation + `add_sub_issue` +
+  `add_dependency` sequences.
+
+### Removed
+
+- Zero-reference MCP tools: `create_draft_issue`, `update_draft_issue`,
+  `convert_draft_issue`, `get_draft_issue`, `list_groups`, `create_views`,
+  and the `RALPH_DEBUG`-gated `debug_stats`. The `debug_stats` removal
+  reverses its earlier "preserved for backward compat" note (GH-1566).
+
+Note: net MCP tool surface is now 38 → 32 (31 always-on + `collate_debug`
+under `RALPH_DEBUG`). GH-1552 may add one more tool later, which would
+adjust this count again.
 
 ### Fixed
 

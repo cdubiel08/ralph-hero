@@ -121,10 +121,9 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `trends-tools.ts` | capture_snapshot, metrics_trends |
 | `directions-tools.ts` | next_actions |
 | `plan-graph-tools.ts` | sync_plan_graph |
-| `view-tools.ts` | create_views |
 | `sre-tools.ts` | sre__scale, sre__rollout_restart, sre__delete_pod, sre__drain |
 | `activity-tools.ts` | recent_activity |
-| `debug-tools.ts` | debug tools (only registered when RALPH_DEBUG=true) |
+| `debug-tools.ts` | collate_debug (only registered when RALPH_DEBUG=true) |
 
 **GitHub client** (`github-client.ts`): Wraps `@octokit/graphql` with dual endpoints — `query()`/`mutate()` for repo operations, `projectQuery()`/`projectMutate()` for project operations (may use a separate token). Auto-injects `rateLimit` fragments into non-mutation queries.
 

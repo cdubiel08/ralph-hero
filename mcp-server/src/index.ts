@@ -31,7 +31,6 @@ import { registerProjectManagementTools } from "./tools/project-management-tools
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
 import { registerDebugTools } from "./tools/debug-tools.js";
 import { registerDecomposeTools } from "./tools/decompose-tools.js";
-import { registerViewTools } from "./tools/view-tools.js";
 import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
 import { registerActivityTools } from "./tools/activity-tools.js";
 import { registerTrendsTools } from "./tools/trends-tools.js";
@@ -534,9 +533,6 @@ async function main(): Promise<void> {
 
   // Decompose feature tool (cross-repo decomposition via .ralph-repos.yml)
   registerDecomposeTools(server, client, fieldCache);
-
-  // View management tools (REST API view creation)
-  registerViewTools(server, client, fieldCache);
 
   // Plan graph sync tool (sync plan dependency edges to GitHub)
   registerPlanGraphTools(server, client);

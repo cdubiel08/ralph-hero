@@ -920,29 +920,4 @@ describe("list_issues / pipeline_dashboard closed-non-terminal agreement (GH-116
     ).toEqual(dashboardNumbers);
   });
 
-  it("list_groups still defaults state=OPEN (regression pin)", async () => {
-    // GH-1169 deliberately left `list_groups`'s OPEN default in place — the
-    // acceptance criteria named `list_issues`, `next_actions`, and
-    // `pipeline_dashboard` but not `list_groups`. This regression pin
-    // documents the current behavior so a future change to `list_groups`
-    // has to update this test deliberately.
-    //
-    // Read the source string directly (no runtime call needed — the
-    // Zod-default change is a source-level invariant) and assert the
-    // `.default("OPEN")` is still present on the `state` field in
-    // relationship-tools.ts. The plan document references
-    // relationship-tools.ts:1204-1208 as the parallel default site.
-    const relationshipToolsSrc = fs.readFileSync(
-      path.resolve(__dirname, "../tools/relationship-tools.ts"),
-      "utf-8",
-    );
-    // Match the state-on-list_groups schema block: an `.enum(["OPEN", "CLOSED"])`
-    // followed by `.optional().default("OPEN")`. The match is loose enough
-    // to survive whitespace/comment changes but strict enough to catch a
-    // default removal.
-    expect(
-      relationshipToolsSrc,
-      "list_groups still has .default(\"OPEN\") on state (regression pin from GH-1169)",
-    ).toMatch(/state:\s*z\s*\.enum\(\["OPEN",\s*"CLOSED"\]\)\s*\.optional\(\)\s*\.default\("OPEN"\)/);
-  });
 });

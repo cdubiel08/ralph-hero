@@ -173,11 +173,22 @@ Any context discovered during §Steps 2-5 that is specific to one child must be 
 
 ## §Step 10: Set sub-issue workflow states
 
-Based on research done during splitting, set the workflow state for **every** child (including children with sibling `blockedBy` dependencies — §Step 7 dependencies are orthogonal to workflow state):
+Based on research done during splitting, determine the target workflow state for **every** child (including children with sibling `blockedBy` dependencies — §Step 7 dependencies are orthogonal to workflow state):
 
-- **Scope clear** → `Ready for Plan` (`command: "ralph_split"`).
+- **Scope clear** → `Ready for Plan`.
 - **Scope needs more research** → keep in `Research Needed`.
 - **Blocked by issue OUTSIDE this split** → keep in `Backlog`.
+
+Children created via `create_sub_issues` in §Step 6 may already carry the correct `workflowState` from creation (when it was passed inline for scope-clear children). This step's `batch_update` covers state fixes for **REUSED** children (§Step 5) and any children whose state was deferred in §Step 6 (research-needed or externally-blocked children were created without `workflowState`).
+
+Group the children that still need a state change by target state and issue one `batch_update` call per non-empty group:
+
+```
+batch_update(issues: [<all children needing "Ready for Plan">],
+             operations: [{field: "workflow_state", value: "Ready for Plan"}])
+```
+
+Repeat with `value: "Research Needed"` or `value: "Backlog"` for the other groups as needed. Skip a group entirely if no child needs that transition.
 
 **Uniformity check**: after this step, `list_sub_issues` on the parent and verify every child has a non-null `workflowState`. The dependency-chain pattern (repo → service → router) is a common pitfall: agents sometimes advance only the unblocked head and leave the rest with no workflow state.
 

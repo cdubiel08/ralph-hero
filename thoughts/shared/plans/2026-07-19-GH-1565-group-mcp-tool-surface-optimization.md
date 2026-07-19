@@ -160,8 +160,8 @@ Delete the 7 dead tools with their exclusive helpers, wiring, and tests; give `b
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `server.tool` blocks at `:44-473` (create/update/convert/get_draft_issue) removed; `create_status_update` + `archive_items` intact
-  - [ ] Test blocks `:157-224` and `:451-518` removed; draft-shaped-ID tests (`:547`, `:592`) and `PROTECTED_FIELDS` block kept
+  - [x] `server.tool` blocks at `:44-473` (create/update/convert/get_draft_issue) removed; `create_status_update` + `archive_items` intact
+  - [x] Test blocks `:157-224` and `:451-518` removed; draft-shaped-ID tests (`:547`, `:592`) and `PROTECTED_FIELDS` block kept
 
 #### Task 2.2: `list_groups` removal
 - **files**: `mcp-server/src/tools/relationship-tools.ts` (modify), `mcp-server/src/__tests__/relationship-tools.test.ts` (modify), `mcp-server/src/__tests__/cross-tool-consistency.test.ts` (modify), `mcp-server/src/__tests__/cross-tool-pagination-consistency.test.ts` (modify)
@@ -169,8 +169,8 @@ Delete the 7 dead tools with their exclusive helpers, wiring, and tests; give `b
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] Tool block `:1062-1290` + exclusive helpers `RawProjectItem` (`:121-133`), `getFieldValue` (`:135-145`) + now-unused `paginateConnection` import removed; `buildSubIssueFragment`/`mapSubIssueNodes` untouched
-  - [ ] `list_groups` describes (`:196-238`, `:244-266`) and the regression pin (`cross-tool-consistency.test.ts:923-946`) removed; pagination-consistency suite read fully and cleaned of any `list_groups` assertions
+  - [x] Tool block `:1062-1290` + exclusive helpers `RawProjectItem` (`:121-133`), `getFieldValue` (`:135-145`) + now-unused `paginateConnection` import removed; `buildSubIssueFragment`/`mapSubIssueNodes` untouched
+  - [x] `list_groups` describes (`:196-238`, `:244-266`) and the regression pin (`cross-tool-consistency.test.ts:923-946`) removed; pagination-consistency suite read fully and cleaned of any `list_groups` assertions
 
 #### Task 2.3: `create_views` + `debug_stats` removal
 - **files**: `mcp-server/src/tools/view-tools.ts` (delete), `mcp-server/src/__tests__/view-tools.test.ts` (delete), `mcp-server/src/tools/project-tools.ts` (modify), `mcp-server/src/tools/debug-tools.ts` (modify), `mcp-server/src/__tests__/debug-tools.test.ts` (delete), `mcp-server/src/index.ts` (modify)
@@ -178,8 +178,8 @@ Delete the 7 dead tools with their exclusive helpers, wiring, and tests; give `b
 - **complexity**: medium
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `view-tools.ts` + its test deleted; `index.ts:33,535` import/registration removed; orphaned `fetchProjectViews` removed from `project-tools.ts`
-  - [ ] `debug_stats` block (`debug-tools.ts:762-812`) + exclusive JSONL machinery + `logDir` + now-unused imports removed; the file-header comment mentioning `debug_stats` ("preserved for backward compat", lines 9-10) updated so the zero-hits grep passes; `collate_debug` and its 4 test files untouched; `registerDebugTools` call in `index.ts` stays (still RALPH_DEBUG-gated)
+  - [x] `view-tools.ts` + its test deleted; `index.ts:33,535` import/registration removed; orphaned `fetchProjectViews` removed from `project-tools.ts`
+  - [x] `debug_stats` block (`debug-tools.ts:762-812`) + exclusive JSONL machinery + `logDir` + now-unused imports removed; the file-header comment mentioning `debug_stats` ("preserved for backward compat", lines 9-10) updated so the zero-hits grep passes; `collate_debug` and its 4 test files untouched; `registerDebugTools` call in `index.ts` stays (still RALPH_DEBUG-gated)
 
 #### Task 2.4: `batch_update` wire-in + roster/CHANGELOG
 - **files**: `ralph/skills/caretake/modes/split.md` (modify), `CLAUDE.md` (modify), `CHANGELOG.md` (modify — root, `## [Unreleased]`; `mcp-server/CHANGELOG.md` does not exist)
@@ -187,16 +187,16 @@ Delete the 7 dead tools with their exclusive helpers, wiring, and tests; give `b
 - **complexity**: low
 - **depends_on**: null
 - **acceptance**:
-  - [ ] `split.md` §Step 10 instructs `batch_update(issues: [all children], operations: [workflow_state])` for the uniformity pass instead of per-child `save_issue`
-  - [ ] CLAUDE.md rows for `view-tools.ts` and `debug_stats` removed/adjusted; `scripts/check-doc-rosters.sh` passes
-  - [ ] CHANGELOG entry: −7 tools (named), +1 `create_sub_issues`, `batch_update` now referenced by split; note GH-1552 may add one more; acknowledge `debug_stats` removal reverses the "preserved for backward compat" header note in `debug-tools.ts` (that header comment is cleaned in Task 2.3)
+  - [x] `split.md` §Step 10 instructs `batch_update(issues: [all children], operations: [workflow_state])` for the uniformity pass instead of per-child `save_issue`
+  - [x] CLAUDE.md rows for `view-tools.ts` and `debug_stats` removed/adjusted; `scripts/check-doc-rosters.sh` passes
+  - [x] CHANGELOG entry: −7 tools (named), +1 `create_sub_issues`, `batch_update` now referenced by split; note GH-1552 may add one more; acknowledge `debug_stats` removal reverses the "preserved for backward compat" header note in `debug-tools.ts` (that header comment is cleaned in Task 2.3)
 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `cd mcp-server && npm run build && npm test` — green with 6 manifest entries removed
-- [ ] `grep -rE "create_draft_issue|update_draft_issue|convert_draft_issue|get_draft_issue|list_groups|create_views|debug_stats" ralph/ plugin/ mcp-server/src/` — zero hits
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `cd mcp-server && npm run build && npm test` — green with 6 manifest entries removed
+- [x] `grep -rE "create_draft_issue|update_draft_issue|convert_draft_issue|get_draft_issue|list_groups|create_views|debug_stats" ralph/ plugin/ mcp-server/src/` — zero hits
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] MCP server starts and lists 31 tools (32 with RALPH_DEBUG, which adds `collate_debug`); no startup errors

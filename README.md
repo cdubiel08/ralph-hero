@@ -86,7 +86,7 @@ The plugin bundles an MCP server ([`ralph-hero-mcp-server`](https://www.npmjs.co
 
 ### Tools
 
-The MCP server registers ~38 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include draft-issue CRUD, `decompose_feature`, `archive_items`, `create_views`, `sync_plan_graph`, `detect_stream_positions`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
+The MCP server registers ~32 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `archive_items`, `sync_plan_graph`, `detect_stream_positions`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
 
 | Tool | Description |
 |------|-------------|
