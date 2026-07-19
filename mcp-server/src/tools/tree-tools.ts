@@ -12,12 +12,16 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { WORKFLOW_STATE_TO_STATUS } from "../lib/workflow-states.js";
+import {
+  WORKFLOW_STATE_TO_STATUS,
+  isParentGateState,
+} from "../lib/workflow-states.js";
 import { toolSuccess, toolError } from "../types.js";
 import {
   ensureFieldCache,
   resolveFullConfig,
   resolveIssueNodeId,
+  autoAdvanceParent,
 } from "../lib/helpers.js";
 import { buildBatchMutationQuery } from "./batch-tools.js";
 
@@ -38,14 +42,46 @@ const FIELD_NAME_MAP = {
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ChildInput {
-  title: string;
-  body?: string;
-  estimate?: string;
-  priority?: string;
-  workflowState?: string;
-  dependsOn?: number[];
-}
+/**
+ * Zod schema for a single child spec. `dependsOn` is sibling-index-only;
+ * pre-existing GitHub issue blockers go in `dependsOnIssues`. Exported so the
+ * handler input and unit tests share one source of truth (F6/F10).
+ */
+export const childSchema = z.object({
+  title: z.string().min(1).describe("Issue title (required)"),
+  body: z.string().optional().describe("Issue body (markdown)"),
+  estimate: z
+    .enum(["XS", "S", "M", "L", "XL"])
+    .optional()
+    .describe("Estimate (passthrough; policy gating lives in hooks)"),
+  priority: z.enum(["P0", "P1", "P2", "P3"]).optional().describe("Priority"),
+  workflowState: z
+    .string()
+    .optional()
+    .describe("Initial workflow state (e.g. 'Backlog', 'Research Needed')"),
+  dependsOn: z
+    .array(z.coerce.number().int())
+    .max(50)
+    .optional()
+    .describe(
+      "Sibling indices ONLY — each value is a 0-based index into THIS call's " +
+        "children array; the child is blocked by (depends on) that sibling. " +
+        "Every value must be in [0, children.length); out-of-range values are " +
+        "rejected up front. For blockers that are EXISTING GitHub issues, use " +
+        "dependsOnIssues instead. Capped at 50 per child.",
+    ),
+  dependsOnIssues: z
+    .array(z.coerce.number().int().positive())
+    .max(50)
+    .optional()
+    .describe(
+      "Existing GitHub issue numbers this child depends on (is blocked by), " +
+        "resolved via node-id lookup. Use this for blockers OUTSIDE this call's " +
+        "children array. Capped at 50 per child.",
+    ),
+});
+
+export type ChildInput = z.infer<typeof childSchema>;
 
 interface ChildStatus {
   index: number;
@@ -262,6 +298,35 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+/**
+ * Pack per-child item groups into chunks of at most `size` items WITHOUT ever
+ * splitting a single child's group across a chunk boundary (F3/F4). A whole
+ * child group is kept intact so its status (fieldsSet / edgesWired) can never
+ * be corrupted by a straddling boundary. Each returned chunk lists the child
+ * indices whose groups it carries. A lone group larger than `size` (guarded
+ * against by the .max(50) caps on dependsOn/dependsOnIssues) becomes its own
+ * oversized chunk rather than straddling.
+ */
+export function packByChild<T>(
+  groups: Map<number, T[]>,
+  size: number,
+): Array<{ childIndices: number[]; items: T[] }> {
+  const chunks: Array<{ childIndices: number[]; items: T[] }> = [];
+  let items: T[] = [];
+  let childIndices: number[] = [];
+  for (const [childIndex, group] of groups) {
+    if (items.length > 0 && items.length + group.length > size) {
+      chunks.push({ childIndices, items });
+      items = [];
+      childIndices = [];
+    }
+    items.push(...group);
+    childIndices.push(childIndex);
+  }
+  if (items.length > 0) chunks.push({ childIndices, items });
+  return chunks;
+}
+
 // ---------------------------------------------------------------------------
 // Register tree tools
 // ---------------------------------------------------------------------------
@@ -290,40 +355,31 @@ export function registerTreeTools(
         .number()
         .describe("Parent issue number the created children are linked under"),
       children: z
-        .array(
-          z.object({
-            title: z.string().min(1).describe("Issue title (required)"),
-            body: z.string().optional().describe("Issue body (markdown)"),
-            estimate: z
-              .enum(["XS", "S", "M", "L", "XL"])
-              .optional()
-              .describe("Estimate (passthrough; policy gating lives in hooks)"),
-            priority: z
-              .enum(["P0", "P1", "P2", "P3"])
-              .optional()
-              .describe("Priority"),
-            workflowState: z
-              .string()
-              .optional()
-              .describe("Initial workflow state (e.g. 'Backlog', 'Research Needed')"),
-            dependsOn: z
-              .array(z.coerce.number())
-              .optional()
-              .describe(
-                "Dependency references. A value < the children array length is a " +
-                  "sibling index into THIS call's children array; a value >= the " +
-                  "children array length is an existing GitHub issue number. Each " +
-                  "reference means this child is blocked by (depends on) the target.",
-              ),
-          }),
-        )
+        .array(childSchema)
         .min(1)
         .max(MAX_CHILDREN)
         .describe("Child issues to create (1-50)"),
     },
     async (args) => {
       try {
-        const children = args.children as ChildInput[];
+        const children: ChildInput[] = args.children;
+
+        // ---- dependsOn strict sibling-index validation -----------------
+        // dependsOn is sibling-index-only now (F6): every value must point at
+        // a real sibling in THIS call. Pre-existing GitHub blockers belong in
+        // dependsOnIssues. Reject out-of-range values before any mutation.
+        for (let i = 0; i < children.length; i++) {
+          for (const d of children[i].dependsOn ?? []) {
+            if (!Number.isInteger(d) || d < 0 || d >= children.length) {
+              return toolError(
+                `Child #${i} (${children[i].title}) has an invalid dependsOn ` +
+                  `value ${d}: dependsOn entries must be sibling indices in ` +
+                  `[0, ${children.length}). Use dependsOnIssues for blockers ` +
+                  `that are existing GitHub issues.`,
+              );
+            }
+          }
+        }
 
         // ---- Cycle validation (before any mutation) --------------------
         const cycle = detectSiblingCycle(children);
@@ -427,11 +483,29 @@ export function registerTreeTools(
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             firstCreateError = firstCreateError ?? message;
+            // GraphqlResponseError carries partial results in err.data: the
+            // aliases that executed before the failing one. Salvage those as
+            // created; only aliases absent/null get the stage error (F1).
+            const data = (err as { data?: Record<string, unknown> }).data;
             for (const i of chunkIndices) {
-              statuses[i].error = appendError(
-                statuses[i].error,
-                `Stage 1 (create) failed: ${message}`,
-              );
+              const issue = data
+                ? (
+                    data[`c${i}`] as {
+                      issue?: { id: string; number: number; url: string };
+                    } | null
+                  )?.issue
+                : undefined;
+              if (issue) {
+                statuses[i].number = issue.number;
+                statuses[i].url = issue.url;
+                statuses[i].nodeId = issue.id;
+                statuses[i].created = true;
+              } else {
+                statuses[i].error = appendError(
+                  statuses[i].error,
+                  `Stage 1 (create) failed: ${message}`,
+                );
+              }
             }
             partialFailure = true;
           }
@@ -464,10 +538,20 @@ export function registerTreeTools(
             for (const s of chunkStatuses) s.linked = true;
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
+            // Salvage aliases that linked before the failing one (F2): an
+            // alias present with a non-null value in err.data succeeded.
+            const data = (err as { data?: Record<string, unknown> }).data;
             for (const s of chunkStatuses) {
-              s.error = appendError(s.error, `Stage 2 (link) failed: ${message}`);
+              if (data && data[`l${s.index}`] != null) {
+                s.linked = true;
+              } else {
+                s.error = appendError(
+                  s.error,
+                  `Stage 2 (link) failed: ${message}`,
+                );
+                partialFailure = true;
+              }
             }
-            partialFailure = true;
           }
         }
 
@@ -519,15 +603,20 @@ export function registerTreeTools(
         // ---- Stage 3: project field updates ----------------------------
         // Only children that made it onto the board can have fields set.
         const withItems = statuses.filter((s) => s.projectItemId);
-        const fieldUpdates: Array<{
+        // Field updates grouped by child index so a child's updates are
+        // packed whole into a chunk and never straddle a boundary (F3).
+        type FieldUpdate = {
           alias: string;
           itemId: string;
           fieldId: string;
           optionId: string;
-          childIndex: number;
-        }> = [];
-        // Track which children requested at least one resolvable field.
-        const requestedFields = new Set<number>();
+        };
+        const fieldGroups = new Map<number, FieldUpdate[]>();
+        const pushFieldUpdate = (childIndex: number, u: FieldUpdate) => {
+          const g = fieldGroups.get(childIndex) ?? [];
+          g.push(u);
+          fieldGroups.set(childIndex, g);
+        };
 
         for (const s of withItems) {
           const child = children[s.index];
@@ -553,13 +642,11 @@ export function registerTreeTools(
               partialFailure = true;
               continue;
             }
-            requestedFields.add(s.index);
-            fieldUpdates.push({
+            pushFieldUpdate(s.index, {
               alias: `f${s.index}_${key}`,
               itemId: s.projectItemId!,
               fieldId,
               optionId,
-              childIndex: s.index,
             });
 
             // Best-effort Status sync for workflow-state changes.
@@ -573,12 +660,11 @@ export function registerTreeTools(
                   ? fieldCache.resolveOptionId("Status", targetStatus, projectNumber)
                   : undefined;
               if (statusFieldId && statusOptionId) {
-                fieldUpdates.push({
+                pushFieldUpdate(s.index, {
                   alias: `f${s.index}_status`,
                   itemId: s.projectItemId!,
                   fieldId: statusFieldId,
                   optionId: statusOptionId,
-                  childIndex: s.index,
                 });
               }
             }
@@ -586,9 +672,9 @@ export function registerTreeTools(
         }
 
         // Children on the board that requested no field updates are
-        // vacuously "fieldsSet". Keyed off the child's spec, not
-        // requestedFields — a child whose only field failed to resolve
-        // must keep fieldsSet=false alongside its Stage 3 error.
+        // vacuously "fieldsSet". Keyed off the child's spec, not whether a
+        // field resolved — a child whose only field failed to resolve must
+        // keep fieldsSet=false alongside its Stage 3 error.
         for (const s of withItems) {
           const child = children[s.index];
           const specifiedAny = Boolean(
@@ -597,25 +683,24 @@ export function registerTreeTools(
           if (!specifiedAny) s.fieldsSet = true;
         }
 
-        for (const chunkUpdates of chunk(fieldUpdates, MUTATION_CHUNK_SIZE)) {
+        for (const fieldChunk of packByChild(fieldGroups, MUTATION_CHUNK_SIZE)) {
           const { mutationString, variables } = buildBatchMutationQuery(
             projectId,
-            chunkUpdates.map((u) => ({
+            fieldChunk.items.map((u) => ({
               alias: u.alias,
               itemId: u.itemId,
               fieldId: u.fieldId,
               optionId: u.optionId,
             })),
           );
-          const chunkChildIndices = new Set(chunkUpdates.map((u) => u.childIndex));
           try {
             await client.projectMutate(mutationString, variables);
-            for (const idx of chunkChildIndices) {
+            for (const idx of fieldChunk.childIndices) {
               statuses[idx].fieldsSet = true;
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            for (const idx of chunkChildIndices) {
+            for (const idx of fieldChunk.childIndices) {
               statuses[idx].error = appendError(
                 statuses[idx].error,
                 `Stage 3 (fields) failed: ${message}`,
@@ -625,61 +710,114 @@ export function registerTreeTools(
           }
         }
 
+        // ---- Parent auto-advance (best-effort, F8) ---------------------
+        // batch field writes don't auto-advance the parent the way
+        // save_issue does. If children were moved to a parent-gate state,
+        // fire the parent gate check per distinct gate state actually set.
+        const advanceNotes: string[] = [];
+        const gateReps = new Map<string, number>();
+        for (const s of statuses) {
+          if (!s.created || s.number == null || !s.fieldsSet) continue;
+          const ws = children[s.index].workflowState;
+          if (ws && isParentGateState(ws) && !gateReps.has(ws)) {
+            gateReps.set(ws, s.number);
+          }
+        }
+        for (const [gateState, repChild] of gateReps) {
+          try {
+            await autoAdvanceParent(
+              client,
+              fieldCache,
+              owner,
+              repo,
+              repChild,
+              gateState,
+              projectNumber,
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            advanceNotes.push(
+              `Parent auto-advance for gate "${gateState}" failed: ${message}`,
+            );
+          }
+        }
+
         // ---- Stage 4: dependency edges (addBlockedBy) ------------------
-        const n = children.length;
-        const edges: Array<{
+        // Edges are grouped by their BLOCKED child so a child's edges pack
+        // whole into a chunk (F4). `blockedIndex` is a scalar — on failure
+        // the error attaches ONLY to the blocked child, never the blocking
+        // sibling (F5). dependsOn holds sibling indices; dependsOnIssues
+        // holds existing GH issue numbers (F6).
+        type Edge = {
           alias: string;
           blockedId: string;
           blockingId: string;
-          childIndices: number[];
-        }> = [];
+          blockedIndex: number;
+        };
+        const edgeGroups = new Map<number, Edge[]>();
+        const pushEdge = (childIndex: number, e: Edge) => {
+          const g = edgeGroups.get(childIndex) ?? [];
+          g.push(e);
+          edgeGroups.set(childIndex, g);
+        };
         // Children that requested at least one edge (to distinguish
         // vacuous edgesWired from a wired one).
         const requestedEdges = new Set<number>();
 
         for (const s of created) {
           const child = children[s.index];
-          const deps = child.dependsOn ?? [];
-          for (let k = 0; k < deps.length; k++) {
-            const dep = deps[k];
+          let k = 0;
+
+          // Sibling-index edges (dependsOn).
+          for (const dep of child.dependsOn ?? []) {
             requestedEdges.add(s.index);
-            let blockingId: string | undefined;
-            const involved = [s.index];
-
-            if (dep < n) {
-              // Sibling index — must have been created this call.
-              const sibling = statuses[dep];
-              if (!sibling?.created || !sibling.nodeId) {
-                s.error = appendError(
-                  s.error,
-                  `Stage 4: sibling #${dep} was not created; skipped edge`,
-                );
-                partialFailure = true;
-                continue;
-              }
-              blockingId = sibling.nodeId;
-              involved.push(dep);
-            } else {
-              // Existing GitHub issue number.
-              try {
-                blockingId = await resolveIssueNodeId(client, owner, repo, dep);
-              } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                s.error = appendError(
-                  s.error,
-                  `Stage 4: could not resolve blocker issue #${dep}: ${message}`,
-                );
-                partialFailure = true;
-                continue;
-              }
+            const sibling = statuses[dep];
+            if (!sibling?.created || !sibling.nodeId) {
+              s.error = appendError(
+                s.error,
+                `Stage 4: sibling #${dep} was not created; skipped edge`,
+              );
+              partialFailure = true;
+              k++;
+              continue;
             }
+            pushEdge(s.index, {
+              alias: `e${s.index}_${k}`,
+              blockedId: s.nodeId!,
+              blockingId: sibling.nodeId,
+              blockedIndex: s.index,
+            });
+            k++;
+          }
 
-            edges.push({
+          // Existing-issue edges (dependsOnIssues).
+          for (const depIssue of child.dependsOnIssues ?? []) {
+            requestedEdges.add(s.index);
+            let blockingId: string;
+            try {
+              blockingId = await resolveIssueNodeId(
+                client,
+                owner,
+                repo,
+                depIssue,
+              );
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              s.error = appendError(
+                s.error,
+                `Stage 4: could not resolve blocker issue #${depIssue}: ${message}`,
+              );
+              partialFailure = true;
+              k++;
+              continue;
+            }
+            pushEdge(s.index, {
               alias: `e${s.index}_${k}`,
               blockedId: s.nodeId!,
               blockingId,
-              childIndices: involved,
+              blockedIndex: s.index,
             });
+            k++;
           }
         }
 
@@ -688,26 +826,23 @@ export function registerTreeTools(
           if (!requestedEdges.has(s.index)) s.edgesWired = true;
         }
 
-        for (const chunkEdges of chunk(edges, MUTATION_CHUNK_SIZE)) {
+        for (const edgeChunk of packByChild(edgeGroups, MUTATION_CHUNK_SIZE)) {
           const { mutationString, variables } = buildDependencyEdgesMutation(
-            chunkEdges.map((e) => ({
+            edgeChunk.items.map((e) => ({
               alias: e.alias,
               blockedId: e.blockedId,
               blockingId: e.blockingId,
             })),
           );
-          const chunkChildIndices = new Set(
-            chunkEdges.flatMap((e) => e.childIndices),
-          );
           try {
             await client.mutate(mutationString, variables);
-            // Mark the blocked child (source of the edge) as wired.
-            for (const e of chunkEdges) {
-              statuses[e.childIndices[0]].edgesWired = true;
+            // Only blocked children are in edgeChunk.childIndices.
+            for (const idx of edgeChunk.childIndices) {
+              statuses[idx].edgesWired = true;
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            for (const idx of chunkChildIndices) {
+            for (const idx of edgeChunk.childIndices) {
               statuses[idx].error = appendError(
                 statuses[idx].error,
                 `Stage 4 (edges) failed: ${message}`,
@@ -741,6 +876,7 @@ export function registerTreeTools(
             addedToProject: statuses.filter((s) => s.projectItemId).length,
           },
           children: childResults,
+          ...(advanceNotes.length ? { notes: advanceNotes } : {}),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

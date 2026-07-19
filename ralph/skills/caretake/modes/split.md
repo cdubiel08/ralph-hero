@@ -123,7 +123,7 @@ Sub-issue body template:
 
 ## §Step 7: Establish dependencies
 
-**New children** (created together in §Step 6): wire each dependency pair inline via the dependent child's `dependsOn` array in the SAME `create_sub_issues` call — no separate step needed. A `dependsOn` value less than the children array length is a sibling index into that call's children array; a value at or above it is an existing GitHub issue number (used when a new child depends on a pre-existing one, e.g. a reused sibling from §Step 5).
+**New children** (created together in §Step 6): wire each dependency pair inline in the SAME `create_sub_issues` call — no separate step needed. Two arrays per child: `dependsOn` holds **sibling indices** (0-based positions into that call's children array); `dependsOnIssues` holds **existing GitHub issue numbers** (used when a new child depends on a pre-existing one, e.g. a reused sibling from §Step 5).
 
 **Edges to pre-existing issues** (reused children from §Step 5, or a dependency discovered after §Step 6 already ran): use `add_dependency` — the dependent issue is blocked by the earlier-phase issue. See [split-decomposition.md](../split-decomposition.md) §Dependency wiring for rules.
 
@@ -190,6 +190,8 @@ batch_update(issues: [<all children needing "Ready for Plan">],
 
 Repeat with `value: "Research Needed"` or `value: "Backlog"` for the other groups as needed. Skip a group entirely if no child needs that transition.
 
+**Re-fire the parent gate check**: `batch_update` does NOT auto-advance the parent (unlike `save_issue`). After the batch calls, if any child now sits at a parent-gate state (Ready for Plan / Plan in Review / In Review / Done), call `advance_issue(direction: "parent", number: <any child number>)` once to run the gate check — it advances the parent only when ALL siblings have reached the same gate. (Children set via `create_sub_issues` in §Step 6 already triggered this check at creation; this covers the batch-updated reused/deferred children.)
+
 **Uniformity check**: after this step, `list_sub_issues` on the parent and verify every child has a non-null `workflowState`. The dependency-chain pattern (repo → service → router) is a common pitfall: agents sometimes advance only the unblocked head and leave the rest with no workflow state.
 
 ## §Step 11: Emit terminal token
@@ -229,5 +231,5 @@ There is **no fixed cap** on sub-issue count. A skill audit epic may legitimatel
 - **XS/S children only** — `split-size-gate.sh` enforces.
 - **No implementation, only issue creation.**
 - **Complete within 20 minutes** — rushing produces under-researched children.
-- **Parent stays in Backlog** — the auto-advance helper inside `save_issue` owns parent transitions.
+- **Parent stays in Backlog** — never advance it manually. Parent transitions are owned by the `autoAdvanceParent` gate check, which `create_sub_issues` fires after setting child fields (§Step 6) and which the explicit `advance_issue(direction: "parent")` call re-fires after §Step 10's `batch_update`.
 - **Sub-agent research is optional** when the issue body already enumerates artifacts (skill audits, fragment extractions).

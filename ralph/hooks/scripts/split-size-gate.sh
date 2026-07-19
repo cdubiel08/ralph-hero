@@ -37,9 +37,10 @@ has_children=$(echo "$RALPH_HOOK_INPUT" | jq -r '(.tool_input.children | type) =
 if [[ "$has_children" == "true" ]]; then
   # Batch path (create_sub_issues): one estimate per child, array-shaped.
   offending=$(echo "$RALPH_HOOK_INPUT" | jq -r --arg valid "$valid_estimates" '
-    ($valid | split(",")) as $ok
+    ($valid | split(",") | map(gsub("^\\s+|\\s+$"; ""))) as $ok
     | [.tool_input.children[]
-        | select(.estimate != null and ((.estimate as $e | $ok | index($e)) == null))
+        | select(.estimate != null
+                 and (((.estimate | gsub("^\\s+|\\s+$"; "")) as $e | $ok | index($e)) == null))
         | "\(.title // "untitled"): \(.estimate)"]
     | join(", ")
   ')

@@ -76,6 +76,9 @@ run_case "batch: empty children array allows" 0 \
   RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
 run_case "batch: out-of-scope allows even with M child" 0 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"M"}]}'
+run_case "batch: whitespace in RALPH_VALID_SUB_ESTIMATES tokens trimmed" 0 \
+  '{"parentNumber":100,"children":[{"title":"a","estimate":"S"}]}' \
+  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split "RALPH_VALID_SUB_ESTIMATES=XS, S"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

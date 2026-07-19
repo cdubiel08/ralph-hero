@@ -30,6 +30,17 @@ to a version heading when that artifact next releases. Full tag history:
 - Tree-creation call sites (`caretake --mode split` §Step 6) now use
   `create_sub_issues` instead of per-child creation + `add_sub_issue` +
   `add_dependency` sequences.
+- `create_sub_issues` splits the old overloaded `dependsOn` into two per-child
+  arrays: `dependsOn` (sibling indices only, validated in-range) and
+  `dependsOnIssues` (existing GitHub issue numbers). Both capped at 50
+  (GH-1565).
+- The `ralph_split` per-command workflow-state allowlist is **not** enforced by
+  `create_sub_issues` / `batch_update` — those tools pass estimate / priority /
+  workflowState through unchanged. Policy gating lives in the caretake hooks
+  (`split-size-gate.sh` et al.) by design (plan decision, GH-1565).
+- `~/.ralph-hero/logs` JSONL debug logs no longer have an in-repo reader —
+  `debug-logger.ts` still writes them under `RALPH_DEBUG=true`, but retention
+  and rotation are now the operator's concern (GH-1565).
 
 ### Removed
 

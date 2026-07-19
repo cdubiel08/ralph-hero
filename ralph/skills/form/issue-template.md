@@ -75,8 +75,8 @@ Each sub-issue is scoped to XS/S for autonomous implementation.
 Creation order:
 
 1. Parent: `create_issue` with `estimate: L`, `workflowState: "Backlog"`.
-2. Each child: `create_issue` with `estimate: XS` (occasionally `S`), `workflowState: "Backlog"`, then `add_sub_issue(parent_number, child_number)`.
-3. Sequential children only: `add_dependency(blocker_number, blocked_number)` in submission order. Independent children get no dependency edge — parallelism is the default.
+2. All children in ONE `create_sub_issues(parentNumber: <parent-number>, children: [{title, body, estimate: "XS", workflowState: "Backlog", dependsOn: [...]}, ...])` call — each entry gets `estimate: XS` (occasionally `S`). The call links every child under the parent and wires dependency edges in the same request; check the response's per-child status for `error` and repair only the failed children.
+3. Sequential children only: give the later child's entry `dependsOn: [<earlier sibling's index>]` so the edge is wired inline (a `dependsOn` value is a sibling index into this call's children array; use `dependsOnIssues` for a pre-existing GitHub issue blocker). Independent children get no `dependsOn` entry — parallelism is the default.
 
 Estimate defaults — **L** for parent, **XS** for child. Bump to **S** for any child that touches >1 component or has nontrivial design surface; bump to **M** only if the child should probably be its own sub-tree.
 

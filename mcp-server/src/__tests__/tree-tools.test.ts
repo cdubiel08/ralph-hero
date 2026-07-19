@@ -14,6 +14,7 @@ import {
   buildAddToProjectMutation,
   buildDependencyEdgesMutation,
   detectSiblingCycle,
+  packByChild,
   registerTreeTools,
 } from "../tools/tree-tools.js";
 import type { GitHubClient } from "../github-client.js";
@@ -495,5 +496,310 @@ describe("ralph_hero__create_sub_issues handler — Stage 3 resolution failure",
     expect(children[0].linked).toBe(true);
     expect(children[0].fieldsSet).toBe(false);
     expect(children[0].error).toContain("Stage 3: could not resolve");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// packByChild — whole-child groups never straddle a chunk boundary (F3/F4)
+// ---------------------------------------------------------------------------
+
+describe("packByChild", () => {
+  it("keeps each child's group whole; a group that would straddle starts a new chunk", () => {
+    // Three groups of 30 each, size 50. A flat chunk(90, 50) would split the
+    // middle group across the boundary; packByChild must not.
+    const groups = new Map<number, number[]>([
+      [0, Array.from({ length: 30 }, (_, i) => i)],
+      [1, Array.from({ length: 30 }, (_, i) => 100 + i)],
+      [2, Array.from({ length: 30 }, (_, i) => 200 + i)],
+    ]);
+    const chunks = packByChild(groups, 50);
+    // No chunk mixes a partial group: each child index appears in exactly one
+    // chunk, and that chunk carries all 30 of its items.
+    expect(chunks).toHaveLength(3);
+    for (const c of chunks) {
+      expect(c.childIndices).toHaveLength(1);
+      expect(c.items).toHaveLength(30);
+    }
+    expect(chunks.map((c) => c.childIndices[0])).toEqual([0, 1, 2]);
+  });
+
+  it("packs multiple small groups into one chunk up to size", () => {
+    const groups = new Map<number, number[]>([
+      [0, [1, 2]],
+      [1, [3, 4]],
+      [2, [5, 6]],
+    ]);
+    const chunks = packByChild(groups, 50);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].childIndices).toEqual([0, 1, 2]);
+    expect(chunks[0].items).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it("emits an oversized lone chunk rather than splitting a single large group", () => {
+    const groups = new Map<number, number[]>([
+      [0, Array.from({ length: 60 }, (_, i) => i)],
+    ]);
+    const chunks = packByChild(groups, 50);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].childIndices).toEqual([0]);
+    expect(chunks[0].items).toHaveLength(60);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Handler-level: partial err.data salvage, dependsOn validation,
+// dependsOnIssues, blocked-only edge attribution (F1/F2/F5/F6)
+// ---------------------------------------------------------------------------
+
+/** A GraphqlResponseError-shaped error: message + partial `.data` payload. */
+function graphqlError(
+  message: string,
+  data: Record<string, unknown>,
+): Error {
+  const err = new Error(message) as Error & { data: Record<string, unknown> };
+  err.data = data;
+  return err;
+}
+
+describe("ralph_hero__create_sub_issues handler — Stage 1 partial err.data salvage (F1)", () => {
+  it("salvages aliases present in err.data as created; absent aliases get the stage error", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        query: [
+          { repository: { id: "repo-id-1" } },
+          { repository: { issue: { id: "parent-node-id" } } },
+        ],
+        mutate: [
+          // Stage 1: createIssue throws but carries c0 in err.data (c1 absent).
+          graphqlError("createIssue partial failure", {
+            c0: { issue: { id: "child-node-0", number: 101, url: "https://x/101" } },
+          }),
+          // Stage 2a: addSubIssue succeeds for the salvaged child.
+          { l0: { subIssue: { id: "child-node-0" } } },
+        ],
+        projectMutate: [
+          // Stage 2b: add to project succeeds for the salvaged child.
+          { p0: { item: { id: "project-item-0" } } },
+        ],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        children: [{ title: "First child" }, { title: "Second child" }],
+      },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(result.isError).toBeFalsy();
+    expect(payload.partialFailure).toBe(true);
+
+    const children = payload.children as Array<{
+      created: boolean;
+      number?: number;
+      error?: string;
+    }>;
+    expect(children[0].created).toBe(true);
+    expect(children[0].number).toBe(101);
+    expect(children[1].created).toBe(false);
+    expect(children[1].error).toContain("Stage 1 (create) failed");
+  });
+});
+
+describe("ralph_hero__create_sub_issues handler — Stage 2a partial err.data salvage (F2)", () => {
+  it("marks aliases present in err.data as linked; absent aliases get the link error", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        query: [
+          { repository: { id: "repo-id-1" } },
+          { repository: { issue: { id: "parent-node-id" } } },
+        ],
+        mutate: [
+          {
+            c0: { issue: { id: "child-node-0", number: 101, url: "https://x/101" } },
+            c1: { issue: { id: "child-node-1", number: 102, url: "https://x/102" } },
+          },
+          // Stage 2a: addSubIssue throws but l0 linked before l1 failed.
+          graphqlError("addSubIssue partial failure", {
+            l0: { subIssue: { id: "child-node-0" } },
+            l1: null,
+          }),
+        ],
+        projectMutate: [
+          {
+            p0: { item: { id: "project-item-0" } },
+            p1: { item: { id: "project-item-1" } },
+          },
+        ],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        children: [{ title: "First child" }, { title: "Second child" }],
+      },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(payload.partialFailure).toBe(true);
+    const children = payload.children as Array<{
+      linked: boolean;
+      error?: string;
+    }>;
+    expect(children[0].linked).toBe(true);
+    expect(children[0].error).toBeUndefined();
+    expect(children[1].linked).toBe(false);
+    expect(children[1].error).toContain("Stage 2 (link) failed");
+  });
+});
+
+describe("ralph_hero__create_sub_issues handler — dependsOn strict-sibling validation (F6)", () => {
+  it("rejects an out-of-range dependsOn value up front, naming the offender", async () => {
+    const fieldCache = createMockFieldCache();
+    // No mutation responses needed — validation returns before any GraphQL.
+    const client = createMockClient({}, {});
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        children: [
+          { title: "First child" },
+          { title: "Second child", dependsOn: [5] },
+        ],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    expect(payload.error).toContain("invalid dependsOn");
+    expect(payload.error).toContain("5");
+    expect(payload.error).toContain("dependsOnIssues");
+  });
+});
+
+describe("ralph_hero__create_sub_issues handler — dependsOnIssues wires edges to existing issues (F6)", () => {
+  it("resolves a pre-existing issue number and wires the edge", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        query: [
+          { repository: { id: "repo-id-1" } },
+          { repository: { issue: { id: "parent-node-id" } } },
+          // Stage 4: resolveIssueNodeId for existing issue #999.
+          { repository: { issue: { id: "issue-999-node" } } },
+        ],
+        mutate: [
+          {
+            c0: { issue: { id: "child-node-0", number: 101, url: "https://x/101" } },
+            c1: { issue: { id: "child-node-1", number: 102, url: "https://x/102" } },
+          },
+          // Stage 2a: addSubIssue succeeds.
+          { l0: {}, l1: {} },
+          // Stage 4: dependency edge succeeds.
+          { e1_0: { issue: { id: "child-node-1" } } },
+        ],
+        projectMutate: [
+          {
+            p0: { item: { id: "project-item-0" } },
+            p1: { item: { id: "project-item-1" } },
+          },
+        ],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        children: [
+          { title: "First child" },
+          { title: "Second child", dependsOnIssues: [999] },
+        ],
+      },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(result.isError).toBeFalsy();
+    expect(payload.partialFailure).toBe(false);
+    const children = payload.children as Array<{ edgesWired: boolean }>;
+    // Both wired: child0 vacuously (no edges), child1 via the resolved edge.
+    expect(children[0].edgesWired).toBe(true);
+    expect(children[1].edgesWired).toBe(true);
+  });
+});
+
+describe("ralph_hero__create_sub_issues handler — Stage 4 blocked-only error attribution (F5)", () => {
+  it("attaches a failed-edge error ONLY to the blocked child, not the blocking sibling", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        query: [
+          { repository: { id: "repo-id-1" } },
+          { repository: { issue: { id: "parent-node-id" } } },
+        ],
+        mutate: [
+          {
+            c0: { issue: { id: "child-node-0", number: 101, url: "https://x/101" } },
+            c1: { issue: { id: "child-node-1", number: 102, url: "https://x/102" } },
+          },
+          // Stage 2a: addSubIssue succeeds.
+          { l0: {}, l1: {} },
+          // Stage 4: dependency edges throw (plain error, no partial data).
+          new Error("addBlockedBy failed"),
+        ],
+        projectMutate: [
+          {
+            p0: { item: { id: "project-item-0" } },
+            p1: { item: { id: "project-item-1" } },
+          },
+        ],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        // child1 (blocked) depends on sibling index 0 (the blocker).
+        children: [
+          { title: "Blocker" },
+          { title: "Blocked", dependsOn: [0] },
+        ],
+      },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(payload.partialFailure).toBe(true);
+    const children = payload.children as Array<{
+      edgesWired: boolean;
+      error?: string;
+    }>;
+    // Blocked child (index 1) carries the edge error and stays unwired.
+    expect(children[1].edgesWired).toBe(false);
+    expect(children[1].error).toContain("Stage 4 (edges) failed");
+    // Blocking sibling (index 0) is untouched: no error, vacuously wired.
+    expect(children[0].edgesWired).toBe(true);
+    expect(children[0].error).toBeUndefined();
   });
 });

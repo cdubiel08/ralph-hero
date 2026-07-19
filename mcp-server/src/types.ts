@@ -164,23 +164,6 @@ export interface PullRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Projects V2 - Views
-// ---------------------------------------------------------------------------
-
-export type ProjectV2ViewLayout =
-  | "BOARD_LAYOUT"
-  | "TABLE_LAYOUT"
-  | "ROADMAP_LAYOUT";
-
-export interface ProjectV2View {
-  id: string;
-  name: string;
-  number: number;
-  layout: ProjectV2ViewLayout;
-  filter?: string;
-}
-
-// ---------------------------------------------------------------------------
 // Projects V2 - Project
 // ---------------------------------------------------------------------------
 
@@ -193,7 +176,6 @@ export interface ProjectV2 {
   closed: boolean;
   fields: Connection<ProjectV2FieldUnion>;
   items: Connection<ProjectV2Item>;
-  views: Connection<ProjectV2View>;
 }
 
 // ---------------------------------------------------------------------------
