@@ -137,9 +137,9 @@ Also add one negative-control case confirming the fallback tier: a `file_path` w
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `bash ralph/hooks/scripts/__tests__/plan-research-required.test.sh` exits 0 with all cases (existing + 2 new) passing
-- [ ] `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -type f -print0 | sort -z | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"'` (CI's `test-hooks` job invocation) passes for the full hook-test suite, not just this file
-- [ ] ShellCheck passes on `ralph/hooks/scripts/hook-utils.sh` and `ralph/hooks/scripts/plan-research-required.sh` at `severity: error` (matches CI's `shellcheck-hooks` job)
+- [x] `bash ralph/hooks/scripts/__tests__/plan-research-required.test.sh` exits 0 with all cases (existing + 2 new) passing — 12 passed, 0 failed
+- [x] `find ralph/hooks/scripts/__tests__ \( -name '*.test.sh' -o -name 'test-*.sh' \) -type f -print0 | sort -z | xargs -0 -n1 bash -c 'echo "=== $0 ==="; bash "$0"'` (CI's `test-hooks` job invocation) passes for the full hook-test suite, not just this file — 13 files, 187 cases, 0 failed
+- [x] ShellCheck passes on `ralph/hooks/scripts/hook-utils.sh` and `ralph/hooks/scripts/plan-research-required.sh` at `severity: error` (matches CI's `shellcheck-hooks` job)
 
 #### Manual Verification
 - [ ] From a shell CWD'd to `~/projects` (not a git repo) with `CLAUDE_PROJECT_DIR` unset, invoke the hook directly with a crafted PreToolUse JSON whose `file_path` points into `~/projects/ralph-hero/thoughts/shared/plans/...` for a ticket with an existing research doc under `~/projects/ralph-hero/thoughts/shared/research/` — confirm exit 0 (previously exit 2)

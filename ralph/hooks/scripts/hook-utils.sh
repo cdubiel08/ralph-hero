@@ -44,6 +44,27 @@ get_project_root() {
   echo "${CLAUDE_PROJECT_DIR:-$(pwd)}"
 }
 
+# Walk up from a file path to the nearest ancestor containing a .git entry
+# (file or directory — linked worktrees use a .git FILE, not a directory).
+# Falls back to get_project_root() when no repo marker is found or the path
+# is empty, so this is additive: sessions whose CWD already equals the repo
+# root see identical behavior.
+resolve_root_from_path() {
+  local target="${1:-}"
+  if [[ -n "$target" ]]; then
+    local dir
+    dir=$(dirname "$target")
+    while [[ "$dir" != "/" && -n "$dir" ]]; do
+      if [[ -e "$dir/.git" ]]; then
+        echo "$dir"
+        return
+      fi
+      dir=$(dirname "$dir")
+    done
+  fi
+  get_project_root
+}
+
 # Block with error message (exit 2)
 block() {
   local message="$1"

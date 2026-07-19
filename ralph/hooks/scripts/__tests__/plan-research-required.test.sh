@@ -19,11 +19,21 @@ pass() { echo "  PASS: $1"; ((PASS++)) || true; }
 fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 
 # Sandbox project root. research/ stays empty except for the one fixture below.
+# The .git marker makes $SBX a repo root for resolve_root_from_path, so existing
+# cases (file paths under $SBX) root at $SBX explicitly, not via env fallback.
 SBX="$(mktemp -d)"
-trap 'rm -rf "$SBX"' EXIT
-mkdir -p "$SBX/thoughts/shared/research" "$SBX/thoughts/shared/plans" "$SBX/src"
+# Second sandbox: a distinct repo tree for the path-derived rooting repro (GH-1556).
+REPO="$(mktemp -d)"
+# Third sandbox: a tree with NO .git ancestor, to exercise the env fallback.
+NOGIT="$(mktemp -d)"
+trap 'rm -rf "$SBX" "$REPO" "$NOGIT"' EXIT
+mkdir -p "$SBX/.git" "$SBX/thoughts/shared/research" "$SBX/thoughts/shared/plans" "$SBX/src"
 # Fixture research doc — matches ticket GH-1 only.
 touch "$SBX/thoughts/shared/research/2026-05-24-GH-1-research.md"
+mkdir -p "$REPO/.git" "$REPO/thoughts/shared/research" "$REPO/thoughts/shared/plans"
+# Fixture research doc in the second repo — matches ticket GH-9 only.
+touch "$REPO/thoughts/shared/research/2026-07-19-GH-9-research.md"
+mkdir -p "$NOGIT/thoughts/shared/plans"
 
 # run_case <desc> <expected_exit> <file_path> <content> [ENV=val ...]
 run_case() {
@@ -76,6 +86,18 @@ run_case "MIN=S + estimate XS allows" 0 \
 # --- Safe-default block --------------------------------------------------------
 run_case "no estimate + no waiver + no research blocks" 2 \
   "$PLANS/2026-05-24-GH-2-x.md" $'---\ndate: 2026-05-24\ntype: plan\n---'
+
+# --- Path-derived rooting (GH-1556) --------------------------------------------
+# Workspace-root repro: CLAUDE_PROJECT_DIR points at $SBX, but the target file
+# lives in a different repo tree ($REPO) that contains the research doc. The
+# hook must root off the file path, not the session env — expect allow.
+run_case "target file's repo root wins over CLAUDE_PROJECT_DIR (workspace-root repro)" 0 \
+  "$REPO/thoughts/shared/plans/2026-07-19-GH-9-x.md" $'---\nestimate: M\n---'
+# Fallback control: target file has no .git ancestor anywhere on its path, and
+# no GH-7 research doc exists under $SBX — the walk exhausts and falls back to
+# get_project_root() (CLAUDE_PROJECT_DIR), preserving old behavior — expect block.
+run_case "no .git ancestor falls back to CLAUDE_PROJECT_DIR root (blocks)" 2 \
+  "$NOGIT/thoughts/shared/plans/2026-07-19-GH-7-x.md" $'---\nestimate: M\n---'
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
