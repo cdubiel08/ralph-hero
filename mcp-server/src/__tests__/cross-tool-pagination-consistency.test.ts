@@ -22,8 +22,6 @@
  * exactly on the boundary the cap used to enforce.
  *
  * Out of scope (per #1175 body and shared constraints in the plan):
- *   - `list_groups` consistency — different shape (groups, not flat items);
- *     covered by its own sub-issue tests in Phase 4.
  *   - The closed-issue asymmetry between Path A (defaults `state: "OPEN"`)
  *     and Path B (no state filter). Path B retains closed-but-non-Done
  *     items; Path A drops them by default. This test sidesteps the

@@ -57,11 +57,13 @@ None — no open design decisions.
 
 ## Child creation
 
-For each feature in the Feature Decomposition:
+For a new tree (2+ features from this decomposition), create every child in ONE `create_sub_issues` call:
 
-1. `create_issue(title: "<feature title>", body: <feature scope + acceptance>, estimate: <S|M>, workflowState: "Backlog", labels: [...])`.
-2. `add_sub_issue(parent: <epic-number>, child: <new-number>)` to link the child under the epic.
-3. Record the assigned number in the plan-of-plans (replace `(GH-NNN — to be assigned)` with the real number + URL).
+1. `create_sub_issues(parentNumber: <epic-number>, children: [{title, body, estimate: <S|M>, workflowState: "Backlog", dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]}, ...])` — one entry per feature in the Feature Decomposition, in the same order the plan-of-plans lists them. `dependsOn` holds **sibling indices only** (0-based positions in THIS call's children array); pre-existing GitHub issue blockers go in `dependsOnIssues`.
+2. Read the per-child status report in the response (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`) — repair only the children that report `error` (re-run the failed stage; the tool is partial-failure aware and safe to retry per-child).
+3. Record each assigned number in the plan-of-plans (replace `(GH-NNN — to be assigned)` with the real number + URL).
+
+**Single-child incremental addition** (re-decomposition adding one feature to an existing tree, or any case where only one child is created): use `create_issue` + `add_sub_issue` as before — `create_sub_issues` exists to batch the multi-child case, not to replace the two-call path for a lone addition.
 
 Estimate defaults:
 
@@ -74,13 +76,18 @@ Estimate defaults:
 
 ## Dependency-edge rules
 
-After all children are created, wire dependencies via `add_dependency(blocker: <A>, blocked: <B>)`:
+For a **new tree**, wire dependencies inline in the same `create_sub_issues` call. Two separate arrays per child: `dependsOn` holds **sibling indices** (0-based positions into that call's children array — validated in-range up front, out-of-range values are rejected), `dependsOnIssues` holds **existing GitHub issue numbers** (blockers outside this call). Each entry means the child is blocked by (depends on) the target:
 
-- **Sequential phases** (B requires A's API to exist): add edge A → B.
-- **Independent features** (can be parallelized): no edges between them.
-- **Shared foundation** (X is a prerequisite for all): X → A, X → B, X → C.
+- **Sequential phases** (B requires A's API to exist): give B's entry `dependsOn: [<A's sibling index>]`.
+- **Independent features** (can be parallelized): no `dependsOn` entry between them.
+- **Shared foundation** (X is a prerequisite for all): give A/B/C's entries `dependsOn: [<X's sibling index>]`.
+- **Blocked by a pre-existing issue** (a feature depends on an issue created before this call): give its entry `dependsOnIssues: [<the existing issue number>]`.
 
-Validate the graph for cycles before committing. If a cycle emerges, rework the feature decomposition (one feature is probably too coarse and should be split).
+For **post-hoc or incremental edges** (wiring a dependency after the tree already exists, or against the single-child `create_issue` path above), use `add_dependency(blocker: <A>, blocked: <B>)`.
+
+Validate the graph for cycles before committing — `create_sub_issues` rejects sibling-index cycles up front (`toolError`, no issues created), but shared-foundation and cross-batch edges still deserve a manual check. If a cycle emerges, rework the feature decomposition (one feature is probably too coarse and should be split).
+
+`sync_plan_graph` remains the post-hoc reconciliation path: it re-derives dependency edges from a plan document and repairs drift between the plan and the board, independent of which call originally created the edges.
 
 ## Re-decomposition
 

@@ -94,7 +94,7 @@ Four `split-*` hooks gate this mode. Each scopes on `RALPH_SUBCOMMAND=split` (or
 |---|---|---|---|
 | `split-estimate-gate.sh` | PreToolUse | `ralph_hero__get_issue` | Surface M/L/XL reminder via stderr; exit 0 to allow. |
 | `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | Parse `tool_response.content[0].text`, extract estimate, exit 2 if XS or S. |
-| `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` | Block child creation with estimate `M`/`L`/`XL`. |
+| `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` \| `ralph_hero__create_sub_issues` | Block child creation with estimate `M`/`L`/`XL` — scalar `.tool_input.estimate` for `create_issue`, every `.tool_input.children[].estimate` for the batch `create_sub_issues` call. |
 | `split-postcondition.sh` | Stop | (matcher-less) | Require ≥ 2 children created and a `SPLIT <N>` or `SPLIT SKIPPED <reason>` terminal token in the transcript. |
 
 The `split-estimate-gate.sh` Pre/Post pairing is the canonical example of the PostToolUse-for-response-inspection pattern documented in CLAUDE.md — PreToolUse cannot see what `get_issue` returned, so the gate uses PostToolUse to inspect the estimate field and block when XS/S.

@@ -154,51 +154,6 @@ describe("project management mutations", () => {
     expect(mutation).toContain("fieldId");
   });
 
-  it("addProjectV2DraftIssue mutation has required input fields", () => {
-    const mutation = `mutation($projectId: ID!, $title: String!, $body: String) {
-      addProjectV2DraftIssue(input: {
-        projectId: $projectId,
-        title: $title,
-        body: $body
-      }) {
-        projectItem { id }
-      }
-    }`;
-    expect(mutation).toContain("addProjectV2DraftIssue");
-    expect(mutation).toContain("projectId");
-    expect(mutation).toContain("title");
-  });
-
-  it("updateProjectV2DraftIssue mutation has required input fields", () => {
-    const mutation = `mutation($draftIssueId: ID!, $title: String, $body: String) {
-      updateProjectV2DraftIssue(input: {
-        draftIssueId: $draftIssueId,
-        title: $title,
-        body: $body
-      }) {
-        draftIssue { id title }
-      }
-    }`;
-    expect(mutation).toContain("updateProjectV2DraftIssue");
-    expect(mutation).toContain("draftIssueId");
-    expect(mutation).toContain("title");
-    expect(mutation).toContain("body");
-  });
-
-  it("convertProjectV2DraftIssueItemToIssue mutation has required input fields", () => {
-    const mutation = `mutation($itemId: ID!, $repositoryId: ID!) {
-      convertProjectV2DraftIssueItemToIssue(input: {
-        itemId: $itemId,
-        repositoryId: $repositoryId
-      }) {
-        item { id }
-      }
-    }`;
-    expect(mutation).toContain("convertProjectV2DraftIssueItemToIssue");
-    expect(mutation).toContain("itemId");
-    expect(mutation).toContain("repositoryId");
-  });
-
   it("repository node ID query has required fields", () => {
     const repoQuery = `query($repoOwner: String!, $repoName: String!) {
       repository(owner: $repoOwner, name: $repoName) { id }
@@ -206,21 +161,6 @@ describe("project management mutations", () => {
     expect(repoQuery).toContain("repository");
     expect(repoQuery).toContain("repoOwner");
     expect(repoQuery).toContain("repoName");
-  });
-
-  it("draft issue content node ID query has required fields", () => {
-    const contentQuery = `query($itemId: ID!) {
-      node(id: $itemId) {
-        ... on ProjectV2Item {
-          content {
-            ... on DraftIssue { id }
-          }
-        }
-      }
-    }`;
-    expect(contentQuery).toContain("ProjectV2Item");
-    expect(contentQuery).toContain("DraftIssue");
-    expect(contentQuery).toContain("itemId");
   });
 
   it("updateProjectV2ItemPosition mutation has required input fields", () => {
@@ -441,79 +381,6 @@ describe("link_team org validation", () => {
     expect(teamQuery).toContain("organization");
     expect(teamQuery).toContain("team(slug:");
     expect(teamQuery).not.toContain("user");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// get_draft_issue query structure
-// ---------------------------------------------------------------------------
-
-describe("get_draft_issue queries", () => {
-  it("DI_ query has required DraftIssue fields", () => {
-    const fragment = `
-      ... on DraftIssue {
-        id
-        title
-        body
-        creator { login }
-        createdAt
-        updatedAt
-      }
-    `;
-    expect(fragment).toContain("id");
-    expect(fragment).toContain("title");
-    expect(fragment).toContain("body");
-    expect(fragment).toContain("creator");
-    expect(fragment).toContain("createdAt");
-    expect(fragment).toContain("updatedAt");
-  });
-
-  it("PVTI_ query includes ProjectV2Item content and fieldValues", () => {
-    const fragment = `
-      ... on ProjectV2Item {
-        id
-        content {
-          ... on DraftIssue {
-            id
-            title
-            body
-            creator { login }
-            createdAt
-            updatedAt
-          }
-        }
-        fieldValues(first: 20) {
-          nodes {
-            ... on ProjectV2ItemFieldSingleSelectValue {
-              name
-              field { ... on ProjectV2FieldCommon { name } }
-            }
-          }
-        }
-      }
-    `;
-    expect(fragment).toContain("ProjectV2Item");
-    expect(fragment).toContain("content");
-    expect(fragment).toContain("DraftIssue");
-    expect(fragment).toContain("fieldValues");
-    expect(fragment).toContain("ProjectV2ItemFieldSingleSelectValue");
-    expect(fragment).toContain("ProjectV2FieldCommon");
-  });
-
-  it("validates ID prefixes (DI_ and PVTI_ only)", () => {
-    const validPrefixes = ["DI_", "PVTI_"];
-    const testIds = [
-      { id: "DI_abc123", valid: true },
-      { id: "PVTI_xyz789", valid: true },
-      { id: "I_invalid", valid: false },
-      { id: "PR_invalid", valid: false },
-      { id: "abc123", valid: false },
-    ];
-
-    for (const { id, valid } of testIds) {
-      const isValid = validPrefixes.some((prefix) => id.startsWith(prefix));
-      expect(isValid).toBe(valid);
-    }
   });
 });
 

@@ -46,8 +46,9 @@ fi
 block "Split postcondition failed: fewer than 2 sub-issues verified
 
 Ticket: $ticket_id
-Expected: At least 2 sub-issues created via ralph_hero__add_sub_issue
-         (a one-child split is a re-estimate, not a decomposition)
+Expected: At least 2 sub-issues created in one ralph_hero__create_sub_issues
+         call (count the children reporting created:true in its per-child
+         status report; a one-child split is a re-estimate, not a decomposition)
 Found: RALPH_SPLIT_COUNT=${split_count}
 
 The /ralph:caretake --mode split body must create ≥2 sub-issues before

@@ -155,10 +155,9 @@ vi.mock("../lib/helpers.js", async (importOriginal) => {
 // guard. The failure messages emitted below ("missing tool: X" / "unexpected
 // new tool: Y") tell you exactly which line to add or remove here.
 //
-// Note: ralph_hero__collate_debug and ralph_hero__debug_stats are intentionally
-// NOT in the manifest because debug-tools is registered only when
-// RALPH_DEBUG=true. The test runs without that flag so those tools should not
-// appear in `registered`.
+// Note: ralph_hero__collate_debug is intentionally NOT in the manifest
+// because debug-tools is registered only when RALPH_DEBUG=true. The test
+// runs without that flag so it should not appear in `registered`.
 const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__add_dependency",
   "ralph_hero__add_sub_issue",
@@ -166,20 +165,16 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__archive_items",
   "ralph_hero__batch_update",
   "ralph_hero__capture_snapshot",
-  "ralph_hero__convert_draft_issue",
   "ralph_hero__create_comment",
-  "ralph_hero__create_draft_issue",
   "ralph_hero__create_issue",
   "ralph_hero__create_status_update",
-  "ralph_hero__create_views",
+  "ralph_hero__create_sub_issues",
   "ralph_hero__decompose_feature",
   "ralph_hero__detect_stream_positions",
-  "ralph_hero__get_draft_issue",
   "ralph_hero__get_issue",
   "ralph_hero__get_project",
   "ralph_hero__health_check",
   "ralph_hero__list_dependencies",
-  "ralph_hero__list_groups",
   "ralph_hero__list_issues",
   "ralph_hero__list_sub_issues",
   "ralph_hero__metrics_trends",
@@ -195,7 +190,6 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__sre__rollout_restart",
   "ralph_hero__sre__scale",
   "ralph_hero__sync_plan_graph",
-  "ralph_hero__update_draft_issue",
 ];
 
 // ---------------------------------------------------------------------------
@@ -267,6 +261,5 @@ describe("tool registration audit", () => {
     // Sanity check that the conditional debug-tools branch in index.ts is
     // gated as documented.
     expect(registered).not.toContain("ralph_hero__collate_debug");
-    expect(registered).not.toContain("ralph_hero__debug_stats");
   });
 });

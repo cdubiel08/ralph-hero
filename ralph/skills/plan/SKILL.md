@@ -92,6 +92,7 @@ allowed-tools:
   - mcp__plugin_ralph_ralph-github__ralph_hero__create_issue
   - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
   - mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_sub_issues
   - mcp__plugin_ralph_ralph-github__ralph_hero__add_dependency
   - mcp__plugin_ralph_ralph-github__ralph_hero__remove_dependency
   - mcp__plugin_ralph_ralph-github__ralph_hero__list_dependencies
@@ -170,7 +171,7 @@ Strategic multi-tier decomposition. Folds `ralph-plan-epic` + epic-decomposition
 1. **Lock epic** — `save_issue(workflowState: "__LOCK__", command: "plan")` on the epic.
 2. **Context gathering** — read epic body + comments + any linked research. Spawn `codebase-locator` for affected areas; spawn `thoughts-locator` for prior plans on the same epic. Wait for ALL.
 3. **Write plan-of-plans** — per `decomposition.md` § Plan-of-plans shape. Required: Strategic Context, Shared Constraints, Feature Decomposition (3-7 features), Integration Strategy, Feature Sequencing, What We're NOT Doing.
-4. **Create feature children** — per `decomposition.md` § Child creation. For each feature: `create_issue` (Backlog state, estimate from decomposition) → `add_sub_issue(parent: <epic>, child: <new>)`. Apply `add_dependency` edges per `decomposition.md` § Dependency-edge rules.
+4. **Create feature children** — per `decomposition.md` § Child creation. Create every feature in ONE `create_sub_issues(parentNumber: <epic>, children: [{title, body, estimate, workflowState: "Backlog", dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]}, ...])` call — one entry per feature in Feature Decomposition order; wire sequencing inline via each child's `dependsOn` (sibling indices) and `dependsOnIssues` (pre-existing blockers) per `decomposition.md` § Dependency-edge rules. Read the per-child status report and repair only children that report `error`.
 5. **Update plan-of-plans** — annotate each `### Feature` with the assigned child issue number + URL.
 6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
 7. **Post artifact + advance** — `create_comment(## Plan of Plans ...)` on the epic; `save_issue(workflowState: "Plan in Review", command: "plan")`.
