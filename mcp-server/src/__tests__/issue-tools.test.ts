@@ -76,6 +76,24 @@ describe("list_issues structural", () => {
   });
 });
 
+describe("list_issues Project-V2 scoping disclosure (GH-1572 Phase 1)", () => {
+  it("tool description states the default scope is Project V2 board membership", () => {
+    expect(issueToolsSrc).toContain('scope: \\"project\\"');
+  });
+
+  it('tool description forward-references scope: "repo" as the repo-wide check', () => {
+    expect(issueToolsSrc).toContain('scope: \\"repo\\"');
+  });
+
+  it("tool description warns that an empty result does not mean the issue doesn't exist", () => {
+    expect(issueToolsSrc).toContain("doesn't exist in the repo");
+  });
+
+  it("create_issue description forward-references the planned dedup check", () => {
+    expect(issueToolsSrc).toContain("GH-1572 Phase 3");
+  });
+});
+
 describe("list_issues has/no presence filters structural", () => {
   it("Zod schema includes has param with enum", () => {
     expect(issueToolsSrc).toContain('"workflowState", "estimate", "priority", "labels", "assignees"');
@@ -242,7 +260,7 @@ describe("list_issues iteration filter structural", () => {
     // list_issues tool description should mention iteration in returned fields
     const toolDesc = issueToolsSrc.slice(
       issueToolsSrc.indexOf("ralph_hero__list_issues"),
-      issueToolsSrc.indexOf("ralph_hero__list_issues") + 1000,
+      issueToolsSrc.indexOf("ralph_hero__list_issues") + 2000,
     );
     expect(toolDesc).toContain("iteration");
   });

@@ -62,7 +62,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_issues",
-    "List issues from a GitHub repository with optional filters. Fetches all project items (full project scan, no silent 500-cap) and applies filters client-side, so items at any board position are visible regardless of default ordering. By default returns issues in any state (both OPEN and CLOSED) so visibility matches the dashboard family (pipeline_dashboard, next_actions, project_hygiene); pass the `state` parameter (\"OPEN\" or \"CLOSED\") to narrow. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters or check that issues exist in the project.",
+    "SCOPE WARNING: by default (scope: \"project\") this tool only sees issues that are items on the configured GitHub Projects V2 board — an issue that exists in the repo but was never added to that board (created by a bot/App via the REST API, predates project automation, or was manually removed from the board) will NOT appear here regardless of filters. A clean/empty result means \"not on the board\", NOT \"doesn't exist in the repo\". Pass scope: \"repo\" to search the repository directly via GitHub's Issue Search API instead, independent of Project V2 membership — use this for any \"does this issue already exist\" existence check before filing a new one. List issues from a GitHub repository with optional filters. Fetches all project items (full project scan, no silent 500-cap) and applies filters client-side, so items at any board position are visible regardless of default ordering. By default returns issues in any state (both OPEN and CLOSED) so visibility matches the dashboard family (pipeline_dashboard, next_actions, project_hygiene); pass the `state` parameter (\"OPEN\" or \"CLOSED\") to narrow. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters, check that issues exist in the project, or retry with scope: \"repo\" for a repo-wide check.",
     {
       owner: z
         .string()
@@ -930,7 +930,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__create_issue",
-    "Create a GitHub issue and add it to the project with optional field values. Returns: number, id, title, url, projectItemId, fieldsSet. Recovery: if field value fails, verify the option name matches exactly (case-sensitive).",
+    "Create a GitHub issue and add it to the project with optional field values. NOTE: a pre-creation duplicate-title check is planned (GH-1572 Phase 3) — until it lands, cross-check with ralph_hero__list_issues scope: \"repo\" for a manual existence check before creating. Returns: number, id, title, url, projectItemId, fieldsSet. Recovery: if field value fails, verify the option name matches exactly (case-sensitive).",
     {
       owner: z
         .string()
