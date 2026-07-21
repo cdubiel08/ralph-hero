@@ -237,7 +237,7 @@ export function registerIssueTools(
 
           const { owner, repo } = resolveConfig(client, args);
           try {
-            const nodes = await searchRepoIssues(
+            const { nodes, truncated, totalCount } = await searchRepoIssues(
               client,
               owner,
               repo,
@@ -270,6 +270,16 @@ export function registerIssueTools(
             return toolSuccess({
               filteredCount: formattedItems.length,
               items: formattedItems,
+              // Signal when more matches exist than were fetched (GH-1573
+              // review follow-up) so callers don't mistake a capped page for
+              // an exhaustive result set.
+              ...(truncated
+                ? {
+                    incomplete: true,
+                    totalCount,
+                    warning: `Result truncated: ${totalCount} issue(s) matched but only ${formattedItems.length} were returned (limit ${args.limit ?? 50}). Raise limit or narrow filters to see the rest.`,
+                  }
+                : {}),
             });
           } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
@@ -1101,13 +1111,15 @@ export function registerIssueTools(
         // through to normal creation rather than blocking it.
         if (!args.skipDedupeCheck) {
           try {
-            const candidates = await searchRepoIssues(
-              client,
-              owner,
-              repo,
-              { query: args.title, state: "OPEN" },
-              10,
-            );
+            const dedupLimit = 10;
+            const { nodes: candidates, truncated, totalCount } =
+              await searchRepoIssues(
+                client,
+                owner,
+                repo,
+                { query: args.title, state: "OPEN" },
+                dedupLimit,
+              );
             const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
             const targetTitle = normalize(args.title);
             const match = candidates.find(
@@ -1117,6 +1129,20 @@ export function registerIssueTools(
               return toolError(
                 `An open issue with this exact title already exists: #${match.number} (${match.url}). ` +
                   "Pass skipDedupeCheck: true to create anyway.",
+              );
+            }
+            // Truncated + no match among the fetched page means the check
+            // was incomplete, not exhaustive — an exact duplicate could be
+            // ranked outside the fetched page. Refuse to silently proceed as
+            // if the dedup check cleared (GH-1573 review follow-up); this is
+            // NOT best-effort like a search failure, since we DID get a
+            // result, it's just possibly incomplete.
+            if (truncated) {
+              return toolError(
+                `More than ${dedupLimit} open issue(s) matched a title-based search for "${args.title}" ` +
+                  `(${totalCount} total matches), so an exact-duplicate check could not be reached ` +
+                  "exhaustively within the fetched page. Narrow the title further, or pass " +
+                  "skipDedupeCheck: true if you're confident this isn't a duplicate.",
               );
             }
           } catch (error) {

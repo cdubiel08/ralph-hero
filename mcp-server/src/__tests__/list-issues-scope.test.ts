@@ -110,6 +110,7 @@ function createMockFieldCache(): FieldOptionCache {
 
 const SEARCH_RESULT = {
   search: {
+    issueCount: 1,
     nodes: [
       {
         number: 1523,
@@ -124,6 +125,14 @@ const SEARCH_RESULT = {
         repository: { name: "test-repo", nameWithOwner: "test-owner/test-repo" },
       },
     ],
+  },
+};
+
+/** Same single node, but GitHub reports far more total matches than fetched. */
+const TRUNCATED_SEARCH_RESULT = {
+  search: {
+    issueCount: 137,
+    nodes: SEARCH_RESULT.search.nodes,
   },
 };
 
@@ -196,6 +205,38 @@ describe("list_issues scope param (GH-1572 Phase 2)", () => {
     expect(result.content[0].text).toContain("workflowState");
     expect(client.query).not.toHaveBeenCalled();
     expect(client.projectQuery).not.toHaveBeenCalled();
+  });
+
+  it('scope: "repo" surfaces incomplete: true + totalCount when the search result is truncated', async () => {
+    const client = createMockClient({ query: [TRUNCATED_SEARCH_RESULT] });
+    const server = buildServer(client, createMockFieldCache());
+    const tool = getTool(server, "ralph_hero__list_issues");
+
+    const result = await tool.handler(
+      { scope: "repo", label: "user-feedback", limit: 1 },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(payload.filteredCount).toBe(1);
+    expect(payload.incomplete).toBe(true);
+    expect(payload.totalCount).toBe(137);
+    expect(typeof payload.warning).toBe("string");
+  });
+
+  it('scope: "repo" omits incomplete/totalCount when the search result is exhaustive', async () => {
+    const client = createMockClient({ query: [SEARCH_RESULT] });
+    const server = buildServer(client, createMockFieldCache());
+    const tool = getTool(server, "ralph_hero__list_issues");
+
+    const result = await tool.handler(
+      { scope: "repo", label: "user-feedback" },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(payload.incomplete).toBeUndefined();
+    expect(payload.totalCount).toBeUndefined();
   });
 
   it("scope omitted preserves the existing project-path behavior (no regression)", async () => {

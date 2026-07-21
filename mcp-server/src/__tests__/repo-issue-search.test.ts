@@ -142,7 +142,8 @@ describe("searchRepoIssues", () => {
   it("issues a search(type: ISSUE) GraphQL query via client.query, not projectQuery", async () => {
     const queryFn = vi.fn(async (queryString: string) => {
       expect(queryString).toContain("search(query: $q, type: ISSUE");
-      return { search: { nodes: [SEARCH_NODE] } };
+      expect(queryString).toContain("issueCount");
+      return { search: { issueCount: 1, nodes: [SEARCH_NODE] } };
     });
     const client = makeClient(queryFn);
 
@@ -155,13 +156,17 @@ describe("searchRepoIssues", () => {
     );
 
     expect(queryFn).toHaveBeenCalledTimes(1);
-    expect(result).toEqual([SEARCH_NODE]);
+    expect(result).toEqual({
+      nodes: [SEARCH_NODE],
+      truncated: false,
+      totalCount: 1,
+    });
   });
 
-  it("returns an empty array when search.nodes is absent", async () => {
+  it("returns an empty result when search.nodes is absent", async () => {
     const client = makeClient(vi.fn(async () => ({ search: {} })));
     const result = await searchRepoIssues(client, "acme", "widgets", {}, 10);
-    expect(result).toEqual([]);
+    expect(result).toEqual({ nodes: [], truncated: false, totalCount: 0 });
   });
 
   it("re-throws on search failure (not best-effort — caller must surface a toolError)", async () => {
@@ -173,5 +178,29 @@ describe("searchRepoIssues", () => {
     await expect(
       searchRepoIssues(client, "acme", "widgets", {}, 10),
     ).rejects.toThrow("rate limited");
+  });
+
+  it("sets truncated: true when issueCount exceeds the fetched page (limit)", async () => {
+    const client = makeClient(
+      vi.fn(async () => ({
+        search: { issueCount: 37, nodes: [SEARCH_NODE] },
+      })),
+    );
+    const result = await searchRepoIssues(client, "acme", "widgets", {}, 1);
+    expect(result).toEqual({
+      nodes: [SEARCH_NODE],
+      truncated: true,
+      totalCount: 37,
+    });
+  });
+
+  it("truncated stays false when issueCount equals the fetched page (exhaustive)", async () => {
+    const client = makeClient(
+      vi.fn(async () => ({
+        search: { issueCount: 1, nodes: [SEARCH_NODE] },
+      })),
+    );
+    const result = await searchRepoIssues(client, "acme", "widgets", {}, 10);
+    expect(result.truncated).toBe(false);
   });
 });

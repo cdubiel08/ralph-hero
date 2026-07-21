@@ -137,6 +137,7 @@ function buildServer(client: GitHubClient, fieldCache: FieldOptionCache): McpSer
 
 const EXISTING_MATCH_SEARCH_RESULT = {
   search: {
+    issueCount: 1,
     nodes: [
       {
         number: 1523,
@@ -156,6 +157,7 @@ const EXISTING_MATCH_SEARCH_RESULT = {
 
 const NO_MATCH_SEARCH_RESULT = {
   search: {
+    issueCount: 1,
     nodes: [
       {
         number: 999,
@@ -170,6 +172,18 @@ const NO_MATCH_SEARCH_RESULT = {
         repository: { name: "test-repo", nameWithOwner: "test-owner/test-repo" },
       },
     ],
+  },
+};
+
+/**
+ * Same single fetched node as `NO_MATCH_SEARCH_RESULT`, but GitHub reports
+ * far more total matches than the dedup check's page size (10) fetched —
+ * the check is incomplete, not exhaustive.
+ */
+const TRUNCATED_NO_MATCH_SEARCH_RESULT = {
+  search: {
+    issueCount: 42,
+    nodes: NO_MATCH_SEARCH_RESULT.search.nodes,
   },
 };
 
@@ -244,6 +258,41 @@ describe("create_issue pre-creation dedup check (GH-1572 Phase 3)", () => {
     expect(result.isError).toBeFalsy();
     expect(payload.number).toBe(5001);
     expect(client.query).toHaveBeenCalledTimes(2); // search, then repo-ID
+  });
+
+  it("refuses creation with a toolError when the dedup search is truncated and no match was found in the fetched page", async () => {
+    const client = createMockClient({
+      query: [TRUNCATED_NO_MATCH_SEARCH_RESULT],
+    });
+    const server = buildServer(client, createMockFieldCache());
+    const tool = getTool(server, "ralph_hero__create_issue");
+
+    const result = await tool.handler({ title: "Login Bug" }, {});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("42");
+    expect(result.content[0].text).toContain("skipDedupeCheck");
+    expect(client.query).toHaveBeenCalledTimes(1); // search only — never reached Step 1
+    expect(client.mutate).not.toHaveBeenCalled();
+  });
+
+  it("skipDedupeCheck: true bypasses the truncated-search guard entirely", async () => {
+    const client = createMockClient({
+      query: [REPO_ID_RESULT],
+      mutate: [CREATE_ISSUE_RESULT],
+      projectMutate: [ADD_TO_PROJECT_RESULT, UPDATE_FIELD_RESULT, UPDATE_FIELD_RESULT],
+    });
+    const server = buildServer(client, createMockFieldCache());
+    const tool = getTool(server, "ralph_hero__create_issue");
+
+    const result = await tool.handler(
+      { title: "Login Bug", skipDedupeCheck: true },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(result.isError).toBeFalsy();
+    expect(payload.number).toBe(5001);
   });
 
   it("a dedup search failure is swallowed and falls through to normal creation", async () => {

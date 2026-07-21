@@ -117,8 +117,23 @@ export interface RepoSearchIssueNode {
 
 interface RepoIssueSearchResponse {
   search: {
+    issueCount: number;
     nodes: RepoSearchIssueNode[];
   };
+}
+
+/**
+ * Result of a `searchRepoIssues` call. `nodes` is the fetched page (capped at
+ * `limit`); `totalCount` is GitHub's total matching-issue count for the query
+ * (independent of `limit`); `truncated` is true when `totalCount` exceeds the
+ * number of nodes actually fetched — i.e. more matches exist than were
+ * returned. Callers MUST check `truncated` before treating `nodes` as an
+ * exhaustive result set (GH-1573 review follow-up).
+ */
+export interface RepoIssueSearchResult {
+  nodes: RepoSearchIssueNode[];
+  truncated: boolean;
+  totalCount: number;
 }
 
 /**
@@ -129,6 +144,11 @@ interface RepoIssueSearchResponse {
  * requested existence check, so a search failure must surface as an error
  * rather than silently returning empty results — a silent-empty-on-error
  * here would recreate the exact bug GH-1572 documents.
+ *
+ * This is a single-page fetch (`first: $limit`, no pagination/cursor), so the
+ * returned `nodes` can be a strict subset of all matching issues. Callers
+ * must consult `truncated`/`totalCount` on the result rather than assuming
+ * `nodes` is exhaustive — see `RepoIssueSearchResult`.
  */
 export async function searchRepoIssues(
   client: GitHubClient,
@@ -136,13 +156,14 @@ export async function searchRepoIssues(
   repo: string,
   filters: RepoSearchFilters,
   limit: number,
-): Promise<RepoSearchIssueNode[]> {
+): Promise<RepoIssueSearchResult> {
   const q = buildRepoSearchQuery(owner, repo, filters);
 
   try {
     const data = await client.query<RepoIssueSearchResponse>(
       `query RepoIssueSearch($q: String!, $first: Int!) {
         search(query: $q, type: ISSUE, first: $first) {
+          issueCount
           nodes {
             ... on Issue {
               number
@@ -162,7 +183,13 @@ export async function searchRepoIssues(
       }`,
       { q, first: limit },
     );
-    return data.search.nodes ?? [];
+    const nodes = data.search.nodes ?? [];
+    const totalCount = data.search.issueCount ?? nodes.length;
+    return {
+      nodes,
+      totalCount,
+      truncated: totalCount > nodes.length,
+    };
   } catch (error) {
     console.error(
       `[repo-issue-search] searchRepoIssues failed: ${
