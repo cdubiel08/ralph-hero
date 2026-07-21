@@ -120,9 +120,9 @@ Rewrite `list_issues`'s (and briefly, `create_issue`'s) tool description so an a
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npx vitest run src/__tests__/issue-tools.test.ts` passes (existing structural suite still green — no schema changes in this phase).
-- [ ] `npm run build` exits 0.
-- [ ] `grep -q "Project V2 board" mcp-server/src/tools/issue-tools.ts` (or equivalent phrasing check) confirms the new caveat text is present — add as a one-line structural assertion in `issue-tools.test.ts` alongside the existing `describe("list_issues structural", ...)` block.
+- [x] `npx vitest run src/__tests__/issue-tools.test.ts` passes (existing structural suite still green — no schema changes in this phase).
+- [x] `npm run build` exits 0.
+- [x] `grep -q "Project V2 board" mcp-server/src/tools/issue-tools.ts` (or equivalent phrasing check) confirms the new caveat text is present — add as a one-line structural assertion in `issue-tools.test.ts` alongside the existing `describe("list_issues structural", ...)` block. (Implemented as 4 assertions on the stable `scope: "repo"` / `scope: "project"` tokens rather than exact prose, per review feedback.)
 
 #### Manual Verification
 - [ ] Read the rendered tool description (e.g. via an MCP client's tool-list output) and confirm the scoping caveat appears near the top, not buried at the end.
