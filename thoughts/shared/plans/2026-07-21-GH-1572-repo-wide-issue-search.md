@@ -148,10 +148,10 @@ Add a new `mcp-server/src/lib/repo-issue-search.ts` module that builds a GitHub 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npx vitest run src/__tests__/repo-issue-search.test.ts` (new file) passes — unit tests `buildRepoSearchQuery` against representative filter combinations (label-only, query+state, reason mapping, updatedSince/Before via `parseDateMath`, excludeLabels) asserting the exact qualifier string, plus a `searchRepoIssues` test with a stubbed `client.query` confirming the GraphQL shape and response mapping.
-- [ ] `npx vitest run src/__tests__/issue-tools.test.ts` passes, including new structural assertions (`scope: z.enum(` present in schema) and new behavioral tests (model on `create-issue-defaults.test.ts`'s mock-client harness) covering: `scope: "repo"` routes to `client.query` not `client.projectQuery`; `scope: "repo"` + `workflowState` returns a `toolError`; `scope` omitted preserves existing project-path behavior byte-for-byte (no regression).
-- [ ] `npm run build` exits 0.
-- [ ] `npm test` (full suite) passes.
+- [x] `npx vitest run src/__tests__/repo-issue-search.test.ts` (new file) passes — unit tests `buildRepoSearchQuery` against representative filter combinations (label-only, query+state, reason mapping, updatedSince/Before via `parseDateMath`, excludeLabels) asserting the exact qualifier string, plus a `searchRepoIssues` test with a stubbed `client.query` confirming the GraphQL shape and response mapping.
+- [x] `npx vitest run src/__tests__/issue-tools.test.ts` passes, including new structural assertions (`scope: z.enum(` present in schema) and new behavioral tests (model on `create-issue-defaults.test.ts`'s mock-client harness, in a new `list-issues-scope.test.ts` file) covering: `scope: "repo"` routes to `client.query` not `client.projectQuery`; `scope: "repo"` + `workflowState` returns a `toolError`; `scope` omitted preserves existing project-path behavior byte-for-byte (no regression).
+- [x] `npm run build` exits 0.
+- [x] `npm test` (full suite) passes — 1643 passed, 1 pre-existing skip.
 
 #### Manual Verification
 - [ ] Against a real repo/project pair, call `list_issues` with `scope: "repo"` and a `label` filter matching a known repo issue that is NOT on the Project V2 board; confirm it's returned with `workflowState: null`.
