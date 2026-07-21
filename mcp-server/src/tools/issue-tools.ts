@@ -47,6 +47,7 @@ import {
 } from "../lib/helpers.js";
 import { lookupRepo, mergeDefaults } from "../lib/repo-registry.js";
 import { isLockConflict } from "../lib/lock-guard.js";
+import { searchRepoIssues } from "../lib/repo-issue-search.js";
 
 // ---------------------------------------------------------------------------
 // Register issue tools
@@ -74,6 +75,19 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      scope: z
+        .enum(["project", "repo"])
+        .optional()
+        .default("project")
+        .describe(
+          '"project" (default) returns items on the configured Projects V2 board only. ' +
+            '"repo" searches the repository directly via GitHub\'s Issue Search API, independent ' +
+            "of Project V2 membership — use this to check whether an issue exists in the repo " +
+            'regardless of board status. scope: "repo" is incompatible with project-only filters ' +
+            "(workflowState, estimate, priority, iteration, has, no, excludeWorkflowStates, " +
+            "excludeEstimates, excludePriorities, profile, repoFilter) — combining them returns a " +
+            "toolError. Repo-scope results always return workflowState/estimate/priority/iteration as null.",
+        ),
       projectNumber: z.coerce.number().optional()
         .describe("Project number override (defaults to configured project)"),
       profile: z
@@ -191,6 +205,78 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
+        // scope: "repo" — search the repository directly via GitHub's Issue
+        // Search API, independent of Project V2 membership (GH-1572). This
+        // branch is checked before profile expansion since `profile` is
+        // itself a project-only filter.
+        if (args.scope === "repo") {
+          const PROJECT_ONLY_FILTERS: Array<[string, unknown]> = [
+            ["workflowState", args.workflowState],
+            ["estimate", args.estimate],
+            ["priority", args.priority],
+            ["iteration", args.iteration],
+            ["has", args.has],
+            ["no", args.no],
+            ["excludeWorkflowStates", args.excludeWorkflowStates],
+            ["excludeEstimates", args.excludeEstimates],
+            ["excludePriorities", args.excludePriorities],
+            ["profile", args.profile],
+            ["repoFilter", args.repoFilter],
+          ];
+          const offending = PROJECT_ONLY_FILTERS.filter(
+            ([, value]) =>
+              value !== undefined &&
+              !(Array.isArray(value) && value.length === 0),
+          ).map(([key]) => key);
+          if (offending.length > 0) {
+            return toolError(
+              `scope: "repo" is incompatible with project-only filter(s): ${offending.join(", ")}. ` +
+                'These are Project V2 field values with no repo-side equivalent. Remove them or use scope: "project" (default).',
+            );
+          }
+
+          const { owner, repo } = resolveConfig(client, args);
+          try {
+            const nodes = await searchRepoIssues(
+              client,
+              owner,
+              repo,
+              {
+                label: args.label,
+                query: args.query,
+                state: args.state,
+                reason: args.reason,
+                excludeLabels: args.excludeLabels,
+                updatedSince: args.updatedSince,
+                updatedBefore: args.updatedBefore,
+                orderBy: args.orderBy,
+              },
+              args.limit ?? 50,
+            );
+            const formattedItems = nodes.map((node) => ({
+              number: node.number,
+              title: node.title,
+              state: node.state,
+              stateReason: node.stateReason ?? null,
+              url: node.url,
+              updatedAt: node.updatedAt ?? null,
+              workflowState: null,
+              estimate: null,
+              priority: null,
+              iteration: null,
+              labels: node.labels?.nodes?.map((l) => l.name) ?? [],
+              assignees: node.assignees?.nodes?.map((a) => a.login) ?? [],
+            }));
+            return toolSuccess({
+              filteredCount: formattedItems.length,
+              items: formattedItems,
+            });
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            return toolError(`Failed to search repo issues: ${message}`);
+          }
+        }
+
         // Expand profile into filter defaults (explicit args override)
         if (args.profile) {
           const profileFilters = expandProfile(args.profile);

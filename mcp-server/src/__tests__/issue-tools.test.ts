@@ -94,6 +94,18 @@ describe("list_issues Project-V2 scoping disclosure (GH-1572 Phase 1)", () => {
   });
 });
 
+describe("list_issues scope param structural (GH-1572 Phase 2)", () => {
+  it("has scope param in Zod schema", () => {
+    expect(issueToolsSrc).toContain("scope: z");
+  });
+
+  it("imports searchRepoIssues", () => {
+    expect(issueToolsSrc).toContain(
+      'import { searchRepoIssues } from "../lib/repo-issue-search.js"',
+    );
+  });
+});
+
 describe("list_issues has/no presence filters structural", () => {
   it("Zod schema includes has param with enum", () => {
     expect(issueToolsSrc).toContain('"workflowState", "estimate", "priority", "labels", "assignees"');
