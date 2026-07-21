@@ -47,6 +47,7 @@ import {
 } from "../lib/helpers.js";
 import { lookupRepo, mergeDefaults } from "../lib/repo-registry.js";
 import { isLockConflict } from "../lib/lock-guard.js";
+import { searchRepoIssues } from "../lib/repo-issue-search.js";
 
 // ---------------------------------------------------------------------------
 // Register issue tools
@@ -62,7 +63,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__list_issues",
-    "List issues from a GitHub repository with optional filters. Fetches all project items (full project scan, no silent 500-cap) and applies filters client-side, so items at any board position are visible regardless of default ordering. By default returns issues in any state (both OPEN and CLOSED) so visibility matches the dashboard family (pipeline_dashboard, next_actions, project_hygiene); pass the `state` parameter (\"OPEN\" or \"CLOSED\") to narrow. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters or check that issues exist in the project.",
+    "SCOPE WARNING: by default (scope: \"project\") this tool only sees issues that are items on the configured GitHub Projects V2 board — an issue that exists in the repo but was never added to that board (created by a bot/App via the REST API, predates project automation, or was manually removed from the board) will NOT appear here regardless of filters. A clean/empty result means \"not on the board\", NOT \"doesn't exist in the repo\". Pass scope: \"repo\" to search the repository directly via GitHub's Issue Search API instead, independent of Project V2 membership — use this for any \"does this issue already exist\" existence check before filing a new one. List issues from a GitHub repository with optional filters. Fetches all project items (full project scan, no silent 500-cap) and applies filters client-side, so items at any board position are visible regardless of default ordering. By default returns issues in any state (both OPEN and CLOSED) so visibility matches the dashboard family (pipeline_dashboard, next_actions, project_hygiene); pass the `state` parameter (\"OPEN\" or \"CLOSED\") to narrow. Returns: number, title, state, workflowState, estimate, priority, iteration, labels, assignees. Use workflowState filter to find issues in a specific phase. Use iteration filter with @current/@next or sprint title. Recovery: if no results, broaden filters, check that issues exist in the project, or retry with scope: \"repo\" for a repo-wide check.",
     {
       owner: z
         .string()
@@ -74,6 +75,19 @@ export function registerIssueTools(
         .string()
         .optional()
         .describe("Repository name. Defaults to GITHUB_REPO env var"),
+      scope: z
+        .enum(["project", "repo"])
+        .optional()
+        .default("project")
+        .describe(
+          '"project" (default) returns items on the configured Projects V2 board only. ' +
+            '"repo" searches the repository directly via GitHub\'s Issue Search API, independent ' +
+            "of Project V2 membership — use this to check whether an issue exists in the repo " +
+            'regardless of board status. scope: "repo" is incompatible with project-only filters ' +
+            "(workflowState, estimate, priority, iteration, has, no, excludeWorkflowStates, " +
+            "excludeEstimates, excludePriorities, profile, repoFilter) — combining them returns a " +
+            "toolError. Repo-scope results always return workflowState/estimate/priority/iteration as null.",
+        ),
       projectNumber: z.coerce.number().optional()
         .describe("Project number override (defaults to configured project)"),
       profile: z
@@ -191,6 +205,88 @@ export function registerIssueTools(
     },
     async (args) => {
       try {
+        // scope: "repo" — search the repository directly via GitHub's Issue
+        // Search API, independent of Project V2 membership (GH-1572). This
+        // branch is checked before profile expansion since `profile` is
+        // itself a project-only filter.
+        if (args.scope === "repo") {
+          const PROJECT_ONLY_FILTERS: Array<[string, unknown]> = [
+            ["workflowState", args.workflowState],
+            ["estimate", args.estimate],
+            ["priority", args.priority],
+            ["iteration", args.iteration],
+            ["has", args.has],
+            ["no", args.no],
+            ["excludeWorkflowStates", args.excludeWorkflowStates],
+            ["excludeEstimates", args.excludeEstimates],
+            ["excludePriorities", args.excludePriorities],
+            ["profile", args.profile],
+            ["repoFilter", args.repoFilter],
+          ];
+          const offending = PROJECT_ONLY_FILTERS.filter(
+            ([, value]) =>
+              value !== undefined &&
+              !(Array.isArray(value) && value.length === 0),
+          ).map(([key]) => key);
+          if (offending.length > 0) {
+            return toolError(
+              `scope: "repo" is incompatible with project-only filter(s): ${offending.join(", ")}. ` +
+                'These are Project V2 field values with no repo-side equivalent. Remove them or use scope: "project" (default).',
+            );
+          }
+
+          const { owner, repo } = resolveConfig(client, args);
+          try {
+            const { nodes, truncated, totalCount } = await searchRepoIssues(
+              client,
+              owner,
+              repo,
+              {
+                label: args.label,
+                query: args.query,
+                state: args.state,
+                reason: args.reason,
+                excludeLabels: args.excludeLabels,
+                updatedSince: args.updatedSince,
+                updatedBefore: args.updatedBefore,
+                orderBy: args.orderBy,
+              },
+              args.limit ?? 50,
+            );
+            const formattedItems = nodes.map((node) => ({
+              number: node.number,
+              title: node.title,
+              state: node.state,
+              stateReason: node.stateReason ?? null,
+              url: node.url,
+              updatedAt: node.updatedAt ?? null,
+              workflowState: null,
+              estimate: null,
+              priority: null,
+              iteration: null,
+              labels: node.labels?.nodes?.map((l) => l.name) ?? [],
+              assignees: node.assignees?.nodes?.map((a) => a.login) ?? [],
+            }));
+            return toolSuccess({
+              filteredCount: formattedItems.length,
+              items: formattedItems,
+              // Signal when more matches exist than were fetched (GH-1573
+              // review follow-up) so callers don't mistake a capped page for
+              // an exhaustive result set.
+              ...(truncated
+                ? {
+                    incomplete: true,
+                    totalCount,
+                    warning: `Result truncated: ${totalCount} issue(s) matched but only ${formattedItems.length} were returned (limit ${args.limit ?? 50}). Raise limit or narrow filters to see the rest.`,
+                  }
+                : {}),
+            });
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            return toolError(`Failed to search repo issues: ${message}`);
+          }
+        }
+
         // Expand profile into filter defaults (explicit args override)
         if (args.profile) {
           const profileFilters = expandProfile(args.profile);
@@ -930,7 +1026,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__create_issue",
-    "Create a GitHub issue and add it to the project with optional field values. Returns: number, id, title, url, projectItemId, fieldsSet. Recovery: if field value fails, verify the option name matches exactly (case-sensitive).",
+    "Create a GitHub issue and add it to the project with optional field values. By default, runs a pre-creation exact-title duplicate check against open issues (case-insensitive, whitespace-normalized) via GitHub's Issue Search API — a match returns a toolError naming the existing issue instead of creating a duplicate; pass skipDedupeCheck: true to bypass. A dedup-search failure is logged and swallowed, falling through to normal creation. Returns: number, id, title, url, projectItemId, fieldsSet. Recovery: if field value fails, verify the option name matches exactly (case-sensitive).",
     {
       owner: z
         .string()
@@ -959,6 +1055,15 @@ export function registerIssueTools(
         .describe('Initial Workflow State name (defaults to "Backlog")'),
       estimate: z.string().optional().describe("Estimate (XS, S, M, L, XL)"),
       priority: z.string().optional().describe("Priority (P0, P1, P2, P3)"),
+      skipDedupeCheck: zBoolish()
+        .optional()
+        .default(false)
+        .describe(
+          "Skip the pre-creation exact-title duplicate check (default false — the check runs by default). " +
+            "The check searches open issues for an exact case-insensitive, whitespace-normalized title match " +
+            "via GitHub's Issue Search API and refuses creation on a match, naming the existing issue. " +
+            "Pass true to bypass (e.g. known-intentional re-use of a title, bulk-seeding scripts).",
+        ),
     },
     async (args) => {
       try {
@@ -999,6 +1104,55 @@ export function registerIssueTools(
 
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        // Pre-creation exact-title dedup check (GH-1572 Phase 3), on by
+        // default. Best-effort per findExistingDebugIssue's established
+        // contract: a search failure is logged and swallowed, falling
+        // through to normal creation rather than blocking it.
+        if (!args.skipDedupeCheck) {
+          try {
+            const dedupLimit = 10;
+            const { nodes: candidates, truncated, totalCount } =
+              await searchRepoIssues(
+                client,
+                owner,
+                repo,
+                { query: args.title, state: "OPEN" },
+                dedupLimit,
+              );
+            const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+            const targetTitle = normalize(args.title);
+            const match = candidates.find(
+              (c) => normalize(c.title) === targetTitle,
+            );
+            if (match) {
+              return toolError(
+                `An open issue with this exact title already exists: #${match.number} (${match.url}). ` +
+                  "Pass skipDedupeCheck: true to create anyway.",
+              );
+            }
+            // Truncated + no match among the fetched page means the check
+            // was incomplete, not exhaustive — an exact duplicate could be
+            // ranked outside the fetched page. Refuse to silently proceed as
+            // if the dedup check cleared (GH-1573 review follow-up); this is
+            // NOT best-effort like a search failure, since we DID get a
+            // result, it's just possibly incomplete.
+            if (truncated) {
+              return toolError(
+                `More than ${dedupLimit} open issue(s) matched a title-based search for "${args.title}" ` +
+                  `(${totalCount} total matches), so an exact-duplicate check could not be reached ` +
+                  "exhaustively within the fetched page. Narrow the title further, or pass " +
+                  "skipDedupeCheck: true if you're confident this isn't a duplicate.",
+              );
+            }
+          } catch (error) {
+            console.error(
+              `[create_issue] dedup search failed (falling through to creation): ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
 
         // Step 1: Get repository ID
         const repoResult = await client.query<{

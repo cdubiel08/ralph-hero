@@ -76,6 +76,41 @@ describe("list_issues structural", () => {
   });
 });
 
+describe("list_issues Project-V2 scoping disclosure (GH-1572 Phase 1)", () => {
+  it("tool description states the default scope is Project V2 board membership", () => {
+    expect(issueToolsSrc).toContain('scope: \\"project\\"');
+  });
+
+  it('tool description forward-references scope: "repo" as the repo-wide check', () => {
+    expect(issueToolsSrc).toContain('scope: \\"repo\\"');
+  });
+
+  it("tool description warns that an empty result does not mean the issue doesn't exist", () => {
+    expect(issueToolsSrc).toContain("doesn't exist in the repo");
+  });
+
+  it("create_issue description documents the dedup check and skipDedupeCheck opt-out", () => {
+    expect(issueToolsSrc).toContain("skipDedupeCheck");
+    expect(issueToolsSrc).toContain("duplicate check");
+  });
+
+  it("create_issue Zod schema has skipDedupeCheck: zBoolish()", () => {
+    expect(issueToolsSrc).toContain("skipDedupeCheck: zBoolish()");
+  });
+});
+
+describe("list_issues scope param structural (GH-1572 Phase 2)", () => {
+  it("has scope param in Zod schema", () => {
+    expect(issueToolsSrc).toContain("scope: z");
+  });
+
+  it("imports searchRepoIssues", () => {
+    expect(issueToolsSrc).toContain(
+      'import { searchRepoIssues } from "../lib/repo-issue-search.js"',
+    );
+  });
+});
+
 describe("list_issues has/no presence filters structural", () => {
   it("Zod schema includes has param with enum", () => {
     expect(issueToolsSrc).toContain('"workflowState", "estimate", "priority", "labels", "assignees"');
@@ -242,7 +277,7 @@ describe("list_issues iteration filter structural", () => {
     // list_issues tool description should mention iteration in returned fields
     const toolDesc = issueToolsSrc.slice(
       issueToolsSrc.indexOf("ralph_hero__list_issues"),
-      issueToolsSrc.indexOf("ralph_hero__list_issues") + 1000,
+      issueToolsSrc.indexOf("ralph_hero__list_issues") + 2000,
     );
     expect(toolDesc).toContain("iteration");
   });
