@@ -89,8 +89,13 @@ describe("list_issues Project-V2 scoping disclosure (GH-1572 Phase 1)", () => {
     expect(issueToolsSrc).toContain("doesn't exist in the repo");
   });
 
-  it("create_issue description forward-references the planned dedup check", () => {
-    expect(issueToolsSrc).toContain("GH-1572 Phase 3");
+  it("create_issue description documents the dedup check and skipDedupeCheck opt-out", () => {
+    expect(issueToolsSrc).toContain("skipDedupeCheck");
+    expect(issueToolsSrc).toContain("duplicate check");
+  });
+
+  it("create_issue Zod schema has skipDedupeCheck: zBoolish()", () => {
+    expect(issueToolsSrc).toContain("skipDedupeCheck: zBoolish()");
   });
 });
 

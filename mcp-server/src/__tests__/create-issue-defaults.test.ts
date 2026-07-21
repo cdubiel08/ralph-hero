@@ -176,7 +176,10 @@ describe("create_issue Workflow State default (GH-1524)", () => {
     const client = createMockClient(
       {},
       {
-        query: [{ repository: { id: "repo-id-1" } }],
+        query: [
+          { search: { nodes: [] } }, // GH-1572 Phase 3: pre-creation dedup search (no match)
+          { repository: { id: "repo-id-1" } },
+        ],
         mutate: [CREATE_ISSUE_RESULT],
         projectMutate: [
           ADD_TO_PROJECT_RESULT,
@@ -223,7 +226,10 @@ describe("create_issue Workflow State default (GH-1524)", () => {
     const client = createMockClient(
       {},
       {
-        query: [{ repository: { id: "repo-id-1" } }],
+        query: [
+          { search: { nodes: [] } }, // GH-1572 Phase 3: pre-creation dedup search (no match)
+          { repository: { id: "repo-id-1" } },
+        ],
         mutate: [CREATE_ISSUE_RESULT],
         projectMutate: [
           ADD_TO_PROJECT_RESULT,

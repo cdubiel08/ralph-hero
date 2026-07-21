@@ -1016,7 +1016,7 @@ export function registerIssueTools(
   // -------------------------------------------------------------------------
   server.tool(
     "ralph_hero__create_issue",
-    "Create a GitHub issue and add it to the project with optional field values. NOTE: a pre-creation duplicate-title check is planned (GH-1572 Phase 3) — until it lands, cross-check with ralph_hero__list_issues scope: \"repo\" for a manual existence check before creating. Returns: number, id, title, url, projectItemId, fieldsSet. Recovery: if field value fails, verify the option name matches exactly (case-sensitive).",
+    "Create a GitHub issue and add it to the project with optional field values. By default, runs a pre-creation exact-title duplicate check against open issues (case-insensitive, whitespace-normalized) via GitHub's Issue Search API — a match returns a toolError naming the existing issue instead of creating a duplicate; pass skipDedupeCheck: true to bypass. A dedup-search failure is logged and swallowed, falling through to normal creation. Returns: number, id, title, url, projectItemId, fieldsSet. Recovery: if field value fails, verify the option name matches exactly (case-sensitive).",
     {
       owner: z
         .string()
@@ -1045,6 +1045,15 @@ export function registerIssueTools(
         .describe('Initial Workflow State name (defaults to "Backlog")'),
       estimate: z.string().optional().describe("Estimate (XS, S, M, L, XL)"),
       priority: z.string().optional().describe("Priority (P0, P1, P2, P3)"),
+      skipDedupeCheck: zBoolish()
+        .optional()
+        .default(false)
+        .describe(
+          "Skip the pre-creation exact-title duplicate check (default false — the check runs by default). " +
+            "The check searches open issues for an exact case-insensitive, whitespace-normalized title match " +
+            "via GitHub's Issue Search API and refuses creation on a match, naming the existing issue. " +
+            "Pass true to bypass (e.g. known-intentional re-use of a title, bulk-seeding scripts).",
+        ),
     },
     async (args) => {
       try {
@@ -1085,6 +1094,39 @@ export function registerIssueTools(
 
         // Ensure field cache is populated
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+        // Pre-creation exact-title dedup check (GH-1572 Phase 3), on by
+        // default. Best-effort per findExistingDebugIssue's established
+        // contract: a search failure is logged and swallowed, falling
+        // through to normal creation rather than blocking it.
+        if (!args.skipDedupeCheck) {
+          try {
+            const candidates = await searchRepoIssues(
+              client,
+              owner,
+              repo,
+              { query: args.title, state: "OPEN" },
+              10,
+            );
+            const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+            const targetTitle = normalize(args.title);
+            const match = candidates.find(
+              (c) => normalize(c.title) === targetTitle,
+            );
+            if (match) {
+              return toolError(
+                `An open issue with this exact title already exists: #${match.number} (${match.url}). ` +
+                  "Pass skipDedupeCheck: true to create anyway.",
+              );
+            }
+          } catch (error) {
+            console.error(
+              `[create_issue] dedup search failed (falling through to creation): ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        }
 
         // Step 1: Get repository ID
         const repoResult = await client.query<{
