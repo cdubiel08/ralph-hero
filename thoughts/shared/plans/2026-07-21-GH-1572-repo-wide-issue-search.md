@@ -179,10 +179,10 @@ Add an on-by-default (`skipDedupeCheck` opt-out) exact-title dedup pre-check to 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `npx vitest run src/__tests__/create-issue-dedup.test.ts` (new file, modeled on `collate-debug-phase3b.test.ts`'s mock-client-with-query-routing pattern and `create-issue-defaults.test.ts`'s independent-per-method-queue pattern) passes: (a) a title-matching existing OPEN issue → `toolError` naming the match, no `createIssue` mutation issued; (b) same scenario with `skipDedupeCheck: true` → creation proceeds normally, no search call issued; (c) a non-matching title → creation proceeds normally after one search call; (d) a search failure (mock throws) → creation proceeds normally (fallback path), confirming the swallowed-failure contract.
-- [ ] `npx vitest run src/__tests__/issue-tools.test.ts` passes (existing `create_issue` structural coverage, plus a new assertion that `skipDedupeCheck: zBoolish()` is present in the schema).
-- [ ] `npm run build` exits 0.
-- [ ] `npm test` (full suite) passes.
+- [x] `npx vitest run src/__tests__/create-issue-dedup.test.ts` (new file, modeled on `collate-debug-phase3b.test.ts`'s mock-client-with-query-routing pattern and `create-issue-defaults.test.ts`'s independent-per-method-queue pattern) passes: (a) a title-matching existing OPEN issue → `toolError` naming the match, no `createIssue` mutation issued; (b) same scenario with `skipDedupeCheck: true` → creation proceeds normally, no search call issued; (c) a non-matching title → creation proceeds normally after one search call; (d) a search failure (mock throws) → creation proceeds normally (fallback path), confirming the swallowed-failure contract.
+- [x] `npx vitest run src/__tests__/issue-tools.test.ts` passes (existing `create_issue` structural coverage, plus a new assertion that `skipDedupeCheck: zBoolish()` is present in the schema).
+- [x] `npm run build` exits 0.
+- [x] `npm test` (full suite) passes — 1648 passed, 1 pre-existing skip. (`create-issue-defaults.test.ts`'s mock query queues updated to account for the new default-on dedup search call.)
 
 #### Manual Verification
 - [ ] Call `create_issue` with a title exactly matching an existing open issue's title; confirm a `toolError` naming that issue's number/URL and no new issue is created.
