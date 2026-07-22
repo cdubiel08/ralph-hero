@@ -118,10 +118,10 @@ Add a pure `buildStatusSummary` projection function and register `ralph_hero__pi
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `cd mcp-server && npm run build` exits 0
-- [ ] `cd mcp-server && npx vitest run src/__tests__/status-summary.test.ts` passes
-- [ ] `cd mcp-server && npx vitest run src/__tests__/pipeline-status-summary.test.ts` passes
-- [ ] `cd mcp-server && npm test` passes (full suite, no regressions in `dashboard.test.ts`/`dashboard-fetch.test.ts`/`dashboard-group-by.test.ts`)
+- [x] `cd mcp-server && npm run build` exits 0
+- [x] `cd mcp-server && npx vitest run src/__tests__/status-summary.test.ts` passes
+- [x] `cd mcp-server && npx vitest run src/__tests__/pipeline-status-summary.test.ts` passes
+- [x] `cd mcp-server && npm test` passes (full suite, no regressions in `dashboard.test.ts`/`dashboard-fetch.test.ts`/`dashboard-group-by.test.ts`)
 
 #### Manual Verification
 - [ ] Call `ralph_hero__pipeline_status_summary` against the live `cdubiel08/ralph-hero` project and eyeball the response: field shape matches the idea doc exactly, response is on the order of 1-2KB, and no per-phase `issues[]` array is present.
@@ -148,9 +148,9 @@ Append one best-effort `phase_completed` JSONL event from `impl-verify-commit.sh
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `bash ralph/hooks/scripts/__tests__/impl-verify-commit.test.sh` — all cases pass
-- [ ] `shellcheck ralph/hooks/scripts/impl-verify-commit.sh` reports no new warnings
-- [ ] Existing hook test suite still passes (no regressions from the added function): `for f in ralph/hooks/scripts/__tests__/*.test.sh; do bash "$f" || exit 1; done`
+- [x] `bash ralph/hooks/scripts/__tests__/impl-verify-commit.test.sh` — all cases pass
+- [x] `shellcheck ralph/hooks/scripts/impl-verify-commit.sh` reports no new warnings
+- [x] Existing hook test suite still passes (no regressions from the added function): `for f in ralph/hooks/scripts/__tests__/*.test.sh; do bash "$f" || exit 1; done`
 
 #### Manual Verification
 - [ ] Run a real `/ralph:impl` phase locally (or a hand-crafted `git commit` with the phase-line convention on a scratch branch), confirm a new `~/.ralph-hero/activity/YYYY/MM/DD.jsonl` line appears with the expected `phase_completed` shape.
