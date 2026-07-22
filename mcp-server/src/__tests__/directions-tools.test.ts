@@ -196,6 +196,16 @@ function isOpenPRsSearchQuery(q: string): boolean {
   return q.includes("search(query:") && q.includes("... on PullRequest");
 }
 
+function isIssueCommentsQuery(q: string): boolean {
+  return q.includes("issue(number: $number)") && q.includes("comments(last:");
+}
+
+interface IssueCommentFixture {
+  body: string;
+  createdAt: string;
+  url?: string;
+}
+
 interface OpenPRFixture {
   number: number;
   title: string;
@@ -217,6 +227,13 @@ interface MockClientOptions {
    * need per-repo routing, so a flat array keeps the mock simple.
    */
   openPRs?: OpenPRFixture[];
+  /**
+   * Per-issue comment fixtures served to the issue-comments query used by
+   * buildUnblockSignalMap / buildDecisionSignalMap. Issues without an
+   * entry return an empty comment list (instead of the throw-and-swallow
+   * path), keeping signal extraction observable end-to-end.
+   */
+  commentsByIssue?: Record<number, IssueCommentFixture[]>;
 }
 
 function createMockClient(
@@ -260,20 +277,26 @@ function createMockClient(
   // by the `q` variable's `repo:<owner>/<repo>` clause so a per-repo search
   // returns only that repo's fixtures — required for the GH-1399 regression
   // to observe radius tightening rather than a global PR dump.
-  const query = vi.fn(async (q: string, vars?: { q?: string }) => {
-    if (isOpenPRsSearchQuery(q)) {
-      const searchExpr = vars?.q ?? "";
-      const repoMatch = searchExpr.match(/repo:([^\s]+)/);
-      const queriedRepo = repoMatch?.[1] ?? null;
-      const all = options.openPRs ?? [];
-      const filtered =
-        queriedRepo === null
-          ? all
-          : all.filter((pr) => pr.url.includes(queriedRepo));
-      return { search: { nodes: filtered } };
-    }
-    throw new Error(`Unmocked query: ${q.slice(0, 80)}`);
-  });
+  const query = vi.fn(
+    async (q: string, vars?: { q?: string; number?: number }) => {
+      if (isOpenPRsSearchQuery(q)) {
+        const searchExpr = vars?.q ?? "";
+        const repoMatch = searchExpr.match(/repo:([^\s]+)/);
+        const queriedRepo = repoMatch?.[1] ?? null;
+        const all = options.openPRs ?? [];
+        const filtered =
+          queriedRepo === null
+            ? all
+            : all.filter((pr) => pr.url.includes(queriedRepo));
+        return { search: { nodes: filtered } };
+      }
+      if (isIssueCommentsQuery(q)) {
+        const nodes = options.commentsByIssue?.[vars?.number ?? -1] ?? [];
+        return { repository: { issue: { comments: { nodes } } } };
+      }
+      throw new Error(`Unmocked query: ${q.slice(0, 80)}`);
+    },
+  );
 
   const client = {
     config: fullConfig,
@@ -470,6 +493,234 @@ describe("ralph_hero__next_actions", () => {
       expect(payload.directions[0].recommended).toBe(true);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // GH-1551: enumerate="human-queue" — full human queue, unsliced
+  // -------------------------------------------------------------------------
+
+  function actionableFixtures(): unknown[] {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    return [
+      rawIssue({
+        number: 710,
+        title: "Plan review A",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 711,
+        title: "In review B",
+        workflowState: "In Review",
+        priority: "P1",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 712,
+        title: "Ready for plan C",
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 713,
+        title: "Research needed D",
+        workflowState: "Research Needed",
+        priority: "P3",
+        updatedAt: oneHourAgo,
+      }),
+    ];
+  }
+
+  it("enumerate='human-queue' returns the full queue, ignoring limit", async () => {
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: actionableFixtures() } },
+    );
+    registerDirectionsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__next_actions");
+
+    const result = await tool.handler(
+      buildArgs({ limit: 1, enumerate: "human-queue" }),
+      {},
+    );
+    const payload = parsePayload(result) as {
+      directions: Array<{ rank: number; recommended: boolean }>;
+      boardItems: number;
+    };
+    expect(result.isError).toBeUndefined();
+    expect(payload.directions).toHaveLength(4);
+    payload.directions.forEach((d, idx) => {
+      expect(d.rank).toBe(idx + 1);
+      expect(d.recommended).toBe(idx === 0);
+    });
+    expect(payload.boardItems).toBe(4);
+  });
+
+  it("enumerate surfaces plan-decision holds with sourceCommentUrl from the mocked comment", async () => {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const commentUrl =
+      "https://github.com/test-owner/r/issues/720#issuecomment-999";
+    const fixtures = [
+      ...actionableFixtures(),
+      rawIssue({
+        number: 720,
+        title: "Held plan",
+        workflowState: "Plan in Review",
+        priority: "P2",
+        updatedAt: oneDayAgo,
+      }),
+    ];
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      {
+        itemsByProject: { 3: fixtures },
+        commentsByIssue: {
+          720: [
+            {
+              body: "## Decision Request\n\n### Storage backend",
+              createdAt: oneDayAgo,
+              url: commentUrl,
+            },
+          ],
+        },
+      },
+    );
+    registerDirectionsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__next_actions");
+
+    const result = await tool.handler(
+      buildArgs({ limit: 1, enumerate: "human-queue" }),
+      {},
+    );
+    const payload = parsePayload(result) as {
+      directions: Array<{
+        kind: string;
+        issue: { number: number } | null;
+        signals: { sourceCommentUrl?: string };
+      }>;
+    };
+    expect(result.isError).toBeUndefined();
+    const decision = payload.directions.find((d) => d.kind === "plan-decision");
+    expect(decision).toBeDefined();
+    expect(decision?.issue?.number).toBe(720);
+    expect(decision?.signals.sourceCommentUrl).toBe(commentUrl);
+  });
+
+  it("enumerate forces human audience even when audience='agent' is passed", async () => {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const fixtures = [
+      ...actionableFixtures(),
+      rawIssue({
+        number: 730,
+        title: "Held plan agent-invisible",
+        workflowState: "Plan in Review",
+        priority: "P2",
+        updatedAt: oneDayAgo,
+      }),
+    ];
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      {
+        itemsByProject: { 3: fixtures },
+        commentsByIssue: {
+          730: [
+            {
+              body: "## Decision Request\n\n### Only decision",
+              createdAt: oneDayAgo,
+              url: "https://github.com/test-owner/r/issues/730#issuecomment-1",
+            },
+          ],
+        },
+      },
+    );
+    registerDirectionsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__next_actions");
+
+    const result = await tool.handler(
+      buildArgs({ limit: 2, audience: "agent", enumerate: "human-queue" }),
+      {},
+    );
+    const payload = parsePayload(result) as {
+      directions: Array<{ kind: string; issue: { number: number } | null }>;
+    };
+    expect(result.isError).toBeUndefined();
+    // Agent audience would EXCLUDE the held plan; the server-side human
+    // override must keep it in the enumeration.
+    const held = payload.directions.find((d) => d.issue?.number === 730);
+    expect(held).toBeDefined();
+    expect(held?.kind).toBe("plan-decision");
+  });
+
+  it("byte-compat: default (no-enumerate) response matches the hard-coded expected object", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const fixtures = [
+      rawIssue({
+        number: 700,
+        title: "P0 plan-in-review",
+        workflowState: "Plan in Review",
+        priority: "P0",
+        updatedAt: oneHourAgo,
+      }),
+      rawIssue({
+        number: 701,
+        title: "P1 ready-for-plan",
+        workflowState: "Ready for Plan",
+        priority: "P1",
+        updatedAt: oneHourAgo,
+      }),
+    ];
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures } },
+    );
+    registerDirectionsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__next_actions");
+
+    const result = await tool.handler(buildArgs({}), {});
+    const payload = parsePayload(result) as Record<string, unknown>;
+    expect(result.isError).toBeUndefined();
+    expect(payload).toEqual({
+      fetchedAt: expect.any(String),
+      boardItems: 2,
+      directions: [
+        {
+          rank: 1,
+          recommended: true,
+          kind: "issue",
+          issue: {
+            number: 700,
+            title: "P0 plan-in-review",
+            workflowState: "Plan in Review",
+            priority: "P0",
+            estimate: null,
+          },
+          pr: null,
+          signals: { tags: ["high-priority"], staleThresholdDays: 2 },
+          reason: expect.any(String),
+          tags: ["high-priority"],
+          score: 0,
+        },
+        {
+          rank: 2,
+          recommended: false,
+          kind: "issue",
+          issue: {
+            number: 701,
+            title: "P1 ready-for-plan",
+            workflowState: "Ready for Plan",
+            priority: "P1",
+            estimate: null,
+          },
+          pr: null,
+          signals: { tags: ["high-priority"], staleThresholdDays: 2 },
+          reason: expect.any(String),
+          tags: ["high-priority"],
+          score: 12,
+        },
+      ],
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -507,12 +758,28 @@ describe("extractUnblockSignal", () => {
           "Thanks!",
         ].join("\n"),
         createdAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+        url: "https://github.com/o/r/issues/5#issuecomment-777",
       },
     ];
     const signal = extractUnblockSignal(comments, NOW);
     expect(signal).not.toBeNull();
     expect(signal?.questionCount).toBe(3);
     expect(signal?.unblockRequestAgeDays).toBe(2);
+    expect(signal?.sourceCommentUrl).toBe(
+      "https://github.com/o/r/issues/5#issuecomment-777",
+    );
+  });
+
+  it("omits sourceCommentUrl when the comment node has no url field", () => {
+    const comments = [
+      {
+        body: "## Unblock Request\n\n1. Question?",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractUnblockSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.sourceCommentUrl).toBeUndefined();
   });
 
   it("returns null when an Escalation comment is newer than the Unblock Request", () => {
@@ -605,12 +872,28 @@ describe("extractDecisionSignal", () => {
           "Reply here, or run /ralph:plan --mode review 123",
         ].join("\n"),
         createdAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
+        url: "https://github.com/o/r/issues/123#issuecomment-888",
       },
     ];
     const signal = extractDecisionSignal(comments, NOW);
     expect(signal).not.toBeNull();
     expect(signal?.decisionCount).toBe(2);
     expect(signal?.decisionRequestAgeDays).toBe(2);
+    expect(signal?.sourceCommentUrl).toBe(
+      "https://github.com/o/r/issues/123#issuecomment-888",
+    );
+  });
+
+  it("omits sourceCommentUrl when the request comment has no url field", () => {
+    const comments = [
+      {
+        body: "## Decision Request\n\n### Lone decision",
+        createdAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      },
+    ];
+    const signal = extractDecisionSignal(comments, NOW);
+    expect(signal).not.toBeNull();
+    expect(signal?.sourceCommentUrl).toBeUndefined();
   });
 
   it("returns null when ANY comment is newer than the request (answered)", () => {

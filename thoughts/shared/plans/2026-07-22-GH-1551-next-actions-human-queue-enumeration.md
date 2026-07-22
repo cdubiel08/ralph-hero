@@ -166,9 +166,9 @@ Thread `sourceCommentUrl` from the GitHub comments GraphQL query through `extrac
 **Changes**:
 - Add a `commentsByIssue` bucket to `MockClientOptions` (`:209-220`) and an `isIssueCommentsQuery(q)` detector (alongside `:187-197`) so `createMockClient`'s `query` mock (`:263-276`) can route the comments query to per-issue fixtures instead of falling through to the throw-and-swallow path.
 - New tests in `describe("ralph_hero__next_actions")` (`:338-473`):
-  - [ ] Calling the tool with `enumerate: "human-queue"` and a small `limit` (e.g. `1`) against a fixture set with 4+ actionable items returns all 4+ directions, not just 1 — proves `limit` is ignored in enumerate mode.
-  - [ ] A Plan in Review fixture with a mocked `## Decision Request` comment (via the new `commentsByIssue` bucket) surfaces `kind: "plan-decision"` with `signals.sourceCommentUrl` matching the mocked comment's `url`, when called with `enumerate: "human-queue"`.
-  - [ ] Calling with `enumerate: "human-queue", audience: "agent"` still returns human-audience semantics (plan-decision items included) — proves the server-side audience override.
+  - [x] Calling the tool with `enumerate: "human-queue"` and a small `limit` (e.g. `1`) against a fixture set with 4+ actionable items returns all 4+ directions, not just 1 — proves `limit` is ignored in enumerate mode.
+  - [x] A Plan in Review fixture with a mocked `## Decision Request` comment (via the new `commentsByIssue` bucket) surfaces `kind: "plan-decision"` with `signals.sourceCommentUrl` matching the mocked comment's `url`, when called with `enumerate: "human-queue"`.
+  - [x] Calling with `enumerate: "human-queue", audience: "agent"` still returns human-audience semantics (plan-decision items included) — proves the server-side audience override.
 - New byte-compat regression test: capture the full JSON response (minus `fetchedAt`) of a call WITHOUT `enumerate` against a fixed fixture set both before and after this phase's changes are applied (in practice: assert the response shape/values against a hard-coded expected object) — proves the default path is unaffected by the `enumerate` param's addition.
 - Existing `describe("extractUnblockSignal")` (`:480-577`) and `describe("extractDecisionSignal")` (`:578-675`) fixtures updated to include a `url` field on comment nodes, with new assertions that the returned signal's `sourceCommentUrl` matches.
 
@@ -176,10 +176,10 @@ Thread `sourceCommentUrl` from the GitHub comments GraphQL query through `extrac
 
 #### Automated Verification
 
-- [ ] `cd mcp-server && npm run build` exits 0.
-- [ ] `npx vitest run src/__tests__/directions-tools.test.ts` passes, including all new tests listed above.
-- [ ] `npm test` (full suite, from `mcp-server/`) passes.
-- [ ] `grep -n "openPRs:\s*z\." mcp-server/src/tools/directions-tools.ts` still returns nothing (existing GH-1155 regression guard at `:686-694` unaffected by this change).
+- [x] `cd mcp-server && npm run build` exits 0.
+- [x] `npx vitest run src/__tests__/directions-tools.test.ts` passes, including all new tests listed above.
+- [x] `npm test` (full suite, from `mcp-server/`) passes.
+- [x] `grep -n "openPRs:\s*z\." mcp-server/src/tools/directions-tools.ts` still returns nothing (existing GH-1155 regression guard at `:686-694` unaffected by this change).
 
 #### Manual Verification
 
