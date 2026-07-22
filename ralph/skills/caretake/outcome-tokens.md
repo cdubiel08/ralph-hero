@@ -114,12 +114,21 @@ watch-upstream has no `Stop` postcondition hook (parity with watch-pr/hygiene/tr
 
 watch-blockers has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/hygiene/trends) — it mutates only the dependency-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
+## Enrich terminal tokens
+
+- `ENRICHED <N>` — `<N>` `status: draft` idea files enriched this pass (`## Enrichment` appended, `status: forming`, `enriched` stamped) and committed + pushed to `main`. A remainder beyond the 5-file per-pass cap is noted in the surrounding summary line, not in the token.
+- `Queue empty.` — no `status: draft` idea files found.
+- `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
+- `ENRICH SKIPPED push-rejected` — §Step 4 non-fast-forward push failed even after one `git pull --rebase origin main` retry; the commit stays local.
+
+enrich has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/watch-blockers/hygiene/trends) — it mutates only the `status: draft` idea files it enriches, never board/workflow state. The token is reported for harness/loop consumption; no automated verification is performed against it.
+
 ## Loop continuation
 
 When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
 
 **Drain modes** (triage, unblock, debug, split, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
 
-**Heartbeat modes** (hygiene, trends, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. The watch modes (watch-pr, watch-upstream, watch-blockers) run as serial children of `--mode all` (not independently looped) and emit their tokens into the consolidated heartbeat report.
+**Heartbeat modes** (hygiene, trends, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. The watch modes (watch-pr, watch-upstream, watch-blockers) and enrich run as serial children of `--mode all` (not independently looped) and emit their tokens into the consolidated heartbeat report — enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain.
 
 **Non-loop invocations** are unaffected: all token semantics above apply to standalone caretake calls; the loop-continuation layer only activates when `--loop` was passed to the outermost invocation.
