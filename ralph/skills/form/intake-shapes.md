@@ -73,6 +73,7 @@ Used by `--mode draft` Step 4 to write `thoughts/shared/ideas/YYYY-MM-DD-descrip
 ---
 date: YYYY-MM-DD
 status: draft
+captured: YYYY-MM-DDTHH:MM:SSZ
 type: idea
 author: user
 tags: [relevant, tags]
@@ -111,3 +112,29 @@ Filename derivation:
 - `description` — 3-6 hyphen-separated lowercase words derived from the title; strip punctuation.
 
 Tag generously — tags are how `/ralph:form` will rediscover related ideas later via knowledge-search and thoughts-locator. Aim for 3-5 tags drawn from the topic, the affected area, and any cross-cutting concerns (e.g., `[performance, dashboard, mvp]`).
+
+## Idea-file lifecycle contract
+
+Idea-file frontmatter is a shared interface across three surfaces: `/ralph:form --mode draft` (writer at capture), `/ralph:caretake --mode enrich` (background writer), and the daily brief (#1553, downstream reader — not yet built). This section is the contract those surfaces read and write against.
+
+**Status progression:**
+
+| `status` | Set by | Meaning |
+|---|---|---|
+| `draft` | `form --mode draft` Step 4, at capture | Freshly captured, unenriched, unreviewed |
+| `forming` | Two writers — see below | Either in active hand-off toward a plan/research/issue, or enriched and awaiting the next look |
+| `refined` | `form` default Step 6d ("Keep as refined idea") | Reviewed and enriched by a human-driven `/ralph:form` pass |
+
+**`forming` has two writers — reconcile by marker, not by status alone.** Both set the same value for different reasons:
+
+1. **Hand-off writer** (`form` default Step 6c): sets `status: forming` when a user routes an idea to "Implementation plan" or "Research topic" — active hand-off, no `## Enrichment` section, no `enriched` field.
+2. **Enrichment writer** (`caretake --mode enrich`): sets `status: forming` after appending `## Enrichment` and stamping `enriched: <timestamp>` — auto-grounded, not human-routed.
+
+Because both land on the same `status` value, **enrichment selection keys on `status: draft` only** — a hand-off `forming` file is never re-selected, re-enriched, or touched by enrichment. Downstream readers (the brief) distinguish the two by presence, not status: a file carrying `enriched` frontmatter / a `## Enrichment` section ran through enrichment; a `forming` file WITHOUT those markers was hand-off routed by a human.
+
+**Frontmatter fields:**
+
+- `captured` — UTC ISO-8601 timestamp, written once at capture by `form --mode draft` Step 4. A multi-thought dump yields N files, each with its own `captured` stamp.
+- `enriched` — UTC ISO-8601 timestamp, written once by `caretake --mode enrich` when it appends `## Enrichment`. Absent on files not yet enriched, or that were hand-off-routed instead.
+
+Existing idea files predating this contract have neither field — `captured`-less files are still valid; the brief treats a missing `captured` as unknown-age, not an error.
