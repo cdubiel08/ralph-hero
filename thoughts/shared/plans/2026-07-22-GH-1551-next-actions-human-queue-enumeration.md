@@ -115,14 +115,14 @@ Add `sourceCommentUrl` to the signal types, refactor `rankDirections` into share
 
 #### Automated Verification
 
-- [ ] `cd mcp-server && npm run build` exits 0 with no new TypeScript errors.
-- [ ] `npx vitest run src/__tests__/directions.test.ts` passes, including:
-  - [ ] New `describe("enumerateDirections — human-queue")` block asserting: the full unsliced list is returned for a fixture set spanning at least `plan-decision`, `human-needed-unblock`, `lock-stale`, `tree-continue`, `pr`, and plain `issue` kinds; ranked order matches manual expectation; `recommended` is `true` only on the first entry; `rank` values are sequential 1..N across the full list.
-  - [ ] New regression test asserting prefix identity: for a fixed input + `config`, `enumerateDirections(items, prs, config).slice(0, config.limit)` deep-equals `rankDirections(items, prs, config)` on every field EXCEPT `signals.tiedAtScore`, which is list-relative by design (`rankDirections` computes the tie count over the sliced list at `directions.ts:1074-1081`; `enumerateDirections` computes it over the full list — a top-score tie crossing the `limit` boundary legitimately yields different values). Either exclude `tiedAtScore` from the deep-equality or use a fixture with no top-score tie crossing the `limit` boundary.
-  - [ ] Dedicated tie-semantics test: with a fixture whose top-score tie extends past `config.limit`, assert enumerate's `tiedAtScore` reflects the FULL tie count while the sliced path's reflects only the sliced count — pinning the intended divergence so an implementer does not "fix" a red prefix test by altering default-path tie semantics.
-  - [ ] `sourceCommentUrl` is present and correct on `plan-decision` and `human-needed-unblock` directions (test fixtures supply `UnblockSignal`/`DecisionSignal` objects with a `sourceCommentUrl`), and ABSENT (`undefined`, no key or `signals.sourceCommentUrl === undefined`) on every other kind.
-  - [ ] Existing "plan-decision directions" (`:1244-1366`) and "rankDirections — human-needed-unblock" (`:1120-1243`) describe blocks updated to supply `sourceCommentUrl` in their `DecisionSignal`/`UnblockSignal` fixtures and assert it round-trips onto `signals.sourceCommentUrl`.
-  - [ ] All pre-existing tests in this file continue to pass unmodified in behavior (only fixture additions for the two updated describe blocks above; no other test's expected values change).
+- [x] `cd mcp-server && npm run build` exits 0 with no new TypeScript errors.
+- [x] `npx vitest run src/__tests__/directions.test.ts` passes, including:
+  - [x] New `describe("enumerateDirections — human-queue")` block asserting: the full unsliced list is returned for a fixture set spanning at least `plan-decision`, `human-needed-unblock`, `lock-stale`, `tree-continue`, `pr`, and plain `issue` kinds; ranked order matches manual expectation; `recommended` is `true` only on the first entry; `rank` values are sequential 1..N across the full list.
+  - [x] New regression test asserting prefix identity: for a fixed input + `config`, `enumerateDirections(items, prs, config).slice(0, config.limit)` deep-equals `rankDirections(items, prs, config)` on every field EXCEPT `signals.tiedAtScore`, which is list-relative by design (`rankDirections` computes the tie count over the sliced list at `directions.ts:1074-1081`; `enumerateDirections` computes it over the full list — a top-score tie crossing the `limit` boundary legitimately yields different values). Either exclude `tiedAtScore` from the deep-equality or use a fixture with no top-score tie crossing the `limit` boundary.
+  - [x] Dedicated tie-semantics test: with a fixture whose top-score tie extends past `config.limit`, assert enumerate's `tiedAtScore` reflects the FULL tie count while the sliced path's reflects only the sliced count — pinning the intended divergence so an implementer does not "fix" a red prefix test by altering default-path tie semantics.
+  - [x] `sourceCommentUrl` is present and correct on `plan-decision` and `human-needed-unblock` directions (test fixtures supply `UnblockSignal`/`DecisionSignal` objects with a `sourceCommentUrl`), and ABSENT (`undefined`, no key or `signals.sourceCommentUrl === undefined`) on every other kind.
+  - [x] Existing "plan-decision directions" (`:1244-1366`) and "rankDirections — human-needed-unblock" (`:1120-1243`) describe blocks updated to supply `sourceCommentUrl` in their `DecisionSignal`/`UnblockSignal` fixtures and assert it round-trips onto `signals.sourceCommentUrl`.
+  - [x] All pre-existing tests in this file continue to pass unmodified in behavior (only fixture additions for the two updated describe blocks above; no other test's expected values change).
 
 #### Manual Verification
 
@@ -166,9 +166,9 @@ Thread `sourceCommentUrl` from the GitHub comments GraphQL query through `extrac
 **Changes**:
 - Add a `commentsByIssue` bucket to `MockClientOptions` (`:209-220`) and an `isIssueCommentsQuery(q)` detector (alongside `:187-197`) so `createMockClient`'s `query` mock (`:263-276`) can route the comments query to per-issue fixtures instead of falling through to the throw-and-swallow path.
 - New tests in `describe("ralph_hero__next_actions")` (`:338-473`):
-  - [ ] Calling the tool with `enumerate: "human-queue"` and a small `limit` (e.g. `1`) against a fixture set with 4+ actionable items returns all 4+ directions, not just 1 — proves `limit` is ignored in enumerate mode.
-  - [ ] A Plan in Review fixture with a mocked `## Decision Request` comment (via the new `commentsByIssue` bucket) surfaces `kind: "plan-decision"` with `signals.sourceCommentUrl` matching the mocked comment's `url`, when called with `enumerate: "human-queue"`.
-  - [ ] Calling with `enumerate: "human-queue", audience: "agent"` still returns human-audience semantics (plan-decision items included) — proves the server-side audience override.
+  - [x] Calling the tool with `enumerate: "human-queue"` and a small `limit` (e.g. `1`) against a fixture set with 4+ actionable items returns all 4+ directions, not just 1 — proves `limit` is ignored in enumerate mode.
+  - [x] A Plan in Review fixture with a mocked `## Decision Request` comment (via the new `commentsByIssue` bucket) surfaces `kind: "plan-decision"` with `signals.sourceCommentUrl` matching the mocked comment's `url`, when called with `enumerate: "human-queue"`.
+  - [x] Calling with `enumerate: "human-queue", audience: "agent"` still returns human-audience semantics (plan-decision items included) — proves the server-side audience override.
 - New byte-compat regression test: capture the full JSON response (minus `fetchedAt`) of a call WITHOUT `enumerate` against a fixed fixture set both before and after this phase's changes are applied (in practice: assert the response shape/values against a hard-coded expected object) — proves the default path is unaffected by the `enumerate` param's addition.
 - Existing `describe("extractUnblockSignal")` (`:480-577`) and `describe("extractDecisionSignal")` (`:578-675`) fixtures updated to include a `url` field on comment nodes, with new assertions that the returned signal's `sourceCommentUrl` matches.
 
@@ -176,10 +176,10 @@ Thread `sourceCommentUrl` from the GitHub comments GraphQL query through `extrac
 
 #### Automated Verification
 
-- [ ] `cd mcp-server && npm run build` exits 0.
-- [ ] `npx vitest run src/__tests__/directions-tools.test.ts` passes, including all new tests listed above.
-- [ ] `npm test` (full suite, from `mcp-server/`) passes.
-- [ ] `grep -n "openPRs:\s*z\." mcp-server/src/tools/directions-tools.ts` still returns nothing (existing GH-1155 regression guard at `:686-694` unaffected by this change).
+- [x] `cd mcp-server && npm run build` exits 0.
+- [x] `npx vitest run src/__tests__/directions-tools.test.ts` passes, including all new tests listed above.
+- [x] `npm test` (full suite, from `mcp-server/`) passes.
+- [x] `grep -n "openPRs:\s*z\." mcp-server/src/tools/directions-tools.ts` still returns nothing (existing GH-1155 regression guard at `:686-694` unaffected by this change).
 
 #### Manual Verification
 

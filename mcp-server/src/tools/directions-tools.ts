@@ -38,6 +38,7 @@ import {
 import type { DashboardItem } from "../lib/dashboard.js";
 import {
   rankDirections,
+  enumerateDirections,
   DEFAULT_RANK_CONFIG,
   type Audience,
   type OpenPR,
@@ -72,6 +73,12 @@ const DAY_MS = 24 * HOUR_MS;
 interface IssueCommentNode {
   body: string;
   createdAt: string;
+  /**
+   * Comment permalink from the GraphQL `url` field. Optional so older
+   * fixtures / callers without the field still type-check; when present it
+   * becomes the signal's `sourceCommentUrl`.
+   */
+  url?: string;
 }
 
 interface FetchCommentsResult {
@@ -101,7 +108,7 @@ async function fetchIssueCommentsForUnblock(
         repository(owner: $owner, name: $repo) {
           issue(number: $number) {
             comments(last: 20) {
-              nodes { body createdAt }
+              nodes { body createdAt url }
             }
           }
         }
@@ -177,7 +184,11 @@ export function extractUnblockSignal(
     .split("\n")
     .filter((line) => /^\d+\.\s/.test(line)).length;
 
-  return { unblockRequestAgeDays, questionCount };
+  const signal: UnblockSignal = { unblockRequestAgeDays, questionCount };
+  if (latestUnblock.url !== undefined) {
+    signal.sourceCommentUrl = latestUnblock.url;
+  }
+  return signal;
 }
 
 /**
@@ -230,7 +241,11 @@ export function extractDecisionSignal(
     latestRequest.body.split("\n").filter((line) => /^### /.test(line)).length,
   );
 
-  return { decisionRequestAgeDays, decisionCount };
+  const signal: DecisionSignal = { decisionRequestAgeDays, decisionCount };
+  if (latestRequest.url !== undefined) {
+    signal.sourceCommentUrl = latestRequest.url;
+  }
+  return signal;
 }
 
 /**
@@ -442,6 +457,13 @@ export interface RunDirectionsArgs {
   treeRecentDoneDays?: number;
   prStaleHours?: number;
   audience: Audience;
+  /**
+   * When `"human-queue"`, return the FULL ranked human queue (every
+   * direction, unsliced) instead of the top-`limit`. Forces
+   * `audience: "human"` server-side. Canonical caller: `catch-up --mode
+   * brief` (GH-1553).
+   */
+  enumerate?: "human-queue";
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +529,11 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
       );
 
       // Build the RankConfig from args + defaults + injected `now`.
+      // Enumeration is a human-queue concept only: when `enumerate` is set,
+      // force human audience server-side regardless of the caller's
+      // `audience` arg (an agent-audience enumeration would silently drop
+      // plan-decision holds — the exact items the human queue exists for).
+      const enumerating = args.enumerate === "human-queue";
       const config: RankConfig = {
         limit: args.limit ?? DEFAULT_RANK_CONFIG.limit,
         stuckThresholdHours:
@@ -517,7 +544,7 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
           args.treeRecentDoneDays ?? DEFAULT_RANK_CONFIG.treeRecentDoneDays,
         prStaleHours:
           args.prStaleHours ?? DEFAULT_RANK_CONFIG.prStaleHours,
-        audience: args.audience,
+        audience: enumerating ? "human" : args.audience,
         now,
         unblockSignals,
         decisionSignals,
@@ -548,7 +575,9 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
         };
       });
 
-      const directions = rankDirections(allItems, enrichedPRs, config);
+      const directions = enumerating
+        ? enumerateDirections(allItems, enrichedPRs, config)
+        : rankDirections(allItems, enrichedPRs, config);
 
       return toolSuccess({
         directions,
@@ -579,7 +608,7 @@ export function registerDirectionsTools(
 
   server.tool(
     "ralph_hero__next_actions",
-    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Fetches all project items (full project scan, no silent 500-cap) so candidate selection covers every item regardless of board position. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items) — callers no longer pass an `openPRs` argument. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. Plan in Review issues holding on an unanswered `## Decision Request` comment (GH-1544 decision-gated approval) surface as `kind: 'plan-decision'` for `audience='human'` (signals carry decisionRequestAgeDays + decisionCount; the right action is ANSWERING the request, not re-reviewing) and are EXCLUDED for `audience='agent'` (an agent cannot answer a design decision). The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the per-item fallback never fires for `audience='human'`. However, when `audience='human'` and the scan yields zero directions (nothing actionable, no PRs, no lock-stale, no unblock signal) and at least one item has a null Workflow State, a single aggregate `kind: 'triage'` direction (`issue`/`pr` both null, `signals.statelessCount` set) is returned instead of an empty list — callers switching on `kind` should tolerate unknown values. Returns `{ directions, fetchedAt, boardItems }` where `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools); the returned `directions` array is bounded by `limit`.",
+    "Compute up to N deterministic 'directions' (next actions) with one flagged `recommended: true`. Fetches all project items (full project scan, no silent 500-cap) so candidate selection covers every item regardless of board position. Used by the /hello skill picker (interactive) and by headless orchestrators (auto-select recommended). Open PRs are fetched internally via the configured GitHub token's `repo` scope (one `is:pr is:open repo:owner/name` GraphQL search per unique repo represented in the project items) — callers no longer pass an `openPRs` argument. Each direction includes a structured signals object (staleDays, staleThresholdDays, tiedAtScore, estimateWeight, parentChainNote) for skills to synthesize prose. Plan in Review issues holding on an unanswered `## Decision Request` comment (GH-1544 decision-gated approval) surface as `kind: 'plan-decision'` for `audience='human'` (signals carry decisionRequestAgeDays + decisionCount; the right action is ANSWERING the request, not re-reviewing) and are EXCLUDED for `audience='agent'` (an agent cannot answer a design decision). The legacy 'reason' string is @deprecated and removed in 2.7.0. When `audience='agent'` and no items are in actionable phases (Plan in Review, In Review, Ready for Plan, Research Needed) or otherwise surfacing (lock-stale, unblock-requested), the picker falls back to Backlog and null-state items so autopilot can drive triage. Fallback items receive a fixed score penalty so they never outrank actionable items when those exist; the per-item fallback never fires for `audience='human'`. However, when `audience='human'` and the scan yields zero directions (nothing actionable, no PRs, no lock-stale, no unblock signal) and at least one item has a null Workflow State, a single aggregate `kind: 'triage'` direction (`issue`/`pr` both null, `signals.statelessCount` set) is returned instead of an empty list — callers switching on `kind` should tolerate unknown values. Returns `{ directions, fetchedAt, boardItems }` where `boardItems` is the raw count of items on the project board pre-filter (uniform across discovery tools); the returned `directions` array is bounded by `limit`. ENUMERATION MODE (GH-1551): pass `enumerate: 'human-queue'` to get the FULL ranked human queue — every direction the ranker would ever surface (plan-decision holds, human-needed unblocks, stale locks, PRs, actionable issues), unsliced. In this mode `limit` is ignored, `audience` is forced to 'human' server-side, `rank` runs 1..N over the whole list, and `plan-decision`/`human-needed-unblock` entries carry `signals.sourceCommentUrl` pointing at the source `## Decision Request`/`## Unblock Request` comment. The ONE canonical caller is `catch-up --mode brief` (GH-1553) — other callers should use the default ranked-top-N path and must NOT re-rank or re-filter enumeration output (epic #1550 contract: one scan, one ranking).",
     {
       owner: z
         .string()
@@ -636,6 +665,12 @@ export function registerDirectionsTools(
         .default(24)
         .describe(
           "Hours before an open PR is considered stale (default: 24, unit: hours). Pulls from PR_STALE_HOURS in src/lib/thresholds.ts.",
+        ),
+      enumerate: z
+        .enum(["human-queue"])
+        .optional()
+        .describe(
+          "Set to 'human-queue' to return the FULL ranked human queue unsliced: ignores `limit`, forces `audience: 'human'` server-side, ranks 1..N over every returned entry. Canonical caller: catch-up --mode brief (GH-1553); other callers should use the default ranked-top-N path.",
         ),
     },
     async (args) => {

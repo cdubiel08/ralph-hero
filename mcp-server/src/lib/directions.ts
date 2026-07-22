@@ -125,6 +125,13 @@ export interface DirectionSignals {
    * board with a null `workflowState`.
    */
   statelessCount?: number;
+  /**
+   * For `kind: "plan-decision"` / `kind: "human-needed-unblock"` only:
+   * URL of the source `## Decision Request` / `## Unblock Request` GitHub
+   * comment the direction was derived from. Other kinds have no anchoring
+   * comment and never carry this field.
+   */
+  sourceCommentUrl?: string;
 }
 
 export interface Direction {
@@ -199,6 +206,13 @@ export type Audience = "human" | "agent";
 export interface UnblockSignal {
   unblockRequestAgeDays: number;
   questionCount: number;
+  /**
+   * URL of the source `## Unblock Request` comment. Optional so the tool
+   * layer can adopt it incrementally; when present it is threaded onto
+   * `DirectionSignals.sourceCommentUrl` for `human-needed-unblock`
+   * directions.
+   */
+  sourceCommentUrl?: string;
 }
 
 /**
@@ -223,6 +237,12 @@ export type UnblockSignalMap = Readonly<Record<number, UnblockSignal>>;
 export interface DecisionSignal {
   decisionRequestAgeDays: number;
   decisionCount: number;
+  /**
+   * URL of the source `## Decision Request` comment. Optional so the tool
+   * layer can adopt it incrementally; when present it is threaded onto
+   * `DirectionSignals.sourceCommentUrl` for `plan-decision` directions.
+   */
+  sourceCommentUrl?: string;
 }
 
 /**
@@ -594,6 +614,9 @@ export function scoreIssue(
       decisionRequestAgeDays: decisionSignal.decisionRequestAgeDays,
       decisionCount: decisionSignal.decisionCount,
     };
+    if (decisionSignal.sourceCommentUrl !== undefined) {
+      signals.sourceCommentUrl = decisionSignal.sourceCommentUrl;
+    }
     if (estPenalty > 0) {
       signals.estimateWeight = estPenalty;
     }
@@ -621,6 +644,9 @@ export function scoreIssue(
       unblockRequestAgeDays: unblockSignal.unblockRequestAgeDays,
       questionCount: unblockSignal.questionCount,
     };
+    if (unblockSignal.sourceCommentUrl !== undefined) {
+      signals.sourceCommentUrl = unblockSignal.sourceCommentUrl;
+    }
     if (estPenalty > 0) {
       signals.estimateWeight = estPenalty;
     }
@@ -918,20 +944,27 @@ function toDirectionPR(pr: OpenPR): Direction["pr"] {
 }
 
 /**
- * Main entry point. Filters, scores, sorts, and slices a candidate set
- * into up to `config.limit` deterministically-ranked directions.
- *
- * Determinism contract: same input + same `config.now` -> byte-identical
- * output across calls. Achieved by:
- *   - never reading `Date.now()` inside the lib
- *   - using stable secondary sort keys (issue number / PR number)
- *   - never iterating Sets/Maps for ordered work
+ * A single pre-slice ranked entry: either a scored issue row or a scored
+ * PR row. `buildMergedEntries` produces the full ordered list;
+ * `rankDirections` slices it to `config.limit` while `enumerateDirections`
+ * consumes it whole.
  */
-export function rankDirections(
+type RankedEntry =
+  | { kind: "issueRow"; payload: ScoredCandidate }
+  | { kind: "prRow"; payload: PRScored };
+
+/**
+ * Steps 1-5 of the ranking pipeline, shared by `rankDirections` (sliced)
+ * and `enumerateDirections` (unsliced): score + phase-filter all items,
+ * apply the agent-audience Backlog fallback, drop blocked items unless
+ * that would empty the set, score PRs, merge + sort, and promote a
+ * tree-continue into slot 2. Returns the full pre-slice `merged` list.
+ */
+function buildMergedEntries(
   items: DashboardItem[],
   openPRs: OpenPR[],
   config: RankConfig,
-): Direction[] {
+): RankedEntry[] {
   // 1. Score all items first so we know which ones lock-stale (those go in
   //    the candidate set even if their phase is not actionable). Human
   //    Needed items also pass the filter when an unblock signal exists for
@@ -1012,11 +1045,7 @@ export function rankDirections(
 
   // 4. Merge issues + PRs into a single ordered list (stable sort:
   //    score asc, then a kind tiebreaker, then number asc).
-  type Entry =
-    | { kind: "issueRow"; payload: ScoredCandidate }
-    | { kind: "prRow"; payload: PRScored };
-
-  const merged: Entry[] = [];
+  const merged: RankedEntry[] = [];
   for (const c of candidates) merged.push({ kind: "issueRow", payload: c });
   // Filter unlinkable PRs (no linked issue) so they don't appear in next_actions.
   // These are handled by the pr-drain Routine (out of band of Director).
@@ -1065,27 +1094,38 @@ export function rankDirections(
     }
   }
 
-  // 6. Slice to limit and assign rank.
-  const sliced = merged.slice(0, Math.max(0, config.limit));
+  return merged;
+}
 
-  // 6a. Compute tied-at-top-score count from the sliced (final) list so the
-  //     tie reflects what the user actually sees. Stamped onto each entry's
-  //     signals only when the count is > 1; omitted otherwise.
+/**
+ * Step 6 of the ranking pipeline, shared by the sliced and unsliced paths:
+ * map an ordered entry list (a slice of — or the entirety of — the
+ * `buildMergedEntries` output) to `Direction[]`, computing the
+ * tied-at-top-score count over the PASSED list (so the tie reflects what
+ * the caller actually returns) and marking the first entry `recommended`.
+ */
+function mapMergedToDirections(
+  entries: RankedEntry[],
+  config: RankConfig,
+): Direction[] {
+  // Compute tied-at-top-score count from the passed (final) list so the
+  // tie reflects what the caller actually sees. Stamped onto each entry's
+  // signals only when the count is > 1; omitted otherwise.
   const tiedCount =
-    sliced.length === 0
+    entries.length === 0
       ? 0
-      : sliced.filter((entry) => {
+      : entries.filter((entry) => {
           const s = entry.kind === "issueRow" ? entry.payload.score : entry.payload.score;
-          const top = sliced[0].kind === "issueRow" ? sliced[0].payload.score : sliced[0].payload.score;
+          const top = entries[0].kind === "issueRow" ? entries[0].payload.score : entries[0].payload.score;
           return s === top;
         }).length;
 
-  const directions: Direction[] = sliced.map((entry, idx) => {
+  const directions: Direction[] = entries.map((entry, idx) => {
     const rank = idx + 1;
     if (entry.kind === "issueRow") {
       const c = entry.payload;
       const signals: DirectionSignals = { ...c.signals };
-      if (tiedCount > 1 && c.score === sliced[0].payload.score) {
+      if (tiedCount > 1 && c.score === entries[0].payload.score) {
         signals.tiedAtScore = tiedCount;
       }
       const reason = buildReason(c.kind, c.item, null, signals, config, null);
@@ -1104,7 +1144,7 @@ export function rankDirections(
     // PR row
     const p = entry.payload;
     const signals: DirectionSignals = { ...p.signals };
-    if (tiedCount > 1 && p.score === sliced[0].payload.score) {
+    if (tiedCount > 1 && p.score === entries[0].payload.score) {
       signals.tiedAtScore = tiedCount;
     }
     const reason = buildReason(
@@ -1135,18 +1175,30 @@ export function rankDirections(
     directions[0].recommended = true;
   }
 
-  // 7. Human-audience aggregate triage fallback: when the human scan finds
-  //    nothing actionable (no scored issues, no PRs, no lock-stale, no
-  //    unblock signal — checked pre-slice via `merged` so a small `limit`
-  //    cannot masquerade as an empty board) and at least one OPEN item on
-  //    the board has a null `workflowState`, surface a single aggregate
-  //    direction pointing at `/ralph:caretake --mode triage` instead of an
-  //    empty list. This is the human-audience counterpart to the agent-only
-  //    Backlog/null-state fallback above (step 1b) — it never fires when
-  //    any real direction exists, never fires when the caller asked for
-  //    zero directions (`limit: 0`), skips already-closed stateless items,
-  //    and never includes Backlog items (Backlog is a legitimate,
-  //    dashboard-visible parking state).
+  return directions;
+}
+
+/**
+ * Step 7 of the ranking pipeline, shared by the sliced and unsliced paths.
+ * Human-audience aggregate triage fallback: when the human scan finds
+ * nothing actionable (no scored issues, no PRs, no lock-stale, no
+ * unblock signal — checked pre-slice via `merged` so a small `limit`
+ * cannot masquerade as an empty board) and at least one OPEN item on
+ * the board has a null `workflowState`, surface a single aggregate
+ * direction pointing at `/ralph:caretake --mode triage` instead of an
+ * empty list. This is the human-audience counterpart to the agent-only
+ * Backlog/null-state fallback (step 1b) — it never fires when
+ * any real direction exists, never fires when the caller asked for
+ * zero directions (`limit: 0`), skips already-closed stateless items,
+ * and never includes Backlog items (Backlog is a legitimate,
+ * dashboard-visible parking state).
+ */
+function appendTriageFallbackIfNeeded(
+  directions: Direction[],
+  merged: RankedEntry[],
+  items: DashboardItem[],
+  config: RankConfig,
+): void {
   if (config.audience === "human" && merged.length === 0 && config.limit > 0) {
     const statelessCount = items.filter(
       (i) => i.workflowState === null && i.closedAt === null,
@@ -1168,6 +1220,53 @@ export function rankDirections(
       });
     }
   }
+}
 
+/**
+ * Main entry point. Filters, scores, sorts, and slices a candidate set
+ * into up to `config.limit` deterministically-ranked directions.
+ *
+ * Determinism contract: same input + same `config.now` -> byte-identical
+ * output across calls. Achieved by:
+ *   - never reading `Date.now()` inside the lib
+ *   - using stable secondary sort keys (issue number / PR number)
+ *   - never iterating Sets/Maps for ordered work
+ */
+export function rankDirections(
+  items: DashboardItem[],
+  openPRs: OpenPR[],
+  config: RankConfig,
+): Direction[] {
+  const merged = buildMergedEntries(items, openPRs, config);
+
+  // 6. Slice to limit and assign rank.
+  const sliced = merged.slice(0, Math.max(0, config.limit));
+  const directions = mapMergedToDirections(sliced, config);
+
+  appendTriageFallbackIfNeeded(directions, merged, items, config);
+  return directions;
+}
+
+/**
+ * Enumeration entry point for the human queue (GH-1551, Feature A of the
+ * ways-of-working epic #1550). Returns the FULL ranked direction list —
+ * every entry `rankDirections` would ever surface across any `limit` —
+ * with identical ordering, `rank` numbered 1..N over the whole list and
+ * `recommended` true only on rank 1. `signals.tiedAtScore` is computed
+ * over the full list (a top-score tie that would cross a `limit` boundary
+ * reports its full width here).
+ *
+ * Canonical caller: `catch-up --mode brief` via the tool layer's
+ * `enumerate: "human-queue"` param. Do not add second consumers that
+ * re-rank or re-filter — the epic contract is one scan, one ranking.
+ */
+export function enumerateDirections(
+  items: DashboardItem[],
+  openPRs: OpenPR[],
+  config: RankConfig,
+): Direction[] {
+  const merged = buildMergedEntries(items, openPRs, config);
+  const directions = mapMergedToDirections(merged, config);
+  appendTriageFallbackIfNeeded(directions, merged, items, config);
   return directions;
 }
