@@ -180,6 +180,7 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__metrics_trends",
   "ralph_hero__next_actions",
   "ralph_hero__pipeline_dashboard",
+  "ralph_hero__pipeline_status_summary",
   "ralph_hero__project_hygiene",
   "ralph_hero__recent_activity",
   "ralph_hero__remove_dependency",
