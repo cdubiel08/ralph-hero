@@ -117,11 +117,11 @@ Also note explicitly: this is the only out-of-band piece (cos lesson honored); t
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `plutil -lint scripts/brief/launchd/com.ralph.brief-prepare.plist.template` exits 0
-- [ ] `grep -c "<key>Weekday</key>" scripts/brief/launchd/com.ralph.brief-prepare.plist.template` returns `5`
-- [ ] `grep -q "catch-up --mode brief --prepare" scripts/brief/launchd/com.ralph.brief-prepare.plist.template`
-- [ ] `grep -q "^## Scheduling runbook" ralph/skills/catch-up/brief-composition.md`
-- [ ] `grep -q "last-prepared" ralph/skills/catch-up/brief-composition.md` (runbook references the same marker path § Prepare already documents — no drift between the two sections)
+- [x] `plutil -lint scripts/brief/launchd/com.ralph.brief-prepare.plist.template` exits 0
+- [x] `grep -c "<key>Weekday</key>" scripts/brief/launchd/com.ralph.brief-prepare.plist.template` returns `5`
+- [x] `grep -q "catch-up --mode brief --prepare" scripts/brief/launchd/com.ralph.brief-prepare.plist.template`
+- [x] `grep -q "^## Scheduling runbook" ralph/skills/catch-up/brief-composition.md`
+- [x] `grep -q "last-prepared" ralph/skills/catch-up/brief-composition.md` (runbook references the same marker path § Prepare already documents — no drift between the two sections)
 
 #### Manual Verification
 - [ ] Run the Setup commands on a macOS machine with the repo cloned at the expected path; `launchctl list | grep brief-prepare` shows the job loaded.
