@@ -55,4 +55,35 @@ $tool_output
 Fix the issues reported by the pre-commit hook before continuing."
 fi
 
+# Best-effort observability side-channel: append a `phase_completed` activity
+# event when the commit message follows the plan's `Phase [N] of [M]: #NNN`
+# convention (plan-compliance.md §Staging Algorithm step 6). Never blocks —
+# every failure path (no match, unwritable dir, append failure) degrades to
+# a silent no-op and the hook still reaches `allow` below.
+log_phase_completed_event() {
+  local command="$1"
+  local phase_n phase_m issue_num
+  if [[ "$command" =~ Phase\ ([0-9]+)\ of\ ([0-9]+):\ \#([0-9]+) ]]; then
+    phase_n="${BASH_REMATCH[1]}"
+    phase_m="${BASH_REMATCH[2]}"
+    issue_num="${BASH_REMATCH[3]}"
+  else
+    return 0
+  fi
+
+  local activity_root month_dir day_file ts
+  activity_root="${RALPH_ACTIVITY_DIR:-$HOME/.ralph-hero/activity}"
+  month_dir="$activity_root/$(date +%Y/%m)"
+  day_file="$month_dir/$(date +%d).jsonl"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  mkdir -p "$month_dir" 2>/dev/null || return 0
+  printf '{"ts":"%s","category":"work","kind":"phase_completed","target":{"issue":%s,"phase":%s,"totalPhases":%s}}\n' \
+    "$ts" "$issue_num" "$phase_n" "$phase_m" >> "$day_file" 2>/dev/null || return 0
+}
+
+if [[ "$command" == *"git commit"* ]]; then
+  log_phase_completed_event "$command" || true
+fi
+
 allow
