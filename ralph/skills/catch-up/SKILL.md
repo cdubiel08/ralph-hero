@@ -1,22 +1,31 @@
 ---
 description: Orientation companion — catches you up on what changed since you last
   checked, surfaces ranked next actions with a recommended pick, renders the
-  pipeline dashboard, or composes and posts a status report. Use whenever the
-  user asks "what's going on", "what should I work on", "catch me up", "show me
-  the board", "post a status update", or starts a session wanting orientation.
-  --mode flag selects narrative / dashboard / report sub-surfaces.
-argument-hint: "[--mode {narrative,dashboard,report}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends] [--loop [duration]]"
+  pipeline dashboard, composes and posts a status report, or walks the full
+  human queue (decisions, unblocks, incubating thoughts) in one sitting. Use
+  whenever the user asks "what's going on", "what should I work on", "catch me
+  up", "show me the board", "post a status update", "daily brief", "walk the
+  queue", "empty the human queue", or starts a session wanting orientation.
+  --mode flag selects narrative / dashboard / report / brief sub-surfaces.
+argument-hint: "[--mode {narrative,dashboard,report,brief}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends] [--prepare] [--loop [duration]]"
 context: inline
 allowed-tools:
   - Read
+  - Glob
+  - Grep
+  - Bash
   - Skill
   - Agent
   - AskUserQuestion
+  - PushNotification
   - mcp__plugin_ralph_ralph-github__ralph_hero__recent_activity
   - mcp__plugin_ralph_ralph-github__ralph_hero__next_actions
   - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard
+  - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_status_summary
   - mcp__plugin_ralph_ralph-github__ralph_hero__create_status_update
   - mcp__plugin_ralph_ralph-github__ralph_hero__metrics_trends
+  - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue
+  - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
 ---
 
 # /ralph:catch-up — Orientation
@@ -36,7 +45,7 @@ The unified orientation verb. The `--mode` flag selects a single-surface alterna
 - **`--mode report`** → allowed. Default interval `1d`. Use `catch-up:report` manifest row — heartbeat, no `Queue empty.` terminal; re-fires on clock.
   - Dry-run default: unless `--post` is in `$ARGUMENTS` OR `RALPH_CATCH_UP_HEARTBEAT_POST=true`, append `--dry-run` to `STRIPPED_ARGS` before wrapping (compose + print only; do NOT call `create_status_update`).
   - Emit `Skill("loop", args="${LOOP_INTERVAL:-1d} /ralph:catch-up --mode report ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
-- **Any other mode** (default/narrative/dashboard) → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
+- **Any other mode** (default/narrative/dashboard/brief) → emit refusal from `loop-wrapper.md` § Refusal message, then STOP. `--mode brief` stays refused here even with `--prepare` set — brief is an interactive sitting; `--prepare`'s daily cadence is owned by the #1555 scheduled task, not `/loop`.
 
 ## Mode dispatch
 
@@ -46,6 +55,7 @@ The unified orientation verb. The `--mode` flag selects a single-surface alterna
 | `--mode narrative` | 2-4 sentence narrative only, no picker, no dispatch |
 | `--mode dashboard` | Raw `pipeline_dashboard` render (markdown / ascii / json) |
 | `--mode report` | Compose status update; post via `create_status_update` (pass `--dry-run` to skip posting) |
+| `--mode brief` | Daily sitting: status header + human-queue walk (decisions → unblocks → thoughts) + read-only flagged tail |
 | `--help` / `-h` | Print this table and exit |
 
 ## Default flow
@@ -142,9 +152,16 @@ If `--dry-run`: display the composed body + determined status + `Dry run complet
 
 Otherwise: call `ralph_hero__create_status_update` with `{status, body}`. Display the response: status update ID + status + first 200 chars of body. Print `Status update posted successfully.`
 
+## --mode brief
+
+Parse `--prepare` from `$ARGUMENTS`. Phase 1 (this cycle) only notes the flag — `--prepare`'s headless branch lands in Phase 2 (GH-1558); for now `--prepare` is inert.
+
+Follow `brief-composition.md` for the full interactive sitting: status header, decision walk, unblock walk, incubating-thought walk, read-only flagged tail, closing summary.
+
 ## References
 
 - `narrative-synthesis.md` — catch-up narrative tone rules + cursor mechanics
 - `next-action-ranking.md` — signal-cue table, picker label rules, dispatch table
 - `dashboard-render.md` — pipeline render rules + negative-constraint prose
 - `report-composition.md` — markdown template, status determination, --with-trends
+- `brief-composition.md` — two-source read, status header, walk order + dispatch table, render rules, closing summary
