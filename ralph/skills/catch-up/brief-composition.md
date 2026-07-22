@@ -56,3 +56,34 @@ Exactly one line:
 
 - `Queue emptied.` — every walked item resolved (decisions answered or an item's decisions fully deferred, unblocks dispatched, thoughts resolved to an option).
 - `N deferred (<kinds>).` — N items skipped or left unresolved across the walk, naming the kinds involved (e.g., `2 deferred (decisions, thoughts)`).
+
+## Prepare (headless)
+
+Consulted by `/ralph:catch-up --mode brief --prepare` after the SKILL.md idempotency check (today's `last-prepared` marker) has already cleared. Runs the SAME two-source read as the interactive sitting (§ Two sources — one `next_actions` call with `enumerate: "human-queue"`, one idea glob) with ZERO prompts and ZERO mutations: no `Skill` dispatches, no `AskUserQuestion`, no issue comments. This is the auto-mode-is-end-to-end axiom — `--prepare` only counts and notifies, it never touches board or issue state.
+
+Compute:
+
+- `N` = count of `kind: "plan-decision"` directions from the board-queue read
+- `M` = count of `kind: "human-needed-unblock"` directions from the board-queue read
+- `K` = count of idea files with `status: draft` or `status: forming` from the thought-queue glob (both count as incubating — the push counts what the interactive sitting will walk, per `../form/intake-shapes.md` § Idea-file lifecycle contract)
+
+Fire exactly ONE `PushNotification`:
+
+```
+PushNotification(
+  title="Daily brief ready",
+  body="N decisions, M unblocks, K thoughts — sit /ralph:catch-up --mode brief"
+)
+```
+
+(data-plane axiom: counts only, nothing the board already shows). Notification failure does NOT fail the mode — proceed to the marker write regardless.
+
+Write today's date (`YYYY-MM-DD`, local) to `~/.ralph-hero/brief/last-prepared` — create the parent directory first (`mkdir -p ~/.ralph-hero/brief`) so a first-ever run doesn't fail on a missing dir.
+
+Emit the terminal line:
+
+```
+Brief prepared: N decisions, M unblocks, K thoughts.
+```
+
+The marker write always happens, even when the notification failed — it is the durable idempotency record; the counts line is the durable output record. A same-day re-run is a silent no-op, caught by SKILL.md's `--prepare` branch before this section is ever reached.

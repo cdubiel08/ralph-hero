@@ -154,9 +154,11 @@ Otherwise: call `ralph_hero__create_status_update` with `{status, body}`. Displa
 
 ## --mode brief
 
-Parse `--prepare` from `$ARGUMENTS`. Phase 1 (this cycle) only notes the flag — `--prepare`'s headless branch lands in Phase 2 (GH-1558); for now `--prepare` is inert.
+Parse `--prepare` from `$ARGUMENTS`.
 
-Follow `brief-composition.md` for the full interactive sitting: status header, decision walk, unblock walk, incubating-thought walk, read-only flagged tail, closing summary.
+**If `--prepare` is present**: read `~/.ralph-hero/brief/last-prepared`. If its content equals today's date (local, `YYYY-MM-DD`), emit `Brief already prepared today.` and STOP — no push, no prompts, no further reads. Otherwise follow `brief-composition.md` § Prepare (headless).
+
+**Otherwise**: follow `brief-composition.md` for the full interactive sitting: status header, decision walk, unblock walk, incubating-thought walk, read-only flagged tail, closing summary.
 
 ## References
 
