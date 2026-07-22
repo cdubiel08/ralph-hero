@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Install workflow for the daily brief-preparation launchd job.
+  See ralph/skills/catch-up/brief-composition.md § Scheduling runbook for
+  the full setup/verify/force-re-push/teardown lifecycle.
+
+  1. Render this template's __HOME__ / __PROJECTS_DIR__ / __USER__
+     placeholders to your actual values (cp + sed), writing the result to
+     ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
+  2. launchctl load ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
+  3. Verify with: launchctl list | grep brief-prepare
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.__USER__.brief-prepare</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-lc</string>
+		<string>cd __PROJECTS_DIR__/ralph-hero &amp;&amp; claude -p '/ralph:catch-up --mode brief --prepare' --dangerously-skip-permissions</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Weekday</key>
+			<integer>1</integer>
+			<key>Hour</key>
+			<integer>7</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>2</integer>
+			<key>Hour</key>
+			<integer>7</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>3</integer>
+			<key>Hour</key>
+			<integer>7</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>4</integer>
+			<key>Hour</key>
+			<integer>7</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>Weekday</key>
+			<integer>5</integer>
+			<key>Hour</key>
+			<integer>7</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+		</dict>
+	</array>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/ralph-brief-prepare.out</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/ralph-brief-prepare.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>

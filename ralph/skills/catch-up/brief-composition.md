@@ -87,3 +87,64 @@ Brief prepared: N decisions, M unblocks, K thoughts.
 ```
 
 The marker write always happens, even when the notification failed — it is the durable idempotency record; the counts line is the durable output record. A same-day re-run is a silent no-op, caught by SKILL.md's `--prepare` branch before this section is ever reached.
+
+## Scheduling runbook
+
+A launchd plist template at `scripts/brief/launchd/com.ralph.brief-prepare.plist.template` fires `claude -p "/ralph:catch-up --mode brief --prepare" --dangerously-skip-permissions` weekday mornings, following the dream-loop `__HOME__`/`__PROJECTS_DIR__`/`__USER__` substitution convention (`scripts/dream/launchd/com.dubiel.dream-loop.plist.template`). No installer script — a single scheduled job doesn't justify one; setup is this documented render-and-load runbook.
+
+### Setup
+
+Render the template's placeholders to your actual values and load it:
+
+```bash
+sed \
+  -e "s|__HOME__|${HOME}|g" \
+  -e "s|__PROJECTS_DIR__|${HOME}/projects|g" \
+  -e "s|__USER__|$(whoami)|g" \
+  scripts/brief/launchd/com.ralph.brief-prepare.plist.template \
+  > ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
+
+launchctl load ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
+```
+
+**Env prerequisite**: the plist's `ProgramArguments` runs `/bin/bash -lc`, and a non-interactive login shell does NOT source the interactive zsh profile (`.zshrc`) the way a Terminal session does — RALPH_* scope vars exported only there never reach the scheduled run. Per root `CLAUDE.md` § Environment Variables, the scope vars (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`, `RALPH_GH_PROJECT_OWNER`) MUST live in the tracked `<repo>/.claude/settings.json`, not only a gitignored `settings.local.json` or a shell profile export — otherwise the headless run is board-blind and fails with `owner is required`.
+
+### Verify
+
+```bash
+launchctl list | grep brief-prepare
+```
+
+should show the label loaded. The first manual headless run must print real counts:
+
+```
+Brief prepared: N decisions, M unblocks, K thoughts.
+```
+
+If it instead prints an `owner is required` error, the env prerequisite above is unmet — fix the scope vars in the tracked `.claude/settings.json` and re-run.
+
+### Force a re-push
+
+`--prepare`'s once-per-day guard is the `~/.ralph-hero/brief/last-prepared` marker file (§ Prepare (headless) above). To bypass it for testing, delete the marker and re-run:
+
+```bash
+rm -f ~/.ralph-hero/brief/last-prepared
+claude -p "/ralph:catch-up --mode brief --prepare" --dangerously-skip-permissions
+```
+
+This fires a second `PushNotification` the same day and rewrites the marker.
+
+### Teardown
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
+rm ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
+```
+
+`launchctl list | grep brief-prepare` should return nothing afterward.
+
+### Hardening note
+
+The runbook ships with `--dangerously-skip-permissions` — the repo's proven `run_headless()` shape (`docs/plans/2026-03-06-ralph-cli-feedback-ux-impl.md`). Migrate to a scoped `--allowedTools` list once the headless plugin-context tool names are verified on this machine — candidates: `mcp__plugin_ralph_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_status_summary`, `PushNotification`. The blast radius under skip-permissions is bounded (`--prepare` is zero-mutation by contract: read-only board queries, one push, one marker-file write), but an untested allowlist risks a silently hung or failed schedule — the worse outcome for a fire-and-forget trigger. Use the Verify step's manual headless run as the moment to test and record the scoped variant.
+
+This launchd plist is the only out-of-band piece — the cos post-mortem lesson (a prior scheduling stack with its own scripts, its own push channel, zero ties to the plugin, deleted without anyone noticing) is honored by keeping every piece of brief logic inside the plugin. The schedule invokes the exact `--mode brief --prepare` mode Feature C already ships; there is no schedule-only code path, so testing the schedule means running `--prepare` by hand.
