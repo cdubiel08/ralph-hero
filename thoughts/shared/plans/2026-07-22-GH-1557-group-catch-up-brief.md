@@ -108,12 +108,12 @@ Register `--mode brief` on catch-up and author `brief-composition.md` — the wa
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -n "mode brief" ralph/skills/catch-up/SKILL.md` shows the mode-table row and section heading
-- [ ] `grep -n "brief-composition" ralph/skills/catch-up/SKILL.md` shows the References entry
-- [ ] `grep -n "PushNotification\|pipeline_status_summary" ralph/skills/catch-up/SKILL.md` shows both allowed-tools additions
-- [ ] `grep -n "enumerate" ralph/skills/catch-up/brief-composition.md` shows the human-queue enumeration call
-- [ ] `grep -n "Idea-file lifecycle contract" ralph/skills/catch-up/brief-composition.md` shows the D-contract pointer
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `grep -n "mode brief" ralph/skills/catch-up/SKILL.md` shows the mode-table row and section heading
+- [x] `grep -n "brief-composition" ralph/skills/catch-up/SKILL.md` shows the References entry
+- [x] `grep -n "PushNotification\|pipeline_status_summary" ralph/skills/catch-up/SKILL.md` shows both allowed-tools additions
+- [x] `grep -n "enumerate" ralph/skills/catch-up/brief-composition.md` shows the human-queue enumeration call
+- [x] `grep -n "Idea-file lifecycle contract" ralph/skills/catch-up/brief-composition.md` shows the D-contract pointer
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] Run `/ralph:catch-up --mode brief` against the live board WITH the as-deployed env (`RALPH_REVIEW_PLAN=auto` exported — do NOT scrub it): header renders, thoughts present the four options, tail is read-only, closing line appears
@@ -140,10 +140,10 @@ Wire the `--prepare` branch: enumeration + thought count, one push per day, idem
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -n "last-prepared" ralph/skills/catch-up/SKILL.md ralph/skills/catch-up/brief-composition.md` shows the marker in both files
-- [ ] `grep -n "Prepare (headless)" ralph/skills/catch-up/brief-composition.md` shows the section
-- [ ] `grep -c "PushNotification" ralph/skills/catch-up/brief-composition.md` ≥ 1
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `grep -n "last-prepared" ralph/skills/catch-up/SKILL.md ralph/skills/catch-up/brief-composition.md` shows the marker in both files
+- [x] `grep -n "Prepare (headless)" ralph/skills/catch-up/brief-composition.md` shows the section
+- [x] `grep -c "PushNotification" ralph/skills/catch-up/brief-composition.md` ≥ 1
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] Run `--mode brief --prepare`: one push fires, marker written, terminal counts line emitted, no prompts
