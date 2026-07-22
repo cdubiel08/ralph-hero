@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import {
   rankDirections,
+  enumerateDirections,
   scoreIssue,
   detectTreeContinue,
   detectLockStale,
@@ -1224,7 +1225,12 @@ describe("rankDirections — human-needed-unblock", () => {
       makeConfig({
         limit: 3,
         unblockSignals: {
-          3300: { unblockRequestAgeDays: 5, questionCount: 4 },
+          3300: {
+            unblockRequestAgeDays: 5,
+            questionCount: 4,
+            sourceCommentUrl:
+              "https://github.com/o/r/issues/3300#issuecomment-111",
+          },
         },
       }),
     );
@@ -1233,6 +1239,9 @@ describe("rankDirections — human-needed-unblock", () => {
     expect(result[0].kind).toBe("human-needed-unblock");
     expect(result[0].signals.unblockRequestAgeDays).toBe(5);
     expect(result[0].signals.questionCount).toBe(4);
+    expect(result[0].signals.sourceCommentUrl).toBe(
+      "https://github.com/o/r/issues/3300#issuecomment-111",
+    );
   });
 });
 
@@ -1263,7 +1272,12 @@ describe("plan-decision directions", () => {
       makeConfig({
         limit: 5,
         decisionSignals: {
-          4000: { decisionRequestAgeDays: 1, decisionCount: 2 },
+          4000: {
+            decisionRequestAgeDays: 1,
+            decisionCount: 2,
+            sourceCommentUrl:
+              "https://github.com/o/r/issues/4000#issuecomment-222",
+          },
         },
       }),
     );
@@ -1273,6 +1287,9 @@ describe("plan-decision directions", () => {
     expect(decisionDirections[0].issue?.number).toBe(4000);
     expect(decisionDirections[0].signals.decisionCount).toBe(2);
     expect(decisionDirections[0].signals.decisionRequestAgeDays).toBe(1);
+    expect(decisionDirections[0].signals.sourceCommentUrl).toBe(
+      "https://github.com/o/r/issues/4000#issuecomment-222",
+    );
     expect(decisionDirections[0].tags).toContain("decision-needed");
 
     // The plain candidate stays an ordinary issue direction.
@@ -1448,5 +1465,212 @@ describe("GH-1470: agent Backlog fallback excludes open-blocker items", () => {
     const result = rankDirections(items, [], makeConfig({ audience: "agent" }));
     expect(result).toHaveLength(1);
     expect(result[0].issue?.number).toBe(516);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enumerateDirections — human-queue enumeration (GH-1551, epic #1550 Feature A)
+// ---------------------------------------------------------------------------
+
+describe("enumerateDirections — human-queue", () => {
+  /**
+   * Fixture spanning every issue-side kind plus a linked PR. Scores are
+   * deliberately spread so the ranked order is stable and asserted below.
+   */
+  function makeQueueFixture(): { items: DashboardItem[]; prs: OpenPR[] } {
+    const items: DashboardItem[] = [
+      // plan-decision (held plan, PLAN_DECISION_BOOST)
+      makeItem({
+        number: 6000,
+        title: "Held plan",
+        workflowState: "Plan in Review",
+        priority: "P2",
+      }),
+      // human-needed-unblock (HUMAN_NEEDED_UNBLOCK_BOOST)
+      makeItem({
+        number: 6001,
+        title: "Awaiting unblock answers",
+        workflowState: "Human Needed",
+        priority: "P2",
+      }),
+      // lock-stale (In Progress, older than lockStaleHours)
+      makeItem({
+        number: 6002,
+        title: "Stalled impl lock",
+        workflowState: "In Progress",
+        priority: "P2",
+        updatedAt: new Date(NOW.getTime() - 30 * HOUR_MS).toISOString(),
+      }),
+      // tree-continue (sibling Done recently under same parent)
+      makeItem({
+        number: 6003,
+        title: "Next tree candidate",
+        workflowState: "Ready for Plan",
+        priority: "P2",
+        parentNumber: 6900,
+      }),
+      makeItem({
+        number: 6004,
+        title: "Recently closed sibling",
+        workflowState: "Done",
+        priority: "P2",
+        parentNumber: 6900,
+        closedAt: new Date(NOW.getTime() - 1 * DAY_MS).toISOString(),
+      }),
+      // plain issue rows padding past any small limit
+      makeItem({ number: 6005, workflowState: "Research Needed", priority: "P3" }),
+      makeItem({ number: 6006, workflowState: "Research Needed", priority: "P3" }),
+    ];
+    const prs: OpenPR[] = [
+      makePR({
+        number: 6100,
+        title: "Review-required PR",
+        url: "https://github.com/o/r/pull/6100",
+        headRefName: "feature/GH-6005",
+        reviewDecision: "REVIEW_REQUIRED",
+      }),
+    ];
+    return { items, prs };
+  }
+
+  function queueConfig(overrides: Partial<RankConfig> = {}): RankConfig {
+    return makeConfig({
+      limit: 3,
+      unblockSignals: {
+        6001: {
+          unblockRequestAgeDays: 2,
+          questionCount: 1,
+          sourceCommentUrl:
+            "https://github.com/o/r/issues/6001#issuecomment-333",
+        },
+      },
+      decisionSignals: {
+        6000: {
+          decisionRequestAgeDays: 1,
+          decisionCount: 2,
+          sourceCommentUrl:
+            "https://github.com/o/r/issues/6000#issuecomment-444",
+        },
+      },
+      ...overrides,
+    });
+  }
+
+  it("returns the full unsliced list spanning all kinds, ranked 1..N with recommended only on rank 1", () => {
+    const { items, prs } = makeQueueFixture();
+    const result = enumerateDirections(items, prs, queueConfig());
+
+    // Full list: strictly more than limit (3), covering every expected kind.
+    expect(result.length).toBeGreaterThan(3);
+    const kinds = result.map((d) => d.kind);
+    for (const expected of [
+      "plan-decision",
+      "human-needed-unblock",
+      "lock-stale",
+      "tree-continue",
+      "pr",
+      "issue",
+    ] as const) {
+      expect(kinds).toContain(expected);
+    }
+
+    // Rank sequential 1..N, recommended only on rank 1.
+    result.forEach((d, idx) => {
+      expect(d.rank).toBe(idx + 1);
+      expect(d.recommended).toBe(idx === 0);
+    });
+
+    // Ranked order sanity. Scores are NOT globally monotonic — the
+    // tree-continue promotion (buildMergedEntries step 5) hoists a
+    // tree-continue into slot 2 regardless of score — so assert monotonic
+    // ordering over the list with the promoted entry removed, plus the
+    // human-attention kinds leading the lock-stale tail.
+    expect(result[0].kind).toBe("pr");
+    const unpromoted = result.filter((d) => d.kind !== "tree-continue");
+    const scores = unpromoted.map((d) => d.score);
+    expect([...scores].sort((a, b) => a - b)).toEqual(scores);
+    expect(kinds.indexOf("plan-decision")).toBeLessThan(kinds.indexOf("lock-stale"));
+    expect(kinds.indexOf("human-needed-unblock")).toBeLessThan(kinds.indexOf("lock-stale"));
+  });
+
+  it("prefix-identity: enumerate(...).slice(0, limit) matches rankDirections(...) on every field except tiedAtScore", () => {
+    const { items, prs } = makeQueueFixture();
+    const config = queueConfig();
+    const ranked = rankDirections(items, prs, config);
+    const prefix = enumerateDirections(items, prs, config).slice(
+      0,
+      config.limit,
+    );
+
+    expect(prefix).toHaveLength(ranked.length);
+    const stripTied = (d: (typeof ranked)[number]) => {
+      const { tiedAtScore: _tied, ...restSignals } = d.signals;
+      return { ...d, signals: restSignals };
+    };
+    expect(prefix.map(stripTied)).toEqual(ranked.map(stripTied));
+  });
+
+  it("tiedAtScore is list-relative by design: full tie width when the tie crosses the limit boundary", () => {
+    // Three identical-score plain issues; limit 1 slices mid-tie.
+    const items: DashboardItem[] = [
+      makeItem({ number: 7000, workflowState: "Ready for Plan", priority: "P2" }),
+      makeItem({ number: 7001, workflowState: "Ready for Plan", priority: "P2" }),
+      makeItem({ number: 7002, workflowState: "Ready for Plan", priority: "P2" }),
+    ];
+    const config = makeConfig({ limit: 1 });
+
+    const ranked = rankDirections(items, [], config);
+    expect(ranked).toHaveLength(1);
+    // Sliced path: only one entry visible -> no tie stamped.
+    expect(ranked[0].signals.tiedAtScore).toBeUndefined();
+
+    const enumerated = enumerateDirections(items, [], config);
+    expect(enumerated).toHaveLength(3);
+    // Unsliced path: the full three-way tie is visible.
+    for (const d of enumerated) {
+      expect(d.signals.tiedAtScore).toBe(3);
+    }
+  });
+
+  it("carries sourceCommentUrl on plan-decision and human-needed-unblock only", () => {
+    const { items, prs } = makeQueueFixture();
+    const result = enumerateDirections(items, prs, queueConfig());
+
+    const decision = result.find((d) => d.kind === "plan-decision");
+    const unblock = result.find((d) => d.kind === "human-needed-unblock");
+    expect(decision?.signals.sourceCommentUrl).toBe(
+      "https://github.com/o/r/issues/6000#issuecomment-444",
+    );
+    expect(unblock?.signals.sourceCommentUrl).toBe(
+      "https://github.com/o/r/issues/6001#issuecomment-333",
+    );
+    for (const d of result) {
+      if (d.kind !== "plan-decision" && d.kind !== "human-needed-unblock") {
+        expect(d.signals.sourceCommentUrl).toBeUndefined();
+      }
+    }
+  });
+
+  it("ignores limit entirely — same full list at limit 0, 1, and 100", () => {
+    const { items, prs } = makeQueueFixture();
+    const at0 = enumerateDirections(items, prs, queueConfig({ limit: 0 }));
+    const at1 = enumerateDirections(items, prs, queueConfig({ limit: 1 }));
+    const at100 = enumerateDirections(items, prs, queueConfig({ limit: 100 }));
+    expect(at1).toEqual(at100);
+    // limit only gates the triage fallback (which needs a non-empty board
+    // signal); with real directions present, limit 0 still enumerates all.
+    expect(at0).toEqual(at100);
+    expect(at100.length).toBeGreaterThan(3);
+  });
+
+  it("preserves the human-audience aggregate triage fallback", () => {
+    const items: DashboardItem[] = [
+      makeItem({ number: 8000, workflowState: null, closedAt: null }),
+      makeItem({ number: 8001, workflowState: null, closedAt: null }),
+    ];
+    const result = enumerateDirections(items, [], makeConfig({ limit: 3 }));
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe("triage");
+    expect(result[0].signals.statelessCount).toBe(2);
   });
 });
