@@ -98,11 +98,11 @@ Extend the `--mode draft` body for any-maturity, multi-thought capture and autho
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `grep -n "captured:" ralph/skills/form/intake-shapes.md` shows the field in the draft template
-- [ ] `grep -n "Idea-file lifecycle contract" ralph/skills/form/intake-shapes.md` finds the new section
-- [ ] `grep -n "kick off" ralph/skills/form/SKILL.md` shows the offer in the DEFAULT flow completion (not in the draft-mode body)
-- [ ] `grep -c "extract" ralph/skills/form/SKILL.md` ≥ 1 in the draft-mode section (multi-thought extraction documented)
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `grep -n "captured:" ralph/skills/form/intake-shapes.md` shows the field in the draft template
+- [x] `grep -n "Idea-file lifecycle contract" ralph/skills/form/intake-shapes.md` finds the new section
+- [x] `grep -n "kick off" ralph/skills/form/SKILL.md` shows the offer in the DEFAULT flow completion (not in the draft-mode body)
+- [x] `grep -c "extract" ralph/skills/form/SKILL.md` ≥ 1 in the draft-mode section (multi-thought extraction documented)
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] Run `/ralph:form --mode draft` with a 3-thought dump; confirm 3 files in `thoughts/shared/ideas/`, each with `status: draft` + `captured`, and exactly one confirmation prompt
@@ -131,11 +131,11 @@ Add `modes/enrich.md` to caretake, wire it into the `--mode all` fan-out before 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] `test -f ralph/skills/caretake/modes/enrich.md`
-- [ ] `grep -n "mode enrich" ralph/skills/caretake/SKILL.md` shows the fan-out step ordered before the catch-up report step
-- [ ] `grep -n "ENRICHED" ralph/skills/caretake/outcome-tokens.md ralph/skills/caretake/SKILL.md` shows token registration in both files
-- [ ] `grep -c "7 total" ralph/skills/caretake/SKILL.md` = 1 (consolidated-outcome count updated)
-- [ ] `bash scripts/check-doc-rosters.sh` passes
+- [x] `test -f ralph/skills/caretake/modes/enrich.md`
+- [x] `grep -n "mode enrich" ralph/skills/caretake/SKILL.md` shows the fan-out step ordered before the catch-up report step
+- [x] `grep -n "ENRICHED" ralph/skills/caretake/outcome-tokens.md ralph/skills/caretake/SKILL.md` shows token registration in both files
+- [x] `grep -c "7 total" ralph/skills/caretake/SKILL.md` = 1 (consolidated-outcome count updated)
+- [x] `bash scripts/check-doc-rosters.sh` passes
 
 #### Manual Verification
 - [ ] Create a fixture `status: draft` idea file; run `/ralph:caretake --mode enrich`; confirm `## Enrichment` appended, `status: forming`, `enriched` stamped, and the change committed to main

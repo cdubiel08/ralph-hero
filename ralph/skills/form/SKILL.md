@@ -41,7 +41,7 @@ inline descriptions into structured GitHub artifacts via an interactive picker.
 | Mode | Behavior |
 |---|---|
 | (default) | Intake → research → dedup → picker (5 output formats) |
-| `--mode draft` | Quick capture: ask 2-3 questions → write to `thoughts/shared/ideas/` |
+| `--mode draft` | Quick capture: any-maturity input, maturity-aware clarification, one file per extracted thought → `thoughts/shared/ideas/` |
 | `--help` / `-h` | Print this table and exit |
 
 ## Step 0: Flag guard
@@ -133,7 +133,7 @@ Draft the issue body per `issue-template.md` (use the research-aware variant whe
 1. Call `create_issue` with the drafted title and body; set `estimate` and `workflowState: "Backlog"`.
 2. Update the source-file frontmatter per `issue-template.md` (`status: formed, github_issue: NNN` for ideas; `github_issue: NNN, github_url: https://...` for research docs).
 3. If `INPUT_TYPE == "research"`, post the `## Research Document` artifact comment on the new issue (see `issue-template.md`).
-4. Report the issue URL + suggested next steps (research / plan / iterate).
+4. Report the issue URL + suggested next steps (research / plan / iterate). Then offer, interactively, to kick off work now: *"Kick off on this now? (`/ralph:hero NNN`)"* — declining is free (default on no answer), and this offer is never made in `--auto`/headless contexts.
 
 ### Step 6b: Create ticket tree
 
@@ -168,15 +168,30 @@ No GitHub mutations.
 
 ## --mode draft
 
-Lightweight quick-capture. No GitHub mutation, no AskUserQuestion picker, no full research suite. The goal is to get the idea into a file before it's lost.
+Lightweight quick-capture. No GitHub mutation, no AskUserQuestion picker, no full research suite. The goal is to get the idea into a file before it's lost. **Capture never mutates board/project state** — no `create_issue`, no `save_issue`, nothing beyond writing files under `thoughts/shared/ideas/`.
 
 ### Step 1 (draft): capture intent
 
+Accept input at any maturity — a one-line fragment ("we should batch these API calls") is exactly as valid as a multi-paragraph dump describing three unrelated problems. Never demand structure or completeness.
+
 If a topic was provided as the argument, begin capturing. Otherwise prompt: *"What's on your mind? Describe a feature idea, a problem you've noticed, a technical concept, or a workflow improvement worth remembering."* Wait for the user.
 
-### Step 2 (draft): quick clarification
+Determine whether the input is a **single thought** or a **multi-thought dump** (more than one distinct idea present in the same input) before proceeding — this decides which Step 2 path applies.
 
-Restate in one sentence, then ask 2-3 focused clarifying questions (most-important first). If the user replies "just capture it" or similar, proceed with what you have — don't block.
+### Step 2 (draft): maturity-aware clarification
+
+- **Single thought**: restate in one sentence, then ask 2-3 focused clarifying questions (most-important first). If the user replies "just capture it" or similar, proceed with what you have — don't block.
+- **Multi-thought dump**: skip clarifying questions entirely — extraction replaces interrogation (GH-706: "extract first, confirm after"). Extract N distinct thoughts from the input, then present ONE confirmation listing the N titles:
+
+  ```
+  Captured as N ideas:
+  1. [Title 1]
+  2. [Title 2]
+  ...
+  Merge any, drop any, or good as-is?
+  ```
+
+  "Good as-is" — or no answer — is the default; proceed to Step 3/4 for all N. Only re-split or merge on an explicit correction. Never ask per-thought clarifying questions for a dump.
 
 ### Step 3 (draft): optional light grounding
 
@@ -188,13 +203,13 @@ Only if `knowledge_search` is available, run an optional dedup check (`type: "id
 
 Skip both steps entirely for purely conceptual ideas — speed over polish.
 
-### Step 4 (draft): write the file
+### Step 4 (draft): write the file(s)
 
-Save to `thoughts/shared/ideas/YYYY-MM-DD-description.md` using the draft template from `intake-shapes.md`.
+For each thought from Step 2 (one for a single capture, N for a dump), save to `thoughts/shared/ideas/YYYY-MM-DD-description.md` using the draft template from `intake-shapes.md`, with `status: draft` and `captured: <current UTC ISO-8601 timestamp>` in frontmatter. Each file gets its own `captured` stamp.
 
 ### Step 5 (draft): report + suggest next steps
 
-Report the file path. Suggest next-step verbs: `/ralph:form <path>` (crystallize into an issue / plan / research / tree), `/ralph:research` (deep dive), `/ralph:plan` (jump straight to planning). No frontmatter mutation, no GitHub integration — drafts are pre-ticket.
+Report every file path written (one per extracted thought). Suggest next-step verbs: `/ralph:form <path>` (crystallize into an issue / plan / research / tree), `/ralph:research` (deep dive), `/ralph:plan` (jump straight to planning). No frontmatter mutation beyond `status`/`captured` set at write time, no GitHub integration — drafts are pre-ticket.
 
 ## References
 
