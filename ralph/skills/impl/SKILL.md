@@ -88,7 +88,7 @@ Reads an approved plan from `thoughts/shared/plans/`, executes phases, and ships
 | **address** | `/ralph:impl --mode address [#NNN]` | PR review feedback handling (MUST_FIX / SHOULD_FIX / DISCUSS) |
 | **pr** | `/ralph:impl --mode pr [#NNN]` | Push branch + create PR + scout-trigger heuristic |
 
-References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-repo), [plan-compliance.md](plan-compliance.md) (File Ownership, staging, drift), [phase-execution.md](phase-execution.md) (task graph, controller, IMPL BLOCKED), [address-mode.md](address-mode.md) (PR feedback classification), [pr-creation.md](pr-creation.md) (body template, scout trigger).
+References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-repo), [plan-compliance.md](plan-compliance.md) (File Ownership, staging, drift), [phase-execution.md](phase-execution.md) (direct + task-graph execution paths, IMPL BLOCKED), [address-mode.md](address-mode.md) (PR feedback classification), [pr-creation.md](pr-creation.md) (body template, scout trigger).
 
 ## Step 0: Parse arguments
 
@@ -169,7 +169,7 @@ Ask the user via AskUserQuestion what to do next:
 4. **Build issues[] + detect phase** — frontmatter `github_issues` array (group) or single `github_issue`. Find the first **unblocked** unchecked phase per `depends_on` annotations; STOP if all remaining phases are blocked.
 5. **Lock** — for every issue in `issues[]`, `save_issue(workflowState="__LOCK__", command="ralph_impl")`. STOP if any issue is not "In Progress".
 6. **Worktree** — consult [worktree-setup.md §Auto-mode](worktree-setup.md) for epic detection, WORKTREE_ID selection (stream / epic / group / single), base-branch detection, create-or-reuse, rebase-onto-main if predecessor merged.
-7. **Execute phase** — consult [phase-execution.md](phase-execution.md) for the task graph + controller pattern + IMPL BLOCKED escalation + phase quality review. If sub-agent budget exhausts at a non-opus tier, emit `IMPL BLOCKED model=<current> needs=opus reason=<short>` and STOP (do NOT escalate to Human Needed; hero re-dispatches at opus once).
+7. **Execute phase** — consult [phase-execution.md](phase-execution.md): direct execution when the phase has no `### Tasks` section (the common case), task-graph controller when it does; plus IMPL BLOCKED escalation + phase quality review. If sub-agent budget exhausts at a non-opus tier, emit `IMPL BLOCKED model=<current> needs=opus reason=<short>` and STOP (do NOT escalate to Human Needed; hero re-dispatches at opus once).
 8. **Stage + commit + push** — per [plan-compliance.md §Staging Algorithm](plan-compliance.md).
 9. **Check completion** — re-read plan. If ALL automated checkboxes are checked, continue to Step 10; otherwise STOP with `Phase [N]/[M] complete.`.
 10. **Final report** — `Implementation complete for #NNN: <Title>` + issues + branch + worktree.

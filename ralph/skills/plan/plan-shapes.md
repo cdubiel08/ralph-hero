@@ -156,9 +156,11 @@ Each `## Phase N:` section MUST include:
 
 File ownership rule: each phase owns a tightly-scoped file set. Phases should not stomp on each other's files. Document file ownership explicitly when a file is touched in multiple phases.
 
-## Task anatomy
+## Task anatomy (opt-in, per phase)
 
-Phases that decompose into tasks use `#### Task N.M:` subheadings. Each task carries four YAML fields below the heading. The per-phase `depends_on:` annotation is what `plan-postcondition.sh` greps for to detect when `sync_plan_graph` should be called (it scans for `depends_on.*\[` and warns when the dependency graph hasn't been synced). The per-task fields below are consumed by `sync_plan_graph` itself and by orchestrators (hero, autopilot) when dispatching implementer sub-agents — they are not read by `plan-postcondition.sh` directly. Plans authored without them still pass hooks but produce a less-detailed parallel-dispatch graph.
+A `### Tasks` section is an opt-in upgrade for a single phase, not a required plan section. Add one when a phase splits into ≥2 file-disjoint chunks that benefit from parallel sub-agent dispatch or per-task model-tier routing — `/ralph:impl --mode auto` then runs that phase through its task-graph controller (`phase-execution.md`). Phases without `### Tasks` are implemented directly by the same skill; that is the normal shape for most plans, especially XS/S.
+
+Tasks use `#### Task N.M:` subheadings, each carrying four YAML fields below the heading. The fields are consumed by the impl controller when dispatching implementer sub-agents. (The per-phase `depends_on:` annotation is separate: `plan-postcondition.sh` greps for `depends_on.*\[` to warn when `sync_plan_graph` hasn't been called, and `sync_plan_graph` reads only those phase-level annotations — it does not parse task blocks.)
 
 ```markdown
 #### Task 1.1: [descriptive name]
@@ -204,7 +206,7 @@ Worked example:
   - [ ] `grep -r "useNewParser" src/` returns ≥1 hit in flags.ts and auth.ts
 ```
 
-Tasks without the four YAML fields still parse — no hook blocks on their absence. `plan-postcondition.sh` warns only when the per-phase `depends_on:` annotation is present but `sync_plan_graph` was not called. Wave 2 may add a doc-structure-level check for the per-task fields once the plan corpus is consistent.
+Tasks without the four YAML fields still parse — no hook blocks on their absence. `plan-postcondition.sh` warns only when the per-phase `depends_on:` annotation is present but `sync_plan_graph` was not called.
 
 ## Group plans (feature = PR unit)
 

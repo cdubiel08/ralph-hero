@@ -1,10 +1,24 @@
 # Phase execution
 
-How `--mode auto` runs one phase of a plan via the task graph + sub-agent controller pattern. Default mode invokes a leaner form (no sub-agent dispatch) — most of this reference is auto-mode specific.
+How `--mode auto` runs one phase of a plan. Default mode invokes a leaner form (no sub-agent dispatch) — most of this reference is auto-mode specific.
+
+A phase is the atomic unit of implementation. It executes on one of two first-class paths, selected by whether the phase carries a `### Tasks` section:
+
+- **Direct** (no `### Tasks` — the common case): implement the phase inline. See §Direct execution.
+- **Task-graph** (`### Tasks` present): the plan opted this phase into parallel sub-agent dispatch. See §Task graph.
+
+Check for the section, pick the path, and execute. Do not narrate the choice or characterize the plan's format — the absence of `### Tasks` is a normal plan shape, not a defect or a legacy artifact.
+
+## §Direct execution
+
+1. Read the phase's "Changes Required" section and implement the changes inline (no sub-agent dispatch).
+2. Run the phase's automated verification.
+3. Stage + commit + push per [plan-compliance.md §Staging Algorithm](plan-compliance.md).
+4. Skip §Controller pattern and §Phase quality review — there's no task graph to review against.
 
 ## §Task graph
 
-A phase's `### Tasks` section contains one or more `#### Task N.M:` blocks. Each task has:
+The phase's `### Tasks` section contains one or more `#### Task N.M:` blocks. Each task has:
 
 - `files: <space-separated paths>` — exact ownership for the task.
 - `tdd: true | false` — whether the implementer must write tests first.
@@ -57,18 +71,6 @@ After all tasks pass the reviewer step:
 4. Post `## Phase N Review` comment on the issue with reviewer verdict + diff summary.
 5. If drift accumulated, post `## Drift Log — Phase N` comment summarizing off-ownership writes (read from `${TMPDIR}/ralph-drift-${RALPH_TICKET_ID}.log`).
 6. Run the phase's automated verification via a **haiku test-runner fork** (GH-1538): `Agent(subagent_type="general-purpose", model="haiku", prompt="Run each of these Automated Verification commands from <worktree-path>: <commands>. For EACH command report PASS or FAIL with the actual parsed result (test counts, exit status) — never infer PASS from exit 0 or tail output alone; quote the failing output verbatim on FAIL.")`. This keeps raw test output out of the controller's context and puts a results-parsing discipline between "command exited" and "check passed". On any FAIL: attempt one fix in the controller, re-run via the same fork; if still failing, commit what works and STOP for human intervention.
-
-## §Legacy plan fallback
-
-If the phase has no `### Tasks` section (older plan format, including most plans authored before the task-graph convention):
-
-1. Read the phase's "Changes Required" section directly.
-2. Implement the changes inline (no sub-agent dispatch).
-3. Run the phase's automated verification.
-4. Stage + commit + push per [plan-compliance.md §Staging Algorithm](plan-compliance.md).
-5. Skip the §Phase quality review step — there's no graph diff to review against.
-
-The fallback is for backward compatibility. New plans should always carry `### Tasks` blocks.
 
 ## §Resumption
 
