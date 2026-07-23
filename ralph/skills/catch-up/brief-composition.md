@@ -90,7 +90,20 @@ The marker write always happens, even when the notification failed — it is the
 
 ## Scheduling runbook
 
-A launchd plist template at `scripts/brief/launchd/com.ralph.brief-prepare.plist.template` fires `claude -p "/ralph:catch-up --mode brief --prepare" --dangerously-skip-permissions` weekday mornings, following the dream-loop `__HOME__`/`__PROJECTS_DIR__`/`__USER__` substitution convention (`scripts/dream/launchd/com.dubiel.dream-loop.plist.template`). No installer script — a single scheduled job doesn't justify one; setup is this documented render-and-load runbook.
+Two mechanisms, in preference order. Testing either = running `--prepare` by hand — there is no schedule-only code path.
+
+### Preferred: bridge-environment routine (in-app)
+
+Create a Claude Code routine (the `/schedule` skill or https://claude.ai/code/routines) pointed at a **bridge environment** for this repo on the target machine — the routine then spawns its session through the local Claude Code app in the real checkout, where the ralph plugin, MCP server, and board config already exist. Cloud (`anthropic_cloud`) environments do NOT install plugins and cannot run this skill; the environment MUST be `kind: bridge` (verified 2026-07-22: a bridge routine ran `--mode brief --prepare` end-to-end, wrote the marker, and fired the push).
+
+- Prompt: `Run /ralph:catch-up --mode brief --prepare` plus the guardrails (follow § Prepare exactly; stop on `Brief already prepared today.`; no other work).
+- Schedule: weekday mornings (cron is UTC — convert from local; avoid the :00 mark).
+- Scope `session_context.allowed_tools` to the prepare surface: `Skill`, `Read`, `Glob`, `Grep`, `Bash`, `PushNotification`, `mcp__plugin_ralph_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_status_summary` — no blanket permission bypass needed.
+- Caveat: the Claude Code app/bridge must be running at fire time; verify the first scheduled fire actually pushed. Teardown/pause: https://claude.ai/code/routines.
+
+### Fallback: launchd (app-independent, the custom option)
+
+A launchd plist template at `scripts/brief/launchd/com.ralph.brief-prepare.plist.template` fires `claude -p "/ralph:catch-up --mode brief --prepare" --dangerously-skip-permissions` weekday mornings, following the dream-loop `__HOME__`/`__PROJECTS_DIR__`/`__USER__` substitution convention (`scripts/dream/launchd/com.dubiel.dream-loop.plist.template`). Use it when the schedule must not depend on the app being open. No installer script — a single scheduled job doesn't justify one; setup is this documented render-and-load runbook.
 
 ### Setup
 
