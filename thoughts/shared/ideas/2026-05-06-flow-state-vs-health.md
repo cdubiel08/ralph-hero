@@ -1,10 +1,10 @@
 ---
 date: 2026-05-06
-status: draft
+status: formed
 type: idea
 author: user
 tags: [pipeline-dashboard, health-scoring, metrics, dx]
-github_issue: null
+github_issue: 1585
 ---
 
 # Separate `flow_state` from `health` in pipeline scoring
