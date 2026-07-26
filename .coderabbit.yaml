@@ -1,0 +1,30 @@
+# CodeRabbit configuration (GH-1589) — the external independent reviewer in
+# the portable merge gate. Repo is public → full Pro features free.
+#
+# Roles in the gate:
+#   - Its review satisfies scripts/merge-pr.sh gate 5 + the validator's
+#     external-review check (policy: .github/ralph-merge-policy.json).
+#   - request_changes_workflow: unresolved findings surface as a
+#     CHANGES_REQUESTED reviewDecision, which gate 1 hard-blocks (not
+#     forceable) until resolved or dismissed.
+#
+# thoughts/ and .claude/ are session/knowledge artifacts, not product code —
+# excluded to keep reviews focused and quiet.
+
+language: "en-US"
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!thoughts/**"
+    - "!.claude/**"
+
+chat:
+  auto_reply: true

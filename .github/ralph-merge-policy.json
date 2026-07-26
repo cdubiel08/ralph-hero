@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "attestation": {
+    "required": true
+  },
+  "external_review": {
+    "required": true,
+    "bot": "coderabbitai"
+  },
+  "exempt_authors": [
+    "dependabot[bot]",
+    "app/dependabot",
+    "github-actions[bot]",
+    "app/github-actions"
+  ]
+}
