@@ -27,7 +27,9 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 ## CI/CD
 
-**PR checks** (`ci.yml`): Build + test for mcp-server (Node 20/22), ralph-demo, ralph-knowledge. Hook tests from `ralph/hooks/scripts/__tests__`. ShellCheck on `ralph/hooks`. Workflow lint via actionlint + zizmor. MCP pin verification. Doc-roster consistency (`scripts/check-doc-rosters.sh`) — the agent/skill/tool rosters in this file are CI-checked against source, so update them in the same PR as roster changes.
+**PR checks** (`ci.yml`): Build + test for mcp-server (Node 20/22), ralph-demo, ralph-knowledge. Hook tests from `ralph/hooks/scripts/__tests__` + merge-gate script tests from `scripts/__tests__`. ShellCheck on `ralph/hooks` and `scripts/`. Workflow lint via actionlint + zizmor. MCP pin verification. Doc-roster consistency (`scripts/check-doc-rosters.sh`) — the agent/skill/tool rosters in this file are CI-checked against source, so update them in the same PR as roster changes.
+
+**Merge gate (GH-1589)**: `main` is ruleset-protected — all changes land via PR; merge through `bash scripts/merge-pr.sh PR_NUMBER` (never bare `gh pr merge`). The script enforces: no `CHANGES_REQUESTED`, CI green, a valid head_sha-bound attestation comment (post via `scripts/attest-pr.sh`), and a CodeRabbit review (policy: `.github/ralph-merge-policy.json`; dependabot/github-actions exempt from evidence gates). `validate-attestation.yml` republishes the verdict as the required `ralph-attestation` commit status. Escape hatch: `--force "reason"` (posts a durable override comment). Release workflows bypass via the GitHub Actions app.
 
 **Auto-release** (`release.yml`): Merges touching `mcp-server/src/**` auto-bump `mcp-server/package.json`, publish to npm (OIDC provenance), and pin `ralph/.mcp.json`. Include `#minor` or `#major` in a commit message for larger bumps.
 
