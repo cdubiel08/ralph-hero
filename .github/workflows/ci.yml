@@ -120,7 +120,7 @@ jobs:
           # Glob both naming conventions used today (*.test.sh and test-*.sh).
           # Each file runs in its own subshell so a `set -e` exit in one test
           # cannot abort the suite. First non-zero rc propagates.
-          find ralph/hooks/scripts/__tests__ \
+          find ralph/hooks/scripts/__tests__ scripts/__tests__ \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \
             | sort -z \
@@ -270,6 +270,14 @@ jobs:
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
         with:
           scandir: ralph/hooks
+          severity: error
+          format: gcc
+
+      # GH-1589: repo-root scripts/ carries the portable merge gate — lint it too.
+      - name: Run ShellCheck on repo scripts
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca
+        with:
+          scandir: scripts
           severity: error
           format: gcc
 
