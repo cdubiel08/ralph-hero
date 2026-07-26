@@ -1,4 +1,9 @@
 {
+  "env": {
+    "RALPH_GH_OWNER": "cdubiel08",
+    "RALPH_GH_REPO": "ralph-hero",
+    "RALPH_GH_PROJECT_NUMBER": "3"
+  },
   "worktree": {
     "bgIsolation": "none"
   }
