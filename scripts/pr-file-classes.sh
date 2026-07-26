@@ -50,10 +50,14 @@ if [[ "${1:-}" == "--pr" ]]; then
   PR_NUMBER="${2:?Usage: $0 --pr PR_NUMBER}"
   # Paginated REST fetch — `gh pr view --json files` silently caps at 100
   # files, which would let classes past the cap escape attestation coverage
-  # (CodeRabbit finding, PR #1602).
+  # (CodeRabbit finding, PR #1602). per_page rides in the URL: `-F` would
+  # flip gh api to POST on this GET endpoint. Fail LOUDLY on fetch error —
+  # an empty path list must not masquerade as "no classes to cover".
+  files_out=$(gh api --paginate "repos/{owner}/{repo}/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename') \
+    || { echo "ERROR: cannot list files for PR #$PR_NUMBER" >&2; exit 1; }
   while IFS= read -r line; do
     [[ -n "$line" ]] && paths+=("$line")
-  done < <(gh api --paginate "repos/{owner}/{repo}/pulls/$PR_NUMBER/files" -F per_page=100 --jq '.[].filename')
+  done <<<"$files_out"
 else
   paths=("$@")
 fi

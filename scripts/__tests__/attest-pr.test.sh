@@ -49,11 +49,11 @@ case "${1:-} ${2:-}" in
   "api --paginate")
     # Paginated REST reads: dispatch on the endpoint URL ($3).
     case "${3:-}" in
-      */pulls/*/files)
+      */pulls/*/files*)
         f="$GH_STUB_DIR/pr_files_rest.json"
         [[ -f "$f" ]] || jq '[.files[] | {filename: .path}]' "$GH_STUB_DIR/pr_view.json" >"$f"
         ;;
-      */issues/*/comments)
+      */issues/*/comments*)
         f="$GH_STUB_DIR/comments_list.json"
         [[ -f "$f" ]] || echo "[]" >"$f"
         ;;

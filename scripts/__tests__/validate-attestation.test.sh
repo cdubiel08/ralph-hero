@@ -35,7 +35,7 @@ case "${1:-} ${2:-}" in
   "api --paginate")
     # pr-file-classes.sh paginated REST files fetch
     case "${3:-}" in
-      */pulls/*/files)
+      */pulls/*/files*)
         f="$GH_STUB_DIR/pr_files_rest.json"
         [[ -f "$f" ]] || jq '[.files[] | {filename: .path}]' "$GH_STUB_DIR/pr_view.json" >"$f"
         ;;
