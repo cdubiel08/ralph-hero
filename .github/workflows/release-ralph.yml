@@ -114,6 +114,7 @@ jobs:
       - name: Commit bump and tag
         env:
           NEW_VERSION: ${{ steps.version.outputs.new }}
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -125,7 +126,16 @@ jobs:
           # this workflow's checkout and the commit; the concurrency group above
           # prevents two release jobs from interleaving but not unrelated pushes.
           git pull --rebase origin main
-          git push origin main --tags
+          # GH-1589: push via the release deploy key — the sole bypass actor
+          # on the protected-main ruleset. GITHUB_TOKEN pushes are blocked by
+          # the pull_request rule, and the github-actions app cannot be a
+          # bypass actor on user-owned repos.
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$RELEASE_DEPLOY_KEY" > "$HOME/.ssh/release_key"
+          chmod 600 "$HOME/.ssh/release_key"
+          ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes" \
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" main --tags
 
       - name: Create GitHub Release
         env:
