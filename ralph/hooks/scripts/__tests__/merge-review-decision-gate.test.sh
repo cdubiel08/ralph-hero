@@ -50,6 +50,10 @@ run_case "bare gh pr merge blocked" 2 "gh pr merge 123 --merge"
 run_case "gh pr merge flags-first blocked" 2 "gh pr merge --squash 123"
 run_case "gh pr merge URL blocked" 2 "gh pr merge https://github.com/o/r/pull/123"
 run_case "chained gh pr merge blocked" 2 "gh pr checks 123 && gh pr merge 123"
+# Regression (CodeRabbit, PR #1602): merge-pr.sh substring must NOT allowlist
+# a command that ALSO contains a bare gh pr merge — block check runs first.
+run_case "merge-pr.sh chained with bare gh pr merge blocked" 2 "bash scripts/merge-pr.sh 123 && gh pr merge 999 --squash"
+run_case "merge-pr.sh then semicolon gh pr merge blocked" 2 "bash scripts/merge-pr.sh 123; gh pr merge 999"
 
 # Block message names the verified path
 json=$(jq -n '{tool_input: {command: "gh pr merge 123"}}')

@@ -9,23 +9,31 @@
 # harness can skip once branch protection requires the context. Also
 # runnable locally for debugging.
 #
-# Output contract: exactly one line "<state>|<description>" on stdout.
+# Output contract: exactly one line "<state>|<sha>|<description>" on stdout.
 #   state ∈ success | failure | pending   (GitHub commit-status states)
+#   sha    = the head SHA this verdict was computed against ("unknown" when
+#            the PR itself could not be read). The workflow posts the status
+#            on THIS sha — never a re-queried one — so a push racing the
+#            validation cannot receive a verdict computed for an older commit
+#            (CodeRabbit finding, PR #1602).
 #   pending  = evidence not there YET (no attestation, stale sha, awaiting
 #              external review) — expected to resolve without code changes
 #   failure  = attestation present but WRONG (unparseable, failing tests,
-#              missing verdict, class under-coverage)
+#              non-APPROVED verdict, class under-coverage) — or a malformed
+#              policy file (fail closed)
 #   success  = fully attested, or exempt/not-required by policy
 # Exits 0 in all verdict cases; non-zero only on invocation error.
 #
 # Checks, in order:
+#   PR unreadable                               → failure (sha unknown)
+#   policy file malformed JSON                  → failure (fail CLOSED)
 #   policy missing / attestation.required=false → success (not opted in)
 #   author policy-exempt (bots)                 → success
 #   marker comment missing                      → pending
 #   JSON payload unparseable                    → failure
 #   head_sha != current PR head                 → pending (re-attest)
 #   tests[] empty or any exit_code != 0         → failure
-#   review.verdict empty                        → failure
+#   review.verdict != APPROVED                  → failure
 #   declared file_classes ⊉ recomputed classes  → failure (under-coverage)
 #   external review required and absent         → pending
 #   otherwise                                   → success
@@ -39,28 +47,34 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$REPO_ROOT/.github/ralph-merge-policy.json}"
 MARKER='<!-- ralph-attestation:v1 -->'
 
-out() { # out <state> <description> — single-line verdict, exit 0
-  echo "$1|$2"
+head_sha="unknown"
+out() { # out <state> <description> — single-line verdict bound to head_sha, exit 0
+  echo "$1|$head_sha|$2"
   exit 0
 }
+
+# --- PR facts (first, so every verdict carries the validated sha) ----------
+pr_json=$(gh pr view "$PR_NUMBER" --json headRefOid,author,comments,reviews 2>/dev/null) \
+  || out failure "cannot read PR #$PR_NUMBER"
+head_sha=$(jq -r '.headRefOid // "unknown"' <<<"$pr_json")
+author=$(jq -r '.author.login // ""' <<<"$pr_json")
 
 # --- policy ----------------------------------------------------------------
 if [[ ! -f "$POLICY_FILE" ]]; then
   out success "no merge policy file — attestation not required"
 fi
-attestation_required=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE" 2>/dev/null || echo "false")
-external_required=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE" 2>/dev/null || echo "false")
-external_bot=$(jq -r '.external_review.bot // "coderabbitai"' "$POLICY_FILE" 2>/dev/null || echo "coderabbitai")
+# Fail CLOSED on a malformed policy file — a corrupt policy must not
+# silently disable the gate (CodeRabbit finding, PR #1602).
+if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
+  out failure "merge policy file is not valid JSON: $POLICY_FILE"
+fi
+attestation_required=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
+external_required=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
+external_bot=$(jq -r '.external_review.bot // "coderabbitai"' "$POLICY_FILE")
 
 if [[ "$attestation_required" != "true" ]]; then
   out success "attestation not required by policy"
 fi
-
-# --- PR facts --------------------------------------------------------------
-pr_json=$(gh pr view "$PR_NUMBER" --json headRefOid,author,comments,reviews 2>/dev/null) \
-  || out failure "cannot read PR #$PR_NUMBER"
-head_sha=$(jq -r '.headRefOid // ""' <<<"$pr_json")
-author=$(jq -r '.author.login // ""' <<<"$pr_json")
 
 exempt=$(jq -r --arg a "$author" '
   def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
@@ -92,9 +106,13 @@ if [[ "$tests_ok" != "true" ]]; then
   out failure "test evidence missing or failing (tests[] empty or non-zero exit_code)"
 fi
 
-has_verdict=$(jq -r '(.review.verdict // "") != "" | tostring' <<<"$att_json")
-if [[ "$has_verdict" != "true" ]]; then
+att_verdict=$(jq -r '.review.verdict // ""' <<<"$att_json")
+if [[ -z "$att_verdict" ]]; then
   out failure "review verdict missing from attestation"
+elif [[ "$att_verdict" != "APPROVED" ]]; then
+  # Presence alone is not approval — an honest REJECTED must fail
+  # (CodeRabbit finding, PR #1602).
+  out failure "review verdict is '$att_verdict', not APPROVED"
 fi
 
 # --- class coverage: recompute from the live diff --------------------------

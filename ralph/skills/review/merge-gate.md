@@ -243,7 +243,7 @@ This gate is intentionally orthogonal to `RALPH_REVIEW_MODE` (which gates code-r
 
 **GH-1589 simplification: autonomous mode has no separate criteria.** The script IS the gate — `bash scripts/merge-pr.sh PR_NUMBER` enforces review, CI, mergeable, attestation, and external review identically in both modes. Autonomous behavior differs only in what happens on failure:
 
-- `MERGE GATE FAIL — checks: ...pending` (or `awaiting external review`) → STOP; the next loop tick re-evaluates. Evidence-in-flight resolves without code changes.
+- `MERGE GATE FAIL — checks: ...pending` (or `external-review: no review by <bot>`) → STOP; the next loop tick re-evaluates. Evidence-in-flight resolves without code changes.
 - Any other `MERGE GATE FAIL` → STOP and surface; there is no fix cycle in autonomous mode — the gate never edits code.
 
 Historical note: the pre-1589 three-criterion prose gate emitted `AUTO-MERGE BLOCKED — <reason>`. The script emits `MERGE BLOCKED — <reason>` (plus `MERGE GATE FAIL`); loop runners already accept both tokens per the contract below, so the change is grep-compatible.

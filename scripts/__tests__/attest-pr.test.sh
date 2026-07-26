@@ -46,6 +46,21 @@ case "${1:-} ${2:-}" in
     # PATCH update path: gh api --method PATCH repos/... -f body=...
     printf '%s' "$body_val" >"$GH_STUB_DIR/patched_body.txt"
     ;;
+  "api --paginate")
+    # Paginated REST reads: dispatch on the endpoint URL ($3).
+    case "${3:-}" in
+      */pulls/*/files)
+        f="$GH_STUB_DIR/pr_files_rest.json"
+        [[ -f "$f" ]] || jq '[.files[] | {filename: .path}]' "$GH_STUB_DIR/pr_view.json" >"$f"
+        ;;
+      */issues/*/comments)
+        f="$GH_STUB_DIR/comments_list.json"
+        [[ -f "$f" ]] || echo "[]" >"$f"
+        ;;
+      *) echo "stub: unhandled paginate URL $3" >&2; exit 64 ;;
+    esac
+    if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$f"; else cat "$f"; fi
+    ;;
   "api repos/{owner}/{repo}/issues/123/comments"*|"api repos"*)
     f="$GH_STUB_DIR/comments_list.json"
     [[ -f "$f" ]] || echo "[]" >"$f"

@@ -40,12 +40,10 @@ if [[ -z "$cmd" ]]; then
   allow
 fi
 
-# The verified path passes through untouched.
-if echo "$cmd" | grep -qE 'scripts/merge-pr\.sh'; then
-  allow
-fi
-
-# Bare `gh pr merge` → funnel to the script.
+# Bare `gh pr merge` ANYWHERE in the command (including chained after
+# merge-pr.sh via && / ; / |) funnels to the script. Checked BEFORE the
+# merge-pr.sh allowlist so a mixed command cannot ride through on that
+# substring (CodeRabbit finding, PR #1602).
 if echo "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge\b'; then
   block "merge-review-decision-gate: use the verified merge path, not bare \`gh pr merge\`.
 
@@ -61,4 +59,5 @@ hatch exists: scripts/merge-pr.sh PR_NUMBER --force \"reason\" posts a
 durable override comment before merging (GH-1589)."
 fi
 
+# The verified path (and everything else) passes through untouched.
 allow

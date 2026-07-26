@@ -48,9 +48,12 @@ classify() { # classify <path> → echoes one class
 paths=()
 if [[ "${1:-}" == "--pr" ]]; then
   PR_NUMBER="${2:?Usage: $0 --pr PR_NUMBER}"
+  # Paginated REST fetch — `gh pr view --json files` silently caps at 100
+  # files, which would let classes past the cap escape attestation coverage
+  # (CodeRabbit finding, PR #1602).
   while IFS= read -r line; do
     [[ -n "$line" ]] && paths+=("$line")
-  done < <(gh pr view "$PR_NUMBER" --json files --jq '.files[].path')
+  done < <(gh api --paginate "repos/{owner}/{repo}/pulls/$PR_NUMBER/files" -F per_page=100 --jq '.[].filename')
 else
   paths=("$@")
 fi

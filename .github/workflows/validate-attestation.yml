@@ -56,11 +56,19 @@ jobs:
       - name: Validate attestation and publish commit status
         run: |
           set -euo pipefail
-          result=$(bash scripts/validate-attestation.sh "$PR_NUMBER") || result="failure|validator error (see run log)"
+          # Validator emits "state|sha|description" — the status is posted on
+          # the SHA the verdict was computed against, never a re-queried head,
+          # so a racing push can't inherit a stale verdict.
+          result=$(bash scripts/validate-attestation.sh "$PR_NUMBER") || result="failure|unknown|validator error (see run log)"
           state="${result%%|*}"
-          desc="${result#*|}"
-          head_sha=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+          rest="${result#*|}"
+          head_sha="${rest%%|*}"
+          desc="${rest#*|}"
           echo "PR #$PR_NUMBER @ $head_sha → $state: $desc"
+          if [[ "$head_sha" == "unknown" || -z "$head_sha" ]]; then
+            echo "no resolvable head SHA — skipping status post (PR unreadable)"
+            exit 1
+          fi
           gh api "repos/${GITHUB_REPOSITORY}/statuses/$head_sha" \
             -f state="$state" \
             -f context="ralph-attestation" \

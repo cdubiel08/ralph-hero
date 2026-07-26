@@ -68,13 +68,13 @@ cat >"$POLICY" <<'EOF'
 }
 EOF
 
-good_attestation_body() { # good_attestation_body <head_sha> [tests_exit]
-  local sha="$1" texit="${2:-0}"
+good_attestation_body() { # good_attestation_body <head_sha> [tests_exit] [verdict]
+  local sha="$1" texit="${2:-0}" verdict="${3:-APPROVED}"
   local payload
-  payload=$(jq -n --arg sha "$sha" --argjson texit "$texit" '{
+  payload=$(jq -n --arg sha "$sha" --argjson texit "$texit" --arg v "$verdict" '{
     version: 1, pr: 123, head_sha: $sha,
     tests: [{command: "npm test", exit_code: $texit, summary: "ok"}],
-    review: {verdict: "APPROVED", reviewer: "ralph:review-agent", mode: "internal"}
+    review: {verdict: $v, reviewer: "ralph:review-agent", mode: "internal"}
   }')
   # shellcheck disable=SC2016  # literal markdown code fence, no expansion wanted
   printf '<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n%s\n```\n' "$payload"
@@ -275,6 +275,30 @@ setup_conflicting() {
 run_case "CONFLICTING blocks" 1 "$POLICY" setup_conflicting
 run_case "CONFLICTING blocks despite --force" 1 "$POLICY" setup_conflicting --force "try anyway"
 expect_not_merged "CONFLICTING + force"
+
+# 17. Non-APPROVED attestation verdict blocks (CodeRabbit, PR #1602)
+setup_rejected() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA" 0 "REJECTED")" "$CODERABBIT_REVIEWS"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "REJECTED attestation verdict blocks" 1 "$POLICY" setup_rejected
+expect_out "non-APPROVED verdict named" "not APPROVED"
+expect_not_merged "REJECTED verdict"
+
+# 18. Malformed policy file fails CLOSED (CodeRabbit, PR #1602)
+BAD_POLICY="$TMP_ROOT/bad-policy.json"
+echo '{ not json' >"$BAD_POLICY"
+run_case "malformed policy fails closed" 1 "$BAD_POLICY" setup_green
+expect_out "policy gate named" "MERGE GATE FAIL — policy"
+expect_not_merged "malformed policy"
+
+# 19. Merge is pinned to the gated head SHA (TOCTOU; CodeRabbit, PR #1602)
+run_case "green path pins merge to head sha" 0 "$POLICY" setup_green
+if grep -q -- "--match-head-commit $SHA" "$LAST_DIR/gh.log" 2>/dev/null; then
+  pass "merge invoked with --match-head-commit \$head_sha"
+else
+  fail "merge missing --match-head-commit pin: $(grep 'pr merge' "$LAST_DIR/gh.log" 2>/dev/null)"
+fi
 
 # ---------------------------------------------------------------------------
 echo

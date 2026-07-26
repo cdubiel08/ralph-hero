@@ -118,9 +118,14 @@ ATTESTATION_REQUIRED="false"
 EXTERNAL_REQUIRED="false"
 EXTERNAL_BOT="coderabbitai"
 if [[ -f "$POLICY_FILE" ]]; then
-  ATTESTATION_REQUIRED=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE" 2>/dev/null || echo "false")
-  EXTERNAL_REQUIRED=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE" 2>/dev/null || echo "false")
-  EXTERNAL_BOT=$(jq -r '.external_review.bot // "coderabbitai"' "$POLICY_FILE" 2>/dev/null || echo "coderabbitai")
+  # Fail CLOSED on a malformed policy file — a truncated/corrupt policy must
+  # not silently disable the evidence gates (CodeRabbit finding, PR #1602).
+  if ! jq -e . "$POLICY_FILE" >/dev/null 2>&1; then
+    block "policy" "merge policy file is not valid JSON: $POLICY_FILE"
+  fi
+  ATTESTATION_REQUIRED=$(jq -r '.attestation.required // false | tostring' "$POLICY_FILE")
+  EXTERNAL_REQUIRED=$(jq -r '.external_review.required // false | tostring' "$POLICY_FILE")
+  EXTERNAL_BOT=$(jq -r '.external_review.bot // "coderabbitai"' "$POLICY_FILE")
 fi
 
 # ---------------------------------------------------------------------------
@@ -209,13 +214,17 @@ if [[ "$ATTESTATION_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
     else
       att_sha=$(jq -r '.head_sha // ""' <<<"$att_json")
       tests_ok=$(jq -r '(.tests // []) | ((length > 0) and all(.exit_code == 0)) | tostring' <<<"$att_json")
-      has_verdict=$(jq -r '(.review.verdict // "") != "" | tostring' <<<"$att_json")
+      att_verdict=$(jq -r '.review.verdict // ""' <<<"$att_json")
       if [[ "$att_sha" != "$head_sha" ]]; then
         soft_gate "attestation" "attestation head_sha ${att_sha:0:8} != PR head ${head_sha:0:8} — re-attest after the latest push"
       elif [[ "$tests_ok" != "true" ]]; then
         soft_gate "attestation" "attestation lacks passing test evidence (tests[] empty or non-zero exit_code)"
-      elif [[ "$has_verdict" != "true" ]]; then
+      elif [[ -z "$att_verdict" ]]; then
         soft_gate "attestation" "attestation lacks a review verdict"
+      elif [[ "$att_verdict" != "APPROVED" ]]; then
+        # An honest non-approving verdict is evidence AGAINST merging
+        # (CodeRabbit finding, PR #1602: presence-only check let REJECTED pass).
+        soft_gate "attestation" "attestation review verdict is '$att_verdict', not APPROVED"
       fi
     fi
   fi
@@ -281,9 +290,10 @@ if [[ -n "$WORKTREE_ID" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Merge
+# Merge — pinned to the gated head SHA so a push landing during the gate
+# window cannot merge an unreviewed commit (TOCTOU; CodeRabbit finding).
 # ---------------------------------------------------------------------------
-echo "Merging PR #$PR_NUMBER..."
-gh pr merge "$PR_NUMBER" --merge --delete-branch
+echo "Merging PR #$PR_NUMBER @ ${head_sha:0:8}..."
+gh pr merge "$PR_NUMBER" --merge --delete-branch --match-head-commit "$head_sha"
 
 echo "PR #$PR_NUMBER merged successfully."

@@ -32,6 +32,17 @@ case "${1:-} ${2:-}" in
   "pr view")
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$GH_STUB_DIR/pr_view.json"; else cat "$GH_STUB_DIR/pr_view.json"; fi
     ;;
+  "api --paginate")
+    # pr-file-classes.sh paginated REST files fetch
+    case "${3:-}" in
+      */pulls/*/files)
+        f="$GH_STUB_DIR/pr_files_rest.json"
+        [[ -f "$f" ]] || jq '[.files[] | {filename: .path}]' "$GH_STUB_DIR/pr_view.json" >"$f"
+        ;;
+      *) echo "stub: unhandled paginate URL $3" >&2; exit 64 ;;
+    esac
+    if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$f"; else cat "$f"; fi
+    ;;
   *)
     echo "stub: unhandled gh $*" >&2
     exit 64
@@ -136,6 +147,33 @@ s_garbage() {
 ```' "$CODERABBIT"
 }
 run_v "unparseable payload" failure "unparseable" "$POLICY" s_garbage
+
+# CodeRabbit findings (PR #1602):
+
+# Non-APPROVED verdict must FAIL, not pass on presence
+s_rejected() {
+  local att
+  att=$(attestation_body "$SHA")
+  att="${att/APPROVED/REJECTED}"
+  write_pr "$1" "cdubiel08" "$att" "$CODERABBIT"
+}
+run_v "REJECTED verdict fails (presence is not approval)" failure "not APPROVED" "$POLICY" s_rejected
+
+# Malformed policy file fails CLOSED
+BAD_POLICY="$TMP_ROOT/bad-policy.json"
+echo '{ not json' >"$BAD_POLICY"
+run_v "malformed policy fails closed" failure "not valid JSON" "$BAD_POLICY" s_valid
+
+# Output is state|sha|description — verdict bound to the validated SHA
+dir="$TMP_ROOT/sha-bind"
+mkdir -p "$dir"
+s_valid "$dir"
+out=$(PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" RALPH_MERGE_POLICY_FILE="$POLICY" bash "$SCRIPT" 123)
+if [[ "$out" == "success|$SHA|"* ]]; then
+  pass "verdict line carries the validated head SHA"
+else
+  fail "sha binding missing from output: $out"
+fi
 
 echo
 echo "Results: $PASS passed, $FAIL failed"
