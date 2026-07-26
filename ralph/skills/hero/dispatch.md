@@ -85,7 +85,7 @@ Decisions-first (per `plan-review.md` § Interactive vs auto): present one `Deci
 
 After all PRs created, read `$RALPH_REVIEW_MODE` (default `auto`):
 
-**`auto`** (default; unset or `auto`): dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics (it's Plan 6's verb) — including the epic close-out validation when the merge closes an epic's last child (fable val-agent, `ralph/skills/review/merge-gate.md` § Epic close-out validation). `CHANGES_REQUESTED` on the PR remains the unconditional human veto (`merge-review-decision-gate.sh` runs regardless of this dial).
+**`auto`** (default; unset or `auto`): dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics (it's Plan 6's verb) — including the epic close-out validation when the merge closes an epic's last child (fable val-agent, `ralph/skills/review/merge-gate.md` § Epic close-out validation). `CHANGES_REQUESTED` on the PR remains the unconditional human veto (enforced by `scripts/merge-pr.sh` gate 1 regardless of this dial — GH-1589).
 
 **`interactive`** (opt-out): report PR URLs, STOP. Human must re-run `/ralph:hero NNN` or `/ralph:review NNN`.
 

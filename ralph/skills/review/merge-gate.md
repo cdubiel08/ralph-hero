@@ -14,33 +14,22 @@ Queue-pick does NOT pre-filter unreviewed PRs — downstream pre-merge gates cat
 
 ## Pre-merge gates
 
-**ALWAYS RUN**, even when called from default-mode (which has already validated + reviewed). The gates are a safety net against caller misconfiguration.
+**The gates live IN `scripts/merge-pr.sh`** (GH-1589) — deterministic, portable (plain bash + gh + jq), enforced from ANY shell or harness. The skill does not duplicate them in prose; invoke the script and parse its output. Server-side, `validate-attestation.yml` republishes the attestation verdict as the `ralph-attestation` commit status — the layer no harness can skip.
 
-### Review decision
+The script blocks (exit 1, `MERGE GATE FAIL — <gate>: <detail>` + legacy `MERGE BLOCKED — <detail>`) unless ALL of:
 
-```bash
-DECISION=$(gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision')
-```
+| Gate | Requirement | On failure |
+|---|---|---|
+| `state` | PR is OPEN | Wrong target — re-check queue-pick. |
+| `review` | `reviewDecision != CHANGES_REQUESTED` | **Hard block, `--force` does not apply.** Resolve or dismiss the review on GitHub (audit-logged). |
+| `mergeable` | `MERGEABLE` (UNKNOWN retried once, 5s) | `CONFLICTING` → rebase is impl-agent's job, not merge-mode's. Not forceable. |
+| `checks` | Every CI check bucket `pass`/`skipping` (the `ralph-attestation` context is excluded — the script validates the comment itself) | Pending → wait/re-tick. Failing → fix cycle. Zero checks → loud warn, continues. |
+| `attestation` | `<!-- ralph-attestation:v1 -->` comment present, JSON-valid, `head_sha` == current head, non-empty `tests[]` all `exit_code: 0`, review verdict present | Post via `scripts/attest-pr.sh` (§Attestation). Stale sha → re-attest after the latest push. |
+| `external-review` | A review by the policy bot (CodeRabbit) exists | Wait for the bot, or fix what it rejected. |
 
-| Value | Action |
-|---|---|
-| `APPROVED` | Continue. |
-| `REVIEW_REQUIRED` / `null` | `MERGE BLOCKED — review required`. STOP. |
-| `CHANGES_REQUESTED` | `MERGE BLOCKED — changes requested`. STOP. |
+Policy data: `.github/ralph-merge-policy.json` — evidence requirements + exempt authors (dependabot, github-actions: CI is their evidence; the evidence gates skip, CI-green never does). No policy file → evidence gates off (portability for repos that haven't opted in).
 
-This is the safety net `/ralph:review --mode merge` provides for standalone callers (`just merge NNN`) that skip the default-mode flow. Even if a caller invokes merge directly on an unreviewed PR, the gate refuses.
-
-### Mergeable status
-
-```bash
-MERGEABLE=$(gh pr view PR_NUMBER --json mergeable --jq '.mergeable')
-```
-
-| Value | Action |
-|---|---|
-| `MERGEABLE` | Continue. |
-| `CONFLICTING` | `MERGE BLOCKED — conflicts`. STOP. Conflict resolution is impl-agent's job, not merge-mode's. |
-| `UNKNOWN` | Retry once after 5 seconds. If still `UNKNOWN`, `MERGE BLOCKED — mergeable status unknown` and STOP. |
+Escape hatch: `bash scripts/merge-pr.sh PR_NUMBER --force "reason"` skips the soft gates and posts a durable `## Merge Gate Override` comment (actor, reason, skipped gates, sha) BEFORE merging. Loud, never silent — and `review`/`mergeable` hard blocks still apply.
 
 ### Scout Report gate
 
@@ -63,9 +52,39 @@ verdict: PASS  (or WARN, or FAIL)
 
 The `verdict:` line is case-insensitive; the hook tolerates whitespace before/after the colon.
 
+## Attestation & adversarial review
+
+Evidence is posted BEFORE invoking the merge (default-mode Step 4.9; standalone merges block until it exists).
+
+**Adversarial reviewer selection (conditional-by-class + unconditional floor):**
+
+1. `bash scripts/pr-file-classes.sh --pr PR_NUMBER` — deterministic classes for the diff.
+2. One adversarial reviewer per class present, each prompted to REFUTE the change through its lens, plus the security floor ALWAYS:
+
+| Class | Adversarial lens |
+|---|---|
+| `mcp-ts` / `knowledge-ts` | TS correctness, tool-contract regressions, cache/state bugs |
+| `hooks-shell` / `scripts-shell` | gate semantics, fail-open paths, quoting, bash-3.2 compat |
+| `ci-workflows` | injection surfaces, permissions creep, unpinned actions |
+| `deps` | supply-chain diff, lockfile provenance, major-bump blast radius |
+| `skills-prose` | roster consistency, contract drift vs. source |
+| `other` | general correctness |
+| _(always)_ | **security floor** — secrets, authz, injection, data exposure |
+
+3. Post the attestation (one comment per PR, updated in place; `head_sha`-bound — any later push invalidates it):
+
+```bash
+bash scripts/attest-pr.sh PR_NUMBER \
+  --test "npm test::0::212 passed" \      # real commands + real exit codes
+  --review-verdict APPROVED --reviewer "ralph:review-agent" \
+  --class "mcp-ts::adversarial:mcp-ts" --class "security::security-floor"
+```
+
+Classes auto-compute from the diff when no `--class` given. `validate-attestation.yml` recomputes classes server-side and FAILS attestations that under-declare coverage — fabricating breadth doesn't work. External independence comes from CodeRabbit (`.coderabbit.yaml`): a separate bot identity whose Request-Changes reviews land in the `review` hard block.
+
 ## Merge mechanics
 
-Invoke the repo-root script (lives at `scripts/merge-pr.sh`, reused as-is by old + new plugins):
+Invoke the repo-root script (the verified gate + merge, GH-1589):
 
 ```bash
 bash scripts/merge-pr.sh PR_NUMBER
@@ -222,82 +241,33 @@ Loop runners (`scripts/ralph-loop.sh --auto-merge` and equivalents) set `RALPH_A
 
 This gate is intentionally orthogonal to `RALPH_REVIEW_MODE` (which gates code-review in default-mode Step 3). Auto-review and auto-merge are independent dials.
 
-### Criteria (ALL must hold)
+**GH-1589 simplification: autonomous mode has no separate criteria.** The script IS the gate — `bash scripts/merge-pr.sh PR_NUMBER` enforces review, CI, mergeable, attestation, and external review identically in both modes. Autonomous behavior differs only in what happens on failure:
 
-1. **Review approved** — `gh pr view PR_NUMBER --json reviewDecision --jq '.reviewDecision'` returns `APPROVED`. The carve-outs in § Carve-outs below also satisfy this criterion (XS-no-comments OR self-authored-on-solo-repo).
-2. **CI green** — `gh pr checks PR_NUMBER --json name,state,conclusion` returns every check with `state: completed` AND `conclusion: success`. Pending or failing checks block.
-3. **PR open and mergeable** — `gh pr view PR_NUMBER --json state,mergeable --jq '{state,mergeable}'` shows `state: OPEN` and `mergeable: MERGEABLE`. `CONFLICTING` or `UNKNOWN` blocks.
+- `MERGE GATE FAIL — checks: ...pending` (or `awaiting external review`) → STOP; the next loop tick re-evaluates. Evidence-in-flight resolves without code changes.
+- Any other `MERGE GATE FAIL` → STOP and surface; there is no fix cycle in autonomous mode — the gate never edits code.
 
-Recommended invocation shape (all three reads parallelized into one shell block):
+Historical note: the pre-1589 three-criterion prose gate emitted `AUTO-MERGE BLOCKED — <reason>`. The script emits `MERGE BLOCKED — <reason>` (plus `MERGE GATE FAIL`); loop runners already accept both tokens per the contract below, so the change is grep-compatible.
 
-```bash
-review_decision=$(gh pr view "$PR_NUMBER" --json reviewDecision --jq '.reviewDecision')
-ci_status=$(gh pr checks "$PR_NUMBER" --json name,state,conclusion)
-pr_state=$(gh pr view "$PR_NUMBER" --json state,mergeable --jq '{state,mergeable}')
-```
+## Superseded: carve-outs from the APPROVED requirement
 
-Then evaluate the three criteria together. Pending checks are explicit blockers — emit the `AUTO-MERGE BLOCKED ci-pending` form and let the next loop iteration re-evaluate.
+**Deleted by GH-1589.** The gate no longer requires `reviewDecision: APPROVED` at all — on solo repos it is structurally unattainable (GitHub forbids self-approval), which is why the old XS-no-comments and self-authored-on-solo-repo carve-outs (GH-932, GH-1375, GH-1395, GH-1538) existed. The evidence contract replaced the whole construct:
 
-### On miss — `AUTO-MERGE BLOCKED`
+- `CHANGES_REQUESTED` remains the unconditional block (now in the script, not a hook).
+- Positive evidence = attestation (tests + verdict + class coverage, `head_sha`-bound) + external review by an independent bot identity (CodeRabbit).
+- Bot authors (dependabot, github-actions) are policy-exempt from the evidence gates — CI is their evidence. See `.github/ralph-merge-policy.json`.
 
-Emit a distinct token so callers (loop runners, hero, autopilot) can distinguish autonomous-gate failures from interactive `MERGE BLOCKED`:
-
-```
-AUTO-MERGE BLOCKED
-Issue: #NNN
-PR: #PR_NUMBER
-Review: [APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|null]
-CI: [summary — e.g., "2/5 checks pending", "1 failing: lint", "all green"]
-Reason: [first failing criterion in plain English]
-```
-
-STOP. The next loop tick re-evaluates. There is no fix cycle in autonomous mode — the gate only merges when everything is already green; it never edits code.
-
-### On pass
-
-All criteria hold. Proceed to the Scout Report gate (above), then Merge mechanics, then Worktree cleanup.
-
-## Carve-outs from the APPROVED requirement
-
-Two intentional carve-outs that the pre-merge `reviewDecision` check (interactive mode) AND the autonomous mode Criterion 1 honor. Both are enforced deterministically by `merge-review-decision-gate.sh` (Phase 4 of GH-1395) — the prose here documents what the hook accepts.
-
-### XS-no-comments
-
-PRs whose linked issues are ALL `estimate: XS` AND whose comment count is `0` may merge without a formal `APPROVED` decision. Use case: one-line typo fixes, trivial docs corrections, comment-only changes where requesting a formal review adds latency without value. Group PRs qualify only when EVERY member is XS — the hook evaluates all `closingIssuesReferences`, fail-closed on empty refs or estimate-fetch errors (GH-1538).
-
-```bash
-estimate=$(gh issue view ISSUE --json projectItems --jq '[.projectItems[].fieldValues[]? | select(.field.name == "Estimate") | .name] | .[0] // "null"')
-comment_count=$(gh pr view PR_NUMBER --json comments --jq '.comments | length')
-if [[ "$estimate" == "XS" && "$comment_count" == "0" ]]; then
-  # carve-out applies — treat as APPROVED-equivalent
-fi
-```
-
-Pairs with the `kind:trivial` / `kind:doc` fast-track ladder rungs (spec §Fast-Track Ladder).
-
-### Self-authored-on-solo-repo
-
-Self-authored PRs on single-contributor repos are treated as APPROVED-equivalent. GitHub blocks self-approval (`Can not approve your own pull request`), so a formal `APPROVED` review is structurally unattainable — without this carve-out, single-developer repos cannot merge anything.
-
-```bash
-pr_author=$(gh pr view PR_NUMBER --json author --jq '.author.login')
-current_user=$(gh api user --jq '.login')
-contributor_count=$(gh api "repos/$(gh repo view --json nameWithOwner --jq .nameWithOwner)/contributors" --jq 'length')
-if [[ "$pr_author" == "$current_user" && "$contributor_count" -le 1 ]]; then
-  # carve-out applies — treat as APPROVED-equivalent
-fi
-```
-
-The caller (default-mode close-out, finish-equivalent) is responsible for ensuring code review actually ran and resolved clean before invoking merge — these carve-outs only suppress the `APPROVED` gate, not the code-review-gate-in-default-mode step. See [GH-932](https://github.com/cdubiel08/ralph-hero/issues/932) for the bootstrap rationale.
+`merge-review-decision-gate.sh` survives as a funnel only: inside `/ralph:review`, bare `gh pr merge` is blocked toward `scripts/merge-pr.sh` so the gates actually run.
 
 ## Verdict tokens (strict)
 
 | Token | Meaning |
 |---|---|
 | `MERGED` | Merge succeeded; SHA captured; issue transitioned to Done. |
-| `MERGE BLOCKED — <reason>` | Pre-merge gate failed (review/mergeable/scout). Emitted in BOTH interactive and autonomous modes — the Pre-merge gates section runs unconditionally per `ALWAYS RUN` at line 17. STOP without merging. |
-| `AUTO-MERGE BLOCKED — <reason>` | Autonomous-mode-specific criterion failed beyond the Pre-merge gates (CI not green, mergeable=UNKNOWN, etc.). STOP — next loop tick re-evaluates. |
+| `MERGE GATE PASS` | Script gates all satisfied (or `--force`-skipped with override comment); merge proceeding. |
+| `MERGE GATE FAIL — <gate>: <detail>` | Script gate failed; gate name is machine-parseable (`state`/`review`/`mergeable`/`checks`/`attestation`/`external-review`/`fetch`). STOP without merging. |
+| `MERGE GATE WARN — <detail>` | Non-blocking anomaly (zero CI checks, force-skip notice). |
+| `MERGE BLOCKED — <reason>` | Legacy block token, emitted alongside every `MERGE GATE FAIL`. STOP without merging. |
 | `MERGE NOT READY` | PR not findable (no open PR on branch). STOP. |
 | `Queue empty.` | No-work short-circuit from queue-pick path. |
 
-> **Loop-runner contract.** Callers grepping for autonomous-mode failures must accept BOTH `MERGE BLOCKED — ` and `AUTO-MERGE BLOCKED — ` as block signals. The Pre-merge gates run before the autonomous-mode-only criteria, so a `MERGE BLOCKED — review required` can fire in an `RALPH_AUTO_MERGE=true` run. Only the autonomous-mode-only criteria (CI green, mergeable status from §Autonomous mode Criteria 2 and 3) emit the `AUTO-MERGE BLOCKED — ` prefix.
+> **Loop-runner contract.** Callers grepping for block signals must accept BOTH `MERGE BLOCKED — ` and the legacy `AUTO-MERGE BLOCKED — ` prefixes. Since GH-1589 the script emits `MERGE BLOCKED — ` for every gate failure in both modes; `AUTO-MERGE BLOCKED — ` no longer fires but stays in the accept-set for older transcripts and forks.
