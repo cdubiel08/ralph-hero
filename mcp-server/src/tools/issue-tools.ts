@@ -662,10 +662,10 @@ export function registerIssueTools(
               subIssues: {
                 nodes: Array<{ number: number; title: string; state: string }>;
               };
-              trackedInIssues: {
+              blocking: {
                 nodes: Array<{ number: number; title: string; state: string }>;
               };
-              trackedIssues: {
+              blockedBy: {
                 nodes: Array<{ number: number; title: string; state: string }>;
               };
               comments: {
@@ -713,10 +713,10 @@ export function registerIssueTools(
                 subIssues(first: 50) {
                   nodes { number title state }
                 }
-                trackedInIssues(first: 20) {
+                blocking(first: 20) {
                   nodes { number title state }
                 }
-                trackedIssues(first: 20) {
+                blockedBy(first: 20) {
                   nodes { number title state }
                 }
                 comments(last: 10) {
@@ -995,12 +995,12 @@ export function registerIssueTools(
             title: si.title,
             state: si.state,
           })),
-          blocking: issue.trackedInIssues.nodes.map((i) => ({
+          blocking: issue.blocking.nodes.map((i) => ({
             number: i.number,
             title: i.title,
             state: i.state,
           })),
-          blockedBy: issue.trackedIssues.nodes.map((i) => ({
+          blockedBy: issue.blockedBy.nodes.map((i) => ({
             number: i.number,
             title: i.title,
             state: i.state,
