@@ -128,7 +128,9 @@ for KIND in PR UPSTREAM ISSUE; do
   assert_file_contains "WATCH-${KIND} token in mode file" "$MODE_FILE" "WATCH-${KIND}"
   assert_file_contains "WATCH-${KIND} token in outcome-tokens.md" "$TOKENS_FILE" "WATCH-${KIND}"
 done
-assert_file_contains "WATCH-<KIND> token family referenced in SKILL.md" "$SKILL_FILE" 'WATCH-<KIND>'
+# GH-1607: SKILL.md must NOT carry a token quick-reference copy — it points at
+# outcome-tokens.md, the single source of truth. Assert the pointer, not the values.
+assert_file_contains "SKILL.md points at outcome-tokens.md for token values" "$SKILL_FILE" 'Single source of truth: \[outcome-tokens.md\]'
 
 assert_file_contains "WATCH-PR ADVANCED token" "$MODE_FILE" "WATCH-PR ADVANCED"
 assert_file_contains "WATCH-PR IDLE token" "$MODE_FILE" "WATCH-PR IDLE"

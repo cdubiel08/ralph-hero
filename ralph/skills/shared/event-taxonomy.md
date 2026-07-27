@@ -18,7 +18,7 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 | any | `trigger:builders` | builders | Manual override: force builder dispatch. Hero handles the issue. |
 | any | `trigger:watch` | watchers | Manual override: force watcher dispatch. `ralph:hero --mode watch`. |
 | any | `trigger:scouts` | scouts | Manual override: force scout dispatch. Dispatches `ralph-playwright` skills (a11y-scan / test-e2e / storybook-test / visual-diff) directly for the issue. |
-| any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch — fires the **full fan-out** (`## Full fan-out` below, all 5 modes serially), not a generic team handoff. |
+| any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch — fires the **full fan-out** (`## Full fan-out` below, all 4 children serially), not a generic team handoff. |
 | any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. **Label is NOT consumed** — it re-fires each tick until a human removes it or a memorykeepers skill ships. |
 
 "The label is consumed (removed) after dispatch" above is a summary, not a single mechanism — see the ownership table immediately below for which dispatcher removes which label (it is not always the same one, and one label is not removed at all today).
@@ -119,7 +119,7 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 | Label present | Dispatch | Notes |
 |---|---|---|
-| `trigger:caretake` | Full fan-out (all 5 modes serially) | Operator override; consume after dispatch |
+| `trigger:caretake` | Full fan-out (all 4 children serially) | Operator override; consume after dispatch |
 | `stale` | `Skill("ralph:caretake", args="--mode hygiene")` | Hygiene mode finds stale items by definition |
 | `status-update-needed` | `Skill("ralph:catch-up", args="--mode report")` | Report lives in catch-up, not caretake |
 | `needs-triage` | `Skill("ralph:caretake", args="--mode triage #NNN")` | Pass through the issue number |

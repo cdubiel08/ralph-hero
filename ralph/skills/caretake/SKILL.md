@@ -140,7 +140,7 @@ Each mode body ends by emitting its terminal token (see [outcome-tokens.md](outc
 
 ## Per-mode terminal tokens
 
-The harness reads these from the transcript; do not paraphrase. **Single source of truth: [outcome-tokens.md](outcome-tokens.md)** — token families: `TRIAGED <verdict>`, `HYGIENE COMPLETE/BLOCKED`, `UNBLOCK RESOLVED/ESCALATED/REQUEST *`, `REFLECT <path>/SKIPPED`, `WATCH-<KIND> ADVANCED/IDLE/SKIPPED`, `ENRICHED/ENRICH SKIPPED`, `Queue empty.` No per-mode value breakdown here (GH-1607: the prior quick-reference copy drifted from the full table on four token shapes) — the linked file is the only place values and reasons are enumerated.
+The harness reads these from the transcript; do not paraphrase. **Single source of truth: [outcome-tokens.md](outcome-tokens.md)** — every token family, value, and reason string is enumerated there and nowhere else. No quick-reference copy lives here: the prior one drifted from the full table on four token shapes (GH-1607), which is what single-sourcing them fixes.
 
 ## Notes
 
