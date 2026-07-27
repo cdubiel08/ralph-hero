@@ -158,7 +158,7 @@ Execute [auto-tick.md](auto-tick.md) § Auto tick steps 1-6 directly (classify o
 
 ## Default mode — one-shot orchestrator
 
-1. **Detect phase.** Parse `$ARGUMENTS` for an issue number; if none, pick from `next_actions({})` via `AskUserQuestion`. **Audience here is the `human` default — intentional:** this result feeds an interactive `AskUserQuestion` picker (not the autonomous loop), so the agent-only XS/S penalty and Backlog/null-state fallback would mis-rank the human surface. The autonomous queue read lives in the internal `--tick` step of `--mode auto` (see § Auto tick below) and uses `audience: "agent"`. A picked direction with `kind: "triage"` has no issue number — label the option from `signals.statelessCount` (e.g. "Triage N stateless items"; do not deref `issue`/`pr`, both null), dispatch `Skill("ralph:caretake", args="--mode triage")` board-wide instead of resolving `TARGET`/`get_issue`, then emit `result: Dispatched board-wide caretake triage (N stateless items).` and STOP — the remaining default-mode steps assume a single TARGET issue and do not apply. Otherwise, call `get_issue({ number: TARGET, includePipeline: true })` — trust the returned `phase`. State machine + convergence rules in [state-machine.md](state-machine.md).
+1. **Detect phase.** Parse `$ARGUMENTS` for an issue number; if none, pick from `next_actions({})` via `AskUserQuestion`. **Audience here is the `human` default — intentional:** this result feeds an interactive `AskUserQuestion` picker (not the autonomous loop), so the agent-only XS/S penalty and Backlog/null-state fallback would mis-rank the human surface. The autonomous queue read lives in the internal `--tick` step of `--mode auto` (see [auto-tick.md](auto-tick.md) § Auto tick) and uses `audience: "agent"`. A picked direction with `kind: "triage"` has no issue number — label the option from `signals.statelessCount` (e.g. "Triage N stateless items"; do not deref `issue`/`pr`, both null), dispatch `Skill("ralph:caretake", args="--mode triage")` board-wide instead of resolving `TARGET`/`get_issue`, then emit `result: Dispatched board-wide caretake triage (N stateless items).` and STOP — the remaining default-mode steps assume a single TARGET issue and do not apply. Otherwise, call `get_issue({ number: TARGET, includePipeline: true })` — trust the returned `phase`. State machine + convergence rules in [state-machine.md](state-machine.md).
 2. **Registry lookup.** Read `.ralph-repos.yml` (single-repo if absent) for cross-repo decomposition.
 3. **Resumability.** `TaskList()` — if tasks match the pipeline shape, skip task creation and resume from the execution loop.
 4. **Build upfront task list** per starting `phase`. Shape + dependency-graph-aware impl ordering in [task-graph.md](task-graph.md).
@@ -176,11 +176,16 @@ Watcher team entrypoint. Full dispatch table + SOUL refusal preconditions + hear
 **`--loop` gate** — dispatch scaffolding only; `loop-wrapper.md` is the sole loop contract (the `hero:watch` manifest row owns the interval default and terminal-sentinel behavior — do not restate them here). Detect `--loop [interval]` (snippet from `loop-wrapper.md` § Arg-parsing snippet; env override `RALPH_WATCH_HEARTBEAT_MIN`). If present, emit `Skill("loop", args="${LOOP_INTERVAL:-15m} /ralph:hero --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, hero:watch row>")` then STOP. `RALPH_WATCH_DISABLE=true` and `/tasks` cancellation are the two ways to stop the heartbeat (hero-specific controls, not part of the shared manifest).
 
 ```bash
-# Argument parse: --issue NNN or bare NNN → direct mode; no arg → heartbeat mode
-case "$ARGUMENTS" in
-  --issue\ [0-9]*|[0-9]*) WATCH_MODE=direct  ;;
-  *)                      WATCH_MODE=heartbeat ;;
-esac
+# --issue NNN (or a bare NNN) ANYWHERE → direct mode; nothing resolvable →
+# heartbeat. Contract + dispatcher rule: watch-dispatch.md § Argument parse.
+WATCH_ISSUE=""
+if [[ "$ARGUMENTS" =~ (^|[[:space:]])--issue[[:space:]]+#?([0-9]+) ]]; then
+  WATCH_ISSUE="${BASH_REMATCH[2]}"
+elif [[ "$ARGUMENTS" =~ (^|[[:space:]])#?([0-9]+)([[:space:]]|$) ]]; then
+  WATCH_ISSUE="${BASH_REMATCH[2]}"   # operator shorthand
+fi
+WATCH_MODE=heartbeat
+[[ -n "$WATCH_ISSUE" ]] && WATCH_MODE=direct
 ```
 
 - **Direct (`--issue NNN` or bare number):** fetch issue → SOUL refusal preconditions ([watch-dispatch.md](watch-dispatch.md) §SOUL refusal) → dispatch table first-match-wins ([watch-dispatch.md](watch-dispatch.md) §Dispatch table) → sre-fixit pre-check if applicable → emit terminal result line.

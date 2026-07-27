@@ -2,6 +2,16 @@
 
 > Consulted by `/ralph:hero --mode watch`. Defines the dispatch table for routing watcher events to gcp-incident-triage / log-reader / sre-fixit, the SOUL refusal preconditions, and the heartbeat fan-out shape.
 
+## Argument parse
+
+`SKILL.md`'s `## --mode watch` section carries the snippet; this is the contract it implements.
+
+**The issue is resolved position-independently.** `--issue NNN` (or a bare `NNN`) is honored **wherever it appears** in `$ARGUMENTS`. The previous `case "$ARGUMENTS" in --issue\ [0-9]*|[0-9]*)` prefix match only fired when the issue was the FIRST token — the same defect class as `SKILL.md` Step 0's old `--mode` prefix match — so every caller that leads with the mode flag fell through to `heartbeat` and silently ignored the issue it was asked to watch. `auto-tick.md`'s `watchers` tier is the live case: it arrives here as `--mode watch --issue NNN`.
+
+**Dispatchers MUST use the explicit `--issue NNN` form.** The bare-number branch is operator shorthand (`/ralph:hero --mode watch 42`) and is deliberately *not* disambiguated from other numeric tokens — `--loop 900` would resolve as issue 900. Automated callers therefore name the issue explicitly; see [auto-tick.md](auto-tick.md)'s dispatch-contract note, which owns the matching rule on the emitting side.
+
+**Heartbeat is the no-target fallback, never a silent downgrade.** If a caller passed an issue and the parse cannot resolve it, that is a dispatcher bug: a board-wide heartbeat sweep is a materially different (and unrequested) action, not a graceful degradation.
+
 ## SOUL refusal preconditions
 
 Before dispatching any sub-skill or subagent, verify the issue body contains at least one of:

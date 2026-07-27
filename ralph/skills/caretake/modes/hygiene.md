@@ -103,7 +103,11 @@ If `archive_items` errors, do NOT retry blindly — emit `HYGIENE BLOCKED <reaso
 
 ## §Step 5: Capture snapshot
 
-Call `ralph_hero__capture_snapshot` with no arguments. The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window, appending one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. This is the plugin's only snapshot producer — `catch-up --mode report --with-trends` reads this store via `metrics_trends`. Capture is non-fatal and best-effort: if it errors, log and continue to §Step 6 without failing the hygiene run.
+Call `ralph_hero__capture_snapshot` with no arguments. The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window, appending one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. This is the plugin's only snapshot producer — `catch-up --mode report --with-trends` reads this store via `metrics_trends`.
+
+**Inspect the returned result — do not assume a failure throws.** Like every `ralph_hero__*` tool, `capture_snapshot` reports failure as a **structured `toolError` result**, not an exception (see `mcp-server/src/lib/types.ts`'s `toolSuccess()`/`toolError()` pair). Checking only for a thrown error means a `toolError` reads as success and the run reports `HYGIENE COMPLETE` for a pass whose snapshot never landed — silently starving the trend store that `metrics_trends` reads.
+
+So: read the result. If it carries a `toolError`, log the reported error message in the §Step 6 summary (`Snapshot: failed — <error>`) and continue to §Step 6. If it succeeded, note `Snapshot: captured`. Capture stays non-fatal and best-effort either way — a failed snapshot never turns the run into `HYGIENE BLOCKED` (that token is reserved for the scan itself failing, §Step 4) and never aborts the hygiene pass; it just must not be reported as if it worked.
 
 ## §Step 6: Summary + terminal token
 
@@ -120,6 +124,7 @@ Hygiene complete.
   Duplicate pairs: N
   Archived: N (or "0 - dry run mode")
   Health warnings: N
+  Snapshot: captured (or "failed — <error from the §Step 5 toolError>")
 ```
 
 Then emit:

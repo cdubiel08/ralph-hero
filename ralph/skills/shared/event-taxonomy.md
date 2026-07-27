@@ -81,7 +81,7 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 | team | `ENTRYPOINT` (skill name) | `DISPATCH_ARG` | status |
 |------|---------------------------|----------------|--------|
 | builders | `ralph:hero` | `NNN` | live |
-| watchers | `ralph:hero` | `--mode watch NNN` | live |
+| watchers | `ralph:hero` | `--mode watch --issue NNN` | live |
 | scouts | `ralph-playwright:a11y-scan` / `ralph-playwright:test-e2e` / `ralph-playwright:storybook-test` / `ralph-playwright:visual-diff` | `NNN` | live |
 | memorykeepers | manual `dream-now` | — | no skill yet; Director emits `needs input:` |
 | caretakers | `ralph:caretake` | `NNN`, or `--mode watch --kind pr\|upstream` for the `blocked:*` tier | live |

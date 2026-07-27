@@ -108,112 +108,28 @@ Surface to the user:
 - **Natural home** — where this fits in the project structure; which epic or initiative it aligns with.
 - **Complexity assessment** — XS / S / M / L / XL with key dependencies and risk areas.
 
-### Step 5: Output picker
+### Step 5: Output picker → Step 6
 
-Use `AskUserQuestion` with these 5 options. Default-selected option:
+Present the 5-option `AskUserQuestion` picker and run the matching output path. Option semantics, the default-selection rule, the source-file-presence fallback, and the full Step 6a-6d procedures live in [output-paths.md](output-paths.md):
 
-- If `LINKED_ISSUE` is set → **Implementation plan** (the linked issue already exists — creating a separate one would duplicate).
-- Otherwise → **GitHub issue** (the first option; the most common path for ideas without prior linkage).
-
-| Label | Behavior |
+| Picker option | Path |
 |---|---|
-| **GitHub issue** | Create a well-scoped issue ready for the backlog → Step 6a |
-| **Implementation plan** | Hand off to `/ralph:plan` → Step 6c |
-| **Research topic** | Hand off to `/ralph:research` → Step 6c |
-| **Epic parent (decompose later)** | Create the parent issue only; offer the `/ralph:plan --mode epic` handoff that builds the child tree → Step 6b |
-| **Keep as refined idea** | Update the source file with context; no GitHub mutation → Step 6d |
+| **GitHub issue** | Step 6a — create a backlog-ready issue |
+| **Implementation plan** | Step 6c — hand off to `/ralph:plan` |
+| **Research topic** | Step 6c — hand off to `/ralph:research` |
+| **Epic parent (decompose later)** | Step 6b — create the parent only, then offer the `/ralph:plan --mode epic` handoff (form does NOT build the tree) |
+| **Keep as refined idea** | Step 6d — enrich the source file, no GitHub mutation |
 
-Wait for the user's structured response, then branch to the matching Step 6 sub-step.
-
-**Source-file presence:** Steps 6a-d's frontmatter updates assume a source file exists. If the input was an inline description (no path argument), offer to write a `thoughts/shared/ideas/YYYY-MM-DD-description.md` first per the draft template in `intake-shapes.md`, then proceed using that file as the source. For Step 6d (refined draft), this file IS the output.
-
-### Step 6a: Create GitHub issue
-
-Draft the issue body per `issue-template.md` (use the research-aware variant when `INPUT_TYPE == "research"`). Show it for approval along with suggested labels, estimate, and priority. On approval:
-
-1. Call `create_issue` with the drafted title and body; set `estimate` and `workflowState: "Backlog"`.
-2. Update the source-file frontmatter per `issue-template.md` (`status: formed, github_issue: NNN` for ideas; `github_issue: NNN, github_url: https://...` for research docs).
-3. If `INPUT_TYPE == "research"`, post the `## Research Document` artifact comment on the new issue (see `issue-template.md`).
-4. Report the issue URL + suggested next steps (research / plan / iterate). Then offer, interactively, to kick off work now: *"Kick off on this now? (`/ralph:hero NNN`)"* — declining is free (default on no answer), and this offer is never made in `--auto`/headless contexts.
-
-### Step 6b: Create parent, forward to plan epic (GH-1605)
-
-Decomposition into a tree of children is `/ralph:plan --mode epic`'s job now, not form's — form creates the parent issue and hands off. **Say so before the approval prompt**, so the user is not agreeing to a tree they will not get: present the drafted parent and state that this step creates the parent issue only, with decomposition into children happening in a separate `/ralph:plan --mode epic` step. On approval:
-
-1. Create the parent issue (`create_issue`, `estimate: L`, `workflowState: "Backlog"`).
-2. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
-3. Report the issue URL, then **offer the handoff directly** via `AskUserQuestion`: *"Decompose #<parent-number> into a feature tree now?"* — Yes → invoke `Skill("ralph:plan", args="--mode epic #<parent-number>")` in this session; No → report the command for later (`/ralph:plan --mode epic #<parent-number>`). Declining is free; the offer is skipped in headless contexts, which report the command instead. (No `create_sub_issues` call here in either branch — form forwards tree creation to plan epic instead of building it inline; see `../plan/decomposition.md` § Hook contract for why that matters.)
-
-See `issue-template.md` for estimate defaults; see `../plan/decomposition.md` for the tree shape plan epic will produce.
-
-### Step 6c: Hand off to another skill
-
-For "Implementation plan" or "Research topic":
-
-1. Update the source file's frontmatter (`status: forming` for ideas; preserve `type: research` for research docs — no status change).
-2. Suggest the next command with the gathered context inlined:
-   - Plan: `/ralph:plan <context summary>`
-   - Research: `/ralph:research <topic>`
-
-Offer to invoke it directly if the user wants.
-
-### Step 6d: Refined draft
-
-For "Keep as refined idea":
-
-1. Update the source file with the enriched content: codebase context, related issues / plans / research, refined scope, updated tags.
-2. Frontmatter: `status: refined` for ideas; preserve `type: research` for research docs (no status field).
-3. Report the path and what was added.
-
-No GitHub mutations.
+Default-selected: **Implementation plan** when `LINKED_ISSUE` is set, otherwise **GitHub issue**.
 
 ## --mode draft
 
-Lightweight quick-capture. No GitHub mutation, no AskUserQuestion picker, no full research suite. The goal is to get the idea into a file before it's lost. **Capture never mutates board/project state** — no `create_issue`, no `save_issue`, nothing beyond writing files under `thoughts/shared/ideas/`.
-
-### Step 1 (draft): capture intent
-
-Accept input at any maturity — a one-line fragment ("we should batch these API calls") is exactly as valid as a multi-paragraph dump describing three unrelated problems. Never demand structure or completeness.
-
-If a topic was provided as the argument, begin capturing. Otherwise prompt: *"What's on your mind? Describe a feature idea, a problem you've noticed, a technical concept, or a workflow improvement worth remembering."* Wait for the user.
-
-Determine whether the input is a **single thought** or a **multi-thought dump** (more than one distinct idea present in the same input) before proceeding — this decides which Step 2 path applies.
-
-### Step 2 (draft): maturity-aware clarification
-
-- **Single thought**: restate in one sentence, then ask 2-3 focused clarifying questions (most-important first). If the user replies "just capture it" or similar, proceed with what you have — don't block.
-- **Multi-thought dump**: skip clarifying questions entirely — extraction replaces interrogation (GH-706: "extract first, confirm after"). Extract N distinct thoughts from the input, then present ONE confirmation listing the N titles:
-
-  ```
-  Captured as N ideas:
-  1. [Title 1]
-  2. [Title 2]
-  ...
-  Merge any, drop any, or good as-is?
-  ```
-
-  "Good as-is" — or no answer — is the default; proceed to Step 3/4 for all N. Only re-split or merge on an explicit correction. Never ask per-thought clarifying questions for a dump.
-
-### Step 3 (draft): optional light grounding
-
-Only if the idea references specific code areas:
-
-- One `Agent(subagent_type="ralph:codebase-locator", prompt="Find files related to [idea topic]")` to confirm the relevant area exists. Don't go deep.
-
-Only if `knowledge_search` is available, run an optional dedup check (`type: "idea"`, `limit: 3`). If a close match is found, mention it: *"There's an existing idea that may overlap: `[path]` — [title]. Continue with a new idea or build on that one?"*
-
-Skip both steps entirely for purely conceptual ideas — speed over polish.
-
-### Step 4 (draft): write the file(s)
-
-For each thought from Step 2 (one for a single capture, N for a dump), save to `thoughts/shared/ideas/YYYY-MM-DD-description.md` using the draft template from `intake-shapes.md`, with `status: draft` and `captured: <current UTC ISO-8601 timestamp>` in frontmatter. Each file gets its own `captured` stamp.
-
-### Step 5 (draft): report + suggest next steps
-
-Report every file path written (one per extracted thought). Suggest next-step verbs: `/ralph:form <path>` (crystallize into an issue / plan / research / tree), `/ralph:research` (deep dive), `/ralph:plan` (jump straight to planning). No frontmatter mutation beyond `status`/`captured` set at write time, no GitHub integration — drafts are pre-ticket.
+Lightweight quick-capture: any-maturity input, maturity-aware clarification, one file per extracted thought under `thoughts/shared/ideas/` with `status: draft`. No GitHub mutation, no picker, no research suite. Full procedure (Steps 1-5 draft) in [draft-capture.md](draft-capture.md).
 
 ## References
 
-- `intake-shapes.md` — input detection, per-input-type research routing, draft template
+- `intake-shapes.md` — input detection, per-input-type research routing, draft template, idea-file lifecycle contract
 - `duplicate-detection.md` — codebase / thoughts / issue-keyword dedup strategies
 - `issue-template.md` — issue body shape, research-aware variant, ticket-tree structure
+- `output-paths.md` — Step 5 picker semantics + the Step 6a-6d output procedures
+- `draft-capture.md` — the `--mode draft` capture procedure

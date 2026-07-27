@@ -125,6 +125,26 @@ assert_eq "0" "$ec" "postcheck exits 0"
 assert_file "$PENDING" "Queue empty is idle (not terminal) -> still owes a wakeup"
 
 echo
+echo "== postcheck: armed + 'Dispatch failed' tick result marks pending =="
+# A failed/refused dispatch is NOT a terminal state for the never-terminating
+# watcher: auto-tick.md step 5 preserves the trigger label precisely so the event
+# is retried, but the retry can only happen if the loop re-fires. If this result
+# line does not mark a pending wakeup, the tick ends, the stop gate stays quiet,
+# /loop reads the absent wakeup as "task complete", and the preserved label is
+# never re-surfaced — the event is silently dropped.
+reset; touch "$AUTOLOOP"
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"ralph:hero","args":"--tick"},"tool_response":"result: Dispatch failed for #42 (gate refused); trigger label preserved for retry. Retrying next tick."}')
+assert_eq "0" "$ec" "postcheck exits 0"
+assert_file "$PENDING" "Dispatch failed result marks pending wakeup (loop must re-fire)"
+
+echo
+echo "== postcheck: armed + skipped-dispatch result marks pending =="
+reset; touch "$AUTOLOOP"
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"ralph:hero","args":"--tick"},"tool_response":"needs input: team memorykeepers not yet implemented; skipping dispatch.\nresult: Dispatch failed for #77 (team memorykeepers not implemented); no label consumed. Retrying next tick."}')
+assert_eq "0" "$ec" "postcheck exits 0"
+assert_file "$PENDING" "unimplemented-team skip still owes a wakeup"
+
+echo
 echo "== wakeup-clear: delaySeconds=300 is rejected =="
 reset; touch "$AUTOLOOP" "$PENDING"
 ec=$(run "$WAKEUP" '{"session_id":"'"$SID"'","tool_input":{"delaySeconds":300}}')

@@ -145,6 +145,60 @@ run_case "10: epic (plan-of-plans) + child with no estimate -> exit 0 (out of sc
   "$SIZE_GATE" "$json_missing_estimate" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic
 
+# --- Cases 11-14: the estimate gate must FAIL CLOSED once it is in scope -------
+# Same defect class the epic is removing from state-gate.sh: an unreadable
+# estimate used to reach hook-utils.sh's warn() (print + exit 0), so an
+# unestimated or malformed parent walked straight into atomic split despite the
+# M/L/XL contract. Once RALPH_COMMAND=plan + RALPH_SUBCOMMAND=epic-split arms the
+# gate, "cannot read the estimate" must block, not warn.
+json_get_issue_no_estimate=$(jq -n '{
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [ { text: (({number:2,title:"unestimated"}) | tojson) } ] }
+}')
+run_case "11: epic-split + parent with NO estimate -> exit 2 (fail closed)" 2 \
+  "$ESTIMATE_GATE" "$json_get_issue_no_estimate" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
+json_get_issue_null_estimate=$(jq -n '{
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [ { text: (({number:3,title:"null est",estimate:null}) | tojson) } ] }
+}')
+run_case "12: epic-split + parent estimate null -> exit 2 (fail closed)" 2 \
+  "$ESTIMATE_GATE" "$json_get_issue_null_estimate" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
+json_get_issue_malformed=$(jq -n '{
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [ { text: "<html>502 Bad Gateway</html>" } ] }
+}')
+run_case "13: epic-split + malformed (non-JSON) response -> exit 2 (fail closed)" 2 \
+  "$ESTIMATE_GATE" "$json_get_issue_malformed" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
+json_get_issue_empty=$(jq -n '{
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [] }
+}')
+run_case "14: epic-split + empty tool_response -> exit 2 (fail closed)" 2 \
+  "$ESTIMATE_GATE" "$json_get_issue_empty" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
+# The fail-closed rule must not leak OUT of scope: the plan-of-plans path
+# (RALPH_SUBCOMMAND=epic) never arms this gate, so an unreadable estimate there
+# is still a clean pass-through.
+run_case "15: epic (plan-of-plans) + parent with NO estimate -> exit 0 (out of scope)" 0 \
+  "$ESTIMATE_GATE" "$json_get_issue_no_estimate" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic
+
+# And a readable, allowed estimate still passes under the armed gate.
+json_get_issue_large=$(jq -n '{
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [ { text: (({number:4,title:"big",estimate:"L"}) | tojson) } ] }
+}')
+run_case "16: epic-split + parent estimate L -> exit 0 (allowed, unchanged)" 0 \
+  "$ESTIMATE_GATE" "$json_get_issue_large" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
 echo ""
 
 # --- Static arming assertion: BOTH sides of the contract, independently --------

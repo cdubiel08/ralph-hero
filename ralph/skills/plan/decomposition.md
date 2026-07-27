@@ -297,7 +297,7 @@ Three hook scripts (four registrations — the estimate gate is Pre+Post) gate t
 | Hook | Event | Matcher | Scope guard | Purpose |
 |---|---|---|---|---|
 | `split-estimate-gate.sh` | PreToolUse | `ralph_hero__get_issue` | `RALPH_COMMAND=plan` + `RALPH_SUBCOMMAND=epic-split` | Surface M/L/XL reminder via stderr; exit 0 to allow. |
-| `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | same | Parse `tool_response.content[0].text`, exit 2 if the estimate is XS or S. |
+| `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | same | Parse `tool_response.content[0].text`, exit 2 if the estimate is XS or S. **Fails closed:** a missing, null, or unparsable estimate (and an empty response body) also exits 2 — once the gate is armed, "cannot read the estimate" is never treated as "estimate is fine". |
 | `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` \| `ralph_hero__create_sub_issues` | same | Block child creation with estimate ∉ `{XS,S}` — scalar `.tool_input.estimate` for `create_issue`, every `.tool_input.children[].estimate` for the batch call. |
 | `split-postcondition.sh` | Stop | (matcher-less) | same | Require `RALPH_SPLIT_COUNT ≥ 2`. |
 

@@ -100,22 +100,45 @@ This step only runs when §Step 2 selected at least one file (N=0 already short-
 git add thoughts/shared/ideas
 git commit -m "chore(ideas): enrich <N> idea file(s)"
 
-# Documented one-time retry, actually implemented. EVERY exit path returns to
-# main — the commit is already safe on the local `chore/enrich-ideas` ref, and
-# leaving that branch checked out would strand the next heartbeat at §Step 1's
-# main-only gate (it would emit `ENRICH SKIPPED — branch chore/enrich-ideas is
-# not main` forever and never reach §Step 2b's recovery path).
-if ! git push origin "$BRANCH"; then
-  git fetch origin "$BRANCH" 2>/dev/null || true
-  git merge --ff-only "origin/$BRANCH" 2>/dev/null || true
-  if ! git push origin "$BRANCH"; then
-    # The commit survives on the local branch ref; only the checkout returns.
-    git checkout main
-    printf '%s\n' "ENRICH SKIPPED push-rejected"
+# EVERY exit path returns to main — the commit is already safe on the local
+# `chore/enrich-ideas` ref, and leaving that branch checked out would strand the
+# next heartbeat at §Step 1's main-only gate (it would emit `ENRICH SKIPPED —
+# branch chore/enrich-ideas is not main` forever and never reach §Step 2b's
+# recovery path). The return itself is checked: an unchecked `git checkout main`
+# that fails would claim recovery while leaving the session on the branch,
+# producing exactly the strand it exists to prevent.
+return_to_main() {
+  if ! checkout_err=$(git checkout main 2>&1); then
+    printf '%s\n' "ENRICH BLOCKED checkout-main-failed: ${checkout_err}"
+    exit 0
+  fi
+}
+
+# Classify BEFORE retrying. Only a remote-branch rejection is retryable — that
+# is what the fetch + fast-forward actually repairs. Authentication, permission,
+# protected-branch, and network failures are NOT fixed by fetching; retrying
+# them and then reporting `push-rejected` mislabels a credentials outage as a
+# routine branch divergence and hides the stderr an operator needs.
+if ! push_err=$(git push origin "$BRANCH" 2>&1); then
+  if printf '%s' "$push_err" | grep -qiE '\[rejected\]|non-fast-forward|fetch first|stale info|updates were rejected'; then
+    git fetch origin "$BRANCH" 2>/dev/null || true
+    git merge --ff-only "origin/$BRANCH" 2>/dev/null || true
+    if ! push_err=$(git push origin "$BRANCH" 2>&1); then
+      # Retry exhausted on a genuine branch rejection. The commit survives on
+      # the local branch ref; only the checkout returns.
+      return_to_main
+      printf '%s\n' "ENRICH SKIPPED push-rejected"
+      exit 0
+    fi
+  else
+    # Auth / permission / network / anything else: not retryable, and not a
+    # rejection. Surface the diagnostics instead of laundering them.
+    return_to_main
+    printf '%s\n' "ENRICH BLOCKED push-failed: ${push_err}"
     exit 0
   fi
 fi
-git checkout main
+return_to_main
 ```
 
 Open the PR (idempotent across heartbeat ticks — reuse the existing one if still open):
@@ -146,7 +169,7 @@ Only the literal "already exists" failure falls back to `gh pr view`. Authentica
 
 The fallback `gh pr view` is checked the same way, for the same reason: it can fail (or return an empty URL) on exactly the auth/network/rate-limit conditions the branch above exists to surface. A failed lookup emits `ENRICH BLOCKED pr-create-failed: PR already exists but lookup failed: <stderr>` — never `ENRICHED <N> (PR )`.
 
-**Push-failure rule.** On a branch-push reject, the retry above runs once (fetch + fast-forward, then push again). If the retry also fails, **return to `main`** and emit `ENRICH SKIPPED push-rejected` — the commit stays on the local `chore/enrich-ideas` ref, which §Step 2b's non-destructive branch setup preserves and re-checks-out on the next pass. Returning to `main` is what keeps that recovery reachable: §Step 1's branch gate stops the whole mode when the session is not on `main`, so leaving the enrichment branch checked out would strand the commit permanently (`ENRICH SKIPPED — branch chore/enrich-ideas is not main` every heartbeat, §Step 2b never reached). Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
+**Push-failure rule.** `push-rejected` is reserved for **retryable remote-branch rejections** — the non-fast-forward / `fetch first` / stale-info family, which is precisely what the fetch + fast-forward retry repairs. On one of those, the retry runs once; if it also fails, **return to `main`** and emit `ENRICH SKIPPED push-rejected` — the commit stays on the local `chore/enrich-ideas` ref, which §Step 2b's non-destructive branch setup preserves and re-checks-out on the next pass. Every other push failure (authentication, permission, protected branch, network, rate limit) is **not** a rejection and is **not** retried: it returns to `main` and emits `ENRICH BLOCKED push-failed: <stderr>` with the diagnostics intact. Classifying those as `push-rejected` would report a credentials outage as routine branch divergence and burn a pointless retry against a remote that is not reachable. The return to `main` is itself checked on every path — a failed `git checkout main` emits `ENRICH BLOCKED checkout-main-failed: <stderr>` rather than silently claiming recovery from the wrong branch. Returning to `main` is what keeps that recovery reachable: §Step 1's branch gate stops the whole mode when the session is not on `main`, so leaving the enrichment branch checked out would strand the commit permanently (`ENRICH SKIPPED — branch chore/enrich-ideas is not main` every heartbeat, §Step 2b never reached). Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
 
 ## §Step 5: Emit terminal token
 
@@ -156,7 +179,9 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - `Queue empty.` — no `status: draft` files found (§Step 2 short-circuit).
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
 - `ENRICH SKIPPED branch-setup-failed` — §Step 2b could not check out `chore/enrich-ideas`; no file was edited.
-- `ENRICH SKIPPED push-rejected` — §Step 4 branch-push retry exhausted; commit stays local on `chore/enrich-ideas` and the checkout returns to `main` so the next heartbeat can retry.
+- `ENRICH SKIPPED push-rejected` — §Step 4 branch-push **rejection** (non-fast-forward / fetch-first / stale info) survived the one fetch + fast-forward retry; commit stays local on `chore/enrich-ideas` and the checkout returns to `main` so the next heartbeat can retry.
+- `ENRICH BLOCKED push-failed: <stderr>` — §Step 4 `git push` failed for a **non-retryable** reason (auth, permission, protected branch, network, rate limit). Not retried, not relabeled as `push-rejected`; the commit stays local and the checkout returns to `main`.
+- `ENRICH BLOCKED checkout-main-failed: <stderr>` — §Step 4's return to `main` failed. The commit is safe on `chore/enrich-ideas` but the session is still on that branch, so the next heartbeat will stop at §Step 1's gate until an operator runs `git checkout main`.
 - `ENRICH BLOCKED pr-create-failed: <stderr>` — §Step 4 `gh pr create` failed for a reason OTHER than an already-open PR (auth, validation, rate limit, network), **or** the already-exists fallback's `gh pr view` failed / returned an empty URL. The commit is pushed; only the PR (or its URL) is missing.
 
 ## §Constraints
@@ -166,4 +191,4 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - Never create issues, never mutate board/workflow state — read-only against GitHub (`list_issues` search only).
 - Mutates only the idea files it enriches (frontmatter + `## Enrichment` append) plus the commit/push of that change.
 - Never force-resets `chore/enrich-ideas` (`git checkout -B`) — an existing local branch may hold an unpushed enrichment commit from a prior pass, and that commit is the only copy of those findings.
-- Hand-off `forming` files (form Step 6c) are never re-selected or re-enriched — selection keys on `status: draft` only (see `intake-shapes.md` § Idea-file lifecycle contract).
+- Hand-off `forming` files (form Step 6c — `../../form/output-paths.md`) are never re-selected or re-enriched — selection keys on `status: draft` only (see `intake-shapes.md` § Idea-file lifecycle contract).

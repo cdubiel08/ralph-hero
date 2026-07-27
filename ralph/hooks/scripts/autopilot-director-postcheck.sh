@@ -84,12 +84,22 @@ response_text=$(printf '%s' "$RALPH_HOOK_INPUT" | jq -r '
 ' 2>/dev/null || echo "")
 result_line=$(printf '%s\n' "$response_text" | grep -E '^result:' | tail -n 1 || true)
 
-# Every productive tick owes a wakeup. Under the never-terminate contract BOTH
-# tick result lines (`Dispatched #…` and `Queue empty.`) require one — the
-# latter backs off to the 1h ceiling rather than stopping. Mark pending when the
-# loop launches OR when either tick result line appears, so the guard holds
-# whether the next tick re-fires Skill("loop") or re-runs the tick directly.
-if [[ "$loop_started" -eq 1 ]] || printf '%s' "$result_line" | grep -qE 'Dispatched #|Queue empty'; then
+# Every tick owes a wakeup. Under the never-terminate contract ALL THREE tick
+# result lines require one:
+#   `Dispatched #…`    -> busy, tight cadence
+#   `Queue empty.`     -> idle backoff to the 1h ceiling, NOT a stop
+#   `Dispatch failed …` -> the dispatch errored / was refused / was skipped.
+#                          auto-tick.md step 5 deliberately PRESERVES the trigger
+#                          label on this path so the event is retried — but the
+#                          retry only happens if the loop re-fires. Without this
+#                          third pattern the tick ended, Stop was never gated,
+#                          /loop read the absent wakeup as "task complete", and
+#                          the preserved label was never re-surfaced: the failure
+#                          silently dropped the event it was trying to save.
+# Mark pending when the loop launches OR when any tick result line appears, so
+# the guard holds whether the next tick re-fires Skill("loop") or re-runs the
+# tick directly.
+if [[ "$loop_started" -eq 1 ]] || printf '%s' "$result_line" | grep -qE 'Dispatched #|Queue empty|Dispatch failed'; then
   printf '%s\n' "${result_line:-loop launch}" > "$pending" 2>/dev/null || true
 fi
 
