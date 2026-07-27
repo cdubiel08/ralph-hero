@@ -7,8 +7,9 @@
  * `determineStatus` in `./metrics.js`). It intentionally does not
  * reimplement any bucketing, warning-detection, or scoring logic — it only
  * reshapes their outputs into the compact ~1-2KB shape that
- * `ralph_hero__pipeline_status_summary` returns (see
- * `mcp-server/src/tools/dashboard-tools.ts`).
+ * `ralph_hero__pipeline_dashboard`'s `view: "summary"` returns (GH-1610
+ * merged the formerly standalone summary tool into `pipeline_dashboard`
+ * behind that enum; see `mcp-server/src/tools/dashboard-tools.ts`).
  */
 
 import {

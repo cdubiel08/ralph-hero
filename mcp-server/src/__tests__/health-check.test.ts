@@ -1,19 +1,26 @@
 /**
  * Tests for `detectOrphanRepoIssues` — the helper that powers the
- * `orphanRepoIssues` warning in the `health_check` MCP tool.
+ * `orphanRepoIssues` warning in the `health_check` MCP tool — plus
+ * integration tests for the `ralph_hero__health_check` tool itself.
  *
- * The tool registration itself lives inline in `index.ts` and is wired to a
- * live MCP server, so unit tests target the pure helper directly with a
- * mocked `GitHubClient`. This keeps the tests fast and deterministic while
- * still asserting the field contract (count, repoOpen, boardItems, sample, note).
+ * GH-1610 moved `health_check`'s registration from `index.ts`'s
+ * `registerCoreTools` into `project-tools.ts` and merged `get_project`'s
+ * fields payload + field-cache side effect into it behind `includeFields`.
+ * The `describe("ralph_hero__health_check tool")` block below exercises the
+ * registered handler directly (mirroring the `getTool`/mock-client pattern
+ * used across `dashboard-summary-view.test.ts`) to cover the override params
+ * (`owner`, `projectNumber`) and the backward-compatible zero-arg shape.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   detectOrphanRepoIssues,
   ORPHAN_REPO_ISSUES_NOTE,
   ORPHAN_SAMPLE_LIMIT,
 } from "../lib/health.js";
+import { registerProjectTools } from "../tools/project-tools.js";
+import { FieldOptionCache } from "../lib/cache.js";
 import type { GitHubClient } from "../github-client.js";
 
 /**
@@ -299,5 +306,206 @@ describe("detectOrphanRepoIssues", () => {
     expect(ORPHAN_REPO_ISSUES_NOTE).toContain("list_issues");
     expect(ORPHAN_REPO_ISSUES_NOTE).toContain("pipeline_dashboard");
     expect(ORPHAN_REPO_ISSUES_NOTE).toContain("project_hygiene");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ralph_hero__health_check tool (GH-1610 — moved into project-tools.ts,
+// absorbed get_project behind includeFields)
+// ---------------------------------------------------------------------------
+
+interface HandlerResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+interface RegisteredTool {
+  handler: (args: unknown, extra: unknown) => Promise<HandlerResult>;
+}
+
+function getTool(server: McpServer, name: string): RegisteredTool {
+  const tools = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })
+    ._registeredTools;
+  const tool = tools?.[name];
+  if (!tool) throw new Error(`Tool ${name} not registered`);
+  return tool;
+}
+
+function parsePayload(result: HandlerResult): Record<string, unknown> {
+  expect(result.content).toHaveLength(1);
+  return JSON.parse(result.content[0].text);
+}
+
+// The richer fetchProject query (used by includeFields) requests `url` and
+// `id`; the lighter project-access check query (step 3) does not — that's
+// the cheapest reliable discriminator between the two shapes.
+function isFetchProjectQuery(q: string): boolean {
+  return q.includes("url");
+}
+
+function makeHealthCheckClient(opts: {
+  owner?: string;
+  repo?: string;
+  projectOwner?: string;
+  projectNumber?: number;
+} = {}): GitHubClient {
+  const owner = opts.owner ?? "test-owner";
+  const repo = opts.repo ?? "test-repo";
+  const projectOwner = opts.projectOwner ?? owner;
+  const projectNumber = opts.projectNumber ?? 1;
+
+  const projectQuery = vi.fn(
+    async (q: string, vars: Record<string, unknown> = {}) => {
+      const num = (vars.number as number | undefined) ?? projectNumber;
+      const ownerArg = (vars.owner as string | undefined) ?? projectOwner;
+
+      if (isFetchProjectQuery(q)) {
+        return {
+          user: {
+            projectV2: {
+              id: "project-node-id",
+              title: "Test Project",
+              number: num,
+              url: `https://github.com/users/${ownerArg}/projects/${num}`,
+              fields: {
+                nodes: [
+                  {
+                    id: "field-ws",
+                    name: "Workflow State",
+                    dataType: "SINGLE_SELECT",
+                    options: [{ id: "opt-1", name: "Backlog", color: "GRAY" }],
+                  },
+                ],
+              },
+            },
+          },
+        };
+      }
+      // Lighter project-access-check query (title + field names only).
+      return {
+        user: {
+          projectV2: {
+            title: "Test Project",
+            fields: {
+              nodes: [
+                { name: "Workflow State" },
+                { name: "Priority" },
+                { name: "Estimate" },
+              ],
+            },
+          },
+        },
+      };
+    },
+  );
+
+  return {
+    query: vi.fn(async () => ({
+      repository: { nameWithOwner: `${owner}/${repo}` },
+    })),
+    projectQuery,
+    mutate: vi.fn(),
+    projectMutate: vi.fn(),
+    getRateLimitStatus: vi.fn(),
+    getCache: vi.fn(() => ({
+      invalidatePrefix: vi.fn(),
+    })),
+    getAuthenticatedUser: vi.fn(async () => "test-user"),
+    restPost: vi.fn(),
+    config: {
+      token: "test",
+      owner,
+      repo,
+      projectNumber,
+      projectOwner,
+    },
+  } as unknown as GitHubClient;
+}
+
+describe("ralph_hero__health_check tool", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("zero-arg call preserves the pre-merge shape (status, checks, config, tokenSources) with no `project` key", async () => {
+    const client = makeHealthCheckClient();
+    registerProjectTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__health_check");
+
+    const result = await tool.handler({}, {});
+    const payload = parsePayload(result);
+
+    expect(result.isError).toBeUndefined();
+    expect(payload).toHaveProperty("status");
+    expect(payload).toHaveProperty("checks");
+    expect(payload).toHaveProperty("config");
+    expect(payload).toHaveProperty("tokenSources");
+    expect(payload).not.toHaveProperty("project");
+    const checks = payload.checks as Record<string, { status: string }>;
+    expect(checks.auth.status).toBe("ok");
+    expect(checks.repoAccess.status).toBe("ok");
+    expect(checks.projectAccess.status).toBe("ok");
+    expect(checks.requiredFields.status).toBe("ok");
+    // includeFields defaults false — no projectFields check entry either.
+    expect(checks).not.toHaveProperty("projectFields");
+  });
+
+  it("includeFields: true appends the project fields/options payload and populates the field cache", async () => {
+    const client = makeHealthCheckClient({ projectNumber: 7 });
+    registerProjectTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__health_check");
+
+    expect(fieldCache.isPopulated(7)).toBe(false);
+
+    const result = await tool.handler({ includeFields: true }, {});
+    const payload = parsePayload(result);
+
+    expect(result.isError).toBeUndefined();
+    expect(payload).toHaveProperty("project");
+    const project = payload.project as {
+      id: string;
+      title: string;
+      number: number;
+      url: string;
+      fields: Array<{ id: string; name: string; dataType: string }>;
+    };
+    expect(project.id).toBe("project-node-id");
+    expect(project.number).toBe(7);
+    expect(project.fields).toEqual([
+      expect.objectContaining({ id: "field-ws", name: "Workflow State" }),
+    ]);
+    // Cache-population side effect preserved from get_project.
+    expect(fieldCache.isPopulated(7)).toBe(true);
+  });
+
+  it("owner/projectNumber overrides apply to the project-access check and the fields fetch", async () => {
+    const client = makeHealthCheckClient({
+      owner: "config-owner",
+      projectOwner: "config-owner",
+      projectNumber: 1,
+    });
+    registerProjectTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__health_check");
+
+    const result = await tool.handler(
+      { owner: "override-owner", projectNumber: 99, includeFields: true },
+      {},
+    );
+    const payload = parsePayload(result);
+
+    expect(result.isError).toBeUndefined();
+    const checks = payload.checks as Record<string, { status: string; detail?: string }>;
+    // projectAccess check ran against the override, not client.config.
+    expect(checks.projectAccess.status).toBe("ok");
+    expect(checks.projectAccess.detail).toContain("#99");
+    // repoAccess is unaffected by the override — still config-based.
+    expect(checks.repoAccess.detail).toBe("config-owner/test-repo");
+    // The fields fetch used the override projectNumber (99), not config's 1.
+    const project = payload.project as { number: number };
+    expect(project.number).toBe(99);
   });
 });

@@ -114,7 +114,7 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | Module | Key tools |
 |--------|-----------|
 | `issue-tools.ts` | list_issues, get_issue, create_issue, save_issue |
-| `project-tools.ts` | setup_project, get_project |
+| `project-tools.ts` | setup_project, health_check |
 | `relationship-tools.ts` | add_sub_issue, add_dependency, advance_issue |
 | `batch-tools.ts` | batch_update |
 | `dashboard-tools.ts` | pipeline_dashboard |

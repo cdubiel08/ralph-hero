@@ -120,7 +120,8 @@ describe("Token resolution logic", () => {
   });
 
   /**
-   * Mirrors the token source detection logic from health_check in index.ts.
+   * Mirrors the token source detection logic from health_check in
+   * project-tools.ts (moved from index.ts in GH-1610).
    * Reports which env var each token was resolved from (not the value).
    * The third tier — `gh auth (keychain)` — fires when neither env var is set.
    */

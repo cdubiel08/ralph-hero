@@ -86,12 +86,11 @@ The plugin bundles an MCP server ([`ralph-hero-mcp-server`](https://www.npmjs.co
 
 ### Tools
 
-The MCP server registers ~31 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `archive_items`, `sync_plan_graph`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
+The MCP server registers ~29 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `archive_items`, `sync_plan_graph`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
 
 | Tool | Description |
 |------|-------------|
-| `health_check` | Validate API connectivity, tokens, repo/project access, and required fields |
-| `get_project` | Fetch project metadata, fields, and items |
+| `health_check` | Validate API connectivity, tokens, repo/project access, and required fields. `includeFields: true` also fetches project fields/options (absorbs the former `get_project`) |
 | `setup_project` | Create or configure a project with required fields and workflow states |
 | `get_issue` | Get full issue details with project fields, sub-issues, and dependencies |
 | `list_issues` | Query issues with filtering, sorting, and pagination |
