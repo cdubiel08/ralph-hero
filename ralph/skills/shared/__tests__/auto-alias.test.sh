@@ -118,13 +118,13 @@ else
   fail "--auto --mode auto conflict" "conflict msg" "msg='$msg'"
 fi
 
-# 6. --auto --mode prove (conflict) → conflict message
-out=$(resolve_auto research "--auto --mode prove")
+# 6. --auto --mode epic (conflict) → conflict message
+out=$(resolve_auto plan "--auto --mode epic")
 msg=$(get_field MSG "$out")
 if [[ "$msg" == "--auto cannot be combined with explicit --mode; pick one." ]]; then
-  ok "--auto --mode prove → conflict message"
+  ok "--auto --mode epic → conflict message"
 else
-  fail "--auto --mode prove conflict" "conflict msg" "msg='$msg'"
+  fail "--auto --mode epic conflict" "conflict msg" "msg='$msg'"
 fi
 
 # 7. No --auto (baseline) → ARGUMENTS unchanged

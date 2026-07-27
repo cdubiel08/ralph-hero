@@ -1,6 +1,6 @@
 # Research shapes
 
-Sub-agent palette + dispatch patterns for `/ralph:research`. Consulted by Step 3 (default flow), Step 4 (autonomous flow), and Step 2 of `--mode prove` (only the knowledge-graph subset).
+Sub-agent palette + dispatch patterns for `/ralph:research`. Consulted by Step 3 (default flow) and Step 4 (autonomous flow).
 
 ## Sub-agent palette
 

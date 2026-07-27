@@ -125,7 +125,6 @@ Single source (GH-1607) for every `--loop`-unsuitable skill:mode — interactive
 | `impl` default | interactive; pauses between phases |
 | `impl --mode address` | single PR feedback cycle |
 | `research` default | interactive question intake |
-| `research --mode prove` | single-claim investigation; interactive |
 | `catch-up` default | interactive orientation |
 | `setup` all modes | one-shot bootstrap |
 | `hero` default | one-shot orchestrator; refuses `--loop`. Use `--auto` → `--mode auto` for the autonomous drain |

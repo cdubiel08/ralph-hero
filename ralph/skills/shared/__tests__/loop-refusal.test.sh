@@ -12,7 +12,7 @@
 #      `## Loop suitability` pointer section). Covers every entry in the
 #      plan's Current-State unsuitable table:
 #        form, plan (default/iterate/epic), impl (default/address),
-#        research (default/prove), catch-up (default),
+#        research (default), catch-up (default),
 #        setup, hero (pr-drain), caretake (reflect), caretake (unblock --question)
 #   3. ralph/CLAUDE.md still carries the `## Loop suitability` heading the
 #      canonical refusal string points at (so the pointer resolves).
@@ -134,7 +134,6 @@ check_unsuitable "plan epic"                    "epic"
 check_unsuitable "impl default"                 "impl.*default|\`impl\` default"
 check_unsuitable "impl address"                 "address"
 check_unsuitable "research default"             "research.*default|\`research\` default"
-check_unsuitable "research prove"               "prove"
 check_unsuitable "catch-up default"             "catch-up"
 check_unsuitable "setup"                        "setup"
 check_unsuitable "hero default"                 "hero.*default|\`hero\` default"

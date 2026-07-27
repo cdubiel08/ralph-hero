@@ -4,7 +4,12 @@ How `/ralph:research` resolves `ARG` into a research question + optional issue l
 
 ## Detection rules
 
-Apply in priority order — first match wins. Detection rules 1-3 run only when `MODE ∈ {default, auto}`. In `--mode prove`, `ARG` is treated **verbatim** as the claim string regardless of any leading `#NNN` / `GH-NNNN` substring — skip the issue-number rule entirely.
+Apply in priority order — first match wins.
+
+A claim-shaped free-form arg ("prove X", "verify Y", "is it true that Z") is not
+a distinct mode — it is a research question answered verdict-first. It still
+runs Detection rule 2 below (free-form question) and the normal Step 3 dispatch;
+only the doc/report shape changes (`findings-format.md` § Claim-check shape).
 
 1. **Issue-number form** — `ARG` matches one of `#NNN`, `NNN` (digits-only), or `GH-NNNN` (optionally zero-padded). Strip the prefix to get the bare number. Call `get_issue(number)` to fetch full context (title, body, current workflow state, comments, group data). Set `LINKED_ISSUE=NNN`. Use the issue title/body as the research question; the user may refine it interactively.
 

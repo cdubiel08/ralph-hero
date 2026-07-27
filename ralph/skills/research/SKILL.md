@@ -5,17 +5,17 @@ description: Investigate a codebase question, a GitHub issue, or a claim. Use wh
   does X do", "find me prior art on Z", hands over an issue number (#NNN /
   GH-NNNN), or asks to "prove" / "verify" / "is it true that" a claim. Default
   flow is interactive (asks for the question, dispatches parallel sub-agents,
-  lets you review findings before writing the doc). --mode auto runs the
-  autonomous Research-Needed picker. --mode prove runs a 5-step knowledge-graph
-  claim investigation that produces a verdict + confidence + evidence chains.
-argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-playwright] [--loop [duration]] [--auto]"
+  lets you review findings before writing the doc) — a claim-shaped question
+  ("prove X", "is it true that Y") is answered verdict-first via the same
+  intake. --mode auto runs the autonomous Research-Needed picker.
+argument-hint: "[--mode auto] [<question|#NNN|claim>] [--playwright|--no-playwright] [--loop [duration]] [--auto]"
 context: inline
 model: sonnet
 hooks:
   # branch-gate.sh is intentionally not declared here. In the slim plugin it's
   # patched to no-op when RALPH_REQUIRED_BRANCH is unset, and the autonomous
   # flow's Step 1 does its own explicit branch check via Bash anyway. Wiring it
-  # in frontmatter would also fire on interactive/prove Bash calls.
+  # in frontmatter would also fire on interactive Bash calls.
   SessionStart:
     - hooks:
         - type: command
@@ -74,9 +74,9 @@ allowed-tools:
 # /ralph:research — Research
 
 The unified research verb. Default flow is interactive (collaborative
-codebase investigation with human review before doc write). `--mode auto`
-is the autonomous Research-Needed picker. `--mode prove` is a 5-step
-knowledge-graph claim investigation.
+codebase investigation with human review before doc write) — a claim-shaped
+question is a research question answered verdict-first, via the same intake.
+`--mode auto` is the autonomous Research-Needed picker.
 
 ## Mode dispatch
 
@@ -84,12 +84,11 @@ knowledge-graph claim investigation.
 |---|---|
 | (default) | Interactive: question/issue intake → parallel sub-agents → findings review picker → write doc → optional artifact comment |
 | `--mode auto [#NNN]` | Autonomous: pick / lock XS/S Research-Needed issue → research → write findings → advance to Ready for Plan |
-| `--mode prove "<claim>"` | Knowledge-graph claim investigation: decompose → entities → paths → evidence → verdict |
 | `--help` / `-h` | Print this table and exit |
 
 ## Step 0: Parse args
 
-Set `MODE` ∈ `{default, auto, prove}` from `--mode` flag (default if absent).
+Set `MODE` ∈ `{default, auto}` from `--mode` flag (default if absent).
 Capture `ARG` as the remaining positional. Capture `--playwright` /
 `--no-playwright` overrides. Bail with the mode table on `--help` / `-h`.
 
@@ -99,7 +98,7 @@ Capture `ARG` as the remaining positional. Capture `--playwright` /
 
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
 - MODE `auto` → `Skill("loop", …)` using the `research:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
-- MODE `default` or `prove` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
+- MODE `default` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
 ## Default flow
 
@@ -185,20 +184,17 @@ Autonomous Research-Needed picker. No questions; one issue, locked, researched, 
 
 **Escalation triggers (autonomous only):** advance to `workflowState: "Human Needed"` (not "Ready for Plan") when (a) issue scope is M/L/XL on inspection (needs re-estimation or splitting), (b) no relevant codebase patterns can be located after broad search, or (c) sub-agents surface conflicting implementations and you cannot determine the canonical one. State the trigger explicitly in the issue comment so the unblock pipeline has context.
 
-## --mode prove
+## Claim-shaped questions
 
-5-step claim investigation over the knowledge graph. No codebase research; no doc write. Produces an inline verdict block. Consult `prove-claim.md` for evidence weighting, confidence calibration, anti-patterns, and the report template.
-
-1. **Decompose** — accept `ARG` as the claim. Break into 2-5 entities + a relationship (`prove-claim.md` § Decomposition).
-2. **Find entity documents** — `knowledge_search(brief: true)` per entity. Record top 3 doc IDs per entity. Prefer `research`/`review` types over `plan`/`idea` at similar relevance.
-3. **Find connections** — `knowledge_paths` / `knowledge_traverse` (filter by `builds_on`/`tensions`/`superseded_by`) / `knowledge_common` between entity-doc pairs. Degradation per `prove-claim.md` § Graceful degradation.
-4. **Read evidence** — `Read` the top 3-5 docs by path. Extract verbatim quotes. Note doc type / date / status. Cap at 5 docs.
-5. **Report** — produce the verdict block per `prove-claim.md` § Report template. No file write.
+A claim ("prove X", "verify Y", "is it true that Z") is not a distinct mode —
+it flows through the same default intake (Step 1) and sub-agent dispatch
+(Step 3) as any other question. Only the write-up shape changes: Step 5/6
+apply `findings-format.md` § Claim-check shape (verdict-first `## Summary`,
+evidence-chain `## Detailed Findings`) instead of open-ended prose.
 
 ## References
 
 - `intake-routing.md` — issue / question / no-args detection, blocker semantics
 - `research-shapes.md` — sub-agent palette, parallel dispatch, knowledge-graph + cross-repo addenda
-- `findings-format.md` — doc frontmatter, section order, Prior Work, Files Affected, per-mode required-sections matrix
+- `findings-format.md` — doc frontmatter, section order, Prior Work, Files Affected, per-mode required-sections matrix, Claim-check shape
 - `playwright-baseline.md` — conditional UI baseline (default + auto modes)
-- `prove-claim.md` — 5-step claim investigation, evidence weighting, confidence calibration, anti-patterns

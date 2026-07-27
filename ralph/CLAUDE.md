@@ -43,7 +43,7 @@ cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts
 
 ## Standalone — `plugin/ralph-hero/` is gone
 
-`ralph` is the sole Claude-Code-facing plugin in this repo; `plugin/ralph-hero/` was deleted in GH-1438 (see root CLAUDE.md). All 9 verbs, 16 agents, and the MCP server (top-level `mcp-server/`) are self-contained here. An untracked `plugin/ralph-hero/` dir may linger on disk locally — it is gone from git; ignore it.
+`ralph` is the sole Claude-Code-facing plugin in this repo; `plugin/ralph-hero/` was deleted in GH-1438 (see root CLAUDE.md). All 9 verbs, 15 agents, and the MCP server (top-level `mcp-server/`) are self-contained here. An untracked `plugin/ralph-hero/` dir may linger on disk locally — it is gone from git; ignore it.
 
 ## Loop suitability
 

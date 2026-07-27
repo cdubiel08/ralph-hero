@@ -118,7 +118,7 @@ The MCP server registers ~32 `ralph_hero__*` tools; the table below is a curated
 mcp-server/              # TypeScript MCP server (published as ralph-hero-mcp-server)
 ralph/                   # Claude Code plugin
 ├── skills/              # 9 fat verbs + experimental hero-fable surface
-├── agents/              # 16 agents (8 per-phase + 8 investigators)
+├── agents/              # 15 agents (7 per-phase + 8 investigators)
 ├── hooks/               # Lifecycle enforcement hooks
 └── .claude-plugin/      # Plugin manifest + .mcp.json
 plugin/

@@ -45,10 +45,10 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 ```
 mcp-server/              # TypeScript MCP server (published as ralph-hero-mcp-server)
-ralph/                   # Main plugin — 9 fat skills, 16 agents, hooks
+ralph/                   # Main plugin — 9 fat skills, 15 agents, hooks
 ├── skills/              # 9 verb skills (catch-up, form, research, plan, impl, review, caretake, hero, setup)
 │   └── shared/          # Shared references: loop-wrapper, auto-alias, mcp-prefix guard
-├── agents/              # 16 agents (8 per-phase + 8 investigators)
+├── agents/              # 15 agents (7 per-phase + 8 investigators)
 ├── hooks/               # Lifecycle enforcement hooks
 ├── .claude-plugin/      # Plugin manifest (plugin.json)
 └── .mcp.json            # Pinned ralph-hero-mcp-server version (updated by release.yml)
@@ -80,9 +80,9 @@ Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable
 
 The plan/review skill sessions pin `model: best` (Fable 5 where entitled, else latest Opus); `plan-agent`/`review-agent` pin `model: fable` — non-Fable accounts set `CLAUDE_CODE_SUBAGENT_MODEL=opus` as the escape hatch for the `Agent()`-fork path. Autonomous paths additionally route tiers by unit size — feature/epic cycles get fable bookends (research, plan, critique, plan-vs-delivery val); single XS/S issue-PR pairs skip fable entirely. Rationale + routing table: [`docs/model-tier-policy.md`](docs/model-tier-policy.md).
 
-### ralph Plugin — 16 Agents
+### ralph Plugin — 15 Agents
 
-**8 per-phase agents** (in `ralph/agents/`): `catch-up-agent`, `impl-agent`, `merge-agent`, `plan-agent`, `research-agent`, `review-agent`, `triage-agent`, `val-agent`
+**7 per-phase agents** (in `ralph/agents/`): `catch-up-agent`, `impl-agent`, `merge-agent`, `plan-agent`, `research-agent`, `review-agent`, `val-agent`
 
 **8 investigators** (in `ralph/agents/`): `codebase-analyzer`, `codebase-locator`, `codebase-pattern-finder`, `log-reader`, `sre-fixit`, `thoughts-analyzer`, `thoughts-locator`, `web-search-researcher`
 

@@ -60,6 +60,7 @@ HEARTBEAT_MODES=(
   "caretake:all"
   "catch-up:report"
   "hero:watch"
+  "hero:auto"
 )
 
 for mode in "${HEARTBEAT_MODES[@]}"; do
@@ -92,7 +93,6 @@ DRAIN_MODES=(
   "caretake:triage"
   "caretake:unblock"
   "caretake:default-event"
-  "hero:auto"
 )
 
 for mode in "${DRAIN_MODES[@]}"; do
