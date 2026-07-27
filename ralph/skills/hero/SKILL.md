@@ -148,13 +148,13 @@ Route to the matching mode section below. The dispatcher does NOT rewrite termin
 
 ## --mode auto
 
-Autonomous **never-terminating adaptive watcher** via `/loop` dynamic mode — see [auto-tick.md](auto-tick.md) for the full contract (loop emission, continuation rules, `ScheduleWakeup` discipline) and the internal `--tick` step it wraps (classify-one-event, dispatch, stop). Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message. **`--loop [duration]` does not apply to this mode** — `--mode auto` always self-loops on its own adaptive cadence (60-270s busy / 3600s idle) and ignores any duration token; only `--mode watch` below honors a fixed `--loop [duration]` override.
+Autonomous **never-terminating adaptive watcher** via `/loop` dynamic mode — see [auto-tick.md](auto-tick.md) for the full contract (loop emission, continuation rules, `ScheduleWakeup` discipline, and the `hero:auto` manifest row's cadence) and the internal `--tick` step it wraps (classify-one-event, dispatch, stop). Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message. **`--loop [duration]` does not apply to this mode** — `--mode auto` always self-loops on its own adaptive cadence and ignores any duration token; only `--mode watch` below honors a fixed `--loop [duration]` override.
 
 ## --mode watch
 
 Watcher team entrypoint. Full dispatch table + SOUL refusal preconditions + heartbeat shape in [watch-dispatch.md](watch-dispatch.md).
 
-**`--loop` gate** — detect `--loop [interval]` (snippet from `loop-wrapper.md` § Arg-parsing snippet). If present: default interval `15m` (see `RALPH_WATCH_HEARTBEAT_MIN`). Use `hero:watch` manifest row — heartbeat, no `Queue empty.` terminal sentinel; re-fires unless `RALPH_WATCH_DISABLE=true` or user cancels via `/tasks`. Emit `Skill("loop", args="${LOOP_INTERVAL:-15m} /ralph:hero --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
+**`--loop` gate** — dispatch scaffolding only; `loop-wrapper.md` is the sole loop contract (the `hero:watch` manifest row owns the interval default and terminal-sentinel behavior — do not restate them here). Detect `--loop [interval]` (snippet from `loop-wrapper.md` § Arg-parsing snippet; env override `RALPH_WATCH_HEARTBEAT_MIN`). If present, emit `Skill("loop", args="${LOOP_INTERVAL:-15m} /ralph:hero --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, hero:watch row>")` then STOP. `RALPH_WATCH_DISABLE=true` and `/tasks` cancellation are the two ways to stop the heartbeat (hero-specific controls, not part of the shared manifest).
 
 ```bash
 # Argument parse: --issue NNN or bare NNN → direct mode; no arg → heartbeat mode

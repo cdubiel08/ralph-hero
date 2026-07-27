@@ -21,6 +21,20 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 | any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch — fires the **full fan-out** (`## Full fan-out` below, all 5 modes serially), not a generic team handoff. |
 | any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. |
 
+"The label is consumed (removed) after dispatch" above is a summary, not a single mechanism — see the ownership table immediately below for which dispatcher removes which label (it is not always the same one, and one label is not removed at all today).
+
+### Trigger-label consumption ownership
+
+| Label | Consumer | Mechanism |
+|---|---|---|
+| `trigger:builders` | Director (`hero --mode auto` / `--tick`) | [`hero/auto-tick.md`](../hero/auto-tick.md) step 5 removes it after dispatching `ralph:hero` |
+| `trigger:watch` | Director (`hero --mode auto` / `--tick`) | Same step 5, after dispatching `ralph:hero --mode watch` |
+| `trigger:scouts` | Director (`hero --mode auto` / `--tick`) | Same step 5, after dispatching the `ralph-playwright` skills |
+| `trigger:caretake` | Director **or** caretake itself | Director's `auto-tick.md` step 5 removes it when caretake was reached via Director's tick; caretake's own `### Label consumption` rule (below, under § Caretake default-mode label routing) removes it a second, idempotent time when an operator runs `/ralph:caretake --issue NNN` directly, bypassing Director entirely |
+| `trigger:memorykeepers` | **None — no live consumer** | No memorykeepers skill exists yet. The classification algorithm's step 6 (`needs input: team memorykeepers not yet implemented; skipping dispatch`) short-circuits before the consume-label step, so the label is left in place by design — it re-fires `needs input:` on every tick until a human removes it or a memorykeepers skill ships |
+
+Director's auto-tick is the *only* consumer for `trigger:builders`/`trigger:watch`/`trigger:scouts`, and it only runs inside `hero --mode auto`'s `--tick` step. If one of those three labels is placed on an issue that `hero --mode auto` never ticks (autopilot disabled, or no queue read ever surfaces the issue), nothing in this repo removes it — that is an operator cleanup task, not a bug in either dispatcher.
+
 ## Priority 2 — Blocked-condition labels (watcher routing)
 
 These labels are written by triage's `WAIT-pr`/`WAIT-upstream` verdicts and park an item against a named, watched condition. Director fires the matching caretake **watcher sweep** (board-wide — it processes every parked item of that kind, including this one) so the condition is re-evaluated immediately rather than at the next heartbeat. The label is **NOT consumed** — the watcher owns its lifecycle and strips it only when the condition resolves.
@@ -137,7 +151,9 @@ save_issue(
 )
 ```
 
-Idempotency rule: only `trigger:caretake` is consumed unconditionally. Other labels (`stale`, `process-improvement`, `needs-split`) describe issue **state** and are owned by other systems (hygiene scans, dream-reflect clustering, triage). The caretaker does not consume those — it acts on them and lets the owner system re-apply or clear them.
+This rule is scoped to **caretake's own dispatch table above** — `trigger:caretake` is the only trigger label that table routes on. Removing it here is a second, idempotent path alongside Director's own removal (see § Trigger-label consumption ownership under Priority 1); it matters specifically when an operator invokes `/ralph:caretake --issue NNN` directly, bypassing Director, since nothing else would strip the label in that case. This does NOT mean the other four `trigger:<team>` labels go unconsumed — see § Trigger-label consumption ownership for their (single) remover, or the explicit "no consumer" note for `trigger:memorykeepers`.
+
+Other labels in this table (`stale`, `process-improvement`, `needs-split`) describe issue **state**, not a one-shot trigger, and are owned by other systems (hygiene scans, dream-reflect clustering, triage). The caretaker does not consume those — it acts on them and lets the owner system re-apply or clear them.
 
 ### `## Caretaker Action` comment shape
 
