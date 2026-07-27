@@ -323,8 +323,13 @@ async function main(): Promise<void> {
   // Trends tools (metrics_trends, incl. {capture: true} — JSONL persistence under ~/.ralph-hero/snapshots/)
   registerTrendsTools(server, client, fieldCache);
 
-  // SRE operation tools (kubectl autoremediation — typed argv, no-shell invariant)
-  registerSreTools(server, client, fieldCache);
+  // SRE operation tools (only when RALPH_SRE_ENABLE=true — kubectl autoremediation,
+  // typed argv, no-shell invariant; gated because the sre-fixit agent's `tools:`
+  // allowlist is a hard runtime enforcement and misconfigured clusters should not
+  // expose live kubectl mutation ops by default)
+  if (process.env.RALPH_SRE_ENABLE === 'true') {
+    registerSreTools(server, client, fieldCache);
+  }
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

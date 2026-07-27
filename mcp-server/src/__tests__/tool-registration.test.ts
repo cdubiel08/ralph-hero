@@ -158,6 +158,12 @@ vi.mock("../lib/helpers.js", async (importOriginal) => {
 // Note: ralph_hero__collate_debug is not in the manifest because the tool
 // (and debug-tools.ts) was deleted in GH-1612 — it no longer exists in
 // source, rather than being gated behind RALPH_DEBUG.
+//
+// Note: the four ralph_hero__sre__* tools are NOT in this manifest — they are
+// gated behind RALPH_SRE_ENABLE=true (GH-1613), mirroring the RALPH_DEBUG
+// pattern collate_debug used before it was deleted outright. Flag-on coverage
+// lives in the sibling file tool-registration-sre-enabled.test.ts (module
+// cache prevents toggling the flag within a single test file).
 const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__add_dependency",
   "ralph_hero__add_sub_issue",
@@ -181,10 +187,6 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__remove_dependency",
   "ralph_hero__save_issue",
   "ralph_hero__setup_project",
-  "ralph_hero__sre__delete_pod",
-  "ralph_hero__sre__drain",
-  "ralph_hero__sre__rollout_restart",
-  "ralph_hero__sre__scale",
 ];
 
 // ---------------------------------------------------------------------------
@@ -197,6 +199,11 @@ beforeAll(async () => {
   // registration since collate_debug (debug-tools.ts) was deleted in
   // GH-1612. Cleared here for hermetic env isolation, not tool gating.
   delete process.env.RALPH_DEBUG;
+
+  // RALPH_SRE_ENABLE gates registerSreTools (GH-1613). Cleared here so this
+  // file always exercises the flag-off surface; the flag-on surface is
+  // covered by tool-registration-sre-enabled.test.ts.
+  delete process.env.RALPH_SRE_ENABLE;
 
   // Provide the minimum env needed for initGitHubClient + main() to succeed.
   // The GitHubClient is mocked, but initGitHubClient still reads these env
