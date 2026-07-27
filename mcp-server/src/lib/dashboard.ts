@@ -40,6 +40,15 @@ export interface DashboardItem {
   updatedAt: string; // ISO timestamp
   closedAt: string | null; // For Done/Canceled filtering
   workflowState: string | null;
+  /**
+   * ISO timestamp of the Workflow State PROJECT FIELD's own `updatedAt`
+   * (GH-1617) — the claim clock. A field-only claim (e.g. save_issue with
+   * no issue-content mutation) does not bump `updatedAt` above, so
+   * `detectLockStale` must prefer this when present. Undefined for stale
+   * fixtures / items fetched before this field existed — callers fall back
+   * to `updatedAt`.
+   */
+  workflowStateUpdatedAt?: string;
   priority: string | null; // P0, P1, P2, P3
   estimate: string | null; // XS, S, M, L, XL
   assignees: string[];

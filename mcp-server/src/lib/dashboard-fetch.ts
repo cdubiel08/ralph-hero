@@ -52,6 +52,7 @@ export interface RawDashboardItem {
     nodes: Array<{
       __typename?: string;
       name?: string;
+      updatedAt?: string;
       iterationId?: string;
       title?: string;
       startDate?: string;
@@ -71,6 +72,19 @@ function getFieldValue(
       n.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
   return fv?.name ?? null;
+}
+
+/**
+ * GH-1617: the Workflow State field VALUE's own `updatedAt` — the claim
+ * clock. Distinct from `getFieldValue`, which only extracts `name`.
+ */
+function getWorkflowStateUpdatedAt(item: RawDashboardItem): string | undefined {
+  const fv = item.fieldValues.nodes.find(
+    (n) =>
+      n.field?.name === "Workflow State" &&
+      n.__typename === "ProjectV2ItemFieldSingleSelectValue",
+  );
+  return fv?.updatedAt;
 }
 
 /**
@@ -95,6 +109,8 @@ export function toDashboardItems(
       (n) => n.__typename === "ProjectV2ItemFieldIterationValue",
     );
 
+    const workflowStateUpdatedAt = getWorkflowStateUpdatedAt(r);
+
     items.push({
       number: r.content.number,
       title: r.content.title ?? "(untitled)",
@@ -115,6 +131,7 @@ export function toDashboardItems(
       ...(projectNumber !== undefined ? { projectNumber } : {}),
       ...(projectTitle !== undefined ? { projectTitle } : {}),
       ...(r.content.repository ? { repository: r.content.repository.nameWithOwner } : {}),
+      ...(workflowStateUpdatedAt !== undefined ? { workflowStateUpdatedAt } : {}),
       ...(iterFv?.iterationId ? {
         iterationId: iterFv.iterationId,
         iterationTitle: iterFv.title ?? undefined,
@@ -170,6 +187,7 @@ export const DASHBOARD_ITEMS_QUERY = `query($projectId: ID!, $cursor: String, $f
               ... on ProjectV2ItemFieldSingleSelectValue {
                 __typename
                 name
+                updatedAt
                 field { ... on ProjectV2FieldCommon { name } }
               }
               ... on ProjectV2ItemFieldIterationValue {

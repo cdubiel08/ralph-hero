@@ -29,6 +29,7 @@ import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
 import { ensureFieldCache } from "../lib/helpers.js";
+import { resolveLockStaleHours } from "../lib/thresholds.js";
 import { paginateConnection } from "../lib/pagination.js";
 import {
   DASHBOARD_ITEMS_QUERY,
@@ -538,8 +539,12 @@ export function makeRunDirections(client: GitHubClient, fieldCache: FieldOptionC
         limit: args.limit ?? DEFAULT_RANK_CONFIG.limit,
         stuckThresholdHours:
           args.stuckThresholdHours ?? DEFAULT_RANK_CONFIG.stuckThresholdHours,
-        lockStaleHours:
-          args.lockStaleHours ?? DEFAULT_RANK_CONFIG.lockStaleHours,
+        // GH-1617: resolveLockStaleHours resolves param > RALPH_LOCK_STALE_HOURS
+        // env > LOCK_STALE_HOURS constant. The zod schema below deliberately
+        // does NOT carry `.default(24)` — a schema default would make
+        // `args.lockStaleHours` always defined and make the env branch
+        // unreachable (the bug this fixes).
+        lockStaleHours: resolveLockStaleHours(args.lockStaleHours),
         treeRecentDoneDays:
           args.treeRecentDoneDays ?? DEFAULT_RANK_CONFIG.treeRecentDoneDays,
         prStaleHours:
@@ -646,9 +651,8 @@ export function registerDirectionsTools(
         .number()
         .nonnegative()
         .optional()
-        .default(24)
         .describe(
-          "Hours before a lock-state issue is considered stalled (default: 24, unit: hours). Pulls from LOCK_STALE_HOURS in src/lib/thresholds.ts.",
+          "Hours before a lock-state issue is considered stalled (default: 24, unit: hours). Pulls from LOCK_STALE_HOURS in src/lib/thresholds.ts, overridable via the RALPH_LOCK_STALE_HOURS env var when this param is omitted (see resolveLockStaleHours). No zod `.default()` here deliberately — a schema default would make this param always defined and the env-var branch unreachable.",
         ),
       treeRecentDoneDays: z
         .number()
