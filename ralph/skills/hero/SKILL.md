@@ -89,7 +89,7 @@ The only autonomous entrypoint in the ralph slim plugin. Drives one issue end-to
 | **default** | `/ralph:hero NNN` or `/ralph:hero` (picks top-ranked) | One-shot: research → plan → review → impl → PR → merge |
 | **`--mode auto`** | `/ralph:hero --mode auto` | Drain the backlog via `/loop` (dynamic) + classify each event |
 | **`--mode classify`** | `/ralph:hero --mode classify [--issue NNN]` | Director-only: classify one event, dispatch correct verb, stop |
-| **`--mode watch`** | `/ralph:hero --mode watch [--issue NNN]` | Watcher heartbeat — dispatch gcp-incident-triage / debug-collate / log-reader / sre-fixit |
+| **`--mode watch`** | `/ralph:hero --mode watch [--issue NNN]` | Watcher heartbeat — dispatch gcp-incident-triage / log-reader / sre-fixit |
 | **`--mode pr-drain`** | `/ralph:hero --mode pr-drain --pr NNN` | Drain a PR (Dependabot/stale/unlinked) — classify, gate, act |
 
 References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md), [dispatch.md](dispatch.md), [event-classes.md](event-classes.md), [watch-dispatch.md](watch-dispatch.md), [pr-drain.md](pr-drain.md).

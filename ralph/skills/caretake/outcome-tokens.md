@@ -2,7 +2,7 @@
 
 Each mode body emits exactly one terminal token on its final line. The harness extractor reads these from the transcript verbatim — do not paraphrase or wrap in prose. Postcondition hooks under `ralph/hooks/scripts/*-postcondition.sh` grep the transcript for the tokens listed here.
 
-Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emits no token.
+Sections are filled across Plans 7 phases 3-8.
 
 ## Triage terminal tokens
 
@@ -52,34 +52,13 @@ Unblock has two sub-modes selected by the `--question` flag; each emits its own 
 - `Queue empty.` — no eligible Human Needed issues (none exist OR all carry a fresh `## Unblock Request`).
 
 `unblock-state-gate.sh` (interactive only) and `unblock-request-postcondition.sh` (autonomous only) each gate on `RALPH_SUBCOMMAND_VARIANT` to discriminate which path is active.
-## Postmortem terminal tokens
+## Reflect terminal tokens
 
-- `POSTMORTEM <path>` — doc written, `<path>` absolute (e.g., `/Users/dubiel/projects/ralph-hero/thoughts/shared/reports/2026-05-23-ralph-team-foo.md`). Plan documents patched with `post_mortem::` edges; `process-improvement` issues filed for blockers.
-- `POSTMORTEM SKIPPED no-session-data` — §Step 1 short-circuit; `TaskList` unavailable or returned empty.
-- `POSTMORTEM SKIPPED <reason>` — other graceful skips (missing primary issue, MCP failures during outcome recording, etc.).
+- `REFLECT <path>` — doc written, `<path>` absolute (`thoughts/shared/research/YYYY-MM-DD-reflect-<slug>.md`).
+- `REFLECT SKIPPED no-friction-signals` — scan returned zero pain points.
+- `REFLECT SKIPPED <reason>` — other graceful skips (user aborted the findings-review loop, scope hint pointed to an empty slice, etc.).
 
-`postmortem-completeness.sh` (Stop hook) greps the transcript for one of these tokens and additionally validates the doc carries the required frontmatter + section headings.
-
-## Retro terminal tokens
-
-- `RETRO <path>` — doc written, `<path>` absolute (`thoughts/shared/research/YYYY-MM-DD-retro-<slug>.md`).
-- `RETRO SKIPPED team-session-redirect` — `TaskList` non-empty and user chose `--mode postmortem` from the dedup prompt.
-- `RETRO SKIPPED no-friction-signals` — scan returned zero pain points.
-- `RETRO SKIPPED <reason>` — other graceful skips (user aborted the findings-review loop, scope hint pointed to an empty slice, etc.).
-
-Retro has no Stop postcondition hook — the mode is an artifact-writer and does not mutate GitHub state. Tokens are reported for parity.
-
-## Trends
-
-Trends is read-only — the markdown report printed to stdout is the deliverable. **No terminal token is emitted** and no postcondition hook gates this mode. The harness extractor treats the entire stdout markdown payload as the result.
-
-## Debug terminal tokens
-
-- `DEBUG FILED <N>` — `N = issuesCreated + issuesUpdated`; emitted on the final line of §Step 6 after the tool returns `dryRun: false`.
-- `DEBUG SKIPPED preflight: RALPH_DEBUG not active` — §Step 1 short-circuit; user must restart Claude Code with `RALPH_DEBUG=true`.
-- `DEBUG SKIPPED preflight: Langfuse unreachable` — §Step 1 short-circuit; user must start the local Langfuse stack.
-- `DEBUG SKIPPED no-errors-in-window` — §Step 4; dry-run returned `errorGroups === 0`.
-- `DEBUG SKIPPED user-declined` — §Step 5; user picked `Skip` on the `AskUserQuestion` confirm prompt.
+Reflect has no Stop postcondition hook — the mode is an artifact-writer and does not mutate GitHub state. Tokens are reported for parity.
 
 ## Split terminal tokens
 
@@ -96,7 +75,7 @@ Trends is read-only — the markdown report printed to stdout is the deliverable
 - `WATCH-PR IDLE` — scan ran cleanly; no Backlog items carry a `blocked:pr-*` label.
 - `WATCH-PR SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit; watch-pr refuses to mutate state from a feature branch (parity with `TRIAGED skipped …`).
 
-watch-pr has no `Stop` postcondition hook (parity with hygiene/trends) — it mutates only the `blocked:pr-*`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
+watch-pr has no `Stop` postcondition hook (parity with hygiene) — it mutates only the `blocked:pr-*`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
 ## Watch-Upstream terminal tokens
 
@@ -104,7 +83,7 @@ watch-pr has no `Stop` postcondition hook (parity with hygiene/trends) — it mu
 - `WATCH-UPSTREAM IDLE` — scan ran cleanly; no Backlog items carry a `blocked:upstream` label.
 - `WATCH-UPSTREAM SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
 
-watch-upstream has no `Stop` postcondition hook (parity with watch-pr/hygiene/trends) — it mutates only the `blocked:upstream`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
+watch-upstream has no `Stop` postcondition hook (parity with watch-pr/hygiene) — it mutates only the `blocked:upstream`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
 ## Watch-Blockers terminal tokens
 
@@ -112,7 +91,7 @@ watch-upstream has no `Stop` postcondition hook (parity with watch-pr/hygiene/tr
 - `WATCH-BLOCKERS IDLE` — scan ran cleanly; no dependency-parked items found.
 - `WATCH-BLOCKERS SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
 
-watch-blockers has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/hygiene/trends) — it mutates only the dependency-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
+watch-blockers has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/hygiene) — it mutates only the dependency-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
 ## Enrich terminal tokens
 
@@ -121,14 +100,14 @@ watch-blockers has no `Stop` postcondition hook (parity with watch-pr/watch-upst
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
 - `ENRICH SKIPPED push-rejected` — §Step 4 non-fast-forward push failed even after one `git pull --rebase origin main` retry; the commit stays local.
 
-enrich has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/watch-blockers/hygiene/trends) — it mutates only the `status: draft` idea files it enriches, never board/workflow state. The token is reported for harness/loop consumption; no automated verification is performed against it.
+enrich has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/watch-blockers/hygiene) — it mutates only the `status: draft` idea files it enriches, never board/workflow state. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
 ## Loop continuation
 
 When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
 
-**Drain modes** (triage, unblock, debug, split, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
+**Drain modes** (triage, unblock, split, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
 
-**Heartbeat modes** (hygiene, trends, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. The watch modes (watch-pr, watch-upstream, watch-blockers) and enrich run as serial children of `--mode all` (not independently looped) and emit their tokens into the consolidated heartbeat report — enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain.
+**Heartbeat modes** (hygiene, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. The watch modes (watch-pr, watch-upstream, watch-blockers) and enrich run as serial children of `--mode all` (not independently looped) and emit their tokens into the consolidated heartbeat report — enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain.
 
 **Non-loop invocations** are unaffected: all token semantics above apply to standalone caretake calls; the loop-continuation layer only activates when `--loop` was passed to the outermost invocation.

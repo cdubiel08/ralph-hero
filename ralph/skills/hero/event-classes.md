@@ -34,7 +34,6 @@ These labels are written by automated producers (event shims, dream-loop classif
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
 | any | `watcher-auto` | watchers | Label applied manually or by a custom monitoring bridge (see `ralph/hooks/` for the watcher entrypoint). `ralph:hero --mode watch` handles the team dispatch. |
-| any | `debug-auto` | watchers | Label written by `ralph:caretake --mode debug` (invoked from Watcher heartbeat). Observability follow-ups are owned by watchers. |
 | any | `scout-auto` | scouts | Label applied manually or by a custom CI step. Dispatches `ralph-playwright` skills directly (a11y-scan / test-e2e / storybook-test / visual-diff). (`playwright-auto.yml` and the nightly scout script were retired with `plugin/ralph-hero/` in GH-1438.) |
 | any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). Feature G ships `ralph:caretake`. |
 
@@ -77,7 +76,7 @@ Director evaluates in this order:
 1. Fetch the candidate issue's labels array.
 2. Check for any `trigger:*` label (Priority 1). First match wins.
 3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch-pr`; exact-match `blocked:upstream` → fire `caretake --mode watch-upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed.
-4. Check for any automation label: `watcher-auto`, `debug-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
+4. Check for any automation label: `watcher-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
 5. Fall through to `workflow_state` lookup (Priority 4).
 6. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.
 
@@ -90,6 +89,5 @@ This table is the canonical inventory of automated label producers as of Feature
 | Label | Producer file | Trigger condition |
 |-------|---------------|-------------------|
 | `watcher-auto` | manual or custom monitoring bridge | GCP Cloud Monitoring alert (or equivalent) delivered to the board; the automated bridge was retired with `plugin/ralph-hero/` in GH-1438 |
-| `debug-auto` | `ralph:caretake --mode debug` (invoked from Watcher heartbeat) | Langfuse error grouping with ≥ N occurrences in window (default: 3) |
 | `process-improvement` | `scripts/dream/reflect.py::emit_process_improvement_issue` | Dream-loop cluster of size ≥ threshold (default: 5) with ≥ N% `tool_use_error` or `verdict: BLOCKED` signals (default: 30%) |
 | `scout-auto` | manual or custom CI step | PR opened/synchronized/reopened with UI-touching changes; `playwright-auto.yml` and the nightly scout script were retired with `plugin/ralph-hero/` in GH-1438 |

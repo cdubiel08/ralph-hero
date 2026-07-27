@@ -8,7 +8,7 @@ export RALPH_SUBCOMMAND=watch-pr
 
 This is the downstream consumer that makes the `WAIT-pr` verdict non-dead-ending: an item waits on a *named, watched condition* (the PR) and advances automatically when that condition resolves. Phase 1 (#1404) produces the `blocked:pr-NNN` label + a `## Triage Decision` comment; this mode resolves it.
 
-No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode trends`) — it mutates only the `blocked:pr-*`-parked items it owns. The terminal token is emitted by convention, not hook-enforced.
+No `Stop` hook gates this mode (parity with `--mode hygiene`) — it mutates only the `blocked:pr-*`-parked items it owns. The terminal token is emitted by convention, not hook-enforced.
 
 ## §Step 1: Verify branch
 

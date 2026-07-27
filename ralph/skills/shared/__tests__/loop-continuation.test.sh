@@ -56,7 +56,6 @@ row_has_queue_empty() {
 
 HEARTBEAT_MODES=(
   "caretake:hygiene"
-  "caretake:trends"
   "caretake:all"
   "catch-up:report"
   "hero:watch"
@@ -91,7 +90,6 @@ DRAIN_MODES=(
   "review:merge"
   "caretake:triage"
   "caretake:unblock"
-  "caretake:debug"
   "caretake:split"
   "caretake:default-event"
   "hero:auto"

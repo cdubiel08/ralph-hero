@@ -121,7 +121,7 @@ assert_file_contains "WATCH-BLOCKERS SKIPPED token" "$MODE_FILE" "WATCH-BLOCKERS
 echo ""
 echo "--- Assertion 6: Heartbeat wiring in SKILL.md ---"
 assert_file_contains "--mode watch-blockers in fan-out dispatch" "$SKILL_FILE" 'mode watch-blockers'
-assert_file_contains "7 total (fan-out child count updated)" "$SKILL_FILE" "7 total"
+assert_file_contains "6 total (fan-out child count updated)" "$SKILL_FILE" "6 total"
 assert_file_contains "modes/watch-blockers.md in mode-bodies list" "$SKILL_FILE" "modes/watch-blockers.md"
 assert_file_count_ge "watch-blockers appears ≥5 times in SKILL.md (frontmatter ×2, table, fan-out, mode-bodies, token-ref)" \
   "$SKILL_FILE" "watch-blockers" 5

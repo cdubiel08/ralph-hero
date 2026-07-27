@@ -1,6 +1,6 @@
 # Dashboard render
 
-This reference is consulted by `/ralph:catch-up --mode dashboard`. It carries the pipeline-render rules and the load-bearing negative-constraint prose ported verbatim from `plugin/ralph-hero/skills/status/SKILL.md`.
+This reference is consulted by `/ralph:catch-up --mode brief` (`brief-composition.md:51`), which inherits its render rules and never-editorialize constraint list by reference. It carries the pipeline-render rules and the load-bearing negative-constraint prose ported verbatim from `plugin/ralph-hero/skills/status/SKILL.md`.
 
 ## pipeline_dashboard call shape
 
@@ -31,7 +31,7 @@ In markdown/ascii mode, surface the raw warning list under a `### Critical Healt
 
 ## Output scope
 
-`--mode dashboard` is a **read-only, passive render of pipeline state plus raw warnings**. It is NOT a triage tool, NOT an analyst, NOT a recommender.
+This render is a **read-only, passive render of pipeline state plus raw warnings**. It is NOT a triage tool, NOT an analyst, NOT a recommender.
 
 **NEVER:**
 
@@ -41,7 +41,7 @@ In markdown/ascii mode, surface the raw warning list under a `### Critical Healt
 - Group, rank, editorialize, or contextualize warnings beyond what the dashboard payload already encodes.
 - Cross-reference issues to call out which "should" be split, closed, or archived.
 
-Remediation, triage, and follow-up analysis belong to `/ralph:caretake` — NOT to `--mode dashboard`. After surfacing the raw warning list, STOP.
+Remediation, triage, and follow-up analysis belong to `/ralph:caretake` — NOT to this render. After surfacing the raw warning list, STOP.
 
 ## Negative example (do NOT produce output like this)
 

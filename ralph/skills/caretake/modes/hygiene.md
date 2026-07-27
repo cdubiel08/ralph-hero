@@ -101,7 +101,11 @@ Use the resolved configuration above to decide:
 
 If `archive_items` errors, do NOT retry blindly — emit `HYGIENE BLOCKED <reason>` (see [outcome-tokens.md](../outcome-tokens.md)) and surface the error in the summary.
 
-## §Step 5: Summary + terminal token
+## §Step 5: Capture snapshot
+
+Call `ralph_hero__capture_snapshot` with no arguments. The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window, appending one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. This is the plugin's only snapshot producer — `catch-up --mode report --with-trends` reads this store via `metrics_trends`. Capture is non-fatal and best-effort: if it errors, log and continue to §Step 6 without failing the hygiene run.
+
+## §Step 6: Summary + terminal token
 
 Output the summary block and then emit exactly one terminal token (see [outcome-tokens.md](../outcome-tokens.md)).
 

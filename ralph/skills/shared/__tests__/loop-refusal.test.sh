@@ -9,8 +9,8 @@
 #   2. The unsuitable-mode list in ralph/CLAUDE.md covers every entry in the
 #      plan's Current-State unsuitable table:
 #        form, plan (default/iterate/epic), impl (default/address),
-#        research (default/prove), catch-up (default/narrative/dashboard),
-#        setup, hero (pr-drain), caretake (postmortem/retro), caretake (unblock --question)
+#        research (default/prove), catch-up (default),
+#        setup, hero (pr-drain), caretake (reflect), caretake (unblock --question)
 
 set -uo pipefail
 
@@ -109,11 +109,10 @@ check_unsuitable "plan iterate"                 "plan.*iterate|iterate"
 check_unsuitable "plan epic"                    "plan.*epic|epic"
 check_unsuitable "impl default/address"         "impl.*address|address"
 check_unsuitable "research default/prove"       "research.*prove|prove"
-check_unsuitable "catch-up default/narrative"   "catch-up.*No|narrative.*No"
+check_unsuitable "catch-up default"             "catch-up.*No|No.*catch-up"
 check_unsuitable "setup"                        "setup.*No|No.*setup"
 check_unsuitable "hero pr-drain"                "pr-drain.*No|No.*pr-drain"
-check_unsuitable "caretake postmortem"          "postmortem.*No|No.*postmortem"
-check_unsuitable "caretake retro"               "retro.*No|No.*retro"
+check_unsuitable "caretake reflect"             "reflect.*No|No.*reflect"
 check_unsuitable "caretake unblock --question"  "unblock.*question|--question"
 
 # ── 5. Refusal targets in auto-alias.md cover form, catch-up, setup ────────────

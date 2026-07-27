@@ -78,7 +78,7 @@ git commit -m "chore(ideas): enrich <N> idea file(s)"
 git push origin main
 ```
 
-**Push-failure rule.** On a non-fast-forward reject, run `git pull --rebase origin main` and retry the push once. If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local (findings are not lost; on the next pass those files are already at `status: forming` and will be skipped, so re-run manually or wait for git state to reconcile). Commit-to-main precedent: `modes/postmortem.md` already commits + pushes from a caretake mode.
+**Push-failure rule.** On a non-fast-forward reject, run `git pull --rebase origin main` and retry the push once. If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local (findings are not lost; on the next pass those files are already at `status: forming` and will be skipped, so re-run manually or wait for git state to reconcile).
 
 ## §Step 5: Emit terminal token
 
