@@ -24,7 +24,7 @@ The script blocks (exit 1, `MERGE GATE FAIL — <gate>: <detail>` + legacy `MERG
 | `review` | `reviewDecision != CHANGES_REQUESTED` | **Hard block, `--force` does not apply.** Resolve or dismiss the review on GitHub (audit-logged). |
 | `mergeable` | `MERGEABLE` (UNKNOWN retried once, 5s) | `CONFLICTING` → rebase is impl-agent's job, not merge-mode's. Not forceable. |
 | `checks` | Every CI check bucket `pass`/`skipping` (the `ralph-attestation` context is excluded — the script validates the comment itself) | Pending → wait/re-tick. Failing → fix cycle. Zero checks → loud warn, continues. |
-| `attestation` | `<!-- ralph-attestation:v1 -->` comment present, JSON-valid, `head_sha` == current head, non-empty `tests[]` all `exit_code: 0`, review verdict present | Post via `scripts/attest-pr.sh` (§Attestation). Stale sha → re-attest after the latest push. |
+| `attestation` | `<!-- ralph-attestation:v1 -->` comment present, JSON-valid, `head_sha` == current head, non-empty `tests[]` all `exit_code: 0`, review verdict present (`models[]` optional — spend observability, not a gate) | Post via `scripts/attest-pr.sh` (§Attestation). Stale sha → re-attest after the latest push. |
 | `external-review` | A review by the policy bot (CodeRabbit) exists | Wait for the bot, or fix what it rejected. |
 
 Policy data: `.github/ralph-merge-policy.json` — evidence requirements + exempt authors (dependabot, github-actions: CI is their evidence; the evidence gates skip, CI-green never does). No policy file → evidence gates off (portability for repos that haven't opted in).
@@ -77,10 +77,13 @@ Evidence is posted BEFORE invoking the merge (default-mode Step 4.9; standalone 
 bash scripts/attest-pr.sh PR_NUMBER \
   --test "npm test::0::212 passed" \      # real commands + real exit codes
   --review-verdict APPROVED --reviewer "ralph:review-agent" \
-  --class "mcp-ts::adversarial:mcp-ts" --class "security::security-floor"
+  --class "mcp-ts::adversarial:mcp-ts" --class "security::security-floor" \
+  --model-tier "impl::standard::sonnet" --model-tier "review::capable::best"
 ```
 
 Classes auto-compute from the diff when no `--class` given. `validate-attestation.yml` recomputes classes server-side and FAILS attestations that under-declare coverage — fabricating breadth doesn't work. External independence comes from CodeRabbit (`.coderabbit.yaml`): a separate bot identity whose Request-Changes reviews land in the `review` hard block.
+
+**Spend trail (GH-1593, optional, non-gating):** `--model-tier "phase::tier::model"` is repeatable — one entry per phase whose tier is known at attest time (`impl`, `review`, `research`, ...). It records a per-issue cost trail in the attestation's `models[]` field; `validate-attestation.sh` validates each entry's shape when present but never fails or holds `pending` on an ABSENT `models[]` — every attestation posted before this field existed keeps validating exactly as before.
 
 ## Merge mechanics
 

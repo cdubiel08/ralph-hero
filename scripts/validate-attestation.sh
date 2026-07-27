@@ -35,8 +35,17 @@
 #   tests[] empty or any exit_code != 0         → failure
 #   review.verdict != APPROVED                  → failure
 #   declared file_classes ⊉ recomputed classes  → failure (under-coverage)
+#   models[] present but malformed (GH-1593)    → failure (see below)
 #   external review required and absent         → pending
 #   otherwise                                   → success
+#
+# models[] (GH-1593, optional, non-gating): a per-phase {phase, tier, model}
+# spend trail. Absence has NO EFFECT — every attestation posted before this
+# field existed keeps validating exactly as before. When present, each
+# entry must carry non-empty phase/tier/model strings; a present-but-
+# malformed models[] fails (garbage evidence must not verify), but this
+# field is NEVER the reason an attestation is `pending` — it is spend
+# observability, not a required gate.
 
 set -euo pipefail
 
@@ -121,6 +130,27 @@ declared=$(jq -r '[.file_classes[]?.class] | .[]' <<<"$att_json" | sort -u)
 uncovered=$(comm -23 <(printf '%s\n' "$computed") <(printf '%s\n' "$declared") | grep -v '^$' || true)
 if [[ -n "$uncovered" ]]; then
   out failure "file classes not covered by attestation: $(tr '\n' ',' <<<"$uncovered" | sed 's/,$//')"
+fi
+
+# --- models[] (GH-1593, optional, non-gating) -------------------------------
+# Absent key → no effect (backward compatible: `.models // []` is empty and
+# the loop below runs zero times). Present → every entry must have
+# non-empty phase/tier/model strings, and the field itself must actually be
+# an array — a present-but-malformed value fails closed rather than
+# silently passing.
+models_shape_ok=$(jq -r '(has("models") | not) or (.models | type == "array")' <<<"$att_json")
+if [[ "$models_shape_ok" != "true" ]]; then
+  out failure "attestation models field is present but not an array"
+fi
+models_malformed=$(jq -r '
+  [(.models // [])[] | select(
+    (.phase // "" | length == 0) or
+    (.tier // "" | length == 0) or
+    (.model // "" | length == 0)
+  )] | length > 0
+' <<<"$att_json")
+if [[ "$models_malformed" == "true" ]]; then
+  out failure "attestation models[] entry missing phase/tier/model"
 fi
 
 # --- external (independent-identity) review --------------------------------

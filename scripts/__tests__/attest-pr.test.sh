@@ -159,6 +159,73 @@ new_case
 run_attest 123 --test "npm test::0"
 [[ "$LAST_RC" -ne 0 ]] && pass "missing verdict/reviewer rejected" || fail "missing verdict accepted"
 
+# 6. --model-tier absent → models: [] in payload, no models table in body (GH-1593)
+new_case
+run_attest 123 --test "npm test::0" --review-verdict APPROVED --reviewer "r" --generated-by "t"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -c '.models' <<<"$payload")" == "[]" ]] && pass "models[] defaults to empty array" || fail "models default wrong: $(jq -c .models <<<"$payload")"
+if grep -q '| Phase | Tier | Model |' "$CASE_DIR/posted_body.txt"; then
+  fail "models table rendered when no --model-tier given"
+else
+  pass "no models table when --model-tier absent"
+fi
+
+# 7. Single --model-tier entry
+new_case
+run_attest 123 --test "npm test::0" --review-verdict APPROVED --reviewer "r" --generated-by "t" \
+  --model-tier "impl::standard::sonnet"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.models | length' <<<"$payload")" == "1" ]] \
+  && [[ "$(jq -r '.models[0].phase' <<<"$payload")" == "impl" ]] \
+  && [[ "$(jq -r '.models[0].tier' <<<"$payload")" == "standard" ]] \
+  && [[ "$(jq -r '.models[0].model' <<<"$payload")" == "sonnet" ]] \
+  && pass "single --model-tier parsed into models[]" \
+  || fail "single --model-tier parse wrong: $(jq -c .models <<<"$payload")"
+grep -q '| Phase | Tier | Model |' "$CASE_DIR/posted_body.txt" \
+  && grep -q '| impl | standard | sonnet |' "$CASE_DIR/posted_body.txt" \
+  && pass "models table rendered with the single entry" \
+  || fail "models table missing/wrong for single entry"
+
+# 8. Multiple --model-tier entries (N-entry repeatable flag)
+new_case
+run_attest 123 --test "npm test::0" --review-verdict APPROVED --reviewer "r" --generated-by "t" \
+  --model-tier "impl::standard::sonnet" --model-tier "review::capable::best"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.models | length' <<<"$payload")" == "2" ]] \
+  && pass "N (2) --model-tier entries all recorded" \
+  || fail "expected 2 models entries, got: $(jq -c .models <<<"$payload")"
+
+# 9. Packed-format edge case: `::` inside the model segment is preserved
+# (first-two-splits semantics — phase/tier come from the first two `::`
+# splits, everything after is the model verbatim).
+new_case
+run_attest 123 --test "npm test::0" --review-verdict APPROVED --reviewer "r" --generated-by "t" \
+  --model-tier "impl::standard::claude-3-5-sonnet::20241022"
+payload=$(extract_payload "$CASE_DIR/posted_body.txt")
+[[ "$(jq -r '.models[0].model' <<<"$payload")" == "claude-3-5-sonnet::20241022" ]] \
+  && pass "extra :: in the model segment preserved verbatim (first-two-splits)" \
+  || fail "model segment mis-split: $(jq -r '.models[0].model' <<<"$payload")"
+
+# 10. Malformed --model-tier (too few segments) is a hard error, like --test's
+# exit-code validation.
+new_case
+run_attest 123 --test "npm test::0" --review-verdict APPROVED --reviewer "r" \
+  --model-tier "impl-only"
+[[ "$LAST_RC" -ne 0 ]] && grep -q "expected format phase::tier::model" <<<"$LAST_OUT" \
+  && pass "malformed --model-tier (1 segment) rejected" || fail "malformed --model-tier accepted: $LAST_OUT"
+
+new_case
+run_attest 123 --test "npm test::0" --review-verdict APPROVED --reviewer "r" \
+  --model-tier "impl::standard"
+[[ "$LAST_RC" -ne 0 ]] && grep -q "expected format phase::tier::model" <<<"$LAST_OUT" \
+  && pass "malformed --model-tier (2 segments) rejected" || fail "malformed --model-tier accepted: $LAST_OUT"
+
+new_case
+run_attest 123 --test "npm test::0" --review-verdict APPROVED --reviewer "r" \
+  --model-tier "::standard::sonnet"
+[[ "$LAST_RC" -ne 0 ]] && grep -q "must all be non-empty" <<<"$LAST_OUT" \
+  && pass "malformed --model-tier (empty phase) rejected" || fail "empty-phase --model-tier accepted: $LAST_OUT"
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

@@ -61,7 +61,22 @@ cat >"$POLICY" <<'EOF'
 }
 EOF
 
-attestation_body() { # attestation_body <sha> [tests_exit] [classes_csv]
+attestation_body() { # attestation_body <sha> [tests_exit] [classes_csv] [models_json]
+  local sha="$1" texit="${2:-0}" classes="${3:-scripts-shell,mcp-ts}" models="${4:-[]}"
+  local classes_json payload
+  classes_json=$(jq -n --arg csv "$classes" \
+    '[($csv | split(",")[]) | {class: ., reviewed_by: ("adversarial:" + .)}]')
+  payload=$(jq -n --arg sha "$sha" --argjson texit "$texit" --argjson classes "$classes_json" --argjson models "$models" '{
+    version: 1, pr: 123, head_sha: $sha,
+    tests: [{command: "npm test", exit_code: $texit, summary: "ok"}],
+    review: {verdict: "APPROVED", reviewer: "ralph:review-agent", mode: "internal"},
+    file_classes: $classes, models: $models, generated_by: "test-harness"
+  }')
+  # shellcheck disable=SC2016  # literal markdown code fence, no expansion wanted
+  printf '<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n%s\n```\n' "$payload"
+}
+
+attestation_body_no_models() { # same as attestation_body but omits the `models` key entirely
   local sha="$1" texit="${2:-0}" classes="${3:-scripts-shell,mcp-ts}"
   local classes_json payload
   classes_json=$(jq -n --arg csv "$classes" \
@@ -163,6 +178,60 @@ run_v "REJECTED verdict fails (presence is not approval)" failure "not APPROVED"
 BAD_POLICY="$TMP_ROOT/bad-policy.json"
 echo '{ not json' >"$BAD_POLICY"
 run_v "malformed policy fails closed" failure "not valid JSON" "$BAD_POLICY" s_valid
+
+# --- models[] (GH-1593, optional, non-gating) -------------------------------
+
+# Pre-existing attestations (no `models` key at all) must keep validating —
+# this is the backward-compatibility proof: absence never gates.
+s_no_models_key() { write_pr "$1" "cdubiel08" "$(attestation_body_no_models "$SHA")" "$CODERABBIT"; }
+run_v "attestation with no models key at all (pre-GH-1593 shape)" success "attested @ ${SHA:0:8}" "$POLICY" s_no_models_key
+
+# Empty models[] (the shape attest-pr.sh emits when --model-tier is never
+# passed) validates identically to the fully-absent key.
+s_empty_models() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-shell,mcp-ts" "[]")" "$CODERABBIT"; }
+run_v "attestation with empty models[]" success "attested @ ${SHA:0:8}" "$POLICY" s_empty_models
+
+# Well-formed models[] present → still verifies (spend trail, not a gate).
+s_good_models() {
+  local models
+  models=$(jq -n '[{phase:"impl",tier:"standard",model:"sonnet"},{phase:"review",tier:"capable",model:"best"}]')
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-shell,mcp-ts" "$models")" "$CODERABBIT"
+}
+run_v "attestation with well-formed models[]" success "attested @ ${SHA:0:8}" "$POLICY" s_good_models
+
+# Malformed models[] (missing a required key) → failure, not pending — garbage
+# evidence must not verify, but it is still evidence-shape failure, never the
+# reason for a `pending` state.
+s_malformed_models_missing_key() {
+  local models
+  models=$(jq -n '[{phase:"impl",tier:"standard"}]') # model key missing
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-shell,mcp-ts" "$models")" "$CODERABBIT"
+}
+run_v "malformed models[] entry (missing model key)" failure "models" "$POLICY" s_malformed_models_missing_key
+
+# Malformed models[] (empty string value) → failure.
+s_malformed_models_empty_value() {
+  local models
+  models=$(jq -n '[{phase:"impl",tier:"",model:"sonnet"}]')
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA" 0 "scripts-shell,mcp-ts" "$models")" "$CODERABBIT"
+}
+run_v "malformed models[] entry (empty tier string)" failure "models" "$POLICY" s_malformed_models_empty_value
+
+# Malformed models[] shape (not an array at all) → failure.
+s_malformed_models_not_array() {
+  local dir="$1" payload att
+  payload=$(jq -n --arg sha "$SHA" '{
+    version: 1, pr: 123, head_sha: $sha,
+    tests: [{command: "npm test", exit_code: 0, summary: "ok"}],
+    review: {verdict: "APPROVED", reviewer: "ralph:review-agent", mode: "internal"},
+    file_classes: [{class:"scripts-shell",reviewed_by:"adversarial:scripts-shell"},{class:"mcp-ts",reviewed_by:"adversarial:mcp-ts"}],
+    models: "not-an-array",
+    generated_by: "test-harness"
+  }')
+  att=$(printf '<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n%s\n```\n' "$payload")
+  write_pr "$dir" "cdubiel08" "$att" "$CODERABBIT"
+}
+run_v "malformed models field (string instead of array)" failure "models" "$POLICY" s_malformed_models_not_array
 
 # Output is state|sha|description — verdict bound to the validated SHA
 dir="$TMP_ROOT/sha-bind"

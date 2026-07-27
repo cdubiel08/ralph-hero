@@ -7,6 +7,7 @@
 #     --review-verdict APPROVED --reviewer "ralph:review-agent" \
 #     [--review-mode internal|external] [--review-url URL] \
 #     [--class "mcp-ts::adversarial:mcp-ts"]... [--no-auto-classes] \
+#     [--model-tier "impl::standard::sonnet"]... \
 #     [--generated-by ID]
 #
 # --test packs "command::exit_code[::summary]". At least one is required —
@@ -15,6 +16,18 @@
 # scripts/pr-file-classes.sh (reviewed_by "adversarial:<class>"); explicit
 # --class entries are appended (same packed format). --no-auto-classes
 # disables the auto pass.
+#
+# --model-tier packs "phase::tier::model" (GH-1593) — a per-phase spend
+# record, e.g. "impl::standard::sonnet" or "review::capable::best". All
+# three segments are required (mirrors --test's packing convention: fewer
+# than 3 `::`-separated segments is a hard error at post time, same
+# posture as --test's exit-code validation). `phase` is free text
+# (impl/review/research/...); `tier` SHOULD be one of the four
+# .ralph-models.yml tier names but is recorded verbatim — the attestation
+# records what ran, it does not re-validate the tier system. Optional:
+# omitting every --model-tier keeps the payload's `models` field an empty
+# array, which validate-attestation.sh treats identically to a fully
+# absent field (spend observability, never a merge gate).
 #
 # The comment carries the machine-readable payload in a ```json fence under
 # the <!-- ralph-attestation:v1 --> marker. head_sha is captured from the PR
@@ -28,7 +41,7 @@ set -euo pipefail
 MARKER='<!-- ralph-attestation:v1 -->'
 
 usage() {
-  grep '^#' "$0" | sed -n '2,20p' >&2
+  grep '^#' "$0" | sed -n '2,37p' >&2
   exit 1
 }
 
@@ -41,6 +54,7 @@ REVIEWER=""
 REVIEW_MODE="internal"
 REVIEW_URL=""
 GENERATED_BY="${RALPH_HARNESS_ID:-}"
+MODEL_TIERS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --review-mode)    REVIEW_MODE="${2:?}"; shift 2 ;;
     --review-url)     REVIEW_URL="${2:-}"; shift 2 ;;
     --generated-by)   GENERATED_BY="${2:?}"; shift 2 ;;
+    --model-tier)     MODEL_TIERS+=("${2:?--model-tier needs a value}"); shift 2 ;;
     -*)               usage ;;
     *)
       if [[ -z "$PR_NUMBER" ]]; then PR_NUMBER="$1"; else usage; fi
@@ -116,6 +131,35 @@ for entry in ${CLASSES[@]+"${CLASSES[@]}"}; do
     '[.[] | select(.class != $c)] + [{class: $c, reviewed_by: $b}]' <<<"$classes_json")
 done
 
+# --- models[] (GH-1593) -----------------------------------------------------
+# Optional per-phase tier/model spend trail. Packing mirrors --test:
+# "phase::tier::model" — first two `::`-splits give phase/tier, everything
+# after the second `::` is the model (so a model id that itself contains
+# `::` is preserved verbatim rather than truncated). Absent entirely →
+# models_json stays "[]", which validate-attestation.sh treats identically
+# to a fully missing `models` key (never a merge gate).
+models_json="[]"
+for mt in ${MODEL_TIERS[@]+"${MODEL_TIERS[@]}"}; do
+  phase="${mt%%::*}"
+  rest="${mt#*::}"
+  if [[ "$rest" == "$mt" ]]; then
+    echo "ERROR: --model-tier '$mt' — expected format phase::tier::model" >&2
+    exit 1
+  fi
+  tier="${rest%%::*}"
+  model="${rest#*::}"
+  if [[ "$model" == "$rest" ]]; then
+    echo "ERROR: --model-tier '$mt' — expected format phase::tier::model" >&2
+    exit 1
+  fi
+  if [[ -z "$phase" || -z "$tier" || -z "$model" ]]; then
+    echo "ERROR: --model-tier '$mt' — phase, tier, and model must all be non-empty" >&2
+    exit 1
+  fi
+  models_json=$(jq --arg p "$phase" --arg t "$tier" --arg m "$model" \
+    '. + [{phase: $p, tier: $t, model: $m}]' <<<"$models_json")
+done
+
 # --- payload ---------------------------------------------------------------
 payload=$(jq -n \
   --argjson pr "$PR_NUMBER" \
@@ -126,6 +170,7 @@ payload=$(jq -n \
   --arg reviewer "$REVIEWER" \
   --arg mode "$REVIEW_MODE" \
   --arg url "$REVIEW_URL" \
+  --argjson models "$models_json" \
   --arg gen "$GENERATED_BY" \
   --arg at "$generated_at" \
   '{
@@ -135,12 +180,23 @@ payload=$(jq -n \
     tests: $tests,
     review: {verdict: $verdict, reviewer: $reviewer, mode: $mode, url: $url},
     file_classes: $classes,
+    models: $models,
     generated_by: $gen,
     generated_at: $at
   }')
 
 tests_rows=$(jq -r '.[] | "| `\(.command)` | \(.exit_code) | \(.summary) |"' <<<"$tests_json")
 classes_rows=$(jq -r '.[] | "| \(.class) | \(.reviewed_by) |"' <<<"$classes_json")
+models_rows=$(jq -r '.[] | "| \(.phase) | \(.tier) | \(.model) |"' <<<"$models_json")
+
+models_section=""
+if [[ -n "$models_rows" ]]; then
+  models_section="
+| Phase | Tier | Model |
+|---|---|---|
+$models_rows
+"
+fi
 
 body="$MARKER
 ## Merge Attestation
@@ -154,7 +210,7 @@ $tests_rows
 | File class | Reviewed by |
 |---|---|
 ${classes_rows:-| _none_ | _none_ |}
-
+$models_section
 \`\`\`json
 $payload
 \`\`\`
