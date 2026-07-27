@@ -9,10 +9,6 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=review"
   PreToolUse:
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue|mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh review merge code_review"
     - matcher: "Bash"
       hooks:
         - type: command
@@ -28,8 +24,6 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/closeout-postcondition.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
 allowed-tools:
@@ -131,7 +125,7 @@ Export `RALPH_TICKET_ID="GH-${TARGET}"` when `TARGET` is an issue number.
 4. **Merge** — `bash scripts/merge-pr.sh PR_NUMBER`. Parse `MERGE GATE PASS` / `MERGE GATE FAIL — <gate>` (legacy `MERGE BLOCKED` emitted alongside). On success capture `MERGE_SHA` via `gh pr view PR_NUMBER --json mergeCommit --jq '.mergeCommit.oid'`. If the gate blocks on a missing/stale attestation, post it first (default-mode Step 4.9 / [merge-gate.md §Attestation](merge-gate.md)) — standalone merges of un-attested PRs are supposed to block.
 5. **Worktree cleanup** — `git worktree remove worktrees/GH-NNN --force`. Cross-repo: remove sibling worktrees per [merge-gate.md §Cross-repo](merge-gate.md).
 6. **Transition issue to Done** — `save_issue(workflowState="__CLOSE__", command="ralph_merge")` (the `__CLOSE__` semantic intent maps `"*": "Done"` per `state-resolution.ts`). Group merges: per-child transition. Do NOT advance parent (server-side GH Action handles it — see [§Parent advancement](merge-gate.md)).
-7. **Cross-repo unblock** — per [§Cross-repo](merge-gate.md): identify sibling repos with `awaits` dependency on this issue; advance / comment per registry `dependency-flow`.
+7. **Cross-repo unblock** — per [§Cross-repo](merge-gate.md): identify sibling repos with `awaits` dependency on this issue; advance / comment per registry `dependency-flow` — a target workflow state MUST be named and the sibling read (`get_issue`) before any write (see merge-gate.md §Cross-repo).
 8. **Post artifact comment + record outcome** — `## Merged` comment with URL + SHA. `knowledge_record_outcome(event_type="pr_merged", ...)`.
 9. **Report** — `MERGED / Issue: #NNN / PR: <url> / SHA: <sha>`. Merge-mode terminates here; default-mode continues to CI watch.
 

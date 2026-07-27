@@ -81,8 +81,8 @@ fi
 
 # No research doc. Parse the plan frontmatter from the Write content for the
 # two new waiver paths. `|| true` keeps each pipeline alive under
-# `set -euo pipefail` when grep finds no matching line (mirrors the convention
-# in split-estimate-gate.sh).
+# `set -euo pipefail` when grep finds no matching line (a convention shared
+# across this hooks directory's field-extraction one-liners).
 content=$(get_field '.tool_input.content')
 frontmatter=$(printf '%s\n' "$content" \
   | awk 'NR==1 && $0=="---"{f=1; next} f && $0=="---"{exit} f{print}')

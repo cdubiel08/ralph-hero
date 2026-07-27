@@ -21,8 +21,6 @@ hooks:
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh caretake:triage triage"
-        - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/unblock-state-gate.sh"
   Stop:
     - hooks:
@@ -30,8 +28,6 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-postcondition.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/unblock-request-postcondition.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
 allowed-tools:
   - Read
   - Write

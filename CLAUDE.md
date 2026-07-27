@@ -162,6 +162,8 @@ Key state categories defined in `workflow-states.ts`:
 
 `save_issue` automatically syncs the Status field (Todo/In Progress/Done) based on `WORKFLOW_STATE_TO_STATUS` mapping when setting `workflowState`. The sync is best-effort and one-way.
 
+**Transition legality is enforced server-side** (GH-1615), ahead of all mutation, at all six Workflow State writers (`save_issue`, `advance_issue` both directions, `batch_update`, `create_sub_issues`, `autoAdvanceParent`, `create_issue`) — `workflow-states.ts`'s `ALLOWED_TRANSITIONS` table plus a documented set of added edges (lock release, plan-reuse fast path, NEEDS_ITERATION re-lock, universal terminal/escalation edges). `force: true` bypasses both transition and lock-guard checks, loudly (`changes.forcedTransition` / `changes.forcedLockOverride` in the response, plus a debug-logger event). The client-side hooks that used to duplicate this (`state-gate.sh`, `lock-release-on-failure.sh`, `split-size-gate.sh`, `split-estimate-gate.sh`) were demoted in GH-1619 — every harness that calls the MCP server inherits the invariant now, not just Claude-Code sessions with the right hooks registered.
+
 **Async unblock loop**: Hero closes its loop at Human Needed. `/ralph:caretake --mode unblock` posts `## Unblock Request` comments; the human answers via `/ralph:caretake --mode unblock --question`. Sibling loop for held plans (GH-1544): plan review posts `## Decision Request` on Plan in Review issues with open `#### Decision:` blocks; the human replies on the issue (or runs `/ralph:plan --mode review NNN` interactively) and the next review dispatch folds the answers.
 
 ### Performance tracking over time
@@ -237,6 +239,7 @@ When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth to
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_GH_TEMPLATE_PROJECT` | No | Template project number for `setup_project` to copy fields/views from |
+| `RALPH_LOCK_STALE_HOURS` | No | Overrides `LOCK_STALE_HOURS` (`mcp-server/src/lib/thresholds.ts`, default `24`) for stale-lock detection. Precedence: explicit per-call `next_actions(lockStaleHours: N)` param > this env var > the constant. Used by `next_actions`' lock-stale reclaim directions (GH-1617). |
 | `RALPH_AUTOPILOT_ENABLE` | No | Must be `"true"` for `hero --mode auto`; enforced by `autopilot-enable-gate.sh` |
 | `RALPH_REVIEW_PLAN` | No | Plan-review gate mode. Default `auto` with decision-driven semantics: APPROVED plans with open `#### Decision:` blocks hold in Plan in Review with a `## Decision Request` comment; decision-free plans auto-advance. `interactive` opts into the whole-plan picker flow. |
 | `RALPH_REVIEW_MODE` | No | Merge-gate mode. Default `auto`: hero runs val → code-review → merge → CI watch unattended (`CHANGES_REQUESTED` on a PR still unconditionally blocks). `interactive` opts into the old report-PR-URLs-and-STOP behavior. |

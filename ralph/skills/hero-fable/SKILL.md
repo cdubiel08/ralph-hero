@@ -40,7 +40,7 @@ Your system prompt names your model. If you are **not** Fable (entitlement, vers
 - **Outcome description, no issue** → create the issue first (`create_issue`, estimate your own, `workflowState: "In Progress"`). The board must know what's being worked on before you start.
 - **Neither** → ask for one.
 
-Claim it: `save_issue(workflowState: "In Progress")` if not already claimed by you. If another session holds a lock state on it, stop and say so.
+Claim it: `save_issue(workflowState: "In Progress")` if not already claimed by you. **Transition legality is enforced server-side** (GH-1615) — `In Progress` is not legal directly from every state (e.g. `Backlog`). If the issue isn't already at a state that transitions directly to `In Progress` (`Ready for Plan`, `Plan in Review`, `In Review`, or already `In Progress`), either take the legal two-step path (`save_issue(workflowState: "Ready for Plan")`, then claim) or use `force: true` and journal why the two-step was skipped. If another session holds a lock state on it, stop and say so.
 
 ## Boundaries
 
@@ -52,7 +52,7 @@ Granted by default — everything the repo's normal development loop implies: re
 
 1. **Decision journal.** Append an entry for every decision that shaped the work: the decision, rationale, alternatives considered, what you deferred, timestamp, and refs (issue/PR/commit/file). Canonical surface: the managed memory bank if this host has one configured; otherwise Claude Code's built-in memory. A short mirror in the close-out comment is welcome but is never the canonical record.
 2. **Findings documented.** Anything notable you discover that outlives this issue — a bug, a constraint, a stale doc — becomes a `thoughts/shared/research/` note or a new issue. Don't let findings die in the transcript.
-3. **Board truthful.** `In Progress` while you work; `Human Needed` the moment you're blocked on an ungranted decision; `In Review` / `Done` per the repo's norms when delivered. The board answers three questions at all times: what is being worked on, what was decided, what was deferred.
+3. **Board truthful.** `In Progress` while you work; `Human Needed` the moment you're blocked on an ungranted decision; `In Review` / `Done` per the repo's norms when delivered. The board answers three questions at all times: what is being worked on, what was decided, what was deferred. A transition the server refuses (illegal from the issue's actual current state, GH-1615) comes back as a tool error naming the legal next states — retry with `force: true` when the deviation from the normal path is deliberate, and journal the justification; that's exactly what the decision journal is for.
 4. **Provenance.** Commits reference the issue (`GH-NNN`); artifacts link back to the issue and PR; the close-out comment links every artifact you produced.
 
 ## Close-out

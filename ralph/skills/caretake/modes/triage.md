@@ -6,7 +6,7 @@ Pick ONE Backlog issue, assess its validity, and route it. Autonomous — no hum
 export RALPH_SUBCOMMAND=triage
 ```
 
-`state-gate.sh caretake:triage triage` (PostToolUse on `save_issue`) gates state transitions on `RALPH_SUBCOMMAND=triage`. `triage-postcondition.sh` (Stop) verifies the transcript carries a `TRIAGED <verdict>` or `Queue empty.` line before allowing exit.
+`save_issue` validates transition legality and the `ralph_triage` command's allowed output states server-side (GH-1615) — no client-side gate needed. `triage-postcondition.sh` (Stop) verifies the transcript carries a `TRIAGED <verdict>` or `Queue empty.` line before allowing exit.
 
 ## §Step 1: Verify branch
 
@@ -293,7 +293,7 @@ After escalating, apply the `ralph-triage` label so the issue is not re-picked.
 - May close/split/update issues (unlike other ralph commands).
 - No code changes.
 - Complete within 10 minutes.
-- The `state-gate.sh` hook validates state transitions; `triage-postcondition.sh` validates the terminal token.
+- `save_issue` validates state transitions server-side; `triage-postcondition.sh` validates the terminal token.
 
 ## §Migration note
 

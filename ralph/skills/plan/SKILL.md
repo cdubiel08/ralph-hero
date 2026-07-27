@@ -36,18 +36,6 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/review-plan-gate.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh plan plan plan_epic review"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__create_issue|mcp__plugin_ralph_ralph-github__ralph_hero__create_sub_issues"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
   PostToolUse:
     - matcher: "Write"
       hooks:
@@ -57,19 +45,16 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/artifact-write-tracker.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
-  # state-gate.sh carries the union of valid transitions across all five
-  # plan modes via its command keys (plan + plan_epic + review), read from
-  # ralph-state-machine.json.
-  # split-* hooks (GH-1605) are the one exception to the file-path
-  # discrimination note below — they fire on MCP tool payloads / Stop, which
-  # carry no file_path, so they key on RALPH_SUBCOMMAND=epic-split (armed by
-  # decomposition.md § Atomic split's re-export, on top of the Step 0 case
-  # export above). The plan-of-plans path stays at RALPH_SUBCOMMAND=epic and
-  # early-exits all three guards.
+  # split-estimate-gate.sh, split-size-gate.sh, state-gate.sh, and
+  # lock-release-on-failure.sh were demoted in GH-1619 — the invariants
+  # they enforced (M/L/XL parent convention, XS/S child ceiling, transition
+  # legality, lock claim/release) now live server-side in save_issue /
+  # create_sub_issues (GH-1615/1616/1618). `split-postcondition.sh` (the
+  # ≥2-children Stop check, GH-1605) is the one split-* hook that survives —
+  # it still keys on RALPH_SUBCOMMAND=epic-split, armed by
+  # decomposition.md § Atomic split's re-export on top of the Step 0 case
+  # export above; the plan-of-plans path stays at RALPH_SUBCOMMAND=epic and
+  # early-exits it (no ≥2-children requirement on S/M feature children).
   # plan-postcondition owns BOTH plan-mode and review-mode Stop checks,
   # discriminating by which artifact path this session wrote (critique
   # under reviews/ → review mode; plan doc under plans/ → plan mode).
@@ -80,8 +65,7 @@ hooks:
   # The other path-discrimination guards still hold:
   #   - doc-structure-validator picks its branch from each session-written
   #     doc's artifact dir,
-  #   - review-verify-doc + review-no-dup self-no-op on file_path,
-  #   - state-gate.sh accepts the union of valid transitions across modes.
+  #   - review-verify-doc + review-no-dup self-no-op on file_path.
   Stop:
     - hooks:
         - type: command
@@ -90,8 +74,6 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-postcondition.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/remember-turn.sh"
 allowed-tools:
@@ -165,7 +147,7 @@ esac
 - MODE `review` → `Skill("loop", …)` using the `plan:review` row, then STOP.
 - MODE `default`, `iterate`, or `epic` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
-No env-flip is needed for most modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch from each session-written doc's artifact dir; state-gate.sh accepts the union of legitimate transitions across all modes). The `split-*` gates are the exception — they fire on MCP tool payloads (`get_issue`, `create_issue`/`create_sub_issues`) and Stop, none of which carry a `file_path`, so they key on `RALPH_SUBCOMMAND` set at Step 0 instead (see `decomposition.md` § Atomic split for the `epic-split` re-export the atomic-split path additionally sets on top of the Step 0 `epic` value).
+No env-flip is needed for most modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch from each session-written doc's artifact dir); transition legality across all five modes is validated server-side by `save_issue` from the issue's live current state (GH-1615), not by a client-side hook keyed on command name. `split-postcondition.sh` is the one exception — it fires on Stop, which carries no `file_path`, so it keys on `RALPH_SUBCOMMAND` set at Step 0 instead (see `decomposition.md` § Atomic split for the `epic-split` re-export the atomic-split path additionally sets on top of the Step 0 `epic` value).
 
 ## Default flow
 
@@ -175,11 +157,11 @@ No env-flip is needed for most modes: the hooks discriminate by the file path be
 4. **Write the plan** — per `plan-shapes.md` (default-column required sections). Filename `thoughts/shared/plans/YYYY-MM-DD-[GH-NNNN-]description.md`. Stamp `estimate:` into the frontmatter from the fetched issue. If the linked-research check (Step 1) ended in "plan anyway", also stamp `research_waived:`. Author the `## Design Decisions & Open Ambiguities` section per `plan-shapes.md` § Design decisions anatomy (resolved decisions journaled; open judgment calls as `#### Decision:` blocks; sentinel when none).
 4a. **UI Validation Phase (conditional)** — skip if `--no-playwright`. Else consult `ui-validation-phase.md`; append `## Phase N: UI Validation` if frontend-relevant + ralph-playwright installed.
 5. **User review picker** — `AskUserQuestion` over *Approve* / *Approve with edits* / *Restart* / *Iterate*. `review-plan-gate.sh` hook enforces this picker runs before any state-advancing `save_issue`.
-6. **GitHub integration** — if `LINKED_ISSUE`: post `## Implementation Plan` artifact comment with doc URL + 1-line summary; update issue body if scope clarified; `save_issue(workflowState: "Plan in Review", command: "plan")`. Human reviews the plan; a separate `--mode review` or manual approval advances to "In Progress".
+6. **GitHub integration** — if `LINKED_ISSUE`: post `## Implementation Plan` artifact comment with doc URL + 1-line summary; update issue body if scope clarified. **Claim then complete** — Steps 1-5 above never took the `Plan in Progress` lock, and writing `Plan in Review` directly is illegal from `Ready for Plan` (exactly where a human-planned issue normally sits, GH-1615): run [§ Legal claim path](#legal-claim-path) below, then `save_issue(workflowState: "__COMPLETE__", command: "plan")` (resolves to `Plan in Review`). Human reviews the plan; a separate `--mode review` or manual approval advances to "In Progress".
 
 ## --mode auto
 
-Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced. Frontmatter `hooks:` gate the flow (tier-validator, state-gate, postcondition, doc-validator, research-required, lock-release). XS/S only, 15-minute budget.
+Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced. Frontmatter `hooks:` gate the flow (tier-validator, postcondition, doc-validator, research-required); transition legality and lock claim/release are server-side (GH-1615/GH-1616). XS/S only, 15-minute budget.
 
 1. **Branch check** — `git branch --show-current` must be `main`.
 2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-plan", limit: 50)`, filter XS/S Ready-for-Plan + unblocked, pick highest priority. None eligible → exit cleanly. (XS/S no longer require linked research — the gate waives sub-threshold work.)
@@ -203,7 +185,7 @@ The single decomposition surface (GH-1605). Folds `ralph-plan-epic` (plan-of-pla
 - **Atomic split** — issue is M/L/XL but does NOT clear the plan-of-plans bar (no natural 3+-feature decomposition; body describes sub-deliverables of one feature). Decomposes into XS/S sub-issues per `decomposition.md` § Atomic split. This path additionally re-exports `RALPH_SUBCOMMAND=epic-split` (on top of the Step 0 `epic` value) so the `split-*` hooks arm their XS/S ceiling + ≥2-children postcondition — the plan-of-plans path never re-exports this and stays at `epic`, where the same three hooks early-exit (S/M feature children pass; no ≥2-children requirement).
 
 0. **Classify** — read the issue body + labels; decide plan-of-plans vs atomic split per `decomposition.md` § When epic-mode applies / § Atomic split § When to split. When ambiguous, prefer plan-of-plans if 2+ independent features can be named without inventing scope; otherwise atomic split.
-1. **Lock epic** — `save_issue(workflowState: "__LOCK__", command: "plan")` on the epic.
+1. **Lock epic** — the epic arrives in whatever state it sits in (`--mode epic` has no queue-pick filter; a direct `#NNN` invocation can hit any state, including `Backlog` — see [§ Legal claim path](#legal-claim-path) below). Run that fragment instead of writing `__LOCK__` unconditionally; from `In Progress` / `In Review` / terminal there is no legal path — STOP and tell the human.
 2. **Context gathering** — read epic body + comments + any linked research. Spawn `codebase-locator` for affected areas; spawn `thoughts-locator` for prior plans on the same epic. Wait for ALL.
 
 **Plan-of-plans path:**
@@ -215,7 +197,7 @@ The single decomposition surface (GH-1605). Folds `ralph-plan-epic` (plan-of-pla
 **Atomic-split path** (re-export `RALPH_SUBCOMMAND=epic-split` per `decomposition.md` § Atomic split before Step 3'):
 
 3'. **Research scope + propose split** — per `decomposition.md` § Atomic split §§Step 1-5 (verify M/L/XL estimate, discover existing children, research scope, propose XS/S sub-issues).
-4'. **Create or update sub-issues** — per `decomposition.md` § Atomic split §Step 6. `split-size-gate.sh` blocks any child estimate ∉ `{XS,S}`.
+4'. **Create or update sub-issues** — per `decomposition.md` § Atomic split §Step 6. `create_sub_issues(maxChildEstimate: "S")` refuses the whole call up front (server-side, GH-1618) if any child estimate exceeds `S`.
 5'. **Establish dependencies + write parent plan-of-plans** — per `decomposition.md` § Atomic split §§Step 7-7.5. The parent plan-of-plans doc this writes is a *different* artifact from Step 3's — it exists so the newly created children are autonomously plannable (closes GH-1416), not a strategic decomposition of the parent itself.
 
 6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
@@ -231,7 +213,7 @@ Surgical updates to an existing plan. No state transitions (the plan stays in wh
 2. **Understand feedback** — `ARG` extra positional or prompt for it. Restate the change in one sentence.
 3. **Confirm approach** — `AskUserQuestion`: *Apply as proposed* / *Adjust* / *Abort*. Loop on Adjust.
 4. **Apply surgical edits** — prefer `Edit` over `Write` per `iteration.md` § Surgical-update principle. Preserve phase numbering; add follow-up sections rather than renumbering. Renumbering escape hatch: see `iteration.md` § Phase numbering preservation.
-5. **Update issue** — post `## Plan Updated` comment summarizing what changed. Do NOT advance state. Do NOT call `save_issue` for workflow transitions in iterate mode (`state-gate.sh` validates transition legitimacy; iterate-mode workflow-body discipline keeps it out of the gate entirely).
+5. **Update issue** — post `## Plan Updated` comment summarizing what changed. Do NOT advance state. Do NOT call `save_issue` for workflow transitions in iterate mode — iterate-mode workflow-body discipline is what keeps it out of the transition-validated write path entirely (the server would validate any such call, but iterate mode should never make one).
 6. **Report** — *Plan iterated for #NNN: [Title] / Plan: [path] / Changes: [1-line summary]*.
 
 ## --mode review
@@ -245,8 +227,12 @@ Mode discrimination is path-based: the Stop chain's `plan-postcondition.sh` bran
 3. **Held-plan short-circuit (auto only)** — if `RALPH_REVIEW_PLAN=auto`, run the idempotency check BEFORE reading the plan or scoring anything (the auto tick re-fires review on every held plan every pass — this step keeps those ticks cheap): existing `## Decision Request` comment → emit `PLAN AWAITING DECISION` or fold a human reply, per `plan-review.md` § Interactive vs auto. Held with no answers → STOP here.
 4. **Execute rubric + pick mode** — read plan FULLY, score against `plan-review.md` § Review rubric. Auto: dispatch a sub-agent for delegated critique. Else (interactive): decisions-first — one `AskUserQuestion` per open `#### Decision:` block (`Decision:`-prefixed headers, recommendation first), fold answers into the plan, then the confirm picker *Approve* / *Request changes* / *Open in editor* (see `plan-review.md` § Interactive vs auto).
 5. **Write critique doc** — `thoughts/shared/reviews/YYYY-MM-DD-GH-NNNN-critique.md` per `plan-review.md` § Critique-doc structure (frontmatter includes `decisions_open: <n>`). `review-no-dup.sh` blocks if a critique already exists.
-6. **Verdict + transition** — per `plan-review.md` § Transition rules: APPROVED decision-free → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). APPROVED with open decisions (auto) → NO transition; post one `## Decision Request` comment + best-effort `PushNotification`, stay in Plan in Review, emit `PLAN AWAITING DECISION`. NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts. `state-gate.sh` is broad enough to accept these (its plan/plan_epic/review command keys union the valid sets from ralph-state-machine.json).
+6. **Verdict + transition** — per `plan-review.md` § Transition rules: APPROVED decision-free → `save_issue(workflowState: "In Progress", command: "review")` (impl can pick it up). APPROVED with open decisions (auto) → NO transition; post one `## Decision Request` comment + best-effort `PushNotification`, stay in Plan in Review, emit `PLAN AWAITING DECISION`. NEEDS_ITERATION → `save_issue(workflowState: "Plan in Progress", command: "review")` + post critique as a comment on the issue with specific gap callouts. Both transitions are validated server-side (`command: "review"` is allowed to output `Plan in Progress` per the NEEDS_ITERATION re-lock fix, GH-1615) — no client-side gate needed.
 7. **Report** — *Plan reviewed for #NNN: [Title] / Verdict: APPROVED|NEEDS_ITERATION / Critique: [path]* — or the terminal line `PLAN AWAITING DECISION` for held plans.
+
+## Legal claim path
+
+!cat ${CLAUDE_PLUGIN_ROOT}/skills/shared/fragments/legal-claim-path.md
 
 ## References
 

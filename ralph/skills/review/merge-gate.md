@@ -117,7 +117,7 @@ For each sibling:
 
 1. Resolve `localDir` (tilde-expanded to absolute path — the cleanup `cd` would silently fail otherwise).
 2. If a sibling worktree exists at `<localDir>/worktrees/GH-NNN`, remove it after merge.
-3. If the registry declares `dependency-flow` for this sibling, advance the sibling's state or post the unblock comment per the flow spec.
+3. If the registry declares `dependency-flow` for this sibling, advance the sibling's state or post the unblock comment per the flow spec. **This is the one MCP-mediated caller whose target state this feature (GH-1592) does not prove legal**: `.ralph-repos.yml`'s `dependency-flow` schema does not enumerate a target workflow state, so the flow MUST name an explicit target state and `get_issue` the sibling first to read its actual current state before writing — do not invent a target. If the registry entry cannot express a target state for this sibling, post the unblock comment only and do not write workflow state.
 
 Tilde expansion: `localDir` values in the registry may use `~`; always expand to absolute paths before `cd` / `git worktree remove`. The path comparison against `file_path` (in hooks) requires absolute.
 
@@ -158,15 +158,22 @@ Agent(
   + evidence) on the epic. Do not touch the epic's state — server-side
   `advance-parent.yml` owns the Done transition.
 - `EPIC GAPS` → post the comment with the gap list AND
-  `save_issue(number=<parent>, workflowState="Human Needed", command="ralph_merge")`
+  `save_issue(number=<parent>, workflowState="Human Needed", command="ralph_merge", force=true)`
   so the epic does not silently stand as Done with unmet intent. This is
   the one sanctioned parent touch — a corrective override, not an
-  advancement. **Race note:** `advance-parent.yml` (triggered by the last
-  child's closure) has NO Human Needed guard and may set the parent to
-  Done before or after this call. Apply Human Needed, then re-read the
+  advancement. **`force: true` is required here**: by the time this fires
+  the parent is very likely `Done` (either `advance-parent.yml` already
+  ran, or this call races it), and `Done` has no outbound edges
+  server-side (GH-1615) — a plain `Human Needed` write would be refused.
+  `force` is loud: the response carries `forcedTransition` with the
+  previous state, which IS the durable record of the override. **Race
+  note:** `advance-parent.yml` (triggered by the last child's closure) has
+  NO Human Needed guard and may set the parent to Done before or after
+  this call. Apply Human Needed (with `force: true`), then re-read the
   parent's state once; if the Action overwrote it back to Done, re-assert
-  Human Needed once (with `issueState: "OPEN"` if the Action also closed
-  the issue). The validation comment is the durable record either way.
+  Human Needed once more (`force: true` again, plus `issueState: "OPEN"`
+  if the Action also closed the issue). The validation comment and the
+  `forcedTransition` markers are the durable record either way.
 
 Skip silently when the merged issue has no parent, the parent has no
 plan-of-plans, or open children remain.

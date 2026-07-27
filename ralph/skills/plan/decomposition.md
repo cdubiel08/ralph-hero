@@ -127,7 +127,7 @@ Re-export this **on top of** the Step 0 `RALPH_SUBCOMMAND=epic` value before any
 
 Split when ALL of the following hold:
 
-- Parent estimate is M, L, or XL (XS/S is already atomic — `split-estimate-gate.sh` blocks).
+- Parent estimate is M, L, or XL (XS/S is already atomic — no technical gate enforces this precondition; it's a skill-level judgment call, not a hook check (`split-estimate-gate.sh` was deleted in GH-1619; What We're NOT Doing #4 of GH-1592 records that the parent-estimate precondition deliberately stays workflow-level, unlike the child ceiling below)).
 - The body has clear sub-deliverables — distinct files, layers, phases, or artifacts that can be implemented independently or in a defined order.
 - A reader can name 2+ children without inventing scope (if you have to invent scope to fill the second child, you're splitting for the sake of splitting).
 
@@ -160,7 +160,7 @@ The dominant decomposition signal is the **artifact boundary** named in the issu
 
 ### §Step 2: Fetch and analyze
 
-Get full issue details + comments; read any linked research. Verify the estimate is M, L, or XL — `split-estimate-gate.sh` (PostToolUse on `get_issue`) blocks with exit 2 if it's XS/S. On block, emit `SPLIT SKIPPED already-atomic` and STOP — do NOT attempt to override the gate.
+Get full issue details + comments; read any linked research. Verify the estimate is M, L, or XL yourself — there is no hook enforcing this (GH-1619 deleted `split-estimate-gate.sh`; the precondition stays workflow-level). If it's XS/S, emit `SPLIT SKIPPED already-atomic` and STOP — do not decompose an already-atomic issue.
 
 ### §Step 3: Discover existing children
 
@@ -198,7 +198,7 @@ create_sub_issues(parentNumber: <parent-number>, maxChildEstimate: "S", children
 
 `maxChildEstimate: "S"` arms the atomic-split contract server-side (GH-1618) — any child estimate above `S` is refused up front, before any issue is created.
 
-`split-size-gate.sh` (PreToolUse on `create_issue` | `create_sub_issues`) blocks the whole call if ANY child's estimate is not `XS`/`S`. Verify via the response's per-child status report (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`); repair only children reporting `error`.
+`create_sub_issues(maxChildEstimate: "S")` refuses the whole call up front, server-side (GH-1618), if ANY child's estimate exceeds `S` — no issues are created on a violation (`split-size-gate.sh`, the client-side hook that used to enforce this, was deleted in GH-1619). Verify via the response's per-child status report (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`); repair only children reporting `error`.
 
 Sub-issue body template:
 
@@ -268,6 +268,8 @@ Any context discovered during §§Steps 2-5 that is specific to one child belong
 
 Determine target state for every child: scope clear → `Ready for Plan`; needs more research → keep `Research Needed`; blocked by an issue outside this split → keep `Backlog`. Group by target state and issue one `batch_update` call per non-empty group. `batch_update` does NOT auto-advance the parent — after the batch calls, if any child now sits at a parent-gate state, call `advance_issue(direction: "parent", number: <any child number>)` once to re-fire the gate check.
 
+**REUSED children can refuse.** `batch_update` validates transition legality server-side per child (GH-1615) and has no `force` param by design — a demotion refused in the response's `errors[]` (e.g. a reused child already at `Ready for Plan` cannot be set back to `Research Needed` or `Backlog`) is a real signal that the reused child is further along than this split assumed, not a bug to route around. Leave it at its current state, or repair one issue at a time via `save_issue(number: <child>, workflowState: <target>, force: true)` with a note on the child explaining the deliberate override.
+
 ### §Step 11: Emit terminal tokens
 
 ```
@@ -289,28 +291,25 @@ On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. 
 ### §Constraints
 
 - Work on ONE parent per invocation.
-- **M/L/XL parents only** — `split-estimate-gate.sh` enforces.
-- **XS/S children only** — `split-size-gate.sh` enforces.
+- **M/L/XL parents only** — workflow-level judgment call (§Step 2 self-check); no technical gate (GH-1592 What We're NOT Doing #4).
+- **XS/S children only** — `create_sub_issues(maxChildEstimate: "S")` enforces server-side, fail-closed (GH-1618).
 - No implementation, only issue creation.
 - **Parent stays in Backlog** — never advance it manually.
 
-### § Hook contract (re-keyed, GH-1605)
+### § Hook contract (GH-1619: demoted to one surviving hook)
 
-Three hook scripts (four registrations — the estimate gate is Pre+Post) gate this path, now registered in `plan/SKILL.md` instead of `caretake/SKILL.md`:
+`split-estimate-gate.sh` and `split-size-gate.sh` (the GH-1605 re-keyed Pre/PostToolUse gates on `get_issue` / `create_issue` / `create_sub_issues`) were deleted in GH-1619 — the invariants they enforced now live server-side (`create_sub_issues(maxChildEstimate)`, GH-1618) or as workflow-level discipline (the parent-estimate precondition, which was never technically enforceable without inventing a precondition the tool contract doesn't need). One hook survives, still registered in `plan/SKILL.md`:
 
 | Hook | Event | Matcher | Scope guard | Purpose |
 |---|---|---|---|---|
-| `split-estimate-gate.sh` | PreToolUse | `ralph_hero__get_issue` | `RALPH_COMMAND=plan` + `RALPH_SUBCOMMAND=epic-split` | Surface M/L/XL reminder via stderr; exit 0 to allow. |
-| `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | same | Parse `tool_response.content[0].text`, exit 2 if the estimate is XS or S. |
-| `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` \| `ralph_hero__create_sub_issues` | same | Block child creation with estimate ∉ `{XS,S}` — scalar `.tool_input.estimate` for `create_issue`, every `.tool_input.children[].estimate` for the batch call. |
-| `split-postcondition.sh` | Stop | (matcher-less) | same | Require `RALPH_SPLIT_COUNT ≥ 2`. |
+| `split-postcondition.sh` | Stop | (matcher-less) | `RALPH_COMMAND=plan` + `RALPH_SUBCOMMAND=epic-split` | Require `RALPH_SPLIT_COUNT ≥ 2`. |
 
-On the **plan-of-plans path** (`RALPH_SUBCOMMAND=epic`, no re-export), all three hooks hit their scope guard and early-exit `allow` — behaving exactly as they do outside any split context: S/M feature children pass (§ Plan-of-plans shape above), and a pure plan-of-plans session reaching Stop with `RALPH_SPLIT_COUNT` unset can never be blocked by the postcondition.
+On the **plan-of-plans path** (`RALPH_SUBCOMMAND=epic`, no re-export), this hook hits its scope guard and early-exits `allow` — a pure plan-of-plans session reaching Stop with `RALPH_SPLIT_COUNT` unset can never be blocked by the postcondition.
 
 ## Terminal tokens
 
 - `SPLIT <N>` — `N ≥ 2` XS/S sub-issues created and linked. `split-postcondition.sh` requires N ≥ 2.
-- `SPLIT SKIPPED already-atomic` — `split-estimate-gate.sh` blocked the parent because its estimate was already XS or S.
+- `SPLIT SKIPPED already-atomic` — emitted when §Step 2's own check finds the parent already XS/S (no hook blocks this — it's a self-check now, GH-1619).
 - `SPLIT SKIPPED <reason>` — other graceful skips (no natural decomposition boundary found, parent already fully split, etc.).
 - `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed (queue-pick invocation with no issue number).
 

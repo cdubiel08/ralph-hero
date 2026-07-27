@@ -21,16 +21,6 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/autopilot-wakeup-clear.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh hero hero"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh hero:pr-drain pr_drain"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh hero hero"
   PostToolUse:
     - matcher: "Skill"
       hooks:
@@ -42,8 +32,6 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/autopilot-stop-gate.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
 allowed-tools:
   - Read
   - Write

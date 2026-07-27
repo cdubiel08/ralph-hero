@@ -20,11 +20,6 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=research"
-  PreToolUse:
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh research research"
   PostToolUse:
     - matcher: "Write|Edit"
       hooks:
@@ -38,8 +33,6 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/remember-turn.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
 allowed-tools:
   - Read
   - Write
@@ -169,7 +162,7 @@ Append to the SAME doc. Update frontmatter (`last_updated`, `last_updated_note`)
 
 ## --mode auto
 
-Autonomous Research-Needed picker. No questions; one issue, locked, researched, advanced. Frontmatter `hooks:` gates the flow (branch-gate, state-gate, postcondition + doc-validator + lock-release on Stop). XS/S only, 15-minute budget.
+Autonomous Research-Needed picker. No questions; one issue, locked, researched, advanced. Frontmatter `hooks:` gates the flow (branch-gate, postcondition + doc-validator on Stop); transition legality and lock claim/release are enforced server-side by `save_issue` (GH-1615/GH-1616). XS/S only, 15-minute budget.
 
 1. **Branch check** — `git branch --show-current` must be `main`; `branch-gate.sh` also blocks non-allowlisted Bash.
 2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-research", limit: 50)`, filter XS/Small + unblocked (per `intake-routing.md` § Blocker semantics — fetch each blocker, do not infer), pick highest priority. None eligible → exit cleanly.
