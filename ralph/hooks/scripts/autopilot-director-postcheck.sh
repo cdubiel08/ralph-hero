@@ -65,7 +65,13 @@ skill_args=$(get_field '.tool_input.args')
 loop_started=0
 if [[ "$skill_bare" == "loop" ]] \
    && printf '%s' "$skill_args" | grep -qE -- '/ralph:hero --tick([[:space:]]|$)'; then
-  touch -- "$autoloop" 2>/dev/null || true
+  if ! touch -- "$autoloop" 2>/dev/null; then
+    # GH-1603 F9: `|| true` here swallowed the exact failure this pair exists
+    # to catch. An unwritable sentinel leaves the Stop gate disarmed, so the
+    # watcher can die silently on the very next tick — the observer must not
+    # block, but it must not be silent either.
+    printf '%s\n' "autopilot-director-postcheck.sh: WARNING could not write autoloop sentinel '$autoloop' — the never-terminate Stop gate is DISARMED for this session." >&2
+  fi
   loop_started=1
 fi
 
@@ -100,7 +106,12 @@ result_line=$(printf '%s\n' "$response_text" | grep -E '^result:' | tail -n 1 ||
 # the guard holds whether the next tick re-fires Skill("loop") or re-runs the
 # tick directly.
 if [[ "$loop_started" -eq 1 ]] || printf '%s' "$result_line" | grep -qE 'Dispatched #|Queue empty|Dispatch failed'; then
-  printf '%s\n' "${result_line:-loop launch}" > "$pending" 2>/dev/null || true
+  if ! printf '%s\n' "${result_line:-loop launch}" > "$pending" 2>/dev/null; then
+    # Same reasoning as the autoloop sentinel above: a pending marker that never
+    # lands means autopilot-stop-gate.sh sees no owed wakeup and lets the tick
+    # stop, which is the silent watcher death this pair was built to detect.
+    printf '%s\n' "autopilot-director-postcheck.sh: WARNING could not write pending-wakeup sentinel '$pending' — this tick's owed ScheduleWakeup is UNGUARDED." >&2
+  fi
 fi
 
 exit 0

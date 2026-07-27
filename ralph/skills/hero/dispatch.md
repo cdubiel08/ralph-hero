@@ -6,10 +6,10 @@
 
 | Phase | Verb | Args |
 |---|---|---|
-| SPLIT | `/ralph:plan --auto --mode epic` | `#NNN` |
+| SPLIT | `/ralph:plan --mode epic` | `#NNN` |
 | RESEARCH | `/ralph:research --auto` | `NNN` |
 | PLAN (XS/S/M) | `/ralph:plan --auto` | `NNN [--research-doc PATH]` |
-| PLAN (L/XL epic) | `/ralph:plan --auto --mode epic` | `NNN [--research-doc PATH]` |
+| PLAN (L/XL epic) | `/ralph:plan --mode epic` | `NNN [--research-doc PATH]` |
 | REVIEW (plan) | `/ralph:plan --mode review` | `NNN [--plan-doc PATH]` |
 | IMPLEMENT | `/ralph:impl --auto` | `NNN [--plan-doc PATH]` |
 | PR | `/ralph:impl --mode pr` | `NNN` |

@@ -211,6 +211,44 @@ else
   fail "refusal cross-ref resolves" "a '§ <heading>' naming a real heading in $CLAUDE_MD" "refusal='$CANONICAL_REFUSAL'"
 fi
 
+# 12c. auto-alias.md claims to be the "sole source of truth ... an alias change
+# here cannot silently de-sync six files". That claim is only true if no OTHER
+# file under ralph/skills/ carries its own copy of the refusal line. Three
+# SKILL.md files did, and they kept emitting a § heading that had been renamed
+# out of ralph/CLAUDE.md — the refusal users actually saw pointed at nothing.
+# Assert the invariant directly: every `--auto is not supported...` line under
+# ralph/skills/ must be byte-identical to the canonical one in auto-alias.md.
+SKILLS_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+divergent=""
+while IFS= read -r hit; do
+  [[ -z "$hit" ]] && continue
+  hit_file="${hit%%:*}"
+  hit_line="${hit#*:}"
+  hit_line="${hit_line#*:}"
+  [[ "$hit_file" == "$ALIAS_DOC" ]] && continue
+  if [[ "$hit_line" != "$CANONICAL_REFUSAL" ]]; then
+    divergent+="${hit_file}: ${hit_line}"$'\n'
+  fi
+done < <(grep -rn '^--auto is not supported for this verb' "$SKILLS_ROOT" 2>/dev/null)
+if [[ -z "$divergent" ]]; then
+  ok "no file under ralph/skills/ holds a divergent copy of the --auto refusal"
+else
+  fail "no divergent --auto refusal copies under ralph/skills/" \
+    "every copy byte-identical to auto-alias.md's" "$divergent"
+fi
+
+# 12d. Conflict detection makes `--auto` + an explicit `--mode` a hard refusal,
+# so any skill prose that DISPATCHES that combination is emitting a guaranteed
+# no-op. hero/dispatch.md and hero/state-machine.md both shipped
+# `/ralph:plan --auto --mode epic`, which the plan skill refuses on sight.
+conflicting=$(grep -rn -- '--auto[[:space:]]\+--mode\|--mode[[:space:]]\+[a-z]\+[[:space:]]\+--auto' \
+  "$SKILLS_ROOT" 2>/dev/null | grep -v '/__tests__/' || true)
+if [[ -z "$conflicting" ]]; then
+  ok "no skill prose dispatches the refused --auto + explicit --mode combination"
+else
+  fail "no --auto + --mode dispatches in skill prose" "no matches outside __tests__" "$conflicting"
+fi
+
 # 13. MODE is re-resolved by the alias expansion (NOT left at its pre-rewrite
 # value). This is the `--auto --loop` bug: MODE parsed before the rewrite stays
 # `default`, so the --loop gate refuses instead of entering the auto loop.

@@ -111,15 +111,34 @@ When the epic spans multiple repos (`.ralph-repos.yml` present, epic touches mul
 - Dependency edges across repos use the same `add_dependency` MCP call — the substrate doesn't distinguish.
 - The epic itself may live in only one repo; children may live in others. The MCP `create_issue` call accepts `owner` / `repo` overrides for cross-repo child creation.
 
+## Dispatch order
+
+`plan/SKILL.md` § --mode epic Step 2 runs this sequence. Steps 0-1 (classify, lock) happen there.
+
+2. **Context gathering** — epic body + comments + linked research; `codebase-locator` for affected areas, `thoughts-locator` for prior plans. Wait for ALL.
+
+**Plan-of-plans path:**
+
+3. **Write plan-of-plans** — per § Plan-of-plans shape (required sections listed there). This write must precede Step 4: it is also what tells `split-size-gate.sh` which ceiling applies (§ Hook contract).
+4. **Create feature children** — per § Child creation and § Dependency-edge rules.
+5. **Update plan-of-plans** — annotate each `### Feature` with its assigned child number + URL.
+
+**Atomic-split path:**
+
+3'. **Research scope + propose split** — per § Atomic split §§Step 1-5.
+4'. **Create or update sub-issues** — per § Atomic split §Step 6.
+5'. **Establish dependencies + write parent plan-of-plans** — per § Atomic split §§Step 7-7.5. That doc is a *different* artifact from Step 3's: it exists so the new children are autonomously plannable (GH-1416), not as a strategic decomposition of the parent.
+
+6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
+7. **Post artifact + advance** — plan-of-plans: `create_comment(## Plan of Plans ...)` on the epic, then `save_issue(workflowState: "Plan in Review", command: "plan")`. Atomic split: per § Atomic split §§Step 8-10 — parent stays in Backlog, child states via `batch_update`. `split-postcondition.sh` reads the created-count from the `create_sub_issues` response itself; nothing to export.
+8. **Optional orchestration** (plan-of-plans only) — optionally dispatch `--mode auto` per child in dependency order. Not auto-cascading by default.
+9. **Report** — plan-of-plans: *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*. Atomic split: terminal token per § Atomic split § Terminal tokens.
+
 ## Atomic split
 
 The non-epic side of decomposition (GH-1605, folded from caretake's retired split mode): take ONE large issue (M/L/XL) that does NOT clear the plan-of-plans bar above and decompose it into XS/S sub-issues that ship atomically. `/ralph:plan --mode epic`'s Step 0 classification selects this path.
 
-```bash
-export RALPH_SUBCOMMAND=epic-split
-```
-
-Re-export this **on top of** the Step 0 `RALPH_SUBCOMMAND=epic` value before any `get_issue` / `create_issue` / `create_sub_issues` call — this is what arms the three `split-*` hooks' XS/S ceiling and ≥2-children postcondition (see § Hook contract below). The plan-of-plans path never re-exports this and stays at `epic`, where the same three hooks early-exit — S/M feature children pass (§ Plan-of-plans shape above), and a pure plan-of-plans session can never be blocked by the ≥2-children postcondition.
+**There is nothing to export.** The three `split-*` hooks classify this path themselves from the tool payloads and this session's recorded writes — see § Hook contract below for the signals and the one ordering rule they impose.
 
 ### When to split (atomic)
 
@@ -158,7 +177,7 @@ The dominant decomposition signal is the **artifact boundary** named in the issu
 
 ### §Step 2: Fetch and analyze
 
-Get full issue details + comments; read any linked research. Verify the estimate is M, L, or XL — `split-estimate-gate.sh` (PostToolUse on `get_issue`) blocks with exit 2 if it's XS/S. On block, emit `SPLIT SKIPPED already-atomic` and STOP — do NOT attempt to override the gate.
+Get full issue details + comments; read any linked research. Verify the estimate is M, L, or XL. `split-estimate-gate.sh` (PostToolUse on `get_issue`) records what it reads, and `split-size-gate.sh` blocks the later `create_sub_issues` call with exit 2 if the recorded parent estimate is XS/S. On XS/S, emit `SPLIT SKIPPED already-atomic` and STOP — do NOT attempt to override the gate.
 
 ### §Step 3: Discover existing children
 
@@ -184,7 +203,7 @@ If existing children were found in §Step 3, compare against the proposal: reuse
 
 ### §Step 6: Create or update sub-issues
 
-**Create new** — ONE `create_sub_issues` call containing ALL net-new children (not one call per child): the complete `children` array and every sibling-index `dependsOn` edge go in that single call, which is also what makes `RALPH_SPLIT_COUNT` a per-batch count:
+**Create new** — ONE `create_sub_issues` call containing ALL net-new children (not one call per child): the complete `children` array and every sibling-index `dependsOn` edge go in that single call, which is also what makes the created-count `split-size-gate.sh` records a per-batch count:
 
 ```text
 create_sub_issues(parentNumber: <parent-number>, children: [
@@ -229,7 +248,7 @@ Write to `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md` — the
 
 One `### Feature` subsection per child under `## Feature Decomposition`, each embedding the child's **real issue number AND title** verbatim, plus its scope + acceptance from §Step 6's body. The parent-plan-reuse short-circuit matches a child to its section **by number or title**, so both must appear. Keep `## Feature Sequencing` **identical** to the `## Issue Split` dependency chain posted in §Step 8 — same edges, same order.
 
-This write happens under `RALPH_SUBCOMMAND=epic-split` in **plan** context, where `plan-research-required.sh`'s carve-out (this doc's own shape) is what lets it pass without a linked research doc — the decomposition itself is the research artifact.
+This write happens in **plan** context, where `plan-research-required.sh`'s carve-out (this doc's own shape) is what lets it pass without a linked research doc — the decomposition itself is the research artifact. It runs *after* §Step 6 on purpose: that ordering is exactly what tells `split-size-gate.sh` this session is on the atomic path (§ Hook contract, signal 3).
 
 ### §Step 8: Update original issue
 
@@ -270,7 +289,7 @@ Determine target state for every child: scope clear → `Ready for Plan`; needs 
 SPLIT <N>
 ```
 
-Export `RALPH_SPLIT_COUNT=<N>` before Stop, where `N` counts **only children reporting `created:true`** in this batch's per-child status report — do NOT add reused (already-existing) children to the count. `split-postcondition.sh` requires `N ≥ 2`; a split that creates one net-new child and reuses one pre-existing child is a re-estimate, not a decomposition, and must not satisfy the gate.
+`N` counts **only children reporting `created:true`** in this batch's per-child status report — do NOT add reused (already-existing) children to the count. Nothing to export: `split-size-gate.sh`'s PostToolUse pass reads that same status report and records the count for `split-postcondition.sh`, which requires `N ≥ 2`. A split that creates one net-new child and reuses one pre-existing child is a re-estimate, not a decomposition, and does not satisfy the gate.
 
 On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. On other graceful skips (no natural boundary, parent already fully split): `SPLIT SKIPPED <reason>`. On an empty queue (§Step 1): `Queue empty.`
 
@@ -290,20 +309,28 @@ On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. 
 - No implementation, only issue creation.
 - **Parent stays in Backlog** — never advance it manually.
 
-### § Hook contract (re-keyed, GH-1605)
+### § Hook contract (re-scoped, GH-1603)
 
-Three hook scripts (four registrations — the estimate gate is Pre+Post) gate this path, now registered in `plan/SKILL.md` instead of `caretake/SKILL.md`:
+Three hook scripts (five registrations — the estimate gate is Pre+Post, the size gate is Pre+Post) gate this path, registered in `plan/SKILL.md`:
 
-| Hook | Event | Matcher | Scope guard | Purpose |
-|---|---|---|---|---|
-| `split-estimate-gate.sh` | PreToolUse | `ralph_hero__get_issue` | `RALPH_COMMAND=plan` + `RALPH_SUBCOMMAND=epic-split` | Surface M/L/XL reminder via stderr; exit 0 to allow. |
-| `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | same | Parse `tool_response.content[0].text`, exit 2 if the estimate is XS or S. **Fails closed:** a missing, null, or unparsable estimate (and an empty response body) also exits 2 — once the gate is armed, "cannot read the estimate" is never treated as "estimate is fine". |
-| `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` \| `ralph_hero__create_sub_issues` | same | Block child creation with estimate ∉ `{XS,S}` — scalar `.tool_input.estimate` for `create_issue`, every `.tool_input.children[].estimate` for the batch call. |
-| `split-postcondition.sh` | Stop | (matcher-less) | same | Require `RALPH_SPLIT_COUNT ≥ 2`. |
+| Hook | Event | Matcher | Purpose |
+|---|---|---|---|
+| `split-estimate-gate.sh` | PreToolUse | `ralph_hero__get_issue` | Surface the M/L/XL reminder via stderr once the atomic path is known; exit 0 to allow. |
+| `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | Parse `tool_response.content[0].text` and **record** the issue's estimate in the session split ledger. Exit 2 if the atomic path is already armed and the estimate is XS or S. **Fails closed when armed:** a missing, null, or unparsable estimate (and an empty response body) also exits 2 — "cannot read the estimate" is never "estimate is fine". |
+| `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` \| `ralph_hero__create_sub_issues` | Classify the path, then block children outside its ceiling — `{XS,S}` atomic, `{S,M}` plan-of-plans — and block any child with **no** estimate on either path. Also blocks when the ledger says this batch's parent is XS/S. |
+| `split-size-gate.sh` | PostToolUse | `ralph_hero__create_sub_issues` | Record how many children reported `created:true`. Never blocks. |
+| `split-postcondition.sh` | Stop | (matcher-less) | When the ledger records an atomic creation attempt, require a recorded count ≥ 2. No attempt recorded ⇒ allow. |
 
-On the **plan-of-plans path** (`RALPH_SUBCOMMAND=epic`, no re-export), all three hooks hit their scope guard and early-exit `allow` — behaving exactly as they do outside any split context: S/M feature children pass (§ Plan-of-plans shape above), and a pure plan-of-plans session reaching Stop with `RALPH_SPLIT_COUNT` unset can never be blocked by the postcondition.
+**Scope comes from what the hooks can observe, never from a mode env var.** A bare `export` inside a Bash tool call does not propagate to hook subprocesses — only `set-skill-env.sh`'s `CLAUDE_ENV_FILE` writes at SessionStart do, and those are static per skill. The signals actually used:
 
-**The Step 0 classification read is deliberately unguarded.** `plan/SKILL.md`'s `## --mode epic` Step 0 ("Classify") reads the epic's body + labels via its own `get_issue` call before any path is chosen, under the Step 0 `RALPH_SUBCOMMAND=epic` value (not yet `epic-split`) — this is intentional, not a gap: classification must succeed regardless of estimate (an XS/S issue can still be *read*, just not *split*), and gating that first read would also wrongly block the plan-of-plans path's own classification. The enforcement point is §Step 2's `get_issue` call above, which always runs *after* the atomic-split path's `RALPH_SUBCOMMAND=epic-split` re-export (`plan/SKILL.md`'s atomic-split step re-exports it "before Step 3'", and §Step 2 only executes inside that step) — so an XS/S parent is still blocked before any child is created, just not at the earliest possible read.
+1. `RALPH_COMMAND=plan` — SessionStart via `CLAUDE_ENV_FILE`, the one env value hooks can trust.
+2. **Tool identity.** Only `--mode epic` creates issues; `default`/`auto`/`iterate`/`review` never call `create_issue` or `create_sub_issues`. So "plan verb + a child-creation payload" already means epic mode.
+3. **Write order**, read from the session artifact list that `artifact-write-tracker.sh` maintains (keyed by the harness's `.session_id`): the plan-of-plans path writes its doc **before** creating children (§ Plan-of-plans path, Step 3 → Step 4); the atomic-split path creates children first and writes the parent plan-of-plans afterwards (§Step 6 → §Step 7.5). A `thoughts/shared/plans/` doc already written by this session ⇒ plan-of-plans ceiling; none ⇒ atomic ceiling.
+4. `RALPH_SUBCOMMAND=epic-split` — honored **additively** if an operator exports it in the environment before launching. It can only force the tighter contract, never relax one.
+
+**Ordering rule this implies:** on the plan-of-plans path, write the plan-of-plans doc *before* `create_sub_issues`. That is already the documented step order; skipping ahead makes the size gate apply the atomic `{XS,S}` ceiling to S/M feature children. Ambiguity resolves to the tighter contract deliberately, and the block message names the fix.
+
+**The Step 0 classification read is unguarded, and that is now free.** `plan/SKILL.md`'s `## --mode epic` Step 0 ("Classify") reads the epic via its own `get_issue` before any path is chosen. The estimate gate only *records* on that read; the M/L/XL parent contract is enforced at the create boundary instead — later than the earliest possible read, but before any child exists, and (unlike the old env-armed check) it actually fires.
 
 ## Terminal tokens
 

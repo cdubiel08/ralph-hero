@@ -201,7 +201,7 @@ tags: [reflect, session-friction, [+ component tags]]
 
 After writing, confirm to the user (`$DOC_PATH` — the absolute path resolved at the top of this step):
 
-```
+```text
 Wrote reflect to:
 `$DOC_PATH`
 

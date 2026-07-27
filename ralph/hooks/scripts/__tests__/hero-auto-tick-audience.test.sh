@@ -37,13 +37,20 @@
 # caretake-watch.test.sh (whose identical migration request was rejected on
 # this PR for exactly this reason) and scripts/check-doc-rosters.sh. A sandbox
 # here would add a temp dir and a copy step that nothing in the test reads.
+# The request was raised a second time in CodeRabbit round 8 and declined again
+# on the same grounds; what DID change is the repo-root resolution below, which
+# no longer shells out to git.
 
 set -euo pipefail
 
 PASS=0
 FAIL=0
 
-REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+# Resolve the repo root from this script's own location, not from `git
+# rev-parse` — the assertions target files at fixed paths relative to this
+# test, and the git call added a dependency that fails outright when the tree
+# is exported without a .git (release tarballs, `git archive` checkouts).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 SKILL_FILE="${REPO_ROOT}/ralph/skills/hero/SKILL.md"
 TICK_FILE="${REPO_ROOT}/ralph/skills/hero/auto-tick.md"
 

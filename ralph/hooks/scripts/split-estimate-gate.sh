@@ -3,23 +3,39 @@
 # Dual-event hook for ralph_hero__get_issue under /ralph:plan --mode epic's
 # atomic-split path (GH-1605; formerly caretake's split mode):
 #   - PreToolUse: surface a context message reminding the agent of the M/L/XL
-#     requirement.
-#   - PostToolUse: parse the get_issue response and BLOCK if the fetched issue's
-#     estimate is XS or S.
+#     requirement (only once the atomic scope is armed — see below).
+#   - PostToolUse: parse the get_issue response, RECORD the fetched issue's
+#     estimate in the session split ledger, and BLOCK if the atomic scope is
+#     armed and that estimate is XS or S.
 #
-# GH-1605: scoped to the plan skill via RALPH_COMMAND, narrowed further by an
-# RALPH_SUBCOMMAND check (epic-split only — the atomic-split re-export from
-# decomposition.md § Atomic split; the plan-of-plans path stays at the Step 0
-# `epic` value and early-exits here). Pipeline-heavy jq stages append `|| true`
-# so the no-match path under `set -euo pipefail` flows to a controlled decision
-# rather than an uncaught abort.
+# GH-1603 scope rework. The previous version keyed enforcement on
+# `RALPH_SUBCOMMAND=epic-split`, armed by a bare `export` in decomposition.md.
+# That export never reaches a hook subprocess (only SessionStart
+# CLAUDE_ENV_FILE writes do — set-skill-env.sh; the same finding
+# autopilot-enable-gate.sh records), so the gate was dead in production. The
+# scope now comes from facts hooks observe themselves:
 #
-# FAIL CLOSED once in scope. Out of scope (wrong verb / wrong subcommand) this
-# hook exits 0 without reading anything. But once the epic-split scope has armed
-# it, an estimate the hook cannot READ is not a reason to allow: warn-and-allow
-# on a missing/unparsable estimate let an unestimated parent walk into atomic
-# split despite the M/L/XL contract — the same defect class this epic is removing
-# from state-gate.sh. Unreadable ⇒ block, with recovery instructions.
+#   * RALPH_COMMAND=plan — set at SessionStart via CLAUDE_ENV_FILE, the one
+#     env signal hooks can trust.
+#   * The session split ledger (hook-utils.sh) — split-size-gate.sh writes
+#     `atomic` when it classifies a child-creation call as an atomic split.
+#   * RALPH_SUBCOMMAND=epic-split — kept as an ADDITIVE arming signal for
+#     environments where an operator exports it before launching. It can only
+#     ADD scope, never remove it.
+#
+# The get_issue PAYLOAD itself carries no field that separates the atomic-split
+# fetch from the plan-of-plans fetch (or from --mode auto's XS/S picker), so
+# this hook cannot classify the path on its own. What it CAN do unconditionally
+# in plan scope is record the estimate it just read; split-size-gate.sh then
+# enforces the M/L/XL parent rule at the create boundary, where the path IS
+# classifiable and where blocking happens before any child exists. That moves
+# the enforcement point later but makes it real — the previous, earlier point
+# never fired at all.
+#
+# FAIL CLOSED once the atomic scope is armed. An estimate the hook cannot READ
+# is not a reason to allow: warn-and-allow on a missing/unparsable estimate let
+# an unestimated parent walk into atomic split despite the M/L/XL contract —
+# the same defect class this epic removed from state-gate.sh.
 #
 # Environment:
 #   RALPH_MIN_ESTIMATE       - Minimum estimate for splitting (default: M).
@@ -30,9 +46,10 @@
 #   RALPH_VALID_SUB_ESTIMATES - Sub-issue estimate set (informational only here)
 #
 # Exit codes:
-#   0 - Allowed (PreToolUse passthrough, PostToolUse confirmed M/L/XL, or out of scope)
-#   2 - Blocked (PostToolUse: fetched issue is XS/S — too small to split, OR the
-#       estimate could not be read from the response — fail closed)
+#   0 - Allowed (PreToolUse passthrough, PostToolUse confirmed M/L/XL, recorded
+#       an estimate without the atomic scope armed, or out of scope)
+#   2 - Blocked (PostToolUse, atomic scope armed: fetched issue is XS/S — too
+#       small to split, OR the estimate could not be read — fail closed)
 
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
@@ -40,39 +57,58 @@ source "$(dirname "$0")/hook-utils.sh"
 if [[ "${RALPH_COMMAND:-}" != "plan" ]]; then
   allow
 fi
-if [[ "${RALPH_SUBCOMMAND:-}" != "epic-split" ]]; then
-  allow
-fi
 
 read_input > /dev/null
 
 min_estimate="${RALPH_MIN_ESTIMATE:-M}"
 
-# Compute allowed estimate set from RALPH_MIN_ESTIMATE
-case "$min_estimate" in
-  XS) allowed="XS,S,M,L,XL" ;;
-  S)  allowed="S,M,L,XL" ;;
-  M)  allowed="M,L,XL" ;;
-  L)  allowed="L,XL" ;;
-  XL) allowed="XL" ;;
-  *)  allowed="M,L,XL" ;;
-esac
+# Allowed parent-estimate set, shared with split-size-gate.sh's parent rule via
+# hook-utils.sh so the two enforcement points can never drift.
+allowed=$(split_min_estimate_set)
 
+# Armed = this session is known to be on the atomic-split path. Ledger fact
+# first (written by split-size-gate.sh from a real create payload), env var
+# second (additive only).
+armed=0
+if [[ "$(split_ledger_get atomic)" == "1" ]]; then
+  armed=1
+elif [[ "${RALPH_SUBCOMMAND:-}" == "epic-split" ]]; then
+  armed=1
+fi
+
+# ---- Event discrimination (GH-1603 F3) ----------------------------------------
+# Never trust `.hook_event_name` alone: an empty/absent value used to fall into
+# the PreToolUse arm, so an S-estimate parent walked straight through the
+# enforcement pass. Discriminate on payload SHAPE — `.tool_response` is present
+# only on PostToolUse — and treat ambiguity as PostToolUse (the enforcing side).
 event_name=$(get_field '.hook_event_name')
+has_response=$(echo "$RALPH_HOOK_INPUT" | jq -r 'has("tool_response")' 2>/dev/null || echo "false")
 
-# ---- PreToolUse path: passthrough with context --------------------------------
-if [[ "$event_name" == "PreToolUse" ]] || [[ -z "$event_name" ]]; then
-  allow_with_context "Split command requires ticket estimate of $allowed. Estimate will be re-checked after fetch."
+if [[ "$has_response" == "true" ]] || [[ "$event_name" == "PostToolUse" ]]; then
+  event="PostToolUse"
+elif [[ "$event_name" == "PreToolUse" ]]; then
+  event="PreToolUse"
+else
+  # Unknown event, no response payload to inspect. Nothing to enforce and
+  # nothing to record — pass through rather than block a shape we cannot read.
+  warn "split-estimate-gate.sh invoked for unrecognized event '${event_name:-<empty>}' with no tool_response; allowing."
 fi
 
-# ---- PostToolUse path: inspect response and enforce ---------------------------
-if [[ "$event_name" != "PostToolUse" ]]; then
-  warn "split-estimate-gate.sh invoked for unexpected event '$event_name'; allowing."
+# ---- PreToolUse path: passthrough, with context only when armed ---------------
+if [[ "$event" == "PreToolUse" ]]; then
+  if [[ "$armed" -eq 1 ]]; then
+    allow_with_context "Split command requires ticket estimate of $allowed. Estimate will be re-checked after fetch."
+  fi
+  allow
 fi
 
+# ---- PostToolUse path: record, then enforce when armed ------------------------
 response_text=$(get_field '.tool_response.content[0].text')
 
 if [[ -z "$response_text" ]]; then
+  if [[ "$armed" -eq 0 ]]; then
+    allow
+  fi
   block "Split blocked: parent estimate unreadable
 
 The get_issue response carried no .content[0].text, so the parent's estimate
@@ -92,6 +128,19 @@ fi
 estimate=$(echo "$response_text" | jq -r '.estimate // empty' 2>/dev/null || echo "")
 issue_number=$(echo "$response_text" | jq -r '.number // empty' 2>/dev/null || echo "")
 issue_title=$(echo "$response_text" | jq -r '.title // empty' 2>/dev/null || echo "")
+
+# Record what we read, armed or not. split-size-gate.sh reads this back at the
+# create boundary to enforce the M/L/XL parent rule on the atomic path — the
+# only place in the flow where that path is identifiable from a payload.
+# Numeric guard: the key becomes a filename under the session ledger dir, and
+# `.number` is attacker-shaped data from a tool response.
+if [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+  split_ledger_put "parent-${issue_number}" "${estimate:-}"
+fi
+
+if [[ "$armed" -eq 0 ]]; then
+  allow
+fi
 
 if [[ -z "$estimate" ]]; then
   block "Split blocked: parent estimate missing or unparsable

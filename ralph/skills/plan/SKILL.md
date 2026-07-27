@@ -61,27 +61,19 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
-  # state-gate.sh carries the union of valid transitions across all five
-  # plan modes via its command keys (plan + plan_epic + review), read from
-  # ralph-state-machine.json.
-  # split-* hooks (GH-1605) are the one exception to the file-path
-  # discrimination note below — they fire on MCP tool payloads / Stop, which
-  # carry no file_path, so they key on RALPH_SUBCOMMAND=epic-split (armed by
-  # decomposition.md § Atomic split's re-export, on top of the Step 0 case
-  # export above). The plan-of-plans path stays at RALPH_SUBCOMMAND=epic and
-  # early-exits all three guards.
-  # plan-postcondition owns BOTH plan-mode and review-mode Stop checks,
-  # discriminating by which artifact path this session wrote (critique
-  # under reviews/ → review mode; plan doc under plans/ → plan mode).
-  # Artifact discovery is session-scoped via artifact-write-tracker.sh
-  # (PostToolUse Write|Edit below), NOT env vars — Bash exports across the
-  # per-call subshell do not reliably reach hook subprocesses — and NOT
-  # directory mtime, which raced against concurrent sessions.
-  # The other path-discrimination guards still hold:
-  #   - doc-structure-validator picks its branch from each session-written
-  #     doc's artifact dir,
-  #   - review-verify-doc + review-no-dup self-no-op on file_path,
-  #   - state-gate.sh accepts the union of valid transitions across modes.
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__create_sub_issues"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
+  # NO hook here keys on a mode env var: a bare `export` in skill prose never
+  # reaches a hook subprocess, and directory mtime raced concurrent sessions.
+  # Every gate discriminates on RALPH_COMMAND=plan (SessionStart/CLAUDE_ENV_FILE)
+  # plus something it observes — file_path (doc-structure-validator,
+  # review-verify-doc, review-no-dup, plan-postcondition's plan-vs-review
+  # branch, all via artifact-write-tracker.sh's session-scoped list), tool
+  # identity + that same artifact list (the split-* gates: decomposition.md
+  # § Hook contract), or the state-machine union (state-gate.sh's plan +
+  # plan_epic + review command keys, from ralph-state-machine.json).
   Stop:
     - hooks:
         - type: command
@@ -149,28 +141,19 @@ Set `MODE` ∈ `{default, auto, epic, iterate, review}` from `--mode` flag (defa
 - Conflict check (`--auto` + an explicit `--mode`): apply `auto-alias.md` § Conflict detection — emit its refusal text verbatim, then STOP. Not restated here; that file is the only copy.
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=plan alias row) **AND set `MODE=auto`**. Rewriting `$ARGUMENTS` alone is not enough: `MODE` was resolved above from the pre-rewrite string, and both the hook-scope block and the `--loop` gate below branch on `MODE` — so `--auto --loop` would arrive as `MODE=default` and be *refused* instead of starting the `plan:auto` loop. Continue to `--loop` detection with the rewritten args.
 
-Derive the hook scope from the **already-parsed `MODE`**, never from a prefix
-match on `$ARGUMENTS` — `--mode` is not required to be the first token
-(`--no-playwright --mode epic #123` is a valid invocation), and a prefix match
-silently falls through to `default`, leaving the `split-*` gates disarmed for a
-real `--mode epic` run:
-
-```bash
-case "$MODE" in
-  auto)    export RALPH_SUBCOMMAND=auto ;;
-  epic)    export RALPH_SUBCOMMAND=epic ;;
-  iterate) export RALPH_SUBCOMMAND=iterate ;;
-  review)  export RALPH_SUBCOMMAND=review ;;
-  *)       export RALPH_SUBCOMMAND=default ;;
-esac
-```
+**Do NOT export a mode env var for the hooks.** A bare `export` inside a Bash
+tool call reaches neither the next Bash call nor any hook subprocess — only
+`set-skill-env.sh`'s `CLAUDE_ENV_FILE` writes at SessionStart do, and those
+cannot know the mode. Every plan hook derives its own scope: `RALPH_COMMAND=plan`
+plus the tool payload or this session's recorded artifact writes. See
+`decomposition.md` § Hook contract for the `split-*` gates specifically.
 
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
 - MODE `auto` → `Skill("loop", …)` using the `plan:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
 - MODE `review` → `Skill("loop", …)` using the `plan:review` row, then STOP.
 - MODE `default`, `iterate`, or `epic` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
-Most modes need no env-flip — hooks discriminate by the file path being written. The `split-*` gates are the exception (MCP payloads + Stop carry no `file_path`), so they key on `RALPH_SUBCOMMAND` instead — see `decomposition.md` § Hook contract for the full discrimination rationale and the `epic-split` re-export.
+No mode env-flip anywhere — hooks that watch `Write` discriminate by the file path being written; the `split-*` gates (MCP payloads + Stop carry no `file_path`) discriminate by tool identity plus this session's recorded artifact writes. See `decomposition.md` § Hook contract.
 
 ## Default flow
 
@@ -202,28 +185,11 @@ Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced.
 
 ## --mode epic
 
-The single decomposition surface (GH-1605): plan-of-plans (strategic, multi-feature) AND atomic split (one M/L/XL issue → XS/S siblings), discriminated by the epic's own shape rather than a separate flag. **`decomposition.md` is the contract** — path selection, doc shape, child payload, dependency wiring, and hook arming all live there; the sequence below is dispatch order only and deliberately restates none of it.
+The single decomposition surface (GH-1605): plan-of-plans (strategic, multi-feature) AND atomic split (one M/L/XL issue → XS/S siblings), discriminated by the epic's own shape rather than a separate flag. **`decomposition.md` is the contract** — path selection, doc shape, child payload, dependency wiring, hook scoping, and the full dispatch order all live there.
 
-0. **Classify** — plan-of-plans vs atomic split, per `decomposition.md` § When epic-mode applies and § Atomic split § When to split (which carry the ambiguity tie-break).
-1. **Lock epic** — `save_issue(workflowState: "__LOCK__", command: "plan")` on the epic.
-2. **Context gathering** — epic body + comments + linked research; `codebase-locator` for affected areas, `thoughts-locator` for prior plans. Wait for ALL.
-
-**Plan-of-plans path:**
-
-3. **Write plan-of-plans** — per `decomposition.md` § Plan-of-plans shape (required sections listed there).
-4. **Create feature children** — per `decomposition.md` § Child creation and § Dependency-edge rules.
-5. **Update plan-of-plans** — annotate each `### Feature` with its assigned child number + URL.
-
-**Atomic-split path** (re-export `RALPH_SUBCOMMAND=epic-split` per `decomposition.md` § Atomic split before Step 3'; rationale in § Hook contract):
-
-3'. **Research scope + propose split** — per `decomposition.md` § Atomic split §§Step 1-5.
-4'. **Create or update sub-issues** — per `decomposition.md` § Atomic split §Step 6.
-5'. **Establish dependencies + write parent plan-of-plans** — per `decomposition.md` § Atomic split §§Step 7-7.5. That doc is a *different* artifact from Step 3's: it exists so the new children are autonomously plannable (GH-1416), not as a strategic decomposition of the parent.
-
-6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
-7. **Post artifact + advance** — plan-of-plans: `create_comment(## Plan of Plans ...)` on the epic, then `save_issue(workflowState: "Plan in Review", command: "plan")`. Atomic split: per `decomposition.md` § Atomic split §§Step 8-10 — parent stays in Backlog, child states via `batch_update`, and `RALPH_SPLIT_COUNT=<N>` is exported before Stop for `split-postcondition.sh`.
-8. **Optional orchestration** (plan-of-plans only) — optionally dispatch `--mode auto` per child in dependency order. Not auto-cascading by default.
-9. **Report** — plan-of-plans: *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*. Atomic split: terminal token per `decomposition.md` § Atomic split § Terminal tokens.
+0. **Classify** — plan-of-plans vs atomic split, per `decomposition.md` § When epic-mode applies and § Atomic split § When to split.
+1. **Lock epic** — `save_issue(workflowState: "__LOCK__", command: "plan")`.
+2. **Run the path** — per `decomposition.md` § Dispatch order (context gathering, per-path steps, commit/push, artifact + advance, report). No env arming: the `split-*` gates classify the path themselves (§ Hook contract).
 
 ## --mode iterate
 

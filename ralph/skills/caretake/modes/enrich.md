@@ -44,6 +44,10 @@ Establish `chore/enrich-ideas` **before** §Step 3 touches a file. Doing it afte
 
 ```bash
 BRANCH="chore/enrich-ideas"
+# Fetch BOTH refs. `origin/main` is the base for every create/fast-forward
+# below; a stale local `origin/main` would branch the standing PR off an
+# outdated base and produce a stale-or-conflicting PR.
+git fetch origin main 2>/dev/null || true
 git fetch origin "$BRANCH" 2>/dev/null || true
 
 if git rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null; then
@@ -64,7 +68,9 @@ If the checkout fails for any reason, STOP before editing and emit `ENRICH SKIPP
 
 ## §Step 3: Enrich each selected file (bounded, serial)
 
-For each of the (up to 5) selected files, run exactly three bounded lookups keyed on the idea's topic (title + "The Idea" body):
+**Re-validate the selection first.** §Step 2 read frontmatter on `main`; §Step 2b may then have checked out `chore/enrich-ideas` carrying a prior pass's unpushed enrichment commit, in which case a file that was `status: draft` during selection is `status: forming` on the branch now checked out. Re-read each selected file's frontmatter **after** the checkout and drop any that is no longer `status: draft` — enriching one twice appends a second `## Enrichment` section. If the re-read empties the selection, emit `Queue empty.`, return to `main` (§Step 4's `return_to_main`), and STOP. Keep the surviving paths in `SELECTED_FILES` — §Step 4 stages exactly those.
+
+For each of the (surviving, up to 5) selected files, run exactly three bounded lookups keyed on the idea's topic (title + "The Idea" body):
 
 1. One `Agent(subagent_type="ralph:codebase-locator", prompt="Find files related to [idea topic]")` sweep — one-line entries only, no deep read.
 2. One `knowledge_search` prior-art query (`type: "idea"`, `limit: 3`) — skip silently (empty subsection, noted as unavailable) if the tool is not available.
@@ -97,9 +103,6 @@ Update frontmatter: `status: forming`, `enriched: <same UTC ISO-8601 timestamp>`
 This step only runs when §Step 2 selected at least one file (N=0 already short-circuited to `Queue empty.`). The branch is already checked out from §Step 2b; `main` rejects all direct pushes (GH-1589 ruleset), so the commit lands through that standing PR-only branch:
 
 ```bash
-git add thoughts/shared/ideas
-git commit -m "chore(ideas): enrich <N> idea file(s)"
-
 # EVERY exit path returns to main — the commit is already safe on the local
 # `chore/enrich-ideas` ref, and leaving that branch checked out would strand the
 # next heartbeat at §Step 1's main-only gate (it would emit `ENRICH SKIPPED —
@@ -113,6 +116,25 @@ return_to_main() {
     exit 0
   fi
 }
+
+# Stage ONLY the files this invocation enriched (§Step 3's SELECTED_FILES).
+# `git add thoughts/shared/ideas` swept in every modified idea file, including
+# unrelated worktree edits — contradicting the "mutates only the idea files it
+# enriches" constraint and publishing that unrelated content in the PR.
+git add -- "${SELECTED_FILES[@]}"
+
+# The commit is checked like every other command in this block. An unchecked
+# commit that fails (pre-commit hook, empty staging set, identity not
+# configured) leaves the push below a no-op that "succeeds", the PR-already-
+# exists fallback then returns a URL, and the mode reports
+# `ENRICHED <N> (PR <url>)` for findings that never reached a PR — while §Step 3
+# has already flipped those files to `status: forming`, so they are never
+# re-selected. The findings would be lost silently.
+if ! commit_err=$(git commit -m "chore(ideas): enrich <N> idea file(s)" 2>&1); then
+  return_to_main
+  printf '%s\n' "ENRICH BLOCKED commit-failed: ${commit_err}"
+  exit 0
+fi
 
 # Classify BEFORE retrying. Only a remote-branch rejection is retryable — that
 # is what the fetch + fast-forward actually repairs. Authentication, permission,
@@ -180,6 +202,7 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
 - `ENRICH SKIPPED branch-setup-failed` — §Step 2b could not check out `chore/enrich-ideas`; no file was edited.
 - `ENRICH SKIPPED push-rejected` — §Step 4 branch-push **rejection** (non-fast-forward / fetch-first / stale info) survived the one fetch + fast-forward retry; commit stays local on `chore/enrich-ideas` and the checkout returns to `main` so the next heartbeat can retry.
+- `ENRICH BLOCKED commit-failed: <stderr>` — §Step 4 `git commit` failed (pre-commit hook, nothing staged, unconfigured identity, …). The enriched files are already at `status: forming` on the branch but nothing was committed, so the pass is reported as blocked rather than as an `ENRICHED <N> (PR <url>)` that points at a PR containing none of these findings. The checkout returns to `main`.
 - `ENRICH BLOCKED push-failed: <stderr>` — §Step 4 `git push` failed for a **non-retryable** reason (auth, permission, protected branch, network, rate limit). Not retried, not relabeled as `push-rejected`; the commit stays local and the checkout returns to `main`.
 - `ENRICH BLOCKED checkout-main-failed: <stderr>` — §Step 4's return to `main` failed. The commit is safe on `chore/enrich-ideas` but the session is still on that branch, so the next heartbeat will stop at §Step 1's gate until an operator runs `git checkout main`.
 - `ENRICH BLOCKED pr-create-failed: <stderr>` — §Step 4 `gh pr create` failed for a reason OTHER than an already-open PR (auth, validation, rate limit, network), **or** the already-exists fallback's `gh pr view` failed / returned an empty URL. The commit is pushed; only the PR (or its URL) is missing.

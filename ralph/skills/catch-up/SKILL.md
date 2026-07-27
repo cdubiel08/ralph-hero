@@ -34,11 +34,7 @@ The unified orientation verb. The `--mode` flag selects a single-surface alterna
 
 ## Step 0: Flag guards
 
-**`--auto` refusal** — if `--auto` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/auto-alias.md` § Refusal targets):
-
-```
---auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.
-```
+**`--auto` refusal** — if `--auto` appears in `$ARGUMENTS`, emit `ralph/skills/shared/auto-alias.md` § Refusal targets' refusal text **verbatim**, then STOP. Not restated here: that file is the only copy (an inline duplicate is what let this skill keep emitting a § heading that no longer exists).
 
 **`--loop` gate** — use the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
 

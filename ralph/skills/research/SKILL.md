@@ -184,13 +184,7 @@ Autonomous Research-Needed picker. No questions; one issue, locked, researched, 
 
 **Escalation triggers (autonomous only):** advance to `workflowState: "Human Needed"` (not "Ready for Plan") when (a) issue scope is M/L/XL on inspection (needs re-estimation or splitting), (b) no relevant codebase patterns can be located after broad search, or (c) sub-agents surface conflicting implementations and you cannot determine the canonical one. State the trigger explicitly in the issue comment so the unblock pipeline has context.
 
-## Claim-shaped questions
-
-A claim ("prove X", "verify Y", "is it true that Z") is not a distinct mode —
-it flows through the same default intake (Step 1) and sub-agent dispatch
-(Step 3) as any other question. Only the write-up shape changes: Step 5/6
-apply `findings-format.md` § Claim-check shape (verdict-first `## Summary`,
-evidence-chain `## Detailed Findings`) instead of open-ended prose.
+**Claim-shaped questions** ("prove X", "verify Y", "is it true that Z") are not a distinct mode — same intake, same dispatch; only the write-up shape changes. Contract: `intake-routing.md` § Detection rules and `findings-format.md` § Claim-check shape.
 
 ## References
 

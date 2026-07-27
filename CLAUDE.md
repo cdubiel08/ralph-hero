@@ -67,7 +67,7 @@ plugin/
 | Verb | Model tier | Purpose |
 |------|-----------|---------|
 | `/ralph:catch-up` | inherit (haiku narrative agent) | Orientation: narrative + picker, or status report/daily brief |
-| `/ralph:form` | inherit | Issue intake: dedup, draft, tree |
+| `/ralph:form` | inherit | Issue intake: dedup, draft, epic-parent handoff to `plan --mode epic` |
 | `/ralph:research` | sonnet (feature/epic units: fable fork) | Research: interactive or autonomous queue-drain |
 | `/ralph:plan` | best (fable→opus); single XS/S auto-plans fork sonnet | Planning: interactive, auto, epic, iterate, review |
 | `/ralph:impl` | sonnet session / complexity ladder (haiku-opus) + haiku test-runner | Implementation: auto, pr, address |

@@ -186,5 +186,27 @@ assert_nofile "$PENDING" "re-entry cleans pending"
 assert_nofile "$AUTOLOOP" "re-entry cleans autoloop"
 
 echo
+echo "== postcheck: an unwritable sentinel dir warns on stderr (GH-1603 F9) =="
+# `touch … || true` and `printf … > "$pending" || true` swallowed the write
+# failure, so a read-only TMPDIR silently left the never-terminate Stop gate
+# disarmed — the exact watcher death this hook pair exists to catch. The hook
+# still must not block (it is an observer), but it must say something.
+RO_DIR="$TEST_DIR/readonly"
+mkdir -p "$RO_DIR"
+chmod 500 "$RO_DIR"
+ro_out=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}' \
+  | env RALPH_COMMAND=hero RALPH_HOOK_INPUT= TMPDIR="$RO_DIR" bash "$POSTCHECK" 2>&1 >/dev/null)
+ro_ec=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}' \
+  | env RALPH_COMMAND=hero RALPH_HOOK_INPUT= TMPDIR="$RO_DIR" bash "$POSTCHECK" >/dev/null 2>&1; echo $?)
+chmod 700 "$RO_DIR"
+assert_eq "0" "$ro_ec" "postcheck still exits 0 on an unwritable sentinel dir (observer never blocks)"
+case "$ro_out" in
+  *"WARNING could not write autoloop sentinel"*)
+    PASS=$((PASS+1)); echo "  PASS: sentinel-write failure surfaces on stderr" ;;
+  *)
+    FAIL=$((FAIL+1)); echo "  FAIL: sentinel-write failure was swallowed"; echo "    stderr: $ro_out" ;;
+esac
+
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

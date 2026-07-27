@@ -88,6 +88,20 @@ run_case "no estimate + no waiver + no research blocks" 2 \
   "$PLANS/2026-05-24-GH-2-x.md" $'---\ndate: 2026-05-24\ntype: plan\n---'
 
 # --- Plan-of-plans carve-out (GH-1605) ------------------------------------------
+# The fixtures below deliberately KEEP a GH-NNN token in the filename. The hook's
+# rule 3 ("no GH-NNNN token in the path -> allow") fires BEFORE the carve-out and
+# before the research lookup, so a token-free fixture path would exit 0 at rule 3
+# and every exit-2 fence assertion here would become a false green. What the
+# fence cases actually need is a token whose research doc does NOT exist (rule 4
+# would otherwise allow first). Assert that precondition explicitly rather than
+# leaving it to whoever next adds a research fixture.
+for tok in GH-3 GH-4 GH-5 GH-6 GH-8 GH-10 GH-11 GH-12 GH-13 GH-14 GH-15; do
+  if compgen -G "$SBX/thoughts/shared/research/*${tok}-*" >/dev/null 2>&1; then
+    fail "fence-branch precondition: a research doc exists for $tok, so rule 4 allows before the fence parser runs"
+  fi
+done
+pass "fence-branch fixtures carry a GH token with no matching research doc (rules 3 and 4 both fall through)"
+
 run_case "plan-of-plans type: frontmatter allows without research doc" 0 \
   "$PLANS/2026-07-26-GH-3-epic.md" $'---\ntype: plan-of-plans\nestimate: L\n---\n\n## Feature Decomposition\n'
 run_case "## Feature Decomposition heading (no type:) allows without research doc" 0 \

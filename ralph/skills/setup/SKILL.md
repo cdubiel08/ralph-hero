@@ -45,11 +45,7 @@ References: [scope-detection.md](scope-detection.md), [setup-state.md](setup-sta
 
 ## Step 0: Parse arguments + set subcommand scope
 
-**`--auto` refusal** — if `--auto` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/auto-alias.md` § Refusal targets):
-
-```
---auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.
-```
+**`--auto` refusal** — if `--auto` appears in `$ARGUMENTS`, emit `ralph/skills/shared/auto-alias.md` § Refusal targets' refusal text **verbatim**, then STOP. Not restated here: that file is the only copy (an inline duplicate is what let this skill keep emitting a § heading that no longer exists).
 
 **`--loop` refusal** — if `--loop` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/loop-wrapper.md` § Refusal message):
 

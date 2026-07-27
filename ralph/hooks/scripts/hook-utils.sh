@@ -213,6 +213,53 @@ session_artifacts() {
   done < "$list"
 }
 
+# --- Atomic-split ledger ----------------------------------------------------
+# The three split-*.sh gates need three facts that no single hook payload
+# carries on its own: (a) whether this session is on the atomic-split path,
+# (b) the parent issue's estimate, (c) how many children were actually created.
+#
+# None of them can travel in an env var. The plan skill body can only `export`
+# inside a Bash tool call, and those exports never reach hook subprocesses —
+# only SessionStart CLAUDE_ENV_FILE writes do (set-skill-env.sh; the same
+# finding autopilot-enable-gate.sh and autopilot-director-postcheck.sh record).
+# So the gates exchange facts through a session-scoped ledger written BY HOOKS
+# from harness-supplied payloads. Writer and reader are both hooks, so
+# ralph_session_dir()'s .session_id key is identical on both sides by
+# construction — no cross-process env assumption anywhere.
+#
+# Requires read_input to have been called (ralph_session_dir reads the payload).
+# Every write is best-effort: a ledger the filesystem refuses is a missing
+# fact, and each consumer decides for itself whether a missing fact blocks.
+split_ledger_put() {
+  local key="$1" value="$2" dir
+  dir=$(ralph_session_dir)
+  [[ -d "$dir" ]] || return 0
+  printf '%s\n' "$value" > "${dir}/split-${key}" 2>/dev/null || true
+}
+
+split_ledger_get() {
+  local key="$1" dir file
+  dir=$(ralph_session_dir)
+  file="${dir}/split-${key}"
+  [[ -f "$file" ]] || return 0
+  head -1 "$file" 2>/dev/null || true
+}
+
+# Expand RALPH_MIN_ESTIMATE (default M) into the comma-separated set of parent
+# estimates large enough to be decomposed. Shared by split-estimate-gate.sh
+# (which reads the parent estimate) and split-size-gate.sh (which enforces the
+# parent rule at the create boundary) so the two can never drift.
+split_min_estimate_set() {
+  case "${RALPH_MIN_ESTIMATE:-M}" in
+    XS) echo "XS,S,M,L,XL" ;;
+    S)  echo "S,M,L,XL" ;;
+    M)  echo "M,L,XL" ;;
+    L)  echo "L,XL" ;;
+    XL) echo "XL" ;;
+    *)  echo "M,L,XL" ;;
+  esac
+}
+
 # find_existing_artifact plus a freshness window (minutes, default 30).
 # Fallback for postconditions when the session artifact list has no entry
 # (e.g. the doc was written by a dispatched sub-agent in a context where
