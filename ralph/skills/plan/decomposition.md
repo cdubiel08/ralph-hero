@@ -65,6 +65,8 @@ For a new tree (2+ features from this decomposition), create every child in ONE 
 
 **Single-child incremental addition** (re-decomposition adding one feature to an existing tree, or any case where only one child is created): use `create_issue` + `add_sub_issue` as before — `create_sub_issues` exists to batch the multi-child case, not to replace the two-call path for a lone addition.
 
+This call intentionally does NOT pass `maxChildEstimate` — epic decomposition relies on the tool's default ceiling of `"M"` (GH-1618) to keep S/M feature children legal; raise it explicitly (e.g. `maxChildEstimate: "L"`) only for a deliberately coarse decomposition.
+
 Estimate defaults:
 
 | Epic estimate | Typical child estimates |
@@ -187,12 +189,14 @@ If existing children were found in §Step 3, compare against the proposal: reuse
 **Create new** — one batch call for every net-new child:
 
 ```
-create_sub_issues(parentNumber: <parent-number>, children: [
+create_sub_issues(parentNumber: <parent-number>, maxChildEstimate: "S", children: [
   {title, body, estimate: <XS|S>, workflowState: "Ready for Plan" | omit,
    dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]},
   ...
 ])
 ```
+
+`maxChildEstimate: "S"` arms the atomic-split contract server-side (GH-1618) — any child estimate above `S` is refused up front, before any issue is created.
 
 `split-size-gate.sh` (PreToolUse on `create_issue` | `create_sub_issues`) blocks the whole call if ANY child's estimate is not `XS`/`S`. Verify via the response's per-child status report (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`); repair only children reporting `error`.
 

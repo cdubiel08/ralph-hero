@@ -476,7 +476,7 @@ describe("ralph_hero__create_sub_issues handler — Stage 3 resolution failure",
     const result = await tool.handler(
       {
         parentNumber: 42,
-        children: [{ title: "Only child", workflowState: "Backlogg" }],
+        children: [{ title: "Only child", workflowState: "Backlog" }],
       },
       {},
     );
@@ -699,10 +699,13 @@ describe("ralph_hero__create_sub_issues handler — dependsOnIssues wires edges 
       {},
       {
         query: [
+          // Up-front (GH-1618): resolveDependsOnIssuesUpFront resolves #999
+          // in one aliased query before any mutation, and seeds the cache
+          // Stage 4's resolveIssueNodeId(999) call below reads from — no
+          // second query for the same issue.
+          { n0: { issue: { id: "issue-999-node" } } },
           { repository: { id: "repo-id-1" } },
           { repository: { issue: { id: "parent-node-id" } } },
-          // Stage 4: resolveIssueNodeId for existing issue #999.
-          { repository: { issue: { id: "issue-999-node" } } },
         ],
         mutate: [
           {
@@ -801,5 +804,241 @@ describe("ralph_hero__create_sub_issues handler — Stage 4 blocked-only error a
     // Blocking sibling (index 0) is untouched: no error, vacuously wired.
     expect(children[0].edgesWired).toBe(true);
     expect(children[0].error).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GH-1618: tree contracts — maxChildEstimate ceiling, up-front workflowState
+// validity, up-front dependsOnIssues resolvability. All whole-batch,
+// before any mutation (nothing is created on a violation).
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__create_sub_issues handler — maxChildEstimate ceiling (GH-1618)", () => {
+  it("rejects a child estimate above an explicit ceiling, creating zero issues", async () => {
+    const fieldCache = createMockFieldCache();
+    // No responses queued at all — the ceiling check must refuse before any
+    // GraphQL call, so an accidental early call surfaces as a queue-exhaustion
+    // error instead of the expected refusal text (a regression pinner).
+    const client = createMockClient({}, {});
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        maxChildEstimate: "S",
+        children: [{ title: "Too big", estimate: "M" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    expect(payload.error).toContain("estimate M");
+    expect(payload.error).toContain("maxChildEstimate=S");
+    expect(client.mutate).not.toHaveBeenCalled();
+    expect(client.projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a child with no estimate when maxChildEstimate is armed explicitly", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient({}, {});
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        maxChildEstimate: "S",
+        children: [{ title: "No estimate" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    expect(payload.error).toContain("has no estimate");
+    expect(payload.error).toContain("maxChildEstimate=S");
+    expect(client.mutate).not.toHaveBeenCalled();
+  });
+
+  it("creates an unestimated child under the DEFAULT ceiling and reports it in unestimatedChildren", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        query: [
+          { repository: { id: "repo-id-1" } },
+          { repository: { issue: { id: "parent-node-id" } } },
+        ],
+        mutate: [
+          { c0: { issue: { id: "child-node-0", number: 101, url: "https://x/101" } } },
+          { l0: {} },
+        ],
+        projectMutate: [{ p0: { item: { id: "project-item-0" } } }],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        // No maxChildEstimate — falls back to the "M" default.
+        children: [{ title: "No estimate, default ceiling" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    expect(payload.unestimatedChildren).toEqual([0]);
+    const children = payload.children as Array<{ created: boolean }>;
+    expect(children[0].created).toBe(true);
+  });
+
+  it("passes an M child under the default ceiling (epic-decomposition counter-example)", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        query: [
+          { repository: { id: "repo-id-1" } },
+          { repository: { issue: { id: "parent-node-id" } } },
+        ],
+        mutate: [
+          { c0: { issue: { id: "child-node-0", number: 101, url: "https://x/101" } } },
+          { l0: {} },
+        ],
+        projectMutate: [{ p0: { item: { id: "project-item-0" } } }],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        // No maxChildEstimate — the "M" default must NOT block this epic's
+        // own M-estimate feature children (the counter-example that ruled
+        // out an unconditional ceiling).
+        children: [{ title: "Feature child", estimate: "M" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    expect(payload.unestimatedChildren).toBeUndefined();
+    const children = payload.children as Array<{ created: boolean }>;
+    expect(children[0].created).toBe(true);
+  });
+
+  it("refuses an XL child under the default ceiling (the closed L/XL hole)", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient({}, {});
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        // No maxChildEstimate — the "M" default must still refuse XL.
+        children: [{ title: "Too coarse", estimate: "XL" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    expect(payload.error).toContain("estimate XL");
+    expect(payload.error).toContain("maxChildEstimate=M");
+    expect(client.mutate).not.toHaveBeenCalled();
+  });
+
+  it("allows an XL child when maxChildEstimate is explicitly raised (deliberate coarse decomposition)", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        query: [
+          { repository: { id: "repo-id-1" } },
+          { repository: { issue: { id: "parent-node-id" } } },
+        ],
+        mutate: [
+          { c0: { issue: { id: "child-node-0", number: 101, url: "https://x/101" } } },
+          { l0: {} },
+        ],
+        projectMutate: [{ p0: { item: { id: "project-item-0" } } }],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        maxChildEstimate: "XL",
+        children: [{ title: "Deliberately coarse", estimate: "XL" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    const children = payload.children as Array<{ created: boolean }>;
+    expect(children[0].created).toBe(true);
+  });
+});
+
+describe("ralph_hero__create_sub_issues handler — up-front workflowState validity (GH-1618)", () => {
+  it("rejects an unknown workflowState up front, creating zero issues", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient({}, {});
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        children: [{ title: "Bad state", workflowState: "Not A Real State" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    expect(payload.error).toContain('unknown workflowState "Not A Real State"');
+    expect(client.mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe("ralph_hero__create_sub_issues handler — up-front dependsOnIssues resolvability (GH-1618)", () => {
+  it("rejects an unresolvable dependsOnIssues number up front, creating zero issues", async () => {
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient(
+      {},
+      {
+        // Up-front resolution query returns no `n0` alias — treated as
+        // unresolved, same as GraphQL genuinely returning issue: null.
+        query: [{}],
+      },
+    );
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_sub_issues");
+
+    const result = await tool.handler(
+      {
+        parentNumber: 42,
+        children: [{ title: "Blocked by ghost", dependsOnIssues: [9999] }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result);
+    expect(payload.error).toContain("unknown issue number");
+    expect(payload.error).toContain("#9999");
+    expect(client.mutate).not.toHaveBeenCalled();
   });
 });
