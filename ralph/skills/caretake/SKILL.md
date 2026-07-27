@@ -81,7 +81,7 @@ All board maintenance flows through this one entrypoint. Seven named modes plus 
 | **watch** | `/ralph:caretake --mode watch [--kind pr\|upstream\|issue]` | Resolve `WAIT-*`-parked items by kind: `pr` (blocked:pr-NNN → PR merge/close), `upstream` (blocked:upstream → external condition), `issue` (blockedBy edge → all blockers closed). Bare invocation sweeps all three kinds serially. |
 | **enrich** | `/ralph:caretake --mode enrich` | Background-enrich `status: draft` idea files (codebase + prior art + related issues), flip to `status: forming` |
 
-References: [label-routing.md](label-routing.md) (default-mode dispatch table), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts).
+References: [../shared/event-taxonomy.md](../shared/event-taxonomy.md) (default-mode dispatch table — single-sourced with hero's Director classifier, GH-1607), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts).
 
 ## Configuration (resolved at load time)
 
@@ -116,7 +116,7 @@ esac
 
 ## Step 1: Dispatch
 
-- **`--issue NNN`** → default-mode (event-driven). Fetch the issue, inspect labels, dispatch per [label-routing.md](label-routing.md). After dispatch, post a `## Caretaker Action` comment summarizing mode + outcome.
+- **`--issue NNN`** → default-mode (event-driven). Fetch the issue, inspect labels, dispatch per [../shared/event-taxonomy.md](../shared/event-taxonomy.md) § Caretake default-mode label routing. After dispatch, post a `## Caretaker Action` comment summarizing mode + outcome.
 - **`--mode <name>`** → read `modes/<name>.md` and follow its body. The mode body sets `RALPH_SUBCOMMAND=<name>` and runs.
 - **No args** or **`--mode all`** → heartbeat fan-out. Invoke serially:
   1. `Skill("ralph:caretake", args="--mode hygiene")`
@@ -140,15 +140,7 @@ Each mode body ends by emitting its terminal token (see [outcome-tokens.md](outc
 
 ## Per-mode terminal tokens
 
-The harness reads these from the transcript; do not paraphrase. Full table in [outcome-tokens.md](outcome-tokens.md). Quick reference:
-
-- triage: `TRIAGED <verdict>` | `Queue empty.`
-- hygiene: `HYGIENE COMPLETE <N>` | `HYGIENE BLOCKED <reason>`
-- unblock (interactive): `UNBLOCK RESOLVED` | `UNBLOCK ESCALATED`
-- unblock (autonomous): `UNBLOCK REQUEST POSTED` | `Queue empty.`
-- reflect: `REFLECT <path>` | `REFLECT SKIPPED <reason>`
-- watch (per kind, `KIND` ∈ `PR`/`UPSTREAM`/`ISSUE`): `WATCH-<KIND> ADVANCED <N>` | `WATCH-<KIND> IDLE` | `WATCH-<KIND> SKIPPED — branch <name> is not main`
-- enrich: `ENRICHED <N>` | `Queue empty.` | `ENRICH SKIPPED <reason>`
+The harness reads these from the transcript; do not paraphrase. **Single source of truth: [outcome-tokens.md](outcome-tokens.md)** — token families: `TRIAGED <verdict>`, `HYGIENE COMPLETE/BLOCKED`, `UNBLOCK RESOLVED/ESCALATED/REQUEST *`, `REFLECT <path>/SKIPPED`, `WATCH-<KIND> ADVANCED/IDLE/SKIPPED`, `ENRICHED/ENRICH SKIPPED`, `Queue empty.` No per-mode value breakdown here (GH-1607: the prior quick-reference copy drifted from the full table on four token shapes) — the linked file is the only place values and reasons are enumerated.
 
 ## Notes
 

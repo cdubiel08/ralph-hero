@@ -1,6 +1,6 @@
 # loop-wrapper.md — Shared `--loop` substrate for ralph slim plugin skills
 
-Reference fragment. SKILL.md bodies copy the snippets below; they do not source this file.
+Reference fragment. All seven `--loop`-capable verb SKILL.md bodies reference this file by pointer for the arg-parsing snippet, the continuation manifest, and the refusal message; none inlines a private copy.
 
 ---
 
@@ -109,3 +109,26 @@ interactive or single-shot surface.
 ```bash
 printf '%s\n' "--loop is not supported for this mode. Looping is meaningful only for autonomous queue-drainers; this surface is interactive. See ralph/CLAUDE.md § Loop suitability."
 ```
+
+---
+
+## Unsuitable surfaces
+
+Single source (GH-1607) for every `--loop`-unsuitable skill:mode — interactive, single-shot, or single-artifact surfaces that emit the refusal message above rather than a manifest row. `ralph/CLAUDE.md § Loop suitability` points here instead of duplicating this list.
+
+| Skill / Mode | Reason |
+|---|---|
+| `form` all modes | interactive picker |
+| `plan` default | interactive phased plan creation |
+| `plan --mode iterate` | single-plan surgical edit; interactive |
+| `plan --mode epic` | single-epic decomposition |
+| `impl` default | interactive; pauses between phases |
+| `impl --mode address` | single PR feedback cycle |
+| `research` default | interactive question intake |
+| `research --mode prove` | single-claim investigation; interactive |
+| `catch-up` default | interactive orientation |
+| `setup` all modes | one-shot bootstrap |
+| `hero` default | one-shot orchestrator; refuses `--loop`. Use `--auto` → `--mode auto` for the autonomous drain |
+| `hero --mode pr-drain` | single-PR action; loop would re-process same PR |
+| `caretake --mode reflect` | single artifact per session |
+| `caretake --mode unblock --question` | interactive answer collection |

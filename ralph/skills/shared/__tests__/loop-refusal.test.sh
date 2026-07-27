@@ -6,11 +6,16 @@
 # Does NOT invoke skills — parses loop-wrapper.md, auto-alias.md, and ralph/CLAUDE.md.
 # Validates:
 #   1. The --loop refusal message in loop-wrapper.md renders as a single line.
-#   2. The unsuitable-mode list in ralph/CLAUDE.md covers every entry in the
+#   2. The unsuitable-mode list now lives in loop-wrapper.md's own
+#      `## Unsuitable surfaces` section (GH-1607 retargeted this off
+#      ralph/CLAUDE.md, which collapsed its 40-row matrix to a
+#      `## Loop suitability` pointer section). Covers every entry in the
 #      plan's Current-State unsuitable table:
 #        form, plan (default/iterate/epic), impl (default/address),
 #        research (default/prove), catch-up (default),
 #        setup, hero (pr-drain), caretake (reflect), caretake (unblock --question)
+#   3. ralph/CLAUDE.md still carries the `## Loop suitability` heading the
+#      canonical refusal string points at (so the pointer resolves).
 
 set -uo pipefail
 
@@ -80,9 +85,11 @@ else
   fail "## Refusal targets section in auto-alias.md" "≥1 match" "0 matches"
 fi
 
-# ── 4. ralph/CLAUDE.md has the full unsuitable-mode matrix ─────────────────────
-# The canonical source for the loop suitability matrix is ralph/CLAUDE.md
-# (written in Phase 4). Parse it to confirm every unsuitable surface from the plan is covered.
+# ── 4. loop-wrapper.md § Unsuitable surfaces covers the interactive/one-shot list ──
+# GH-1607 moved the unsuitable-mode list off ralph/CLAUDE.md's 40-row matrix
+# (now a `## Loop suitability` pointer section) into loop-wrapper.md's own
+# `## Unsuitable surfaces` section — that section is now the canonical source.
+# Parse it to confirm every unsuitable surface from the plan is still covered.
 
 if [[ -f "$RALPH_CLAUDE" ]]; then
   ok "ralph/CLAUDE.md exists"
@@ -90,29 +97,49 @@ else
   fail "ralph/CLAUDE.md exists" "file present" "not found at ${RALPH_CLAUDE}"
 fi
 
-# Each entry: label | grep pattern to search in ralph/CLAUDE.md
+# The canonical refusal string points at "ralph/CLAUDE.md § Loop suitability" —
+# verify that heading still exists so the pointer resolves.
+if grep -q '^## Loop suitability' "$RALPH_CLAUDE"; then
+  ok "ralph/CLAUDE.md has ## Loop suitability heading (refusal-string target resolves)"
+else
+  fail "## Loop suitability heading in ralph/CLAUDE.md" "≥1 match" "0 matches"
+fi
+
+unsuitable_block=$(awk '/^## Unsuitable surfaces/{f=1;next} f&&/^## /{exit} f' "$LOOP_WRAPPER")
+
+if [[ -n "$unsuitable_block" ]]; then
+  ok "loop-wrapper.md has non-empty ## Unsuitable surfaces section"
+else
+  fail "## Unsuitable surfaces section in loop-wrapper.md" "non-empty section" "empty or not found"
+fi
+
+# Each entry: label | grep pattern to search within the extracted section
 check_unsuitable() {
   local label="$1"
   local pattern="$2"
-  if grep -qE "$pattern" "$RALPH_CLAUDE"; then
-    ok "unsuitable surface documented in ralph/CLAUDE.md: ${label}"
+  if printf '%s' "$unsuitable_block" | grep -qE "$pattern"; then
+    ok "unsuitable surface documented in loop-wrapper.md: ${label}"
   else
-    fail "unsuitable surface in ralph/CLAUDE.md: ${label}" \
+    fail "unsuitable surface in loop-wrapper.md: ${label}" \
       "pattern '${pattern}' found" \
       "not found"
   fi
 }
 
 # Plan's Current-State unsuitable table (§ Where looping is meaningless):
-check_unsuitable "form"                         "form.*No|No.*form"
-check_unsuitable "plan iterate"                 "plan.*iterate|iterate"
-check_unsuitable "plan epic"                    "plan.*epic|epic"
-check_unsuitable "impl default/address"         "impl.*address|address"
-check_unsuitable "research default/prove"       "research.*prove|prove"
-check_unsuitable "catch-up default"             "catch-up.*No|No.*catch-up"
-check_unsuitable "setup"                        "setup.*No|No.*setup"
-check_unsuitable "hero pr-drain"                "pr-drain.*No|No.*pr-drain"
-check_unsuitable "caretake reflect"             "reflect.*No|No.*reflect"
+check_unsuitable "form"                         "form"
+check_unsuitable "plan default"                 "plan.*default|\`plan\` default"
+check_unsuitable "plan iterate"                 "iterate"
+check_unsuitable "plan epic"                    "epic"
+check_unsuitable "impl default"                 "impl.*default|\`impl\` default"
+check_unsuitable "impl address"                 "address"
+check_unsuitable "research default"             "research.*default|\`research\` default"
+check_unsuitable "research prove"               "prove"
+check_unsuitable "catch-up default"             "catch-up"
+check_unsuitable "setup"                        "setup"
+check_unsuitable "hero default"                 "hero.*default|\`hero\` default"
+check_unsuitable "hero pr-drain"                "pr-drain"
+check_unsuitable "caretake reflect"             "reflect"
 check_unsuitable "caretake unblock --question"  "unblock.*question|--question"
 
 # ── 5. Refusal targets in auto-alias.md cover form, catch-up, setup ────────────
