@@ -168,3 +168,112 @@ export const ISSUE_STATE_TO_TERMINAL_WORKFLOW: Record<string, string> = {
   "CLOSED:NOT_PLANNED": "Canceled",
   "CLOSED:": "Done",
 };
+
+/**
+ * Server-side transition legality table (GH-1615).
+ *
+ * Base edges are ported verbatim from `ralph-state-machine.json`'s
+ * `states.*.allowed_transitions`. Additions on top of the JSON (each with
+ * its consuming caller, per the GH-1592 group plan's Design Decisions):
+ *
+ * - Release edges (a): `Research in Progress -> Research Needed` and
+ *   `Plan in Progress -> Ready for Plan` — required by #1617 stale-lock
+ *   reclamation and by `lock-release-on-failure.sh`'s crashed-agent advice.
+ *   Deliberately NO `In Progress -> Ready for Plan` release edge (preserves
+ *   the no-rollback-on-impl-failure asymmetry).
+ * - Universal edges (b): every non-terminal state can reach
+ *   `Human Needed` / `Done` / `Canceled` — mirrors the
+ *   `__ESCALATE__`/`__CLOSE__`/`__CANCEL__` wildcard intents, the auto-close
+ *   path, and the reverse-inference path (issue-tools.ts).
+ * - (c) `Ready for Plan -> In Progress` — parent-plan-reuse fast path
+ *   (`intake-routing.md`) and `ralph_plan`'s existing allowlist.
+ * - (d) `Research Needed -> Backlog` — `ralph_split` `__COMPLETE__` re-queue.
+ * - (e) `Plan in Review -> Plan in Progress` — NEEDS_ITERATION re-lock
+ *   (fixes the live `plan/SKILL.md` mismatch).
+ *
+ * Kept in lockstep with `ralph/hooks/scripts/ralph-state-machine.json` by
+ * the two-way parity test in `state-resolution.test.ts`.
+ */
+export const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
+  "Backlog": ["Research Needed", "Ready for Plan", "Done", "Canceled", "Human Needed"],
+  "Research Needed": ["Research in Progress", "Ready for Plan", "Human Needed", "Backlog", "Done", "Canceled"],
+  "Research in Progress": ["Ready for Plan", "Human Needed", "Research Needed", "Done", "Canceled"],
+  "Ready for Plan": ["Plan in Progress", "Human Needed", "In Progress", "Done", "Canceled"],
+  "Plan in Progress": ["Plan in Review", "In Progress", "Human Needed", "Ready for Plan", "Done", "Canceled"],
+  "Plan in Review": ["In Progress", "Ready for Plan", "Human Needed", "Plan in Progress", "Done", "Canceled"],
+  "In Progress": ["In Review", "Human Needed", "Done", "Canceled"],
+  "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
+  "Human Needed": ["Backlog", "Research Needed", "Ready for Plan", "In Progress", "Done", "Canceled"],
+  "Done": [],
+  "Canceled": [],
+};
+
+/**
+ * Check whether a workflow-state transition is legal.
+ *
+ * - `current` undefined/empty (new/stateless item — genuinely unset, not
+ *   "could not be read") always passes. Discriminating "genuinely unset"
+ *   from "fetch failed" is the CALLER's job (see issue-tools.ts's
+ *   three-outcome table) — this predicate stays pure and permissive on
+ *   `undefined` so it can be unit-tested without API stubs.
+ * - `current === target` always passes (idempotent re-assert).
+ * - Otherwise, `target` must be in `ALLOWED_TRANSITIONS[current]`.
+ */
+export function isLegalTransition(
+  current: string | null | undefined,
+  target: string,
+): boolean {
+  if (!current) return true;
+  if (current === target) return true;
+  const allowed = ALLOWED_TRANSITIONS[current];
+  return allowed ? allowed.includes(target) : false;
+}
+
+/**
+ * Legal next states from `current`, for refusal error text.
+ */
+export function legalNextStates(current: string): readonly string[] {
+  return ALLOWED_TRANSITIONS[current] ?? [];
+}
+
+/** Result of a parent-gate advance legality check. */
+export type ParentGateAdvanceResult =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/**
+ * Check whether a parent may be advanced to `gate` given its current state.
+ *
+ * The parent gate legitimately performs a MULTI-HOP forward jump — a parent
+ * at `Backlog` whose children all reach `In Review` should advance — so
+ * validating it against `isLegalTransition` verbatim is too strong (it would
+ * refuse `Backlog -> In Review` and strand the parent permanently, since
+ * `split.md` states parent transitions are server-owned, never manual). The
+ * children's own (now transition-validated) progression is the legality
+ * evidence for each skipped phase. This predicate is therefore a
+ * purpose-built, documented carve-out, not a verbatim transition check.
+ */
+export function isLegalParentGateAdvance(
+  current: string | null | undefined,
+  gate: string,
+): ParentGateAdvanceResult {
+  if (!current) {
+    return { ok: false, reason: "parent state unresolvable" };
+  }
+  if (current === "Human Needed") {
+    return { ok: false, reason: "parent is escalated" };
+  }
+  if (TERMINAL_STATES.includes(current)) {
+    return { ok: false, reason: "parent is terminal" };
+  }
+  if (LOCK_STATES.includes(current) && current !== gate) {
+    return { ok: false, reason: "parent is locked by an active claim" };
+  }
+  if (!PARENT_GATE_STATES.includes(gate)) {
+    return { ok: false, reason: "not a gate state" };
+  }
+  if (stateIndex(gate) <= stateIndex(current)) {
+    return { ok: false, reason: "already at or past" };
+  }
+  return { ok: true };
+}

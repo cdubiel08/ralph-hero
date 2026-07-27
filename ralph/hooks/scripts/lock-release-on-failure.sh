@@ -75,7 +75,7 @@ cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "Stop",
-    "additionalContext": "LOCK RELEASE NEEDED: Skill '${command}' stopped while issue ${ticket_id} was in lock state '${lock_state}'. The lock must be released to '${release_state}' to allow other agents to process this ticket.\n\nTo release: call ralph_hero__save_issue with issueNumber=${issue_number} and workflowState='${release_state}'"
+    "additionalContext": "LOCK RELEASE NEEDED: Skill '${command}' stopped while issue ${ticket_id} was in lock state '${lock_state}'. The lock must be released to '${release_state}' to allow other agents to process this ticket.\n\nTo release: call ralph_hero__save_issue with issueNumber=${issue_number}, workflowState='${release_state}', and force=true (GH-1615: this backward release edge is gated on a stale claim or force — a fresh crash means heldSince is recent, so staleness alone cannot carry it during the rollout window)"
   }
 }
 EOF

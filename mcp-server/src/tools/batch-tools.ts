@@ -18,7 +18,14 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "../lib/cache.js";
-import { isEarlierState, WORKFLOW_STATE_TO_STATUS } from "../lib/workflow-states.js";
+import {
+  isEarlierState,
+  isValidState,
+  isLegalTransition,
+  legalNextStates,
+  VALID_STATES,
+  WORKFLOW_STATE_TO_STATUS,
+} from "../lib/workflow-states.js";
 import { toolSuccess, toolError } from "../types.js";
 import { zBoolish } from "../lib/zod-helpers.js";
 import {
@@ -447,6 +454,21 @@ export function registerBatchTools(
           }
         }
 
+        // GH-1615: whole-batch refusal on a typo'd/unknown workflow_state
+        // value — a caller bug, not a per-issue condition. Deliberately a
+        // pure, config-independent check (no project/field-cache lookup),
+        // so it runs before ANY API call, ahead of the
+        // project-configuration-dependent resolveOptionId check below
+        // (which validates against this project's configured field
+        // OPTIONS, a different failure class from "not a real ralph state").
+        for (const op of fieldOps) {
+          if (op.field === "workflow_state" && !isValidState(op.value)) {
+            return toolError(
+              `Invalid workflow_state value "${op.value}". Valid states: ${VALID_STATES.join(", ")}.`,
+            );
+          }
+        }
+
         const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
           client,
           args,
@@ -546,39 +568,57 @@ export function registerBatchTools(
           });
         }
 
-        // Step 2: Pre-filter with skipIfAtOrPast
+        // Step 2: Workflow-state transition legality (GH-1615) + the
+        // pre-existing skipIfAtOrPast pre-filter. Both consume the same
+        // current-field-value fetch — one query, not two.
         const hasWorkflowStateOp = fieldOps.some(
           (op) => op.field === "workflow_state",
         );
 
-        if (args.skipIfAtOrPast && hasWorkflowStateOp && resolved.size > 0) {
+        if (hasWorkflowStateOp) {
+          // isValidState(wsOp.value) was already checked up front, ahead of
+          // any API call (see the whole-batch refusal above).
           const wsOp = fieldOps.find((op) => op.field === "workflow_state")!;
 
-          // Build batch query for current field values
-          const itemsToCheck = Array.from(resolved.entries()).map(
-            ([num, issue]) => ({
-              alias: `fv${num}`,
-              itemId: issue.projectItemId,
-            }),
-          );
+          if (resolved.size > 0) {
+            // Build batch query for current field values
+            const itemsToCheck = Array.from(resolved.entries()).map(
+              ([num, issue]) => ({
+                alias: `fv${num}`,
+                itemId: issue.projectItemId,
+              }),
+            );
 
-          const { queryString: fvQuery, variables: fvVars } =
-            buildBatchFieldValueQuery(itemsToCheck);
+            const { queryString: fvQuery, variables: fvVars } =
+              buildBatchFieldValueQuery(itemsToCheck);
 
-          try {
-            const fvResult = await client.query<
-              Record<string, {
-                fieldValues?: {
-                  nodes: Array<{
-                    __typename?: string;
-                    name?: string;
-                    field?: { name: string };
-                  }>;
-                };
-              } | null>
-            >(fvQuery, fvVars);
+            let fvResult: Record<string, {
+              fieldValues?: {
+                nodes: Array<{
+                  __typename?: string;
+                  name?: string;
+                  field?: { name: string };
+                }>;
+              };
+            } | null>;
 
-            for (const [num, issue] of resolved) {
+            // Unconditional and fail-CLOSED — deliberately NOT the
+            // `catch { proceed }` shape used elsewhere in this file for the
+            // optional skipIfAtOrPast optimization. That shape is fine for
+            // an optimization; it would be fail-open for a guard, silently
+            // disabling transition validation for the whole batch.
+            try {
+              fvResult = await client.query(fvQuery, fvVars);
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              return toolError(
+                `Could not determine current workflow state for the batch: ${message}. ` +
+                  `No changes were made. Recovery: retry, or verify all issues are on the project board.`,
+              );
+            }
+
+            const currentStates = new Map<number, string | undefined>();
+            for (const [num] of resolved) {
               const alias = `fv${num}`;
               const fvData = fvResult[alias];
               const wsValue = fvData?.fieldValues?.nodes?.find(
@@ -586,20 +626,49 @@ export function registerBatchTools(
                   fv.field?.name === "Workflow State" &&
                   fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
               )?.name;
+              currentStates.set(num, wsValue);
+            }
 
-              if (wsValue && !isEarlierState(wsValue, wsOp.value)) {
-                result.skipped.push({
+            // Per-issue transition legality: illegal transitions are dropped
+            // from the mutation batch and reported in errors[], consistent
+            // with this tool's existing partial-failure semantics. No
+            // `force` param exists on batch_update and none is added — bulk
+            // force is exactly the disaster the guard exists to prevent;
+            // repair goes through save_issue(force: true) one issue at a
+            // time.
+            for (const num of Array.from(resolved.keys())) {
+              const current = currentStates.get(num);
+              if (!isLegalTransition(current, wsOp.value)) {
+                const legal = legalNextStates(current ?? "");
+                result.errors.push({
                   number: num,
-                  reason:
-                    wsValue === wsOp.value
-                      ? "Already at target state"
-                      : "Already past target state",
+                  error:
+                    `Illegal transition for #${num}: "${current ?? "(unset)"}" -> "${wsOp.value}". ` +
+                    `Legal next states from "${current ?? "(unset)"}": ${legal.length > 0 ? legal.join(", ") : "(none — terminal state)"}. ` +
+                    `Recovery: move through the pipeline via one of the legal states, or repair this issue ` +
+                    `individually via save_issue(force: true).`,
                 });
                 resolved.delete(num);
               }
             }
-          } catch {
-            // If field value fetch fails, proceed without filtering
+
+            // Optional skipIfAtOrPast pre-filter (unchanged semantics),
+            // reusing the fetch above instead of issuing a second query.
+            if (args.skipIfAtOrPast) {
+              for (const num of Array.from(resolved.keys())) {
+                const wsValue = currentStates.get(num);
+                if (wsValue && !isEarlierState(wsValue, wsOp.value)) {
+                  result.skipped.push({
+                    number: num,
+                    reason:
+                      wsValue === wsOp.value
+                        ? "Already at target state"
+                        : "Already past target state",
+                  });
+                  resolved.delete(num);
+                }
+              }
+            }
           }
         }
 

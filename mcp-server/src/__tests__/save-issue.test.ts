@@ -2,15 +2,20 @@
  * Tests for the save_issue unified mutation tool.
  *
  * Covers: schema validation, auto-close logic, semantic intent integration,
- * and structural verification via source code reading.
+ * structural verification via source code reading, and (GH-1615) handler-
+ * level integration tests for the transition-legality choke point.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveState } from "../lib/state-resolution.js";
 import { TERMINAL_STATES, ISSUE_STATE_TO_TERMINAL_WORKFLOW } from "../lib/workflow-states.js";
+import { registerIssueTools } from "../tools/issue-tools.js";
+import type { GitHubClient } from "../github-client.js";
+import { FieldOptionCache } from "../lib/cache.js";
 
 // ---------------------------------------------------------------------------
 // Read source for structural tests
@@ -524,5 +529,390 @@ describe("save_issue lock guard integration", () => {
 
   it("guard is bypassed when args.force is true", () => {
     expect(issueToolsSrc).toContain("!args.force");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GH-1615: transition-legality choke point — handler-level integration tests
+// (mirrors the `getTool` pattern used elsewhere in this test suite, e.g.
+// issue-tools.test.ts's get_issue/list_issues integration harness).
+// ---------------------------------------------------------------------------
+
+interface HandlerResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+interface RegisteredTool {
+  handler: (args: unknown, extra: unknown) => Promise<HandlerResult>;
+}
+
+function getSaveIssueHandler(server: McpServer): RegisteredTool {
+  const tools = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })
+    ._registeredTools;
+  const tool = tools?.["ralph_hero__save_issue"];
+  if (!tool) throw new Error("ralph_hero__save_issue not registered");
+  return tool;
+}
+
+function parseSaveIssuePayload(result: HandlerResult): Record<string, unknown> {
+  expect(result.content).toHaveLength(1);
+  return JSON.parse(result.content[0].text) as Record<string, unknown>;
+}
+
+function makeFieldCacheForSaveIssueTests(): FieldOptionCache {
+  const cache = new FieldOptionCache();
+  cache.populate(7, "project-id-1", [
+    {
+      id: "field-ws-id",
+      name: "Workflow State",
+      options: [
+        "Backlog", "Research Needed", "Research in Progress", "Ready for Plan",
+        "Plan in Progress", "Plan in Review", "In Progress", "In Review",
+        "Done", "Canceled", "Human Needed",
+      ].map((name, i) => ({ id: `opt-ws-${i}`, name })),
+    },
+    {
+      id: "field-status-id",
+      name: "Status",
+      options: [
+        { id: "opt-todo", name: "Todo" },
+        { id: "opt-ip", name: "In Progress" },
+        { id: "opt-done", name: "Done" },
+      ],
+    },
+  ]);
+  return cache;
+}
+
+/**
+ * Mock GitHubClient for save_issue integration tests. `currentWorkflowState`
+ * models the live board state: a string for a real value, `null` for "query
+ * succeeded, no Workflow State value on the item" (genuinely unset).
+ */
+function makeSaveIssueMockClient(opts: {
+  currentWorkflowState: string | null;
+  fieldValueQueryShouldFail?: boolean;
+}): { client: GitHubClient; mutate: ReturnType<typeof vi.fn>; projectMutate: ReturnType<typeof vi.fn> } {
+  const cacheStore = new Map<string, { value: unknown; expiry: number }>();
+  const projectItemId = "item-1615";
+
+  const query = vi.fn(async (q: string) => {
+    // resolveProjectItemId: `... on Issue { projectItems(first: ...) }`
+    if (q.includes("... on Issue {") && q.includes("projectItems(first:")) {
+      return {
+        node: {
+          projectItems: {
+            nodes: [{ id: projectItemId, project: { id: "project-id-1" } }],
+          },
+        },
+      };
+    }
+    // getCurrentFieldValue: `... on ProjectV2Item { fieldValues(first: 20) }`
+    if (q.includes("... on ProjectV2Item {") && q.includes("fieldValues(first: 20)")) {
+      if (opts.fieldValueQueryShouldFail) {
+        throw new Error("simulated current-state fetch failure");
+      }
+      const nodes = opts.currentWorkflowState
+        ? [{ __typename: "ProjectV2ItemFieldSingleSelectValue", name: opts.currentWorkflowState, field: { name: "Workflow State" } }]
+        : [];
+      return { node: { fieldValues: { nodes } } };
+    }
+    // resolveIssueNodeId: `repository(owner: ...) { issue(number: ...) { id } }`.
+    // This is a READ helper shared by resolveProjectItemId (used by the
+    // transition-legality check's current-state fetch) AND section 3's
+    // issue-mutation path — it never mutates by itself, so its query firing
+    // does not indicate a mutation happened.
+    if (q.includes("repository(owner:") && q.includes("issue(number:")) {
+      return { repository: { issue: { id: "issue-node-1615" } } };
+    }
+    throw new Error(`Unmocked query: ${q.slice(0, 120)}`);
+  });
+
+  const mutate = vi.fn(async () => ({}));
+  const projectMutate = vi.fn(async () => ({}));
+
+  const client = {
+    config: {
+      token: "test",
+      owner: "octocat",
+      repo: "repo",
+      projectNumber: 7,
+      projectOwner: "octocat",
+    },
+    query,
+    projectQuery: vi.fn(async () => {
+      throw new Error("projectQuery should not be called — field cache is pre-populated");
+    }),
+    mutate,
+    projectMutate,
+    getCache: () => ({
+      get: <T>(key: string): T | undefined => {
+        const entry = cacheStore.get(key);
+        if (!entry || Date.now() > entry.expiry) return undefined;
+        return entry.value as T;
+      },
+      set: (key: string, value: unknown, ttlMs?: number) => {
+        cacheStore.set(key, { value, expiry: Date.now() + (ttlMs ?? 30 * 60 * 1000) });
+      },
+      invalidatePrefix: () => {},
+    }),
+    getAuthenticatedUser: vi.fn(),
+    getRateLimitStatus: vi.fn(),
+    restPost: vi.fn(),
+  } as unknown as GitHubClient;
+
+  return { client, mutate, projectMutate };
+}
+
+describe("save_issue transition legality — handler integration (GH-1615)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = makeFieldCacheForSaveIssueTests();
+  });
+
+  it("PLACEMENT TEST: illegal transition + issueState:OPEN + title mutates NOTHING", async () => {
+    const { client, mutate, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "Backlog",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      {
+        number: 1615,
+        issueState: "OPEN",
+        title: "New title",
+        workflowState: "In Review", // Backlog -> In Review is illegal
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Illegal transition for #1615");
+    expect(payload.error).toContain('"Backlog" -> "In Review"');
+    expect(payload.error).toContain("force=true");
+
+    // Zero mutations of any kind: no reopenIssue/updateIssue (client.mutate)
+    // and no updateProjectV2ItemFieldValue (client.projectMutate).
+    expect(mutate).not.toHaveBeenCalled();
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("illegal transition names the legal next states", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Legal next states from \"Backlog\"");
+    expect(payload.error).toContain("Research Needed");
+    expect(payload.error).toContain("Ready for Plan");
+  });
+
+  it("legal transition succeeds and mutates the project field", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: "Ready for Plan" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as { changes: { workflowState: string } };
+    expect(payload.changes.workflowState).toBe("In Progress");
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("force bypasses an illegal transition and marks it forced", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review", force: true },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as {
+      changes: { forcedTransition?: { from: string; to: string } };
+    };
+    expect(payload.changes.forcedTransition).toEqual({ from: "Backlog", to: "In Review" });
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("force on an already-legal transition does NOT add a forcedTransition marker", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Ready for Plan" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress", force: true },
+      {},
+    );
+
+    const payload = parseSaveIssuePayload(result) as { changes: Record<string, unknown> };
+    expect(payload.changes.forcedTransition).toBeUndefined();
+  });
+
+  it("command-less direct-state path is still transition-validated", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    // No `command` — validateDirectState/resolveState are bypassed entirely,
+    // but the transition-legality check still runs (this is the closed gap
+    // research §3 identified: "the command-less path checks only isValidState").
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review" },
+      {},
+    );
+    expect(result.isError).toBe(true);
+  });
+
+  it("command + illegal transition is refused even though the command allows the direct state", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    // "In Review" is a valid ralph_impl output state (command-level check
+    // passes), but Backlog -> In Review is still an illegal TRANSITION.
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review", command: "ralph_impl" },
+      {},
+    );
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Illegal transition");
+  });
+
+  it("TERMINAL-SOURCE TEST: CLOSED_NOT_PLANNED on a Done issue refuses without force and does not close", async () => {
+    const { client, mutate } = makeSaveIssueMockClient({ currentWorkflowState: "Done" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, issueState: "CLOSED_NOT_PLANNED" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Illegal transition for #1615");
+    expect(payload.error).toContain('"Done" -> "Canceled"');
+    // closeIssue is a client.mutate call — must not have fired.
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("TERMINAL-SOURCE TEST: CLOSED_NOT_PLANNED on Done succeeds with force and reports forcedTransition", async () => {
+    const { client, mutate } = makeSaveIssueMockClient({ currentWorkflowState: "Done" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, issueState: "CLOSED_NOT_PLANNED", force: true },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as {
+      changes: { forcedTransition?: { from: string; to: string }; workflowStateInferred?: string };
+    };
+    expect(payload.changes.forcedTransition).toEqual({ from: "Done", to: "Canceled" });
+    // With force, the close mutation DOES fire.
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("TERMINAL-SOURCE TEST: Done -> Done re-close (same-state) still passes without force", async () => {
+    const { client, mutate } = makeSaveIssueMockClient({ currentWorkflowState: "Done" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, issueState: "CLOSED" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as { changes: Record<string, unknown> };
+    expect(payload.changes.forcedTransition).toBeUndefined();
+    expect(payload.changes.workflowStateInferred).toBe("Done");
+    expect(mutate).toHaveBeenCalledTimes(1); // closeIssue still fires (same-state)
+  });
+
+  it("FAIL-CLOSED FETCH TEST: current-state read rejects -> toolError, zero mutations", async () => {
+    const { client, mutate, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "Backlog",
+      fieldValueQueryShouldFail: true,
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Could not determine the current state");
+    expect(mutate).not.toHaveBeenCalled();
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("FAIL-CLOSED FETCH TEST: item present with no Workflow State value PASSES", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: null });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "Ready for Plan" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as { changes: { workflowState: string } };
+    expect(payload.changes.workflowState).toBe("Ready for Plan");
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("lock guard still fires (transition is legal) and shares the transition check's current-state read", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: "Plan in Progress" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    // "Plan in Progress" -> "In Progress" IS a legal transition (JSON edge),
+    // so this exercises the lock guard specifically, not the transition
+    // check: current is a DIFFERENT lock state than the target, a conflict.
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("already in a lock state");
+    expect(projectMutate).not.toHaveBeenCalled();
+
+    // getCurrentFieldValue's underlying query fires exactly once — shared
+    // between the transition check and the lock guard (GH-1615 Performance
+    // Considerations: "hoisted so lock guard and transition check share it").
+    const fieldValueCalls = (client.query as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
+      ([q]: unknown[]) => typeof q === "string" && q.includes("fieldValues(first: 20)"),
+    );
+    expect(fieldValueCalls).toHaveLength(1);
   });
 });

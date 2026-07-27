@@ -6,59 +6,59 @@
   "states": {
     "Backlog": {
       "description": "Ticket awaiting triage",
-      "allowed_transitions": ["Research Needed", "Ready for Plan", "Done", "Canceled"],
+      "allowed_transitions": ["Research Needed", "Ready for Plan", "Done", "Canceled", "Human Needed"],
       "required_by_commands": [],
       "produces_for_commands": ["ralph_triage", "ralph_split", "ralph_unblock"]
     },
     "Research Needed": {
       "description": "Ticket needs investigation before planning",
-      "allowed_transitions": ["Research in Progress", "Ready for Plan", "Human Needed"],
+      "allowed_transitions": ["Research in Progress", "Ready for Plan", "Human Needed", "Backlog", "Done", "Canceled"],
       "required_by_commands": ["ralph_research", "ralph_split"],
       "produces_for_commands": ["ralph_triage", "ralph_unblock"]
     },
     "Research in Progress": {
       "description": "Research actively being conducted (LOCKED)",
-      "allowed_transitions": ["Ready for Plan", "Human Needed"],
+      "allowed_transitions": ["Ready for Plan", "Human Needed", "Research Needed", "Done", "Canceled"],
       "required_by_commands": [],
       "produces_for_commands": ["ralph_research"],
       "is_lock_state": true
     },
     "Ready for Plan": {
       "description": "Research complete, ready for implementation planning",
-      "allowed_transitions": ["Plan in Progress", "Human Needed"],
+      "allowed_transitions": ["Plan in Progress", "Human Needed", "In Progress", "Done", "Canceled"],
       "required_by_commands": ["ralph_plan", "ralph_plan_epic"],
       "produces_for_commands": ["ralph_research", "ralph_split", "ralph_unblock"]
     },
     "Plan in Progress": {
       "description": "Plan actively being created (LOCKED)",
-      "allowed_transitions": ["Plan in Review", "In Progress", "Human Needed"],
+      "allowed_transitions": ["Plan in Review", "In Progress", "Human Needed", "Ready for Plan", "Done", "Canceled"],
       "required_by_commands": [],
       "produces_for_commands": ["ralph_plan", "ralph_plan_epic"],
       "is_lock_state": true
     },
     "Plan in Review": {
       "description": "Plan under review (decision-gated, GH-1544): decision-free plans auto-advance to In Progress; plans with open design decisions hold here with a ## Decision Request comment until the human replies",
-      "allowed_transitions": ["In Progress", "Ready for Plan", "Human Needed"],
+      "allowed_transitions": ["In Progress", "Ready for Plan", "Human Needed", "Plan in Progress", "Done", "Canceled"],
       "required_by_commands": ["ralph_review", "ralph_split"],
       "produces_for_commands": ["ralph_plan", "ralph_review"],
       "requires_human_action": false
     },
     "In Progress": {
       "description": "Implementation actively underway or children being worked",
-      "allowed_transitions": ["In Review", "Human Needed"],
+      "allowed_transitions": ["In Review", "Human Needed", "Done", "Canceled"],
       "required_by_commands": ["ralph_impl"],
       "produces_for_commands": ["ralph_plan_epic", "ralph_plan", "ralph_review", "ralph_split", "ralph_unblock"]
     },
     "In Review": {
       "description": "PR created, awaiting code review",
-      "allowed_transitions": ["Done", "In Progress", "Human Needed"],
+      "allowed_transitions": ["Done", "In Progress", "Human Needed", "Canceled"],
       "required_by_commands": [],
       "produces_for_commands": ["ralph_impl", "ralph_pr"],
       "requires_human_action": true
     },
     "Human Needed": {
       "description": "Escalated - requires human intervention",
-      "allowed_transitions": ["Backlog", "Research Needed", "Ready for Plan", "In Progress"],
+      "allowed_transitions": ["Backlog", "Research Needed", "Ready for Plan", "In Progress", "Done", "Canceled"],
       "required_by_commands": ["ralph_unblock"],
       "produces_for_commands": ["*"],
       "requires_human_action": true
@@ -256,7 +256,7 @@
     "ralph_review": {
       "description": "Review implementation plans before execution (decision-gated, any estimate)",
       "valid_input_states": ["Plan in Review"],
-      "valid_output_states": ["In Progress", "Ready for Plan", "Human Needed"],
+      "valid_output_states": ["In Progress", "Ready for Plan", "Human Needed", "Plan in Progress"],
       "creates_artifacts": ["thoughts/shared/reviews/YYYY-MM-DD-GH-NNN-critique.md"],
       "optional": true,
       "modes": ["interactive", "auto"],

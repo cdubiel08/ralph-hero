@@ -301,4 +301,30 @@ describe("create_issue Workflow State default (GH-1524)", () => {
         .success,
     ).toBe(true);
   });
+
+  it("GH-1615: refuses an unknown (but non-empty) workflowState before ANY mutation", async () => {
+    // create_issue is the sixth Workflow State writer (effectiveState reaches
+    // updateProjectItemField with no validity check today). "Bogus State"
+    // clears the zod .min(1) schema check but is not a real ralph state —
+    // the up-front isValidState check must catch it before the dedup
+    // search, before createIssue, before addProjectV2ItemById, before
+    // anything.
+    const fieldCache = createMockFieldCache();
+    const client = createMockClient({}, { query: [], mutate: [], projectMutate: [] });
+    const server = buildServer(client, fieldCache);
+    const tool = getTool(server, "ralph_hero__create_issue");
+
+    const result = await tool.handler(
+      { title: "Test issue", workflowState: "Bogus State" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result) as { error: string };
+    expect(payload.error).toContain('Unknown workflow state "Bogus State"');
+
+    expect(client.query).not.toHaveBeenCalled();
+    expect(client.mutate).not.toHaveBeenCalled();
+    expect(client.projectMutate).not.toHaveBeenCalled();
+  });
 });

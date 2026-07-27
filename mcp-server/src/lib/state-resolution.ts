@@ -40,6 +40,7 @@ const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
     "Done",
     "Canceled",
     "Human Needed",
+    "Backlog",
   ],
   ralph_split: ["Backlog", "In Progress", "Ready for Plan"],
   ralph_research: ["Research in Progress", "Ready for Plan", "Human Needed"],
@@ -47,8 +48,18 @@ const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
   ralph_plan_epic: ["Plan in Progress", "In Progress", "Human Needed"],
   ralph_pr: ["In Review", "Human Needed"],
   ralph_impl: ["In Progress", "In Review", "Human Needed"],
-  ralph_review: ["In Progress", "Ready for Plan", "Human Needed"],
-  ralph_hero: ["In Review", "Human Needed"],
+  ralph_review: ["In Progress", "Ready for Plan", "Human Needed", "Plan in Progress"],
+  ralph_hero: [
+    "Research Needed",
+    "Research in Progress",
+    "Ready for Plan",
+    "Plan in Progress",
+    "Plan in Review",
+    "In Progress",
+    "In Review",
+    "Done",
+    "Human Needed",
+  ],
   ralph_merge: ["Done", "Human Needed"],
   ralph_code_review: ["In Review", "Human Needed"],
   ralph_unblock: [
@@ -58,6 +69,7 @@ const COMMAND_ALLOWED_STATES: Record<string, string[]> = {
     "In Progress",
     "Human Needed",
   ],
+  ralph_pr_drain: ["In Progress", "Done", "Human Needed"],
 };
 
 // --- Helpers ---

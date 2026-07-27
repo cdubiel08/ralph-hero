@@ -7,6 +7,16 @@ import {
   COMMAND_ALLOWED_STATES,
   normalizeCommand,
 } from "../lib/state-resolution.js";
+import { ALLOWED_TRANSITIONS } from "../lib/workflow-states.js";
+
+// The state machine JSON lives at `ralph/hooks/scripts/`, not repo-root
+// `hooks/scripts/` (GH-1615: the previous path resolved to a nonexistent
+// location and the `existsSync` guard made every parity test below pass
+// vacuously — this is how the COMMAND_ALLOWED_STATES drift survived).
+const STATE_MACHINE_JSON_PATH = path.resolve(
+  __dirname,
+  "../../../ralph/hooks/scripts/ralph-state-machine.json",
+);
 
 describe("normalizeCommand", () => {
   it("passes through ralph_ prefixed commands", () => {
@@ -386,19 +396,19 @@ describe("error messages contain Recovery: section", () => {
 });
 
 describe("data consistency with state machine JSON", () => {
+  // GH-1615: a missing state machine must fail CI, not skip silently. The
+  // previous `if (!fs.existsSync(jsonPath)) return;` guard combined with the
+  // wrong path made every test in this block a silent no-op.
+  it("ralph-state-machine.json exists at the expected path", () => {
+    expect(fs.existsSync(STATE_MACHINE_JSON_PATH)).toBe(true);
+  });
+
+  const raw = fs.readFileSync(STATE_MACHINE_JSON_PATH, "utf-8");
+  const stateMachine = JSON.parse(raw);
+
   it("verify SEMANTIC_INTENTS matches ralph-state-machine.json semantic_states", () => {
-    const jsonPath = path.resolve(
-      __dirname,
-      "../../../hooks/scripts/ralph-state-machine.json",
-    );
-    // Only run if the JSON file exists (not in CI without full repo)
-    if (!fs.existsSync(jsonPath)) return;
-
-    const raw = fs.readFileSync(jsonPath, "utf-8");
-    const stateMachine = JSON.parse(raw);
     const semanticStates = stateMachine.semantic_states;
-
-    if (!semanticStates) return; // Section may not exist yet
+    expect(semanticStates).toBeDefined();
 
     // Verify each semantic state in JSON has a matching entry in SEMANTIC_INTENTS
     for (const [intent, mapping] of Object.entries(semanticStates)) {
@@ -416,22 +426,34 @@ describe("data consistency with state machine JSON", () => {
     }
   });
 
-  it("verify COMMAND_ALLOWED_STATES matches ralph-state-machine.json commands", () => {
-    const jsonPath = path.resolve(
-      __dirname,
-      "../../../hooks/scripts/ralph-state-machine.json",
-    );
-    if (!fs.existsSync(jsonPath)) return;
-
-    const raw = fs.readFileSync(jsonPath, "utf-8");
-    const stateMachine = JSON.parse(raw);
+  it("verify COMMAND_ALLOWED_STATES matches ralph-state-machine.json commands (two-way, set-equal)", () => {
     const commands = stateMachine.commands;
+    expect(commands).toBeDefined();
 
-    if (!commands) return;
+    const jsonCommandNames = new Set(Object.keys(commands));
+    const hardcodedCommandNames = new Set(Object.keys(COMMAND_ALLOWED_STATES));
+
+    // Every JSON command must exist in the hardcoded map (previously only
+    // checked hardcoded -> JSON, which is how ralph_pr_drain went missing
+    // entirely without a test failure).
+    for (const cmd of jsonCommandNames) {
+      expect(
+        hardcodedCommandNames.has(cmd),
+        `JSON command "${cmd}" is missing from COMMAND_ALLOWED_STATES`,
+      ).toBe(true);
+    }
+
+    // Every hardcoded command must exist in the JSON.
+    for (const cmd of hardcodedCommandNames) {
+      expect(
+        jsonCommandNames.has(cmd),
+        `COMMAND_ALLOWED_STATES has "${cmd}" which is not a JSON command`,
+      ).toBe(true);
+    }
 
     for (const [cmd, config] of Object.entries(commands)) {
       const hardcoded = COMMAND_ALLOWED_STATES[cmd];
-      if (!hardcoded) continue; // Command may not be in our map
+      if (!hardcoded) continue; // reported as a failure above already
 
       const jsonConfig = config as {
         valid_output_states?: string[];
@@ -444,9 +466,63 @@ describe("data consistency with state machine JSON", () => {
         expected.add(jsonConfig.lock_state);
       }
 
-      // Every state in hardcoded should be in expected
-      for (const state of hardcoded) {
-        expect(expected.has(state)).toBe(true);
+      const hardcodedSet = new Set(hardcoded);
+
+      // Set-equal, not one-directional: every hardcoded state must be in the
+      // JSON-derived expected set, AND every JSON-derived state must be in
+      // the hardcoded set (catches e.g. ralph_triage missing "Backlog").
+      for (const state of hardcodedSet) {
+        expect(
+          expected.has(state),
+          `COMMAND_ALLOWED_STATES.${cmd} has "${state}" not in JSON valid_output_states/lock_state`,
+        ).toBe(true);
+      }
+      for (const state of expected) {
+        expect(
+          hardcodedSet.has(state),
+          `JSON ${cmd}.valid_output_states/lock_state has "${state}" missing from COMMAND_ALLOWED_STATES.${cmd}`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("verify ALLOWED_TRANSITIONS matches ralph-state-machine.json allowed_transitions (set-equal per state)", () => {
+    const states = stateMachine.states;
+    expect(states).toBeDefined();
+
+    const jsonStateNames = new Set(Object.keys(states));
+    const hardcodedStateNames = new Set(Object.keys(ALLOWED_TRANSITIONS));
+
+    for (const state of jsonStateNames) {
+      expect(
+        hardcodedStateNames.has(state),
+        `JSON state "${state}" is missing from ALLOWED_TRANSITIONS`,
+      ).toBe(true);
+    }
+    for (const state of hardcodedStateNames) {
+      expect(
+        jsonStateNames.has(state),
+        `ALLOWED_TRANSITIONS has "${state}" which is not a JSON state`,
+      ).toBe(true);
+    }
+
+    for (const [state, config] of Object.entries(states)) {
+      const jsonTransitions = new Set(
+        (config as { allowed_transitions?: string[] }).allowed_transitions || [],
+      );
+      const hardcodedTransitions = new Set(ALLOWED_TRANSITIONS[state] ?? []);
+
+      for (const target of jsonTransitions) {
+        expect(
+          hardcodedTransitions.has(target),
+          `ALLOWED_TRANSITIONS["${state}"] is missing JSON target "${target}"`,
+        ).toBe(true);
+      }
+      for (const target of hardcodedTransitions) {
+        expect(
+          jsonTransitions.has(target),
+          `ALLOWED_TRANSITIONS["${state}"] has "${target}" not present in the JSON (undocumented addition)`,
+        ).toBe(true);
       }
     }
   });

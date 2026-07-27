@@ -36,7 +36,14 @@ state machine for a mistyped verb.
   repair path — it must make it explicit and logged.
 - **Don't enforce on tools that are about to move.** #1592 is ordered
   after #1591 (tool wave 2) precisely so invariants land on the
-  consolidated tool set; the first child is board-blocked on #1614.
+  consolidated tool set. **Amended (GH-1615 group plan, iteration + round-2
+  review):** the group plan's `depends_on: null` de-serializes this
+  ordering on the merits — #1591 explicitly KEEPS
+  `save_issue`/`advance_issue`/`create_sub_issues`, and none of #1609–#1613
+  rename or remove them; the only real overlap is `batch_update`
+  (`batch-tools.ts`, a merge-conflict-level coordination with #1611, not a
+  semantic dependency). See that plan's Design Decisions for the full
+  argument and its Iteration Log for the board-edge correction.
 - **Hooks come out only after the server proves the invariant.** Demotion
   is the last child, not a parallel one.
 - **Merge path.** `main` is ruleset-protected — PR + `scripts/attest-pr.sh`
@@ -50,7 +57,10 @@ The transition-legality predicate goes into `workflow-states.ts` and is
 called by both mutating tools, refusing illegal transitions with an error
 that names the legal next states. Semantic intents (`__LOCK__`,
 `__COMPLETE__`, `__ESCALATE__`) resolve *before* validation so they cannot
-be used as a bypass. Board-blocked on #1614 (end of the tool wave).
+be used as a bypass. **Amended:** the earlier "gated on #1614" framing does
+not hold up — the GH-1615 group plan's `depends_on: null` supersedes it
+(see that plan's Design Decisions); the `1614 -> 1615` dependency edge
+itself is removed as part of Phase 1.
 
 Acceptance: illegal transitions refused with actionable errors, validation
 fails closed, `force` explicit and logged, refusal classes covered by tests.
@@ -114,12 +124,13 @@ demotion, ShellCheck, doc rosters, and the zero-hook lifecycle transcript.
 ## Feature Sequencing
 
 ```
-#1614 ─> #1615 ──┬─> #1616 ──> #1617 ──┬─> #1619
-                 └─> #1618 ────────────┘   (#1619 also blocked by #1605)
+#1615 ──┬─> #1616 ──> #1617 ──┬─> #1619
+        └─> #1618 ────────────┘   (#1619 also blocked by #1605)
 ```
 
-- #1615 first and board-blocked on #1614 so invariants land on the
-  consolidated tool set.
+- #1615 first, `depends_on: null` (amended — the `1614 -> 1615` board edge
+  is removed; see the GH-1615 group plan's Design Decisions and Iteration
+  Log for why the earlier gating framing did not hold up).
 - #1616 and #1618 are parallel-safe after #1615 (lock path vs tree path).
 - #1617 after #1616 — reclamation builds on the hardened lock guard.
 - #1619 last — hooks come out only after every server invariant is proven,

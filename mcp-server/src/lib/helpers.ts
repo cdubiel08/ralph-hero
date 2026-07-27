@@ -10,7 +10,11 @@ import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "./cache.js";
 import type { ProjectV2IterationFieldIteration } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
-import { WORKFLOW_STATE_TO_STATUS, stateIndex, isParentGateState } from "./workflow-states.js";
+import {
+  WORKFLOW_STATE_TO_STATUS,
+  isParentGateState,
+  isLegalParentGateAdvance,
+} from "./workflow-states.js";
 import {
   buildBatchResolveQuery,
   buildBatchFieldValueQuery,
@@ -719,7 +723,10 @@ export async function autoAdvanceParent(
   issueNumber: number,
   gateState: string,
   projectNumber: number,
-): Promise<{ advanced: boolean; parentNumber?: number; toState?: string } | null> {
+): Promise<
+  | { advanced: boolean; parentNumber?: number; toState?: string; skippedReason?: string }
+  | null
+> {
   try {
     // Step A: Fetch parent number (1 query)
     const parentResult = await client.query<{
@@ -821,8 +828,26 @@ export async function autoAdvanceParent(
 
     const parentIdx = allNumbers.length - 1;
     const parentState = extractWorkflowState(fvResult[`fv${parentIdx}`]);
-    if (stateIndex(parentState || "") >= stateIndex(gateState)) {
-      return { advanced: false, parentNumber };
+
+    // GH-1615: replaces the bare `stateIndex(parent) >= stateIndex(gate)`
+    // guard. stateIndex returns -1 for Human Needed / Canceled / unset, so
+    // the old guard always advanced from those states — silently
+    // overwriting an escalation or writing over a parent holding a live
+    // lock, with no lock-guard consultation. isLegalParentGateAdvance keeps
+    // the legitimate multi-hop gate-jump carve-out (this function's whole
+    // purpose) while refusing those two cases explicitly. Stays best-effort:
+    // never throws, never fails the primary save_issue/create_sub_issues
+    // call — a refusal here is a skip, observable via skippedReason and an
+    // optional debug-log line, not an error.
+    const gateCheck = isLegalParentGateAdvance(parentState, gateState);
+    if (!gateCheck.ok) {
+      if (process.env.RALPH_DEBUG === "true") {
+        console.error(
+          `[autoAdvanceParent] skipped advancing parent #${parentNumber} to "${gateState}": ${gateCheck.reason} ` +
+            `(current="${parentState ?? "(unset)"}")`,
+        );
+      }
+      return { advanced: false, parentNumber, skippedReason: gateCheck.reason };
     }
 
     // Step F: Advance parent (1-2 mutations)

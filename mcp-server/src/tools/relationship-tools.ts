@@ -15,6 +15,9 @@ import { FieldOptionCache } from "../lib/cache.js";
 import {
   isValidState,
   isEarlierState,
+  isLegalTransition,
+  legalNextStates,
+  isLegalParentGateAdvance,
   VALID_STATES,
   PARENT_GATE_STATES,
   isParentGateState,
@@ -750,6 +753,24 @@ export function registerRelationshipTools(
                 continue;
               }
 
+              // GH-1615: transition legality — the forward-only check above is
+              // a weak monotonicity guard (it allows any earlier-to-later move,
+              // including multi-gate skips like Research Needed -> In Progress,
+              // and can set lock states with no lock-guard consultation). Per-
+              // issue refusal, same refusal text as save_issue; batch continues.
+              if (!isLegalTransition(currentState, args.targetState)) {
+                const legal = legalNextStates(currentState);
+                errors.push({
+                  number: issueNum,
+                  error:
+                    `Illegal transition for #${issueNum}: "${currentState}" -> "${args.targetState}". ` +
+                    `Legal next states from "${currentState}": ${legal.length > 0 ? legal.join(", ") : "(none — terminal state)"}. ` +
+                    `Recovery: move through the pipeline via one of the legal states, or repair this issue ` +
+                    `individually via save_issue(force: true).`,
+                });
+                continue;
+              }
+
               // Advance the issue
               const projectItemId = await resolveProjectItemId(
                 client,
@@ -971,12 +992,22 @@ export function registerRelationshipTools(
             projectNumber,
           );
 
-          // Check if parent is already at or past the target state
-          const parentIdx = stateIndex(parentState || "");
-          if (parentIdx >= minStateIdx) {
+          // GH-1615: parent-gate advance legality. The previous guard was a
+          // bare `stateIndex(parent) >= stateIndex(gate)` comparison —
+          // stateIndex returns -1 for Human Needed / Canceled / unset, so
+          // "-1 >= n" is false and the old check always "advanced" from
+          // those states, silently overwriting an escalation or writing
+          // straight over a parent holding a live lock with no lock-guard
+          // consultation. isLegalParentGateAdvance keeps the legitimate
+          // multi-hop gate-jump carve-out (a parent at Backlog whose
+          // children all reach In Review should still advance — the
+          // children's own now-validated transitions are the legality
+          // evidence) while refusing those two cases explicitly.
+          const gateCheck = isLegalParentGateAdvance(parentState, minState);
+          if (!gateCheck.ok) {
             return toolSuccess({
               advanced: false,
-              reason: "Parent already at or past target state",
+              reason: gateCheck.reason,
               parent: {
                 number: parentNumber,
                 title: parentIssue.title,

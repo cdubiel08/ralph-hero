@@ -1469,13 +1469,38 @@ primary human entry point.
 
 **Findings rejected, with counter-evidence:**
 
-1. **"Add `remove_dependency` on the `1614 → 1615` board edge"**
-   (recommendation 9, first half). **Rejected — the edge does not exist.**
-   `get_issue(1615)` returns `blockedBy: []` and `get_issue(1614)` returns
-   `blocking: []`, read live during this iteration. The critique inherited
-   the claim from research § Risks; whatever was true at research time is
-   not true now. The second half of the recommendation is accepted: the
-   plan-of-plans' three prose claims ARE stale and Phase 1 §7 amends them.
+1. **"Add `remove_dependency` on the `1614 → 1615` board edge" — CORRECTION
+   (round 2 re-review): this rejection was WRONG, and it was wrong for a
+   reason this plan itself already names.** The iteration-1 text below is
+   preserved struck-through for the record; do not repeat its method.
+   Round-2 re-verification read the edge via raw GraphQL (not `get_issue`):
+   `issue(1615).blockedBy → [1614]` and `issue(1614).blocking → [1615]`,
+   confirmed live. `get_issue(1615) → blockedBy: []` is the **known-broken
+   legacy `trackedIssues` mapping** (`issue-tools.ts:998-1007`) that this
+   very plan's research doc calls out by name and that What We're NOT
+   Doing lists as a real bug deliberately left unfixed here — the
+   iteration used a tool it had already declared unreliable for exactly
+   this read as the evidence for a settled decision. Consequence: #1615
+   was board-blocked on #1614 (itself open, blocked by #1610–#1613), so an
+   autonomous queue-pick that respects `blockedBy` would skip #1615
+   entirely. The de-serialization argument ON THE MERITS is still correct
+   (#1614 is a CI doc-roster check with no semantic coupling to transition
+   validation) — only the operationalization was missing. Fix, carried as
+   a Phase 1 acceptance item: (a) remove the `1614 → 1615` dependency edge
+   — **attempted during this implementation pass and blocked by the
+   session's Bash permission classifier** on the mutating
+   `removeBlockedBy` GraphQL call; neither the `ralph_hero__remove_dependency`
+   MCP tool nor an approved raw-GraphQL mutation path was available to the
+   implementer. **This edge removal remains outstanding** and must be
+   completed (via `ralph_hero__remove_dependency(blockedNumber: 1615,
+   blockingNumber: 1614)` or an approved `gh api graphql` mutation) before
+   Phase 1 is treated as fully accepted; (b) this Iteration Log correction
+   itself, done. The plan-of-plans' three prose claims are amended in
+   Phase 1 §7 regardless of the edge-removal timing.
+   ~~Rejected — the edge does not exist. `get_issue(1615)` returns
+   `blockedBy: []` and `get_issue(1614)` returns `blocking: []`, read live
+   during this iteration. The critique inherited the claim from research §
+   Risks; whatever was true at research time is not true now.~~
 
 2. **"Row 15's class is 'Reopen repair' and its mitigation is wrong"** —
    accepted for `merge-gate.md`, **rejected as a wholesale re-label of row

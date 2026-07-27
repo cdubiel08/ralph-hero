@@ -20,6 +20,8 @@ import {
   isValidState,
   isEarlierState,
   isParentGateState,
+  isLegalTransition,
+  legalNextStates,
   VALID_STATES,
   LOCK_STATES,
   TERMINAL_STATES,
@@ -1088,6 +1090,20 @@ export function registerIssueTools(
         let effectiveEstimate = args.estimate;
         const effectiveState = args.workflowState ?? "Backlog";
 
+        // GH-1615: create_issue is the sixth Workflow State writer and had no
+        // validity check at all — effectiveState reached updateProjectItemField
+        // (below) unchecked. No transition check is needed (the issue was
+        // created milliseconds earlier, so current state is empty by
+        // construction) — just refuse an unknown state name up front, before
+        // any mutation.
+        if (!isValidState(effectiveState)) {
+          return toolError(
+            `Unknown workflow state "${effectiveState}". ` +
+              `Valid states: ${VALID_STATES.join(", ")}. ` +
+              `Recovery: retry with a valid state name, or omit workflowState to default to "Backlog".`,
+          );
+        }
+
         if (registry) {
           const repoLookup = lookupRepo(registry, repo);
           if (repoLookup) {
@@ -1449,6 +1465,73 @@ export function registerIssueTools(
           }
         }
 
+        // 2b. GH-1615: transition legality check, hoisted ahead of ALL
+        // mutation (issue AND project-field). Placement is load-bearing:
+        // save_issue mutates the GitHub issue first (close/reopen/title/
+        // body/labels/assignees at "3. Issue state mutations" below) and
+        // only reaches the project-field block at "4." — checking at "4."
+        // would let an illegal-transition call reopen/close the issue and
+        // THEN refuse, leaving GitHub and the board split-brained. This
+        // block hoists the project-context resolution that "4." used to do
+        // at its own head, so a pre-mutation current-state read is possible
+        // at all — project fields, lock guard, and transition legality now
+        // share one resolution instead of three.
+        //
+        // Also covers the reverse-inference terminal-source case uniformly:
+        // resolvedWorkflowState set via inferredFromClose runs through the
+        // exact same isLegalTransition check as an explicit workflowState,
+        // so re-classifying an already-terminal issue (Done -> Canceled via
+        // issueState: "CLOSED_NOT_PLANNED", or the reverse) is refused
+        // without force like any other illegal transition — there is no
+        // "legal by construction" exemption.
+        let projectContext: ReturnType<typeof resolveFullConfig> | undefined;
+        let currentWorkflowState: string | undefined;
+
+        if (hasProjectFields || inferredFromClose) {
+          projectContext = resolveFullConfig(client, args);
+          await ensureFieldCache(client, fieldCache, projectContext.projectOwner, projectContext.projectNumber);
+
+          if (resolvedWorkflowState !== undefined) {
+            try {
+              currentWorkflowState = await getCurrentFieldValue(
+                client, fieldCache, owner, repo, args.number, "Workflow State", projectContext.projectNumber,
+              );
+            } catch (error: unknown) {
+              // Fail closed: a query error or an unresolvable item is NOT the
+              // same as "genuinely unset" (which isLegalTransition treats as
+              // legal). Zero mutations have happened at this point.
+              const message = error instanceof Error ? error.message : String(error);
+              return toolError(
+                `Could not determine the current state of issue #${args.number} to validate the transition: ${message}. ` +
+                  `No changes were made. Recovery: verify the issue is on the project board and retry.`,
+              );
+            }
+
+            const illegal = !isLegalTransition(currentWorkflowState, resolvedWorkflowState);
+
+            if (illegal && !args.force) {
+              const fromLabel = currentWorkflowState ?? "(unset)";
+              const legal = legalNextStates(currentWorkflowState ?? "");
+              return toolError(
+                `Illegal transition for #${args.number}: "${fromLabel}" -> "${resolvedWorkflowState}". ` +
+                  `Legal next states from "${fromLabel}": ${legal.length > 0 ? legal.join(", ") : "(none — terminal state)"}. ` +
+                  `Recovery: move through the pipeline via one of the legal states, or — for human repair ` +
+                  `(e.g. reopening a closed issue) — retry with force=true; the override is recorded in the response.`,
+              );
+            }
+
+            if (illegal && args.force) {
+              changes.forcedTransition = { from: currentWorkflowState ?? null, to: resolvedWorkflowState };
+              if (process.env.RALPH_DEBUG === "true") {
+                console.error(
+                  `[ralph_hero__save_issue] forced illegal transition on #${args.number}: ` +
+                    `"${currentWorkflowState ?? "(unset)"}" -> "${resolvedWorkflowState}"`,
+                );
+              }
+            }
+          }
+        }
+
         // 3. Issue state mutations (close/reopen) - use dedicated mutations
         const hasMetadataFields = args.title !== undefined || args.body !== undefined ||
           args.labels !== undefined || args.assignees !== undefined;
@@ -1585,8 +1668,9 @@ export function registerIssueTools(
         // 4. Project-field mutations (aliased batch for workflow state + status sync + estimate + priority)
         // Also fires when workflowState was inferred from issueState (reverse-close inference).
         if (hasProjectFields || inferredFromClose) {
-          const { projectNumber, projectOwner } = resolveFullConfig(client, args);
-          await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+          // GH-1615: projectContext was already resolved above (step 2b), ahead
+          // of the issue-mutation block — reused here rather than re-resolved.
+          const { projectNumber } = projectContext!;
 
           const projectItemId = await resolveProjectItemId(
             client, fieldCache, owner, repo, args.number, projectNumber,
@@ -1599,10 +1683,9 @@ export function registerIssueTools(
           // Server-side lock guard: prevent two agents from claiming the same
           // lock state simultaneously. Only fires when the caller is trying to
           // SET a lock state — non-lock transitions skip this check entirely.
+          // currentWorkflowState was already fetched in step 2b (shared with
+          // the transition-legality check — one read, not two).
           if (!args.force && resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
-            const currentWorkflowState = await getCurrentFieldValue(
-              client, fieldCache, owner, repo, args.number, "Workflow State", projectNumber,
-            );
             if (isLockConflict(currentWorkflowState, resolvedWorkflowState)) {
               return toolError(
                 `Issue #${args.number} is already in a lock state ("${currentWorkflowState}") ` +
