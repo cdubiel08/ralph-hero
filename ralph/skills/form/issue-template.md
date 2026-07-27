@@ -56,29 +56,31 @@ Key findings: [1-3 line summary from the research doc's Summary section]
 
 This mirrors the protocol used by `/ralph:research` so the issue's comment history shows the artifact provenance in a consistent shape.
 
-## Ticket-tree shape
+## Epic tree preview (Step 6b)
 
-For Step 6b:
+Show only a preview of what `/ralph:plan --mode epic` will later build from the parent — **form does not create this tree** (GH-1605). Form's Step 6b creates only the parent issue; decomposition into feature children is entirely `/ralph:plan --mode epic`'s job, per `decomposition.md` § Child creation:
 
 ```
-Proposed ticket tree:
+Proposed epic:
 
 **Parent**: [Epic title] (L)
-├── #??: [Sub-task 1] (XS)
-├── #??: [Sub-task 2] (XS)
-├── #??: [Sub-task 3] (S)
-└── #??: [Sub-task 4] (XS)
-
-Each sub-issue is scoped to XS/S for autonomous implementation.
+(features + internal tasks decomposed later by `/ralph:plan --mode epic`)
 ```
 
-Creation order — **form performs step 1 only** (GH-1605). Steps 2-3 describe what `/ralph:plan --mode epic` does with the parent after form hands off; form itself makes no `create_sub_issues` call:
+Do not preview specific feature titles or estimates here — the plan-of-plans decomposition (`ralph/skills/plan/decomposition.md` § Feature Decomposition) is what names features, and doing that work twice (once loosely in form, once for real in plan) invites drift between the two.
 
-1. Parent: `create_issue` with `estimate: L`, `workflowState: "Backlog"`.
-2. All children in ONE `create_sub_issues(parentNumber: <parent-number>, children: [{title, body, estimate: "XS", workflowState: "Backlog", dependsOn: [...]}, ...])` call — each entry gets `estimate: XS` (occasionally `S`). The call links every child under the parent and wires dependency edges in the same request; check the response's per-child status for `error` and repair only the failed children.
-3. Sequential children only: give the later child's entry `dependsOn: [<earlier sibling's index>]` so the edge is wired inline (a `dependsOn` value is a sibling index into this call's children array; use `dependsOnIssues` for a pre-existing GitHub issue blocker). Independent children get no `dependsOn` entry — parallelism is the default.
+**What `/ralph:plan --mode epic` builds later** (for context — form does not execute any of this):
 
-Estimate defaults — **L** for parent, **XS** for child. Bump to **S** for any child that touches >1 component or has nontrivial design surface; bump to **M** only if the child should probably be its own sub-tree.
+- Each **feature child is the PR unit** (GH-1538) — sized **S or M**, never XS, and never a further sub-issue. Typical fan-out: an **L** epic decomposes into 3-5 S children; an **XL** epic into 3-5 M children, or 6-10 S children.
+- A feature's internal work is represented as plan **phases** inside that child's own implementation plan (executed one per tick by `/ralph:impl --mode auto`, committed per phase on one branch) — **not** as additional XS task-level sub-issues under it.
+- All children are created together in one `create_sub_issues` call, with dependency edges (`dependsOn` sibling indices / `dependsOnIssues` for pre-existing blockers) wired inline in the same request.
+
+Creation order — **form performs step 1 only**:
+
+1. Parent: `create_issue` with `estimate: L` (or `XL`), `workflowState: "Backlog"`.
+2. (Later, by `/ralph:plan --mode epic`, not form) All feature children in ONE `create_sub_issues(...)` call, each `estimate: "S"` or `"M"` per the fan-out table above.
+
+Estimate defaults — **L** (or **XL** for a larger epic) for the parent. Form does not assign a child estimate at all; that is `/ralph:plan --mode epic`'s decision once the Feature Decomposition exists.
 
 ## Source-file frontmatter updates
 

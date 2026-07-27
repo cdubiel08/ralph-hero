@@ -103,6 +103,20 @@ Update frontmatter: `status: forming`, `enriched: <same UTC ISO-8601 timestamp>`
 This step only runs when §Step 2 selected at least one file (N=0 already short-circuited to `Queue empty.`). The branch is already checked out from §Step 2b; `main` rejects all direct pushes (GH-1589 ruleset), so the commit lands through that standing PR-only branch:
 
 ```bash
+# git/gh stderr can carry embedded newlines. The terminal token is the LAST
+# LINE of the transcript and must stay verbatim-parseable (outcome-tokens.md
+# § file-level invariant — "the harness extractor reads these from the
+# transcript verbatim"); a raw multiline diagnostic embedded in a token would
+# split it across several physical lines and break that read. Collapse to one
+# line (and cap length) before it ever reaches a printed token; nothing is
+# lost — the un-sanitized $checkout_err/$commit_err/$push_err/$pr_err/$view_err
+# values are still available in the transcript's own command output above the
+# token line for a human to inspect.
+sanitize_diag() {
+  printf '%s' "$1" | tr '\n\r' '  ' | tr -s '[:space:]' ' ' | cut -c1-300 \
+    | sed -e 's/[[:space:]]*$//'
+}
+
 # EVERY exit path returns to main — the commit is already safe on the local
 # `chore/enrich-ideas` ref, and leaving that branch checked out would strand the
 # next heartbeat at §Step 1's main-only gate (it would emit `ENRICH SKIPPED —
@@ -112,7 +126,7 @@ This step only runs when §Step 2 selected at least one file (N=0 already short-
 # producing exactly the strand it exists to prevent.
 return_to_main() {
   if ! checkout_err=$(git checkout main 2>&1); then
-    printf '%s\n' "ENRICH BLOCKED checkout-main-failed: ${checkout_err}"
+    printf '%s\n' "ENRICH BLOCKED checkout-main-failed: $(sanitize_diag "$checkout_err")"
     exit 0
   fi
 }
@@ -132,7 +146,7 @@ git add -- "${SELECTED_FILES[@]}"
 # re-selected. The findings would be lost silently.
 if ! commit_err=$(git commit -m "chore(ideas): enrich <N> idea file(s)" 2>&1); then
   return_to_main
-  printf '%s\n' "ENRICH BLOCKED commit-failed: ${commit_err}"
+  printf '%s\n' "ENRICH BLOCKED commit-failed: $(sanitize_diag "$commit_err")"
   exit 0
 fi
 
@@ -156,7 +170,7 @@ if ! push_err=$(git push origin "$BRANCH" 2>&1); then
     # Auth / permission / network / anything else: not retryable, and not a
     # rejection. Surface the diagnostics instead of laundering them.
     return_to_main
-    printf '%s\n' "ENRICH BLOCKED push-failed: ${push_err}"
+    printf '%s\n' "ENRICH BLOCKED push-failed: $(sanitize_diag "$push_err")"
     exit 0
   fi
 fi
@@ -177,21 +191,23 @@ elif printf '%s' "$pr_err" | grep -qi 'already exists'; then
   # and swallowing it would report `ENRICHED <N> (PR )` for a pass with no
   # reviewable PR URL. Check the exit status AND the emptiness of the result.
   if ! view_err=$(gh pr view "$BRANCH" --json url -q .url 2>&1) || [[ -z "$view_err" ]]; then
-    printf '%s\n' "ENRICH BLOCKED pr-create-failed: PR already exists but lookup failed: ${view_err:-empty url}"
+    printf '%s\n' "ENRICH BLOCKED pr-create-failed: PR already exists but lookup failed: $(sanitize_diag "${view_err:-empty url}")"
     exit 0
   fi
   PR_URL="$view_err"
 else
-  printf '%s\n' "ENRICH BLOCKED pr-create-failed: ${pr_err}"
+  printf '%s\n' "ENRICH BLOCKED pr-create-failed: $(sanitize_diag "$pr_err")"
   exit 0
 fi
 ```
 
-Only the literal "already exists" failure falls back to `gh pr view`. Authentication failures, validation errors, rate limiting, and network errors must **not** be swallowed — masking them behind the duplicate-PR fallback would report `ENRICHED <N> (PR <url>)` for a pass whose findings never reached a reviewable PR. Those emit `ENRICH BLOCKED pr-create-failed: <stderr>` instead; the branch and commit are already pushed, so re-running the mode (or opening the PR by hand) recovers.
+Only the literal "already exists" failure falls back to `gh pr view`. Authentication failures, validation errors, rate limiting, and network errors must **not** be swallowed — masking them behind the duplicate-PR fallback would report `ENRICHED <N> (PR <url>)` for a pass whose findings never reached a reviewable PR. Those emit `ENRICH BLOCKED pr-create-failed: <sanitized-stderr>` instead; the branch and commit are already pushed, so re-running the mode (or opening the PR by hand) recovers.
 
-The fallback `gh pr view` is checked the same way, for the same reason: it can fail (or return an empty URL) on exactly the auth/network/rate-limit conditions the branch above exists to surface. A failed lookup emits `ENRICH BLOCKED pr-create-failed: PR already exists but lookup failed: <stderr>` — never `ENRICHED <N> (PR )`.
+The fallback `gh pr view` is checked the same way, for the same reason: it can fail (or return an empty URL) on exactly the auth/network/rate-limit conditions the branch above exists to surface. A failed lookup emits `ENRICH BLOCKED pr-create-failed: PR already exists but lookup failed: <sanitized-stderr>` — never `ENRICHED <N> (PR )`.
 
-**Push-failure rule.** `push-rejected` is reserved for **retryable remote-branch rejections** — the non-fast-forward / `fetch first` / stale-info family, which is precisely what the fetch + fast-forward retry repairs. On one of those, the retry runs once; if it also fails, **return to `main`** and emit `ENRICH SKIPPED push-rejected` — the commit stays on the local `chore/enrich-ideas` ref, which §Step 2b's non-destructive branch setup preserves and re-checks-out on the next pass. Every other push failure (authentication, permission, protected branch, network, rate limit) is **not** a rejection and is **not** retried: it returns to `main` and emits `ENRICH BLOCKED push-failed: <stderr>` with the diagnostics intact. Classifying those as `push-rejected` would report a credentials outage as routine branch divergence and burn a pointless retry against a remote that is not reachable. The return to `main` is itself checked on every path — a failed `git checkout main` emits `ENRICH BLOCKED checkout-main-failed: <stderr>` rather than silently claiming recovery from the wrong branch. Returning to `main` is what keeps that recovery reachable: §Step 1's branch gate stops the whole mode when the session is not on `main`, so leaving the enrichment branch checked out would strand the commit permanently (`ENRICH SKIPPED — branch chore/enrich-ideas is not main` every heartbeat, §Step 2b never reached). Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
+**Push-failure rule.** `push-rejected` is reserved for **retryable remote-branch rejections** — the non-fast-forward / `fetch first` / stale-info family, which is precisely what the fetch + fast-forward retry repairs. On one of those, the retry runs once; if it also fails, **return to `main`** and emit `ENRICH SKIPPED push-rejected` — the commit stays on the local `chore/enrich-ideas` ref, which §Step 2b's non-destructive branch setup preserves and re-checks-out on the next pass. Every other push failure (authentication, permission, protected branch, network, rate limit) is **not** a rejection and is **not** retried: it returns to `main` and emits `ENRICH BLOCKED push-failed: <sanitized-stderr>` with the diagnostics intact. Classifying those as `push-rejected` would report a credentials outage as routine branch divergence and burn a pointless retry against a remote that is not reachable. The return to `main` is itself checked on every path — a failed `git checkout main` emits `ENRICH BLOCKED checkout-main-failed: <sanitized-stderr>` rather than silently claiming recovery from the wrong branch. Returning to `main` is what keeps that recovery reachable: §Step 1's branch gate stops the whole mode when the session is not on `main`, so leaving the enrichment branch checked out would strand the commit permanently (`ENRICH SKIPPED — branch chore/enrich-ideas is not main` every heartbeat, §Step 2b never reached). Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
+
+**Diagnostic sanitization.** `git`/`gh` stderr can carry embedded newlines. Every `<sanitized-stderr>` above runs through the `sanitize_diag()` helper (§Step 4) before it reaches a token line — collapsed to a single line and capped at 300 chars — so a multiline diagnostic can never split a terminal token across several physical lines (outcome-tokens.md § file-level invariant: "the harness extractor reads these from the transcript verbatim"). Nothing is lost: the raw, un-sanitized error still appears in the transcript's own command output above the token line.
 
 ## §Step 5: Emit terminal token
 

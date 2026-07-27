@@ -19,7 +19,7 @@ Determine whether the input is a **single thought** or a **multi-thought dump** 
 - **Single thought**: restate in one sentence, then ask 2-3 focused clarifying questions (most-important first). If the user replies "just capture it" or similar, proceed with what you have — don't block.
 - **Multi-thought dump**: skip clarifying questions entirely — extraction replaces interrogation (GH-706: "extract first, confirm after"). Extract N distinct thoughts from the input, then present ONE confirmation listing the N titles:
 
-  ```
+  ```text
   Captured as N ideas:
   1. [Title 1]
   2. [Title 2]

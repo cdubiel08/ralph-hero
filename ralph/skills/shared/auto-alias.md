@@ -25,7 +25,7 @@ Reference fragment and **sole source of truth** for the alias table, the refusal
 Verbs that refuse `--auto` entirely (interactive / single-artifact / one-shot):
 
 - `form` — interactive picker with 3-5 AskUserQuestion calls
-- `catch-up` — interactive orientation (default/narrative/dashboard modes)
+- `catch-up` — interactive orientation (default/`--mode report`/`--mode brief`)
 - `setup` — one-shot bootstrap; no queue to drain
 
 Refusal text (emit verbatim, then STOP):

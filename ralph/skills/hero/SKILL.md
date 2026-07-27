@@ -1,5 +1,5 @@
 ---
-description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with decision-gated human plan approval (open design decisions route to the human; decision-free plans flow through) and autonomous merge by default. Four modes:default(one-shot), --mode auto (autopilot drain via /loop, internally ticking a director-only dispatch step), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
+description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with decision-gated human plan approval (open design decisions route to the human; decision-free plans flow through) and autonomous merge by default. Four modes:default(one-shot), --mode auto (never-terminating adaptive watcher via /loop, internally ticking a director-only dispatch step per event), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
 argument-hint: "[<issue-number> | --mode <auto|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>] [--loop [duration]] [--auto] [--model fable]"
 context: inline
 model: sonnet
@@ -87,7 +87,7 @@ The only autonomous entrypoint in the ralph slim plugin. Drives one issue end-to
 | Mode | Trigger | Role |
 |---|---|---|
 | **default** | `/ralph:hero NNN` or `/ralph:hero` (picks top-ranked) | One-shot: research → plan → review → impl → PR → merge |
-| **`--mode auto`** | `/ralph:hero --mode auto` | Drain the backlog via `/loop` (dynamic); each tick internally classifies one event and dispatches the correct verb |
+| **`--mode auto`** | `/ralph:hero --mode auto` | Never-terminating adaptive watcher via `/loop` (dynamic) — re-fires on dispatch, idle, and failure; each internal per-event tick classifies one event and dispatches the correct verb |
 | **`--mode watch`** | `/ralph:hero --mode watch [--issue NNN]` | Watcher heartbeat — dispatch gcp-incident-triage / log-reader / sre-fixit |
 | **`--mode pr-drain`** | `/ralph:hero --mode pr-drain --pr NNN` | Drain a PR (Dependabot/stale/unlinked) — classify, gate, act |
 
