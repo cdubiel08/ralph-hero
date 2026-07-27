@@ -376,6 +376,8 @@ function makeAdvanceIssueMockClient(opts: {
   currentStates: Record<number, string | undefined>;
   childrenByParent?: Record<number, number[]>;
   parentOf?: Record<number, number>;
+  /** GH-1616: per-issue holder/heldSince for the lock-conflict enrichment. */
+  currentHolders?: Record<number, { holder?: string; heldSince?: string }>;
 }): { client: GitHubClient; projectMutate: ReturnType<typeof vi.fn> } {
   const cacheStore = new Map<string, { value: unknown; expiry: number }>();
 
@@ -397,14 +399,22 @@ function makeAdvanceIssueMockClient(opts: {
         },
       };
     }
-    // getCurrentFieldValue: `... on ProjectV2Item { fieldValues(first: 20) }`
+    // getFieldValueDetail (GH-1616, replaces bare getCurrentFieldValue):
+    // `... on ProjectV2Item { fieldValues(first: 20) }`
     if (q.includes("... on ProjectV2Item {") && q.includes("fieldValues(first: 20)")) {
       const itemId = vars.itemId as string;
       const match = /item-(\d+)/.exec(itemId);
       const num = match ? Number(match[1]) : 0;
       const state = opts.currentStates[num];
+      const holderInfo = opts.currentHolders?.[num];
       const nodes = state
-        ? [{ __typename: "ProjectV2ItemFieldSingleSelectValue", name: state, field: { name: "Workflow State" } }]
+        ? [{
+            __typename: "ProjectV2ItemFieldSingleSelectValue",
+            name: state,
+            updatedAt: holderInfo?.heldSince,
+            creator: holderInfo?.holder ? { login: holderInfo.holder } : undefined,
+            field: { name: "Workflow State" },
+          }]
         : [];
       return { node: { fieldValues: { nodes } } };
     }
@@ -547,6 +557,64 @@ describe("advance_issue direction='children' transition legality (GH-1615)", () 
     };
     expect(payload.errors).toEqual([]);
     expect(payload.advanced.map((a) => a.number)).toEqual([30]);
+  });
+});
+
+describe("advance_issue direction='children' lock-conflict guard (GH-1616)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = makeAdvanceIssueFieldCache();
+  });
+
+  it("a lock-to-lock conflict lands in errors[] with holder + heldSince; the rest of the batch advances", async () => {
+    const { client, projectMutate } = makeAdvanceIssueMockClient({
+      currentStates: { 20: "Plan in Progress", 21: "Ready for Plan" },
+      currentHolders: { 20: { holder: "other-agent", heldSince: "2026-07-25T00:00:00Z" } },
+      childrenByParent: { 100: [20, 21] },
+    });
+    registerRelationshipTools(server, client, fieldCache);
+    const handler = getAdvanceIssueHandler(server);
+
+    const result = await handler.handler(
+      { direction: "children", number: 100, targetState: "In Progress" },
+      {},
+    );
+
+    const payload = parseAdvancePayload(result) as {
+      advanced: Array<{ number: number }>;
+      errors: Array<{ number: number; error: string }>;
+    };
+
+    // #20: Plan in Progress -> In Progress IS a legal JSON transition, but
+    // it's a lock-to-lock conflict — errors[], not silently advanced.
+    expect(payload.errors.map((e) => e.number)).toEqual([20]);
+    expect(payload.errors[0].error).toContain("is locked:");
+    expect(payload.errors[0].error).toContain("@other-agent");
+    expect(payload.errors[0].error).toContain("2026-07-25T00:00:00Z");
+
+    // #21: Ready for Plan -> In Progress is legal and lock-conflict-free.
+    expect(payload.advanced.map((a) => a.number)).toEqual([21]);
+    expect(projectMutate).toHaveBeenCalled();
+  });
+
+  it("does not apply the lock-conflict guard when targetState is not a lock state", async () => {
+    const { client } = makeAdvanceIssueMockClient({
+      currentStates: { 20: "Research in Progress" },
+      childrenByParent: { 100: [20] },
+    });
+    registerRelationshipTools(server, client, fieldCache);
+    const handler = getAdvanceIssueHandler(server);
+
+    const result = await handler.handler(
+      { direction: "children", number: 100, targetState: "Ready for Plan" },
+      {},
+    );
+
+    const payload = parseAdvancePayload(result) as { errors: Array<unknown> };
+    expect(payload.errors).toEqual([]);
   });
 });
 

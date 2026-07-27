@@ -39,7 +39,7 @@ import {
   resolveIssueNodeId,
   resolveProjectItemId,
   updateProjectItemField,
-  getCurrentFieldValue,
+  getFieldValueDetail,
   resolveConfig,
   resolveFullConfig,
   resolveFullConfigOptionalRepo,
@@ -48,7 +48,14 @@ import {
   resolveIterationId,
 } from "../lib/helpers.js";
 import { lookupRepo, mergeDefaults } from "../lib/repo-registry.js";
-import { isLockConflict } from "../lib/lock-guard.js";
+import {
+  isLockConflict,
+  isGuardedLockRelease,
+  isHeldSinceStale,
+  describeLockConflict,
+  describeGuardedRelease,
+} from "../lib/lock-guard.js";
+import { resolveLockStaleHours } from "../lib/thresholds.js";
 import { searchRepoIssues } from "../lib/repo-issue-search.js";
 
 // ---------------------------------------------------------------------------
@@ -1486,14 +1493,26 @@ export function registerIssueTools(
         // "legal by construction" exemption.
         let projectContext: ReturnType<typeof resolveFullConfig> | undefined;
         let currentWorkflowState: string | undefined;
+        // GH-1616: set when a same-state lock re-claim needs the Workflow
+        // State field cleared then re-set in step 4a to force a fresh
+        // `updatedAt` (see the clear-then-reset comment at that site for
+        // why a same-value write alone does not refresh the claim clock).
+        let refreshLockClaimClock = false;
 
         if (hasProjectFields || inferredFromClose) {
           projectContext = resolveFullConfig(client, args);
           await ensureFieldCache(client, fieldCache, projectContext.projectOwner, projectContext.projectNumber);
 
           if (resolvedWorkflowState !== undefined) {
+            // GH-1616: getFieldValueDetail replaces the bare getCurrentFieldValue
+            // read — the same fetch now also carries the field value's
+            // creator/updatedAt, which is BOTH the lock guard's holder/claim-time
+            // enrichment below AND (unchanged) the "could this be read at all"
+            // fail-closed signal Phase 1 established (throws on a real fetch
+            // failure; returns an empty detail for "genuinely unset").
+            let currentFieldDetail: { name?: string; updatedAt?: string; creator?: string };
             try {
-              currentWorkflowState = await getCurrentFieldValue(
+              currentFieldDetail = await getFieldValueDetail(
                 client, fieldCache, owner, repo, args.number, "Workflow State", projectContext.projectNumber,
               );
             } catch (error: unknown) {
@@ -1506,7 +1525,9 @@ export function registerIssueTools(
                   `No changes were made. Recovery: verify the issue is on the project board and retry.`,
               );
             }
+            currentWorkflowState = currentFieldDetail.name;
 
+            // 2b-i. Transition legality (GH-1615).
             const illegal = !isLegalTransition(currentWorkflowState, resolvedWorkflowState);
 
             if (illegal && !args.force) {
@@ -1527,6 +1548,70 @@ export function registerIssueTools(
                   `[ralph_hero__save_issue] forced illegal transition on #${args.number}: ` +
                     `"${currentWorkflowState ?? "(unset)"}" -> "${resolvedWorkflowState}"`,
                 );
+              }
+            }
+
+            // 2b-ii. Guarded lock release (GH-1616 §4b) — closes the two-call
+            // takeover recipe. Only the two BACKWARD release edges Phase 1
+            // added are gated; completion, escalation, and terminal exits
+            // (including the illegal-transition branch above, which already
+            // requires force) stay unconditional. Runs even when the
+            // transition above was legal — a release edge IS a legal
+            // transition; legality alone does not make a live release safe.
+            if (isGuardedLockRelease(currentWorkflowState, resolvedWorkflowState)) {
+              const thresholdHours = resolveLockStaleHours();
+              const stale = isHeldSinceStale(currentFieldDetail.updatedAt, thresholdHours);
+              if (!stale && !args.force) {
+                return toolError(
+                  describeGuardedRelease(
+                    args.number, currentWorkflowState!, resolvedWorkflowState,
+                    currentFieldDetail.updatedAt, thresholdHours,
+                  ),
+                );
+              }
+              changes.lockReleased = {
+                previousState: currentWorkflowState,
+                heldSince: currentFieldDetail.updatedAt ?? null,
+                forced: !stale && !!args.force,
+              };
+              if (process.env.RALPH_DEBUG === "true") {
+                console.error(
+                  `[ralph_hero__save_issue] lock released on #${args.number}: ` +
+                    `"${currentWorkflowState}" -> "${resolvedWorkflowState}" (stale=${stale}, forced=${!!args.force})`,
+                );
+              }
+            }
+
+            // 2b-iii. Lock conflict guard (GH-652, enriched GH-1616). Moved
+            // here from the old "4. Project-field mutations" block — that
+            // placement let an illegal-lock-conflict call already run the
+            // issue mutation (step 3, below) before refusing, the same
+            // split-brain class Phase 1 fixed for transition legality.
+            if (resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
+              if (currentWorkflowState === resolvedWorkflowState) {
+                // Same-state re-claim: visible, not silent (Design Decisions).
+                changes.lockReclaim = { heldSince: currentFieldDetail.updatedAt ?? null };
+                refreshLockClaimClock = true;
+              } else if (isLockConflict(currentWorkflowState, resolvedWorkflowState)) {
+                if (!args.force) {
+                  return toolError(
+                    describeLockConflict(
+                      args.number, currentWorkflowState!, resolvedWorkflowState,
+                      currentFieldDetail.creator, currentFieldDetail.updatedAt,
+                    ),
+                  );
+                }
+                changes.forcedLockOverride = {
+                  previousState: currentWorkflowState,
+                  holder: currentFieldDetail.creator ?? null,
+                  heldSince: currentFieldDetail.updatedAt ?? null,
+                };
+                if (process.env.RALPH_DEBUG === "true") {
+                  console.error(
+                    `[ralph_hero__save_issue] forced lock override on #${args.number}: ` +
+                      `"${currentWorkflowState}" -> "${resolvedWorkflowState}" (holder=${currentFieldDetail.creator ?? "unknown"})`,
+                  );
+                }
               }
             }
           }
@@ -1680,21 +1765,13 @@ export function registerIssueTools(
             return toolError("Could not resolve project ID");
           }
 
-          // Server-side lock guard: prevent two agents from claiming the same
-          // lock state simultaneously. Only fires when the caller is trying to
-          // SET a lock state — non-lock transitions skip this check entirely.
-          // currentWorkflowState was already fetched in step 2b (shared with
-          // the transition-legality check — one read, not two).
-          if (!args.force && resolvedWorkflowState && LOCK_STATES.includes(resolvedWorkflowState)) {
-            if (isLockConflict(currentWorkflowState, resolvedWorkflowState)) {
-              return toolError(
-                `Issue #${args.number} is already in a lock state ("${currentWorkflowState}") ` +
-                `and cannot be claimed as "${resolvedWorkflowState}". ` +
-                `Another agent is actively working on this issue. ` +
-                `Use save_issue with force=true to override, or wait for the lock holder to release.`,
-              );
-            }
-          }
+          // GH-1616: the lock-conflict guard, the guarded-release gate, and
+          // the transition-legality check all now run in step 2b, ahead of
+          // the issue-mutation block (step 3) — NOT here. Checking here (the
+          // pre-GH-1616 placement) let an illegal-lock-conflict call already
+          // run the GitHub issue mutation before refusing, split-braining
+          // GitHub and the board exactly like the transition-legality bug
+          // Phase 1 fixed. See step 2b-ii/2b-iii above.
 
           // Collect field updates for aliased batch mutation
           const updates: Array<{ alias: string; itemId: string; fieldId: string; optionId: string; valueType?: "singleSelectOptionId" | "iterationId" }> = [];
@@ -1707,6 +1784,35 @@ export function registerIssueTools(
             const fieldId = fieldCache.getFieldId("Workflow State", projectNumber);
             const optionId = fieldId ? fieldCache.resolveOptionId("Workflow State", resolvedWorkflowState, projectNumber) : undefined;
             if (fieldId && optionId) {
+              // GH-1617 calibration: writing the SAME option value twice via
+              // `updateProjectV2ItemFieldValue` does NOT bump the field
+              // value's `updatedAt` — confirmed empirically against a live
+              // project item (a same-value Priority write left `updatedAt`
+              // unchanged). A same-state lock re-claim would therefore keep
+              // reading as its ORIGINAL claim time indefinitely, eventually
+              // reading as stale under GH-1616's release gate even for an
+              // agent actively resuming its own work. Clearing the field
+              // first makes the following aliased mutation create a
+              // genuinely NEW field-value record (fresh createdAt/updatedAt)
+              // instead of a same-value no-op write — this is the only
+              // reliable way to refresh the claim clock on the API surface
+              // observed. Scoped to lock re-claims only (see
+              // `refreshLockClaimClock` at step 2b-iii); every other write
+              // path is unaffected.
+              if (refreshLockClaimClock) {
+                await client.projectMutate(
+                  `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+                    clearProjectV2ItemFieldValue(input: {
+                      projectId: $projectId,
+                      itemId: $itemId,
+                      fieldId: $fieldId
+                    }) {
+                      projectV2Item { id }
+                    }
+                  }`,
+                  { projectId, itemId: projectItemId, fieldId },
+                );
+              }
               updates.push({ alias: `ws_${opIdx}`, itemId: projectItemId, fieldId, optionId });
               opIdx++;
 

@@ -57,3 +57,26 @@ export const AGENT_BACKLOG_FALLBACK_PENALTY = 100;
 // and is deliberately decoupled from AGENT_BACKLOG_FALLBACK_PENALTY so
 // retuning the agent fallback cannot alter the human surface.
 export const HUMAN_TRIAGE_DIRECTION_SCORE = 100;
+
+/**
+ * Resolve the lock-stale threshold (hours), GH-1617.
+ *
+ * Precedence: explicit per-call param > `RALPH_LOCK_STALE_HOURS` env var >
+ * `LOCK_STALE_HOURS` constant. Shared by `next_actions`'s `lockStaleHours`
+ * param (`directions-tools.ts`) and `save_issue`'s lock-release gate
+ * (`issue-tools.ts`, GH-1616 §4b) so both consult the same env default.
+ *
+ * `next_actions`'s `lockStaleHours` zod schema deliberately does NOT carry
+ * `.default(24)` — a schema default would make `args.lockStaleHours` always
+ * defined and this function's env branch unreachable (the bug this function
+ * replaces). Precedence resolution happens here, in the handler, not in zod.
+ */
+export function resolveLockStaleHours(paramValue?: number): number {
+  if (paramValue !== undefined) return paramValue;
+  const envValue = process.env.RALPH_LOCK_STALE_HOURS;
+  if (envValue !== undefined && envValue !== "") {
+    const parsed = Number(envValue);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return LOCK_STALE_HOURS;
+}

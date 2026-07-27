@@ -23,6 +23,7 @@ import {
   isValidState,
   isLegalTransition,
   legalNextStates,
+  LOCK_STATES,
   VALID_STATES,
   WORKFLOW_STATE_TO_STATUS,
 } from "../lib/workflow-states.js";
@@ -33,6 +34,7 @@ import {
   resolveFullConfig,
   resolveProjectItemId,
 } from "../lib/helpers.js";
+import { isLockConflict, describeLockConflict } from "../lib/lock-guard.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -177,13 +179,28 @@ export function buildBatchMutationQuery(
 /**
  * Build an aliased query to fetch current field values for multiple
  * project items.
+ *
+ * `includeDetail` (GH-1616, default false — preserves the exact query the
+ * pre-existing `skipIfAtOrPast` filter and `autoAdvanceParent` already
+ * depend on) adds `updatedAt` and `creator { login }` — the field value's
+ * claim clock and holder identity, needed to enrich `batch_update`'s
+ * lock-conflict refusal the same way `save_issue`'s is enriched
+ * (`helpers.ts#getFieldValueDetail`). GraphQL errors are all-or-nothing per
+ * response (a permission failure on ONE field throws for the whole query),
+ * so the lock-conflict caller retries with `includeDetail: false` on
+ * failure rather than fail the whole batch over a non-essential enrichment
+ * field — see the retry in the `batch_update` handler below.
  */
 export function buildBatchFieldValueQuery(
   projectItemIds: Array<{ alias: string; itemId: string }>,
+  options?: { includeDetail?: boolean },
 ): { queryString: string; variables: Record<string, unknown> } {
   const variables: Record<string, unknown> = {};
   const varDecls: string[] = [];
   const aliases: string[] = [];
+  const detailFragment = options?.includeDetail
+    ? "\n                updatedAt\n                creator { login }"
+    : "";
 
   for (const { alias, itemId } of projectItemIds) {
     const varName = `id_${alias}`;
@@ -196,7 +213,7 @@ export function buildBatchFieldValueQuery(
             nodes {
               ... on ProjectV2ItemFieldSingleSelectValue {
                 __typename
-                name
+                name${detailFragment}
                 field { ... on ProjectV2FieldCommon { name } }
               }
             }
@@ -589,44 +606,60 @@ export function registerBatchTools(
               }),
             );
 
-            const { queryString: fvQuery, variables: fvVars } =
-              buildBatchFieldValueQuery(itemsToCheck);
-
-            let fvResult: Record<string, {
-              fieldValues?: {
-                nodes: Array<{
-                  __typename?: string;
-                  name?: string;
-                  field?: { name: string };
-                }>;
-              };
-            } | null>;
+            type FieldValueNode = {
+              __typename?: string;
+              name?: string;
+              updatedAt?: string;
+              creator?: { login?: string } | null;
+              field?: { name: string };
+            };
+            type FvResult = Record<string, { fieldValues?: { nodes: FieldValueNode[] } } | null>;
 
             // Unconditional and fail-CLOSED — deliberately NOT the
             // `catch { proceed }` shape used elsewhere in this file for the
             // optional skipIfAtOrPast optimization. That shape is fine for
             // an optimization; it would be fail-open for a guard, silently
-            // disabling transition validation for the whole batch.
+            // disabling transition validation for the whole batch. GH-1616:
+            // requests holder/heldSince detail first (for the lock-conflict
+            // refusal below); on failure, retries WITHOUT the detail fields
+            // rather than fail the whole batch over a non-essential
+            // enrichment (mirrors `helpers.ts#getFieldValueDetail`'s
+            // graceful degrade). Only a failure of BOTH attempts is a real
+            // fetch failure.
+            let fvResult: FvResult;
             try {
+              const { queryString: fvQuery, variables: fvVars } =
+                buildBatchFieldValueQuery(itemsToCheck, { includeDetail: true });
               fvResult = await client.query(fvQuery, fvVars);
-            } catch (error: unknown) {
-              const message = error instanceof Error ? error.message : String(error);
-              return toolError(
-                `Could not determine current workflow state for the batch: ${message}. ` +
-                  `No changes were made. Recovery: retry, or verify all issues are on the project board.`,
-              );
+            } catch {
+              try {
+                const { queryString: fvQuery, variables: fvVars } =
+                  buildBatchFieldValueQuery(itemsToCheck, { includeDetail: false });
+                fvResult = await client.query(fvQuery, fvVars);
+              } catch (error: unknown) {
+                const message = error instanceof Error ? error.message : String(error);
+                return toolError(
+                  `Could not determine current workflow state for the batch: ${message}. ` +
+                    `No changes were made. Recovery: retry, or verify all issues are on the project board.`,
+                );
+              }
             }
 
             const currentStates = new Map<number, string | undefined>();
+            const currentDetails = new Map<number, { updatedAt?: string; creator?: string }>();
             for (const [num] of resolved) {
               const alias = `fv${num}`;
               const fvData = fvResult[alias];
-              const wsValue = fvData?.fieldValues?.nodes?.find(
+              const wsNode = fvData?.fieldValues?.nodes?.find(
                 (fv) =>
                   fv.field?.name === "Workflow State" &&
                   fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
-              )?.name;
-              currentStates.set(num, wsValue);
+              );
+              currentStates.set(num, wsNode?.name);
+              currentDetails.set(num, {
+                updatedAt: wsNode?.updatedAt,
+                creator: wsNode?.creator?.login ?? undefined,
+              });
             }
 
             // Per-issue transition legality: illegal transitions are dropped
@@ -649,6 +682,28 @@ export function registerBatchTools(
                     `individually via save_issue(force: true).`,
                 });
                 resolved.delete(num);
+              }
+            }
+
+            // GH-1616: lock-conflict guard — the second of the three
+            // unguarded side doors this feature closes (the first is the
+            // transition check above; `advance_issue`'s is below). Only
+            // fires when the batch target is itself a lock state; a legal
+            // transition is not automatically lock-safe (e.g. "Plan in
+            // Progress" -> "In Progress" is a legal JSON edge but still a
+            // lock-to-lock conflict). No `force` on `batch_update` — repair
+            // goes through `save_issue(force: true)` one issue at a time.
+            if (LOCK_STATES.includes(wsOp.value)) {
+              for (const num of Array.from(resolved.keys())) {
+                const current = currentStates.get(num);
+                if (isLockConflict(current, wsOp.value)) {
+                  const detail = currentDetails.get(num);
+                  result.errors.push({
+                    number: num,
+                    error: describeLockConflict(num, current!, wsOp.value, detail?.creator, detail?.updatedAt),
+                  });
+                  resolved.delete(num);
+                }
               }
             }
 

@@ -20,6 +20,7 @@ import {
   isLegalParentGateAdvance,
   VALID_STATES,
   PARENT_GATE_STATES,
+  LOCK_STATES,
   isParentGateState,
   stateIndex,
 } from "../lib/workflow-states.js";
@@ -30,10 +31,12 @@ import {
   resolveProjectItemId,
   updateProjectItemField,
   getCurrentFieldValue,
+  getFieldValueDetail,
   resolveConfig,
   resolveFullConfig,
   syncStatusField,
 } from "../lib/helpers.js";
+import { isLockConflict, describeLockConflict } from "../lib/lock-guard.js";
 import { zBoolish } from "../lib/zod-helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -720,8 +723,11 @@ export function registerRelationshipTools(
 
           for (const issueNum of issueNumbers) {
             try {
-              // Get current workflow state
-              const currentState = await getCurrentFieldValue(
+              // Get current workflow state. GH-1616: getFieldValueDetail
+              // (not the bare getCurrentFieldValue) so the lock-conflict
+              // check below can name the holder + claim time, same as
+              // save_issue's enriched refusal.
+              const currentFieldDetail = await getFieldValueDetail(
                 client,
                 fieldCache,
                 owner,
@@ -730,6 +736,7 @@ export function registerRelationshipTools(
                 "Workflow State",
                 projectNumber,
               );
+              const currentState = currentFieldDetail.name;
 
               if (!currentState) {
                 skipped.push({
@@ -767,6 +774,23 @@ export function registerRelationshipTools(
                     `Legal next states from "${currentState}": ${legal.length > 0 ? legal.join(", ") : "(none — terminal state)"}. ` +
                     `Recovery: move through the pipeline via one of the legal states, or repair this issue ` +
                     `individually via save_issue(force: true).`,
+                });
+                continue;
+              }
+
+              // GH-1616: lock-conflict guard — the third of the three
+              // unguarded side doors. A legal transition is not
+              // automatically lock-safe (e.g. "Plan in Progress" -> "In
+              // Progress" is a legal JSON edge but still a lock-to-lock
+              // conflict). advance_issue has no `force` param; repair goes
+              // through save_issue(force: true) one issue at a time.
+              if (LOCK_STATES.includes(args.targetState) && isLockConflict(currentState, args.targetState)) {
+                errors.push({
+                  number: issueNum,
+                  error: describeLockConflict(
+                    issueNum, currentState, args.targetState,
+                    currentFieldDetail.creator, currentFieldDetail.updatedAt,
+                  ),
                 });
                 continue;
               }

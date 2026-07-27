@@ -342,30 +342,43 @@ export async function updateProjectItemField(
 // Helper: Get current field value for an issue's project item
 // ---------------------------------------------------------------------------
 
-export async function getCurrentFieldValue(
-  client: GitHubClient,
-  fieldCache: FieldOptionCache,
-  owner: string,
-  repo: string,
-  issueNumber: number,
-  fieldName: string,
-  projectNumber?: number,
-): Promise<string | undefined> {
-  const projectItemId = await resolveProjectItemId(
-    client,
-    fieldCache,
-    owner,
-    repo,
-    issueNumber,
-    projectNumber,
-  );
+/**
+ * Detail returned by `getFieldValueDetail` (GH-1616): the field's current
+ * value name plus holder identity and claim timestamp, sourced from
+ * `ProjectV2ItemFieldValueCommon.creator`/`updatedAt` — the same fetch that
+ * gives `save_issue`'s lock refusals "who" and "since when", and `next_actions`'
+ * stale-lock detection its correct clock (GH-1617, `dashboard-fetch.ts`
+ * fetches the equivalent shape via a different query for the bulk-scan path).
+ *
+ * `name`/`updatedAt`/`creator` all undefined means "query succeeded, no
+ * value on this field" (genuinely unset — legal per `isLegalTransition`).
+ * A fetch that cannot be completed at all (item not on the board, transient
+ * API error) THROWS rather than returning this shape — "no value" and
+ * "could not read" are different answers, and only the caller may decide
+ * which of its own fail-open/fail-closed branches applies (mirrors the
+ * pre-existing `getCurrentFieldValue` contract this function replaces).
+ */
+export interface FieldValueDetail {
+  name?: string;
+  updatedAt?: string;
+  creator?: string;
+}
 
+async function queryFieldValueDetail(
+  client: GitHubClient,
+  itemId: string,
+  fieldName: string,
+  includeCreator: boolean,
+): Promise<FieldValueDetail> {
+  const creatorFragment = includeCreator ? "\n                creator { login }" : "";
   const result = await client.query<{
     node: {
       fieldValues: {
         nodes: Array<{
           __typename?: string;
           name?: string;
+          updatedAt?: string;
+          creator?: { login?: string } | null;
           field?: { name: string };
         }>;
       };
@@ -379,6 +392,7 @@ export async function getCurrentFieldValue(
               ... on ProjectV2ItemFieldSingleSelectValue {
                 __typename
                 name
+                updatedAt${creatorFragment}
                 field { ... on ProjectV2FieldCommon { name } }
               }
             }
@@ -386,7 +400,7 @@ export async function getCurrentFieldValue(
         }
       }
     }`,
-    { itemId: projectItemId },
+    { itemId },
   );
 
   const fieldValue = result.node?.fieldValues?.nodes?.find(
@@ -394,7 +408,72 @@ export async function getCurrentFieldValue(
       fv.field?.name === fieldName &&
       fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
-  return fieldValue?.name;
+
+  return {
+    name: fieldValue?.name,
+    updatedAt: fieldValue?.updatedAt,
+    creator: fieldValue?.creator?.login ?? undefined,
+  };
+}
+
+export async function getFieldValueDetail(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  fieldName: string,
+  projectNumber?: number,
+): Promise<FieldValueDetail> {
+  const projectItemId = await resolveProjectItemId(
+    client,
+    fieldCache,
+    owner,
+    repo,
+    issueNumber,
+    projectNumber,
+  );
+
+  try {
+    return await queryFieldValueDetail(client, projectItemId, fieldName, true);
+  } catch (error) {
+    // GraphQL errors are all-or-nothing per response (a permission failure
+    // on ONE requested field throws for the whole query, via
+    // @octokit/graphql) — degrade gracefully by dropping `creator` rather
+    // than fail closed over a non-essential enrichment field. `heldSince`
+    // (updatedAt) is the load-bearing half of the refusal text; holder
+    // identity is best-effort (research: every local agent shares one
+    // token login, so identity carries little signal on this deployment
+    // regardless).
+    if (process.env.RALPH_DEBUG === "true") {
+      console.error(
+        `[getFieldValueDetail] creator field unavailable, retrying without it: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return await queryFieldValueDetail(client, projectItemId, fieldName, false);
+  }
+}
+
+export async function getCurrentFieldValue(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  fieldName: string,
+  projectNumber?: number,
+): Promise<string | undefined> {
+  const detail = await getFieldValueDetail(
+    client,
+    fieldCache,
+    owner,
+    repo,
+    issueNumber,
+    fieldName,
+    projectNumber,
+  );
+  return detail.name;
 }
 
 // ---------------------------------------------------------------------------
