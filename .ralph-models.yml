@@ -1,0 +1,154 @@
+# .ralph-models.yml — capability-tier -> model map (GH-1593)
+#
+# Source of truth for every tier-governed `model:` frontmatter pin and
+# `Agent(model="...")` dispatch literal in `ralph/`. Consumed by two
+# independent parsers (mirroring the `.ralph-routing.yml` precedent):
+#   - mcp-server/src/lib/model-tier-registry.ts (Zod schema + pure loader;
+#     typed reference implementation, no registered tool consumer yet)
+#   - scripts/model-tiers/render.js (standalone Node checker/renderer; the
+#     actual CI enforcement surface via scripts/check-model-tiers.sh)
+#
+# The default (`claude-code`) mapping below reproduces every pin exactly as
+# it existed before this config was introduced — zero behavior change.
+#
+# Docs: docs/model-tier-policy.md (tier table, resolution order, hard-pin
+# carve-outs). Hooks are NOT touched by this config (see "What We're NOT
+# Doing" in the plan) — impl-postcondition.sh's `IMPL BLOCKED ` grep and the
+# `needs=opus` escalation token stay literal wire format, allowlisted below.
+
+version: 1
+defaultHarness: claude-code
+
+# Tier -> per-surface model literal. "skill" = skill-session frontmatter
+# (accepts the entitlement-aware `best` alias); "agent" = agent frontmatter
+# AND Agent(model=...) dispatch params (closed enum — `best` is invalid
+# there; the Zod schema in model-tier-registry.ts rejects it outright).
+harnesses:
+  claude-code: # shipped default — reproduces today's pins exactly
+    cheap: { skill: haiku, agent: haiku }
+    standard: { skill: sonnet, agent: sonnet }
+    capable: { skill: best, agent: opus }
+    frontier: { skill: fable, agent: fable }
+
+# Runtime overrides (documented; resolution order lives in
+# docs/model-tier-policy.md § Per-session overrides).
+overrides:
+  impl: { env: RALPH_IMPL_MODEL, default: standard } # accepts a tier name or a raw model id
+
+# Sites: every tier-governed pin. kind: skill|agent -> frontmatter equality
+# check (compares the file's `model:` line against resolveTier(tier, surface)
+# for that kind). kind: dispatch -> per-file multiset check of `model="..."`
+# literals (checker sums sites + hardPins per (path, resolved-value) pair;
+# `count` defaults to 1 when omitted).
+sites:
+  # --- Skill-session frontmatter (8) ---
+  - { path: ralph/skills/research/SKILL.md, kind: skill, tier: standard }
+  - { path: ralph/skills/impl/SKILL.md, kind: skill, tier: standard }
+  - { path: ralph/skills/caretake/SKILL.md, kind: skill, tier: standard }
+  - { path: ralph/skills/hero/SKILL.md, kind: skill, tier: standard }
+  - { path: ralph/skills/setup/SKILL.md, kind: skill, tier: cheap }
+  - { path: ralph/skills/plan/SKILL.md, kind: skill, tier: capable }
+  - { path: ralph/skills/review/SKILL.md, kind: skill, tier: capable }
+  # hero-fable/SKILL.md is a hardPin (identity-defining), not a site — see below.
+
+  # --- Agent frontmatter: cheap / haiku (6) ---
+  - { path: ralph/agents/catch-up-agent.md, kind: agent, tier: cheap }
+  - { path: ralph/agents/codebase-locator.md, kind: agent, tier: cheap }
+  - { path: ralph/agents/codebase-pattern-finder.md, kind: agent, tier: cheap }
+  - { path: ralph/agents/merge-agent.md, kind: agent, tier: cheap }
+  - { path: ralph/agents/thoughts-locator.md, kind: agent, tier: cheap }
+  - { path: ralph/agents/log-reader.md, kind: agent, tier: cheap }
+
+  # --- Agent frontmatter: standard / sonnet (7) ---
+  # NOTE (GH-1593 Phase 2 drift check): the plan's manifest listed an 8th
+  # entry here, `ralph/agents/triage-agent.md`. That file no longer exists —
+  # triage-agent was deleted when ralph/hooks were demoted in GH-1619 (the
+  # commit immediately preceding this worktree's base). CLAUDE.md's own
+  # roster already reflects "15 Agents" (was 16), confirming the removal.
+  # There is no replacement site to add; the tier this pin governed simply
+  # no longer exists in the tree.
+  - { path: ralph/agents/codebase-analyzer.md, kind: agent, tier: standard }
+  - { path: ralph/agents/impl-agent.md, kind: agent, tier: standard }
+  - { path: ralph/agents/research-agent.md, kind: agent, tier: standard }
+  - { path: ralph/agents/sre-fixit.md, kind: agent, tier: standard }
+  - { path: ralph/agents/thoughts-analyzer.md, kind: agent, tier: standard }
+  - { path: ralph/agents/val-agent.md, kind: agent, tier: standard }
+  - { path: ralph/agents/web-search-researcher.md, kind: agent, tier: standard }
+
+  # --- Agent frontmatter: frontier / fable (2) ---
+  # J7: agent frontmatter cannot express `best` (closed enum) — frontier
+  # renders the literal `fable` here regardless of harness entitlement; a
+  # non-Fable account rescues these two forks with
+  # `CLAUDE_CODE_SUBAGENT_MODEL=opus` (documented in docs/model-tier-policy.md,
+  # cannot be generated — this caveat is hand-authored prose, not a site).
+  - { path: ralph/agents/plan-agent.md, kind: agent, tier: frontier }
+  - { path: ralph/agents/review-agent.md, kind: agent, tier: frontier }
+
+  # --- Dispatch literals: Agent(model="...") in skill prose (7 files, 11 occurrences) ---
+  # J1 — ralph/skills/plan/SKILL.md (line ~173 as of this worktree; was line
+  # 160 pre-GH-1619/1620 restructure — sites key on path/kind/tier, not line
+  # numbers, so this drift needs no manifest change): singles fork
+  # plan-agent at sonnet; the "groups author inline under the session's
+  # `best` pin" branch carries no model= param and is correctly NOT a site.
+  - { path: ralph/skills/plan/SKILL.md, kind: dispatch, tier: standard, count: 1 }
+
+  # J2 — ralph/skills/plan/plan-review.md:142 + :148 (both `opus`, single
+  # XS/S review-agent critique fork; the `# ... OMIT for group / M /
+  # plan-of-plans units` comment at :148 is load-bearing prose, preserved).
+  - { path: ralph/skills/plan/plan-review.md, kind: dispatch, tier: capable, count: 2 }
+
+  # ralph/skills/impl/phase-execution.md: task reviewer (:46) + deterministic
+  # test-runner fork (:73), both haiku/cheap.
+  - { path: ralph/skills/impl/phase-execution.md, kind: dispatch, tier: cheap, count: 2 }
+  # Per-phase quality reviewer (:69), opus/capable. (Line :60's opus literal
+  # is the BLOCKED-escalation hardPin below — combined with this site, the
+  # checker expects 2 total `model="opus"` occurrences in this file.)
+  - { path: ralph/skills/impl/phase-execution.md, kind: dispatch, tier: capable, count: 1 }
+
+  # J3 — ralph/skills/review/SKILL.md (line ~86 as of this worktree; was
+  # line 92): group/plan-of-plans val-agent fork at fable; prose
+  # cross-references "single XS/S plans keep val-agent's sonnet default"
+  # (the standard tier's rendered value) — kept consistent by inspection.
+  - { path: ralph/skills/review/SKILL.md, kind: dispatch, tier: frontier, count: 1 }
+
+  # ralph/skills/review/behavior-verification.md:33 — opus, UI-surface group
+  # PR behavior-verification stage.
+  - { path: ralph/skills/review/behavior-verification.md, kind: dispatch, tier: capable, count: 1 }
+
+  # ralph/skills/review/merge-gate.md:143 — fable, epic close-out
+  # plan-vs-delivery validation.
+  - { path: ralph/skills/review/merge-gate.md, kind: dispatch, tier: frontier, count: 1 }
+
+  # J4 — ralph/skills/hero/dispatch.md:27 — fable, feature/epic-unit
+  # RESEARCH fork (estimate M+ or kind:epic/kind:feature); row prose
+  # (the CLAUDE_CODE_SUBAGENT_MODEL rescue note) preserved.
+  - { path: ralph/skills/hero/dispatch.md, kind: dispatch, tier: frontier, count: 1 }
+
+# Hard pins: allowlisted literals the checker must see but never derive.
+# Combined with `sites:` (kind: dispatch) on the same path to build each
+# file's expected model="..." multiset.
+hardPins:
+  # J8 — identity-defining: hero-fable IS Fable, unconditionally. A config
+  # change to the `frontier` tier must never swap this file's model.
+  - { path: ralph/skills/hero-fable/SKILL.md, kind: skill, value: fable,
+      reason: "identity-defining — hero-fable IS Fable; not tier-governed" }
+
+  # J6 — ralph/skills/impl/phase-execution.md:60 — narrative `model="opus"`
+  # describing hero's BLOCKED re-dispatch. Wire-format-coupled to the
+  # `IMPL BLOCKED needs=opus` escalation chain (impl-postcondition.sh's grep,
+  # hero/dispatch.md's re-dispatch prose) — allowlisted, not derived.
+  - { path: ralph/skills/impl/phase-execution.md, kind: dispatch, value: opus, count: 1,
+      reason: "BLOCKED escalation narrative (line ~60) — wire-format-coupled" }
+
+# NOT sites, NOT hardPins — excluded from the sweep by pattern (no literal
+# `model="..."` and no frontmatter `model:` beyond each file's own pin):
+#   - ralph/skills/hero/dispatch.md:38 `impl_model="${RALPH_IMPL_MODEL:-sonnet}"`
+#     — a shell variable assignment (`impl_model`, not `model`) whose value is
+#     an env-var expansion, not a literal tier value. The checker's sweep
+#     pattern is boundary-aware (`\bmodel="`): `_` and `m` share a word
+#     boundary in regex terms, so `impl_model="` never matches `\bmodel="`.
+#   - ralph/skills/hero/dispatch.md's `RALPH_IMPL_MODEL=opus` re-dispatch
+#     literal and `needs=opus` escalation token — wire format, not a
+#     `model="..."` dispatch param.
+#   - ralph/skills/hero/SKILL.md's `!`echo ${RALPH_IMPL_MODEL:-sonnet}`` —
+#     display-only narrative line, not a dispatch.

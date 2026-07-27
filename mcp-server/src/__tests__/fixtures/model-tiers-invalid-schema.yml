@@ -1,0 +1,9 @@
+# Missing the "frontier" tier entirely — schema requires all four tiers.
+version: 1
+defaultHarness: claude-code
+harnesses:
+  claude-code:
+    cheap:    { skill: haiku,  agent: haiku }
+    standard: { skill: sonnet, agent: sonnet }
+    capable:  { skill: best,   agent: opus }
+sites: []

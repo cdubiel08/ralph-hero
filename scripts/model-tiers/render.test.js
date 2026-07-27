@@ -1,0 +1,353 @@
+#!/usr/bin/env node
+'use strict';
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const {
+  resolveTier,
+  extractFrontmatterModel,
+  extractDispatchLiterals,
+  walkMarkdownFiles,
+  runCheck,
+  runWrite,
+  loadConfig,
+  parseArgs,
+} = require('./render.js');
+
+const REPO_ROOT = path.join(__dirname, '..', '..');
+
+function baseConfig() {
+  return {
+    version: 1,
+    defaultHarness: 'claude-code',
+    harnesses: {
+      'claude-code': {
+        cheap: { skill: 'haiku', agent: 'haiku' },
+        standard: { skill: 'sonnet', agent: 'sonnet' },
+        capable: { skill: 'best', agent: 'opus' },
+        frontier: { skill: 'fable', agent: 'fable' },
+      },
+      'claude-code-opus': {
+        cheap: { skill: 'haiku', agent: 'haiku' },
+        standard: { skill: 'sonnet', agent: 'sonnet' },
+        capable: { skill: 'best', agent: 'opus' },
+        frontier: { skill: 'opus', agent: 'opus' },
+      },
+    },
+    sites: [],
+    hardPins: [],
+  };
+}
+
+function mkTmpTree() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-tiers-test-'));
+  fs.mkdirSync(path.join(root, 'ralph', 'skills', 'demo'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'ralph', 'agents'), { recursive: true });
+  return root;
+}
+
+// ---------------------------------------------------------------------------
+// resolveTier
+// ---------------------------------------------------------------------------
+
+describe('resolveTier', () => {
+  it('resolves every tier x surface for the default harness', () => {
+    const config = baseConfig();
+    assert.equal(resolveTier(config, 'cheap', 'claude-code', 'skill'), 'haiku');
+    assert.equal(resolveTier(config, 'capable', 'claude-code', 'skill'), 'best');
+    assert.equal(resolveTier(config, 'capable', 'claude-code', 'agent'), 'opus');
+    assert.equal(resolveTier(config, 'frontier', 'claude-code', 'agent'), 'fable');
+  });
+
+  it('resolves a second harness independently (claude-code-opus)', () => {
+    const config = baseConfig();
+    assert.equal(resolveTier(config, 'frontier', 'claude-code-opus', 'skill'), 'opus');
+    assert.equal(resolveTier(config, 'frontier', 'claude-code-opus', 'agent'), 'opus');
+    // capable is unchanged across harnesses.
+    assert.equal(resolveTier(config, 'capable', 'claude-code-opus', 'agent'), 'opus');
+  });
+
+  it('throws on an unknown harness', () => {
+    const config = baseConfig();
+    assert.throws(() => resolveTier(config, 'standard', 'nonexistent', 'skill'), /Unknown harness/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractFrontmatterModel
+// ---------------------------------------------------------------------------
+
+describe('extractFrontmatterModel', () => {
+  it('extracts the model: value from a frontmatter block', () => {
+    const text = '---\nname: demo\nmodel: sonnet\ndescription: x\n---\n\nBody text.\n';
+    assert.equal(extractFrontmatterModel(text), 'sonnet');
+  });
+
+  it('returns null when there is no frontmatter block', () => {
+    assert.equal(extractFrontmatterModel('# Just a doc\n\nSome prose about model="opus".\n'), null);
+  });
+
+  it('returns null when the frontmatter block has no model: line', () => {
+    const text = '---\nname: demo\n---\n\nBody.\n';
+    assert.equal(extractFrontmatterModel(text), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractDispatchLiterals — the boundary-aware sweep pattern
+// ---------------------------------------------------------------------------
+
+describe('extractDispatchLiterals', () => {
+  it('counts every model="..." literal', () => {
+    const text = '`Agent(model="haiku")` then later `Agent(model="haiku")` and `model="opus"`.';
+    assert.deepEqual(extractDispatchLiterals(text), { haiku: 2, opus: 1 });
+  });
+
+  it('does NOT match impl_model="..." (hero/dispatch.md:38 false-positive case)', () => {
+    // This is the exact review-flagged line shape from
+    // ralph/skills/hero/dispatch.md:38 — a naive `model="` grep would match
+    // it; the boundary-aware \bmodel=" pattern must not.
+    const text = 'impl_model="${RALPH_IMPL_MODEL:-sonnet}"';
+    assert.deepEqual(extractDispatchLiterals(text), {});
+  });
+
+  it('does not confuse a shell variable assignment with a real dispatch literal even alongside real ones', () => {
+    const text = [
+      'impl_model="${RALPH_IMPL_MODEL:-sonnet}"',
+      '`Agent(subagent_type="ralph:research-agent", model="fable", prompt="...")`',
+    ].join('\n');
+    assert.deepEqual(extractDispatchLiterals(text), { fable: 1 });
+  });
+
+  it('returns an empty object when there are no literals', () => {
+    assert.deepEqual(extractDispatchLiterals('no dispatch literals here'), {});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCheck — equality, multiset, completeness sweep
+// ---------------------------------------------------------------------------
+
+describe('runCheck', () => {
+  it('passes when frontmatter and dispatch literals match the config', () => {
+    const root = mkTmpTree();
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'skills', 'demo', 'SKILL.md'),
+      '---\nname: demo\nmodel: sonnet\n---\n\nBody.\n',
+    );
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'agents', 'demo-agent.md'),
+      '---\nname: demo-agent\nmodel: haiku\n---\n\nBody.\n',
+    );
+    const config = baseConfig();
+    config.sites = [
+      { path: 'ralph/skills/demo/SKILL.md', kind: 'skill', tier: 'standard' },
+      { path: 'ralph/agents/demo-agent.md', kind: 'agent', tier: 'cheap' },
+    ];
+    const { ok, diagnostics } = runCheck(root, config, 'claude-code');
+    assert.equal(ok, true, diagnostics.join('\n'));
+  });
+
+  it('fails on a frontmatter equality mismatch and names the site', () => {
+    const root = mkTmpTree();
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'skills', 'demo', 'SKILL.md'),
+      '---\nname: demo\nmodel: haiku\n---\n\nBody.\n', // hand-edited away from sonnet
+    );
+    const config = baseConfig();
+    config.sites = [{ path: 'ralph/skills/demo/SKILL.md', kind: 'skill', tier: 'standard' }];
+    const { ok, diagnostics } = runCheck(root, config, 'claude-code');
+    assert.equal(ok, false);
+    assert.ok(diagnostics.some((d) => d.includes('ralph/skills/demo/SKILL.md') && d.includes('FAIL')));
+  });
+
+  it('fails on a dispatch multiset mismatch', () => {
+    const root = mkTmpTree();
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'skills', 'demo', 'dispatch.md'),
+      'Only one: `model="haiku"`.\n', // config expects 2
+    );
+    const config = baseConfig();
+    config.sites = [{ path: 'ralph/skills/demo/dispatch.md', kind: 'dispatch', tier: 'cheap', count: 2 }];
+    const { ok, diagnostics } = runCheck(root, config, 'claude-code');
+    assert.equal(ok, false);
+    assert.ok(diagnostics.some((d) => d.includes('count 1 !== expected 2')));
+  });
+
+  it('combines a dispatch site and a hardPin into one expected multiset for the same file', () => {
+    const root = mkTmpTree();
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'skills', 'demo', 'dispatch.md'),
+      'Reviewer: `model="opus"`. Escalation: `model="opus"`.\n',
+    );
+    const config = baseConfig();
+    config.sites = [{ path: 'ralph/skills/demo/dispatch.md', kind: 'dispatch', tier: 'capable', count: 1 }];
+    config.hardPins = [
+      { path: 'ralph/skills/demo/dispatch.md', kind: 'dispatch', value: 'opus', count: 1, reason: 'test hard pin' },
+    ];
+    const { ok, diagnostics } = runCheck(root, config, 'claude-code');
+    assert.equal(ok, true, diagnostics.join('\n'));
+  });
+
+  it('completeness sweep fails on an unmanifested frontmatter pin', () => {
+    const root = mkTmpTree();
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'skills', 'demo', 'SKILL.md'),
+      '---\nname: demo\nmodel: sonnet\n---\n\nBody.\n',
+    );
+    const config = baseConfig(); // no sites at all
+    const { ok, diagnostics } = runCheck(root, config, 'claude-code');
+    assert.equal(ok, false);
+    assert.ok(diagnostics.some((d) => d.includes('unmanifested')));
+  });
+
+  it('completeness sweep fails on an unmanifested dispatch literal', () => {
+    const root = mkTmpTree();
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'skills', 'demo', 'dispatch.md'),
+      'New site nobody declared: `model="fable"`.\n',
+    );
+    const config = baseConfig();
+    const { ok, diagnostics } = runCheck(root, config, 'claude-code');
+    assert.equal(ok, false);
+    assert.ok(diagnostics.some((d) => d.includes('unmanifested')));
+  });
+
+  it('completeness sweep does not false-flag an impl_model="..." shell assignment', () => {
+    const root = mkTmpTree();
+    fs.writeFileSync(
+      path.join(root, 'ralph', 'skills', 'demo', 'dispatch.md'),
+      '```bash\nimpl_model="${RALPH_IMPL_MODEL:-sonnet}"\n```\n',
+    );
+    const config = baseConfig(); // no sites — would fail if the sweep matched impl_model
+    const { ok, diagnostics } = runCheck(root, config, 'claude-code');
+    assert.equal(ok, true, diagnostics.join('\n'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runWrite — idempotence + ambiguity refusal
+// ---------------------------------------------------------------------------
+
+describe('runWrite', () => {
+  it('is idempotent: running --write twice on an already-correct tree makes no further changes', () => {
+    const root = mkTmpTree();
+    const filePath = path.join(root, 'ralph', 'skills', 'demo', 'SKILL.md');
+    fs.writeFileSync(filePath, '---\nname: demo\nmodel: haiku\n---\n\nBody.\n');
+    const config = baseConfig();
+    config.sites = [{ path: 'ralph/skills/demo/SKILL.md', kind: 'skill', tier: 'standard' }];
+
+    runWrite(root, config, 'claude-code'); // haiku -> sonnet
+    const afterFirst = fs.readFileSync(filePath, 'utf-8');
+    assert.match(afterFirst, /model: sonnet/);
+
+    const messagesSecond = runWrite(root, config, 'claude-code');
+    const afterSecond = fs.readFileSync(filePath, 'utf-8');
+    assert.equal(afterFirst, afterSecond);
+    assert.ok(messagesSecond.some((m) => m.startsWith('OK:')));
+  });
+
+  it('never rewrites a hardPin frontmatter value', () => {
+    const root = mkTmpTree();
+    const filePath = path.join(root, 'ralph', 'skills', 'demo', 'SKILL.md');
+    fs.writeFileSync(filePath, '---\nname: demo\nmodel: fable\n---\n\nBody.\n');
+    const config = baseConfig();
+    config.hardPins = [
+      { path: 'ralph/skills/demo/SKILL.md', kind: 'skill', value: 'fable', reason: 'identity' },
+    ];
+    runWrite(root, config, 'claude-code');
+    assert.match(fs.readFileSync(filePath, 'utf-8'), /model: fable/);
+  });
+
+  it('refuses an ambiguous dispatch rewrite and reports it instead of guessing', () => {
+    const root = mkTmpTree();
+    const filePath = path.join(root, 'ralph', 'skills', 'demo', 'dispatch.md');
+    fs.writeFileSync(filePath, '`model="haiku"` and `model="opus"` both present, config expects only one value.\n');
+    const config = baseConfig();
+    config.sites = [{ path: 'ralph/skills/demo/dispatch.md', kind: 'dispatch', tier: 'capable', count: 1 }];
+    const messages = runWrite(root, config, 'claude-code');
+    assert.ok(messages.some((m) => m.startsWith('MANUAL EDIT REQUIRED')));
+    // File must be untouched.
+    assert.equal(
+      fs.readFileSync(filePath, 'utf-8'),
+      '`model="haiku"` and `model="opus"` both present, config expects only one value.\n',
+    );
+  });
+
+  it('rewrites an unambiguous dispatch literal', () => {
+    const root = mkTmpTree();
+    const filePath = path.join(root, 'ralph', 'skills', 'demo', 'dispatch.md');
+    fs.writeFileSync(filePath, 'Fork at `model="fable"`.\n');
+    const config = baseConfig();
+    config.sites = [{ path: 'ralph/skills/demo/dispatch.md', kind: 'dispatch', tier: 'frontier', count: 1 }];
+    runWrite(root, config, 'claude-code-opus'); // frontier/agent -> opus under this harness
+    assert.match(fs.readFileSync(filePath, 'utf-8'), /model="opus"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Second-mapping (claude-code-opus) diff shape — a lightweight precursor to
+// the full Phase 3 fixture (which lands against the real ralph/ tree).
+// ---------------------------------------------------------------------------
+
+describe('cross-harness check binding', () => {
+  it('a tree written under claude-code-opus fails --check under claude-code and passes under claude-code-opus', () => {
+    const root = mkTmpTree();
+    const filePath = path.join(root, 'ralph', 'agents', 'demo-agent.md');
+    fs.writeFileSync(filePath, '---\nname: demo-agent\nmodel: fable\n---\n\nBody.\n');
+    const config = baseConfig();
+    config.sites = [{ path: 'ralph/agents/demo-agent.md', kind: 'agent', tier: 'frontier' }];
+
+    runWrite(root, config, 'claude-code-opus'); // frontier/agent -> opus
+    assert.match(fs.readFileSync(filePath, 'utf-8'), /model: opus/);
+
+    const underOpus = runCheck(root, config, 'claude-code-opus');
+    assert.equal(underOpus.ok, true, underOpus.diagnostics.join('\n'));
+
+    const underDefault = runCheck(root, config, 'claude-code');
+    assert.equal(underDefault.ok, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseArgs
+// ---------------------------------------------------------------------------
+
+describe('parseArgs', () => {
+  it('parses --check with --harness/--config/--root overrides', () => {
+    const args = parseArgs(['--check', '--harness', 'claude-code-opus', '--config', 'x.yml', '--root', '/tmp']);
+    assert.equal(args.mode, 'check');
+    assert.equal(args.harness, 'claude-code-opus');
+    assert.equal(args.config, 'x.yml');
+    assert.equal(args.root, '/tmp');
+  });
+
+  it('defaults config to .ralph-models.yml and root to cwd', () => {
+    const args = parseArgs(['--write']);
+    assert.equal(args.mode, 'write');
+    assert.equal(args.config, '.ralph-models.yml');
+    assert.equal(args.root, process.cwd());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration: the real repo-root .ralph-models.yml against the real tree
+// ---------------------------------------------------------------------------
+
+describe('integration — real repo tree', () => {
+  it('the committed .ralph-models.yml passes --check against this worktree', () => {
+    const configPath = path.join(REPO_ROOT, '.ralph-models.yml');
+    const config = loadConfig(configPath);
+    const { ok, diagnostics } = runCheck(REPO_ROOT, config, config.defaultHarness);
+    assert.equal(ok, true, diagnostics.filter((d) => d.startsWith('FAIL')).join('\n'));
+  });
+
+  it('walkMarkdownFiles finds real skill and agent files', () => {
+    const files = walkMarkdownFiles(REPO_ROOT, ['ralph/skills', 'ralph/agents']);
+    assert.ok(files.length > 20);
+  });
+});

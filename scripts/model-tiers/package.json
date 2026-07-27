@@ -1,0 +1,13 @@
+{
+  "name": "ralph-model-tiers",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Capability-tier model config renderer/checker for .ralph-models.yml (GH-1593)",
+  "main": "render.js",
+  "scripts": {
+    "test": "node --test render.test.js"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  }
+}

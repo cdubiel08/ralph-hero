@@ -1,0 +1,15 @@
+version: 1
+defaultHarness: claude-code
+harnesses:
+  claude-code:
+    cheap:    { skill: haiku,  agent: haiku }
+    standard: { skill: sonnet, agent: sonnet }
+    capable:  { skill: best,   agent: opus }
+    frontier: { skill: fable,  agent: fable }
+overrides:
+  impl: { env: RALPH_IMPL_MODEL, default: standard }
+sites:
+  - { path: ralph/skills/research/SKILL.md, kind: skill, tier: standard }
+hardPins:
+  - { path: ralph/skills/hero-fable/SKILL.md, kind: skill, value: fable,
+      reason: "identity-defining — not tier-governed" }

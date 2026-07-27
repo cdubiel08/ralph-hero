@@ -1,0 +1,5 @@
+version: 1
+defaultHarness: claude-code
+harnesses:
+  claude-code:
+    cheap: { skill: haiku, agent: haiku
