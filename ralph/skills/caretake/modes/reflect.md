@@ -116,7 +116,14 @@ Routing: drop/add/re-classify re-displays the list and re-asks until the user pi
 
 ## §Step 5: Write research document
 
-Path: `thoughts/shared/research/YYYY-MM-DD-reflect-[description].md` where `[description]` is a kebab-case slug from the dominant pain-point theme.
+**Resolve the path ONCE, absolute, and reuse that one value everywhere below.** Every downstream consumer — the confirmation to the user (§Step 5), the `form` handoff (§Step 6), the `knowledge_record_outcome` payload (§Step 7), and the `REFLECT <path>` terminal token (§Step 8) — must emit the *same* string. The terminal-token contract in [outcome-tokens.md](../outcome-tokens.md) declares `<path>` absolute, so a repo-relative `thoughts/shared/...` in any of those four places violates it and leaves the extractor (and `/ralph:form`) resolving against whatever CWD the session happens to hold.
+
+```bash
+DOC_REL="thoughts/shared/research/$(date -u +%F)-reflect-<description>.md"
+DOC_PATH="$(git rev-parse --show-toplevel)/${DOC_REL}"   # absolute; the ONLY form emitted downstream
+```
+
+`<description>` is a kebab-case slug from the dominant pain-point theme. Write to `$DOC_PATH`; refer to `$DOC_PATH` (never `$DOC_REL`) in every emitted string from here on.
 
 ```markdown
 ---
@@ -192,11 +199,11 @@ tags: [reflect, session-friction, [+ component tags]]
 
 **Critical: `## Files Affected` MUST be present** — postcondition hooks validate section presence, not non-emptiness. Use explicit `None` entries when no code is implicated.
 
-After writing, confirm to the user:
+After writing, confirm to the user (`$DOC_PATH` — the absolute path resolved at the top of this step):
 
 ```
 Wrote reflect to:
-`thoughts/shared/research/YYYY-MM-DD-reflect-[description].md`
+`$DOC_PATH`
 
 Captured N pain points across [list categories that had findings].
 ```
@@ -222,7 +229,7 @@ AskUserQuestion(
 
 Routing:
 
-- **"Create issue from findings"**: invoke `Skill("ralph:form", args="thoughts/shared/research/YYYY-MM-DD-reflect-[description].md")`.
+- **"Create issue from findings"**: invoke `Skill("ralph:form", args="$DOC_PATH")` — the absolute path from §Step 5, so `form`'s intake resolves it regardless of the session CWD.
 - **"Deep-dive a specific pain point"**: ask which one, dispatch `Agent(subagent_type="ralph:codebase-analyzer", ...)`, append findings to the same reflect doc as `## Follow-up Investigation`.
 - **"Save for later — done"**: STOP.
 
@@ -234,10 +241,12 @@ knowledge_record_outcome(
   payload={
     pain_point_count: <N>,
     categories: [<list with findings>],
-    created_doc_path: "thoughts/shared/research/YYYY-MM-DD-reflect-[description].md"
+    created_doc_path: "$DOC_PATH"
   }
 )
 ```
+
+`created_doc_path` carries the same absolute `$DOC_PATH` as the confirmation, the `form` handoff, and the terminal token — one resolved value, four consumers.
 
 If unavailable, skip silently.
 
@@ -247,7 +256,7 @@ If unavailable, skip silently.
 REFLECT <path>
 ```
 
-Where `<path>` is the absolute path written in §Step 5. On the no-findings short-circuit:
+Where `<path>` is `$DOC_PATH` — the absolute path resolved once in §Step 5 and emitted unchanged by every consumer (confirmation, `form` handoff, `knowledge_record_outcome`, this token). On the no-findings short-circuit:
 
 ```text
 REFLECT SKIPPED <reason>

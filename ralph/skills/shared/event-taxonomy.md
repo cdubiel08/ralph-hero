@@ -18,7 +18,7 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 | any | `trigger:builders` | builders | Manual override: force builder dispatch. Hero handles the issue. |
 | any | `trigger:watch` | watchers | Manual override: force watcher dispatch. `ralph:hero --mode watch`. |
 | any | `trigger:scouts` | scouts | Manual override: force scout dispatch. Dispatches `ralph-playwright` skills (a11y-scan / test-e2e / storybook-test / visual-diff) directly for the issue. |
-| any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch — fires the **full fan-out** (`## Full fan-out` below, all 4 children serially), not a generic team handoff. |
+| any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch — fires the **full fan-out** (`## Full fan-out` below, all 5 children serially), not a generic team handoff. |
 | any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. **Label is NOT consumed** — it re-fires each tick until a human removes it or a memorykeepers skill ships. |
 
 "The label is consumed (removed) after dispatch" above is a summary, not a single mechanism — see the ownership table immediately below for which dispatcher removes which label (it is not always the same one, and one label is not removed at all today).
@@ -30,7 +30,7 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 | `trigger:builders` | Director (`hero --mode auto` / `--tick`) | [`hero/auto-tick.md`](../hero/auto-tick.md) step 5 removes it **after a successful** `ralph:hero` dispatch; a failed dispatch preserves the label so the event can be retried |
 | `trigger:watch` | Director (`hero --mode auto` / `--tick`) | Same step 5, after a successful `ralph:hero --mode watch` dispatch (preserved on failure) |
 | `trigger:scouts` | Director (`hero --mode auto` / `--tick`) | Same step 5, after a successful `ralph-playwright` skill dispatch (preserved on failure) |
-| `trigger:caretake` | Director **or** caretake itself | Director's `auto-tick.md` step 5 removes it when caretake was reached via Director's tick; caretake's own `### Label consumption` rule (below, under § Caretake default-mode label routing) removes it a second, idempotent time when an operator runs `/ralph:caretake --issue NNN` directly, bypassing Director entirely |
+| `trigger:caretake` | Director **or** caretake itself | Director's `auto-tick.md` step 5 removes it **after a successful** dispatch when caretake was reached via Director's tick; caretake's own `### Label consumption` rule (below, under § Caretake default-mode label routing) removes it a second, idempotent time — also only on success — when an operator runs `/ralph:caretake --issue NNN` directly, bypassing Director entirely. A failed dispatch on either path preserves the label |
 | `trigger:memorykeepers` | **None — no live consumer** | No memorykeepers skill exists yet. The classification algorithm's step 6 (`needs input: team memorykeepers not yet implemented; skipping dispatch`) short-circuits before the consume-label step, so the label is left in place by design — it re-fires `needs input:` on every tick until a human removes it or a memorykeepers skill ships |
 
 Director's auto-tick is the *only* consumer for `trigger:builders`/`trigger:watch`/`trigger:scouts`, and it only runs inside `hero --mode auto`'s `--tick` step. If one of those three labels is placed on an issue that `hero --mode auto` never ticks (autopilot disabled, or no queue read ever surfaces the issue), nothing in this repo removes it — that is an operator cleanup task, not a bug in either dispatcher.
@@ -76,13 +76,15 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 
 ## Team → entrypoint mapping
 
-| team | skill entrypoint | status |
-|------|-----------------|--------|
-| builders | `ralph:hero` | live |
-| watchers | `ralph:hero --mode watch` | live |
-| scouts | `Skill("ralph-playwright:a11y-scan")` / `Skill("ralph-playwright:test-e2e")` / `Skill("ralph-playwright:storybook-test")` / `Skill("ralph-playwright:visual-diff")` | live |
-| memorykeepers | manual `dream-now` | no skill yet; Director emits `needs input:` |
-| caretakers | `ralph:caretake` | live |
+`ENTRYPOINT` (the skill **name**) and `DISPATCH_ARG` (the argument string) are separate columns on purpose: [`hero/auto-tick.md`](../hero/auto-tick.md) step 4 dispatches `Skill(ENTRYPOINT, args=DISPATCH_ARG)`, and `Skill()` resolves its first argument as a literal skill identifier. Folding a mode flag into the name (`Skill("ralph:hero --mode watch", …)`) matches no registered skill and silently dispatches nothing.
+
+| team | `ENTRYPOINT` (skill name) | `DISPATCH_ARG` | status |
+|------|---------------------------|----------------|--------|
+| builders | `ralph:hero` | `NNN` | live |
+| watchers | `ralph:hero` | `--mode watch NNN` | live |
+| scouts | `ralph-playwright:a11y-scan` / `ralph-playwright:test-e2e` / `ralph-playwright:storybook-test` / `ralph-playwright:visual-diff` | `NNN` | live |
+| memorykeepers | manual `dream-now` | — | no skill yet; Director emits `needs input:` |
+| caretakers | `ralph:caretake` | `NNN`, or `--mode watch --kind pr\|upstream` for the `blocked:*` tier | live |
 
 ---
 
@@ -113,13 +115,13 @@ This table is the canonical inventory of automated label producers.
 
 ## Caretake default-mode label routing
 
-The `/ralph:caretake --issue NNN` default-mode dispatcher reads this table (narrower and caretake-specific — this is the label→**mode** lookup, run only once Director has already picked the `caretakers` team above, or when an operator invokes caretake directly with `--issue`). It picks the **first matching row in declaration order** and invokes the listed `Skill()`. After the dispatch returns, the dispatcher consumes the `trigger:caretake` label (when present) and posts a `## Caretaker Action` comment summarizing what ran.
+The `/ralph:caretake --issue NNN` default-mode dispatcher reads this table (narrower and caretake-specific — this is the label→**mode** lookup, run only once Director has already picked the `caretakers` team above, or when an operator invokes caretake directly with `--issue`). It picks the **first matching row in declaration order** and invokes the listed `Skill()`. After the dispatch returns **successfully**, the dispatcher consumes the `trigger:caretake` label (when present); a failed or refused dispatch preserves it for retry (see § Label consumption below). Either way it posts a `## Caretaker Action` comment summarizing what ran.
 
 The dispatcher walks this table top-to-bottom and stops at the first matching label. Labels are checked in priority order — `trigger:caretake` always wins because it represents an explicit operator intent ("run the full fan-out on this issue").
 
 | Label present | Dispatch | Notes |
 |---|---|---|
-| `trigger:caretake` | Full fan-out (all 4 children serially) | Operator override; consume after dispatch |
+| `trigger:caretake` | Full fan-out (all 5 children serially) | Operator override; consume after dispatch |
 | `stale` | `Skill("ralph:caretake", args="--mode hygiene")` | Hygiene mode finds stale items by definition |
 | `status-update-needed` | `Skill("ralph:catch-up", args="--mode report")` | Report lives in catch-up, not caretake |
 | `needs-triage` | `Skill("ralph:caretake", args="--mode triage #NNN")` | Pass through the issue number |
@@ -130,7 +132,7 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 ### Full fan-out (`trigger:caretake`)
 
-When `trigger:caretake` is present, the dispatcher invokes **all five modes serially** so the operator gets a complete board sweep from one command. Order matters — modes that mutate state run before modes that read state:
+When `trigger:caretake` is present, the dispatcher invokes **all five children serially** so the operator gets a complete board sweep from one command. Order matters — modes that mutate state run before modes that read state:
 
 1. `Skill("ralph:caretake", args="--mode hygiene")` — archive candidates, WIP violations, field gaps
 2. `Skill("ralph:caretake", args="--mode triage #NNN")` — assess the issue that carries the trigger label
@@ -140,9 +142,11 @@ When `trigger:caretake` is present, the dispatcher invokes **all five modes seri
 
 Skip modes that no-op cleanly; always run hygiene + triage + report.
 
+> **Not the same fan-out as `/ralph:caretake --mode all`.** That bare no-arg heartbeat runs **4** children (hygiene + watch + enrich + catch-up report; see `ralph/skills/caretake/SKILL.md`). This one is the operator-triggered, issue-scoped sweep and runs the **5** children listed above. The two counts are both correct for their own fan-out — do not "reconcile" them.
+
 ### Label consumption
 
-After a `trigger:caretake` dispatch (single-label or full fan-out), the dispatcher MUST remove that trigger label so the issue is not re-picked on the next caretaker sweep. Use `save_issue` with the remaining label set:
+After a **successful** `trigger:caretake` dispatch (single-label or full fan-out), the dispatcher MUST remove that trigger label so the issue is not re-picked on the next caretaker sweep. Use `save_issue` with the remaining label set:
 
 ```text
 save_issue(
@@ -150,6 +154,8 @@ save_issue(
   labels: [...remaining-labels-without-trigger:caretake]
 )
 ```
+
+**Only on success.** If the dispatch errored, was refused by a gate hook, or never ran, **leave `trigger:caretake` in place** and note the failure in the `## Caretaker Action` comment. The label is the only record that the event is still owed — stripping it on a failed dispatch loses the event silently, since nothing re-adds it. This matches Director's own rule for `trigger:builders` / `trigger:watch` (see [`hero/auto-tick.md`](../hero/auto-tick.md) step 5 and § Trigger-label consumption ownership above); the two removal paths are idempotent, and a failure on either one preserves the label for retry. For the full fan-out, "successful" means the sweep ran — a child mode that legitimately no-ops (`IDLE` / `Queue empty.`) is a success, not a failure.
 
 This rule is scoped to **caretake's own dispatch table above** — `trigger:caretake` is the only trigger label that table routes on. Removing it here is a second, idempotent path alongside Director's own removal (see § Trigger-label consumption ownership under Priority 1); it matters specifically when an operator invokes `/ralph:caretake --issue NNN` directly, bypassing Director, since nothing else would strip the label in that case. This does NOT mean the other four `trigger:<team>` labels go unconsumed — see § Trigger-label consumption ownership for their (single) remover, or the explicit "no consumer" note for `trigger:memorykeepers`.
 

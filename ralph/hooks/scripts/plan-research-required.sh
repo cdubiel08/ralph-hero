@@ -62,6 +62,10 @@ fi
 # backticks left a hole where a ~~~-wrapped example could expose the marker
 # strings and waive research for an ordinary plan. A fence closes only on the
 # same character it opened with, so track the opening char alongside the length.
+# A CLOSING fence additionally carries no info string (CommonMark 4.5: only
+# trailing whitespace may follow it). Closing on any same-character prefix left
+# a second hole: ```not-a-closer / ~~~not-a-closer ended the block early and
+# exposed the marker lines that followed, waiving research for an ordinary plan.
 content_probe=$(get_field '.tool_input.content')
 content_probe_stripped=$(printf '%s\n' "$content_probe" | awk '
   {
@@ -70,8 +74,11 @@ content_probe_stripped=$(printf '%s\n' "$content_probe" | awk '
     if (probe ~ /^```/ || probe ~ /^~~~/) {
       ch = substr(probe, 1, 1)
       match(probe, "^" ch "+"); len = RLENGTH
-      if (!f) { f = 1; open = len; opench = ch }
-      else if (ch == opench && len >= open) { f = 0 }
+      rest = substr(probe, len + 1)
+      if (!f) { f = 1; open = len; opench = ch; next }
+      # Inside a block: only a same-char, long-enough, info-string-free run
+      # closes it. Anything else is ordinary fenced content and stays stripped.
+      if (ch == opench && len >= open && rest ~ /^[[:space:]]*$/) { f = 0 }
       next
     }
     if (!f) print $0

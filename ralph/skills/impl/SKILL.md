@@ -94,7 +94,7 @@ References: [worktree-setup.md](worktree-setup.md) (worktree lifecycle, cross-re
 
 **`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
 - Conflict check (`--auto` + an explicit `--mode`): apply `auto-alias.md` § Conflict detection — emit its refusal text verbatim, then STOP. Not restated here; that file is the only copy.
-- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=impl alias row). Continue to `--loop` detection with the rewritten args.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=impl alias row) **AND set `MODE=auto`**. `$ARGUMENTS` alone is not enough — the `--loop` gate below branches on `MODE`, so an unresolved `MODE` makes `--auto --loop` refuse instead of starting the `impl:auto` loop. (impl resolves `MODE` *after* this stanza, so a plain re-parse of the rewritten args also satisfies the contract; see `auto-alias.md` § Ordering contract.) Continue to `--loop` detection with the rewritten args.
 
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
 - MODE `auto` → `Skill("loop", …)` using the `impl:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.

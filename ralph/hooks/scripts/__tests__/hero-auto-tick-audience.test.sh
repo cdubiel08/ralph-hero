@@ -26,6 +26,17 @@
 # SKILL.md into the sibling ralph/skills/hero/auto-tick.md (SKILL.md was
 # over the ~200-line dispatch-and-skeleton convention in ralph/CLAUDE.md) —
 # the Auto tick section, and this test's target file, now live there.
+#
+# HARNESS NOTE (deliberate, do not "fix"): this file uses NO SBX/REPO/NOGIT
+# sandbox and no run_case, because it invokes no hook. It makes structural
+# grep assertions over live skill markdown — it never executes a *.sh gate,
+# never feeds JSON on stdin, and never exercises resolve_root_from_path. The
+# plan-research-required.test.sh harness exists specifically for hooks that
+# resolve artifacts from tool_input.file_path, which is what ralph/CLAUDE.md
+# scopes that convention to. Same category, and same precedent, as
+# caretake-watch.test.sh (whose identical migration request was rejected on
+# this PR for exactly this reason) and scripts/check-doc-rosters.sh. A sandbox
+# here would add a temp dir and a copy step that nothing in the test reads.
 
 set -euo pipefail
 

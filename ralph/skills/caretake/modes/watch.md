@@ -54,11 +54,13 @@ If a kind's candidate set is empty, emit `WATCH-<KIND> IDLE` (§Step 6 token) an
 
 | Kind | Check | MET → advance | Not met → leave (uncounted unless noted) | Can't confirm → leave |
 |---|---|---|---|---|
-| **pr** | `gh pr view <NNN> --json state,mergedAt --jq '{state: .state, merged: (.mergedAt != null)}'` | `state=MERGED` | `state=OPEN` — still waiting, no mutation | `gh pr view` errors (not found/inaccessible) — leave untouched, note in summary, never guess |
+| **pr** | `gh pr view <NNN> --json state,mergedAt --jq '{state: .state, merged: (.mergedAt != null)}'` | `state=MERGED` — equivalently `merged == true`; the projection emits both and they never disagree | `state=OPEN` (`merged == false`) — still waiting, no mutation. `state=CLOSED` + `merged == false` is closed-unmerged → **escalate** (§Step 5), not "leave" | `gh pr view` errors (not found/inaccessible) — leave untouched, note in summary, never guess |
 | **upstream** | Read the issue's **`## Triage Decision`** comment (this is where #1404's `WAIT-upstream` records the URL + condition — NOT a `## Blocker` comment, which does not exist) for the upstream URL + condition. Only a **confident MET** advances; anything uncertain leaves parked (never false-advance): GitHub issue/PR URL → `gh issue view`/`gh pr view`, MET = `CLOSED`/`MERGED`; package-registry URL → fetch registry JSON, MET only if a version/tag field satisfies the named condition; plain HTTP resource → MET only if the condition names an explicit checkable signal and the fetch confirms it; anything else/ambiguous → still blocked | confidently met | live-but-unconfirmable / ambiguous — parks indefinitely (no age/sweep escalation this phase; a human or manual label removal is the escape) | **Dead URL — HTTP 404/410 only** → escalate branch (§Step 5). Any *other* fetch failure (5xx, timeout, DNS) is **transient** → still blocked, note in summary, retry next sweep. Never escalate on a one-off error. No URL/condition parseable at all → escalate branch. |
 | **issue** | `get_issue(<blocker>)` for **every** blocker number found for the item | ALL blockers `state=CLOSED` (Done or Canceled) | ANY blocker `state=OPEN` — leave untouched, **counted in `<m>`** | Blocker number unresolvable (`get_issue` errors) — leave untouched, note in summary, never guess |
 
 Conservative posture across upstream/issue: only a confident MET / all-CLOSED set advances; anything uncertain leaves the item parked.
+
+> **`gh pr view --json state` really does return `MERGED`.** GitHub's GraphQL `PullRequestState` enum is `OPEN | CLOSED | MERGED`, and `gh` surfaces it unmapped — a merged PR reports `{"merged":true,"state":"MERGED"}`, never `state=CLOSED`. So `state=MERGED` and `merged == true` are the same test on this projection, and `state=CLOSED` unambiguously means closed-**un**merged. Verified against this repo: `gh pr view 1602 --json state,mergedAt --jq '{state: .state, merged: (.mergedAt != null)}'` → `{"merged":true,"state":"MERGED"}` (a merged PR); PR 1620 while open → `{"merged":false,"state":"OPEN"}`. Recorded here because "GitHub does not return `state=MERGED`" is a recurring review misreading, and acting on it would break the advance path this row exists for.
 
 ## §Step 5: Act
 
@@ -88,13 +90,13 @@ Every `save_issue` call above passes an **explicit `labels` array** — `save_is
 
 ## §Step 6: Emit terminal token(s)
 
-For a **bare invocation**, print the optional cross-kind summary line FIRST (e.g. `WATCH summary: N advanced across pr/upstream/issue`) — it is informational, not a grepped token, and `outcome-tokens.md`'s invariant requires the token block to be the last thing emitted. Then emit exactly one token per kind processed (one line for `--kind <x>`; three lines in `pr`/`upstream`/`issue` order for a bare invocation — see [outcome-tokens.md](../outcome-tokens.md)):
+Print every informational line FIRST — for a bare invocation the optional cross-kind summary (e.g. `WATCH summary: N advanced across pr/upstream/issue`), and for the **issue** kind the still-blocked count (`WATCH-ISSUE detail: <m> item(s) still blocked`). These are prose, not grepped tokens, and `outcome-tokens.md`'s invariant requires the token block to be the last thing emitted. Then emit exactly one token per kind processed (one line for `--kind <x>`; three lines in `pr`/`upstream`/`issue` order for a bare invocation — see [outcome-tokens.md](../outcome-tokens.md)):
 
 - `WATCH-PR ADVANCED <N>` — `<N>` items **resolved this sweep**: merged→promoted PLUS closed-unmerged→escalated. Open/still-waiting items are NOT counted. | `WATCH-PR IDLE` — no `blocked:pr-*` items found. | `WATCH-PR SKIPPED — branch <name> is not main`.
 - `WATCH-UPSTREAM ADVANCED <N>` — `<N>` items **resolved this sweep**: condition-met→promoted PLUS dead/unparseable→escalated. Still-blocked/can't-confirm items are NOT counted. | `WATCH-UPSTREAM IDLE` — no `blocked:upstream` items found. | `WATCH-UPSTREAM SKIPPED — branch <name> is not main`.
-- `WATCH-ISSUE ADVANCED <N>` — `<N>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced). Append informational prose `, <m> still blocked` for the count of items left parked with ≥1 open blocker (not part of the grepped token). | `WATCH-ISSUE IDLE` — no dependency-parked items found. | `WATCH-ISSUE SKIPPED — branch <name> is not main`.
+- `WATCH-ISSUE ADVANCED <N>` — `<N>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced). The count of items left parked with ≥1 open blocker goes in the `WATCH-ISSUE detail:` line ABOVE the token block, never appended to the token — the extractor reads token lines verbatim, and a trailing `, <m> still blocked` makes `<N>` parse as `<N>,`. | `WATCH-ISSUE IDLE` — no dependency-parked items found. | `WATCH-ISSUE SKIPPED — branch <name> is not main`.
 
-Nothing may follow the token block — no trailing summary, no closing prose.
+Nothing may follow the token block — no trailing summary, no closing prose — and nothing may be appended to a token line itself.
 
 ## §Constraints
 

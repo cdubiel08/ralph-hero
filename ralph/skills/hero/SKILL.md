@@ -111,15 +111,28 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 
 **`--auto` alias** — resolve BEFORE mode dispatch. See `ralph/skills/shared/auto-alias.md`:
 - Conflict check (`--auto` + an explicit `--mode`): apply `auto-alias.md` § Conflict detection — emit its refusal text verbatim, then STOP. Not restated here; that file is the only copy.
-- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=hero alias row). The `RALPH_AUTOPILOT_ENABLE` gate still applies — `--mode auto` dispatches via `/loop` which is guarded by `autopilot-enable-gate.sh`.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=hero alias row). The `RALPH_AUTOPILOT_ENABLE` gate still applies — `--mode auto` dispatches via `/loop` which is guarded by `autopilot-enable-gate.sh`. hero resolves `MODE` from the **rewritten** `$ARGUMENTS` below, so no separate `MODE=` assignment is needed here (see `auto-alias.md` § Ordering contract).
+
+Resolve `MODE` from `--mode` **wherever it appears** in `$ARGUMENTS`, then key the
+hook scope off that. A `case "$ARGUMENTS" in --mode\ watch*)` prefix match only
+fires when `--mode` is the FIRST token, so `/ralph:hero --issue 5 --mode watch`
+fell through to `default` and exported the wrong scope key (same defect class as
+plan/SKILL.md's Step 0):
 
 ```bash
-case "$ARGUMENTS" in
-  --mode\ auto*)        export RALPH_SUBCOMMAND=auto ;;
-  --tick*)              export RALPH_SUBCOMMAND=tick ;;
-  --mode\ watch*)       export RALPH_SUBCOMMAND=watch ;;
-  --mode\ pr-drain*)    export RALPH_SUBCOMMAND=pr-drain ;;
-  *)                    export RALPH_SUBCOMMAND=default ;;
+MODE=""
+if [[ "$ARGUMENTS" =~ (^|[[:space:]])--mode[[:space:]]+([a-z-]+) ]]; then
+  MODE="${BASH_REMATCH[2]}"
+elif [[ " $ARGUMENTS " == *" --tick "* ]]; then
+  # --tick is a bare internal flag, not a --mode value. --mode wins if both appear.
+  MODE=tick
+fi
+case "$MODE" in
+  auto)     export RALPH_SUBCOMMAND=auto ;;
+  tick)     export RALPH_SUBCOMMAND=tick ;;
+  watch)    export RALPH_SUBCOMMAND=watch ;;
+  pr-drain) export RALPH_SUBCOMMAND=pr-drain ;;
+  *)        export RALPH_SUBCOMMAND=default ;;
 esac
 ```
 

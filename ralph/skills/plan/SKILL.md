@@ -147,15 +147,21 @@ Set `MODE` ∈ `{default, auto, epic, iterate, review}` from `--mode` flag (defa
 
 **`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
 - Conflict check (`--auto` + an explicit `--mode`): apply `auto-alias.md` § Conflict detection — emit its refusal text verbatim, then STOP. Not restated here; that file is the only copy.
-- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=plan alias row). Continue to `--loop` detection with the rewritten args.
+- If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=plan alias row) **AND set `MODE=auto`**. Rewriting `$ARGUMENTS` alone is not enough: `MODE` was resolved above from the pre-rewrite string, and both the hook-scope block and the `--loop` gate below branch on `MODE` — so `--auto --loop` would arrive as `MODE=default` and be *refused* instead of starting the `plan:auto` loop. Continue to `--loop` detection with the rewritten args.
+
+Derive the hook scope from the **already-parsed `MODE`**, never from a prefix
+match on `$ARGUMENTS` — `--mode` is not required to be the first token
+(`--no-playwright --mode epic #123` is a valid invocation), and a prefix match
+silently falls through to `default`, leaving the `split-*` gates disarmed for a
+real `--mode epic` run:
 
 ```bash
-case "$ARGUMENTS" in
-  --mode\ auto*)    export RALPH_SUBCOMMAND=auto ;;
-  --mode\ epic*)    export RALPH_SUBCOMMAND=epic ;;
-  --mode\ iterate*) export RALPH_SUBCOMMAND=iterate ;;
-  --mode\ review*)  export RALPH_SUBCOMMAND=review ;;
-  *)                export RALPH_SUBCOMMAND=default ;;
+case "$MODE" in
+  auto)    export RALPH_SUBCOMMAND=auto ;;
+  epic)    export RALPH_SUBCOMMAND=epic ;;
+  iterate) export RALPH_SUBCOMMAND=iterate ;;
+  review)  export RALPH_SUBCOMMAND=review ;;
+  *)       export RALPH_SUBCOMMAND=default ;;
 esac
 ```
 

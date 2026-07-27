@@ -54,7 +54,7 @@ Unblock has two sub-modes selected by the `--question` flag; each emits its own 
 `unblock-state-gate.sh` (interactive only) and `unblock-request-postcondition.sh` (autonomous only) each gate on `RALPH_SUBCOMMAND_VARIANT` to discriminate which path is active.
 ## Reflect terminal tokens
 
-- `REFLECT <path>` — doc written, `<path>` absolute (`thoughts/shared/research/YYYY-MM-DD-reflect-<slug>.md`).
+- `REFLECT <path>` — doc written. `<path>` is **absolute** — `<repo-root>/thoughts/shared/research/YYYY-MM-DD-reflect-<slug>.md`, the single `$DOC_PATH` value `modes/reflect.md` § Step 5 resolves and every downstream consumer re-emits verbatim (user confirmation, `form` handoff, `knowledge_record_outcome.created_doc_path`, this token). A repo-relative path here violates the contract.
 - `REFLECT SKIPPED no-friction-signals` — scan returned zero pain points.
 - `REFLECT SKIPPED <reason>` — other graceful skips (user aborted the findings-review loop, scope hint pointed to an empty slice, etc.).
 
@@ -64,13 +64,13 @@ Reflect has no Stop postcondition hook — the mode is an artifact-writer and do
 
 ## Watch terminal tokens
 
-One token per kind processed (`KIND` ∈ `PR` / `UPSTREAM` / `ISSUE`) — one line for `--kind <x>`, three lines in `pr`/`upstream`/`issue` order for a bare invocation. For the bare invocation the optional cross-kind summary line is printed **before** the three tokens, so the token block stays terminal (see the file-level invariant above):
+One token per kind processed (`KIND` ∈ `PR` / `UPSTREAM` / `ISSUE`) — one line for `--kind <x>`, three lines in `pr`/`upstream`/`issue` order for a bare invocation. Every informational line (the bare invocation's optional cross-kind summary, and the **issue** kind's `WATCH-ISSUE detail: <m> item(s) still blocked`) is printed **before** the token block, so the block stays terminal and each token line stays verbatim-parseable (see the file-level invariant above):
 
 - `WATCH-PR ADVANCED <N>` — `<N>` items **resolved this sweep**: merged-PR items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS closed-unmerged items escalated (`WAIT-decision` → Human Needed). Open/still-waiting items are NOT counted.
 - `WATCH-PR IDLE` — scan ran cleanly; no Backlog items carry a `blocked:pr-*` label.
 - `WATCH-UPSTREAM ADVANCED <N>` — `<N>` items **resolved this sweep**: condition-met items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS dead-URL/unparseable items escalated (`WAIT-decision` → Human Needed). Still-blocked / can't-confirm items are NOT counted (conservative — never false-advance).
 - `WATCH-UPSTREAM IDLE` — scan ran cleanly; no Backlog items carry a `blocked:upstream` label.
-- `WATCH-ISSUE ADVANCED <N>` — `<N>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced to the embedded/default target). Informational prose `, <m> still blocked` (count of items left with ≥1 open blocker) may follow the token but is not part of the grepped match. Items with no blocker signal are not counted in either number.
+- `WATCH-ISSUE ADVANCED <N>` — `<N>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced to the embedded/default target). The count of items left with ≥1 open blocker is emitted as a separate `WATCH-ISSUE detail: <m> item(s) still blocked` line **above** the token block — never appended to the token line, which must stay verbatim so `<N>` does not parse as `<N>,`. Items with no blocker signal are not counted in either number.
 - `WATCH-ISSUE IDLE` — scan ran cleanly; no dependency-parked items found.
 - `WATCH-<KIND> SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit; watch refuses to mutate state from a feature branch (parity with `TRIAGED skipped …`).
 
@@ -81,7 +81,8 @@ watch has no `Stop` postcondition hook (parity with hygiene) — it mutates only
 - `ENRICHED <N> (PR <url>)` — `<N>` `status: draft` idea files enriched this pass (`## Enrichment` appended, `status: forming`, `enriched` stamped), committed to the standing `chore/enrich-ideas` branch, and opened/updated as a PR against `main` — **never pushed to `main` directly** (GH-1589 ruleset; see `modes/enrich.md` § Step 4). A remainder beyond the 5-file per-pass cap is noted in the surrounding summary line, not in the token.
 - `Queue empty.` — no `status: draft` idea files found.
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
-- `ENRICH SKIPPED push-rejected` — §Step 4 branch push failed even after one retry; the commit stays local.
+- `ENRICH SKIPPED push-rejected` — §Step 4 branch push failed even after one retry; the commit stays on the local `chore/enrich-ideas` ref and the checkout returns to `main`, so §Step 1's main-only gate does not strand the next heartbeat before §Step 2b's recovery path.
+- `ENRICH BLOCKED pr-create-failed: <stderr>` — §Step 4 `gh pr create` failed for a reason other than an already-open PR, or the already-exists fallback's `gh pr view` failed / returned an empty URL. The commit is pushed; only the PR (or its URL) is missing.
 
 enrich has no `Stop` postcondition hook (parity with watch/hygiene) — it never mutates board/workflow state directly; its only git write is a PR against `main`, which still requires human (or a future policy-driven) merge. The token is reported for harness/loop consumption; no automated verification is performed against it.
 

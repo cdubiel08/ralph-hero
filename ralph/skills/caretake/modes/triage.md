@@ -193,13 +193,17 @@ Valid values: `CLOSE-done | CLOSE-canceled | SPLIT | PROMOTE-research | PROMOTE-
 
 Apply the `ralph-triage` label on every verdict that **leaves the issue in Backlog**: `SPLIT`, `WAIT-pr`, `WAIT-upstream`, and the orthogonal `RE-ESTIMATE` (plus legacy `HUMAN`). Read current labels first, then include them all plus `ralph-triage` (and any `blocked:*` label from §Step 5) in the `save_issue` call.
 
+The two escalation verdicts — `WAIT-issue=NNN` and `WAIT-decision` — apply the label too (§Step 5 applies it inline on both branches). They do not *need* it for re-pick suppression, but they carry it as the durable record of a reached verdict.
+
 Rationale: **two distinct re-pick suppression mechanisms** are in play:
 
-1. **§Step 2 Backlog-query suppression** (via `ralph-triage` label): verdicts that leave the issue in Backlog need this label to prevent §Step 2's untriaged-Backlog picker from re-selecting the issue on the next triage tick. Affects `SPLIT`, `WAIT-pr`, `WAIT-upstream`, `RE-ESTIMATE`.
+1. **§Step 2 Backlog-query suppression** (via `ralph-triage` label): verdicts that leave the issue in Backlog *depend* on this label to prevent §Step 2's untriaged-Backlog picker from re-selecting the issue on the next triage tick. Affects `SPLIT`, `WAIT-pr`, `WAIT-upstream`, `RE-ESTIMATE`.
 
-2. **Workflow-state removal from Backlog** (no label needed): verdicts that move the issue OUT of Backlog are invisible to §Step 2's Backlog query. Affects `PROMOTE-*`, `CLOSE-*`, `WAIT-decision`, and `WAIT-issue=NNN` (all land in non-Backlog states).
+2. **Workflow-state removal from Backlog** (label not load-bearing): verdicts that move the issue OUT of Backlog are invisible to §Step 2's Backlog query, so suppression does not rest on the label. Affects `PROMOTE-*`, `CLOSE-*`, `WAIT-decision`, and `WAIT-issue=NNN` (all land in non-Backlog states). Of these, the two Human-Needed escalations (`WAIT-issue`, `WAIT-decision`) still apply `ralph-triage`; the `PROMOTE-*` / `CLOSE-*` verdicts do not.
 
-`WAIT-issue=NNN` moves to **Human Needed** (not Backlog) — it does NOT need the `ralph-triage` label for re-pick suppression because it exits the Backlog query entirely. The dependency edge ensures `caretake --mode watch --kind issue` (#1473) can find and auto-advance it when #NNN closes. The `WAIT-pr` and `WAIT-upstream` verdicts stay in Backlog (a watcher owns them); `WAIT-issue` lands in Human Needed (`--kind issue` owns it). These three are siblings in the `WAIT-*` family but differ in safe parking state.
+`WAIT-issue=NNN` moves to **Human Needed** (not Backlog), so it does not *depend* on the `ralph-triage` label for re-pick suppression — it exits §Step 2's Backlog query entirely. It **still applies the label** (§Step 5's `WAIT-issue` branch, step 3), for the same reason `WAIT-decision` does: the label is the durable record that a triage verdict was reached, and it is what keeps the item excluded if a later verdict or a human ever moves it back to Backlog. Read that as "belt and braces", not "required": removing the label would not resurface the item today, but re-parking it in Backlog without the label would.
+
+The dependency edge ensures `caretake --mode watch --kind issue` (#1473) can find and auto-advance it when #NNN closes. The `WAIT-pr` and `WAIT-upstream` verdicts stay in Backlog (a watcher owns them); `WAIT-issue` lands in Human Needed (`--kind issue` owns it). These three are siblings in the `WAIT-*` family but differ in safe parking state — not in whether they carry `ralph-triage`, which all three do.
 
 ## §Step 7: Find and Link Related Issues
 

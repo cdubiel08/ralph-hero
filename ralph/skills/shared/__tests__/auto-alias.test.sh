@@ -13,21 +13,44 @@ FAIL=0
 ok()   { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; echo "      expected: $2"; echo "      got:      $3"; FAIL=$((FAIL + 1)); }
 
+# The canonical refusal text, read from auto-alias.md itself rather than
+# re-typed here. The fixture previously hard-coded a stale variant ("§ Loop and
+# --auto suitability matrix for the canonical table") that no longer existed in
+# the source, so the resolver stopped modelling the real refusal while the
+# substring assertions below stayed green. Extracting it makes drift impossible.
+ALIAS_DOC="$(cd "$(dirname "$0")/.." && pwd)/auto-alias.md"
+CANONICAL_REFUSAL="$(grep -m1 '^--auto is not supported for this verb' "$ALIAS_DOC")"
+if [[ -z "$CANONICAL_REFUSAL" ]]; then
+  echo "FATAL: could not extract the canonical --auto refusal text from $ALIAS_DOC"
+  exit 1
+fi
+
 # Embed the same rewrite logic the Step-0 stanzas use.
 # $1 = verb (research|plan|impl|review|caretake|hero|form|catch-up|setup)
 # $2 = raw ARGUMENTS string
-# Outputs two lines: "ARGUMENTS=<result>" and "MSG=<conflict/refusal msg, empty if none>"
+# Outputs three lines: "ARGUMENTS=<result>", "MODE=<resolved mode>" and
+# "MSG=<conflict/refusal msg, empty if none>". MODE is modelled explicitly
+# because rewriting $ARGUMENTS is NOT sufficient — every downstream --loop gate
+# branches on MODE, so an alias expansion that leaves MODE=default makes
+# `--auto --loop` refuse instead of starting the auto loop.
 resolve_auto() {
   local verb="$1"
   local ARGUMENTS="$2"
   local MSG=""
+  local MODE="default"
+
+  # Pre-rewrite MODE parse — mirrors the SKILL.md Step 0 ordering that made
+  # this bug possible (MODE resolved from the raw args, before alias expansion).
+  if [[ "$ARGUMENTS" =~ (^|[[:space:]])--mode[[:space:]]+([a-z-]+) ]]; then
+    MODE="${BASH_REMATCH[2]}"
+  fi
 
   # Refusal targets
   case "$verb" in
     form|catch-up|setup)
       if [[ "$ARGUMENTS" =~ (^|[[:space:]])--auto([[:space:]]|$) ]]; then
-        MSG="--auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table."
-        printf 'ARGUMENTS=%s\nMSG=%s\n' "$ARGUMENTS" "$MSG"
+        MSG="$CANONICAL_REFUSAL"
+        printf 'ARGUMENTS=%s\nMODE=%s\nMSG=%s\n' "$ARGUMENTS" "$MODE" "$MSG"
         return
       fi
       ;;
@@ -38,7 +61,7 @@ resolve_auto() {
     # Conflict: --auto + explicit --mode
     if [[ "$ARGUMENTS" =~ (^|[[:space:]])--mode[[:space:]] ]]; then
       MSG="--auto cannot be combined with explicit --mode; pick one."
-      printf 'ARGUMENTS=%s\nMSG=%s\n' "$ARGUMENTS" "$MSG"
+      printf 'ARGUMENTS=%s\nMODE=%s\nMSG=%s\n' "$ARGUMENTS" "$MODE" "$MSG"
       return
     fi
 
@@ -46,13 +69,16 @@ resolve_auto() {
     local stripped
     stripped="$(printf '%s' "$ARGUMENTS" | sed -E 's/(^|[[:space:]])--auto([[:space:]]|$)/\1/g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
-    # Prepend resolved mode per alias table
+    # Prepend resolved mode per alias table AND re-resolve MODE (auto-alias.md
+    # § Step-0 stanza: the `MODE=<RESOLVED_MODE>` line).
     case "$verb" in
       research|plan|impl|hero)
         ARGUMENTS="--mode auto${stripped:+ ${stripped}}"
+        MODE="auto"
         ;;
       caretake)
         ARGUMENTS="--mode triage${stripped:+ ${stripped}}"
+        MODE="triage"
         ;;
       review)
         # No mode prepend; default is already autonomous
@@ -61,7 +87,7 @@ resolve_auto() {
     esac
   fi
 
-  printf 'ARGUMENTS=%s\nMSG=%s\n' "$ARGUMENTS" "$MSG"
+  printf 'ARGUMENTS=%s\nMODE=%s\nMSG=%s\n' "$ARGUMENTS" "$MODE" "$MSG"
 }
 
 # Helper: extract field from resolve_auto output
@@ -154,31 +180,64 @@ else
   fail "--auto review" "empty args / no msg" "args='$args' msg='$msg'"
 fi
 
-# 10. form --auto → refusal
-out=$(resolve_auto form "--auto")
-msg=$(get_field MSG "$out")
-if [[ "$msg" == *"--auto is not supported for this verb"* ]]; then
-  ok "--auto (form) → refusal message"
+# 10-12. Refusal verbs emit the CANONICAL refusal VERBATIM. Asserted against the
+# string extracted from auto-alias.md, not a loose substring — a substring match
+# is exactly what let the fixture drift to a stale § heading while staying green.
+for verb in form catch-up setup; do
+  out=$(resolve_auto "$verb" "--auto")
+  msg=$(get_field MSG "$out")
+  if [[ "$msg" == "$CANONICAL_REFUSAL" ]]; then
+    ok "--auto ($verb) → canonical refusal message, verbatim"
+  else
+    fail "--auto $verb" "$CANONICAL_REFUSAL" "msg='$msg'"
+  fi
+done
+
+# 12b. The canonical refusal must point at a § heading that actually exists in
+# ralph/CLAUDE.md — the stale fixture named "§ Loop and --auto suitability
+# matrix", which is not a heading in that file.
+CLAUDE_MD="$(cd "$(dirname "$0")/../../.." && pwd)/CLAUDE.md"
+matched_heading=""
+while IFS= read -r heading; do
+  [[ -z "$heading" ]] && continue
+  if [[ "$CANONICAL_REFUSAL" == *"§ ${heading}"* ]]; then
+    matched_heading="$heading"
+    break
+  fi
+done < <(sed -n 's/^#\{1,\} \(.*[^[:space:]]\)[[:space:]]*$/\1/p' "$CLAUDE_MD")
+if [[ -n "$matched_heading" ]]; then
+  ok "refusal cross-ref '§ ${matched_heading}' resolves to a real heading in ralph/CLAUDE.md"
 else
-  fail "--auto form" "refusal msg" "msg='$msg'"
+  fail "refusal cross-ref resolves" "a '§ <heading>' naming a real heading in $CLAUDE_MD" "refusal='$CANONICAL_REFUSAL'"
 fi
 
-# 11. catch-up --auto → refusal
-out=$(resolve_auto catch-up "--auto")
-msg=$(get_field MSG "$out")
-if [[ "$msg" == *"--auto is not supported for this verb"* ]]; then
-  ok "--auto (catch-up) → refusal message"
+# 13. MODE is re-resolved by the alias expansion (NOT left at its pre-rewrite
+# value). This is the `--auto --loop` bug: MODE parsed before the rewrite stays
+# `default`, so the --loop gate refuses instead of entering the auto loop.
+for verb in research plan impl hero; do
+  out=$(resolve_auto "$verb" "--auto --loop")
+  mode=$(get_field MODE "$out")
+  if [[ "$mode" == "auto" ]]; then
+    ok "--auto --loop ($verb) → MODE=auto (loop gate reaches the auto branch)"
+  else
+    fail "--auto --loop $verb MODE" "auto" "mode='$mode'"
+  fi
+done
+out=$(resolve_auto caretake "--auto --loop")
+mode=$(get_field MODE "$out")
+if [[ "$mode" == "triage" ]]; then
+  ok "--auto --loop (caretake) → MODE=triage (caretake:triage manifest row)"
 else
-  fail "--auto catch-up" "refusal msg" "msg='$msg'"
+  fail "--auto --loop caretake MODE" "triage" "mode='$mode'"
 fi
-
-# 12. setup --auto → refusal
-out=$(resolve_auto setup "--auto")
-msg=$(get_field MSG "$out")
-if [[ "$msg" == *"--auto is not supported for this verb"* ]]; then
-  ok "--auto (setup) → refusal message"
+# review has no mode prepend — its default mode is already the autonomous
+# drainer, so MODE legitimately stays `default`.
+out=$(resolve_auto review "--auto --loop")
+mode=$(get_field MODE "$out")
+if [[ "$mode" == "default" ]]; then
+  ok "--auto --loop (review) → MODE=default (default mode is already autonomous)"
 else
-  fail "--auto setup" "refusal msg" "msg='$msg'"
+  fail "--auto --loop review MODE" "default" "mode='$mode'"
 fi
 
 # ── summary ────────────────────────────────────────────────────────────────────

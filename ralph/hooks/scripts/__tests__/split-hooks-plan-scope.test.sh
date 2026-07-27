@@ -59,7 +59,13 @@ done
 run_case() {
   local desc="$1" expected="$2" hook="$3" json="$4"; shift 4
   local actual
+  # Clear EVERY hook-control variable these three gates read before applying the
+  # per-case overrides in "$@". An inherited RALPH_FORCE_STOP=true flips Case 6
+  # from block to allow (a false green); RALPH_VALID_SUB_ESTIMATES and
+  # RALPH_MIN_ESTIMATE likewise re-tune the size/estimate gates. The developer
+  # shell profile exports RALPH_* vars, so this is a live leak, not a theory.
   if env -u RALPH_COMMAND -u RALPH_SUBCOMMAND -u RALPH_TICKET_ID -u RALPH_SPLIT_COUNT \
+    -u RALPH_FORCE_STOP -u RALPH_VALID_SUB_ESTIMATES -u RALPH_MIN_ESTIMATE \
     RALPH_HOOK_INPUT= "$@" bash "$hook" <<<"$json" >/dev/null 2>&1; then
     actual=0
   else
@@ -167,6 +173,21 @@ else
     pass "plan/SKILL.md Step 0 still exports the base RALPH_SUBCOMMAND=epic case"
   else
     fail "plan/SKILL.md Step 0 no longer exports RALPH_SUBCOMMAND=epic (split guards have nothing to layer '${required}' onto)"
+  fi
+
+  # (a2) That export must be keyed on the PARSED mode, not on a prefix match
+  # over $ARGUMENTS. `case "$ARGUMENTS" in --mode\ epic*)` only fires when
+  # --mode is the FIRST token, so `--no-playwright --mode epic #123` fell
+  # through to `default` and left these gates disarmed for a real epic run.
+  if grep -qE '^case "\$MODE" in' "$PLAN_SKILL"; then
+    pass "plan/SKILL.md Step 0 arms RALPH_SUBCOMMAND from the parsed \$MODE"
+  else
+    fail "plan/SKILL.md Step 0 no longer switches on \"\$MODE\" (prefix-matching \$ARGUMENTS disarms the split gates for non-leading --mode)"
+  fi
+  if grep -qE 'case "\$ARGUMENTS" in' "$PLAN_SKILL"; then
+    fail "plan/SKILL.md Step 0 regressed to a \$ARGUMENTS prefix match for RALPH_SUBCOMMAND"
+  else
+    pass "plan/SKILL.md Step 0 has no \$ARGUMENTS prefix match for RALPH_SUBCOMMAND"
   fi
 
   # (b) The atomic-split re-export in decomposition.md — the arm the hooks

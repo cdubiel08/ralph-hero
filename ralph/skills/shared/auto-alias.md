@@ -58,8 +58,20 @@ if [[ "$ARGUMENTS" =~ (^|[[:space:]])--auto([[:space:]]|$) ]]; then
   # Rewrite: remove --auto token, prepend resolved mode (verb-specific)
   ARGUMENTS="$(echo "$ARGUMENTS" | sed -E 's/(^|[[:space:]])--auto([[:space:]]|$)/\1/g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   ARGUMENTS="--mode <RESOLVED_MODE> ${ARGUMENTS}"
+  # Rewriting $ARGUMENTS is NOT enough — MODE was already resolved from the
+  # pre-rewrite string, and every downstream gate branches on MODE, not on
+  # $ARGUMENTS. Re-resolve it here or `--auto --loop` reaches the --loop gate
+  # as MODE=default and gets REFUSED instead of starting the auto loop.
+  MODE=<RESOLVED_MODE>
 fi
 ```
 
 Replace `<RESOLVED_MODE>` per the alias table row for the verb being edited.
-`review` skips the `--mode` prepend (default is already autonomous); just strip `--auto`.
+`review` skips both the `--mode` prepend and the `MODE=` assignment (its default
+mode is already the autonomous drainer); it just strips `--auto`.
+
+**Ordering contract.** Verbs whose Step 0 sets `MODE` from the `--mode` flag before
+this stanza runs MUST re-resolve `MODE` here — that is what the `MODE=<RESOLVED_MODE>`
+line is for. Equivalently, a verb may run this stanza first and parse `MODE` from the
+rewritten `$ARGUMENTS` afterwards. What is NOT allowed is parsing `MODE` once, before
+the rewrite, and never updating it.

@@ -100,13 +100,17 @@ This step only runs when §Step 2 selected at least one file (N=0 already short-
 git add thoughts/shared/ideas
 git commit -m "chore(ideas): enrich <N> idea file(s)"
 
-# Documented one-time retry, actually implemented. Only a SUCCESSFUL push
-# returns to main — a failed push leaves the branch checked out with the
-# commit intact so the next pass (or a human) can retry it.
+# Documented one-time retry, actually implemented. EVERY exit path returns to
+# main — the commit is already safe on the local `chore/enrich-ideas` ref, and
+# leaving that branch checked out would strand the next heartbeat at §Step 1's
+# main-only gate (it would emit `ENRICH SKIPPED — branch chore/enrich-ideas is
+# not main` forever and never reach §Step 2b's recovery path).
 if ! git push origin "$BRANCH"; then
   git fetch origin "$BRANCH" 2>/dev/null || true
   git merge --ff-only "origin/$BRANCH" 2>/dev/null || true
   if ! git push origin "$BRANCH"; then
+    # The commit survives on the local branch ref; only the checkout returns.
+    git checkout main
     printf '%s\n' "ENRICH SKIPPED push-rejected"
     exit 0
   fi
@@ -123,8 +127,15 @@ if pr_err=$(gh pr create --base main --head "$BRANCH" \
   PR_URL="$pr_err"
 elif printf '%s' "$pr_err" | grep -qi 'already exists'; then
   # Expected on every tick after the first: the new commit lands as an update
-  # to the open PR. This is the ONLY failure that is not a failure.
-  PR_URL=$(gh pr view "$BRANCH" --json url -q .url)
+  # to the open PR. This is the ONLY failure that is not a failure — but the
+  # lookup that recovers the URL is itself fallible (auth, network, rate limit),
+  # and swallowing it would report `ENRICHED <N> (PR )` for a pass with no
+  # reviewable PR URL. Check the exit status AND the emptiness of the result.
+  if ! view_err=$(gh pr view "$BRANCH" --json url -q .url 2>&1) || [[ -z "$view_err" ]]; then
+    printf '%s\n' "ENRICH BLOCKED pr-create-failed: PR already exists but lookup failed: ${view_err:-empty url}"
+    exit 0
+  fi
+  PR_URL="$view_err"
 else
   printf '%s\n' "ENRICH BLOCKED pr-create-failed: ${pr_err}"
   exit 0
@@ -133,7 +144,9 @@ fi
 
 Only the literal "already exists" failure falls back to `gh pr view`. Authentication failures, validation errors, rate limiting, and network errors must **not** be swallowed — masking them behind the duplicate-PR fallback would report `ENRICHED <N> (PR <url>)` for a pass whose findings never reached a reviewable PR. Those emit `ENRICH BLOCKED pr-create-failed: <stderr>` instead; the branch and commit are already pushed, so re-running the mode (or opening the PR by hand) recovers.
 
-**Push-failure rule.** On a branch-push reject, the retry above runs once (fetch + fast-forward, then push again). If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local **on `chore/enrich-ideas`**, which stays checked out; §Step 2b's non-destructive branch setup is what makes it survive to the next pass. Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
+The fallback `gh pr view` is checked the same way, for the same reason: it can fail (or return an empty URL) on exactly the auth/network/rate-limit conditions the branch above exists to surface. A failed lookup emits `ENRICH BLOCKED pr-create-failed: PR already exists but lookup failed: <stderr>` — never `ENRICHED <N> (PR )`.
+
+**Push-failure rule.** On a branch-push reject, the retry above runs once (fetch + fast-forward, then push again). If the retry also fails, **return to `main`** and emit `ENRICH SKIPPED push-rejected` — the commit stays on the local `chore/enrich-ideas` ref, which §Step 2b's non-destructive branch setup preserves and re-checks-out on the next pass. Returning to `main` is what keeps that recovery reachable: §Step 1's branch gate stops the whole mode when the session is not on `main`, so leaving the enrichment branch checked out would strand the commit permanently (`ENRICH SKIPPED — branch chore/enrich-ideas is not main` every heartbeat, §Step 2b never reached). Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
 
 ## §Step 5: Emit terminal token
 
@@ -143,8 +156,8 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - `Queue empty.` — no `status: draft` files found (§Step 2 short-circuit).
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
 - `ENRICH SKIPPED branch-setup-failed` — §Step 2b could not check out `chore/enrich-ideas`; no file was edited.
-- `ENRICH SKIPPED push-rejected` — §Step 4 branch-push retry exhausted; commit stays local on `chore/enrich-ideas`.
-- `ENRICH BLOCKED pr-create-failed: <stderr>` — §Step 4 `gh pr create` failed for a reason OTHER than an already-open PR (auth, validation, rate limit, network). The commit is pushed; only the PR is missing.
+- `ENRICH SKIPPED push-rejected` — §Step 4 branch-push retry exhausted; commit stays local on `chore/enrich-ideas` and the checkout returns to `main` so the next heartbeat can retry.
+- `ENRICH BLOCKED pr-create-failed: <stderr>` — §Step 4 `gh pr create` failed for a reason OTHER than an already-open PR (auth, validation, rate limit, network), **or** the already-exists fallback's `gh pr view` failed / returned an empty URL. The commit is pushed; only the PR (or its URL) is missing.
 
 ## §Constraints
 

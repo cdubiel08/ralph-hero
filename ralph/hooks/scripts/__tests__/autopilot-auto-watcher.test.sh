@@ -34,8 +34,25 @@ assert_nofile() {
   else FAIL=$((FAIL+1)); echo "  FAIL: $2 (present)"; fi
 }
 reset() { rm -f "$AUTOLOOP" "$PENDING"; }
+# Payload delivery: `RALPH_HOOK_INPUT= ` + JSON on stdin is the REAL Claude Code
+# hook shape, and it is fully wired. hook-utils.sh's read_input() is
+#   if [[ -z "${RALPH_HOOK_INPUT:-}" ]]; then export RALPH_HOOK_INPUT=$(cat); fi
+# so an EMPTY RALPH_HOOK_INPUT is precisely the signal to consume stdin and
+# export it. Every later `$RALPH_HOOK_INPUT` read in the hook (including the
+# jq over .tool_response) therefore sees the piped JSON. The proof is in the
+# assertions themselves: they check for sentinels named
+# ralph-hero-autoloop-testsession, i.e. the session_id parsed OUT of the piped
+# payload. An empty payload would fall back to $PPID and every assert_file
+# below would go red. Keep stdin here — it is the only coverage of read_input()'s
+# stdin branch; the env-var branch is covered explicitly further down.
 run() { # run <script> <input-json>  (RALPH_COMMAND=hero + clean TMPDIR)
   echo "$2" | env RALPH_COMMAND=hero RALPH_HOOK_INPUT= TMPDIR="$TEST_DIR" bash "$1" >/dev/null 2>&1
+  echo $?
+}
+# Same call, delivered via the pre-populated env var instead of stdin (the
+# branch read_input() takes when a caller has already exported the payload).
+run_env() { # run_env <script> <input-json>
+  env RALPH_COMMAND=hero RALPH_HOOK_INPUT="$2" TMPDIR="$TEST_DIR" bash "$1" >/dev/null 2>&1
   echo $?
 }
 
@@ -56,6 +73,19 @@ ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","ar
 assert_eq "0" "$ec" "postcheck exits 0"
 assert_file "$AUTOLOOP" "autoloop armed by Skill(loop,/ralph:hero --tick)"
 assert_file "$PENDING" "pending wakeup marked for the launch tick"
+
+echo
+echo "== payload delivery: stdin and RALPH_HOOK_INPUT are equivalent (read_input both branches) =="
+# Both hook-utils.sh read_input() branches must yield the SAME parsed
+# session_id. These assertions are what make the "the hook receives an empty
+# payload" reading falsifiable: if either channel failed to deliver, the
+# sentinel would be keyed on $PPID and both assert_file calls would go red.
+reset
+ec=$(run_env "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}')
+assert_eq "0" "$ec" "postcheck exits 0 with the payload in RALPH_HOOK_INPUT (no stdin)"
+assert_file "$AUTOLOOP" "autoloop armed via RALPH_HOOK_INPUT (session_id parsed, not \$PPID fallback)"
+assert_file "$PENDING" "pending wakeup marked via RALPH_HOOK_INPUT"
+reset
 
 echo
 echo "== postcheck: inner command must match on a TOKEN boundary =="

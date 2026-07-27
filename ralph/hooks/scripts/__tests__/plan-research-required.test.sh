@@ -107,6 +107,27 @@ run_case "unfenced plan-of-plans still carves out after the tilde fix" 0 \
 # desync the fence tracker and leak the inner markers.
 run_case "tilde fence wrapping a backtick fence does NOT carve out" 2 \
   "$PLANS/2026-07-26-GH-10-plan.md" $'---\nestimate: M\n---\n\nExample:\n~~~markdown\n```\ntype: plan-of-plans\n```\n~~~\n'
+# Malformed closers (CommonMark: a closing fence carries NO info string — only
+# trailing whitespace). Closing on any same-character prefix let ```not-a-closer
+# end the block early and expose the marker lines that follow it, waiving
+# research for an ordinary plan.
+run_case "malformed backtick closer (\`\`\`not-a-closer) does NOT end the fence" 2 \
+  "$PLANS/2026-07-26-GH-11-plan.md" $'---\nestimate: M\n---\n\nExample:\n```markdown\nsome example body\n```not-a-closer\ntype: plan-of-plans\n```\n'
+run_case "malformed tilde closer (~~~not-a-closer) does NOT end the fence" 2 \
+  "$PLANS/2026-07-26-GH-12-plan.md" $'---\nestimate: M\n---\n\nExample:\n~~~markdown\nsome example body\n~~~not-a-closer\ntype: plan-of-plans\n~~~\n'
+# Mixed-fence nesting where the INNER fence is itself malformed: the inner
+# marker is a different character, so it can never close the outer block no
+# matter what follows it.
+run_case "backtick fence wrapping a malformed tilde fence does NOT carve out" 2 \
+  "$PLANS/2026-07-26-GH-13-plan.md" $'---\nestimate: M\n---\n\nExample:\n```markdown\n~~~not-a-closer\ntype: plan-of-plans\n~~~\n```\n'
+run_case "tilde fence wrapping a malformed backtick fence does NOT carve out" 2 \
+  "$PLANS/2026-07-26-GH-14-plan.md" $'---\nestimate: M\n---\n\nExample:\n~~~markdown\n```not-a-closer\ntype: plan-of-plans\n```\n~~~\n'
+# Positive control: the stricter closer must still CLOSE on a well-formed fence
+# (bare marker + optional trailing whitespace). A real plan-of-plans marker
+# after a properly closed example block must still carve out — otherwise the
+# fix would have made fences never close, silently disabling the waiver.
+run_case "well-formed closer (trailing whitespace) still closes; later marker carves out" 0 \
+  "$PLANS/2026-07-26-GH-15-epic.md" $'---\nestimate: L\n---\n\nExample:\n```markdown\nsome example body\n```   \n\ntype: plan-of-plans\n'
 
 # --- Path-derived rooting (GH-1556) --------------------------------------------
 # Workspace-root repro: CLAUDE_PROJECT_DIR points at $SBX, but the target file
