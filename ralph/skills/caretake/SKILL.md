@@ -54,6 +54,8 @@ allowed-tools:
   - mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue
   - mcp__plugin_ralph_ralph-github__ralph_hero__create_sub_issues
   - mcp__plugin_ralph_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__remove_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_dependencies
   - mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue
   - mcp__plugin_ralph_ralph-github__ralph_hero__batch_update
   - mcp__plugin_ralph_ralph-github__ralph_hero__list_sub_issues

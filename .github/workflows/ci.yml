@@ -293,3 +293,11 @@ jobs:
 
       - name: Run doc-roster consistency check
         run: bash scripts/check-doc-rosters.sh
+
+      # GH-1614: two-direction tool-surface drift check — prose naming a
+      # tool a skill doesn't grant (uncallable on the autonomous path), and
+      # a registered tool with zero rostered consumers (dead weight).
+      # check-doc-rosters.sh above is docs<->source only; this is
+      # source<->skill-surface.
+      - name: Run tool-consumer drift check
+        run: bash scripts/check-tool-consumers.sh

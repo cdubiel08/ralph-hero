@@ -118,6 +118,7 @@ allowed-tools:
   - mcp__plugin_ralph_ralph-github__ralph_hero__list_dependencies
   - mcp__plugin_ralph_ralph-github__ralph_hero__list_sub_issues
   - mcp__plugin_ralph_ralph-github__ralph_hero__decompose_feature
+  - mcp__plugin_ralph_ralph-github__ralph_hero__batch_update
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_recall
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
