@@ -117,7 +117,7 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `project-tools.ts` | setup_project, get_project |
 | `relationship-tools.ts` | add_sub_issue, add_dependency, advance_issue |
 | `batch-tools.ts` | batch_update |
-| `dashboard-tools.ts` | pipeline_dashboard, detect_stream_positions |
+| `dashboard-tools.ts` | pipeline_dashboard |
 | `project-management-tools.ts` | archive_items, create_status_update |
 | `hygiene-tools.ts` | project_hygiene |
 | `decompose-tools.ts` | decompose_feature |

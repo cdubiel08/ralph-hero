@@ -170,7 +170,6 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__create_status_update",
   "ralph_hero__create_sub_issues",
   "ralph_hero__decompose_feature",
-  "ralph_hero__detect_stream_positions",
   "ralph_hero__get_issue",
   "ralph_hero__get_project",
   "ralph_hero__health_check",

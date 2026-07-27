@@ -18,8 +18,8 @@ import {
   STUCK_THRESHOLD_HOURS,
 } from "./thresholds.js";
 /**
- * WorkStream type matching the shape from work-stream-detection.ts.
- * Defined here to avoid import dependency until GH-323 merges.
+ * WorkStream shape consumed by `pipeline_dashboard`'s optional `streams`
+ * param (pre-computed stream assignments supplied by the caller).
  */
 export interface WorkStream {
   id: string;
