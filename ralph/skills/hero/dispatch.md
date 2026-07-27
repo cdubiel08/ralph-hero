@@ -1,6 +1,6 @@
 # Hero Dispatch Contract
 
-> Consulted by `/ralph:hero` default mode Step 3 (execution loop) and `--mode classify` (single dispatch). Maps each phase to the verb that runs it.
+> Consulted by `/ralph:hero` default mode Step 3 (execution loop) and the `--mode auto` tick (single dispatch). Maps each phase to the verb that runs it.
 
 ## Phase → verb mapping
 
@@ -17,7 +17,7 @@
 
 All targets are skills in the same `ralph` plugin → unqualified names work in `Skill()` calls.
 
-**Group unit (GH-1538):** PLAN, IMPLEMENT, PR, and INTEGRATE operate on the *plan group*, not the individual leaf. Once a sibling group plan exists (frontmatter `github_issues`), hero treats all members as one pipeline unit: one plan task, one worktree/branch, one PR closing every member. On the classify/auto path, SKIP any issue whose group is already in flight — a sibling group plan covering it exists and its train (plan → phases → PR) is the vehicle; dispatching the member separately would fork a duplicate PR.
+**Group unit (GH-1538):** PLAN, IMPLEMENT, PR, and INTEGRATE operate on the *plan group*, not the individual leaf. Once a sibling group plan exists (frontmatter `github_issues`), hero treats all members as one pipeline unit: one plan task, one worktree/branch, one PR closing every member. On the auto-tick path, SKIP any issue whose group is already in flight — a sibling group plan covering it exists and its train (plan → phases → PR) is the vehicle; dispatching the member separately would fork a duplicate PR.
 
 ## Skill() vs Agent()
 

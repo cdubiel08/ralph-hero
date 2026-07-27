@@ -7,7 +7,7 @@
 #
 # Gated by TWO sentinels (both written by autopilot-director-postcheck.sh):
 #   autoloop  — present only inside the --mode auto watcher, so one-shot
-#               `--mode classify` and `--mode default` runs are NOT blocked.
+#               `--tick` and `--mode default` runs are NOT blocked.
 #   pending   — present when the current tick still owes a ScheduleWakeup
 #               (cleared by autopilot-wakeup-clear.sh when one fires).
 # Block only when BOTH are present.

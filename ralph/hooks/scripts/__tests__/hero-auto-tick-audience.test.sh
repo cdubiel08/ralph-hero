@@ -1,6 +1,6 @@
 #!/bin/bash
-# ralph/hooks/scripts/__tests__/hero-classify-audience.test.sh
-# Regression guard for GH-1479.
+# ralph/hooks/scripts/__tests__/hero-auto-tick-audience.test.sh
+# Regression guard for GH-1479 (re-anchored for GH-1606).
 #
 # Asserts the AUTONOMOUS queue-read call site in the hero skill passes
 # audience: "agent" — not the bare next_actions({}) human default that
@@ -9,14 +9,18 @@
 # scored.length === 0 branch).
 #
 # The tool behavior is already covered by mcp-server directions.test.ts;
-# this guards the *consumer* (hero --mode classify, the engine of
+# this guards the *consumer* (the hero auto tick, the engine of
 # --mode auto) so the call site cannot silently regress to the human
 # default again (the #1159 regression this issue fixes).
 #
 # Strategy: grep structural invariants over ralph/skills/hero/SKILL.md.
 # The default-mode picker call site legitimately keeps next_actions({})
 # (it feeds an interactive AskUserQuestion), so the negative assertion is
-# SCOPED to the "## --mode classify" section rather than the whole file.
+# SCOPED to the "## Auto tick" section rather than the whole file.
+# GH-1606 folded the former director-only classify mode into the internal
+# `--tick` step of `--mode auto`; the section heading moved from the old
+# classify mode heading to
+# "## Auto tick (internal — dispatched only by --mode auto's loop wrapper)".
 
 set -euo pipefail
 
@@ -47,20 +51,20 @@ assert_file_contains() {
   fi
 }
 
-# Extract the body of the "## --mode classify" section (lines after the
+# Extract the body of the "## Auto tick ..." section (lines after the
 # header, up to but not including the next "## " heading). The start
-# pattern is anchored ("$") so a future sibling heading like
-# "## --mode classify-pr" cannot prefix-match and fold its body into the
-# block (which would latently false-pass assertions 3/4).
-classify_block() {
+# pattern is anchored to the literal heading prefix so a future sibling
+# heading cannot prefix-match and fold its body into the block (which
+# would latently false-pass assertions 3/4).
+tick_block() {
   awk '
-    /^## --mode classify[[:space:]]*$/ { f=1; next }
+    /^## Auto tick \(internal/ { f=1; next }
     /^## / { f=0 }
     f
   ' "$SKILL_FILE"
 }
 
-echo "=== hero-classify-audience regression guard (GH-1479) ==="
+echo "=== hero-auto-tick-audience regression guard (GH-1479 / re-anchored GH-1606) ==="
 echo ""
 
 # -----------------------------------------------------------------------
@@ -79,24 +83,24 @@ assert_file_contains "SKILL.md contains next_actions({ audience: \"agent\" })" \
 
 # -----------------------------------------------------------------------
 echo ""
-echo "--- Assertion 3: the agent-audience call lives in the --mode classify section ---"
-BLOCK="$(classify_block)"
+echo "--- Assertion 3: the agent-audience call lives in the Auto tick section ---"
+BLOCK="$(tick_block)"
 if printf '%s\n' "$BLOCK" | grep -qF 'next_actions({ audience: "agent" })'; then
-  pass "--mode classify section reads the queue with audience: agent"
+  pass "Auto tick section reads the queue with audience: agent"
 else
-  fail "--mode classify section does NOT request audience: agent (regressed to human default?)"
+  fail "Auto tick section does NOT request audience: agent (regressed to human default?)"
 fi
 
 # -----------------------------------------------------------------------
 echo ""
-echo "--- Assertion 4: --mode classify section has no bare next_actions({}) ---"
+echo "--- Assertion 4: Auto tick section has no bare next_actions({}) ---"
 # Negative guard: the autonomous path must not be the human default.
-# Scoped to the classify block — the default-mode picker keeps the bare
+# Scoped to the tick block — the default-mode picker keeps the bare
 # call legitimately, so a whole-file check would be wrong.
 if printf '%s\n' "$BLOCK" | grep -qF 'next_actions({})'; then
-  fail "--mode classify section still has a bare next_actions({}) (human-default regression)"
+  fail "Auto tick section still has a bare next_actions({}) (human-default regression)"
 else
-  pass "--mode classify section has no bare next_actions({})"
+  pass "Auto tick section has no bare next_actions({})"
 fi
 
 # -----------------------------------------------------------------------
