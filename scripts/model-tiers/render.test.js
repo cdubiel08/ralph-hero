@@ -17,6 +17,8 @@ const {
   printTierTable,
   loadConfig,
   parseArgs,
+  buildExpectedFrontmatter,
+  buildExpectedDispatchMultisets,
 } = require('./render.js');
 
 const REPO_ROOT = path.join(__dirname, '..', '..');
@@ -387,5 +389,158 @@ describe('integration — real repo tree', () => {
   it('walkMarkdownFiles finds real skill and agent files', () => {
     const files = walkMarkdownFiles(REPO_ROOT, ['ralph/skills', 'ralph/agents']);
     assert.ok(files.length > 20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3 — the second-mapping demonstration (GH-1593). This is the epic-
+// facing payoff: proving the config, not the prose, decides the models, by
+// switching harnesses against a COPY of the real ralph/ tree and showing
+// the diff is exactly the frontier sites — nothing more, nothing less — and
+// contrasting that with what the all-flattening `CLAUDE_CODE_SUBAGENT_MODEL`
+// escape hatch would have done to the same tree.
+// ---------------------------------------------------------------------------
+
+describe('Phase 3 — claude-code-opus second mapping (real ralph/ tree)', () => {
+  function copyRealRalphTree() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'model-tiers-phase3-'));
+    for (const relDir of ['ralph/skills', 'ralph/agents']) {
+      fs.cpSync(path.join(REPO_ROOT, relDir), path.join(root, relDir), { recursive: true });
+    }
+    return root;
+  }
+
+  function snapshot(root) {
+    const files = new Map();
+    for (const absPath of walkMarkdownFiles(root, ['ralph/skills', 'ralph/agents'])) {
+      files.set(path.relative(root, absPath).split(path.sep).join('/'), fs.readFileSync(absPath, 'utf-8'));
+    }
+    return files;
+  }
+
+  it('--write --harness claude-code-opus changes EXACTLY the 5 frontier sites (2 agent frontmatter + 3 dispatch literals) and nothing else', () => {
+    const root = copyRealRalphTree();
+    const config = loadConfig(path.join(REPO_ROOT, '.ralph-models.yml'));
+
+    const before = snapshot(root);
+    runWrite(root, config, 'claude-code-opus');
+    const after = snapshot(root);
+
+    assert.deepEqual([...before.keys()].sort(), [...after.keys()].sort(), 'file set must not change');
+
+    const changed = [...before.keys()].filter((relPath) => before.get(relPath) !== after.get(relPath)).sort();
+
+    const expectedChanged = [
+      'ralph/agents/plan-agent.md',
+      'ralph/agents/review-agent.md',
+      'ralph/skills/hero/dispatch.md',
+      'ralph/skills/review/SKILL.md',
+      'ralph/skills/review/merge-gate.md',
+    ].sort();
+
+    assert.deepEqual(changed, expectedChanged);
+
+    // Frontmatter sites: fable -> opus.
+    assert.match(after.get('ralph/agents/plan-agent.md'), /^model: opus$/m);
+    assert.match(after.get('ralph/agents/review-agent.md'), /^model: opus$/m);
+    // Dispatch literals: fable -> opus, exactly one occurrence each.
+    for (const relPath of ['ralph/skills/hero/dispatch.md', 'ralph/skills/review/SKILL.md', 'ralph/skills/review/merge-gate.md']) {
+      assert.deepEqual(extractDispatchLiterals(after.get(relPath)), { opus: 1 });
+      assert.deepEqual(extractDispatchLiterals(before.get(relPath)), { fable: 1 });
+    }
+
+    // Hard pins are untouched: hero-fable stays fable; the BLOCKED-escalation
+    // opus literal in phase-execution.md is unaffected by this harness switch.
+    assert.equal(before.get('ralph/skills/hero-fable/SKILL.md'), after.get('ralph/skills/hero-fable/SKILL.md'));
+    assert.equal(before.get('ralph/skills/impl/phase-execution.md'), after.get('ralph/skills/impl/phase-execution.md'));
+  });
+
+  it('the rewritten tree passes --check under claude-code-opus and FAILS --check under the default claude-code harness', () => {
+    const root = copyRealRalphTree();
+    const config = loadConfig(path.join(REPO_ROOT, '.ralph-models.yml'));
+    runWrite(root, config, 'claude-code-opus');
+
+    const underOpus = runCheck(root, config, 'claude-code-opus');
+    assert.equal(underOpus.ok, true, underOpus.diagnostics.filter((d) => d.startsWith('FAIL')).join('\n'));
+
+    const underDefault = runCheck(root, config, 'claude-code');
+    assert.equal(underDefault.ok, false);
+    // Only the 5 frontier sites should be the ones failing under the default
+    // harness — everything else in the rewritten tree still matches claude-code.
+    const failingSites = underDefault.diagnostics
+      .filter((d) => d.startsWith('FAIL'))
+      .map((d) => d.replace(/^FAIL: /, '').split(':')[0]);
+    const uniqueFailingFiles = [...new Set(failingSites)].sort();
+    assert.deepEqual(uniqueFailingFiles, [
+      'ralph/agents/plan-agent.md',
+      'ralph/agents/review-agent.md',
+      'ralph/skills/hero/dispatch.md',
+      'ralph/skills/review/SKILL.md',
+      'ralph/skills/review/merge-gate.md',
+    ].sort());
+  });
+
+  it('the untouched real tree still passes --check under the default claude-code harness (second mapping ships dormant)', () => {
+    const config = loadConfig(path.join(REPO_ROOT, '.ralph-models.yml'));
+    const { ok, diagnostics } = runCheck(REPO_ROOT, config, config.defaultHarness);
+    assert.equal(ok, true, diagnostics.filter((d) => d.startsWith('FAIL')).join('\n'));
+    assert.equal(config.defaultHarness, 'claude-code');
+  });
+
+  it('PROOF: the profile switch retargets ONLY the frontier sites, while CLAUDE_CODE_SUBAGENT_MODEL=opus would flatten every agent-surface tier', () => {
+    // This is the specific claim the epic cares about: `.ralph-models.yml`
+    // replaces the blunt `CLAUDE_CODE_SUBAGENT_MODEL` hammer (which the
+    // platform documents as top-precedence and uniform — it overrides
+    // frontmatter AND every per-invocation `model=` param with no way to
+    // scope it to one tier) with a config edit that moves ONLY the tier(s)
+    // named in the mapping.
+    const config = loadConfig(path.join(REPO_ROOT, '.ralph-models.yml'));
+
+    // Every site that runs on the "agent surface" at runtime (agent
+    // frontmatter pins AND Agent(model=...) dispatch literals) — this is
+    // exactly the set CLAUDE_CODE_SUBAGENT_MODEL reaches, per
+    // docs/model-tier-policy.md's precedence-chain step 1.
+    const agentSurfaceSites = (config.sites || []).filter((s) => s.kind === 'agent' || s.kind === 'dispatch');
+    assert.ok(agentSurfaceSites.length >= 20, `expected a substantial manifest, got ${agentSurfaceSites.length}`);
+
+    // Sites whose EXPECTED VALUE actually changes when switching from
+    // claude-code to claude-code-opus (the targeted config-driven path).
+    const changedByProfileSwitch = agentSurfaceSites.filter(
+      (s) => resolveTier(config, s.tier, 'claude-code', 'agent') !== resolveTier(config, s.tier, 'claude-code-opus', 'agent'),
+    );
+    assert.equal(changedByProfileSwitch.length, 5, 'profile switch must touch exactly the 5 frontier sites');
+    assert.ok(changedByProfileSwitch.every((s) => s.tier === 'frontier'));
+
+    // Sites whose RUNTIME MODEL would change if CLAUDE_CODE_SUBAGENT_MODEL=opus
+    // were set instead — every site not ALREADY resolving to opus under the
+    // default harness, since the env var forces literally every subagent
+    // fork/frontmatter pin to opus regardless of its tier.
+    const flattenedByEnvVar = agentSurfaceSites.filter(
+      (s) => resolveTier(config, s.tier, 'claude-code', 'agent') !== 'opus',
+    );
+    assert.ok(
+      flattenedByEnvVar.length > changedByProfileSwitch.length,
+      `env var flattening (${flattenedByEnvVar.length} sites) must reach strictly more sites than the targeted profile switch (${changedByProfileSwitch.length} sites)`,
+    );
+
+    // Concretely: the env var also touches every cheap (haiku) and standard
+    // (sonnet) agent-surface site — sites the profile switch leaves alone.
+    const cheapOrStandardTouchedByEnvVar = flattenedByEnvVar.filter((s) => s.tier === 'cheap' || s.tier === 'standard');
+    assert.ok(
+      cheapOrStandardTouchedByEnvVar.length > 0,
+      'the env var must reach cheap/standard-tier sites the profile switch does not touch',
+    );
+    for (const site of cheapOrStandardTouchedByEnvVar) {
+      // Confirm the profile switch (claude-code -> claude-code-opus) leaves
+      // this specific site's resolved value untouched...
+      assert.equal(
+        resolveTier(config, site.tier, 'claude-code', 'agent'),
+        resolveTier(config, site.tier, 'claude-code-opus', 'agent'),
+      );
+      // ...while CLAUDE_CODE_SUBAGENT_MODEL=opus would override it to opus
+      // regardless (a flat env var, not a per-tier config value — it has no
+      // "which tier" input at all, unlike resolveTier).
+      assert.notEqual(resolveTier(config, site.tier, 'claude-code', 'agent'), 'opus');
+    }
   });
 });

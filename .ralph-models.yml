@@ -29,6 +29,20 @@ harnesses:
     standard: { skill: sonnet, agent: sonnet }
     capable: { skill: best, agent: opus }
     frontier: { skill: fable, agent: fable }
+  claude-code-opus: # GH-1593 Phase 3 — non-Fable profile, ships dormant
+    # (defaultHarness stays claude-code; switch via `render.js --harness` or
+    # by editing defaultHarness + `render.js --write`). cheap/standard/capable
+    # are byte-identical to claude-code — only frontier moves off Fable, so
+    # switching harnesses retargets EXACTLY the 5 frontier-tier sites
+    # (2 agent frontmatter + 3 dispatch literals; see render.test.js's
+    # Phase 3 fixture) instead of the all-flattening
+    # `CLAUDE_CODE_SUBAGENT_MODEL=opus`, which would also move every
+    # cheap/standard agent-surface site to opus (see docs/model-tier-policy.md
+    # § Switching mappings).
+    cheap: { skill: haiku, agent: haiku }
+    standard: { skill: sonnet, agent: sonnet }
+    capable: { skill: best, agent: opus }
+    frontier: { skill: opus, agent: opus }
 
 # Runtime overrides (documented; resolution order lives in
 # docs/model-tier-policy.md § Per-session overrides).

@@ -189,6 +189,50 @@ sessions, from highest to lowest precedence:
 5. **Session model** — skills/agents without a pin (`catch-up`, `form`)
    inherit whatever model the parent session is already running.
 
+## Switching mappings (`claude-code-opus`, GH-1593 Phase 3)
+
+`.ralph-models.yml` ships a second harness block, `claude-code-opus`, dormant
+by default (`defaultHarness: claude-code`). It is byte-identical to
+`claude-code` on `cheap`/`standard`/`capable`; only `frontier` differs —
+`{ skill: opus, agent: opus }` instead of `{ skill: fable, agent: fable }`.
+This is the concrete non-Fable profile: an account without Fable entitlement
+retargets the whole plugin's frontier tier by switching ONE YAML block
+instead of hunting the ~35 pin sites by hand.
+
+**What this replaces.** Today's non-Fable rescue is
+`CLAUDE_CODE_SUBAGENT_MODEL=opus` — harness-native, top-precedence, and
+*uniform*: it overrides every subagent's frontmatter and every
+per-invocation `model=` param with no way to scope it to one tier. Switching
+to `claude-code-opus` is targeted: it moves only the 5 frontier-tier sites
+(`ralph/agents/plan-agent.md`, `ralph/agents/review-agent.md` frontmatter,
+plus the `model="fable"` dispatch literals in `ralph/skills/hero/dispatch.md`,
+`ralph/skills/review/SKILL.md`, `ralph/skills/review/merge-gate.md`) — every
+cheap/standard/capable pin (haiku/sonnet/opus forks and sessions) is left
+exactly as it was. `scripts/model-tiers/render.test.js`'s Phase 3 fixture
+proves this by diffing a rewritten copy of the real `ralph/` tree against the
+original and asserting the changed-file set is exactly those 5 paths.
+
+**What this does NOT replace.** `CLAUDE_CODE_SUBAGENT_MODEL` still sits above
+the tier config in the precedence chain (step 1 above) — if it is set, it
+wins regardless of which harness `.ralph-models.yml` selects.
+
+**The recipe:**
+
+```bash
+# One-off render against the alternate harness (no file edits to defaultHarness):
+node scripts/model-tiers/render.js --write --harness claude-code-opus
+
+# Or make it the standing default: edit `defaultHarness: claude-code-opus`
+# in .ralph-models.yml, then run the same --write, then commit both.
+git add -A && git commit -m "chore(model-tiers): switch to claude-code-opus profile"
+```
+
+`bash scripts/check-model-tiers.sh` (default harness only) enforces coherence
+on every PR — a `--write --harness claude-code-opus` run without also
+flipping `defaultHarness` leaves the committed tree matching the (unchanged)
+default harness, so the check stays green with the second mapping shipped
+dormant, exactly as it does on `main` today.
+
 ## Escalation contract
 
 When ralph-impl's internal budget exhausts below the top tier it emits a

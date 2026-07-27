@@ -206,3 +206,47 @@ describe("AC-2 regression — repo-root .ralph-models.yml reproduces current pin
     expect(result.config.hardPins.length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 3 — the claude-code-opus second mapping, resolved from the real
+// repo-root .ralph-models.yml. The renderer's fixture test
+// (scripts/model-tiers/render.test.js) proves the file-level rewrite; this
+// pins the same resolution at the typed-loader layer so the two parsers of
+// one YAML (mcp-server loader + standalone renderer) can't silently drift
+// on what the second harness resolves to (the plan's own "two parsers"
+// risk row).
+// ---------------------------------------------------------------------------
+
+describe("claude-code-opus resolution — GH-1593 Phase 3 second mapping", () => {
+  it("is present in the shipped config and ships dormant (defaultHarness stays claude-code)", async () => {
+    const result = await loadModelTierConfig(REPO_ROOT_CONFIG);
+    if (result.status !== "loaded") throw new Error("expected loaded");
+    expect(Object.keys(result.config.harnesses)).toContain("claude-code-opus");
+    expect(result.config.defaultHarness).toBe("claude-code");
+  });
+
+  it("frontier resolves to opus on both surfaces under claude-code-opus", async () => {
+    const result = await loadModelTierConfig(REPO_ROOT_CONFIG);
+    if (result.status !== "loaded") throw new Error("expected loaded");
+    const { config } = result;
+    expect(resolveTier(config, "frontier", "claude-code-opus", "skill")).toBe("opus");
+    expect(resolveTier(config, "frontier", "claude-code-opus", "agent")).toBe("opus");
+  });
+
+  it("cheap/standard/capable are byte-identical to claude-code — only frontier moves", async () => {
+    const result = await loadModelTierConfig(REPO_ROOT_CONFIG);
+    if (result.status !== "loaded") throw new Error("expected loaded");
+    const { config } = result;
+    for (const tier of ["cheap", "standard", "capable"] as const) {
+      for (const surface of ["skill", "agent"] as const) {
+        expect(resolveTier(config, tier, "claude-code-opus", surface)).toBe(
+          resolveTier(config, tier, "claude-code", surface),
+        );
+      }
+    }
+    // frontier is the one tier that genuinely differs between harnesses.
+    expect(resolveTier(config, "frontier", "claude-code-opus", "agent")).not.toBe(
+      resolveTier(config, "frontier", "claude-code", "agent"),
+    );
+  });
+});
