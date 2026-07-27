@@ -150,7 +150,7 @@ plugin/
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
-| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (`sonnet`, `opus`, or `fable`; default `sonnet`; BLOCKED escalation re-dispatches once at `opus`) |
+| `RALPH_IMPL_MODEL` | No | Override the impl dispatch tier — a `.ralph-models.yml` tier name (`cheap`/`standard`/`capable`/`frontier`) or a raw model id (`sonnet`, `opus`, `fable`, `haiku`); default `standard` (= `sonnet`); BLOCKED escalation re-dispatches once at `opus` |
 | `RALPH_REVIEW_PLAN` | No | Plan-review gate (default `auto`, decision-driven: decision-free APPROVED plans auto-advance; plans with open `#### Decision:` blocks hold with a `## Decision Request` comment). `interactive` opts into the whole-plan picker. |
 | `RALPH_REVIEW_MODE` | No | Merge gate (default `auto`: val → code-review → merge → CI watch unattended; `CHANGES_REQUESTED` always blocks). `interactive` opts into report-PR-URLs-and-stop. |
 | `RALPH_AUTOPILOT_ENABLE` | No | Must be `"true"` for `/ralph:hero --mode auto` (enforced by `autopilot-enable-gate.sh`) |

@@ -38,7 +38,19 @@ Read `${RALPH_IMPL_MODEL:-sonnet}`. Default is sonnet; override via env or shell
 impl_model="${RALPH_IMPL_MODEL:-sonnet}"
 ```
 
-Pass the resolved model explicitly to dispatched verbs that respect it. Default is `sonnet`; opus is used on BLOCKED-escalation (when impl returns `IMPL BLOCKED needs=opus`).
+`RALPH_IMPL_MODEL` accepts EITHER a `.ralph-models.yml` tier name OR a raw Claude Code model id — the two vocabularies are disjoint, so interpretation is unambiguous (GH-1593). Rendered tier table (`claude-code` harness, `agent` surface — see `docs/model-tier-policy.md` § Per-session overrides):
+
+| Tier name | Resolves to |
+|---|---|
+| cheap | haiku |
+| standard | sonnet |
+| capable | opus |
+| frontier | fable |
+
+- `RALPH_IMPL_MODEL=capable` → resolves to opus via the table above.
+- `RALPH_IMPL_MODEL=opus` → not a tier name, used as-is (legacy raw model id).
+
+Pass the resolved model explicitly to dispatched verbs that respect it. Default is `sonnet` (tier `standard`); opus is used on BLOCKED-escalation (when impl returns `IMPL BLOCKED needs=opus`).
 
 ## BLOCKED escalation
 

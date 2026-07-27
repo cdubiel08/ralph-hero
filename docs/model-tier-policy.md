@@ -37,6 +37,24 @@ as the FIRST step in subagent model resolution — it overrides both the
 per-invocation `model` param and frontmatter. Plan doc:
 thoughts/shared/plans/2026-07-01-plan-review-best-model-tier.md.
 
+**Updated 2026-07-27 (GH-1593): tiers are now config, not just convention.**
+`.ralph-models.yml` (repo root) is the source of truth for every
+tier-governed `model:` frontmatter pin and `Agent(model="...")` dispatch
+literal in `ralph/`. Because Claude Code parses `model:` as a static string
+at plugin-load time and the `Agent()` tool's `model` param is a literal
+argument in dispatch prose, tier resolution inside a Claude Code session is
+NOT dynamic — the config is enforced by **build-time codegen + a CI drift
+check** (`scripts/model-tiers/render.js` / `scripts/check-model-tiers.sh`,
+`bash scripts/check-model-tiers.sh` — mirroring `scripts/check-doc-rosters.sh`
+in shape), not a live lookup. Every table on this page describes the
+*rendered output* of the `claude-code` harness block in `.ralph-models.yml`;
+the YAML, not this page, is authoritative when the two disagree — the CI gate
+exists precisely so they can't silently diverge (a non-Claude-Code harness
+can also read `.ralph-models.yml` directly; it cannot read Claude Code
+frontmatter — this is the epic #1588 portability payoff). Structural
+precedent: `.ralph-routing.yml` + `mcp-server/src/lib/routing-config.ts` +
+`scripts/routing/route.js`.
+
 ## The rule
 
 Complexity drives tier, not role. The highest tier the plugin pins by default
@@ -55,28 +73,57 @@ agents.
 
 Escalate on BLOCKED, never preemptively.
 
+`cheap`/`standard`/`capable`/`frontier` are the four tier names in
+`.ralph-models.yml`'s `harnesses.claude-code` block; the Model column above
+is that harness's rendered value for the **skill** surface (`capable`
+renders `opus`, not `best`, on the **agent** surface — see "Default tier by
+surface" and "Not tier-governed" below).
+
 ## Default tier by surface
 
 | Surface | Model | Pin location |
 |---|---|---|
 | hero parent session (all modes) | sonnet | `ralph/skills/hero/SKILL.md` |
-| hero-fable session (experimental rail-free surface, opt-in; requires Fable access) | fable | `ralph/skills/hero-fable/SKILL.md` |
+| hero-fable session (experimental rail-free surface, opt-in; requires Fable access) | fable | `ralph/skills/hero-fable/SKILL.md` (**not tier-governed** — see below) |
 | research skill session | sonnet | `ralph/skills/research/SKILL.md` |
 | plan skill session (incl. `--mode review`) | best (fable→opus resolver) | `ralph/skills/plan/SKILL.md` |
 | review skill session | best (fable→opus resolver) | `ralph/skills/review/SKILL.md` |
 | plan-agent / review-agent (`Agent()`-forked) | fable (escape hatch: `CLAUDE_CODE_SUBAGENT_MODEL=opus`) | `ralph/agents/{plan,review}-agent.md` |
 | impl / caretake skill sessions | sonnet | respective `SKILL.md` |
-| research / impl / val / triage agents, sre-fixit, analyzers | sonnet | `ralph/agents/*.md` |
+| research / impl / val agents, sre-fixit, analyzers | sonnet | `ralph/agents/*.md` |
 | merge / catch-up agents, locators, log-reader | haiku | `ralph/agents/*.md` |
 | impl per-phase quality reviewer (`Agent()`-dispatched inline, not a named agent file) | opus | `ralph/skills/impl/phase-execution.md` — kept opus as a review-function surface; not touched by this re-tier |
 | impl per-task sub-agents | haiku/sonnet/opus by `complexity:` | `ralph/skills/impl/phase-execution.md` |
 | impl deterministic test-runner (per-phase Automated Verification) | haiku | `ralph/skills/impl/phase-execution.md` §Phase quality review step 6 |
 | behavior verification (feature close-out, UI-surface PRs only) | opus | `ralph/skills/review/behavior-verification.md` |
 
-The frontmatter pins above are STATIC defaults. The autonomous paths
-additionally route tiers per unit size — see the next section.
+The frontmatter pins above are STATIC defaults, rendered from
+`.ralph-models.yml` and drift-checked by `scripts/check-model-tiers.sh` (see
+the 2026-07-27 update above). The autonomous paths additionally route tiers
+per unit size — see the next section.
 
 > **Decision-gated plan approval (GH-1544).** Tier routing below is unchanged by the gate flip: the same critique tiers run for the same unit sizes. What changed is the *human* gate — it is now decision-conditional, not size-conditional: an APPROVED plan holds in Plan in Review only when it carries open `#### Decision:` blocks (see `ralph/skills/plan/plan-shapes.md` § Design decisions anatomy); decision-free plans advance at any size, and the merge gate defaults to autonomous (`RALPH_REVIEW_MODE=auto`).
+
+## Not tier-governed
+
+Three things this page's tables and `.ralph-models.yml`'s `sites:` manifest
+deliberately do NOT cover — a config change can never move these, by design:
+
+- **`hero-fable/SKILL.md`'s `model: fable` pin** — identity-defining;
+  hero-fable IS Fable, not "Fable by default." It is a `hardPins` entry in
+  `.ralph-models.yml`, allowlisted so the drift checker sees it but never
+  derives it from a tier.
+- **The `IMPL BLOCKED needs=opus` escalation chain** — a hook-grepped wire
+  format (`impl-postcondition.sh`'s `IMPL BLOCKED ` prefix match, the
+  `RALPH_IMPL_MODEL=opus` re-dispatch literal in `hero/dispatch.md`, and the
+  narrative `model="opus"` at `ralph/skills/impl/phase-execution.md:60`
+  describing that re-dispatch). Renaming `needs=opus` to a tier name is a
+  possible future change, but it is a deliberate, hook-synced edit — not
+  something the tier config drives. The `phase-execution.md:60` literal is a
+  `hardPins` entry for the same reason as hero-fable's.
+- **`CLAUDE_CODE_SUBAGENT_MODEL`** — harness-native, not ralph plumbing (see
+  "Per-session overrides" below). The tier config has no lever over it and
+  never will; it sits above every rendered pin and every runtime override.
 
 ## Tier routing by unit size (GH-1538)
 
@@ -94,10 +141,11 @@ is a fork whose frontmatter or param a non-Fable account neutralizes with
 | Feature group (`github_issues:` plan) or M single | **fable** (research-agent fork, `model="fable"`) | **fable** (inline in the `best` plan session) | **fable** (review-agent frontmatter default) | sonnet (+BLOCKED→opus) | haiku | opus (blocking) | **fable** (val-agent fork, `model="fable"`) |
 | Epic (plan-of-plans) | **fable** | **fable** (epic decomposition in the `best` session) | **fable** | per-feature cycles | per-feature | per-feature | **fable** epic close-out validation |
 
-Dispatch sites implementing this routing:
+Dispatch sites implementing this routing (each is a `kind: dispatch` entry
+in `.ralph-models.yml`'s `sites:`):
 
 - `ralph/skills/hero/dispatch.md` §Skill() vs Agent() — RESEARCH fork row.
-- `ralph/skills/plan/SKILL.md` `--mode auto` Step 6 — singles fork
+- `ralph/skills/plan/SKILL.md` `--mode auto` step — singles fork
   plan-agent at sonnet; groups author inline.
 - `ralph/skills/plan/plan-review.md` §Interactive vs auto — review-agent
   fork, `model="opus"` for singles, frontmatter fable for groups/epics.
@@ -112,20 +160,34 @@ exactly where per-issue fable spend was the cost leak.
 
 ## Per-session overrides
 
-`RALPH_IMPL_MODEL=fable|opus|sonnet|haiku` overrides the impl dispatch tier
-(default `sonnet`). It is the ONLY wired model env var in the slim plugin —
-per-agent `RALPH_<AGENT>_MODEL` vars from the legacy plugin were never wired;
-edit frontmatter instead.
+This is the single home of Claude Code's model-resolution order for ralph
+sessions, from highest to lowest precedence:
 
-`CLAUDE_CODE_SUBAGENT_MODEL` (harness-native, not ralph plumbing) is the
-escape hatch for the fable-pinned agents: Claude Code resolves every
-subagent's model as env var → per-invocation `model` param → frontmatter →
-session model, so `CLAUDE_CODE_SUBAGENT_MODEL=opus` rescues
-plan-agent/review-agent on non-Fable accounts. **Blast radius warning:** it
-is global to ALL subagents — it also flattens the haiku locators, the impl
-complexity ladder, and the hero BLOCKED→opus re-dispatch (it beats the
-per-invocation param too). Set it only if your account lacks Fable and you
-use the `Agent()`-fork path; unset (or `inherit`) otherwise.
+1. **`CLAUDE_CODE_SUBAGENT_MODEL`** — harness-native, not ralph plumbing.
+   Flattens EVERY subagent's model uniformly (both fable agents, all other
+   agent pins, every per-invocation `model=` param, the impl BLOCKED→opus
+   re-dispatch) — it beats both the per-invocation param and frontmatter.
+   The tier config in `.ralph-models.yml` has no lever over this step and is
+   not meant to; it is a documented boundary, not a migration target. Set it
+   only if your account lacks Fable and you use the `Agent()`-fork path;
+   unset (or `inherit`) otherwise.
+2. **Runtime tier override — `RALPH_IMPL_MODEL`** (impl dispatch surface
+   only; the ONLY wired model env var in the slim plugin). Accepts EITHER a
+   tier name (`cheap`/`standard`/`capable`/`frontier` — resolved via the
+   rendered tier table for the `agent` surface) OR a raw Claude Code model
+   id/alias (`sonnet`/`opus`/`haiku`/`fable` — used as-is, legacy behavior
+   unchanged). Default `standard` (= `sonnet`), so `${RALPH_IMPL_MODEL:-sonnet}`
+   in `hero/dispatch.md` renders identically whether or not
+   `.ralph-models.yml` exists. Per-agent `RALPH_<AGENT>_MODEL` vars from the
+   legacy plugin were never wired; edit frontmatter (via `.ralph-models.yml`
+   + `render.js --write`) instead.
+3. **Rendered `Agent(model="...")` dispatch literal** — derived from
+   `.ralph-models.yml`'s `sites:` (kind: dispatch) at codegen time; verified
+   by `scripts/check-model-tiers.sh` on every PR.
+4. **Rendered frontmatter pin** — derived from `sites:` (kind: skill/agent)
+   at codegen time; same drift check.
+5. **Session model** — skills/agents without a pin (`catch-up`, `form`)
+   inherit whatever model the parent session is already running.
 
 ## Escalation contract
 
@@ -140,7 +202,8 @@ Hero matches the `IMPL BLOCKED ` prefix (never the full string) and
 re-dispatches ONCE with `RALPH_IMPL_MODEL=opus`. A second BLOCKED at opus
 escalates to Human Needed via `save_issue(workflowState="__ESCALATE__")`.
 `impl-postcondition.sh` also greps only the bare prefix, so the `needs=`
-value can change without touching hooks.
+value can change without touching hooks. This entire chain is a hook-grepped
+wire format, not a tier-config pin — see "Not tier-governed" above.
 
 ## Fable defaults and the escape hatch
 
@@ -161,6 +224,17 @@ pin, and at the time no rescue existed. Two things have since changed:
    recourse" to "one env var" — accepted 2026-07-01 for the two judgment
    agents only.
 
+**GH-1593 caveat (agent frontmatter cannot express `best`):** in
+`.ralph-models.yml`, the `frontier` tier's `agent` surface renders the
+literal `fable` — there is no `best`-equivalent resolver for agent
+frontmatter or the `Agent()` tool's `model` param (closed enum, no `best`;
+the Zod schema in `mcp-server/src/lib/model-tier-registry.ts` rejects `best`
+on an agent surface outright). This is a Claude Code platform limitation,
+not something the tier config works around: `plan-agent`/`review-agent`
+always pin `fable`, and non-Fable accounts always need
+`CLAUDE_CODE_SUBAGENT_MODEL=opus` for those two files specifically,
+regardless of what mapping `.ralph-models.yml` selects.
+
 Cost remains the reason everything else stays at opus-or-below (GH-1250
 30-day audit): most impl phases are mechanical when the plan is detailed —
 sonnet handles them; failure cases that need a higher tier are detectable
@@ -178,7 +252,7 @@ Default-fable (new 2026-07-01):
 Users WITH Fable access additionally opt in via:
 
 - `/ralph:hero-fable` (or `/ralph:hero --model fable`) — explicitly
-  experimental rail-free surface.
+  experimental rail-free surface, **not tier-governed** (see above).
 - `RALPH_IMPL_MODEL=fable` — per-session impl tier override.
 - Running the session itself on Fable (`/model fable`) — skills without a
   pin inherit it.

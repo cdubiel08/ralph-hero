@@ -352,22 +352,43 @@ function runWrite(root, config, harness) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { mode: null, harness: null, config: '.ralph-models.yml', root: process.cwd() };
+  const args = {
+    mode: null,
+    harness: null,
+    config: '.ralph-models.yml',
+    root: process.cwd(),
+    surface: 'skill',
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--check') args.mode = 'check';
     else if (arg === '--write') args.mode = 'write';
+    else if (arg === '--print-tier-table') args.mode = 'print-tier-table';
     else if (arg === '--harness') args.harness = argv[++i];
     else if (arg === '--config') args.config = argv[++i];
     else if (arg === '--root') args.root = argv[++i];
+    else if (arg === '--surface') args.surface = argv[++i];
   }
   return args;
+}
+
+/**
+ * Print `tier:model` lines for every tier under one harness/surface — the
+ * single source other checkers (e.g. check-model-tiers.sh's doc-table
+ * section) should read instead of hand-duplicating the tier->model mapping
+ * a third time (which would itself be exactly the "two parsers of one YAML"
+ * drift risk this config exists to eliminate).
+ */
+function printTierTable(config, harness, surface) {
+  return TIER_NAMES.map((tier) => `${tier}:${resolveTier(config, tier, harness, surface)}`);
 }
 
 function main(argv) {
   const args = parseArgs(argv);
   if (!args.mode) {
-    console.error('Usage: render.js --check|--write [--harness NAME] [--config PATH] [--root DIR]');
+    console.error(
+      'Usage: render.js --check|--write|--print-tier-table [--harness NAME] [--config PATH] [--root DIR] [--surface skill|agent]',
+    );
     return 2;
   }
 
@@ -380,6 +401,11 @@ function main(argv) {
     for (const line of diagnostics) console.log(line);
     console.log(ok ? 'All model-tier sites match the config.' : 'Model-tier drift detected.');
     return ok ? 0 : 1;
+  }
+
+  if (args.mode === 'print-tier-table') {
+    for (const line of printTierTable(config, harness, args.surface)) console.log(line);
+    return 0;
   }
 
   // --write
@@ -403,6 +429,7 @@ module.exports = {
   buildExpectedFrontmatter,
   runCheck,
   runWrite,
+  printTierTable,
   parseArgs,
   main,
 };

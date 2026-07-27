@@ -14,6 +14,7 @@ const {
   walkMarkdownFiles,
   runCheck,
   runWrite,
+  printTierTable,
   loadConfig,
   parseArgs,
 } = require('./render.js');
@@ -310,6 +311,43 @@ describe('cross-harness check binding', () => {
 
     const underDefault = runCheck(root, config, 'claude-code');
     assert.equal(underDefault.ok, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// printTierTable — the single source docs/CI-table checks should read from,
+// instead of hand-duplicating the tier->model mapping a third time.
+// ---------------------------------------------------------------------------
+
+describe('printTierTable', () => {
+  it('prints tier:model for every tier on the skill surface', () => {
+    const config = baseConfig();
+    assert.deepEqual(printTierTable(config, 'claude-code', 'skill'), [
+      'cheap:haiku',
+      'standard:sonnet',
+      'capable:best',
+      'frontier:fable',
+    ]);
+  });
+
+  it('prints tier:model for every tier on the agent surface', () => {
+    const config = baseConfig();
+    assert.deepEqual(printTierTable(config, 'claude-code', 'agent'), [
+      'cheap:haiku',
+      'standard:sonnet',
+      'capable:opus',
+      'frontier:fable',
+    ]);
+  });
+
+  it('reflects the second harness (claude-code-opus) for frontier', () => {
+    const config = baseConfig();
+    assert.deepEqual(printTierTable(config, 'claude-code-opus', 'skill'), [
+      'cheap:haiku',
+      'standard:sonnet',
+      'capable:best',
+      'frontier:opus',
+    ]);
   });
 });
 
