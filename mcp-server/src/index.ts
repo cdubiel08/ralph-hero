@@ -27,9 +27,7 @@ import { registerDirectionsTools } from "./tools/directions-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
-import { registerDebugTools } from "./tools/debug-tools.js";
 import { registerDecomposeTools } from "./tools/decompose-tools.js";
-import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
 import { registerActivityTools } from "./tools/activity-tools.js";
 import { registerTrendsTools } from "./tools/trends-tools.js";
 import { registerSreTools } from "./tools/sre-tools.js";
@@ -319,9 +317,6 @@ async function main(): Promise<void> {
   // Decompose feature tool (cross-repo decomposition via .ralph-repos.yml)
   registerDecomposeTools(server, client, fieldCache);
 
-  // Plan graph sync tool (sync plan dependency edges to GitHub)
-  registerPlanGraphTools(server, client);
-
   // Activity log reader (recent_activity tool — pure filesystem, no GitHub client)
   registerActivityTools(server);
 
@@ -330,11 +325,6 @@ async function main(): Promise<void> {
 
   // SRE operation tools (kubectl autoremediation — typed argv, no-shell invariant)
   registerSreTools(server, client, fieldCache);
-
-  // Debug tools (only when RALPH_DEBUG=true)
-  if (process.env.RALPH_DEBUG === 'true') {
-    registerDebugTools(server, client);
-  }
 
   // Connect via stdio transport
   const transport = new StdioServerTransport();

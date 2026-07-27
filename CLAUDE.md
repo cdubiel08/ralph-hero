@@ -124,10 +124,8 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `tree-tools.ts` | create_sub_issues |
 | `trends-tools.ts` | metrics_trends (incl. `{capture: true}`) |
 | `directions-tools.ts` | next_actions |
-| `plan-graph-tools.ts` | sync_plan_graph |
 | `sre-tools.ts` | sre__scale, sre__rollout_restart, sre__delete_pod, sre__drain |
 | `activity-tools.ts` | recent_activity |
-| `debug-tools.ts` | collate_debug (only registered when RALPH_DEBUG=true) |
 
 **GitHub client** (`github-client.ts`): Wraps `@octokit/graphql` with dual endpoints — `query()`/`mutate()` for repo operations, `projectQuery()`/`projectMutate()` for project operations (may use a separate token). Auto-injects `rateLimit` fragments into non-mutation queries.
 
@@ -147,7 +145,6 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `lock-guard.ts` | Pure lock-conflict check for `save_issue` |
 | `activity.ts` | Activity log reader (pure filesystem) |
 | `directions.ts` | Pure ranker behind `next_actions` (session-briefing directions) |
-| `plan-graph.ts` | Plan markdown → issue dependency-edge parser (pure) |
 | `snapshots.ts` / `trends.ts` | Snapshot persistence + trend computation |
 | `telemetry.ts` / `debug-logger.ts` | OTel export + JSONL debug logging (both gated by `RALPH_DEBUG=true`) |
 
@@ -252,7 +249,7 @@ When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth to
 
 ### OpenTelemetry export (`RALPH_DEBUG=true`)
 
-`mcp-server/src/lib/telemetry.ts` lazily initializes the OTel NodeSDK only when `RALPH_DEBUG=true` (zero overhead otherwise). It exports `ralph_hero.graphql` spans (emitted in `github-client.ts`) over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` — e.g. the local Langfuse harness at `~/projects/langfuse/`. Auto-instrumentation is off; a custom SpanProcessor redacts token-shaped attribute values (`gh[ps]_*` values, `*_TOKEN`/`authorization` keys) before export. The same env var gates JSONL debug logging (`debug-logger.ts`) and the debug tools.
+`mcp-server/src/lib/telemetry.ts` lazily initializes the OTel NodeSDK only when `RALPH_DEBUG=true` (zero overhead otherwise). It exports `ralph_hero.graphql` spans (emitted in `github-client.ts`) over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` — e.g. the local Langfuse harness at `~/projects/langfuse/`. Auto-instrumentation is off; a custom SpanProcessor redacts token-shaped attribute values (`gh[ps]_*` values, `*_TOKEN`/`authorization` keys) before export. The same env var gates JSONL debug logging (`debug-logger.ts`).
 
 ## GitHub Actions Workflows
 

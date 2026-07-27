@@ -155,9 +155,9 @@ vi.mock("../lib/helpers.js", async (importOriginal) => {
 // guard. The failure messages emitted below ("missing tool: X" / "unexpected
 // new tool: Y") tell you exactly which line to add or remove here.
 //
-// Note: ralph_hero__collate_debug is intentionally NOT in the manifest
-// because debug-tools is registered only when RALPH_DEBUG=true. The test
-// runs without that flag so it should not appear in `registered`.
+// Note: ralph_hero__collate_debug is not in the manifest because the tool
+// (and debug-tools.ts) was deleted in GH-1612 — it no longer exists in
+// source, rather than being gated behind RALPH_DEBUG.
 const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__add_dependency",
   "ralph_hero__add_sub_issue",
@@ -185,7 +185,6 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__sre__drain",
   "ralph_hero__sre__rollout_restart",
   "ralph_hero__sre__scale",
-  "ralph_hero__sync_plan_graph",
 ];
 
 // ---------------------------------------------------------------------------
@@ -193,7 +192,10 @@ const EXPECTED_TOOLS: readonly string[] = [
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
-  // Ensure debug tools stay out of the captured set.
+  // RALPH_DEBUG still gates JSONL debug logging and OTel export
+  // (lib/debug-logger.ts, lib/telemetry.ts); it no longer gates any tool
+  // registration since collate_debug (debug-tools.ts) was deleted in
+  // GH-1612. Cleared here for hermetic env isolation, not tool gating.
   delete process.env.RALPH_DEBUG;
 
   // Provide the minimum env needed for initGitHubClient + main() to succeed.
@@ -253,9 +255,9 @@ describe("tool registration audit", () => {
     ).toEqual([]);
   });
 
-  it("does not register debug tools when RALPH_DEBUG is unset", () => {
-    // Sanity check that the conditional debug-tools branch in index.ts is
-    // gated as documented.
+  it("never registers collate_debug (deleted in GH-1612)", () => {
+    // Sanity check that the tool is gone from source entirely, not merely
+    // gated behind RALPH_DEBUG.
     expect(registered).not.toContain("ralph_hero__collate_debug");
   });
 });
