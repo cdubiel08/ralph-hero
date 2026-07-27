@@ -24,8 +24,8 @@ These labels are written by triage's `WAIT-pr`/`WAIT-upstream` verdicts and park
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
-| any | `blocked:pr-*` (prefix-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch-pr")` — board-wide sweep, no issue scoping. Label persists. Producer: triage `WAIT-pr` (#1404); consumer: watch-pr (#1406). |
-| any | `blocked:upstream` (exact-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch-upstream")` — board-wide sweep. Label persists. Producer: triage `WAIT-upstream` (#1404); consumer: watch-upstream (#1407). |
+| any | `blocked:pr-*` (prefix-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch --kind pr")` — board-wide sweep, no issue scoping. Label persists. Producer: triage `WAIT-pr` (#1404); consumer: `caretake --mode watch --kind pr` (#1406). |
+| any | `blocked:upstream` (exact-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch --kind upstream")` — board-wide sweep. Label persists. Producer: triage `WAIT-upstream` (#1404); consumer: `caretake --mode watch --kind upstream` (#1407). |
 
 ## Priority 3 — Automation labels (label exists, producer pending until noted)
 
@@ -75,7 +75,7 @@ Director evaluates in this order:
 
 1. Fetch the candidate issue's labels array.
 2. Check for any `trigger:*` label (Priority 1). First match wins.
-3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch-pr`; exact-match `blocked:upstream` → fire `caretake --mode watch-upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed.
+3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch --kind pr`; exact-match `blocked:upstream` → fire `caretake --mode watch --kind upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed.
 4. Check for any automation label: `watcher-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
 5. Fall through to `workflow_state` lookup (Priority 4).
 6. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.

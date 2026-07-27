@@ -71,9 +71,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `caretake --mode hygiene` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic scan |
 | `caretake --mode unblock` | Yes | — | dynamic | `Queue empty.` | autonomous path only (no `--question`) |
 | `caretake --mode split` | Yes | — | dynamic | `Queue empty.` | drain M/L/XL queue |
-| `caretake --mode watch-pr` | Yes | — | — | heartbeat (no `Queue empty.`) | sweep `blocked:pr-NNN` items; usually runs inside the `--mode all` fan-out |
-| `caretake --mode watch-upstream` | Yes | — | — | heartbeat (no `Queue empty.`) | sweep `blocked:upstream` items; usually runs inside the `--mode all` fan-out |
-| `caretake --mode watch-blockers` | Yes | — | — | heartbeat (no `Queue empty.`) | advance items whose `blockedBy` edges all closed; usually runs inside the `--mode all` fan-out |
+| `caretake --mode watch [--kind pr\|upstream\|issue]` | Yes | — | — | heartbeat (no `Queue empty.`) | sweep `blocked:pr-NNN` / `blocked:upstream` / `blockedBy`-edge items by kind; bare invocation sweeps all three serially; usually runs inside the `--mode all` fan-out |
 | `caretake --mode all` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic fan-out: hygiene + watch-* + report |
 | `caretake` default (event) | Yes | `--mode triage` | dynamic | `Queue empty.` | drain `trigger:*` labels (`--issue NNN` / `--auto`→triage). Bare no-arg `--loop` → heartbeat fan-out (`caretake:all`), not this drain. |
 | `caretake --mode reflect` | No | — | — | — | single artifact per session |

@@ -8,7 +8,7 @@ export RALPH_SUBCOMMAND=enrich
 
 This is the background half of the capture custody chain: `/ralph:form --mode draft` (#1559) writes `status: draft` + `captured`; this mode grounds each draft in codebase/prior-art/issue context before the daily brief (#1553, downstream reader) ever sees it.
 
-No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode watch-pr`) — it mutates only file contents under `thoughts/shared/ideas/`, never workflow state. The terminal token is emitted by convention, not hook-enforced.
+No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode watch`) — it mutates only file contents under `thoughts/shared/ideas/`, never workflow state. The terminal token is emitted by convention, not hook-enforced.
 
 ## §Step 1: Verify branch
 

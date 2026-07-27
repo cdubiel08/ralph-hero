@@ -1,6 +1,6 @@
 ---
-description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "capture friction", "reflect on the session", "unblock issue", "answer unblock questions", "split this issue", "decompose ticket", "enrich idea files". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/reflect/split/watch-pr/watch-upstream/watch-blockers/enrich) each route to a dedicated mode body under `modes/`.
-argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|reflect|split|watch-pr|watch-upstream|watch-blockers|enrich|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
+description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "capture friction", "reflect on the session", "unblock issue", "answer unblock questions", "split this issue", "decompose ticket", "enrich idea files". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/reflect/split/watch/enrich) each route to a dedicated mode body under `modes/`.
+argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|reflect|split|watch [--kind pr|upstream|issue]|enrich|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
 context: inline
 model: sonnet
 hooks:
@@ -82,20 +82,18 @@ allowed-tools:
 
 # /ralph:caretake — Board steward in one verb
 
-All board maintenance flows through this one entrypoint. Ten named modes plus a default event-driven dispatcher. Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out.
+All board maintenance flows through this one entrypoint. Eight named modes plus a default event-driven dispatcher. Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out.
 
 | Mode | Trigger | Role |
 |---|---|---|
 | **default** | `/ralph:caretake --issue NNN` | Event-driven: read labels, dispatch the right mode via `Skill()` |
-| **all** | `/ralph:caretake` (no args) or `/ralph:caretake --mode all` | Heartbeat fan-out: hygiene + watch-pr + watch-upstream + watch-blockers + enrich + catch-up report |
+| **all** | `/ralph:caretake` (no args) or `/ralph:caretake --mode all` | Heartbeat fan-out: hygiene + watch + enrich + catch-up report |
 | **triage** | `/ralph:caretake --mode triage [#NNN]` | Pick oldest untriaged Backlog, assess, route |
 | **hygiene** | `/ralph:caretake --mode hygiene` | Scan for archive candidates, stale items, WIP violations |
 | **unblock** | `/ralph:caretake --mode unblock [#NNN] [--question]` | Interactive answer OR autonomous request post |
 | **reflect** | `/ralph:caretake --mode reflect` | Capture intra-session friction into research doc |
 | **split** | `/ralph:caretake --mode split [#NNN]` | Split M/L/XL → multiple XS/S sub-issues |
-| **watch-pr** | `/ralph:caretake --mode watch-pr` | Resolve `blocked:pr-NNN` items when their PR merges (advance) or closes-unmerged (escalate) |
-| **watch-upstream** | `/ralph:caretake --mode watch-upstream` | Resolve `blocked:upstream` items when their external condition resolves (advance) or URL is dead/unparseable (escalate) |
-| **watch-blockers** | `/ralph:caretake --mode watch-blockers` | Auto-advance items whose `blockedBy` dependency edges have all closed (resolves the `WAIT-issue=NNN` triage verdict); leave items with any open blocker |
+| **watch** | `/ralph:caretake --mode watch [--kind pr\|upstream\|issue]` | Resolve `WAIT-*`-parked items by kind: `pr` (blocked:pr-NNN → PR merge/close), `upstream` (blocked:upstream → external condition), `issue` (blockedBy edge → all blockers closed). Bare invocation sweeps all three kinds serially. |
 | **enrich** | `/ralph:caretake --mode enrich` | Background-enrich `status: draft` idea files (codebase + prior art + related issues), flip to `status: forming` |
 
 References: [label-routing.md](label-routing.md) (default-mode dispatch table), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts), [split-decomposition.md](split-decomposition.md) (split-mode strategy + hook contracts).
@@ -117,6 +115,7 @@ References: [label-routing.md](label-routing.md) (default-mode dispatch table), 
 - No args (no `--issue`) → bare invocation runs the **heartbeat fan-out** (`RALPH_SUBCOMMAND=all`; see the dispatch body), so loop it with the `caretake:all` heartbeat row — default interval `1h`, **no `Queue empty.` terminal**, re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:all row>")` then STOP. (The `caretake:default-event` row is the `--issue NNN`-scoped trigger-drain path — NOT the bare no-arg fan-out.)
 - `--issue NNN` present, `--mode reflect`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
 - **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode all ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
+- **`--mode watch`** (with or without `--kind`) → heartbeat; default interval `1h`. Use `caretake:watch` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:watch row>")` then STOP.
 
 ```bash
 # Parse $ARGUMENTS into mode + flags. Each mode body sets RALPH_SUBCOMMAND itself
@@ -136,12 +135,10 @@ esac
 - **`--mode <name>`** → read `modes/<name>.md` and follow its body. The mode body sets `RALPH_SUBCOMMAND=<name>` and runs.
 - **No args** or **`--mode all`** → heartbeat fan-out. Invoke serially:
   1. `Skill("ralph:caretake", args="--mode hygiene")`
-  2. `Skill("ralph:caretake", args="--mode watch-pr")`
-  3. `Skill("ralph:caretake", args="--mode watch-upstream")`
-  4. `Skill("ralph:caretake", args="--mode watch-blockers")`
-  5. `Skill("ralph:caretake", args="--mode enrich")`
-  6. `Skill("ralph:catch-up", args="--mode report")`
-  Report consolidated outcome (one line per child — 6 total). The watch modes and enrich run before report so the dashboards and brief reflect post-enrichment board/file state; all no-op (`IDLE` / `Queue empty.`) on an empty board/queue, or `SKIPPED` when the heartbeat fires off `main`.
+  2. `Skill("ralph:caretake", args="--mode watch")`
+  3. `Skill("ralph:caretake", args="--mode enrich")`
+  4. `Skill("ralph:catch-up", args="--mode report")`
+  Report consolidated outcome (one line per child — 4 total). `--mode watch` (bare, no `--kind`) sweeps all three watcher kinds serially in this one child. The watch and enrich children run before report so the dashboards and brief reflect post-enrichment board/file state; all no-op (`IDLE` / `Queue empty.`) on an empty board/queue, or `SKIPPED` when the heartbeat fires off `main`.
 
 ## Step 2: Emit result line
 
@@ -154,9 +151,7 @@ Each mode body ends by emitting its terminal token (see [outcome-tokens.md](outc
 - [modes/unblock.md](modes/unblock.md) — interactive answer OR autonomous request
 - [modes/reflect.md](modes/reflect.md) — intra-session friction → research doc
 - [modes/split.md](modes/split.md) — M/L/XL → XS/S sub-issues
-- [modes/watch-pr.md](modes/watch-pr.md) — resolve `blocked:pr-NNN` items on PR merge/close
-- [modes/watch-upstream.md](modes/watch-upstream.md) — resolve `blocked:upstream` items on external condition
-- [modes/watch-blockers.md](modes/watch-blockers.md) — resolve dependency-parked items on blocker close
+- [modes/watch.md](modes/watch.md) — resolve `WAIT-*`-parked items by kind (`--kind pr|upstream|issue`; bare sweeps all three)
 - [modes/enrich.md](modes/enrich.md) — background-enrich `status: draft` idea files
 
 ## Per-mode terminal tokens
@@ -169,9 +164,7 @@ The harness reads these from the transcript; do not paraphrase. Full table in [o
 - unblock (autonomous): `UNBLOCK REQUEST POSTED` | `Queue empty.`
 - reflect: `REFLECT <path>` | `REFLECT SKIPPED <reason>`
 - split: `SPLIT <N>` | `SPLIT SKIPPED <reason>`
-- watch-pr: `WATCH-PR ADVANCED <N>` | `WATCH-PR IDLE` | `WATCH-PR SKIPPED — branch <name> is not main`
-- watch-upstream: `WATCH-UPSTREAM ADVANCED <N>` | `WATCH-UPSTREAM IDLE` | `WATCH-UPSTREAM SKIPPED — branch <name> is not main`
-- watch-blockers: `WATCH-BLOCKERS <n> advanced, <m> still blocked` | `WATCH-BLOCKERS IDLE` | `WATCH-BLOCKERS SKIPPED — branch <name> is not main`
+- watch (per kind, `KIND` ∈ `PR`/`UPSTREAM`/`ISSUE`): `WATCH-<KIND> ADVANCED <N>` | `WATCH-<KIND> IDLE` | `WATCH-<KIND> SKIPPED — branch <name> is not main`
 - enrich: `ENRICHED <N>` | `Queue empty.` | `ENRICH SKIPPED <reason>`
 
 ## Notes

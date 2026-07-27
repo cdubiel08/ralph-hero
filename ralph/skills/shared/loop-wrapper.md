@@ -44,6 +44,7 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 | review:merge | `MERGED / …` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain mergeable queue |
 | caretake:triage | `TRIAGED <verdict>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Backlog |
 | caretake:hygiene | `HYGIENE COMPLETE <N>` / `HYGIENE BLOCKED <reason>` | (none — heartbeat; re-fire always) | default interval 1h; 60-270s if changes made | periodic scan |
+| caretake:watch | `WATCH-<KIND> ADVANCED <N>` | (none — heartbeat; re-fire always) | default interval 1h | sweeps pr/upstream/issue kinds; bare invocation runs all three serially |
 | caretake:unblock | `UNBLOCK REQUEST POSTED` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Human Needed queue |
 | caretake:split | `SPLIT <N>` / `SPLIT SKIPPED <reason>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain M/L/XL queue |
 | caretake:all | (fan-out, no aggregated sentinel) | (none — heartbeat; re-fire always) | default interval 1h; schedule accordingly | periodic fan-out heartbeat |
@@ -52,7 +53,7 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 | hero:auto | `result: Dispatched #NNN to <team> via <entrypoint>` AND `result: Queue empty.` (both re-fire) | (none — never terminates; cancel via `/tasks`) | 60-270s on dispatch; **3600s flat** when the queue is idle / `Queue empty` | **NEVER-TERMINATING adaptive watcher** (not a drain). `--mode auto` wraps the internal `--tick` step; BOTH its result lines re-fire the loop. `result: Queue empty.` is an *idle backoff* signal (sleep at the 1h ceiling, then re-check), NOT a stop. Tight cadence during bursts, 1h floor when idle; runs until the user deletes the pending wakeup via `/tasks`. Re-fire is hook-enforced by `autopilot-stop-gate.sh` (keyed to `RALPH_COMMAND=hero`). |
 | hero:watch | `result: Watch complete — …` | (none — heartbeat; re-fire always) | default interval 15m; schedule accordingly | polling heartbeat |
 
-**Heartbeat vs. drain continuation rule**: heartbeat / never-terminate modes (caretake:hygiene, caretake:all, catch-up:report, hero:watch, **hero:auto**) do NOT list `Queue empty.` as a terminal sentinel — they re-fire regardless of whether any work was found. The first four re-fire on a fixed clock; **hero:auto re-fires on an adaptive cadence** (tight during bursts, 3600s flat when idle). Drain modes DO list `Queue empty.` as the signal to end the loop.
+**Heartbeat vs. drain continuation rule**: heartbeat / never-terminate modes (caretake:hygiene, caretake:watch, caretake:all, catch-up:report, hero:watch, **hero:auto**) do NOT list `Queue empty.` as a terminal sentinel — they re-fire regardless of whether any work was found. All but hero:auto re-fire on a fixed clock; **hero:auto re-fires on an adaptive cadence** (tight during bursts, 3600s flat when idle). Drain modes DO list `Queue empty.` as the signal to end the loop.
 
 ---
 

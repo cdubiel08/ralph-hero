@@ -56,6 +56,7 @@ row_has_queue_empty() {
 
 HEARTBEAT_MODES=(
   "caretake:hygiene"
+  "caretake:watch"
   "caretake:all"
   "catch-up:report"
   "hero:watch"

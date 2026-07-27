@@ -13,9 +13,9 @@ The **9 structured verdicts** (#1417 + #1472) each emit a verbatim `TRIAGED <ver
 - `TRIAGED SPLIT` — children created; issue stays in Backlog with the `ralph-triage` label so `--mode split` / the picker doesn't re-select it.
 - `TRIAGED PROMOTE-research` — routed to Research Needed for investigation.
 - `TRIAGED PROMOTE-plan` — issue well-specified; routed to Ready for Plan (research skipped).
-- `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` + `ralph-triage`; the `=NNN` PR number is part of the token. Phase 3 (#1406) watch-pr strips the label when the PR merges.
-- `TRIAGED WAIT-upstream` — parked in **Backlog** with `blocked:upstream` + `ralph-triage`; the upstream URL is recorded in the `## Triage Decision` comment, not the token (URLs are unwieldy in a terminal token). Phase 3 (#1407) watch-upstream resolves it.
-- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN + `add_dependency` edge written + `ralph-triage` applied; the `=NNN` issue number is part of the token. **NOT parked in Backlog** — the picker's Backlog-fallback would re-surface it on every autopilot tick (no watcher owns OPEN-issue blockers until Gap C `watch-blockers` ships). Once Gap A (#1470) and Gap C ship, this target relaxes to Backlog+edge. The `WAIT-issue` family member distinguishes OPEN-issue blockers from PR/upstream blockers: WAIT-pr and WAIT-upstream stay Backlog (watched); WAIT-issue goes Human Needed (unwatched until Gap C).
+- `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` + `ralph-triage`; the `=NNN` PR number is part of the token. `caretake --mode watch --kind pr` (#1406) strips the label when the PR merges.
+- `TRIAGED WAIT-upstream` — parked in **Backlog** with `blocked:upstream` + `ralph-triage`; the upstream URL is recorded in the `## Triage Decision` comment, not the token (URLs are unwieldy in a terminal token). `caretake --mode watch --kind upstream` (#1407) resolves it.
+- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN + `add_dependency` edge written + `ralph-triage` applied; the `=NNN` issue number is part of the token. **NOT parked in Backlog** — the picker's Backlog-fallback would re-surface it on every autopilot tick (no watcher owns OPEN-issue blockers until Gap C `caretake --mode watch --kind issue` ships). Once Gap A (#1470) and Gap C ship, this target relaxes to Backlog+edge. The `WAIT-issue` family member distinguishes OPEN-issue blockers from PR/upstream blockers: WAIT-pr and WAIT-upstream stay Backlog (watched); WAIT-issue goes Human Needed (unwatched until Gap C).
 - `TRIAGED WAIT-decision` — escalated to Human Needed with a `## Escalation` comment naming the decision required; `ralph-triage` applied.
 - `Queue empty.` — no untriaged Backlog issues remain.
 
@@ -69,29 +69,19 @@ Reflect has no Stop postcondition hook — the mode is an artifact-writer and do
 
 `split-postcondition.sh` (Stop hook) greps the transcript for one of these tokens AND verifies via `list_sub_issues` that the parent has ≥ 2 children when `SPLIT <N>` is emitted.
 
-## Watch-PR terminal tokens
+## Watch terminal tokens
+
+One token per kind processed (`KIND` ∈ `PR` / `UPSTREAM` / `ISSUE`) — one line for `--kind <x>`, three lines in `pr`/`upstream`/`issue` order for a bare invocation:
 
 - `WATCH-PR ADVANCED <N>` — `<N>` items **resolved this sweep**: merged-PR items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS closed-unmerged items escalated (`WAIT-decision` → Human Needed). Open/still-waiting items are NOT counted.
 - `WATCH-PR IDLE` — scan ran cleanly; no Backlog items carry a `blocked:pr-*` label.
-- `WATCH-PR SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit; watch-pr refuses to mutate state from a feature branch (parity with `TRIAGED skipped …`).
-
-watch-pr has no `Stop` postcondition hook (parity with hygiene) — it mutates only the `blocked:pr-*`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
-
-## Watch-Upstream terminal tokens
-
 - `WATCH-UPSTREAM ADVANCED <N>` — `<N>` items **resolved this sweep**: condition-met items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS dead-URL/unparseable items escalated (`WAIT-decision` → Human Needed). Still-blocked / can't-confirm items are NOT counted (conservative — never false-advance).
 - `WATCH-UPSTREAM IDLE` — scan ran cleanly; no Backlog items carry a `blocked:upstream` label.
-- `WATCH-UPSTREAM SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
+- `WATCH-ISSUE ADVANCED <N>` — `<N>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced to the embedded/default target). Informational prose `, <m> still blocked` (count of items left with ≥1 open blocker) may follow the token but is not part of the grepped match. Items with no blocker signal are not counted in either number.
+- `WATCH-ISSUE IDLE` — scan ran cleanly; no dependency-parked items found.
+- `WATCH-<KIND> SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit; watch refuses to mutate state from a feature branch (parity with `TRIAGED skipped …`).
 
-watch-upstream has no `Stop` postcondition hook (parity with watch-pr/hygiene) — it mutates only the `blocked:upstream`-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
-
-## Watch-Blockers terminal tokens
-
-- `WATCH-BLOCKERS <n> advanced, <m> still blocked` — `<n>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced to the embedded/default target); `<m>` items left with ≥1 open blocker. Items with no blocker signal are not counted in either.
-- `WATCH-BLOCKERS IDLE` — scan ran cleanly; no dependency-parked items found.
-- `WATCH-BLOCKERS SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
-
-watch-blockers has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/hygiene) — it mutates only the dependency-parked items it owns. The token is reported for harness/loop consumption; no automated verification is performed against it.
+watch has no `Stop` postcondition hook (parity with hygiene) — it mutates only the items it owns per kind. The token(s) are reported for harness/loop consumption; no automated verification is performed against them.
 
 ## Enrich terminal tokens
 
@@ -100,7 +90,7 @@ watch-blockers has no `Stop` postcondition hook (parity with watch-pr/watch-upst
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
 - `ENRICH SKIPPED push-rejected` — §Step 4 non-fast-forward push failed even after one `git pull --rebase origin main` retry; the commit stays local.
 
-enrich has no `Stop` postcondition hook (parity with watch-pr/watch-upstream/watch-blockers/hygiene) — it mutates only the `status: draft` idea files it enriches, never board/workflow state. The token is reported for harness/loop consumption; no automated verification is performed against it.
+enrich has no `Stop` postcondition hook (parity with watch/hygiene) — it mutates only the `status: draft` idea files it enriches, never board/workflow state. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
 ## Loop continuation
 
@@ -108,6 +98,6 @@ When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrap
 
 **Drain modes** (triage, unblock, split, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
 
-**Heartbeat modes** (hygiene, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. The watch modes (watch-pr, watch-upstream, watch-blockers) and enrich run as serial children of `--mode all` (not independently looped) and emit their tokens into the consolidated heartbeat report — enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain.
+**Heartbeat modes** (hygiene, watch, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. Watch and enrich run as serial children of `--mode all` (not independently looped there) and emit their tokens into the consolidated heartbeat report — enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain. `--mode watch` can also be looped directly (`--loop`), in which case a bare invocation sweeps all three kinds every tick.
 
 **Non-loop invocations** are unaffected: all token semantics above apply to standalone caretake calls; the loop-continuation layer only activates when `--loop` was passed to the outermost invocation.
