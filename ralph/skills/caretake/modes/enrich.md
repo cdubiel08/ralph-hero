@@ -8,7 +8,7 @@ export RALPH_SUBCOMMAND=enrich
 
 This is the background half of the capture custody chain: `/ralph:form --mode draft` (#1559) writes `status: draft` + `captured`; this mode grounds each draft in codebase/prior-art/issue context before the daily brief (#1553, downstream reader) ever sees it.
 
-No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode watch`) — it mutates only file contents under `thoughts/shared/ideas/`, never workflow state. The terminal token is emitted by convention, not hook-enforced.
+No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode watch`) — it never mutates GitHub workflow state. The terminal token is emitted by convention, not hook-enforced. **It does write to git** (§Step 4) — `main` is ruleset-protected (GH-1589: no direct pushes, even from automation), so this mode lands its commit through a PR, never a direct push to `main`.
 
 ## §Step 1: Verify branch
 
@@ -68,26 +68,46 @@ _Enriched: <UTC ISO-8601 timestamp>_
 
 Update frontmatter: `status: forming`, `enriched: <same UTC ISO-8601 timestamp>`.
 
-## §Step 4: Commit and push
+## §Step 4: Commit and open (or update) a PR — never push `main` directly
 
-This step only runs when §Step 2 selected at least one file (N=0 already short-circuited to `Queue empty.`).
+This step only runs when §Step 2 selected at least one file (N=0 already short-circuited to `Queue empty.`). `main` rejects all direct pushes (GH-1589 ruleset) — land the commit through a standing PR-only branch instead:
 
 ```bash
+BRANCH="chore/enrich-ideas"
+git fetch origin "$BRANCH" 2>/dev/null
+if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+  git checkout -B "$BRANCH" "origin/$BRANCH"
+  git merge --ff-only origin/main
+else
+  git checkout -B "$BRANCH" origin/main
+fi
 git add thoughts/shared/ideas
 git commit -m "chore(ideas): enrich <N> idea file(s)"
-git push origin main
+git push origin "$BRANCH"
+git checkout main
 ```
 
-**Push-failure rule.** On a non-fast-forward reject, run `git pull --rebase origin main` and retry the push once. If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local (findings are not lost; on the next pass those files are already at `status: forming` and will be skipped, so re-run manually or wait for git state to reconcile).
+Open the PR (idempotent across heartbeat ticks — reuse the existing one if still open):
+
+```bash
+gh pr create --base main --head "$BRANCH" \
+  --title "chore(ideas): enrich idea file(s)" \
+  --body "Automated background enrichment (see the appended ## Enrichment sections). File-only change — no board/workflow-state mutation." \
+  || gh pr view "$BRANCH" --json url -q .url
+```
+
+`gh pr create` fails with "already exists" once a PR is open for `$BRANCH` — that failure is expected on every subsequent tick; the new commit lands as an update to the existing open PR, so fall back to looking up its URL rather than treating the failure as an error.
+
+**Push-failure rule.** On a branch-push reject (rare — `$BRANCH` is rebased onto `origin/main` above), retry the push once. If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local (findings are not lost; on the next pass those files are already at `status: forming` and will be skipped, so re-run manually to retry the push).
 
 ## §Step 5: Emit terminal token
 
 Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 
-- `ENRICHED <N>` — `<N>` files enriched, appended, stamped, and pushed this pass. A noted remainder (§Step 2) belongs in the surrounding summary line, not the token itself.
+- `ENRICHED <N> (PR <url>)` — `<N>` files enriched, appended, and stamped this pass; committed to `chore/enrich-ideas` and opened/updated as a PR against `main` (never pushed directly). A noted remainder (§Step 2) belongs in the surrounding summary line, not the token itself.
 - `Queue empty.` — no `status: draft` files found (§Step 2 short-circuit).
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
-- `ENRICH SKIPPED push-rejected` — §Step 4 push retry exhausted; commit stays local.
+- `ENRICH SKIPPED push-rejected` — §Step 4 branch-push retry exhausted; commit stays local.
 
 ## §Constraints
 

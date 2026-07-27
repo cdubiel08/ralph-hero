@@ -87,9 +87,10 @@ and STOP. Do NOT triage, do NOT change the issue state.
 
 | Blocker kind | Blocker state | Correct action |
 |---|---|---|
-| OPEN issue (sibling/dep) | OPEN | `WAIT-issue=NNN` → Human Needed (Backlog is unsafe — picker will re-surface; no watcher owns this yet; see Gap A cross-ref below) |
+| OPEN issue (sibling/dep) | OPEN | `WAIT-issue=NNN` → Human Needed (Backlog is unsafe — picker will re-surface; `caretake --mode watch --kind issue` auto-advances once #NNN closes — see Gap A cross-ref below for why the target is Human Needed rather than Backlog+edge) |
 | OPEN issue (sibling/dep) | CLOSED | Advance the item per the embedded condition — do NOT park |
-| Open PR | open/merged? | `WAIT-pr=NNN` → stays Backlog (`caretake --mode watch --kind pr` owns it, #1406) |
+| Open PR | OPEN | `WAIT-pr=NNN` → stays Backlog (`caretake --mode watch --kind pr` owns it, #1406) |
+| Open PR | MERGED | Blocker resolved — do NOT park. Advance the item per whatever verdict it merits now (same treatment as a CLOSED blocking issue, above) |
 | External URL | active | `WAIT-upstream=URL` → stays Backlog (`caretake --mode watch --kind upstream` owns it, #1407) |
 | None | — | Normal verdict flow below |
 
@@ -120,7 +121,7 @@ When uncertain, prefer `PROMOTE-research` (route for investigation) or `WAIT-dec
 
 **Orthogonal action — `RE-ESTIMATE`**: if the estimate is missing or wrong, correct it (issue stays in Backlog for re-triage on the next sweep). This is a field fix, not a routing verdict, so it composes with — rather than replaces — one of the 9 verdicts on a later tick.
 
-> The `WAIT-*` verdicts only *park* the item against a labelled condition this phase (Phase 1, #1404). The watchers that strip the label and re-apply the deferred verdict ship in Phase 3 (#1406/#1407). Until then a `WAIT-*` item waits indefinitely with its `blocked:*` label.
+> The `WAIT-*` verdicts *park* the item against a labelled (or, for `WAIT-issue`, dependency-edge) condition; `caretake --mode watch --kind {pr,upstream,issue}` (#1406/#1407/#1473) is the live watcher that strips the label/edge and applies the deferred advance when the condition resolves — see [watch.md](watch.md).
 
 ## §Step 5: Take action
 

@@ -79,7 +79,7 @@ All board maintenance flows through this one entrypoint. Seven named modes plus 
 | **unblock** | `/ralph:caretake --mode unblock [#NNN] [--question]` | Interactive answer OR autonomous request post |
 | **reflect** | `/ralph:caretake --mode reflect` | Capture intra-session friction into research doc |
 | **watch** | `/ralph:caretake --mode watch [--kind pr\|upstream\|issue]` | Resolve `WAIT-*`-parked items by kind: `pr` (blocked:pr-NNN → PR merge/close), `upstream` (blocked:upstream → external condition), `issue` (blockedBy edge → all blockers closed). Bare invocation sweeps all three kinds serially. |
-| **enrich** | `/ralph:caretake --mode enrich` | Background-enrich `status: draft` idea files (codebase + prior art + related issues), flip to `status: forming` |
+| **enrich** | `/ralph:caretake --mode enrich` | Background-enrich `status: draft` idea files (codebase + prior art + related issues), flip to `status: forming`, land via a standing PR against `main` (never a direct push — GH-1589) |
 
 References: [../shared/event-taxonomy.md](../shared/event-taxonomy.md) (default-mode dispatch table — single-sourced with hero's Director classifier, GH-1607), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts).
 
@@ -99,8 +99,8 @@ References: [../shared/event-taxonomy.md](../shared/event-taxonomy.md) (default-
 - `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row. Emit `Skill("loop", …)` then STOP.
 - No args (no `--issue`) → bare invocation runs the **heartbeat fan-out** (`RALPH_SUBCOMMAND=all`; see the dispatch body), so loop it with the `caretake:all` heartbeat row — default interval `1h`, **no `Queue empty.` terminal**, re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:all row>")` then STOP. (The `caretake:default-event` row is the `--issue NNN`-scoped trigger-drain path — NOT the bare no-arg fan-out.)
 - `--issue NNN` present, `--mode reflect`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
-- **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode all ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
-- **`--mode watch`** (with or without `--kind`) → heartbeat; default interval `1h`. Use `caretake:watch` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:watch row>")` then STOP.
+- **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. `STRIPPED_ARGS` already carries the original `--mode all` — do NOT re-prefix it. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
+- **`--mode watch`** (with or without `--kind`) → heartbeat; default interval `1h`. Use `caretake:watch` manifest row — no `Queue empty.` terminal; re-fires on clock. `STRIPPED_ARGS` already carries the original `--mode watch [--kind …]` — do NOT re-prefix it. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:watch row>")` then STOP.
 
 ```bash
 # Parse $ARGUMENTS into mode + flags. Each mode body sets RALPH_SUBCOMMAND itself
@@ -123,7 +123,7 @@ esac
   2. `Skill("ralph:caretake", args="--mode watch")`
   3. `Skill("ralph:caretake", args="--mode enrich")`
   4. `Skill("ralph:catch-up", args="--mode report")`
-  Report consolidated outcome (one line per child — 4 total). `--mode watch` (bare, no `--kind`) sweeps all three watcher kinds serially in this one child. The watch and enrich children run before report so the dashboards and brief reflect post-enrichment board/file state; all no-op (`IDLE` / `Queue empty.`) on an empty board/queue, or `SKIPPED` when the heartbeat fires off `main`.
+  Report consolidated outcome (one line per child — 4 total). `--mode watch` (bare, no `--kind`) sweeps all three watcher kinds serially in this one child. The watch and enrich children run before report so the dashboards and brief reflect post-enrichment board/file state; all no-op (`IDLE` / `Queue empty.`) on an empty board/queue, or `SKIPPED` when the heartbeat fires off `main`. Enrich never pushes `main` directly even when it has files to land — it opens/updates a PR (`modes/enrich.md` § Step 4) and reports `ENRICHED <N> (PR <url>)`, so the routine no-argument heartbeat cannot perform an unreviewed repository write.
 
 ## Step 2: Emit result line
 

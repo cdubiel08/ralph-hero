@@ -164,7 +164,7 @@ esac
 - MODE `review` → `Skill("loop", …)` using the `plan:review` row, then STOP.
 - MODE `default`, `iterate`, or `epic` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
-No env-flip is needed for most modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch from each session-written doc's artifact dir; state-gate.sh accepts the union of legitimate transitions across all modes). The `split-*` gates are the exception — they fire on MCP tool payloads (`get_issue`, `create_issue`/`create_sub_issues`) and Stop, none of which carry a `file_path`, so they key on `RALPH_SUBCOMMAND` set at Step 0 instead (see `decomposition.md` § Atomic split for the `epic-split` re-export the atomic-split path additionally sets on top of the Step 0 `epic` value).
+Most modes need no env-flip — hooks discriminate by the file path being written. The `split-*` gates are the exception (MCP payloads + Stop carry no `file_path`), so they key on `RALPH_SUBCOMMAND` instead — see `decomposition.md` § Hook contract for the full discrimination rationale and the `epic-split` re-export.
 
 ## Default flow
 
@@ -196,12 +196,9 @@ Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced.
 
 ## --mode epic
 
-The single decomposition surface (GH-1605). Folds `ralph-plan-epic` (plan-of-plans) AND the atomic-split side of the retired `ralph-split` / caretake's retired split mode into one mode, discriminated by the epic's own shape rather than a separate flag:
+The single decomposition surface (GH-1605): plan-of-plans (strategic, multi-feature) AND atomic split (one M/L/XL issue → XS/S siblings), discriminated by the epic's own shape rather than a separate flag. Path selection + shape rules: `decomposition.md` § When epic-mode applies / § Atomic split § When to split. The atomic-split path re-exports `RALPH_SUBCOMMAND=epic-split` (Step 3' below); see `decomposition.md` § Hook contract for the full arming/discrimination rationale.
 
-- **Plan-of-plans** (the common case) — issue is `kind:epic`/`kind:feature`-labeled, or its body describes 3+ distinct features/surfaces (`decomposition.md` § When epic-mode applies). Writes a plan-of-plans doc + creates S/M feature children with dependency edges.
-- **Atomic split** — issue is M/L/XL but does NOT clear the plan-of-plans bar (no natural 3+-feature decomposition; body describes sub-deliverables of one feature). Decomposes into XS/S sub-issues per `decomposition.md` § Atomic split. This path additionally re-exports `RALPH_SUBCOMMAND=epic-split` (on top of the Step 0 `epic` value) so the `split-*` hooks arm their XS/S ceiling + ≥2-children postcondition — the plan-of-plans path never re-exports this and stays at `epic`, where the same three hooks early-exit (S/M feature children pass; no ≥2-children requirement).
-
-0. **Classify** — read the issue body + labels; decide plan-of-plans vs atomic split per `decomposition.md` § When epic-mode applies / § Atomic split § When to split. When ambiguous, prefer plan-of-plans if 2+ independent features can be named without inventing scope; otherwise atomic split.
+0. **Classify** — read the issue body + labels; decide plan-of-plans vs atomic split per `decomposition.md`. When ambiguous, prefer plan-of-plans if 2+ independent features can be named without inventing scope; otherwise atomic split.
 1. **Lock epic** — `save_issue(workflowState: "__LOCK__", command: "plan")` on the epic.
 2. **Context gathering** — read epic body + comments + any linked research. Spawn `codebase-locator` for affected areas; spawn `thoughts-locator` for prior plans on the same epic. Wait for ALL.
 

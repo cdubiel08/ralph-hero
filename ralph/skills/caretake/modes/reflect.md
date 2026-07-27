@@ -228,7 +228,7 @@ Routing:
 
 ## §Step 7: Record outcome (optional)
 
-```
+```text
 knowledge_record_outcome(
   event_type="reflect_completed",
   payload={

@@ -9,6 +9,7 @@ Before dispatching any sub-skill or subagent, verify the issue body contains at 
 - A trace ID matching `projects/[^/]+/traces/[a-f0-9]+`
 - A literal `gcloud logging read ...` snippet
 - A `<!-- gcp-policy: ... -->` marker (which implies an upstream alert source that gcp-incident-triage will query)
+- A `langfuse-trace:` URL (the dispatch table below routes this same signal to `ralph:log-reader` — it must clear this precondition first)
 
 If none present, post a `needs input:` comment and escalate to Human Needed:
 
@@ -47,7 +48,7 @@ If the requested action is not in the list, do NOT dispatch sre-fixit. Escalate 
 2. If empty, emit `result: heartbeat: 0 alerts dispatched` and stop.
 3. For each issue, dispatch per the table above (sequential — avoids race conditions on shared board state).
 4. Emit:
-   ```
+   ```text
    result: heartbeat: N alerts dispatched
    ```
 

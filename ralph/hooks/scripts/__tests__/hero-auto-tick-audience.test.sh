@@ -13,14 +13,19 @@
 # --mode auto) so the call site cannot silently regress to the human
 # default again (the #1159 regression this issue fixes).
 #
-# Strategy: grep structural invariants over ralph/skills/hero/SKILL.md.
-# The default-mode picker call site legitimately keeps next_actions({})
-# (it feeds an interactive AskUserQuestion), so the negative assertion is
-# SCOPED to the "## Auto tick" section rather than the whole file.
+# Strategy: grep structural invariants over the hero skill's Auto tick
+# content. The default-mode picker call site legitimately keeps
+# next_actions({}) (it feeds an interactive AskUserQuestion), so the
+# negative assertion is SCOPED to the "## Auto tick" section rather than
+# the whole surface.
 # GH-1606 folded the former director-only classify mode into the internal
 # `--tick` step of `--mode auto`; the section heading moved from the old
 # classify mode heading to
 # "## Auto tick (internal — dispatched only by --mode auto's loop wrapper)".
+# GH-1603 address-mode pass moved "## --mode auto" + "## Auto tick" out of
+# SKILL.md into the sibling ralph/skills/hero/auto-tick.md (SKILL.md was
+# over the ~200-line dispatch-and-skeleton convention in ralph/CLAUDE.md) —
+# the Auto tick section, and this test's target file, now live there.
 
 set -euo pipefail
 
@@ -29,6 +34,7 @@ FAIL=0
 
 REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 SKILL_FILE="${REPO_ROOT}/ralph/skills/hero/SKILL.md"
+TICK_FILE="${REPO_ROOT}/ralph/skills/hero/auto-tick.md"
 
 pass() {
   echo "  PASS: $1"
@@ -61,25 +67,30 @@ tick_block() {
     /^## Auto tick \(internal/ { f=1; next }
     /^## / { f=0 }
     f
-  ' "$SKILL_FILE"
+  ' "$TICK_FILE"
 }
 
 echo "=== hero-auto-tick-audience regression guard (GH-1479 / re-anchored GH-1606) ==="
 echo ""
 
 # -----------------------------------------------------------------------
-echo "--- Assertion 1: skill file exists ---"
+echo "--- Assertion 1: skill file + auto-tick sibling exist ---"
 if [[ -s "$SKILL_FILE" ]]; then
   pass "hero SKILL.md exists and is non-empty"
 else
   fail "hero SKILL.md missing or empty: $SKILL_FILE"
 fi
+if [[ -s "$TICK_FILE" ]]; then
+  pass "hero auto-tick.md exists and is non-empty"
+else
+  fail "hero auto-tick.md missing or empty: $TICK_FILE"
+fi
 
 # -----------------------------------------------------------------------
 echo ""
 echo "--- Assertion 2: autonomous call site passes audience: agent ---"
-assert_file_contains "SKILL.md contains next_actions({ audience: \"agent\" })" \
-  "$SKILL_FILE" 'next_actions({ audience: "agent" })'
+assert_file_contains "auto-tick.md contains next_actions({ audience: \"agent\" })" \
+  "$TICK_FILE" 'next_actions({ audience: "agent" })'
 
 # -----------------------------------------------------------------------
 echo ""

@@ -15,7 +15,7 @@ The **9 structured verdicts** (#1417 + #1472) each emit a verbatim `TRIAGED <ver
 - `TRIAGED PROMOTE-plan` — issue well-specified; routed to Ready for Plan (research skipped).
 - `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` + `ralph-triage`; the `=NNN` PR number is part of the token. `caretake --mode watch --kind pr` (#1406) strips the label when the PR merges.
 - `TRIAGED WAIT-upstream` — parked in **Backlog** with `blocked:upstream` + `ralph-triage`; the upstream URL is recorded in the `## Triage Decision` comment, not the token (URLs are unwieldy in a terminal token). `caretake --mode watch --kind upstream` (#1407) resolves it.
-- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN + `add_dependency` edge written + `ralph-triage` applied; the `=NNN` issue number is part of the token. **NOT parked in Backlog** — the picker's Backlog-fallback would re-surface it on every autopilot tick (no watcher owns OPEN-issue blockers until Gap C `caretake --mode watch --kind issue` ships). Once Gap A (#1470) and Gap C ship, this target relaxes to Backlog+edge. The `WAIT-issue` family member distinguishes OPEN-issue blockers from PR/upstream blockers: WAIT-pr and WAIT-upstream stay Backlog (watched); WAIT-issue goes Human Needed (unwatched until Gap C).
+- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN + `add_dependency` edge written + `ralph-triage` applied; the `=NNN` issue number is part of the token. **NOT parked in Backlog** — the picker's Backlog-fallback would re-surface it on every autopilot tick if left there; `caretake --mode watch --kind issue` (#1473, live) owns resolution and auto-advances the item once #NNN closes. Once Gap A (#1470) ships (`next_actions` honoring `add_dependency` edges), this target can relax to Backlog+edge. The `WAIT-issue` family member distinguishes OPEN-issue blockers from PR/upstream blockers: all three kinds are watched (`--kind pr`/`upstream`/`issue`) but WAIT-pr and WAIT-upstream stay Backlog (edge-safe today) while WAIT-issue goes Human Needed (Backlog isn't edge-safe for it until Gap A ships).
 - `TRIAGED WAIT-decision` — escalated to Human Needed with a `## Escalation` comment naming the decision required; `ralph-triage` applied.
 - `Queue empty.` — no untriaged Backlog issues remain.
 
@@ -78,12 +78,12 @@ watch has no `Stop` postcondition hook (parity with hygiene) — it mutates only
 
 ## Enrich terminal tokens
 
-- `ENRICHED <N>` — `<N>` `status: draft` idea files enriched this pass (`## Enrichment` appended, `status: forming`, `enriched` stamped) and committed + pushed to `main`. A remainder beyond the 5-file per-pass cap is noted in the surrounding summary line, not in the token.
+- `ENRICHED <N> (PR <url>)` — `<N>` `status: draft` idea files enriched this pass (`## Enrichment` appended, `status: forming`, `enriched` stamped), committed to the standing `chore/enrich-ideas` branch, and opened/updated as a PR against `main` — **never pushed to `main` directly** (GH-1589 ruleset; see `modes/enrich.md` § Step 4). A remainder beyond the 5-file per-pass cap is noted in the surrounding summary line, not in the token.
 - `Queue empty.` — no `status: draft` idea files found.
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit (parity with `TRIAGED skipped …`).
-- `ENRICH SKIPPED push-rejected` — §Step 4 non-fast-forward push failed even after one `git pull --rebase origin main` retry; the commit stays local.
+- `ENRICH SKIPPED push-rejected` — §Step 4 branch push failed even after one retry; the commit stays local.
 
-enrich has no `Stop` postcondition hook (parity with watch/hygiene) — it mutates only the `status: draft` idea files it enriches, never board/workflow state. The token is reported for harness/loop consumption; no automated verification is performed against it.
+enrich has no `Stop` postcondition hook (parity with watch/hygiene) — it never mutates board/workflow state directly; its only git write is a PR against `main`, which still requires human (or a future policy-driven) merge. The token is reported for harness/loop consumption; no automated verification is performed against it.
 
 ## Loop continuation
 

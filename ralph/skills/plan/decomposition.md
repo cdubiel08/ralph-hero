@@ -186,7 +186,7 @@ If existing children were found in §Step 3, compare against the proposal: reuse
 
 **Create new** — one batch call for every net-new child:
 
-```
+```text
 create_sub_issues(parentNumber: <parent-number>, children: [
   {title, body, estimate: <XS|S>, workflowState: "Ready for Plan" | omit,
    dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]},
@@ -266,11 +266,11 @@ Determine target state for every child: scope clear → `Ready for Plan`; needs 
 
 ### §Step 11: Emit terminal tokens
 
-```
+```text
 SPLIT <N>
 ```
 
-Export `RALPH_SPLIT_COUNT=<N>` (total children created + reused) before Stop — `split-postcondition.sh` requires `N ≥ 2`.
+Export `RALPH_SPLIT_COUNT=<N>` before Stop, where `N` counts **only children reporting `created:true`** in this batch's per-child status report — do NOT add reused (already-existing) children to the count. `split-postcondition.sh` requires `N ≥ 2`; a split that creates one net-new child and reuses one pre-existing child is a re-estimate, not a decomposition, and must not satisfy the gate.
 
 On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. On other graceful skips (no natural boundary, parent already fully split): `SPLIT SKIPPED <reason>`. On an empty queue (§Step 1): `Queue empty.`
 
@@ -303,9 +303,11 @@ Three hook scripts (four registrations — the estimate gate is Pre+Post) gate t
 
 On the **plan-of-plans path** (`RALPH_SUBCOMMAND=epic`, no re-export), all three hooks hit their scope guard and early-exit `allow` — behaving exactly as they do outside any split context: S/M feature children pass (§ Plan-of-plans shape above), and a pure plan-of-plans session reaching Stop with `RALPH_SPLIT_COUNT` unset can never be blocked by the postcondition.
 
+**The Step 0 classification read is deliberately unguarded.** `plan/SKILL.md`'s `## --mode epic` Step 0 ("Classify") reads the epic's body + labels via its own `get_issue` call before any path is chosen, under the Step 0 `RALPH_SUBCOMMAND=epic` value (not yet `epic-split`) — this is intentional, not a gap: classification must succeed regardless of estimate (an XS/S issue can still be *read*, just not *split*), and gating that first read would also wrongly block the plan-of-plans path's own classification. The enforcement point is §Step 2's `get_issue` call above, which always runs *after* the atomic-split path's `RALPH_SUBCOMMAND=epic-split` re-export (`plan/SKILL.md`'s atomic-split step re-exports it "before Step 3'", and §Step 2 only executes inside that step) — so an XS/S parent is still blocked before any child is created, just not at the earliest possible read.
+
 ## Terminal tokens
 
-- `SPLIT <N>` — `N ≥ 2` XS/S sub-issues created and linked. `split-postcondition.sh` requires N ≥ 2.
+- `SPLIT <N>` — `N ≥ 2` net-new XS/S sub-issues created and linked this invocation (reused pre-existing children are NOT counted toward `N`). `split-postcondition.sh` requires N ≥ 2.
 - `SPLIT SKIPPED already-atomic` — `split-estimate-gate.sh` blocked the parent because its estimate was already XS or S.
 - `SPLIT SKIPPED <reason>` — other graceful skips (no natural decomposition boundary found, parent already fully split, etc.).
 - `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed (queue-pick invocation with no issue number).

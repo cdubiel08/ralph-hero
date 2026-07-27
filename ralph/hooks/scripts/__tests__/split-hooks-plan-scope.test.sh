@@ -10,8 +10,25 @@
 # § Atomic split's re-export), so it fails if either side of the arming
 # drifts.
 #
-# Cases 1, 2, 5, and the static arming assertion are the ones that fail in
+# Cases 1, 2, 5, and the static arming assertions are the ones that fail in
 # the states the critique identified (guards dead / plan-of-plans regressed).
+#
+# Harness: named `run_case` (matching plan-research-required.test.sh's
+# convention) rather than `run_hook`. No SBX/REPO/NOGIT filesystem sandboxes
+# are set up here, unlike plan-research-required.test.sh — that harness's
+# sandboxes exist specifically to exercise resolve_root_from_path's
+# file_path-derived rooting (ralph/CLAUDE.md § Hooks). split-size-gate.sh /
+# split-estimate-gate.sh / split-postcondition.sh do no file_path lookups at
+# all (see each hook's own header) — they gate purely on
+# RALPH_COMMAND/RALPH_SUBCOMMAND env plus the MCP tool_input/tool_response
+# JSON payload — so there is no filesystem root to sandbox and no
+# CLAUDE_PROJECT_DIR dependency to isolate. What IS shared with that harness
+# is exit-code assertion via a `run_case` helper over crafted JSON on stdin
+# with explicit env isolation.
+#
+# Exit-code capture avoids toggling `set +e`/`set -e` (ast-grep
+# set-plus-e-error-masking-bash) — an `if`/`else` around the invocation
+# captures $? without ever disabling errexit for the rest of the script.
 
 set -uo pipefail
 
@@ -25,6 +42,8 @@ HOOKS_DIR="${REPO_ROOT}/ralph/hooks/scripts"
 SIZE_GATE="${HOOKS_DIR}/split-size-gate.sh"
 ESTIMATE_GATE="${HOOKS_DIR}/split-estimate-gate.sh"
 POSTCONDITION="${HOOKS_DIR}/split-postcondition.sh"
+PLAN_SKILL="${REPO_ROOT}/ralph/skills/plan/SKILL.md"
+DECOMPOSITION="${REPO_ROOT}/ralph/skills/plan/decomposition.md"
 
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
@@ -36,15 +55,16 @@ for f in "$SIZE_GATE" "$ESTIMATE_GATE" "$POSTCONDITION"; do
   fi
 done
 
-# run_hook <desc> <expected_exit> <hook> <json> [ENV=val ...]
-run_hook() {
+# run_case <desc> <expected_exit> <hook> <json> [ENV=val ...]
+run_case() {
   local desc="$1" expected="$2" hook="$3" json="$4"; shift 4
   local actual
-  set +e
-  env -u RALPH_COMMAND -u RALPH_SUBCOMMAND -u RALPH_TICKET_ID -u RALPH_SPLIT_COUNT \
-    RALPH_HOOK_INPUT= "$@" bash "$hook" <<<"$json" >/dev/null 2>&1
-  actual=$?
-  set -e
+  if env -u RALPH_COMMAND -u RALPH_SUBCOMMAND -u RALPH_TICKET_ID -u RALPH_SPLIT_COUNT \
+    RALPH_HOOK_INPUT= "$@" bash "$hook" <<<"$json" >/dev/null 2>&1; then
+    actual=0
+  else
+    actual=$?
+  fi
   if [[ "$actual" == "$expected" ]]; then
     pass "$desc (exit $actual)"
   else
@@ -57,34 +77,34 @@ echo ""
 
 # --- Case 1: atomic guard armed — epic-split + M child -> blocked --------------
 json_m_child='{"tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"M"}]}}'
-run_hook "1: epic-split + M child -> exit 2 (atomic guard armed)" 2 \
+run_case "1: epic-split + M child -> exit 2 (atomic guard armed)" 2 \
   "$SIZE_GATE" "$json_m_child" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
 # --- Case 2: plan-of-plans M children unregressed (F2) -------------------------
-run_hook "2: epic + M child -> exit 0 (plan-of-plans M children unregressed)" 0 \
+run_case "2: epic + M child -> exit 0 (plan-of-plans M children unregressed)" 0 \
   "$SIZE_GATE" "$json_m_child" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic
 
 # --- Case 3: atomic path allows XS/S ---------------------------------------------
 json_xs_s='{"tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"S"},{"title":"b","estimate":"XS"}]}}'
-run_hook "3: epic-split + S/XS children -> exit 0" 0 \
+run_case "3: epic-split + S/XS children -> exit 0" 0 \
   "$SIZE_GATE" "$json_xs_s" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
 # --- Case 4: old key fully retired ------------------------------------------------
-run_hook "4: old caretake+split key -> exit 0 (fully retired)" 0 \
+run_case "4: old caretake+split key -> exit 0 (fully retired)" 0 \
   "$SIZE_GATE" "$json_m_child" \
   RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
 
 # --- Case 5: pure plan-of-plans session cannot be blocked by postcondition -----
 json_stop='{"hook_event_name":"Stop","stop_hook_active":false}'
-run_hook "5: epic + RALPH_TICKET_ID set, no RALPH_SPLIT_COUNT -> exit 0" 0 \
+run_case "5: epic + RALPH_TICKET_ID set, no RALPH_SPLIT_COUNT -> exit 0" 0 \
   "$POSTCONDITION" "$json_stop" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic RALPH_TICKET_ID=GH-1
 
 # --- Case 6: atomic postcondition blocks below the ≥2 threshold ----------------
-run_hook "6: epic-split + RALPH_SPLIT_COUNT=1 -> exit 2" 2 \
+run_case "6: epic-split + RALPH_SPLIT_COUNT=1 -> exit 2" 2 \
   "$POSTCONDITION" "$json_stop" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split RALPH_TICKET_ID=GH-1 RALPH_SPLIT_COUNT=1
 
@@ -93,27 +113,48 @@ json_get_issue_small=$(jq -n '{
   hook_event_name: "PostToolUse",
   tool_response: { content: [ { text: (({number:1,title:"tiny",estimate:"S"}) | tojson) } ] }
 }')
-run_hook "7: epic-split + parent estimate S -> exit 2 (too small)" 2 \
+run_case "7: epic-split + parent estimate S -> exit 2 (too small)" 2 \
   "$ESTIMATE_GATE" "$json_get_issue_small" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
 echo ""
 
-# --- Static arming assertion ----------------------------------------------------
-# Extract the required RALPH_SUBCOMMAND value from the hook's own guard
-# literal (anchored on REPO_ROOT so this test is runnable from any CWD), then
-# assert the plan skill actually exports it somewhere. This is the check that
-# fails the moment the Step 0 case export / decomposition.md re-export is
-# removed — the exact F1 state.
+# --- Static arming assertion: BOTH sides of the contract, independently --------
+# The split-* hooks require RALPH_SUBCOMMAND=epic-split (extracted from the
+# hook's own guard literal below, anchored on REPO_ROOT so this test is
+# runnable from any CWD). That value only exists at runtime because of TWO
+# separate, independently-removable pieces of skill prose:
+#   (a) ralph/skills/plan/SKILL.md Step 0 exports the base RALPH_SUBCOMMAND
+#       (epic, iterate, review, ...) per --mode — this is the case arm that
+#       ultimately makes epic-split's re-export meaningful (with no Step 0
+#       export at all, "on top of" has nothing to layer onto).
+#   (b) ralph/skills/plan/decomposition.md § Atomic split re-exports
+#       RALPH_SUBCOMMAND=epic-split on top of the Step 0 value, immediately
+#       before any get_issue/create_issue/create_sub_issues call.
+# A single recursive grep across ralph/skills/plan/ (the prior version of
+# this test) is satisfied by (b) alone and stays green even if (a) is
+# deleted — assert them separately so either regression is caught.
 required=$(sed -n 's/.*RALPH_SUBCOMMAND:-}" != "\([a-z-]*\)".*/\1/p' "$SIZE_GATE" | head -1)
 if [[ -z "$required" ]]; then
   fail "extracted required RALPH_SUBCOMMAND value from split-size-gate.sh"
 else
   pass "extracted required RALPH_SUBCOMMAND value from split-size-gate.sh: ${required}"
-  if grep -rq "export RALPH_SUBCOMMAND=${required}" "${REPO_ROOT}/ralph/skills/plan/"; then
-    pass "plan skill exports RALPH_SUBCOMMAND=${required} somewhere under ralph/skills/plan/"
+
+  # (a) Step 0 base case export in plan/SKILL.md — the epic-mode arm.
+  if grep -qE 'export RALPH_SUBCOMMAND=epic\b' "$PLAN_SKILL"; then
+    pass "plan/SKILL.md Step 0 still exports the base RALPH_SUBCOMMAND=epic case"
   else
-    fail "split guards are not armed in plan context (no 'export RALPH_SUBCOMMAND=${required}' under ralph/skills/plan/)"
+    fail "plan/SKILL.md Step 0 no longer exports RALPH_SUBCOMMAND=epic (split guards have nothing to layer '${required}' onto)"
+  fi
+
+  # (b) The atomic-split re-export in decomposition.md — the arm the hooks
+  # literally require. This is the check that goes red the moment the
+  # export is removed from decomposition.md § Atomic split (the exact F1
+  # regression state).
+  if grep -qE "export RALPH_SUBCOMMAND=${required}\$" "$DECOMPOSITION"; then
+    pass "decomposition.md § Atomic split still re-exports RALPH_SUBCOMMAND=${required}"
+  else
+    fail "split guards are not armed in plan context (no 'export RALPH_SUBCOMMAND=${required}' in ralph/skills/plan/decomposition.md)"
   fi
 fi
 

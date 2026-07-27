@@ -72,7 +72,7 @@ plugin/
 | `/ralph:plan` | best (fable→opus); single XS/S auto-plans fork sonnet | Planning: interactive, auto, epic, iterate, review |
 | `/ralph:impl` | sonnet session / complexity ladder (haiku-opus) + haiku test-runner | Implementation: auto, pr, address |
 | `/ralph:review` | best (fable→opus); singles reviewed at opus, group val at fable | Review: val, code, merge, behavior verification |
-| `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, report |
+| `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, reflect, watch, enrich |
 | `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + pr-drain |
 | `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
 

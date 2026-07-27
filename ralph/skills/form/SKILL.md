@@ -141,7 +141,7 @@ Decomposition into a tree of children is `/ralph:plan --mode epic`'s job now, no
 
 1. Create the parent issue (`create_issue`, `estimate: L`, `workflowState: "Backlog"`).
 2. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
-3. Report the issue URL and suggest the next command: *"Decompose into a feature tree: `/ralph:plan --mode epic #<parent-number>`."* (No `create_sub_issues` call here — form registers no hooks, so its old inline tree-creation path was gate-free; forwarding to plan epic routes the tree through `split-estimate-gate.sh` / `split-size-gate.sh` / `split-postcondition.sh` like every other decomposition.)
+3. Report the issue URL and suggest the next command: *"Decompose into a feature tree: `/ralph:plan --mode epic #<parent-number>`."* (No `create_sub_issues` call here — form forwards tree creation to plan epic instead of building it inline; see `../plan/decomposition.md` § Hook contract for why that matters.)
 
 See `issue-template.md` for estimate defaults; see `../plan/decomposition.md` for the tree shape plan epic will produce.
 

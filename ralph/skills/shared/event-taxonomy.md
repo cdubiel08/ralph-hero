@@ -128,9 +128,9 @@ Skip modes that no-op cleanly; always run hygiene + triage + report.
 
 ### Label consumption
 
-After dispatch (single-label or full fan-out), the dispatcher MUST remove the routing label so the issue is not re-picked on the next caretaker sweep. Use `save_issue` with the remaining label set:
+After a `trigger:caretake` dispatch (single-label or full fan-out), the dispatcher MUST remove that trigger label so the issue is not re-picked on the next caretaker sweep. Use `save_issue` with the remaining label set:
 
-```
+```text
 save_issue(
   number: NNN,
   labels: [...remaining-labels-without-trigger:caretake]

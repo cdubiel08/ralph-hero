@@ -127,7 +127,7 @@ Single source (GH-1607) for every `--loop`-unsuitable skill:mode — interactive
 | `research` default | interactive question intake |
 | `catch-up` default | interactive orientation |
 | `setup` all modes | one-shot bootstrap |
-| `hero` default | one-shot orchestrator; refuses `--loop`. Use `--auto` → `--mode auto` for the autonomous drain |
+| `hero` default | one-shot orchestrator; refuses `--loop`. Use `--auto` → `--mode auto` for the autonomous watcher |
 | `hero --mode pr-drain` | single-PR action; loop would re-process same PR |
 | `caretake --mode reflect` | single artifact per session |
 | `caretake --mode unblock --question` | interactive answer collection |
