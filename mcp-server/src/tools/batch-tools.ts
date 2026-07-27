@@ -1,9 +1,17 @@
 /**
  * MCP tools for batch operations on GitHub Projects V2 issues.
  *
- * Provides bulk-update capabilities using aliased GraphQL queries and
- * mutations for efficient batch processing (one API call per step
- * instead of one per issue).
+ * Provides bulk field-update capabilities using aliased GraphQL queries and
+ * mutations for efficient batch processing (one API call per step instead
+ * of one per issue). GH-1611 folded the former standalone archive tool
+ * into `batch_update` as a second operation kind
+ * (`{action: "archive"|"unarchive"}`) with an
+ * `issues`/`projectItemIds`/`filter` selector, and ADDS the GH-0870
+ * open-children guard server-side to the filter-driven bulk-scan path
+ * (mirroring `findArchiveCandidates()` in `lib/hygiene.ts`) — closing a
+ * bypass that existed in the standalone tool. Explicit `issues`/
+ * `projectItemIds` selection intentionally bypasses the guard (targeted
+ * archive/unarchive stays possible without a sub-issue check).
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,8 +23,8 @@ import { toolSuccess, toolError } from "../types.js";
 import { zBoolish } from "../lib/zod-helpers.js";
 import {
   ensureFieldCache,
-  resolveConfig,
   resolveFullConfig,
+  resolveProjectItemId,
 } from "../lib/helpers.js";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +42,37 @@ interface BatchResult {
   skipped: Array<{ number: number; reason: string }>;
   errors: Array<{ number: number; error: string }>;
   summary: { total: number; succeeded: number; skipped: number; errors: number };
+}
+
+/** Raw shape of a project item scanned by the archive filter path. */
+interface RawBulkArchiveItem {
+  id: string;
+  type: string;
+  content: {
+    number?: number;
+    title?: string;
+    updatedAt?: string;
+    subIssues?: { totalCount: number };
+  } | null;
+  fieldValues: {
+    nodes: Array<{
+      __typename?: string;
+      name?: string;
+      field?: { name: string };
+    }>;
+  };
+}
+
+function getBulkArchiveFieldValue(
+  item: RawBulkArchiveItem,
+  fieldName: string,
+): string | undefined {
+  const fieldValue = item.fieldValues.nodes.find(
+    (fv) =>
+      fv.field?.name === fieldName &&
+      fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
+  );
+  return fieldValue?.name;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +234,37 @@ export function buildBatchArchiveMutation(
   return { mutationString, variables };
 }
 
+/**
+ * Build an aliased mutation to unarchive multiple project items
+ * in a single GraphQL call. Mirrors buildBatchArchiveMutation.
+ */
+export function buildBatchUnarchiveMutation(
+  projectId: string,
+  itemIds: string[],
+): { mutationString: string; variables: Record<string, unknown> } {
+  const variables: Record<string, unknown> = { projectId };
+  const varDecls = ["$projectId: ID!"];
+  const aliases: string[] = [];
+
+  for (let i = 0; i < itemIds.length; i++) {
+    const itemVar = `item_u${i}`;
+    varDecls.push(`$${itemVar}: ID!`);
+    variables[itemVar] = itemIds[i];
+
+    aliases.push(
+      `u${i}: unarchiveProjectV2Item(input: {
+        projectId: $projectId,
+        itemId: $${itemVar}
+      }) {
+        item { id }
+      }`,
+    );
+  }
+
+  const mutationString = `mutation(${varDecls.join(", ")}) {\n  ${aliases.join("\n  ")}\n}`;
+  return { mutationString, variables };
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -211,6 +281,23 @@ const FIELD_NAME_MAP: Record<BatchField, string> = {
 const MAX_ISSUES = 50;
 const MAX_OPERATIONS = 3;
 const MUTATION_CHUNK_SIZE = 50; // Max aliases per mutation
+const ARCHIVE_CHUNK_SIZE = 50; // Max aliases per archive/unarchive mutation
+const SCAN_CAP = 2000; // Hard limit to prevent runaway pagination in filter mode
+
+type FieldOperation = { field: BatchField; value: string };
+type ActionOperation = { action: "archive" | "unarchive" };
+
+function isFieldOperation(
+  op: FieldOperation | ActionOperation,
+): op is FieldOperation {
+  return "field" in op;
+}
+
+function isActionOperation(
+  op: FieldOperation | ActionOperation,
+): op is ActionOperation {
+  return "action" in op;
+}
 
 // ---------------------------------------------------------------------------
 // Register batch tools
@@ -223,7 +310,14 @@ export function registerBatchTools(
 ): void {
   server.tool(
     "ralph_hero__batch_update",
-    "Bulk-update project fields (workflow state, estimate, priority) across multiple issues in a single call. Uses aliased GraphQL for efficiency (~2 API calls instead of 3N). Returns: succeeded, skipped, errors arrays with per-issue status. Recovery: partial failures don't abort the batch; check errors array for issues that need manual retry.",
+    "Bulk-update project fields (workflow state, estimate, priority) OR archive/unarchive project items, across multiple issues, in a single call. " +
+      "Field-update mode: operations are `{field, value}` and require `issues[]` (1-50). " +
+      "Archive mode: exactly one operation `{action: \"archive\"|\"unarchive\"}` (cannot be mixed with field operations) plus a selector — " +
+      "`issues[]` and/or `projectItemIds[]` (explicit targeting; works for both archive and unarchive; intentionally bypasses the open-children guard), " +
+      "or `filter: {workflowStates, updatedBefore?, maxItems?}` (bulk scan-until-full pagination, archive only, previewable via top-level `dryRun`). " +
+      "GH-0870 guard: the `filter` bulk-scan path skips items with any sub-issues (mirrors project_hygiene's findArchiveCandidates) and reports them under `skipped` with reason `open-or-any-children`; explicit issues/projectItemIds selection does not run this check. " +
+      "Uses aliased GraphQL for efficiency. Returns (field mode): {succeeded, skipped, errors, summary}. Returns (archive mode): {dryRun, action, archivedCount|wouldArchive, items, skipped, errors, hasMore, totalScanned}. " +
+      "Recovery: partial failures don't abort the batch; check errors array for issues that need manual retry.",
     {
       owner: z
         .string()
@@ -239,38 +333,114 @@ export function registerBatchTools(
         .array(z.coerce.number())
         .min(1)
         .max(MAX_ISSUES)
-        .describe("Issue numbers to update (1-50)"),
+        .optional()
+        .describe(
+          "Issue numbers (1-50). Required for field operations. For archive/unarchive, an explicit selector (mutually exclusive with `filter`).",
+        ),
+      projectItemIds: z
+        .array(z.string())
+        .min(1)
+        .optional()
+        .describe(
+          "Project item IDs to archive/unarchive (for draft items with no issue number). Archive/unarchive selector only; mutually exclusive with `filter`.",
+        ),
+      filter: z
+        .object({
+          workflowStates: z
+            .array(z.string())
+            .min(1)
+            .describe('Workflow states to match, e.g. ["Done", "Canceled"]'),
+          updatedBefore: z
+            .string()
+            .optional()
+            .describe(
+              "ISO 8601 date (UTC). Only match items with updatedAt before this date.",
+            ),
+          maxItems: z
+            .number()
+            .optional()
+            .describe("Max items to match per invocation (default 50, cap 200)."),
+        })
+        .optional()
+        .describe(
+          "Bulk selector for the archive action only (scan-until-full pagination). Mutually exclusive with `issues`/`projectItemIds`.",
+        ),
       operations: z
         .array(
-          z.object({
-            field: z
-              .enum(["workflow_state", "estimate", "priority"])
-              .describe("Field to update"),
-            value: z.string().describe(
-              "Target value. " +
-              "For workflow_state: Backlog, Research Needed, Research in Progress, Ready for Plan, " +
-              "Plan in Progress, Plan in Review, In Progress, In Review, Done, Human Needed, Canceled. " +
-              "For estimate: XS, S, M, L, XL. " +
-              "For priority: P0, P1, P2, P3. " +
-              "Note: 'Todo' is a Status field value, NOT a valid workflow state.",
-            ),
-          }),
+          z.union([
+            z.object({
+              field: z
+                .enum(["workflow_state", "estimate", "priority"])
+                .describe("Field to update"),
+              value: z.string().describe(
+                "Target value. " +
+                "For workflow_state: Backlog, Research Needed, Research in Progress, Ready for Plan, " +
+                "Plan in Progress, Plan in Review, In Progress, In Review, Done, Human Needed, Canceled. " +
+                "For estimate: XS, S, M, L, XL. " +
+                "For priority: P0, P1, P2, P3. " +
+                "Note: 'Todo' is a Status field value, NOT a valid workflow state.",
+              ),
+            }),
+            z.object({
+              action: z
+                .enum(["archive", "unarchive"])
+                .describe(
+                  "Archive or unarchive the selected items instead of updating a field.",
+                ),
+            }),
+          ]),
         )
         .min(1)
         .max(MAX_OPERATIONS)
-        .describe("Field updates to apply to all issues (1-3)"),
+        .describe(
+          "1-3 operations: field updates (`{field, value}`) OR exactly one `{action}` archive/unarchive operation. The two kinds cannot be mixed in one call.",
+        ),
       skipIfAtOrPast: zBoolish()
         .optional()
         .default(false)
         .describe(
           "For workflow_state operations, skip issues already at or past the target state (default: false)",
         ),
+      dryRun: zBoolish()
+        .optional()
+        .default(false)
+        .describe(
+          "Archive mode with `filter` only: preview matches without archiving (default: false).",
+        ),
     },
     async (args) => {
       try {
+        const fieldOps = args.operations.filter(isFieldOperation);
+        const actionOps = args.operations.filter(isActionOperation);
+
+        if (fieldOps.length > 0 && actionOps.length > 0) {
+          return toolError(
+            "Cannot mix field operations with archive/unarchive operations in the same call.",
+          );
+        }
+
+        if (actionOps.length > 0) {
+          if (actionOps.length > 1) {
+            return toolError(
+              "Only one archive/unarchive operation is allowed per call.",
+            );
+          }
+          return await handleArchiveMode(
+            client,
+            fieldCache,
+            args,
+            actionOps[0].action,
+          );
+        }
+
+        if (!args.issues || args.issues.length === 0) {
+          return toolError("Field operations require `issues`.");
+        }
+        const issues = args.issues;
+
         // Validate operations
-        for (const op of args.operations) {
-          if (!VALID_FIELDS.includes(op.field as BatchField)) {
+        for (const op of fieldOps) {
+          if (!VALID_FIELDS.includes(op.field)) {
             return toolError(
               `Invalid field "${op.field}". Valid fields: ${VALID_FIELDS.join(", ")}`,
             );
@@ -291,8 +461,8 @@ export function registerBatchTools(
         }
 
         // Validate option names up front (before any API calls)
-        for (const op of args.operations) {
-          const projectFieldName = FIELD_NAME_MAP[op.field as BatchField];
+        for (const op of fieldOps) {
+          const projectFieldName = FIELD_NAME_MAP[op.field];
           const optionId = fieldCache.resolveOptionId(projectFieldName, op.value, projectNumber);
           if (!optionId) {
             const validOptions = fieldCache.getOptionNames(projectFieldName, projectNumber);
@@ -307,12 +477,12 @@ export function registerBatchTools(
           succeeded: [],
           skipped: [],
           errors: [],
-          summary: { total: args.issues.length, succeeded: 0, skipped: 0, errors: 0 },
+          summary: { total: issues.length, succeeded: 0, skipped: 0, errors: 0 },
         };
 
         // Step 1: Batch resolve node IDs and project item IDs
         const { queryString: resolveQuery, variables: resolveVars } =
-          buildBatchResolveQuery(owner, repo, args.issues);
+          buildBatchResolveQuery(owner, repo, issues);
 
         let resolveResult: Record<string, {
           issue: {
@@ -332,8 +502,8 @@ export function registerBatchTools(
 
         // Parse resolved issues
         const resolved: Map<number, ResolvedIssue> = new Map();
-        for (let i = 0; i < args.issues.length; i++) {
-          const issueNumber = args.issues[i];
+        for (let i = 0; i < issues.length; i++) {
+          const issueNumber = issues[i];
           const alias = `i${i}`;
           const data = resolveResult[alias];
 
@@ -377,12 +547,12 @@ export function registerBatchTools(
         }
 
         // Step 2: Pre-filter with skipIfAtOrPast
-        const hasWorkflowStateOp = args.operations.some(
+        const hasWorkflowStateOp = fieldOps.some(
           (op) => op.field === "workflow_state",
         );
 
         if (args.skipIfAtOrPast && hasWorkflowStateOp && resolved.size > 0) {
-          const wsOp = args.operations.find((op) => op.field === "workflow_state")!;
+          const wsOp = fieldOps.find((op) => op.field === "workflow_state")!;
 
           // Build batch query for current field values
           const itemsToCheck = Array.from(resolved.entries()).map(
@@ -446,9 +616,9 @@ export function registerBatchTools(
           }> = [];
 
           for (const [num, issue] of resolved) {
-            for (let opIdx = 0; opIdx < args.operations.length; opIdx++) {
-              const op = args.operations[opIdx];
-              const projectFieldName = FIELD_NAME_MAP[op.field as BatchField];
+            for (let opIdx = 0; opIdx < fieldOps.length; opIdx++) {
+              const op = fieldOps[opIdx];
+              const projectFieldName = FIELD_NAME_MAP[op.field];
               const fieldId = fieldCache.getFieldId(projectFieldName, projectNumber)!;
               const optionId = fieldCache.resolveOptionId(projectFieldName, op.value, projectNumber)!;
 
@@ -527,7 +697,7 @@ export function registerBatchTools(
           for (const [num] of resolved) {
             if (!failedIssues.has(num)) {
               const issueUpdates: Record<string, string> = {};
-              for (const op of args.operations) {
+              for (const op of fieldOps) {
                 issueUpdates[op.field] = op.value;
               }
               result.succeeded.push({ number: num, updates: issueUpdates });
@@ -547,4 +717,366 @@ export function registerBatchTools(
       }
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Archive / unarchive mode (GH-1611 — folded from the former standalone archive tool)
+// ---------------------------------------------------------------------------
+
+interface ArchiveModeArgs {
+  owner?: string;
+  repo?: string;
+  projectNumber?: number;
+  issues?: number[];
+  projectItemIds?: string[];
+  filter?: {
+    workflowStates: string[];
+    updatedBefore?: string;
+    maxItems?: number;
+  };
+  dryRun?: boolean;
+}
+
+async function handleArchiveMode(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  args: ArchiveModeArgs,
+  action: "archive" | "unarchive",
+) {
+  const hasFilter = !!args.filter;
+  const hasIssues = !!args.issues && args.issues.length > 0;
+  const hasProjectItemIds = !!args.projectItemIds && args.projectItemIds.length > 0;
+
+  if (hasFilter && (hasIssues || hasProjectItemIds)) {
+    return toolError(
+      "`filter` is mutually exclusive with `issues`/`projectItemIds`.",
+    );
+  }
+  if (!hasFilter && !hasIssues && !hasProjectItemIds) {
+    return toolError(
+      "Provide `issues`, `projectItemIds`, or `filter` to select items for archive/unarchive.",
+    );
+  }
+  if (action === "unarchive" && hasFilter) {
+    return toolError(
+      "`filter` is only valid with the `archive` action, not `unarchive`.",
+    );
+  }
+
+  try {
+    const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
+      client,
+      args,
+    );
+
+    await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
+
+    const projectId = fieldCache.getProjectId(projectNumber);
+    if (!projectId) {
+      return toolError("Could not resolve project ID");
+    }
+
+    if (hasFilter) {
+      return await runFilterArchive(
+        client,
+        projectId,
+        args.filter!,
+        args.dryRun ?? false,
+      );
+    }
+
+    return await runExplicitArchiveOrUnarchive(
+      client,
+      fieldCache,
+      owner,
+      repo,
+      projectNumber,
+      projectId,
+      action,
+      args.issues,
+      args.projectItemIds,
+    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return toolError(`Failed to ${action}: ${message}`);
+  }
+}
+
+/**
+ * Bulk filter-driven archive: scan-until-full pagination over the project's
+ * items, matching on workflowStates (+ optional updatedBefore), skipping
+ * items with any sub-issues (GH-0870 guard, mirrors
+ * `findArchiveCandidates()` in `lib/hygiene.ts`).
+ */
+async function runFilterArchive(
+  client: GitHubClient,
+  projectId: string,
+  filter: { workflowStates: string[]; updatedBefore?: string; maxItems?: number },
+  dryRun: boolean,
+) {
+  const effectiveMax = Math.min(filter.maxItems || 50, 200);
+
+  // Validate updatedBefore early (before scan loop)
+  let updatedBeforeCutoff: number | undefined;
+  if (filter.updatedBefore) {
+    updatedBeforeCutoff = new Date(filter.updatedBefore).getTime();
+    if (isNaN(updatedBeforeCutoff)) {
+      return toolError(
+        "Invalid updatedBefore date. Use ISO 8601 format (e.g., 2026-02-01T00:00:00Z)",
+      );
+    }
+  }
+
+  // Scan-until-full: fetch pages and filter until we have enough matches or exhaust items
+  const matched: RawBulkArchiveItem[] = [];
+  const skipped: Array<{ number?: number; reason: string }> = [];
+  let cursor: string | null = null;
+  let totalScanned = 0;
+  let hasMorePages = true;
+
+  while (matched.length < effectiveMax && hasMorePages && totalScanned < SCAN_CAP) {
+    const pageSize = Math.min(100, SCAN_CAP - totalScanned);
+    const page = await client.projectQuery(
+      `query($projectId: ID!, $cursor: String, $first: Int!) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            items(first: $first, after: $cursor) {
+              totalCount
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                id
+                type
+                content {
+                  ... on Issue {
+                    number
+                    title
+                    updatedAt
+                    subIssues { totalCount }
+                  }
+                  ... on PullRequest {
+                    number
+                    title
+                    updatedAt
+                  }
+                }
+                fieldValues(first: 20) {
+                  nodes {
+                    ... on ProjectV2ItemFieldSingleSelectValue {
+                      __typename
+                      name
+                      field { ... on ProjectV2FieldCommon { name } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { projectId, first: pageSize, cursor },
+    );
+
+    const connection = (page as Record<string, unknown>).node as Record<string, unknown>;
+    const items = (connection as Record<string, unknown>).items as {
+      totalCount: number;
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      nodes: RawBulkArchiveItem[];
+    };
+
+    totalScanned += items.nodes.length;
+
+    for (const item of items.nodes) {
+      if (matched.length >= effectiveMax) break;
+
+      const ws = getBulkArchiveFieldValue(item, "Workflow State");
+      if (!ws || !filter.workflowStates.includes(ws)) continue;
+
+      if (updatedBeforeCutoff !== undefined) {
+        if (!item.content?.updatedAt) continue;
+        if (new Date(item.content.updatedAt).getTime() >= updatedBeforeCutoff) continue;
+      }
+
+      // GH-0870 guard (server-side, added in GH-1611): skip parents with
+      // any sub-issues, mirroring findArchiveCandidates() (hygiene.ts:142).
+      // This closes the bypass the former standalone archive tool had —
+      // its bulk-scan query never fetched sub-issue data at all.
+      const subIssueCount = item.content?.subIssues?.totalCount ?? 0;
+      if (subIssueCount > 0) {
+        skipped.push({
+          number: item.content?.number,
+          reason: "open-or-any-children",
+        });
+        continue;
+      }
+
+      matched.push(item);
+    }
+
+    hasMorePages = items.pageInfo.hasNextPage && !!items.pageInfo.endCursor;
+    cursor = items.pageInfo.endCursor;
+  }
+
+  // Determine if more eligible items may exist beyond what we collected
+  const hasMore = matched.length >= effectiveMax && hasMorePages;
+
+  if (matched.length === 0) {
+    return toolSuccess({
+      dryRun,
+      action: "archive",
+      archivedCount: 0,
+      wouldArchive: 0,
+      items: [],
+      skipped,
+      errors: [],
+      hasMore: false,
+      totalScanned,
+    });
+  }
+
+  // Dry run: return matched items without archiving
+  if (dryRun) {
+    return toolSuccess({
+      dryRun: true,
+      action: "archive",
+      wouldArchive: matched.length,
+      items: matched.map((m) => ({
+        number: m.content?.number,
+        title: m.content?.title,
+        itemId: m.id,
+      })),
+      skipped,
+      errors: [],
+      hasMore,
+      totalScanned,
+    });
+  }
+
+  // Chunk and execute archive mutations
+  const itemIds = matched.map((m) => m.id);
+  const archived: Array<{ number?: number; title?: string; itemId: string }> = [];
+  const errors: string[] = [];
+
+  for (let i = 0; i < itemIds.length; i += ARCHIVE_CHUNK_SIZE) {
+    const chunk = itemIds.slice(i, i + ARCHIVE_CHUNK_SIZE);
+    const chunkItems = matched.slice(i, i + ARCHIVE_CHUNK_SIZE);
+    try {
+      const { mutationString, variables } =
+        buildBatchArchiveMutation(projectId, chunk);
+      await client.projectMutate(mutationString, variables);
+      for (const item of chunkItems) {
+        archived.push({
+          number: item.content?.number,
+          title: item.content?.title,
+          itemId: item.id,
+        });
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(
+        `Chunk ${Math.floor(i / ARCHIVE_CHUNK_SIZE) + 1} failed: ${msg}`,
+      );
+    }
+  }
+
+  return toolSuccess({
+    dryRun: false,
+    action: "archive",
+    archivedCount: archived.length,
+    items: archived,
+    skipped,
+    errors,
+    hasMore,
+    totalScanned,
+  });
+}
+
+/**
+ * Explicit-selection archive/unarchive: `issues[]` (resolved to project
+ * item IDs) and/or `projectItemIds[]` (used directly, for draft items).
+ * Does NOT run the GH-0870 guard — targeted selection is deliberate.
+ */
+async function runExplicitArchiveOrUnarchive(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  projectNumber: number,
+  projectId: string,
+  action: "archive" | "unarchive",
+  issues: number[] | undefined,
+  projectItemIds: string[] | undefined,
+) {
+  const itemIds: string[] = [];
+  const itemMeta: Array<{ number?: number; itemId: string }> = [];
+  const errors: string[] = [];
+
+  if (issues) {
+    for (const num of issues) {
+      try {
+        const itemId = await resolveProjectItemId(
+          client,
+          fieldCache,
+          owner,
+          repo,
+          num,
+          projectNumber,
+        );
+        itemIds.push(itemId);
+        itemMeta.push({ number: num, itemId });
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        errors.push(`Issue #${num}: ${msg}`);
+      }
+    }
+  }
+  if (projectItemIds) {
+    for (const itemId of projectItemIds) {
+      itemIds.push(itemId);
+      itemMeta.push({ itemId });
+    }
+  }
+
+  if (itemIds.length === 0) {
+    return toolSuccess({
+      dryRun: false,
+      action,
+      archivedCount: 0,
+      items: [],
+      skipped: [],
+      errors,
+      hasMore: false,
+      totalScanned: 0,
+    });
+  }
+
+  const succeededItems: Array<{ number?: number; itemId: string }> = [];
+
+  for (let i = 0; i < itemIds.length; i += ARCHIVE_CHUNK_SIZE) {
+    const chunkIds = itemIds.slice(i, i + ARCHIVE_CHUNK_SIZE);
+    const chunkMeta = itemMeta.slice(i, i + ARCHIVE_CHUNK_SIZE);
+    try {
+      const { mutationString, variables } =
+        action === "archive"
+          ? buildBatchArchiveMutation(projectId, chunkIds)
+          : buildBatchUnarchiveMutation(projectId, chunkIds);
+      await client.projectMutate(mutationString, variables);
+      succeededItems.push(...chunkMeta);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      errors.push(
+        `Chunk ${Math.floor(i / ARCHIVE_CHUNK_SIZE) + 1} failed: ${msg}`,
+      );
+    }
+  }
+
+  return toolSuccess({
+    dryRun: false,
+    action,
+    archivedCount: succeededItems.length,
+    items: succeededItems,
+    skipped: [],
+    errors,
+    hasMore: false,
+    totalScanned: 0,
+  });
 }

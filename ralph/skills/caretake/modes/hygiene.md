@@ -92,18 +92,18 @@ If the dashboard returns no health warnings, omit this section.
 Use the resolved configuration above to decide:
 
 - **`RALPH_HYGIENE_DRY_RUN=true`** (default): report what would be archived. Do NOT call any archive tools.
-- **`RALPH_HYGIENE_DRY_RUN=false` AND eligible count > `RALPH_HYGIENE_THRESHOLD`**: call `ralph_hero__archive_items` with bulk-mode parameters:
-  - `workflowStates: ["Done", "Canceled"]`
-  - `updatedBefore: <ISO date 14 days ago>`
+- **`RALPH_HYGIENE_DRY_RUN=false` AND eligible count > `RALPH_HYGIENE_THRESHOLD`**: call `ralph_hero__batch_update` with a filter-mode archive operation:
+  - `operations: [{action: "archive"}]`
+  - `filter: {workflowStates: ["Done", "Canceled"], updatedBefore: <ISO date 14 days ago>}`
   - `dryRun: false`
 
-  Report archived count from the response.
+  Report `archivedCount` from the response. Parents with any sub-issues are skipped server-side (GH-0870 guard) and reported under `skipped` — do not retry those; they need manual review, not a blind re-archive attempt.
 
-If `archive_items` errors, do NOT retry blindly — emit `HYGIENE BLOCKED <reason>` (see [outcome-tokens.md](../outcome-tokens.md)) and surface the error in the summary.
+If `batch_update` errors, do NOT retry blindly — emit `HYGIENE BLOCKED <reason>` (see [outcome-tokens.md](../outcome-tokens.md)) and surface the error in the summary.
 
 ## §Step 5: Capture snapshot
 
-Call `ralph_hero__capture_snapshot` with no arguments. The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window, appending one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. This is the plugin's only snapshot producer — `catch-up --mode report --with-trends` reads this store via `metrics_trends`. Capture is non-fatal and best-effort: if it errors, log and continue to §Step 6 without failing the hygiene run.
+Call `ralph_hero__metrics_trends` with `capture: true` (no other arguments). The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window, appending one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl` before computing trends. This is the plugin's only snapshot producer — `catch-up --mode report --with-trends` reads this store via `metrics_trends` (without `capture`). Capture is non-fatal and best-effort: if it errors, log and continue to §Step 6 without failing the hygiene run.
 
 ## §Step 6: Summary + terminal token
 

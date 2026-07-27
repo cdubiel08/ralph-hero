@@ -250,7 +250,7 @@ function parsePayload(result: HandlerResult): Record<string, unknown> {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("ralph_hero__capture_snapshot", () => {
+describe("ralph_hero__metrics_trends {capture: true} (GH-1611 — folded from capture_snapshot)", () => {
   let tmpRoot: string;
   let server: McpServer;
   let fieldCache: FieldOptionCache;
@@ -267,7 +267,7 @@ describe("ralph_hero__capture_snapshot", () => {
     await fs.rm(tmpRoot, { recursive: true, force: true });
   });
 
-  it("appends one snapshot row matching the returned payload", async () => {
+  it("appends one snapshot row and returns it nested under `snapshot`", async () => {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const recent = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const fixtures = [
@@ -304,20 +304,27 @@ describe("ralph_hero__capture_snapshot", () => {
     );
 
     registerTrendsTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__capture_snapshot");
+    const tool = getTool(server, "ralph_hero__metrics_trends");
 
-    const result = await tool.handler({ windowDays: 7 }, {});
+    const result = await tool.handler({ capture: true, windowDays: 7, format: "json" }, {});
     expect(result.isError).toBeFalsy();
 
     const payload = parsePayload(result);
+    // Trends payload is still present alongside the snapshot.
     expect(payload.owner).toBe("octocat");
     expect(payload.projectNumber).toBe(7);
-    expect(payload.schemaVersion).toBe(1);
-    expect(payload.velocity).toBe(1); // one Done in window
-    expect(payload.windowDays).toBe(7);
-    expect(payload.cycleTime).toBeUndefined();
+    expect(payload.series).toBeDefined();
 
-    const wipByPhase = payload.wipByPhase as Record<string, number>;
+    const snapshot = payload.snapshot as Record<string, unknown>;
+    expect(snapshot).toBeDefined();
+    expect(snapshot.owner).toBe("octocat");
+    expect(snapshot.projectNumber).toBe(7);
+    expect(snapshot.schemaVersion).toBe(1);
+    expect(snapshot.velocity).toBe(1); // one Done in window
+    expect(snapshot.windowDays).toBe(7);
+    expect(snapshot.cycleTime).toBeUndefined();
+
+    const wipByPhase = snapshot.wipByPhase as Record<string, number>;
     expect(wipByPhase.Backlog).toBe(1);
     expect(wipByPhase["In Progress"]).toBe(1);
     expect(wipByPhase.Done).toBe(1);
@@ -328,9 +335,34 @@ describe("ralph_hero__capture_snapshot", () => {
     const lines = raw.split("\n").filter((l) => l.length > 0);
     expect(lines).toHaveLength(1);
     const written = JSON.parse(lines[0]) as Record<string, unknown>;
-    expect(written.capturedAt).toBe(payload.capturedAt);
+    expect(written.capturedAt).toBe(snapshot.capturedAt);
     expect(written.owner).toBe("octocat");
     expect(written.projectNumber).toBe(7);
+  });
+
+  it("returns {snapshot, markdown} — not {markdown} alone — when combined with format: markdown", async () => {
+    const { client } = createMockClient(
+      { owner: "octocat", projectNumber: 7, projectOwner: "octocat" },
+      { itemsByProject: { 7: [rawIssue({ number: 1, title: "x", workflowState: "Backlog" })] } },
+    );
+
+    registerTrendsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__metrics_trends");
+
+    const result = await tool.handler({ capture: true, format: "markdown" }, {});
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+
+    expect(payload.snapshot).toBeDefined();
+    expect(payload.markdown).toBeDefined();
+    expect(typeof payload.markdown).toBe("string");
+    const snapshot = payload.snapshot as Record<string, unknown>;
+    expect(snapshot.owner).toBe("octocat");
+    expect(snapshot.projectNumber).toBe(7);
+
+    // The capture still appended a row even though format is markdown.
+    const rows = await readSnapshots("octocat", 7);
+    expect(rows).toHaveLength(1);
   });
 
   it("appends a second row on re-invocation (preserving the first)", async () => {
@@ -340,16 +372,37 @@ describe("ralph_hero__capture_snapshot", () => {
     );
 
     registerTrendsTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__capture_snapshot");
+    const tool = getTool(server, "ralph_hero__metrics_trends");
 
-    await tool.handler({ windowDays: 7 }, {});
+    await tool.handler({ capture: true, windowDays: 7 }, {});
     // Tiny delay so the two captures get distinct ISO timestamps.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    await tool.handler({ windowDays: 7 }, {});
+    await tool.handler({ capture: true, windowDays: 7 }, {});
 
     const rows = await readSnapshots("octocat", 7);
     expect(rows).toHaveLength(2);
     expect(rows[0].capturedAt).not.toBe(rows[1].capturedAt);
+  });
+
+  it("does NOT append a row when capture is false (default) — offline-capable read", async () => {
+    const { client, projectQuery } = createMockClient({
+      owner: "octocat",
+      projectOwner: "octocat",
+      projectNumber: 7,
+    });
+
+    registerTrendsTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__metrics_trends");
+
+    const result = await tool.handler({}, {});
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    expect(payload.snapshot).toBeUndefined();
+    // No dashboard fetch was attempted — proves the read path stays local/offline.
+    expect(projectQuery).not.toHaveBeenCalled();
+
+    const rows = await readSnapshots("octocat", 7);
+    expect(rows).toHaveLength(0);
   });
 
   it("returns an error when owner is missing", async () => {
@@ -360,9 +413,9 @@ describe("ralph_hero__capture_snapshot", () => {
     });
 
     registerTrendsTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__capture_snapshot");
+    const tool = getTool(server, "ralph_hero__metrics_trends");
 
-    const result = await tool.handler({ windowDays: 7 }, {});
+    const result = await tool.handler({ capture: true, windowDays: 7 }, {});
     expect(result.isError).toBe(true);
     const payload = parsePayload(result);
     expect(payload.error).toMatch(/RALPH_GH_OWNER/);
@@ -412,14 +465,15 @@ describe("ralph_hero__capture_snapshot", () => {
     );
 
     registerTrendsTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__capture_snapshot");
+    const tool = getTool(server, "ralph_hero__metrics_trends");
 
-    const result = await tool.handler({ windowDays: 7 }, {});
+    const result = await tool.handler({ capture: true, windowDays: 7 }, {});
     expect(result.isError).toBeFalsy();
     const payload = parsePayload(result);
+    const snapshot = payload.snapshot as Record<string, unknown>;
 
-    expect(payload.cycleTime).toBeDefined();
-    const ct = payload.cycleTime as Record<string, unknown>;
+    expect(snapshot.cycleTime).toBeDefined();
+    const ct = snapshot.cycleTime as Record<string, unknown>;
     expect(ct.sampleSize).toBe(1);
     // Lead-time is the 4h interval between the two transitions.
     expect(ct.leadTimeP50Hours).toBeCloseTo(4, 1);
@@ -441,9 +495,9 @@ describe("ralph_hero__capture_snapshot", () => {
     });
 
     registerTrendsTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__capture_snapshot");
+    const tool = getTool(server, "ralph_hero__metrics_trends");
 
-    const result = await tool.handler({ windowDays: 7 }, {});
+    const result = await tool.handler({ capture: true, windowDays: 7 }, {});
     expect(result.isError).toBe(true);
     const payload = parsePayload(result);
     expect(payload.error).toMatch(/RALPH_GH_/);

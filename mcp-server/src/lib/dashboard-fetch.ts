@@ -5,8 +5,9 @@
  * (`RawDashboardItem`), and the raw→DashboardItem conversion
  * (`toDashboardItems`). Previously these lived inline in
  * `tools/dashboard-tools.ts`; centralising them lets
- * `ralph_hero__capture_snapshot` and any future tool reuse the same
- * fetch path without duplicating the GraphQL or conversion logic.
+ * `ralph_hero__metrics_trends`'s `{capture: true}` path and any future
+ * tool reuse the same fetch path without duplicating the GraphQL or
+ * conversion logic.
  *
  * Behaviour mirrors the inline fetch loop the dashboard tool used to
  * run:

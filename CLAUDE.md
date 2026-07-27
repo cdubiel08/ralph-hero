@@ -116,13 +116,13 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `issue-tools.ts` | list_issues, get_issue, create_issue, save_issue |
 | `project-tools.ts` | setup_project, health_check |
 | `relationship-tools.ts` | add_sub_issue, add_dependency, advance_issue |
-| `batch-tools.ts` | batch_update |
+| `batch-tools.ts` | batch_update (field updates + archive/unarchive) |
 | `dashboard-tools.ts` | pipeline_dashboard |
-| `project-management-tools.ts` | archive_items, create_status_update |
+| `project-management-tools.ts` | create_status_update |
 | `hygiene-tools.ts` | project_hygiene |
 | `decompose-tools.ts` | decompose_feature |
 | `tree-tools.ts` | create_sub_issues |
-| `trends-tools.ts` | capture_snapshot, metrics_trends |
+| `trends-tools.ts` | metrics_trends (incl. `{capture: true}`) |
 | `directions-tools.ts` | next_actions |
 | `plan-graph-tools.ts` | sync_plan_graph |
 | `sre-tools.ts` | sre__scale, sre__rollout_restart, sre__delete_pod, sre__drain |
@@ -169,8 +169,8 @@ Key state categories defined in `workflow-states.ts`:
 
 ### Performance tracking over time
 
-- **Capture**: `ralph_hero__capture_snapshot` appends to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`.
-- **Trends**: `ralph_hero__metrics_trends` returns 1d/7d/30d deltas via `src/lib/trends.ts`.
+- **Capture**: `ralph_hero__metrics_trends` with `capture: true` appends to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl` before computing trends (folded from a former standalone snapshot-capture tool, GH-1611); the appended row is returned under `snapshot` regardless of `format`.
+- **Trends**: `ralph_hero__metrics_trends` (default `capture: false`, pure local read, offline-capable) returns 1d/7d/30d deltas via `src/lib/trends.ts`.
 - **Fixture**: `src/__tests__/fixtures/snapshots.fixture.jsonl` holds 30 synthetic schema-valid rows.
 
 ### Activity log

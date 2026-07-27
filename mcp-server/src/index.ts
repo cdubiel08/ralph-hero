@@ -325,7 +325,7 @@ async function main(): Promise<void> {
   // Activity log reader (recent_activity tool — pure filesystem, no GitHub client)
   registerActivityTools(server);
 
-  // Trends tools (capture_snapshot — JSONL persistence under ~/.ralph-hero/snapshots/)
+  // Trends tools (metrics_trends, incl. {capture: true} — JSONL persistence under ~/.ralph-hero/snapshots/)
   registerTrendsTools(server, client, fieldCache);
 
   // SRE operation tools (kubectl autoremediation — typed argv, no-shell invariant)

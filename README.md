@@ -86,7 +86,7 @@ The plugin bundles an MCP server ([`ralph-hero-mcp-server`](https://www.npmjs.co
 
 ### Tools
 
-The MCP server registers ~29 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `archive_items`, `sync_plan_graph`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
+The MCP server registers ~27 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `sync_plan_graph`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
 
 | Tool | Description |
 |------|-------------|
@@ -103,13 +103,12 @@ The MCP server registers ~29 `ralph_hero__*` tools; the table below is a curated
 | `add_dependency` | Add a blocking dependency between issues |
 | `list_dependencies` | List blocking and blocked-by relationships |
 | `advance_issue` | Move an issue to the next workflow state with validation |
-| `batch_update` | Bulk-update project fields across multiple issues |
+| `batch_update` | Bulk-update project fields across multiple issues, or archive/unarchive items (explicit selection or filter-driven bulk scan) |
 | `pipeline_dashboard` | Aggregated pipeline view with counts per workflow state and health indicators |
 | `project_hygiene` | Board health report — stale items, orphans, field gaps |
 | `next_actions` | Ranked list of recommended next actions |
 | `recent_activity` | Read per-session activity log |
-| `capture_snapshot` | Capture pipeline snapshot for trend tracking |
-| `metrics_trends` | 1d/7d/30d velocity and WIP trends |
+| `metrics_trends` | 1d/7d/30d velocity and WIP trends; `capture: true` also appends a snapshot row |
 
 ### Architecture
 
