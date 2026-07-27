@@ -22,9 +22,15 @@ source "$(dirname "$0")/hook-utils.sh"
 read_input > /dev/null
 
 # Only fires for autopilot. Other skills using Skill() pass through.
-# Legacy: RALPH_COMMAND=autopilot. Slim: RALPH_COMMAND=hero + RALPH_SUBCOMMAND=auto.
+# Legacy: RALPH_COMMAND=autopilot. Slim: RALPH_COMMAND=hero + RALPH_SUBCOMMAND
+# in {auto, tick}. `tick` is the per-event body `--mode auto`'s /loop wrapper
+# re-issues; hero's Step 0 gives it its own subcommand value so it routes to the
+# tick body instead of re-emitting Skill("loop", …). Both values stay in scope
+# here so the opt-in gate keeps covering the child dispatches of a running
+# watcher, not just the launch call.
 if [[ "${RALPH_COMMAND:-}" != "autopilot" \
-      && ! ( "${RALPH_COMMAND:-}" == "hero" && "${RALPH_SUBCOMMAND:-}" == "auto" ) ]]; then
+      && ! ( "${RALPH_COMMAND:-}" == "hero" \
+             && ( "${RALPH_SUBCOMMAND:-}" == "auto" || "${RALPH_SUBCOMMAND:-}" == "tick" ) ) ]]; then
   exit 0
 fi
 

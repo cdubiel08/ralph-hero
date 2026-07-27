@@ -30,6 +30,11 @@ fi
 read_input > /dev/null
 check_stop_hook_active
 
+# Escape hatch. `warn` (hook-utils.sh) prints to stderr and EXITS 0 — it is a
+# terminal call, not a fall-through, so control never reaches the block() below.
+# Spelled out because "warn then keep going" is the natural reading and would be
+# a silent fail-closed if someone ever changed warn() to return.
+# Pinned by __tests__/split-hooks-plan-scope.test.sh (RALPH_FORCE_STOP case).
 if [[ "${RALPH_FORCE_STOP:-}" == "true" ]]; then
   warn "RALPH_FORCE_STOP=true - bypassing split postcondition check"
 fi

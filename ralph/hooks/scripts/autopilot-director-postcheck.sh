@@ -54,8 +54,17 @@ skill_args=$(get_field '.tool_input.args')
 # inside /loop, so this token uniquely identifies the auto watcher (vs.
 # --mode watch, which wraps `--mode watch`, or a bare one-shot `--tick` with
 # no loop wrapper).
+#
+# Matched on a TOKEN boundary (`--tick` followed by whitespace or end-of-line),
+# not as a loose substring: a bare `grep -F '/ralph:hero --tick'` also fires on
+# `/ralph:hero --tickle` or on documentation text quoting the command inside an
+# unrelated loop prompt, arming `autoloop`+`pending` for a non-auto loop and
+# blocking session exit. `--mode auto` emits
+# `Run /ralph:hero --tick on the next-most-important event …` (auto-tick.md),
+# which still matches byte-for-byte.
 loop_started=0
-if [[ "$skill_bare" == "loop" ]] && printf '%s' "$skill_args" | grep -q -- '/ralph:hero --tick'; then
+if [[ "$skill_bare" == "loop" ]] \
+   && printf '%s' "$skill_args" | grep -qE -- '/ralph:hero --tick([[:space:]]|$)'; then
   touch -- "$autoloop" 2>/dev/null || true
   loop_started=1
 fi

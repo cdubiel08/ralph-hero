@@ -93,7 +93,7 @@ Capture `ARG` as the remaining positional. Capture `--playwright` /
 `--no-playwright` overrides. Bail with the mode table on `--help` / `-h`.
 
 **`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
-- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- Conflict check (`--auto` + an explicit `--mode`): apply `auto-alias.md` § Conflict detection — emit its refusal text verbatim, then STOP. Not restated here; that file is the only copy.
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=research alias row). Continue to `--loop` detection with the rewritten args.
 
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:

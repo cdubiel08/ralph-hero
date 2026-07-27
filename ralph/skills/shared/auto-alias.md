@@ -1,6 +1,6 @@
 # auto-alias.md — Per-verb `--auto` alias for ralph slim plugin skills
 
-Reference fragment. Every alias-table verb's SKILL.md references this file by pointer for the alias table, the refusal targets, and the Step-0 stanza; none inlines a private copy.
+Reference fragment and **sole source of truth** for the alias table, the refusal targets, the verbatim conflict/refusal text, and the Step-0 stanza. Every alias-table verb's SKILL.md points here for all four; each Step 0 restates exactly one thing — its own row's resolved mode, which is by definition verb-local. No SKILL.md re-derives or re-quotes the shared parts, so an alias change here cannot silently de-sync six files.
 
 ---
 

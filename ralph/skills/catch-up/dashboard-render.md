@@ -1,6 +1,6 @@
 # Dashboard render
 
-This reference is consulted by `/ralph:catch-up --mode brief` (`brief-composition.md:51`), which inherits its render rules and never-editorialize constraint list by reference. It carries the pipeline-render rules and the load-bearing negative-constraint prose ported verbatim from `plugin/ralph-hero/skills/status/SKILL.md`.
+This reference is consulted by `/ralph:catch-up --mode brief` (`brief-composition.md:51`), which inherits its render rules and never-editorialize constraint list by reference. This file **is** the source contract for both: the pipeline-render rules and the load-bearing negative-constraint prose are maintained here, in `ralph`, and have no upstream to re-sync from.
 
 ## pipeline_dashboard call shape
 

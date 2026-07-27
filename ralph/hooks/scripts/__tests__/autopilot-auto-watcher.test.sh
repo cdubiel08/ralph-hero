@@ -58,6 +58,22 @@ assert_file "$AUTOLOOP" "autoloop armed by Skill(loop,/ralph:hero --tick)"
 assert_file "$PENDING" "pending wakeup marked for the launch tick"
 
 echo
+echo "== postcheck: inner command must match on a TOKEN boundary =="
+reset
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tickle on the queue"}}')
+assert_eq "0" "$ec" "postcheck exits 0 for a --tickle prompt"
+assert_nofile "$AUTOLOOP" "no autoloop armed by /ralph:hero --tickle (substring, not the --tick token)"
+assert_nofile "$PENDING" "no pending wakeup armed by /ralph:hero --tickle"
+reset
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"15m /ralph:caretake --mode all\n\nNote: the autopilot uses /ralph:hero --ticket-style prompts"}}')
+assert_eq "0" "$ec" "postcheck exits 0 for an unrelated loop quoting a hero-ish token"
+assert_nofile "$AUTOLOOP" "no autoloop armed by a non-auto loop prompt"
+reset
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick"}}')
+assert_eq "0" "$ec" "postcheck exits 0 for --tick at end-of-line"
+assert_file "$AUTOLOOP" "autoloop armed when --tick ends the line (end-anchored token)"
+
+echo
 echo "== postcheck: outside the watcher (no autoloop), other Skill is ignored =="
 reset
 ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"plan","args":"123"},"tool_response":"result: Plan complete for #123"}')

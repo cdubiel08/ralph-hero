@@ -38,6 +38,30 @@ and STOP.
 
 **Per-pass cap.** Sort the selected files by `captured` ascending (oldest first; files missing `captured` sort last) and process at most the **5 oldest**. If more than 5 files are eligible, note the remainder count in the summary line so a backlog drains across successive heartbeats instead of straining one tick.
 
+## §Step 2b: Prepare the enrichment branch (BEFORE any file edit)
+
+Establish `chore/enrich-ideas` **before** §Step 3 touches a file. Doing it after the edits would run `git checkout -B` / `git merge --ff-only` against a dirty worktree (the merge refuses; the checkout can carry or clobber the edits), and — worse — force-resetting the local branch would silently discard an enrichment commit that a previous pass created but could not push (§Step 4's push-failure rule leaves exactly that).
+
+```bash
+BRANCH="chore/enrich-ideas"
+git fetch origin "$BRANCH" 2>/dev/null || true
+
+if git rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null; then
+  # Local branch exists. NEVER -B it: it may hold a recovered, unpushed
+  # enrichment commit. Switch to it as-is and fast-forward onto origin/main
+  # only if that is a clean no-merge-commit move.
+  git checkout "$BRANCH"
+  git merge --ff-only origin/main 2>/dev/null || true
+elif git rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null; then
+  git checkout -b "$BRANCH" "origin/$BRANCH"
+  git merge --ff-only origin/main 2>/dev/null || true
+else
+  git checkout -b "$BRANCH" origin/main
+fi
+```
+
+If the checkout fails for any reason, STOP before editing and emit `ENRICH SKIPPED branch-setup-failed` — never fall back to enriching on `main`.
+
 ## §Step 3: Enrich each selected file (bounded, serial)
 
 For each of the (up to 5) selected files, run exactly three bounded lookups keyed on the idea's topic (title + "The Idea" body):
@@ -70,35 +94,46 @@ Update frontmatter: `status: forming`, `enriched: <same UTC ISO-8601 timestamp>`
 
 ## §Step 4: Commit and open (or update) a PR — never push `main` directly
 
-This step only runs when §Step 2 selected at least one file (N=0 already short-circuited to `Queue empty.`). `main` rejects all direct pushes (GH-1589 ruleset) — land the commit through a standing PR-only branch instead:
+This step only runs when §Step 2 selected at least one file (N=0 already short-circuited to `Queue empty.`). The branch is already checked out from §Step 2b; `main` rejects all direct pushes (GH-1589 ruleset), so the commit lands through that standing PR-only branch:
 
 ```bash
-BRANCH="chore/enrich-ideas"
-git fetch origin "$BRANCH" 2>/dev/null
-if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-  git checkout -B "$BRANCH" "origin/$BRANCH"
-  git merge --ff-only origin/main
-else
-  git checkout -B "$BRANCH" origin/main
-fi
 git add thoughts/shared/ideas
 git commit -m "chore(ideas): enrich <N> idea file(s)"
-git push origin "$BRANCH"
+
+# Documented one-time retry, actually implemented. Only a SUCCESSFUL push
+# returns to main — a failed push leaves the branch checked out with the
+# commit intact so the next pass (or a human) can retry it.
+if ! git push origin "$BRANCH"; then
+  git fetch origin "$BRANCH" 2>/dev/null || true
+  git merge --ff-only "origin/$BRANCH" 2>/dev/null || true
+  if ! git push origin "$BRANCH"; then
+    printf '%s\n' "ENRICH SKIPPED push-rejected"
+    exit 0
+  fi
+fi
 git checkout main
 ```
 
 Open the PR (idempotent across heartbeat ticks — reuse the existing one if still open):
 
 ```bash
-gh pr create --base main --head "$BRANCH" \
-  --title "chore(ideas): enrich idea file(s)" \
-  --body "Automated background enrichment (see the appended ## Enrichment sections). File-only change — no board/workflow-state mutation." \
-  || gh pr view "$BRANCH" --json url -q .url
+if pr_err=$(gh pr create --base main --head "$BRANCH" \
+      --title "chore(ideas): enrich idea file(s)" \
+      --body "Automated background enrichment (see the appended ## Enrichment sections). File-only change — no board/workflow-state mutation." 2>&1); then
+  PR_URL="$pr_err"
+elif printf '%s' "$pr_err" | grep -qi 'already exists'; then
+  # Expected on every tick after the first: the new commit lands as an update
+  # to the open PR. This is the ONLY failure that is not a failure.
+  PR_URL=$(gh pr view "$BRANCH" --json url -q .url)
+else
+  printf '%s\n' "ENRICH BLOCKED pr-create-failed: ${pr_err}"
+  exit 0
+fi
 ```
 
-`gh pr create` fails with "already exists" once a PR is open for `$BRANCH` — that failure is expected on every subsequent tick; the new commit lands as an update to the existing open PR, so fall back to looking up its URL rather than treating the failure as an error.
+Only the literal "already exists" failure falls back to `gh pr view`. Authentication failures, validation errors, rate limiting, and network errors must **not** be swallowed — masking them behind the duplicate-PR fallback would report `ENRICHED <N> (PR <url>)` for a pass whose findings never reached a reviewable PR. Those emit `ENRICH BLOCKED pr-create-failed: <stderr>` instead; the branch and commit are already pushed, so re-running the mode (or opening the PR by hand) recovers.
 
-**Push-failure rule.** On a branch-push reject (rare — `$BRANCH` is rebased onto `origin/main` above), retry the push once. If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local (findings are not lost; on the next pass those files are already at `status: forming` and will be skipped, so re-run manually to retry the push).
+**Push-failure rule.** On a branch-push reject, the retry above runs once (fetch + fast-forward, then push again). If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local **on `chore/enrich-ideas`**, which stays checked out; §Step 2b's non-destructive branch setup is what makes it survive to the next pass. Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
 
 ## §Step 5: Emit terminal token
 
@@ -107,7 +142,9 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - `ENRICHED <N> (PR <url>)` — `<N>` files enriched, appended, and stamped this pass; committed to `chore/enrich-ideas` and opened/updated as a PR against `main` (never pushed directly). A noted remainder (§Step 2) belongs in the surrounding summary line, not the token itself.
 - `Queue empty.` — no `status: draft` files found (§Step 2 short-circuit).
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
-- `ENRICH SKIPPED push-rejected` — §Step 4 branch-push retry exhausted; commit stays local.
+- `ENRICH SKIPPED branch-setup-failed` — §Step 2b could not check out `chore/enrich-ideas`; no file was edited.
+- `ENRICH SKIPPED push-rejected` — §Step 4 branch-push retry exhausted; commit stays local on `chore/enrich-ideas`.
+- `ENRICH BLOCKED pr-create-failed: <stderr>` — §Step 4 `gh pr create` failed for a reason OTHER than an already-open PR (auth, validation, rate limit, network). The commit is pushed; only the PR is missing.
 
 ## §Constraints
 
@@ -115,4 +152,5 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - Never dispatch research agents beyond the single locator sweep — no sub-agent fan-out, no full `/ralph:research` doc.
 - Never create issues, never mutate board/workflow state — read-only against GitHub (`list_issues` search only).
 - Mutates only the idea files it enriches (frontmatter + `## Enrichment` append) plus the commit/push of that change.
+- Never force-resets `chore/enrich-ideas` (`git checkout -B`) — an existing local branch may hold an unpushed enrichment commit from a prior pass, and that commit is the only copy of those findings.
 - Hand-off `forming` files (form Step 6c) are never re-selected or re-enriched — selection keys on `status: draft` only (see `intake-shapes.md` § Idea-file lifecycle contract).

@@ -117,6 +117,28 @@ run_case "7: epic-split + parent estimate S -> exit 2 (too small)" 2 \
   "$ESTIMATE_GATE" "$json_get_issue_small" \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
+# --- Case 8: RALPH_FORCE_STOP escape hatch actually bypasses -------------------
+# Case 6 above is the same input WITHOUT the hatch (exit 2). This pins the
+# documented bypass: hook-utils.sh's warn() prints and exits 0, so the warning
+# branch is terminal and never falls through to block(). If warn() is ever
+# changed to return, or the branch is reordered below the block, this goes red.
+run_case "8: epic-split + RALPH_SPLIT_COUNT=0 + RALPH_FORCE_STOP=true -> exit 0 (hatch honored)" 0 \
+  "$POSTCONDITION" "$json_stop" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split RALPH_TICKET_ID=GH-1 \
+  RALPH_SPLIT_COUNT=0 RALPH_FORCE_STOP=true
+
+# --- Case 9: missing child estimate is NOT a free pass under epic-split -------
+# The XS/S ceiling must not be bypassable by omitting `estimate`. Mirrors
+# GH-1618's server-side rule (create_sub_issues refuses estimate-less children
+# whenever maxChildEstimate is armed explicitly, which this path does).
+json_missing_estimate='{"tool_input":{"parentNumber":100,"children":[{"title":"a"},{"title":"b","estimate":"XS"}]}}'
+run_case "9: epic-split + child with no estimate -> exit 2" 2 \
+  "$SIZE_GATE" "$json_missing_estimate" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+run_case "10: epic (plan-of-plans) + child with no estimate -> exit 0 (out of scope)" 0 \
+  "$SIZE_GATE" "$json_missing_estimate" \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic
+
 echo ""
 
 # --- Static arming assertion: BOTH sides of the contract, independently --------

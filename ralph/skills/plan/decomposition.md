@@ -184,7 +184,7 @@ If existing children were found in §Step 3, compare against the proposal: reuse
 
 ### §Step 6: Create or update sub-issues
 
-**Create new** — one batch call for every net-new child:
+**Create new** — ONE `create_sub_issues` call containing ALL net-new children (not one call per child): the complete `children` array and every sibling-index `dependsOn` edge go in that single call, which is also what makes `RALPH_SPLIT_COUNT` a per-batch count:
 
 ```text
 create_sub_issues(parentNumber: <parent-number>, children: [
@@ -194,7 +194,7 @@ create_sub_issues(parentNumber: <parent-number>, children: [
 ])
 ```
 
-`split-size-gate.sh` (PreToolUse on `create_issue` | `create_sub_issues`) blocks the whole call if ANY child's estimate is not `XS`/`S`. Verify via the response's per-child status report (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`); repair only children reporting `error`.
+`split-size-gate.sh` (PreToolUse on `create_issue` | `create_sub_issues`) blocks the whole call if ANY child's estimate is not `XS`/`S` — **including a child with no estimate at all**; every child needs an explicit one. Verify via the response's per-child status report (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`); repair only children reporting `error`.
 
 Sub-issue body template:
 

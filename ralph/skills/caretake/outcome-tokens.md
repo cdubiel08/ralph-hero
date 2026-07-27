@@ -1,6 +1,6 @@
 # Caretake terminal tokens
 
-Each mode body emits exactly one terminal token on its final line. The harness extractor reads these from the transcript verbatim — do not paraphrase or wrap in prose. Postcondition hooks under `ralph/hooks/scripts/*-postcondition.sh` grep the transcript for the tokens listed here.
+Each mode body ends with its terminal token — the token, or the token block, is the **last thing emitted**. Most modes emit exactly one token on the final line; the one exception is bare `--mode watch`, which emits a three-token block (one per kind, `pr`/`upstream`/`issue` order) as the final lines. Any informational summary a mode wants to print goes **before** the token block, never after it. The harness extractor reads these from the transcript verbatim — do not paraphrase or wrap in prose. Postcondition hooks under `ralph/hooks/scripts/*-postcondition.sh` grep the transcript for the tokens listed here.
 
 Sections are filled across Plans 7 phases 3-8.
 
@@ -64,7 +64,7 @@ Reflect has no Stop postcondition hook — the mode is an artifact-writer and do
 
 ## Watch terminal tokens
 
-One token per kind processed (`KIND` ∈ `PR` / `UPSTREAM` / `ISSUE`) — one line for `--kind <x>`, three lines in `pr`/`upstream`/`issue` order for a bare invocation:
+One token per kind processed (`KIND` ∈ `PR` / `UPSTREAM` / `ISSUE`) — one line for `--kind <x>`, three lines in `pr`/`upstream`/`issue` order for a bare invocation. For the bare invocation the optional cross-kind summary line is printed **before** the three tokens, so the token block stays terminal (see the file-level invariant above):
 
 - `WATCH-PR ADVANCED <N>` — `<N>` items **resolved this sweep**: merged-PR items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS closed-unmerged items escalated (`WAIT-decision` → Human Needed). Open/still-waiting items are NOT counted.
 - `WATCH-PR IDLE` — scan ran cleanly; no Backlog items carry a `blocked:pr-*` label.

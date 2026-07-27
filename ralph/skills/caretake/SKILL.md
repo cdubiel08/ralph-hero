@@ -92,7 +92,7 @@ References: [../shared/event-taxonomy.md](../shared/event-taxonomy.md) (default-
 ## Step 0: Parse arguments + set subcommand scope
 
 **`--auto` alias** — resolve BEFORE `--loop` detection. See `ralph/skills/shared/auto-alias.md`:
-- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- Conflict check (`--auto` + an explicit `--mode`): apply `auto-alias.md` § Conflict detection — emit its refusal text verbatim, then STOP. Not restated here; that file is the only copy.
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode triage` to `$ARGUMENTS` (verb=caretake alias row). Continue to `--loop` detection with the rewritten args.
 
 **`--loop` gate** — dispatch scaffolding only; `ralph/skills/shared/loop-wrapper.md` is the sole loop contract (intervals, terminal-sentinel presence/absence, and re-fire behavior all live in its manifest rows — do not restate them here). Run the arg-parsing snippet from `loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set, resolve the manifest row for the routed mode and emit `Skill("loop", …)` via `loop-wrapper.md` § Continuation-prompt template, passing `STRIPPED_ARGS` through unchanged, then STOP. Mode → manifest row:

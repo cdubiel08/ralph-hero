@@ -94,6 +94,19 @@ run_case "## Feature Decomposition heading (no type:) allows without research do
   "$PLANS/2026-07-26-GH-4-epic.md" $'---\nestimate: L\n---\n\n## Feature Decomposition\n'
 run_case "fence-wrapped plan-of-plans example does NOT carve out (ordinary plan still blocked)" 2 \
   "$PLANS/2026-07-26-GH-5-plan.md" $'---\nestimate: M\n---\n\nExample shape:\n```markdown\ntype: plan-of-plans\n## Feature Decomposition\n```\n'
+# Same fixture with the OTHER CommonMark fence style. Stripping only backticks
+# left a hole: a ~~~-wrapped example still exposed the marker strings and
+# waived research for an ordinary plan.
+run_case "TILDE-fenced plan-of-plans example does NOT carve out (ordinary plan still blocked)" 2 \
+  "$PLANS/2026-07-26-GH-6-plan.md" $'---\nestimate: M\n---\n\nExample shape:\n~~~markdown\ntype: plan-of-plans\n## Feature Decomposition\n~~~\n'
+# Control: an UNFENCED plan-of-plans still carves out — the tilde fix must not
+# break the real waiver, only the quoted-example false positive.
+run_case "unfenced plan-of-plans still carves out after the tilde fix" 0 \
+  "$PLANS/2026-07-26-GH-8-epic.md" $'---\ntype: plan-of-plans\nestimate: L\n---\n\n## Feature Decomposition\n'
+# Mixed styles: a ~~~ block containing ``` lines (and vice versa) must not
+# desync the fence tracker and leak the inner markers.
+run_case "tilde fence wrapping a backtick fence does NOT carve out" 2 \
+  "$PLANS/2026-07-26-GH-10-plan.md" $'---\nestimate: M\n---\n\nExample:\n~~~markdown\n```\ntype: plan-of-plans\n```\n~~~\n'
 
 # --- Path-derived rooting (GH-1556) --------------------------------------------
 # Workspace-root repro: CLAUDE_PROJECT_DIR points at $SBX, but the target file

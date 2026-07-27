@@ -27,9 +27,9 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 
 | Label | Consumer | Mechanism |
 |---|---|---|
-| `trigger:builders` | Director (`hero --mode auto` / `--tick`) | [`hero/auto-tick.md`](../hero/auto-tick.md) step 5 removes it after dispatching `ralph:hero` |
-| `trigger:watch` | Director (`hero --mode auto` / `--tick`) | Same step 5, after dispatching `ralph:hero --mode watch` |
-| `trigger:scouts` | Director (`hero --mode auto` / `--tick`) | Same step 5, after dispatching the `ralph-playwright` skills |
+| `trigger:builders` | Director (`hero --mode auto` / `--tick`) | [`hero/auto-tick.md`](../hero/auto-tick.md) step 5 removes it **after a successful** `ralph:hero` dispatch; a failed dispatch preserves the label so the event can be retried |
+| `trigger:watch` | Director (`hero --mode auto` / `--tick`) | Same step 5, after a successful `ralph:hero --mode watch` dispatch (preserved on failure) |
+| `trigger:scouts` | Director (`hero --mode auto` / `--tick`) | Same step 5, after a successful `ralph-playwright` skill dispatch (preserved on failure) |
 | `trigger:caretake` | Director **or** caretake itself | Director's `auto-tick.md` step 5 removes it when caretake was reached via Director's tick; caretake's own `### Label consumption` rule (below, under § Caretake default-mode label routing) removes it a second, idempotent time when an operator runs `/ralph:caretake --issue NNN` directly, bypassing Director entirely |
 | `trigger:memorykeepers` | **None — no live consumer** | No memorykeepers skill exists yet. The classification algorithm's step 6 (`needs input: team memorykeepers not yet implemented; skipping dispatch`) short-circuits before the consume-label step, so the label is left in place by design — it re-fires `needs input:` on every tick until a human removes it or a memorykeepers skill ships |
 
@@ -159,7 +159,7 @@ Other labels in this table (`stale`, `process-improvement`, `needs-split`) descr
 
 After dispatch (success or failure), post one comment on the issue:
 
-```
+```text
 ## Caretaker Action
 
 Mode: <mode-or-fanout>
@@ -176,7 +176,7 @@ The taxonomy is intentionally one-row-per-label so future automation can extend 
 
 1. Append a new row to the Director table (Priority 1-4 above) if it changes team-level dispatch, or to the caretake default-mode table above if it only changes which caretake mode runs.
 2. If the dispatch is a new mode body, scaffold the mode under `caretake/modes/<name>.md` and add a row to the mode-dispatch table in `caretake/SKILL.md`.
-3. If the label is operator-driven (e.g., a future `trigger:<team>`), make sure it gets consumed per `### Label consumption` above.
+3. If the label is operator-driven (e.g., a future `trigger:<team>`), give it its **own row in § Trigger-label consumption ownership** (under Priority 1) naming a specific consumer and the specific mechanism that removes it — or an explicit "no consumer, left in place by design" note, as `trigger:memorykeepers` has. Do **not** route it to caretake's `### Label consumption` rule: that rule removes `trigger:caretake` and nothing else, so pointing a new `trigger:<team>` at it leaves the label unconsumed (re-firing every tick) or, worse, invites the wrong dispatcher to strip a label it does not own. Director's auto-tick step 5 is the default consumer for a `trigger:<team>` it routes on — and only after a successful dispatch.
 
 No code change required for routing additions — both dispatchers read this file as prose; SKILL.md frontmatter only declares the union of hook scopes.
 

@@ -110,13 +110,13 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 - Any other `--model <x>` value → emit `--model selects the fable surface only (--model fable). Model tiers are pinned in frontmatter; the impl tier is overridden via RALPH_IMPL_MODEL.` and STOP.
 
 **`--auto` alias** — resolve BEFORE mode dispatch. See `ralph/skills/shared/auto-alias.md`:
-- If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
+- Conflict check (`--auto` + an explicit `--mode`): apply `auto-alias.md` § Conflict detection — emit its refusal text verbatim, then STOP. Not restated here; that file is the only copy.
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=hero alias row). The `RALPH_AUTOPILOT_ENABLE` gate still applies — `--mode auto` dispatches via `/loop` which is guarded by `autopilot-enable-gate.sh`.
 
 ```bash
 case "$ARGUMENTS" in
   --mode\ auto*)        export RALPH_SUBCOMMAND=auto ;;
-  --tick*)              export RALPH_SUBCOMMAND=auto ;;
+  --tick*)              export RALPH_SUBCOMMAND=tick ;;
   --mode\ watch*)       export RALPH_SUBCOMMAND=watch ;;
   --mode\ pr-drain*)    export RALPH_SUBCOMMAND=pr-drain ;;
   *)                    export RALPH_SUBCOMMAND=default ;;
@@ -136,6 +136,12 @@ fi
 ## Step 1: Dispatch by `RALPH_SUBCOMMAND`
 
 Route to the matching mode section below. The dispatcher does NOT rewrite terminal `result:` lines — the harness reads them directly.
+
+`auto` and `tick` are **different destinations and must not be collapsed**: `auto` is the outer wrapper (it emits `Skill("loop", …)` once and stops), `tick` is the per-event body that wrapper re-issues. Routing `--tick` to the `auto` section would make every loop iteration emit another `Skill("loop", …)` — the queue would never be read and the nested watchers would compound.
+
+## --tick (internal — not a public mode)
+
+Execute [auto-tick.md](auto-tick.md) § Auto tick steps 1-6 directly (classify one event, dispatch the matching verb, consume the trigger label on success, emit the `result:` marker), then STOP. Do **not** fall through to `## --mode auto` and do **not** emit a `Skill("loop", …)` call — the `/loop` wrapper that dispatched this tick owns the cadence and the `ScheduleWakeup`.
 
 ## Default mode — one-shot orchestrator
 

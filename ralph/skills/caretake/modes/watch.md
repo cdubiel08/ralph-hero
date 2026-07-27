@@ -88,13 +88,13 @@ Every `save_issue` call above passes an **explicit `labels` array** — `save_is
 
 ## §Step 6: Emit terminal token(s)
 
-Emit exactly one token per kind processed (one line for `--kind <x>`; three lines in `pr`/`upstream`/`issue` order for a bare invocation — see [outcome-tokens.md](../outcome-tokens.md)):
+For a **bare invocation**, print the optional cross-kind summary line FIRST (e.g. `WATCH summary: N advanced across pr/upstream/issue`) — it is informational, not a grepped token, and `outcome-tokens.md`'s invariant requires the token block to be the last thing emitted. Then emit exactly one token per kind processed (one line for `--kind <x>`; three lines in `pr`/`upstream`/`issue` order for a bare invocation — see [outcome-tokens.md](../outcome-tokens.md)):
 
 - `WATCH-PR ADVANCED <N>` — `<N>` items **resolved this sweep**: merged→promoted PLUS closed-unmerged→escalated. Open/still-waiting items are NOT counted. | `WATCH-PR IDLE` — no `blocked:pr-*` items found. | `WATCH-PR SKIPPED — branch <name> is not main`.
 - `WATCH-UPSTREAM ADVANCED <N>` — `<N>` items **resolved this sweep**: condition-met→promoted PLUS dead/unparseable→escalated. Still-blocked/can't-confirm items are NOT counted. | `WATCH-UPSTREAM IDLE` — no `blocked:upstream` items found. | `WATCH-UPSTREAM SKIPPED — branch <name> is not main`.
 - `WATCH-ISSUE ADVANCED <N>` — `<N>` items **resolved this sweep** (all blockers CLOSED → dependency edge removed + advanced). Append informational prose `, <m> still blocked` for the count of items left parked with ≥1 open blocker (not part of the grepped token). | `WATCH-ISSUE IDLE` — no dependency-parked items found. | `WATCH-ISSUE SKIPPED — branch <name> is not main`.
 
-For a bare invocation, print one additional informational summary line after the three tokens (e.g. `WATCH summary: N advanced across pr/upstream/issue`) — not a grepped token.
+Nothing may follow the token block — no trailing summary, no closing prose.
 
 ## §Constraints
 

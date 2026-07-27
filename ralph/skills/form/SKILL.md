@@ -17,6 +17,7 @@ allowed-tools:
   - Bash
   - Agent
   - AskUserQuestion
+  - Skill
   - WebSearch
   - WebFetch
   - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
@@ -119,7 +120,7 @@ Use `AskUserQuestion` with these 5 options. Default-selected option:
 | **GitHub issue** | Create a well-scoped issue ready for the backlog → Step 6a |
 | **Implementation plan** | Hand off to `/ralph:plan` → Step 6c |
 | **Research topic** | Hand off to `/ralph:research` → Step 6c |
-| **Ticket tree** | Break into parent + children sub-issues → Step 6b |
+| **Epic parent (decompose later)** | Create the parent issue only; offer the `/ralph:plan --mode epic` handoff that builds the child tree → Step 6b |
 | **Keep as refined idea** | Update the source file with context; no GitHub mutation → Step 6d |
 
 Wait for the user's structured response, then branch to the matching Step 6 sub-step.
@@ -137,11 +138,11 @@ Draft the issue body per `issue-template.md` (use the research-aware variant whe
 
 ### Step 6b: Create parent, forward to plan epic (GH-1605)
 
-Decomposition into a tree of children is `/ralph:plan --mode epic`'s job now, not form's — form creates the parent issue and forwards. Show the drafted parent for approval. On approval:
+Decomposition into a tree of children is `/ralph:plan --mode epic`'s job now, not form's — form creates the parent issue and hands off. **Say so before the approval prompt**, so the user is not agreeing to a tree they will not get: present the drafted parent and state that this step creates the parent issue only, with decomposition into children happening in a separate `/ralph:plan --mode epic` step. On approval:
 
 1. Create the parent issue (`create_issue`, `estimate: L`, `workflowState: "Backlog"`).
 2. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
-3. Report the issue URL and suggest the next command: *"Decompose into a feature tree: `/ralph:plan --mode epic #<parent-number>`."* (No `create_sub_issues` call here — form forwards tree creation to plan epic instead of building it inline; see `../plan/decomposition.md` § Hook contract for why that matters.)
+3. Report the issue URL, then **offer the handoff directly** via `AskUserQuestion`: *"Decompose #<parent-number> into a feature tree now?"* — Yes → invoke `Skill("ralph:plan", args="--mode epic #<parent-number>")` in this session; No → report the command for later (`/ralph:plan --mode epic #<parent-number>`). Declining is free; the offer is skipped in headless contexts, which report the command instead. (No `create_sub_issues` call here in either branch — form forwards tree creation to plan epic instead of building it inline; see `../plan/decomposition.md` § Hook contract for why that matters.)
 
 See `issue-template.md` for estimate defaults; see `../plan/decomposition.md` for the tree shape plan epic will produce.
 

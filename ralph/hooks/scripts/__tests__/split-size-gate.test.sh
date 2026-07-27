@@ -56,7 +56,11 @@ run_case "scalar: L blocked" 2 '{"estimate":"L"}' \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: XL blocked" 2 '{"estimate":"XL"}' \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
-run_case "scalar: no estimate allows" 0 '{}' \
+# A missing estimate must NOT slip past the ceiling: omitting the field is not
+# a waiver. Aligned with GH-1618's server-side create_sub_issues rule (an
+# explicitly armed maxChildEstimate — which the atomic-split path sets to "S" —
+# refuses estimate-less children up front).
+run_case "scalar: no estimate blocked (omission is not a waiver)" 2 '{}' \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: custom valid-estimates env honored" 0 '{"estimate":"M"}' \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split RALPH_VALID_SUB_ESTIMATES=XS,S,M
@@ -71,8 +75,14 @@ run_case "batch: one M child blocked" 2 \
 run_case "batch: trailing L child blocked" 2 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"S"},{"title":"b","estimate":"S"},{"title":"c","estimate":"L"}]}' \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
-run_case "batch: child with no estimate allowed alongside valid siblings" 0 \
+run_case "batch: child with no estimate blocked even alongside valid siblings" 2 \
   '{"parentNumber":100,"children":[{"title":"a"},{"title":"b","estimate":"XS"}]}' \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+run_case "batch: child with empty-string estimate blocked" 2 \
+  '{"parentNumber":100,"children":[{"title":"a","estimate":""},{"title":"b","estimate":"S"}]}' \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+run_case "batch: child with null estimate blocked" 2 \
+  '{"parentNumber":100,"children":[{"title":"a","estimate":null},{"title":"b","estimate":"S"}]}' \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "batch: empty children array allows" 0 \
   '{"parentNumber":100,"children":[]}' \

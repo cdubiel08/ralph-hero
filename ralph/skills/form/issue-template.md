@@ -1,6 +1,6 @@
 # Issue template
 
-This reference is consulted by `/ralph:form` Step 6a (single issue) and Step 6b (ticket tree). It carries the issue body shape, the research-aware variant, the artifact-comment protocol, the tree structure, and the source-file frontmatter updates.
+This reference is consulted by `/ralph:form` Step 6a (single issue) and Step 6b (epic parent, decomposed later by `/ralph:plan --mode epic`). It carries the issue body shape, the research-aware variant, the artifact-comment protocol, the tree structure plan epic will produce, and the source-file frontmatter updates.
 
 ## Single-issue body
 
@@ -72,7 +72,7 @@ Proposed ticket tree:
 Each sub-issue is scoped to XS/S for autonomous implementation.
 ```
 
-Creation order:
+Creation order — **form performs step 1 only** (GH-1605). Steps 2-3 describe what `/ralph:plan --mode epic` does with the parent after form hands off; form itself makes no `create_sub_issues` call:
 
 1. Parent: `create_issue` with `estimate: L`, `workflowState: "Backlog"`.
 2. All children in ONE `create_sub_issues(parentNumber: <parent-number>, children: [{title, body, estimate: "XS", workflowState: "Backlog", dependsOn: [...]}, ...])` call — each entry gets `estimate: XS` (occasionally `S`). The call links every child under the parent and wires dependency edges in the same request; check the response's per-child status for `error` and repair only the failed children.

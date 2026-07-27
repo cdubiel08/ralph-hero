@@ -58,15 +58,24 @@ fi
 # implementation plan then fails doc-structure-validator.sh's Stop-side
 # `## Feature Decomposition` + `## Feature Sequencing` + Design Decisions
 # requirement for the plan-of-plans shape.
+# Strip BOTH fence styles CommonMark allows (``` and ~~~) — stripping only
+# backticks left a hole where a ~~~-wrapped example could expose the marker
+# strings and waive research for an ordinary plan. A fence closes only on the
+# same character it opened with, so track the opening char alongside the length.
 content_probe=$(get_field '.tool_input.content')
 content_probe_stripped=$(printf '%s\n' "$content_probe" | awk '
-  /^[[:space:]]*```/ {
-    match($0, /`+/); len = RLENGTH
-    if (!f) { f = 1; open = len }
-    else if (len >= open) { f = 0 }
-    next
-  }
-  !f { print }')
+  {
+    probe = $0
+    sub(/^[[:space:]]+/, "", probe)
+    if (probe ~ /^```/ || probe ~ /^~~~/) {
+      ch = substr(probe, 1, 1)
+      match(probe, "^" ch "+"); len = RLENGTH
+      if (!f) { f = 1; open = len; opench = ch }
+      else if (ch == opench && len >= open) { f = 0 }
+      next
+    }
+    if (!f) print $0
+  }')
 if printf '%s\n' "$content_probe_stripped" | grep -qE '^type:[[:space:]]*plan-of-plans' \
    || printf '%s\n' "$content_probe_stripped" | grep -qE '^## Feature Decomposition([[:space:]]|$)'; then
   allow_with_context "Plan-of-plans shape detected (type: plan-of-plans or ## Feature Decomposition) — research requirement waived; doc-structure-validator.sh enforces the plan-of-plans shape at Stop."

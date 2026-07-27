@@ -243,13 +243,13 @@ If unavailable, skip silently.
 
 ## §Step 8: Emit terminal token
 
-```
+```text
 REFLECT <path>
 ```
 
 Where `<path>` is the absolute path written in §Step 5. On the no-findings short-circuit:
 
-```
+```text
 REFLECT SKIPPED <reason>
 ```
 
