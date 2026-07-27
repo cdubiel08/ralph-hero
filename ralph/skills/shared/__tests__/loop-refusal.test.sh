@@ -140,6 +140,7 @@ check_unsuitable "hero default"                 "hero.*default|\`hero\` default"
 check_unsuitable "hero pr-drain"                "pr-drain"
 check_unsuitable "caretake reflect"             "reflect"
 check_unsuitable "caretake unblock --question"  "unblock.*question|--question"
+check_unsuitable "caretake enrich"              "enrich"
 
 # ── 5. Refusal targets in auto-alias.md cover form, catch-up, setup ────────────
 

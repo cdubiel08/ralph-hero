@@ -11,7 +11,7 @@ There is exactly one copy now — no synchronization instruction between duplica
 
 ## Priority 1 — Explicit trigger labels (highest priority)
 
-These labels are placed manually (by human or iOS remote-control shortcut) or by external event shims. A `trigger:<team>` label on any issue causes Director to dispatch that team regardless of workflow state. The label is consumed (removed) after dispatch.
+These labels are placed manually (by human or iOS remote-control shortcut) or by external event shims. A `trigger:<team>` label on any issue causes Director to dispatch that team regardless of workflow state. The label is **normally** consumed (removed) after dispatch — `trigger:memorykeepers` is the standing exception and is left in place by design. Per-label ownership, including that exception, is in § Trigger-label consumption ownership below; do not strip a label on the strength of this summary alone.
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
@@ -19,7 +19,7 @@ These labels are placed manually (by human or iOS remote-control shortcut) or by
 | any | `trigger:watch` | watchers | Manual override: force watcher dispatch. `ralph:hero --mode watch`. |
 | any | `trigger:scouts` | scouts | Manual override: force scout dispatch. Dispatches `ralph-playwright` skills (a11y-scan / test-e2e / storybook-test / visual-diff) directly for the issue. |
 | any | `trigger:caretake` | caretakers | Manual override: force caretaker dispatch — fires the **full fan-out** (`## Full fan-out` below, all 5 modes serially), not a generic team handoff. |
-| any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. |
+| any | `trigger:memorykeepers` | memorykeepers | Manual override: force memorykeeper dispatch. No skill yet; Director emits `needs input:` marker. **Label is NOT consumed** — it re-fires each tick until a human removes it or a memorykeepers skill ships. |
 
 "The label is consumed (removed) after dispatch" above is a summary, not a single mechanism — see the ownership table immediately below for which dispatcher removes which label (it is not always the same one, and one label is not removed at all today).
 

@@ -100,7 +100,7 @@ References: [../shared/event-taxonomy.md](../shared/event-taxonomy.md) (default-
 - No args (no `--issue`) → bare invocation runs the **heartbeat fan-out** (`RALPH_SUBCOMMAND=all`; see the dispatch body) → `caretake:all`. (The `caretake:default-event` row is the separate `--issue NNN`-scoped trigger-drain path — NOT this bare no-arg fan-out.)
 - **`--mode all`** → `caretake:all`. `STRIPPED_ARGS` already carries the original `--mode all` — do NOT re-prefix it.
 - **`--mode watch`** (with or without `--kind`) → `caretake:watch`. `STRIPPED_ARGS` already carries the original `--mode watch [--kind …]` — do NOT re-prefix it.
-- `--issue NNN` present, `--mode reflect`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
+- `--issue NNN` present, `--mode reflect`, `--mode enrich`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP. (`enrich` already runs as a child of the `caretake:all` heartbeat — see `loop-wrapper.md` § Unsuitable surfaces for why a standalone loop is refused.)
 
 ```bash
 # Parse $ARGUMENTS into mode + flags. Each mode body sets RALPH_SUBCOMMAND itself

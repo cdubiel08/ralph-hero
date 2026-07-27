@@ -131,3 +131,4 @@ Single source (GH-1607) for every `--loop`-unsuitable skill:mode — interactive
 | `hero --mode pr-drain` | single-PR action; loop would re-process same PR |
 | `caretake --mode reflect` | single artifact per session |
 | `caretake --mode unblock --question` | interactive answer collection |
+| `caretake --mode enrich` | already a child of the `caretake:all` heartbeat fan-out; a standalone loop would re-enrich the same idea files on a second cadence |
