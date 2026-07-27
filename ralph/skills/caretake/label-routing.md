@@ -8,25 +8,24 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 | Label present | Dispatch | Notes |
 |---|---|---|
-| `trigger:caretake` | Full fan-out (all 6 modes serially) | Operator override; consume after dispatch |
+| `trigger:caretake` | Full fan-out (all 5 modes serially) | Operator override; consume after dispatch |
 | `stale` | `Skill("ralph:caretake", args="--mode hygiene")` | Hygiene mode finds stale items by definition |
 | `status-update-needed` | `Skill("ralph:catch-up", args="--mode report")` | Report lives in catch-up (Plan 1), not caretake |
 | `needs-triage` | `Skill("ralph:caretake", args="--mode triage #NNN")` | Pass through the issue number |
 | `human-needed` | `Skill("ralph:caretake", args="--mode unblock --question #NNN")` | Autonomous request — posts `## Unblock Request` |
 | `process-improvement` | `Skill("ralph:caretake", args="--mode reflect")` | Manual reflect flow scoped to the issue |
-| `needs-split` | `Skill("ralph:caretake", args="--mode split #NNN")` | M/L/XL parent ready for decomposition |
+| `needs-split` | `Skill("ralph:plan", args="--mode epic #NNN")` | M/L/XL parent ready for decomposition (GH-1605) |
 | (none / default) | `Skill("ralph:caretake", args="--mode triage #NNN")` | Untriaged issue with no explicit label hint |
 
 ## Full fan-out (`trigger:caretake`)
 
-When `trigger:caretake` is present, the dispatcher invokes **all six modes serially** so the operator gets a complete board sweep from one command. Order matters — modes that mutate state run before modes that read state:
+When `trigger:caretake` is present, the dispatcher invokes **all five modes serially** so the operator gets a complete board sweep from one command. Order matters — modes that mutate state run before modes that read state:
 
 1. `Skill("ralph:caretake", args="--mode hygiene")` — archive candidates, WIP violations, field gaps
 2. `Skill("ralph:caretake", args="--mode triage #NNN")` — assess the issue that carries the trigger label
-3. `Skill("ralph:caretake", args="--mode split #NNN")` — only if the triage outcome was `TRIAGED needs-split`
-4. `Skill("ralph:caretake", args="--mode unblock --question")` — pick the oldest Human Needed and post a fresh `## Unblock Request` (autonomous path)
-5. `Skill("ralph:caretake", args="--mode reflect")` — only if inline conversation context is available
-6. `Skill("ralph:catch-up", args="--mode report")` — final status update so the operator sees the consolidated outcome
+3. `Skill("ralph:caretake", args="--mode unblock --question")` — pick the oldest Human Needed and post a fresh `## Unblock Request` (autonomous path)
+4. `Skill("ralph:caretake", args="--mode reflect")` — only if inline conversation context is available
+5. `Skill("ralph:catch-up", args="--mode report")` — final status update so the operator sees the consolidated outcome
 
 Skip modes that no-op cleanly; always run hygiene + triage + report.
 

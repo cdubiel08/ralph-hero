@@ -1,10 +1,14 @@
 #!/bin/bash
 # ralph/hooks/scripts/split-size-gate.sh
 # PreToolUse (ralph_hero__create_issue | ralph_hero__create_sub_issues): Validate
-# that sub-tickets created by /ralph:caretake --mode split are XS/S only.
+# that sub-tickets created by /ralph:plan --mode epic's atomic-split path
+# (GH-1605; formerly caretake's split mode) are XS/S only.
 #
-# Plan 6 hardening: scope-guarded (caretake + split). Larger estimates would
-# undermine the atomic-decomposition contract — block them at the MCP boundary.
+# GH-1605: scope-guarded (plan + epic-split — the atomic-split re-export from
+# decomposition.md § Atomic split; the plan-of-plans path stays at the Step 0
+# `epic` value and early-exits here, letting S/M feature children pass per
+# decomposition.md § Plan-of-plans shape). Larger estimates would undermine
+# the atomic-decomposition contract — block them at the MCP boundary.
 #
 # GH-1565: create_sub_issues batches N children in a single call, each with
 # its own optional .estimate — there is no single scalar estimate to read, so
@@ -21,10 +25,10 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
-if [[ "${RALPH_COMMAND:-}" != "caretake" ]]; then
+if [[ "${RALPH_COMMAND:-}" != "plan" ]]; then
   allow
 fi
-if [[ "${RALPH_SUBCOMMAND:-}" != "split" ]]; then
+if [[ "${RALPH_SUBCOMMAND:-}" != "epic-split" ]]; then
   allow
 fi
 
@@ -51,7 +55,7 @@ if [[ "$has_children" == "true" ]]; then
 Offending children: $offending
 Valid estimates: $valid_estimates
 
-/ralph:caretake --mode split must create XS or S sub-tickets only.
+/ralph:plan --mode epic (atomic-split path) must create XS or S sub-tickets only.
 If the work is larger, consider further decomposition."
   fi
 
@@ -71,7 +75,7 @@ if ! validate_state "$estimate" "$valid_estimates"; then
 Attempted estimate: $estimate
 Valid estimates: $valid_estimates
 
-/ralph:caretake --mode split must create XS or S sub-tickets only.
+/ralph:plan --mode epic (atomic-split path) must create XS or S sub-tickets only.
 If the work is larger, consider further decomposition."
 fi
 

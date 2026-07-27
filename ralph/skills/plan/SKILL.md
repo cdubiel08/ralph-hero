@@ -40,6 +40,14 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh plan plan plan_epic review"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__create_issue|mcp__plugin_ralph_ralph-github__ralph_hero__create_sub_issues"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
   PostToolUse:
     - matcher: "Write"
       hooks:
@@ -49,9 +57,19 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/artifact-write-tracker.sh"
+    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
+      hooks:
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
   # state-gate.sh carries the union of valid transitions across all five
   # plan modes via its command keys (plan + plan_epic + review), read from
   # ralph-state-machine.json.
+  # split-* hooks (GH-1605) are the one exception to the file-path
+  # discrimination note below — they fire on MCP tool payloads / Stop, which
+  # carry no file_path, so they key on RALPH_SUBCOMMAND=epic-split (armed by
+  # decomposition.md § Atomic split's re-export, on top of the Step 0 case
+  # export above). The plan-of-plans path stays at RALPH_SUBCOMMAND=epic and
+  # early-exits all three guards.
   # plan-postcondition owns BOTH plan-mode and review-mode Stop checks,
   # discriminating by which artifact path this session wrote (critique
   # under reviews/ → review mode; plan doc under plans/ → plan mode).
@@ -70,6 +88,8 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/plan-postcondition.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
+        - type: command
+          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-postcondition.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
         - type: command
@@ -129,12 +149,22 @@ Set `MODE` ∈ `{default, auto, epic, iterate, review}` from `--mode` flag (defa
 - If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode auto` to `$ARGUMENTS` (verb=plan alias row). Continue to `--loop` detection with the rewritten args.
 
+```bash
+case "$ARGUMENTS" in
+  --mode\ auto*)    export RALPH_SUBCOMMAND=auto ;;
+  --mode\ epic*)    export RALPH_SUBCOMMAND=epic ;;
+  --mode\ iterate*) export RALPH_SUBCOMMAND=iterate ;;
+  --mode\ review*)  export RALPH_SUBCOMMAND=review ;;
+  *)                export RALPH_SUBCOMMAND=default ;;
+esac
+```
+
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set:
 - MODE `auto` → `Skill("loop", …)` using the `plan:auto` manifest row + continuation-prompt template from `loop-wrapper.md`, then STOP.
 - MODE `review` → `Skill("loop", …)` using the `plan:review` row, then STOP.
 - MODE `default`, `iterate`, or `epic` → emit the refusal from `loop-wrapper.md` § Refusal message, then STOP.
 
-No env-flip is needed between modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch from each session-written doc's artifact dir; state-gate.sh accepts the union of legitimate transitions across all modes).
+No env-flip is needed for most modes: the hooks discriminate by the file path being written (review-no-dup / review-verify-doc no-op outside `thoughts/shared/reviews/`; doc-structure-validator picks its branch from each session-written doc's artifact dir; state-gate.sh accepts the union of legitimate transitions across all modes). The `split-*` gates are the exception — they fire on MCP tool payloads (`get_issue`, `create_issue`/`create_sub_issues`) and Stop, none of which carry a `file_path`, so they key on `RALPH_SUBCOMMAND` set at Step 0 instead (see `decomposition.md` § Atomic split for the `epic-split` re-export the atomic-split path additionally sets on top of the Step 0 `epic` value).
 
 ## Default flow
 
@@ -166,17 +196,31 @@ Autonomous XS/S plan picker. No questions; one issue, locked, planned, advanced.
 
 ## --mode epic
 
-Strategic multi-tier decomposition. Folds `ralph-plan-epic` + epic-decomposition side of `ralph-split`. Writes a plan-of-plans doc + creates feature children with dependency edges.
+The single decomposition surface (GH-1605). Folds `ralph-plan-epic` (plan-of-plans) AND the atomic-split side of the retired `ralph-split` / caretake's retired split mode into one mode, discriminated by the epic's own shape rather than a separate flag:
 
+- **Plan-of-plans** (the common case) — issue is `kind:epic`/`kind:feature`-labeled, or its body describes 3+ distinct features/surfaces (`decomposition.md` § When epic-mode applies). Writes a plan-of-plans doc + creates S/M feature children with dependency edges.
+- **Atomic split** — issue is M/L/XL but does NOT clear the plan-of-plans bar (no natural 3+-feature decomposition; body describes sub-deliverables of one feature). Decomposes into XS/S sub-issues per `decomposition.md` § Atomic split. This path additionally re-exports `RALPH_SUBCOMMAND=epic-split` (on top of the Step 0 `epic` value) so the `split-*` hooks arm their XS/S ceiling + ≥2-children postcondition — the plan-of-plans path never re-exports this and stays at `epic`, where the same three hooks early-exit (S/M feature children pass; no ≥2-children requirement).
+
+0. **Classify** — read the issue body + labels; decide plan-of-plans vs atomic split per `decomposition.md` § When epic-mode applies / § Atomic split § When to split. When ambiguous, prefer plan-of-plans if 2+ independent features can be named without inventing scope; otherwise atomic split.
 1. **Lock epic** — `save_issue(workflowState: "__LOCK__", command: "plan")` on the epic.
 2. **Context gathering** — read epic body + comments + any linked research. Spawn `codebase-locator` for affected areas; spawn `thoughts-locator` for prior plans on the same epic. Wait for ALL.
+
+**Plan-of-plans path:**
+
 3. **Write plan-of-plans** — per `decomposition.md` § Plan-of-plans shape. Required: Strategic Context, Shared Constraints, Feature Decomposition (3-7 features), Integration Strategy, Feature Sequencing, What We're NOT Doing.
 4. **Create feature children** — per `decomposition.md` § Child creation. Create every feature in ONE `create_sub_issues(parentNumber: <epic>, children: [{title, body, estimate, workflowState: "Backlog", dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]}, ...])` call — one entry per feature in Feature Decomposition order; wire sequencing inline via each child's `dependsOn` (sibling indices) and `dependsOnIssues` (pre-existing blockers) per `decomposition.md` § Dependency-edge rules. Read the per-child status report and repair only children that report `error`.
 5. **Update plan-of-plans** — annotate each `### Feature` with the assigned child issue number + URL.
+
+**Atomic-split path** (re-export `RALPH_SUBCOMMAND=epic-split` per `decomposition.md` § Atomic split before Step 3'):
+
+3'. **Research scope + propose split** — per `decomposition.md` § Atomic split §§Step 1-5 (verify M/L/XL estimate, discover existing children, research scope, propose XS/S sub-issues).
+4'. **Create or update sub-issues** — per `decomposition.md` § Atomic split §Step 6. `split-size-gate.sh` blocks any child estimate ∉ `{XS,S}`.
+5'. **Establish dependencies + write parent plan-of-plans** — per `decomposition.md` § Atomic split §§Step 7-7.5. The parent plan-of-plans doc this writes is a *different* artifact from Step 3's — it exists so the newly created children are autonomously plannable (closes GH-1416), not a strategic decomposition of the parent itself.
+
 6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
-7. **Post artifact + advance** — `create_comment(## Plan of Plans ...)` on the epic; `save_issue(workflowState: "Plan in Review", command: "plan")`.
-8. **Optional orchestration** — for each child in dependency order, optionally dispatch `--mode auto` to plan that feature. The user/orchestrator picks whether to chain — this mode does not auto-cascade by default.
-9. **Report** — *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*.
+7. **Post artifact + advance** — plan-of-plans: `create_comment(## Plan of Plans ...)` on the epic; `save_issue(workflowState: "Plan in Review", command: "plan")`. Atomic split: `create_comment(## Issue Split ...)` per `decomposition.md` § Atomic split §Step 8; **keep the parent in Backlog** (do NOT call `save_issue` with a `workflowState` argument on it); set child workflow states via `batch_update` per §Step 10; export `RALPH_SPLIT_COUNT=<N>` before Stop so `split-postcondition.sh` can verify ≥2 children were created.
+8. **Optional orchestration** (plan-of-plans only) — for each child in dependency order, optionally dispatch `--mode auto` to plan that feature. The user/orchestrator picks whether to chain — this mode does not auto-cascade by default.
+9. **Report** — plan-of-plans: *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*. Atomic split: terminal token `SPLIT <N>` / `SPLIT SKIPPED <reason>` per `decomposition.md` § Atomic split § Terminal tokens.
 
 ## --mode iterate
 

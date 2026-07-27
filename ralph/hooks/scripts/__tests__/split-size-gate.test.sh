@@ -3,7 +3,8 @@
 # split-size-gate.sh must block M/L/XL sub-ticket estimates for both the
 # scalar create_issue payload AND the batch create_sub_issues payload
 # (GH-1565: children[].estimate array), while staying out of scope for
-# anything outside caretake --mode split.
+# anything outside /ralph:plan --mode epic's atomic-split path (GH-1605;
+# formerly caretake's split mode; RALPH_COMMAND=plan + RALPH_SUBCOMMAND=epic-split).
 
 set -euo pipefail
 
@@ -40,45 +41,47 @@ echo ""
 # --- Scope guards ------------------------------------------------------------
 run_case "out-of-scope RALPH_COMMAND allows anything" 0 '{"estimate":"XL"}'
 run_case "wrong RALPH_SUBCOMMAND allows anything" 0 '{"estimate":"XL"}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=hygiene
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic
+run_case "old caretake+split key fully retired (allows)" 0 '{"estimate":"XL"}' \
+  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
 
 # --- Scalar path (create_issue) ----------------------------------------------
 run_case "scalar: XS allowed" 0 '{"estimate":"XS"}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: S allowed" 0 '{"estimate":"S"}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: M blocked" 2 '{"estimate":"M"}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: L blocked" 2 '{"estimate":"L"}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: XL blocked" 2 '{"estimate":"XL"}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: no estimate allows" 0 '{}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "scalar: custom valid-estimates env honored" 0 '{"estimate":"M"}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split RALPH_VALID_SUB_ESTIMATES=XS,S,M
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split RALPH_VALID_SUB_ESTIMATES=XS,S,M
 
 # --- Batch path (create_sub_issues) ------------------------------------------
 run_case "batch: all XS/S allowed" 0 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"XS"},{"title":"b","estimate":"S"}]}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "batch: one M child blocked" 2 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"XS"},{"title":"b","estimate":"M"}]}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "batch: trailing L child blocked" 2 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"S"},{"title":"b","estimate":"S"},{"title":"c","estimate":"L"}]}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "batch: child with no estimate allowed alongside valid siblings" 0 \
   '{"parentNumber":100,"children":[{"title":"a"},{"title":"b","estimate":"XS"}]}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "batch: empty children array allows" 0 \
   '{"parentNumber":100,"children":[]}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 run_case "batch: out-of-scope allows even with M child" 0 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"M"}]}'
 run_case "batch: whitespace in RALPH_VALID_SUB_ESTIMATES tokens trimmed" 0 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"S"}]}' \
-  RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split "RALPH_VALID_SUB_ESTIMATES=XS, S"
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split "RALPH_VALID_SUB_ESTIMATES=XS, S"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

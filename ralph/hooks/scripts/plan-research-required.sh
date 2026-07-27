@@ -49,6 +49,29 @@ if [[ -z "$ticket_id" ]]; then
   allow
 fi
 
+# Plan-of-plans carve-out (GH-1605): a plan-of-plans doc legitimately has no
+# linked research doc — the decomposition itself IS the research artifact.
+# Detect by content shape (fence-stripped, mirroring
+# doc-structure-validator.sh's plan discriminator) rather than file path,
+# since both plan shapes live under /plans/. The hole this opens (labeling
+# any plan `type: plan-of-plans` to skip research) is bounded: a mislabeled
+# implementation plan then fails doc-structure-validator.sh's Stop-side
+# `## Feature Decomposition` + `## Feature Sequencing` + Design Decisions
+# requirement for the plan-of-plans shape.
+content_probe=$(get_field '.tool_input.content')
+content_probe_stripped=$(printf '%s\n' "$content_probe" | awk '
+  /^[[:space:]]*```/ {
+    match($0, /`+/); len = RLENGTH
+    if (!f) { f = 1; open = len }
+    else if (len >= open) { f = 0 }
+    next
+  }
+  !f { print }')
+if printf '%s\n' "$content_probe_stripped" | grep -qE '^type:[[:space:]]*plan-of-plans' \
+   || printf '%s\n' "$content_probe_stripped" | grep -qE '^## Feature Decomposition([[:space:]]|$)'; then
+  allow_with_context "Plan-of-plans shape detected (type: plan-of-plans or ## Feature Decomposition) — research requirement waived; doc-structure-validator.sh enforces the plan-of-plans shape at Stop."
+fi
+
 research_dir="$(resolve_root_from_path "$file_path")/thoughts/shared/research"
 research_doc=$(find_existing_artifact "$research_dir" "$ticket_id")
 

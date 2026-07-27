@@ -103,7 +103,7 @@ Choose ONE of the **9 structured verdicts**. Every verdict names its successor �
 |---|---|---|
 | `CLOSE-done` | Done | — |
 | `CLOSE-canceled` | Canceled | — |
-| `SPLIT` | (stays Backlog, children created) | caretake `--mode split` |
+| `SPLIT` | (stays Backlog, children created) | `/ralph:plan --mode epic #NNN` |
 | `PROMOTE-research` | Research Needed | `/ralph:research --mode auto` |
 | `PROMOTE-plan` | Ready for Plan | `/ralph:plan --mode auto` |
 | `WAIT-pr=NNN` | Backlog + `blocked:pr-NNN` label | `caretake --mode watch --kind pr` (Phase 3, #1406) |

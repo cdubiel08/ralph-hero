@@ -135,15 +135,15 @@ Draft the issue body per `issue-template.md` (use the research-aware variant whe
 3. If `INPUT_TYPE == "research"`, post the `## Research Document` artifact comment on the new issue (see `issue-template.md`).
 4. Report the issue URL + suggested next steps (research / plan / iterate). Then offer, interactively, to kick off work now: *"Kick off on this now? (`/ralph:hero NNN`)"* — declining is free (default on no answer), and this offer is never made in `--auto`/headless contexts.
 
-### Step 6b: Create ticket tree
+### Step 6b: Create parent, forward to plan epic (GH-1605)
 
-Break the idea into a parent + 2-6 children. Show the tree for approval. On approval:
+Decomposition into a tree of children is `/ralph:plan --mode epic`'s job now, not form's — form creates the parent issue and forwards. Show the drafted parent for approval. On approval:
 
 1. Create the parent issue (`create_issue`, `estimate: L`, `workflowState: "Backlog"`).
-2. Create all children in ONE `create_sub_issues(parentNumber: <parent-number>, children: [{title, body, estimate: "XS", workflowState: "Backlog", dependsOn: [...]}, ...])` call — for sequential children, give the later entry `dependsOn: [<earlier sibling's index>]` so the dependency edge is wired in the same call (`dependsOn` holds sibling indices into this call's children array; a blocker that is a pre-existing GitHub issue goes in `dependsOnIssues`). Check the response's per-child status for `error` and repair only the failed children.
-3. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
+2. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
+3. Report the issue URL and suggest the next command: *"Decompose into a feature tree: `/ralph:plan --mode epic #<parent-number>`."* (No `create_sub_issues` call here — form registers no hooks, so its old inline tree-creation path was gate-free; forwarding to plan epic routes the tree through `split-estimate-gate.sh` / `split-size-gate.sh` / `split-postcondition.sh` like every other decomposition.)
 
-See `issue-template.md` for the tree shape and estimate defaults.
+See `issue-template.md` for estimate defaults; see `../plan/decomposition.md` for the tree shape plan epic will produce.
 
 ### Step 6c: Hand off to another skill
 

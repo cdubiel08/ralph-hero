@@ -91,7 +91,6 @@ DRAIN_MODES=(
   "review:merge"
   "caretake:triage"
   "caretake:unblock"
-  "caretake:split"
   "caretake:default-event"
   "hero:auto"
 )

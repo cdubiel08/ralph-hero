@@ -10,7 +10,7 @@ The **9 structured verdicts** (#1417 + #1472) each emit a verbatim `TRIAGED <ver
 
 - `TRIAGED CLOSE-done` — closed as done/implemented/duplicate; references a `## Duplicate Of` comment when a duplicate.
 - `TRIAGED CLOSE-canceled` — closed not-planned (tech changed, product direction shifted, etc.).
-- `TRIAGED SPLIT` — children created; issue stays in Backlog with the `ralph-triage` label so `--mode split` / the picker doesn't re-select it.
+- `TRIAGED SPLIT` — children created; issue stays in Backlog with the `ralph-triage` label so `/ralph:plan --mode epic` / the picker doesn't re-select it.
 - `TRIAGED PROMOTE-research` — routed to Research Needed for investigation.
 - `TRIAGED PROMOTE-plan` — issue well-specified; routed to Ready for Plan (research skipped).
 - `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` + `ralph-triage`; the `=NNN` PR number is part of the token. `caretake --mode watch --kind pr` (#1406) strips the label when the PR merges.
@@ -60,14 +60,7 @@ Unblock has two sub-modes selected by the `--question` flag; each emits its own 
 
 Reflect has no Stop postcondition hook — the mode is an artifact-writer and does not mutate GitHub state. Tokens are reported for parity.
 
-## Split terminal tokens
-
-- `SPLIT <N>` — `N ≥ 2` XS/S sub-issues created and linked. `split-postcondition.sh` requires N ≥ 2.
-- `SPLIT SKIPPED already-atomic` — `split-estimate-gate.sh` blocked the parent because its estimate was already XS or S.
-- `SPLIT SKIPPED <reason>` — other graceful skips (no natural decomposition boundary found, parent already fully split, decompose_feature returned no children, etc.).
-- `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed.
-
-`split-postcondition.sh` (Stop hook) greps the transcript for one of these tokens AND verifies via `list_sub_issues` that the parent has ≥ 2 children when `SPLIT <N>` is emitted.
+> **Decomposition terminal tokens moved (GH-1605).** `SPLIT <N>` / `SPLIT SKIPPED <reason>` are now documented in [`ralph/skills/plan/decomposition.md`](../plan/decomposition.md) § Terminal tokens — `/ralph:plan --mode epic` emits them on its M/L/XL-to-XS/S decomposition path; caretake no longer has that mode. The token family itself is unchanged.
 
 ## Watch terminal tokens
 
@@ -96,7 +89,7 @@ enrich has no `Stop` postcondition hook (parity with watch/hygiene) — it mutat
 
 When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
 
-**Drain modes** (triage, unblock, split, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
+**Drain modes** (triage, unblock, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
 
 **Heartbeat modes** (hygiene, watch, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. Watch and enrich run as serial children of `--mode all` (not independently looped there) and emit their tokens into the consolidated heartbeat report — enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain. `--mode watch` can also be looped directly (`--loop`), in which case a bare invocation sweeps all three kinds every tick.
 

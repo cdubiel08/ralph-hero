@@ -1,6 +1,6 @@
 # Decomposition
 
-Epic → feature decomposition for `/ralph:plan --mode epic`. Folds `ralph-plan-epic`'s plan-of-plans shape and the epic-decomposition side of `ralph-split`. Atomic splitting (M/L/XL → S/XS) is NOT here — that's `/ralph:caretake --mode split` (Plan 7).
+Epic → feature decomposition for `/ralph:plan --mode epic`. Folds `ralph-plan-epic`'s plan-of-plans shape, the epic-decomposition side of `ralph-split`, AND (GH-1605) the atomic-split side — formerly caretake's split mode — into one surface. § When epic-mode applies below covers the plan-of-plans shape; § Atomic split covers the M/L/XL → XS/S path.
 
 ## When epic-mode applies
 
@@ -110,6 +110,205 @@ When the epic spans multiple repos (`.ralph-repos.yml` present, epic touches mul
 - Children inherit the repo-qualified prefix in their `## Files Affected` (e.g., `ralph-hero:src/...`).
 - Dependency edges across repos use the same `add_dependency` MCP call — the substrate doesn't distinguish.
 - The epic itself may live in only one repo; children may live in others. The MCP `create_issue` call accepts `owner` / `repo` overrides for cross-repo child creation.
+
+## Atomic split
+
+The non-epic side of decomposition (GH-1605, folded from caretake's retired split mode): take ONE large issue (M/L/XL) that does NOT clear the plan-of-plans bar above and decompose it into XS/S sub-issues that ship atomically. `/ralph:plan --mode epic`'s Step 0 classification selects this path.
+
+```bash
+export RALPH_SUBCOMMAND=epic-split
+```
+
+Re-export this **on top of** the Step 0 `RALPH_SUBCOMMAND=epic` value before any `get_issue` / `create_issue` / `create_sub_issues` call — this is what arms the three `split-*` hooks' XS/S ceiling and ≥2-children postcondition (see § Hook contract below). The plan-of-plans path never re-exports this and stays at `epic`, where the same three hooks early-exit — S/M feature children pass (§ Plan-of-plans shape above), and a pure plan-of-plans session can never be blocked by the ≥2-children postcondition.
+
+### When to split (atomic)
+
+Split when ALL of the following hold:
+
+- Parent estimate is M, L, or XL (XS/S is already atomic — `split-estimate-gate.sh` blocks).
+- The body has clear sub-deliverables — distinct files, layers, phases, or artifacts that can be implemented independently or in a defined order.
+- A reader can name 2+ children without inventing scope (if you have to invent scope to fill the second child, you're splitting for the sake of splitting).
+
+Do NOT split when:
+
+- The work is genuinely atomic (one file, one PR, one acceptance criterion).
+- The scope is unclear (route to `caretake --mode triage` → Research Needed instead).
+- The parent is already fully split (children exist that cover the entire scope).
+- The children would merge in one PR anyway (single surface, shared revert scope) — that's a multi-phase plan, not a split (GH-1538). Sub-deliverables that land together are plan phases, not issues.
+
+The dominant decomposition signal is the **artifact boundary** named in the issue body — read the body first for an enumerated list (skills, fragments, docs, patterns) before inventing a strategy:
+
+| Original type | Split strategy |
+|---|---|
+| Database schema | One issue per table/view |
+| ETL pipeline | Extract, Transform, Load as separate issues |
+| API endpoint | Repository, Service, Router as separate issues |
+| Multi-state feature | One issue per state |
+| Frontend feature | Component, State, Integration as separate issues |
+| Skill audit (multi-skill) | One issue per skill or skill family |
+| Fragment extraction | One issue per fragment |
+| Documentation update | One issue per document or section |
+| Cross-cutting refactor | One issue per pattern instance or call-site cluster |
+
+### §Step 1: Select issue
+
+**If issue number provided**: fetch it directly (this is the common case — `/ralph:plan --mode epic #NNN` was dispatched on a specific M/L/XL issue).
+
+**If no issue number**: find the oldest M+ issue in Research Needed or Backlog (`orderBy: "CREATED_AT"` ascending across estimate M, then L, then XL, `limit: 50` each). If none eligible, emit `Queue empty.` and STOP.
+
+### §Step 2: Fetch and analyze
+
+Get full issue details + comments; read any linked research. Verify the estimate is M, L, or XL — `split-estimate-gate.sh` (PostToolUse on `get_issue`) blocks with exit 2 if it's XS/S. On block, emit `SPLIT SKIPPED already-atomic` and STOP — do NOT attempt to override the gate.
+
+### §Step 3: Discover existing children
+
+`list_sub_issues` on the parent. No children → proceed to research + create-all-new. Children found → read each (title, description, estimate, state) and carry forward for scope comparison.
+
+### §Step 4: Research scope (optional)
+
+Spawn parallel sub-agents (`codebase-locator`, `codebase-analyzer`) to find natural decomposition boundaries — skip if the issue body already enumerates the artifacts to split (a list of skills, fragments, files).
+
+### §Step 5: Propose split
+
+Pick from the sizing rubric — do NOT default every child to XS:
+
+| Child scope signal | Estimate |
+|---|---|
+| Single file, < 2 hours, trivial multi-file edit | XS |
+| Multi-file content work (e.g., SKILL.md + eval-scenarios.md + hooks), 2-4 hours | S |
+| Service / repository / router layer with tests | S |
+| One-pattern audit or refactor with no new files | XS |
+| Fragment extraction with consumer-skill rewrites in 3+ files | S |
+
+If existing children were found in §Step 3, compare against the proposal: reuse matches, mark net-new for the rest, leave unmatched existing children as-is.
+
+### §Step 6: Create or update sub-issues
+
+**Create new** — one batch call for every net-new child:
+
+```
+create_sub_issues(parentNumber: <parent-number>, children: [
+  {title, body, estimate: <XS|S>, workflowState: "Ready for Plan" | omit,
+   dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]},
+  ...
+])
+```
+
+`split-size-gate.sh` (PreToolUse on `create_issue` | `create_sub_issues`) blocks the whole call if ANY child's estimate is not `XS`/`S`. Verify via the response's per-child status report (`{index, title, number, url, created, linked, fieldsSet, edgesWired, error}`); repair only children reporting `error`.
+
+Sub-issue body template:
+
+```markdown
+## Summary
+[What this sub-issue accomplishes]
+
+## Scope
+[Specific files/components to modify]
+
+## Acceptance Criteria
+- [ ] [Specific criterion 1]
+
+## References
+- Parent: #[parent-number]
+
+## Out of Scope
+- [What's handled by sibling issues]
+```
+
+### §Step 7: Establish dependencies
+
+**New children** (created together in §Step 6): wire each pair inline in the SAME `create_sub_issues` call — `dependsOn` holds sibling indices, `dependsOnIssues` holds pre-existing issue numbers.
+
+**Edges to pre-existing issues** (reused children, or a dependency discovered after §Step 6 ran): use `add_dependency(blocker: <A>, blocked: <B>)`.
+
+### §Step 7.5: Write parent plan-of-plans
+
+When the split produced **2+ children** (skip on the re-estimate / `SPLIT SKIPPED` path — no children created, nothing to plan), write a parent plan-of-plans so the children are autonomously plannable. Without it, `/ralph:plan --mode auto` has neither a per-child research doc nor a parent plan to consume, so each child stalls (GH-1416).
+
+Write to `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md` — the `<parent>` number is what the parent-plan-reuse glob `*GH-NNNN-*.md` keys on (`intake-routing.md` § Parent-plan reuse). Shape: § Plan-of-plans shape above — frontmatter `type: plan-of-plans`; sections `## Strategic Context`, `## Shared Constraints`, `## Feature Decomposition`, `## Integration Strategy`, `## Feature Sequencing`, `## What We're NOT Doing`.
+
+One `### Feature` subsection per child under `## Feature Decomposition`, each embedding the child's **real issue number AND title** verbatim, plus its scope + acceptance from §Step 6's body. The parent-plan-reuse short-circuit matches a child to its section **by number or title**, so both must appear. Keep `## Feature Sequencing` **identical** to the `## Issue Split` dependency chain posted in §Step 8 — same edges, same order.
+
+This write happens under `RALPH_SUBCOMMAND=epic-split` in **plan** context, where `plan-research-required.sh`'s carve-out (this doc's own shape) is what lets it pass without a linked research doc — the decomposition itself is the research artifact.
+
+### §Step 8: Update original issue
+
+Add a split-summary comment on the parent:
+
+```markdown
+## Issue Split
+
+This issue has been decomposed into [N] sub-issues:
+
+| Order | Issue | Title | Estimate |
+|---|---|---|---|
+| 1 | #AA | [title] | XS |
+| 2 | #BB | [title] | S |
+
+**Dependency chain**: #AA -> #BB
+
+Original estimate: [M/L/XL]
+Total after split: [sum] points across [N] issues
+
+---
+*Split by `/ralph:plan --mode epic` (atomic-split path)*
+```
+
+**Keep parent in Backlog** — do NOT call `save_issue` with a `workflowState` argument on the parent. The `autoAdvanceParent` gate inside `save_issue`/`create_sub_issues` advances it only when ALL children reach a gate state; manually advancing here races with that helper. Update the original issue body to prepend `## Split into Sub-Issues\nThis issue has been decomposed. See children and comments for details.\n\n`.
+
+### §Step 9: Push child-specific research notes
+
+Any context discovered during §§Steps 2-5 that is specific to one child belongs in that child's body, not just the parent comment — append under `## Research Notes` via `save_issue`.
+
+### §Step 10: Set sub-issue workflow states
+
+Determine target state for every child: scope clear → `Ready for Plan`; needs more research → keep `Research Needed`; blocked by an issue outside this split → keep `Backlog`. Group by target state and issue one `batch_update` call per non-empty group. `batch_update` does NOT auto-advance the parent — after the batch calls, if any child now sits at a parent-gate state, call `advance_issue(direction: "parent", number: <any child number>)` once to re-fire the gate check.
+
+### §Step 11: Emit terminal tokens
+
+```
+SPLIT <N>
+```
+
+Export `RALPH_SPLIT_COUNT=<N>` (total children created + reused) before Stop — `split-postcondition.sh` requires `N ≥ 2`.
+
+On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. On other graceful skips (no natural boundary, parent already fully split): `SPLIT SKIPPED <reason>`. On an empty queue (§Step 1): `Queue empty.`
+
+### §Escalation
+
+| Situation | Action |
+|---|---|
+| Can't identify natural decomposition boundaries | Escalate via `## Escalation` comment |
+| Circular dependencies in proposed split | Escalate: "Proposed split has circular dependency. Need guidance." |
+| Issue is actually XS/Small after research | Update estimate instead of splitting (no escalation needed) |
+
+### §Constraints
+
+- Work on ONE parent per invocation.
+- **M/L/XL parents only** — `split-estimate-gate.sh` enforces.
+- **XS/S children only** — `split-size-gate.sh` enforces.
+- No implementation, only issue creation.
+- **Parent stays in Backlog** — never advance it manually.
+
+### § Hook contract (re-keyed, GH-1605)
+
+Three hook scripts (four registrations — the estimate gate is Pre+Post) gate this path, now registered in `plan/SKILL.md` instead of `caretake/SKILL.md`:
+
+| Hook | Event | Matcher | Scope guard | Purpose |
+|---|---|---|---|---|
+| `split-estimate-gate.sh` | PreToolUse | `ralph_hero__get_issue` | `RALPH_COMMAND=plan` + `RALPH_SUBCOMMAND=epic-split` | Surface M/L/XL reminder via stderr; exit 0 to allow. |
+| `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | same | Parse `tool_response.content[0].text`, exit 2 if the estimate is XS or S. |
+| `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` \| `ralph_hero__create_sub_issues` | same | Block child creation with estimate ∉ `{XS,S}` — scalar `.tool_input.estimate` for `create_issue`, every `.tool_input.children[].estimate` for the batch call. |
+| `split-postcondition.sh` | Stop | (matcher-less) | same | Require `RALPH_SPLIT_COUNT ≥ 2`. |
+
+On the **plan-of-plans path** (`RALPH_SUBCOMMAND=epic`, no re-export), all three hooks hit their scope guard and early-exit `allow` — behaving exactly as they do outside any split context: S/M feature children pass (§ Plan-of-plans shape above), and a pure plan-of-plans session reaching Stop with `RALPH_SPLIT_COUNT` unset can never be blocked by the postcondition.
+
+## Terminal tokens
+
+- `SPLIT <N>` — `N ≥ 2` XS/S sub-issues created and linked. `split-postcondition.sh` requires N ≥ 2.
+- `SPLIT SKIPPED already-atomic` — `split-estimate-gate.sh` blocked the parent because its estimate was already XS or S.
+- `SPLIT SKIPPED <reason>` — other graceful skips (no natural decomposition boundary found, parent already fully split, etc.).
+- `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed (queue-pick invocation with no issue number).
 
 ## Anti-patterns
 

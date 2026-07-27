@@ -46,7 +46,6 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 | caretake:hygiene | `HYGIENE COMPLETE <N>` / `HYGIENE BLOCKED <reason>` | (none — heartbeat; re-fire always) | default interval 1h; 60-270s if changes made | periodic scan |
 | caretake:watch | `WATCH-<KIND> ADVANCED <N>` | (none — heartbeat; re-fire always) | default interval 1h | sweeps pr/upstream/issue kinds; bare invocation runs all three serially |
 | caretake:unblock | `UNBLOCK REQUEST POSTED` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Human Needed queue |
-| caretake:split | `SPLIT <N>` / `SPLIT SKIPPED <reason>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain M/L/XL queue |
 | caretake:all | (fan-out, no aggregated sentinel) | (none — heartbeat; re-fire always) | default interval 1h; schedule accordingly | periodic fan-out heartbeat |
 | caretake:default-event | per dispatched mode | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain trigger:* labels (`--issue NNN`-scoped; the bare no-arg fan-out uses `caretake:all`) |
 | catch-up:report | `Status update posted successfully.` | (none — heartbeat; re-fire always) | default interval 1d; schedule accordingly | periodic status post |

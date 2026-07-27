@@ -87,6 +87,14 @@ run_case "MIN=S + estimate XS allows" 0 \
 run_case "no estimate + no waiver + no research blocks" 2 \
   "$PLANS/2026-05-24-GH-2-x.md" $'---\ndate: 2026-05-24\ntype: plan\n---'
 
+# --- Plan-of-plans carve-out (GH-1605) ------------------------------------------
+run_case "plan-of-plans type: frontmatter allows without research doc" 0 \
+  "$PLANS/2026-07-26-GH-3-epic.md" $'---\ntype: plan-of-plans\nestimate: L\n---\n\n## Feature Decomposition\n'
+run_case "## Feature Decomposition heading (no type:) allows without research doc" 0 \
+  "$PLANS/2026-07-26-GH-4-epic.md" $'---\nestimate: L\n---\n\n## Feature Decomposition\n'
+run_case "fence-wrapped plan-of-plans example does NOT carve out (ordinary plan still blocked)" 2 \
+  "$PLANS/2026-07-26-GH-5-plan.md" $'---\nestimate: M\n---\n\nExample shape:\n```markdown\ntype: plan-of-plans\n## Feature Decomposition\n```\n'
+
 # --- Path-derived rooting (GH-1556) --------------------------------------------
 # Workspace-root repro: CLAUDE_PROJECT_DIR points at $SBX, but the target file
 # lives in a different repo tree ($REPO) that contains the research doc. The

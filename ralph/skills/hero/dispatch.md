@@ -6,7 +6,7 @@
 
 | Phase | Verb | Args |
 |---|---|---|
-| SPLIT | `/ralph:caretake --mode split` | `#NNN` |
+| SPLIT | `/ralph:plan --auto --mode epic` | `#NNN` |
 | RESEARCH | `/ralph:research --auto` | `NNN` (or `NNN --mode prove` for claim-checks) |
 | PLAN (XS/S/M) | `/ralph:plan --auto` | `NNN [--research-doc PATH]` |
 | PLAN (L/XL epic) | `/ralph:plan --auto --mode epic` | `NNN [--research-doc PATH]` |

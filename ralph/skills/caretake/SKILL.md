@@ -1,6 +1,6 @@
 ---
-description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "capture friction", "reflect on the session", "unblock issue", "answer unblock questions", "split this issue", "decompose ticket", "enrich idea files". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/reflect/split/watch/enrich) each route to a dedicated mode body under `modes/`.
-argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|reflect|split|watch [--kind pr|upstream|issue]|enrich|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
+description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "capture friction", "reflect on the session", "unblock issue", "answer unblock questions", "enrich idea files". Decomposition ("decompose ticket", "break this into sub-issues") lives in `/ralph:plan --mode epic` (GH-1605). Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/reflect/watch/enrich) each route to a dedicated mode body under `modes/`.
+argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|reflect|watch [--kind pr|upstream|issue]|enrich|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
 context: inline
 model: sonnet
 hooks:
@@ -13,23 +13,11 @@ hooks:
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/branch-gate.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__create_issue|mcp__plugin_ralph_ralph-github__ralph_hero__create_sub_issues"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-size-gate.sh"
     - matcher: "Skill"
       hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-no-skill-dispatch.sh"
   PostToolUse:
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-estimate-gate.sh"
     - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
       hooks:
         - type: command
@@ -42,8 +30,6 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/triage-postcondition.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/unblock-request-postcondition.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/split-postcondition.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
 allowed-tools:
@@ -82,7 +68,7 @@ allowed-tools:
 
 # /ralph:caretake — Board steward in one verb
 
-All board maintenance flows through this one entrypoint. Eight named modes plus a default event-driven dispatcher. Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out.
+All board maintenance flows through this one entrypoint. Seven named modes plus a default event-driven dispatcher. Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out. Decomposition (M/L/XL → sub-issues, strategic or atomic) is NOT here — see `/ralph:plan --mode epic` (GH-1605).
 
 | Mode | Trigger | Role |
 |---|---|---|
@@ -92,11 +78,10 @@ All board maintenance flows through this one entrypoint. Eight named modes plus 
 | **hygiene** | `/ralph:caretake --mode hygiene` | Scan for archive candidates, stale items, WIP violations |
 | **unblock** | `/ralph:caretake --mode unblock [#NNN] [--question]` | Interactive answer OR autonomous request post |
 | **reflect** | `/ralph:caretake --mode reflect` | Capture intra-session friction into research doc |
-| **split** | `/ralph:caretake --mode split [#NNN]` | Split M/L/XL → multiple XS/S sub-issues |
 | **watch** | `/ralph:caretake --mode watch [--kind pr\|upstream\|issue]` | Resolve `WAIT-*`-parked items by kind: `pr` (blocked:pr-NNN → PR merge/close), `upstream` (blocked:upstream → external condition), `issue` (blockedBy edge → all blockers closed). Bare invocation sweeps all three kinds serially. |
 | **enrich** | `/ralph:caretake --mode enrich` | Background-enrich `status: draft` idea files (codebase + prior art + related issues), flip to `status: forming` |
 
-References: [label-routing.md](label-routing.md) (default-mode dispatch table), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts), [split-decomposition.md](split-decomposition.md) (split-mode strategy + hook contracts).
+References: [label-routing.md](label-routing.md) (default-mode dispatch table), [outcome-tokens.md](outcome-tokens.md) (per-mode terminal verdicts).
 
 ## Configuration (resolved at load time)
 
@@ -111,7 +96,7 @@ References: [label-routing.md](label-routing.md) (default-mode dispatch table), 
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode triage` to `$ARGUMENTS` (verb=caretake alias row). Continue to `--loop` detection with the rewritten args.
 
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set, route by mode (all use continuation-prompt template from `loop-wrapper.md`):
-- `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row; `--mode split` → `caretake:split` row. Emit `Skill("loop", …)` then STOP.
+- `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row. Emit `Skill("loop", …)` then STOP.
 - No args (no `--issue`) → bare invocation runs the **heartbeat fan-out** (`RALPH_SUBCOMMAND=all`; see the dispatch body), so loop it with the `caretake:all` heartbeat row — default interval `1h`, **no `Queue empty.` terminal**, re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:all row>")` then STOP. (The `caretake:default-event` row is the `--issue NNN`-scoped trigger-drain path — NOT the bare no-arg fan-out.)
 - `--issue NNN` present, `--mode reflect`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
 - **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode all ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
@@ -150,7 +135,6 @@ Each mode body ends by emitting its terminal token (see [outcome-tokens.md](outc
 - [modes/hygiene.md](modes/hygiene.md) — scan + optional archive
 - [modes/unblock.md](modes/unblock.md) — interactive answer OR autonomous request
 - [modes/reflect.md](modes/reflect.md) — intra-session friction → research doc
-- [modes/split.md](modes/split.md) — M/L/XL → XS/S sub-issues
 - [modes/watch.md](modes/watch.md) — resolve `WAIT-*`-parked items by kind (`--kind pr|upstream|issue`; bare sweeps all three)
 - [modes/enrich.md](modes/enrich.md) — background-enrich `status: draft` idea files
 
@@ -163,7 +147,6 @@ The harness reads these from the transcript; do not paraphrase. Full table in [o
 - unblock (interactive): `UNBLOCK RESOLVED` | `UNBLOCK ESCALATED`
 - unblock (autonomous): `UNBLOCK REQUEST POSTED` | `Queue empty.`
 - reflect: `REFLECT <path>` | `REFLECT SKIPPED <reason>`
-- split: `SPLIT <N>` | `SPLIT SKIPPED <reason>`
 - watch (per kind, `KIND` ∈ `PR`/`UPSTREAM`/`ISSUE`): `WATCH-<KIND> ADVANCED <N>` | `WATCH-<KIND> IDLE` | `WATCH-<KIND> SKIPPED — branch <name> is not main`
 - enrich: `ENRICHED <N>` | `Queue empty.` | `ENRICH SKIPPED <reason>`
 

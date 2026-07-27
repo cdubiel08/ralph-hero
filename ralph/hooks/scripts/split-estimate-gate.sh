@@ -1,14 +1,17 @@
 #!/bin/bash
 # ralph/hooks/scripts/split-estimate-gate.sh
-# Dual-event hook for ralph_hero__get_issue under /ralph:caretake --mode split:
+# Dual-event hook for ralph_hero__get_issue under /ralph:plan --mode epic's
+# atomic-split path (GH-1605; formerly caretake's split mode):
 #   - PreToolUse: surface a context message reminding the agent of the M/L/XL
 #     requirement.
 #   - PostToolUse: parse the get_issue response and BLOCK if the fetched issue's
 #     estimate is XS or S.
 #
-# Plan 6 hardening: RALPH_COMMAND scope guard (caretake only) + RALPH_SUBCOMMAND
-# scope check (split only). Pipeline-heavy jq stages append `|| true` so the
-# no-match path under `set -euo pipefail` flows to a controlled warn/allow.
+# GH-1605: scoped to the plan skill via RALPH_COMMAND, narrowed further by an
+# RALPH_SUBCOMMAND check (epic-split only — the atomic-split re-export from
+# decomposition.md § Atomic split; the plan-of-plans path stays at the Step 0
+# `epic` value and early-exits here). Pipeline-heavy jq stages append `|| true`
+# so the no-match path under `set -euo pipefail` flows to a controlled warn/allow.
 #
 # Environment:
 #   RALPH_MIN_ESTIMATE       - Minimum estimate for splitting (default: M).
@@ -25,10 +28,10 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
-if [[ "${RALPH_COMMAND:-}" != "caretake" ]]; then
+if [[ "${RALPH_COMMAND:-}" != "plan" ]]; then
   allow
 fi
-if [[ "${RALPH_SUBCOMMAND:-}" != "split" ]]; then
+if [[ "${RALPH_SUBCOMMAND:-}" != "epic-split" ]]; then
   allow
 fi
 
