@@ -167,13 +167,27 @@ SESSION_ID=pop-xl run_case "plan-of-plans: XL child still blocked" 2 \
 seed_plan_of_plans "pop-scalar"
 SESSION_ID=pop-scalar run_case "plan-of-plans: scalar M allowed" 0 '{"estimate":"M"}' \
   RALPH_COMMAND=plan
-seed_plan_of_plans "pop-tighten"
-SESSION_ID=pop-tighten run_case "epic-split env can only TIGHTEN, never relax" 2 \
+# A stale exported RALPH_SUBCOMMAND=epic-split must have NO effect on the
+# classification in EITHER direction. It used to be honored "additively" (it
+# could force the tighter atomic ceiling); CodeRabbit (PR #1620, 2026-07-28)
+# showed that tightening off a stale value is still mis-arming — an operator
+# whose shell profile exports it had every legitimate S/M plan-of-plans child
+# refused as "estimate too large". The observable write-order signal is the
+# whole contract now. Both directions are pinned:
+seed_plan_of_plans "pop-stale-env"
+SESSION_ID=pop-stale-env run_case "stale RALPH_SUBCOMMAND=epic-split cannot TIGHTEN a plan-of-plans batch" 0 \
+  '{"parentNumber":100,"children":[{"title":"a","estimate":"M"},{"title":"b","estimate":"S"}]}' \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+run_case "stale RALPH_SUBCOMMAND=epic-split cannot RELAX the atomic ceiling either" 2 \
   '{"parentNumber":100,"children":[{"title":"a","estimate":"M"}]}' \
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
 # --- Unreadable payload must block, not exit non-blocking (GH-1603 F8) -------
-if env -u RALPH_COMMAND -u RALPH_SUBCOMMAND TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT='{"tool_input":' \
+# Same env scrubbing as run_case/stderr_case: the developer shell profile
+# exports RALPH_* vars, so the estimate-override leak is live here too.
+if env -u RALPH_COMMAND -u RALPH_SUBCOMMAND -u RALPH_VALID_SUB_ESTIMATES \
+  -u RALPH_VALID_FEATURE_ESTIMATES -u RALPH_MIN_ESTIMATE \
+  TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT='{"tool_input":' \
   RALPH_COMMAND=plan bash "$HOOK" </dev/null >/dev/null 2>&1; then
   malformed_actual=0
 else

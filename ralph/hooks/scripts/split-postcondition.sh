@@ -30,8 +30,16 @@
 # this hook cannot tell how many children it produced" is exactly the state the
 # postcondition exists to catch.
 #
+# The ledger is the ONLY arming route. An env-var fallback was retained for one
+# round as a "legacy additive" signal and removed again (CodeRabbit, PR #1620,
+# 2026-07-28): a stale `export RALPH_SUBCOMMAND=epic-split` left in an
+# operator's shell profile armed this Stop hook for every unrelated
+# /ralph:plan session, and those sessions have no ledger count — so the gate
+# blocked them as "unverifiable". Arming off a value the hook cannot trust is
+# the same defect GH-1603 closed on the arming side; it must not survive as a
+# fallback. Nothing sets that variable in a way this subprocess can see anyway.
+#
 # Environment (additive / legacy only — never required):
-#   RALPH_SUBCOMMAND=epic-split - arms the gate when an operator exports it
 #   RALPH_SPLIT_COUNT           - count override when the ledger has none
 #   RALPH_TICKET_ID             - parent ticket, for the failure message
 #   RALPH_FORCE_STOP            - If "true", allow stop even if postconditions fail
@@ -60,10 +68,9 @@ if [[ "${RALPH_FORCE_STOP:-}" == "true" ]]; then
 fi
 
 # ---- Arming ------------------------------------------------------------------
+# Ledger only. See the scope note above: no env var may arm this gate.
 armed=0
 if [[ "$(split_ledger_get attempted)" == "1" ]]; then
-  armed=1
-elif [[ "${RALPH_SUBCOMMAND:-}" == "epic-split" ]]; then
   armed=1
 fi
 

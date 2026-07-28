@@ -33,9 +33,14 @@
 #      split. The per-parent scoping matters: an unscoped, session-wide read
 #      let one ticket's plan-of-plans doc relax the NEXT ticket's atomic
 #      ceiling (GH-1603 round 9).
-#   4. RALPH_SUBCOMMAND=epic-split — retained as an ADDITIVE arming signal for
-#      environments where an operator exports it before launching. It can only
-#      force the tighter (atomic) contract, never relax it.
+# No env var participates in the classification. `RALPH_SUBCOMMAND=epic-split`
+# survived one round as an "additive, tightening-only" signal and is now gone
+# (CodeRabbit, PR #1620, 2026-07-28): tightening off a stale value is still
+# mis-arming. A leftover `export RALPH_SUBCOMMAND=epic-split` in an operator's
+# shell profile forced the atomic {XS,S} ceiling onto a genuine plan-of-plans
+# batch, so every legitimate S/M child was refused as "estimate too large" —
+# a false block on a documented path, from a variable no ralph code sets in a
+# way a hook subprocess can see. The observable signals (1-3) are the contract.
 #
 # Ambiguity resolves to the atomic (tighter) contract: the recovery message
 # then tells the plan-of-plans path to write its doc before creating children,
@@ -179,9 +184,6 @@ elif [[ -n "$(session_artifacts "thoughts/shared/plans")" ]]; then
   # ticket-scoped. Fall back to the session-wide signal — the best fact
   # available for that shape, and the same signal this path has always used.
   atomic=0
-fi
-if [[ "${RALPH_SUBCOMMAND:-}" == "epic-split" ]]; then
-  atomic=1
 fi
 
 if [[ "$atomic" -eq 1 ]]; then

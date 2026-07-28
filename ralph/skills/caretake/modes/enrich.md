@@ -24,6 +24,28 @@ ENRICH SKIPPED — branch <name> is not main
 
 Idea files are tracked in git on `main`; enrichment commits must not land on a stray feature branch (parity with the watch-mode branch guard).
 
+## §Step 1a: Define `sanitize_diag()` (BEFORE any step that can emit a token)
+
+**Definition site, not just documentation.** Every failure path from §Step 2b onward interpolates `$(sanitize_diag "$…_err")` into a terminal token, and §Step 2b's branch-setup failures are the *earliest* of them. Defining the helper down in §Step 4 (where it was) meant a failed `git fetch` in §Step 2b ran `sanitize_diag` before it existed: the command substitution emitted a shell `command not found` error, produced an empty diagnostic, and the `ENRICH SKIPPED branch-setup-failed: fetch-main:` token lost exactly the stderr it exists to carry. Define it here, once, and use it everywhere below.
+
+```bash
+# git/gh stderr can carry embedded newlines. The terminal token is the LAST
+# LINE of the transcript and must stay verbatim-parseable (outcome-tokens.md
+# § file-level invariant — "the harness extractor reads these from the
+# transcript verbatim"); a raw multiline diagnostic embedded in a token would
+# split it across several physical lines and break that read. Collapse to one
+# line (and cap length) before it ever reaches a printed token; nothing is
+# lost — the un-sanitized $branch_err/$checkout_err/$commit_err/$push_err/
+# $pr_err/$view_err values are still available in the transcript's own command
+# output above the token line for a human to inspect.
+sanitize_diag() {
+  printf '%s' "$1" | tr '\n\r' '  ' | tr -s '[:space:]' ' ' | cut -c1-300 \
+    | sed -e 's/[[:space:]]*$//'
+}
+```
+
+`ralph/skills/caretake/__tests__/enrich-outcome-tokens.test.sh` pins this body against a canonical copy and executes it to prove the collapse — a change here is a two-file change on purpose.
+
 ## §Step 2: Select drafts
 
 Glob `thoughts/shared/ideas/*.md`. Read each file's frontmatter; select files with `status: draft` — skip `forming`, `refined`, or anything else (idempotency; see `intake-shapes.md` § Idea-file lifecycle contract — hand-off `forming` files are never touched here, selection keys on `status: draft` only).
@@ -94,11 +116,34 @@ if [[ "$current_branch" != "$BRANCH" ]]; then
 fi
 ```
 
-`sanitize_diag()` is the helper §Step 4 defines; **hoist that definition above this block** so the tokens here are sanitized too — the terminal token must stay one verbatim-parseable line wherever it is emitted (outcome-tokens.md § file-level invariant). **Never fall back to enriching on `main`:** on any `branch-setup-failed` path, nothing has been edited yet, the session is left wherever git left it (no commit exists to strand), and the next heartbeat re-enters §Step 1's `main`-only gate cleanly.
+`sanitize_diag()` is defined in §Step 1a, above this block — that ordering is load-bearing, not cosmetic: these are the earliest token-emitting paths in the mode, and a helper defined later would not exist when they run. The terminal token must stay one verbatim-parseable line wherever it is emitted (outcome-tokens.md § file-level invariant). **Never fall back to enriching on `main`:** on any `branch-setup-failed` path, nothing has been edited yet, the session is left wherever git left it (no commit exists to strand), and the next heartbeat re-enters §Step 1's `main`-only gate cleanly.
 
 ## §Step 3: Enrich each selected file (bounded, serial)
 
-**Re-validate the selection first.** §Step 2 read frontmatter on `main`; §Step 2b may then have checked out `chore/enrich-ideas` carrying a prior pass's unpushed enrichment commit, in which case a file that was `status: draft` during selection is `status: forming` on the branch now checked out. Re-read each selected file's frontmatter **after** the checkout and drop any that is no longer `status: draft` — enriching one twice appends a second `## Enrichment` section. If the re-read empties the selection, emit `Queue empty.`, return to `main` (§Step 4's `return_to_main`), and STOP. Keep the surviving paths in `SELECTED_FILES` — §Step 4 stages exactly those.
+**Re-validate the selection first.** §Step 2 read frontmatter on `main`; §Step 2b may then have checked out `chore/enrich-ideas` carrying a prior pass's unpushed enrichment commit, in which case a file that was `status: draft` during selection is `status: forming` on the branch now checked out. Re-read each selected file's frontmatter **after** the checkout and drop any that is no longer `status: draft` — enriching one twice appends a second `## Enrichment` section. Keep the surviving paths in `SELECTED_FILES` — §Step 4 stages exactly those.
+
+**An empty selection is NOT automatically `Queue empty.`** — that short-circuit is only correct when there is also nothing already committed to publish. The stranding case is the exact state §Step 4's failure paths leave behind: a pass enriched files, committed them, and then failed to push (`ENRICH SKIPPED push-rejected` / `ENRICH BLOCKED push-failed`) or failed to open the PR (`ENRICH BLOCKED pr-create-failed`). Those files are `status: forming` **on the branch** while `main` still shows them `draft`, so §Step 2 re-selects them from `main` and this re-read then drops every one of them. Emitting `Queue empty.` there returns to `main` and stops — and because §Step 2 will keep making the same selection and this re-read will keep emptying it, the commit is never pushed and the PR is never opened, on any future heartbeat. The commit is the only copy of those findings.
+
+So when `SELECTED_FILES` is empty, check the branch for recoverable work **before** short-circuiting:
+
+```bash
+# Commits on the standing branch that origin/main does not have. Non-zero means
+# a prior pass committed enrichment that never reached a reviewable PR.
+pending_commits=$(git rev-list --count "origin/main..$BRANCH" 2>/dev/null || echo "")
+[[ "$pending_commits" =~ ^[0-9]+$ ]] || pending_commits=0
+
+if [[ "$pending_commits" -gt 0 ]]; then
+  : # RECOVER — skip §Step 3's enrichment and §Step 4's add/commit; resume at
+    # §Step 4's push step, then the same idempotent PR create/lookup.
+else
+  return_to_main
+  printf '%s\n' "Queue empty."
+  exit 0
+fi
+```
+
+- **Recovery path** (`pending_commits > 0`): enrich nothing, stage nothing, commit nothing. Jump straight to §Step 4's `git push origin "$BRANCH"` block — including its rejection classification and one fetch + fast-forward retry — and then the idempotent `gh pr create` / `gh pr view` block. Every failure token there applies unchanged (`push-rejected`, `push-failed`, `pr-create-failed`, `checkout-main-failed`); on success emit `ENRICH RECOVERED (PR <url>)` rather than `ENRICHED <N> (PR <url>)`, because this pass enriched nothing — it only published what an earlier one had already committed. The push and the PR create are both idempotent, so a recovery pass that races a healthy one is a no-op, not a duplicate.
+- **`Queue empty.`** is reserved for the genuinely idle state: no `status: draft` file to enrich **and** no unpublished commit on the branch. Only then return to `main` and stop.
 
 For each of the (surviving, up to 5) selected files, run exactly three bounded lookups keyed on the idea's topic (title + "The Idea" body):
 
@@ -133,19 +178,9 @@ Update frontmatter: `status: forming`, `enriched: <same UTC ISO-8601 timestamp>`
 This step only runs when §Step 2 selected at least one file (N=0 already short-circuited to `Queue empty.`). The branch is already checked out from §Step 2b; `main` rejects all direct pushes (GH-1589 ruleset), so the commit lands through that standing PR-only branch:
 
 ```bash
-# git/gh stderr can carry embedded newlines. The terminal token is the LAST
-# LINE of the transcript and must stay verbatim-parseable (outcome-tokens.md
-# § file-level invariant — "the harness extractor reads these from the
-# transcript verbatim"); a raw multiline diagnostic embedded in a token would
-# split it across several physical lines and break that read. Collapse to one
-# line (and cap length) before it ever reaches a printed token; nothing is
-# lost — the un-sanitized $checkout_err/$commit_err/$push_err/$pr_err/$view_err
-# values are still available in the transcript's own command output above the
-# token line for a human to inspect.
-sanitize_diag() {
-  printf '%s' "$1" | tr '\n\r' '  ' | tr -s '[:space:]' ' ' | cut -c1-300 \
-    | sed -e 's/[[:space:]]*$//'
-}
+# sanitize_diag() is already defined (§Step 1a) — do NOT redefine it here. It
+# was defined in this block once, which left §Step 2b's branch-setup failures
+# calling it before it existed.
 
 # EVERY exit path returns to main — the commit is already safe on the local
 # `chore/enrich-ideas` ref, and leaving that branch checked out would strand the
@@ -250,14 +285,15 @@ The fallback `gh pr view` is checked the same way, for the same reason: it can f
 
 **Push-failure rule.** `push-rejected` is reserved for **retryable remote-branch rejections** — the non-fast-forward / `fetch first` / stale-info family, which is precisely what the fetch + fast-forward retry repairs. On one of those, the retry runs once; if it also fails, **return to `main`** and emit `ENRICH SKIPPED push-rejected` — the commit stays on the local `chore/enrich-ideas` ref, which §Step 2b's non-destructive branch setup preserves and re-checks-out on the next pass. Every other push failure (authentication, permission, protected branch, network, rate limit) is **not** a rejection and is **not** retried: it returns to `main` and emits `ENRICH BLOCKED push-failed: <sanitized-stderr>` with the diagnostics intact. Classifying those as `push-rejected` would report a credentials outage as routine branch divergence and burn a pointless retry against a remote that is not reachable. The return to `main` is itself checked on every path — a failed `git checkout main` emits `ENRICH BLOCKED checkout-main-failed: <sanitized-stderr>` rather than silently claiming recovery from the wrong branch. Returning to `main` is what keeps that recovery reachable: §Step 1's branch gate stops the whole mode when the session is not on `main`, so leaving the enrichment branch checked out would strand the commit permanently (`ENRICH SKIPPED — branch chore/enrich-ideas is not main` every heartbeat, §Step 2b never reached). Findings are not lost, but the enriched files are already at `status: forming` and will not be re-selected, so the local commit is the only copy until it pushes.
 
-**Diagnostic sanitization.** `git`/`gh` stderr can carry embedded newlines. Every `<sanitized-stderr>` above runs through the `sanitize_diag()` helper (§Step 4) before it reaches a token line — collapsed to a single line and capped at 300 chars — so a multiline diagnostic can never split a terminal token across several physical lines (outcome-tokens.md § file-level invariant: "the harness extractor reads these from the transcript verbatim"). Nothing is lost: the raw, un-sanitized error still appears in the transcript's own command output above the token line.
+**Diagnostic sanitization.** `git`/`gh` stderr can carry embedded newlines. Every `<sanitized-stderr>` above runs through the `sanitize_diag()` helper (§Step 1a — defined there precisely so §Step 2b's earlier failure paths can use it too) before it reaches a token line — collapsed to a single line and capped at 300 chars — so a multiline diagnostic can never split a terminal token across several physical lines (outcome-tokens.md § file-level invariant: "the harness extractor reads these from the transcript verbatim"). Nothing is lost: the raw, un-sanitized error still appears in the transcript's own command output above the token line.
 
 ## §Step 5: Emit terminal token
 
 Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 
 - `ENRICHED <N> (PR <url>)` — `<N>` files enriched, appended, and stamped this pass; committed to `chore/enrich-ideas` and opened/updated as a PR against `main` (never pushed directly). A noted remainder (§Step 2) belongs in the surrounding summary line, not the token itself.
-- `Queue empty.` — no `status: draft` files found (§Step 2 short-circuit).
+- `ENRICH RECOVERED (PR <url>)` — this pass enriched nothing, but §Step 3's empty-selection check found unpublished commits on `chore/enrich-ideas` (a prior pass whose push or PR create failed) and published them. Nothing was staged or committed; only the push and the idempotent PR create/lookup ran.
+- `Queue empty.` — no `status: draft` files found (§Step 2 short-circuit) **and** no unpublished commit on `chore/enrich-ideas` (§Step 3's recovery check). Both conditions are required — see §Step 3.
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
 - `ENRICH SKIPPED branch-setup-failed: <stage>: <sanitized-stderr>` — §Step 2b's fail-closed branch setup stopped before any edit. `<stage>` names which step refused: `fetch-main` (stale/unreachable base), `checkout-local` / `checkout-from-remote` / `checkout-new` (the checkout itself), or the post-condition form `on '<branch>', expected 'chore/enrich-ideas'` (the checkout reported success but did not move). No file was edited and no commit exists, so nothing is stranded.
 - `ENRICH SKIPPED push-rejected` — §Step 4 branch-push **rejection** (non-fast-forward / fetch-first / stale info) survived the one fetch + fast-forward retry; commit stays local on `chore/enrich-ideas` and the checkout returns to `main` so the next heartbeat can retry.

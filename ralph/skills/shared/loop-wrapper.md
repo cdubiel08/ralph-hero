@@ -90,7 +90,7 @@ it declared complete. Cancel the loop via /tasks → delete pending wakeup.")
 **Worked example (impl:auto)** — note the inner command names no mode: `STRIPPED_ARGS` already
 holds `--mode auto` (either typed directly or written there by the `--auto` alias rewrite).
 
-```
+```text
 Skill("loop", args="Run /ralph:impl ${STRIPPED_ARGS}
 
 Continuation rules (LOAD-BEARING):

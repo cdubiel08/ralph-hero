@@ -104,8 +104,12 @@ After the explorer-agent completes, read the trace at `.playwright-cli/<session>
 
 In `--mode auto`, after appending the `## UI Baseline` section, commit the updated doc through the standard artifact-commit path (`../shared/artifact-commit.md`) — **never `git push origin main`**, which the ruleset rejects (GH-1589):
 
+`$FINDINGS_DOC` is the research document this baseline was appended to — the path `SKILL.md` § `--mode auto` Step 5 resolved and Step 7 committed. Stage that resolved path, never a literal ellipsis: `git add thoughts/shared/research/...` names a file that does not exist, so the stage fails and the commit below never runs.
+
 ```bash
-git add thoughts/shared/research/...
+# FINDINGS_DOC — the resolved findings-document path from Step 5 (e.g.
+# thoughts/shared/research/2026-07-28-GH-1234-feature-research.md).
+git add -- "$FINDINGS_DOC"
 git commit -m "docs(research): add UI baseline for GH-NNN"
 ```
 

@@ -16,6 +16,19 @@
 # Doc-structure coverage (the same model as hero-auto-tick-audience.test.sh and
 # caretake-watch.test.sh): these are prose contracts with no runtime hook, so the
 # skill surface itself is the correct assertion target.
+#
+# NOT a hook test — deliberately does not use plan-research-required.test.sh's
+# SBX/REPO/NOGIT + `run_case` harness (CodeRabbit asked for it on PR #1620,
+# 2026-07-28; declined for the same reason the two tests above were). This file
+# executes no hook: no HOOKS_DIR, no `bash "$HOOK"`, no RALPH_HOOK_INPUT, no
+# stdin JSON payload anywhere in it. That harness exists to exercise
+# `resolve_root_from_path`'s file_path-derived rooting through fixture repos
+# (ralph/CLAUDE.md § Hooks); there is no file_path and no rooting here. And the
+# assertion below is a REPO-WIDE SWEEP — "every ${STRIPPED_ARGS} dispatch site
+# under ralph/skills" — whose whole value is that it finds sites nobody
+# enumerated. Run against a sandbox of hand-copied fixtures it would only ever
+# check the sites someone remembered to copy, i.e. it would stop being the
+# check it exists to be.
 
 set -uo pipefail
 

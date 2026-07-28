@@ -474,12 +474,42 @@ json_auto_pick=$(jq -n '{
 run_case "C13: pre-exported epic-split + plan --mode auto XS read -> exit 0 (not epic scope)" 0 \
   "$ESTIMATE_GATE" "$json_auto_pick" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
-# The legacy env signal is ADDITIVE — it may arm the tighter contract, and it
-# must never DISARM one. `RALPH_SUBCOMMAND=epic` used to switch all three gates
-# off; that is exactly the hole GH-1603 closed.
+# The legacy env signal must never DISARM a gate. `RALPH_SUBCOMMAND=epic` used
+# to switch all three off; that is exactly the hole GH-1603 closed.
 json_m_child_epic='{"session_id":"legacy-epic","tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"M"}]}}'
 run_case "C9: stale RALPH_SUBCOMMAND=epic cannot disarm the atomic ceiling -> exit 2" 2 \
   "$SIZE_GATE" "$json_m_child_epic" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic
+
+# ---- CodeRabbit PR #1620 (2026-07-28): ...and it must not ARM one either -----
+# The env value survived one round as a "legacy additive" arming fallback. It is
+# gone now, in BOTH split hooks that read it, because tightening/arming off a
+# stale value is the same defect as disarming off one — the hook cannot tell a
+# deliberate export from a leftover in a shell profile (and the developer shell
+# here really does export RALPH_* vars).
+#
+# C14: the Stop gate. A stale epic-split armed the postcondition for every
+# unrelated /ralph:plan session; those sessions record no ledger count, so the
+# gate blocked them as "count could not be verified" — an unrelated plan session
+# could not exit.
+run_case "C14: stale RALPH_SUBCOMMAND=epic-split cannot ARM the Stop postcondition -> exit 0" 0 \
+  "$POSTCONDITION" '{"session_id":"stale-arm-1"}' RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
+# C15: the create gate. A stale epic-split forced the atomic {XS,S} ceiling onto
+# a session whose write-order signal says plan-of-plans, refusing that path's
+# legitimate S/M children.
+seed_plan_of_plans "stale-arm-2"
+run_case "C15: stale RALPH_SUBCOMMAND=epic-split cannot re-classify a plan-of-plans batch -> exit 0" 0 \
+  "$SIZE_GATE" '{"session_id":"stale-arm-2","tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"M"},{"title":"b","estimate":"S"}]}}' \
+  RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
+# C16: and the ledger route still arms the Stop gate on its own.
+seed_ledger "stale-arm-3" attempted 1
+seed_ledger "stale-arm-3" count 3
+run_case "C16: ledger attempted=1 + count=3 still arms and passes the Stop gate -> exit 0" 0 \
+  "$POSTCONDITION" '{"session_id":"stale-arm-3"}' RALPH_COMMAND=plan
+seed_ledger "stale-arm-4" attempted 1
+run_case "C17: ledger attempted=1 with NO count still blocks (unverifiable) -> exit 2" 2 \
+  "$POSTCONDITION" '{"session_id":"stale-arm-4"}' RALPH_COMMAND=plan
 
 echo ""
 
@@ -503,14 +533,16 @@ else
   pass "plan skill prose carries no 'export RALPH_SPLIT_COUNT=' arming"
 fi
 
-# No split-* hook may make RALPH_SUBCOMMAND a REQUIRED scope guard again — i.e.
-# an early `allow` when it is not epic-split. Additive reads (`== "epic-split"`
-# to tighten) are fine; the `!=` early-exit is the dead shape.
+# No split-* hook may read RALPH_SUBCOMMAND AT ALL in executable code — neither
+# as a `!=` scope guard (the dead shape that disarmed all three) nor as an `==`
+# additive arming fallback (the stale-value shape C14/C15 pin). Comments are
+# exempt: the scope headers document why the variable is gone, and that prose is
+# worth keeping. `grep -v '^\s*#'` strips full-line comments before the check.
 for hook in "$SIZE_GATE" "$ESTIMATE_GATE" "$POSTCONDITION"; do
-  if grep -qE '"\$\{RALPH_SUBCOMMAND:-\}" != ' "$hook"; then
-    fail "$(basename "$hook") early-exits on RALPH_SUBCOMMAND again (dead scope guard)"
+  if grep -vE '^[[:space:]]*#' "$hook" | grep -q 'RALPH_SUBCOMMAND'; then
+    fail "$(basename "$hook") reads RALPH_SUBCOMMAND in executable code again (dead/stale arming channel)"
   else
-    pass "$(basename "$hook") does not gate on RALPH_SUBCOMMAND propagating"
+    pass "$(basename "$hook") reads RALPH_SUBCOMMAND nowhere outside comments"
   fi
 done
 
