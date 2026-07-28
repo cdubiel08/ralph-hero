@@ -184,6 +184,17 @@ describe("resolveLockStaleHours (GH-1617)", () => {
     process.env[ENV_KEY] = "-5";
     expect(resolveLockStaleHours(undefined)).toBe(LOCK_STALE_HOURS);
   });
+
+  // A param of 0 must NOT short-circuit resolution: age > 0 is true for every
+  // held lock, so honoring it would report the entire board as lock-stale. The
+  // zod schema rejects it too (`.positive()`); this covers the direct-call path.
+  it("ignores a non-positive param and continues resolving (0 would stale every lock)", () => {
+    process.env[ENV_KEY] = "12";
+    expect(resolveLockStaleHours(0)).toBe(12);
+    expect(resolveLockStaleHours(-1)).toBe(12);
+    delete process.env[ENV_KEY];
+    expect(resolveLockStaleHours(0)).toBe(LOCK_STALE_HOURS);
+  });
 });
 
 describe("thresholds — cross-module duplication is collapsed", () => {

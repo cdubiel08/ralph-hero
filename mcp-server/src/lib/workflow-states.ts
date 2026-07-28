@@ -272,6 +272,13 @@ export function isLegalParentGateAdvance(
   if (!PARENT_GATE_STATES.includes(gate)) {
     return { ok: false, reason: "not a gate state" };
   }
+  // Fail closed on a state outside the canonical pipeline (renamed or custom
+  // project-field option, drift). Without this, stateIndex(current) is -1, the
+  // ordering check below can never be true, and a corrupted parent state would
+  // be silently overwritten instead of refused like the other unresolvable cases.
+  if (stateIndex(current) === -1) {
+    return { ok: false, reason: "parent state unrecognized" };
+  }
   if (stateIndex(gate) <= stateIndex(current)) {
     return { ok: false, reason: "already at or past" };
   }

@@ -1945,6 +1945,16 @@ export function registerIssueTools(
                   number: advanceResult.parentNumber,
                   toState: advanceResult.toState,
                 };
+              } else if (advanceResult?.skippedReason) {
+                // A parent-gate refusal is a silent no-op otherwise: the caller
+                // sees the child advance and reasonably assumes the parent
+                // followed. Surfacing the reason is what makes "escalated" /
+                // "locked" / "unrecognized" parents diagnosable without digging
+                // through the debug log.
+                changes.parentAdvanceSkipped = {
+                  number: advanceResult.parentNumber,
+                  reason: advanceResult.skippedReason,
+                };
               }
             } catch {
               // Best-effort: don't fail the primary save_issue operation

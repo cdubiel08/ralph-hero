@@ -327,7 +327,7 @@ async function main(): Promise<void> {
   // typed argv, no-shell invariant; gated because the sre-fixit agent's `tools:`
   // allowlist is a hard runtime enforcement and misconfigured clusters should not
   // expose live kubectl mutation ops by default)
-  if (process.env.RALPH_SRE_ENABLE === 'true') {
+  if (resolveEnv("RALPH_SRE_ENABLE") === "true") {
     registerSreTools(server, client, fieldCache);
   }
 

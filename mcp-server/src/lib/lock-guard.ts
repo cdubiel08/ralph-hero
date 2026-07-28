@@ -144,6 +144,7 @@ export function describeLockConflict(
     : `"${current}" has no release edge; `;
   return (
     `Issue #${issueNumber} is locked: "${current}" held by ${holderLabel} since ${sinceLabel}. ` +
+    `Refused move to "${target}". ` +
     `Another agent may be working on it. Recovery: wait for release; ${releaseHint}` +
     `or override this claim directly with force=true (the override is recorded in the response).`
   );

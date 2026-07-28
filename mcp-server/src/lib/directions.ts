@@ -30,6 +30,7 @@
 
 import type { DashboardItem } from "./dashboard.js";
 import { LOCK_STATES, STATE_ORDER } from "./workflow-states.js";
+import { LOCK_RELEASE_TARGET } from "./lock-guard.js";
 import {
   AGENT_BACKLOG_FALLBACK_PENALTY,
   HUMAN_TRIAGE_DIRECTION_SCORE,
@@ -471,16 +472,13 @@ export function detectLockStale(item: DashboardItem, config: RankConfig): boolea
  * that would be refused.
  */
 export function buildLockReclaimInstruction(workflowState: string | null): string | undefined {
-  if (workflowState === "Research in Progress") {
+  // Derived from LOCK_RELEASE_TARGET rather than restating its targets: the map
+  // is what save_issue's release gate actually enforces, so a hardcoded copy
+  // here could drift into advising a move the server refuses.
+  const releaseTarget = workflowState ? LOCK_RELEASE_TARGET[workflowState] : undefined;
+  if (releaseTarget) {
     return (
-      'Stale claim — release it via save_issue(workflowState: "Research Needed") so another ' +
-      "agent can pick it up (the claim's age already clears the release gate), or if you are " +
-      "the holder resuming, re-claim with the same state to refresh the claim clock."
-    );
-  }
-  if (workflowState === "Plan in Progress") {
-    return (
-      'Stale claim — release it via save_issue(workflowState: "Ready for Plan") so another ' +
+      `Stale claim — release it via save_issue(workflowState: "${releaseTarget}") so another ` +
       "agent can pick it up (the claim's age already clears the release gate), or if you are " +
       "the holder resuming, re-claim with the same state to refresh the claim clock."
     );

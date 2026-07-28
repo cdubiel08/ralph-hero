@@ -221,6 +221,21 @@ describe("isLegalParentGateAdvance", () => {
     });
   });
 
+  // Reachable whenever the parent's Workflow State field holds a renamed or
+  // custom option (project drift). Before the fail-closed guard, stateIndex()
+  // returned -1, the ordering check could never be true, and the corrupted
+  // parent state was silently overwritten instead of refused.
+  it("refuses an unrecognized (non-empty, off-pipeline) current state", () => {
+    expect(isLegalParentGateAdvance("Blocked On Vendor", "Ready for Plan")).toEqual({
+      ok: false,
+      reason: "parent state unrecognized",
+    });
+    expect(isLegalParentGateAdvance("todo", "In Review")).toEqual({
+      ok: false,
+      reason: "parent state unrecognized",
+    });
+  });
+
   it("refuses when the parent is escalated (Human Needed)", () => {
     expect(isLegalParentGateAdvance("Human Needed", "In Review")).toEqual({
       ok: false,

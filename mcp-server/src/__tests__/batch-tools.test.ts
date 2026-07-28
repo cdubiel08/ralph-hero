@@ -611,12 +611,10 @@ describe("ralph_hero__batch_update workflow_state transition legality (GH-1615)"
     expect(projectMutate).not.toHaveBeenCalled();
   });
 
-  it("batch_update has no force parameter — schema rejects an unknown force field silently (passthrough ignored)", () => {
-    // batch_update's zod schema has no `force` key; this documents the
-    // deliberate absence (repair goes through save_issue(force: true)
-    // one issue at a time) rather than asserting runtime behavior.
-    expect(batchToolsSrc).not.toContain('force: zBoolish()');
-  });
+  // NOTE: the absence of a `force` escape hatch is asserted behaviorally in the
+  // lock-conflict suite below ("force: true does not bypass..."). A
+  // `not.toContain('force: zBoolish()')` source check is trivially defeated by
+  // any reformatting or an equivalent schema spelling.
 });
 
 // ---------------------------------------------------------------------------
@@ -664,6 +662,37 @@ describe("ralph_hero__batch_update lock-conflict guard (GH-1616)", () => {
     // (Ready for Plan is not a lock state) — still mutates.
     expect(payload.succeeded.map((s) => s.number)).toEqual([11]);
     expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  // batch_update deliberately has no `force` escape hatch — repair goes through
+  // save_issue(force: true) one issue at a time, so an override is always a
+  // deliberate single-issue act with a recorded marker, never a bulk sweep.
+  it("force: true does not bypass the lock-conflict guard (no bulk override path)", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Plan in Progress" },
+      currentHolders: { 10: { holder: "other-agent", heldSince: "2026-07-25T00:00:00Z" } },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [{ field: "workflow_state", value: "In Progress" }],
+        force: true,
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      succeeded: Array<{ number: number }>;
+      errors: Array<{ number: number; error: string }>;
+    };
+
+    expect(payload.errors.map((e) => e.number)).toEqual([10]);
+    expect(payload.errors[0].error).toContain("is locked:");
+    expect(payload.succeeded).toEqual([]);
+    expect(projectMutate).not.toHaveBeenCalled();
   });
 
   it("does not apply the lock-conflict guard when the target is not a lock state", async () => {

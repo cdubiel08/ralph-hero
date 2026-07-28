@@ -731,8 +731,13 @@ export function registerProjectTools(
         config: {
           repoOwner: client.config.owner || "(not set)",
           repo: client.config.repo || "(not set)",
-          projectOwner: resolveProjectOwner(client.config) || "(not set)",
-          projectNumber: client.config.projectNumber || "(not set)",
+          // Effective values, not raw config: `owner`/`projectNumber` args
+          // override config for the project probes above, so echoing the
+          // config-only values would describe a different project than the
+          // one `checks.projectAccess`/`projectFields` actually ran against.
+          projectOwner: projOwner || "(not set)",
+          projectNumber: projNum || "(not set)",
+          projectOverridden: Boolean(args.owner || args.projectNumber),
           tokenMode:
             projectTokenSource !== repoTokenSource
               ? "dual-token"

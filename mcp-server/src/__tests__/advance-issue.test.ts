@@ -478,7 +478,11 @@ function makeAdvanceIssueMockClient(opts: {
       projectOwner: "octocat",
     },
     query,
-    projectQuery: vi.fn(async () => {
+    projectQuery: vi.fn(async (q: string, vars?: Record<string, unknown>) => {
+      // queryFieldValueDetail reads ProjectV2Item field values through the
+      // PROJECT endpoint (split-token setups) — delegate those to the shared
+      // handler. Anything else still trips the field-cache assertion below.
+      if (q.includes("... on ProjectV2Item {")) return query(q, vars);
       throw new Error("projectQuery should not be called — field cache is pre-populated");
     }),
     mutate: vi.fn(),

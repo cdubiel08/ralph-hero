@@ -371,7 +371,10 @@ async function queryFieldValueDetail(
   includeCreator: boolean,
 ): Promise<FieldValueDetail> {
   const creatorFragment = includeCreator ? "\n                creator { login }" : "";
-  const result = await client.query<{
+  // projectQuery, not query: this reads a ProjectV2Item, which in split-token
+  // setups is only reachable with RALPH_GH_PROJECT_TOKEN. Using the repo
+  // endpoint would fail the lock/status read path for those configs.
+  const result = await client.projectQuery<{
     node: {
       fieldValues: {
         nodes: Array<{

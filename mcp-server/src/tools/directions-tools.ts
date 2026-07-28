@@ -649,10 +649,10 @@ export function registerDirectionsTools(
         ),
       lockStaleHours: z
         .number()
-        .nonnegative()
+        .positive()
         .optional()
         .describe(
-          "Hours before a lock-state issue is considered stalled (default: 24, unit: hours). Pulls from LOCK_STALE_HOURS in src/lib/thresholds.ts, overridable via the RALPH_LOCK_STALE_HOURS env var when this param is omitted (see resolveLockStaleHours). No zod `.default()` here deliberately — a schema default would make this param always defined and the env-var branch unreachable.",
+          "Hours before a lock-state issue is considered stalled (default: 24, unit: hours). Pulls from LOCK_STALE_HOURS in src/lib/thresholds.ts, overridable via the RALPH_LOCK_STALE_HOURS env var when this param is omitted (see resolveLockStaleHours). No zod `.default()` here deliberately — a schema default would make this param always defined and the env-var branch unreachable. `.positive()`, not `.nonnegative()` — 0 would mark every held lock stale.",
         ),
       treeRecentDoneDays: z
         .number()

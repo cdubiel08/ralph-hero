@@ -535,13 +535,10 @@ describe("save_issue lock guard integration", () => {
     expect(issueToolsSrc).toContain("!args.force");
   });
 
-  it("lock-conflict guard runs ahead of issue mutations (step 2b, not step 4)", () => {
-    const lockConflictIdx = issueToolsSrc.indexOf("describeLockConflict(");
-    const issueMutationIdx = issueToolsSrc.indexOf("// 3. Issue state mutations");
-    expect(lockConflictIdx).toBeGreaterThan(0);
-    expect(issueMutationIdx).toBeGreaterThan(0);
-    expect(lockConflictIdx).toBeLessThan(issueMutationIdx);
-  });
+  // NOTE: the "guard runs ahead of issue mutations" ordering is asserted
+  // behaviorally in the integration suite below ("a refused claim leaves the
+  // issue untouched") rather than by comparing source-offset indices against a
+  // code comment, which breaks on any rewording and only proxies the invariant.
 });
 
 // ---------------------------------------------------------------------------
@@ -664,7 +661,11 @@ function makeSaveIssueMockClient(opts: {
       projectOwner: "octocat",
     },
     query,
-    projectQuery: vi.fn(async () => {
+    projectQuery: vi.fn(async (q: string, vars?: Record<string, unknown>) => {
+      // queryFieldValueDetail reads ProjectV2Item field values through the
+      // PROJECT endpoint (split-token setups) — delegate those to the shared
+      // handler. Anything else still trips the field-cache assertion below.
+      if (q.includes("... on ProjectV2Item {")) return query(q, vars);
       throw new Error("projectQuery should not be called — field cache is pre-populated");
     }),
     mutate,
@@ -938,6 +939,35 @@ describe("save_issue transition legality — handler integration (GH-1615)", () 
       ([q]: unknown[]) => typeof q === "string" && q.includes("fieldValues(first: 20)"),
     );
     expect(fieldValueCalls).toHaveLength(1);
+  });
+
+  it("lock-conflict guard runs ahead of issue mutations: a refused claim leaves the issue untouched", async () => {
+    const { client, mutate, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "Plan in Progress",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    // title + issueState both mutate the ISSUE. "Plan in Progress" -> "In
+    // Progress" is a legal transition, so it is the LOCK guard that refuses
+    // here. If that guard ran after the issue-mutation block, the rename and
+    // close would land while the board stayed put — exactly the split-brain
+    // the choke-point ordering exists to prevent.
+    const result = await handler.handler(
+      {
+        number: 1615,
+        title: "Renamed by a second agent",
+        issueState: "CLOSED",
+        workflowState: "In Progress",
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("is locked:");
+    expect(mutate).not.toHaveBeenCalled();
+    expect(projectMutate).not.toHaveBeenCalled();
   });
 });
 

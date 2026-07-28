@@ -80,7 +80,11 @@ describe("getFieldValueDetail", () => {
     const client = {
       config: { token: "t", owner: "o", repo: "r", projectNumber: 1, projectOwner: "o" },
       query,
-      projectQuery: vi.fn(),
+      // getFieldValueDetail reads ProjectV2Item field values through the
+      // PROJECT endpoint (split-token setups route project reads to
+      // RALPH_GH_PROJECT_TOKEN), so the detail-shape mocks above must be
+      // reachable from here too.
+      projectQuery: vi.fn(query),
       mutate: vi.fn(),
       projectMutate: vi.fn(),
       getCache: () => ({
@@ -96,7 +100,7 @@ describe("getFieldValueDetail", () => {
       }),
     } as unknown as GitHubClient;
 
-    return { client, query };
+    return { client, query, projectQuery: client.projectQuery as ReturnType<typeof vi.fn> };
   }
 
   function makeDetailFieldCache(): FieldOptionCache {
@@ -117,6 +121,26 @@ describe("getFieldValueDetail", () => {
     });
     const detail = await getFieldValueDetail(client, makeDetailFieldCache(), "o", "r", 42, "Workflow State", 1);
     expect(detail).toEqual({ name: "In Progress", updatedAt: "2026-07-26T10:00:00Z", creator: "cdubiel08" });
+  });
+
+  // Split-token setups (RALPH_GH_PROJECT_TOKEN) route project reads to a
+  // different credential than repo reads. A ProjectV2Item field-value read
+  // issued on the repo endpoint fails there, taking the lock guard and the
+  // stale-lock clock down with it.
+  it("issues the ProjectV2Item field-value read on the PROJECT endpoint", async () => {
+    const { client, projectQuery } = makeDetailMockClient({
+      fieldValueNode: {
+        __typename: "ProjectV2ItemFieldSingleSelectValue",
+        name: "In Progress",
+        updatedAt: "2026-07-26T10:00:00Z",
+        field: { name: "Workflow State" },
+      },
+    });
+    await getFieldValueDetail(client, makeDetailFieldCache(), "o", "r", 42, "Workflow State", 1);
+    const projectCalls = projectQuery.mock.calls.filter(([q]: [string]) =>
+      q.includes("... on ProjectV2Item {") && q.includes("fieldValues(first: 20)"),
+    );
+    expect(projectCalls.length).toBeGreaterThan(0);
   });
 
   it("returns an empty detail when the field genuinely has no value (not a fetch failure)", async () => {

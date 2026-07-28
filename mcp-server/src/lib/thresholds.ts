@@ -72,7 +72,11 @@ export const HUMAN_TRIAGE_DIRECTION_SCORE = 100;
  * replaces). Precedence resolution happens here, in the handler, not in zod.
  */
 export function resolveLockStaleHours(paramValue?: number): number {
-  if (paramValue !== undefined) return paramValue;
+  // `> 0`, not just `!== undefined`: a caller passing 0 would otherwise short-
+  // circuit both fallbacks and mark EVERY held lock stale (age > 0 always).
+  // The zod schema rejects non-positive values, so this is defense in depth
+  // for the direct-call path.
+  if (paramValue !== undefined && paramValue > 0) return paramValue;
   const envValue = process.env.RALPH_LOCK_STALE_HOURS;
   if (envValue !== undefined && envValue !== "") {
     const parsed = Number(envValue);
