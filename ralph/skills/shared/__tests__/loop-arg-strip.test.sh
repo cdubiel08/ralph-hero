@@ -43,12 +43,23 @@ fi
 
 # Run the extracted arg-parsing snippet for the given ARGUMENTS string.
 # Outputs three lines: LOOP_RAW=<val>  LOOP_INTERVAL=<val>  STRIPPED_ARGS=<val>
+#
+# CodeRabbit (PR #1620, 2026-07-27): `printf` used to be the last command in
+# this function, so a snippet that FAILED still returned 0 and the fixtures
+# below carried on comparing against the local defaults set just above — a
+# verification that cannot fail. The failure is now propagated two ways, both
+# needed: `return 1` gives the caller a nonzero status, AND the printf is
+# skipped, so `out` comes back empty and every fixture's value assertion fails
+# loudly rather than matching a default by accident.
 run_snippet() {
   local ARGUMENTS="$1"
   local LOOP_RAW=""
   local LOOP_INTERVAL=""
   local STRIPPED_ARGS="$ARGUMENTS"
-  eval "$SNIPPET"
+  if ! eval "$SNIPPET"; then
+    echo "FATAL: extracted arg-parsing snippet failed for ARGUMENTS='$ARGUMENTS'" >&2
+    return 1
+  fi
   printf 'LOOP_RAW=%s\nLOOP_INTERVAL=%s\nSTRIPPED_ARGS=%s\n' \
     "$LOOP_RAW" "$LOOP_INTERVAL" "$STRIPPED_ARGS"
 }

@@ -28,8 +28,11 @@
 #      creates children first and writes the parent plan-of-plans afterwards
 #      (§ Atomic split, §Step 6 → §Step 7.5). artifact-write-tracker.sh
 #      already records every session Write under thoughts/shared/plans/, keyed
-#      by the harness's .session_id. A plans/ doc already written by THIS
-#      session ⇒ plan-of-plans path; none ⇒ atomic split.
+#      by the harness's .session_id. A plans/ doc already written by this
+#      session FOR THIS BATCH'S PARENT ⇒ plan-of-plans path; none ⇒ atomic
+#      split. The per-parent scoping matters: an unscoped, session-wide read
+#      let one ticket's plan-of-plans doc relax the NEXT ticket's atomic
+#      ceiling (GH-1603 round 9).
 #   4. RALPH_SUBCOMMAND=epic-split — retained as an ADDITIVE arming signal for
 #      environments where an operator exports it before launching. It can only
 #      force the tighter (atomic) contract, never relax it.
@@ -103,9 +106,57 @@ if [[ "$(get_field '.hook_event_name')" == "PostToolUse" ]] || \
   exit 0
 fi
 
+# Numeric guard: parent_number becomes part of a ledger filename below, scopes
+# the plans-ledger lookup, and `.tool_input.parentNumber` is caller-supplied.
+# Read BEFORE classification — the write-order signal is only meaningful when
+# it is read per-TICKET (see below).
+parent_number=$(jq_or_block '.tool_input.parentNumber // empty')
+if [[ ! "$parent_number" =~ ^[0-9]+$ ]]; then
+  parent_number=""
+fi
+
+# plans_doc_for_parent — did THIS session already write a thoughts/shared/plans/
+# doc for THIS batch's parent?
+#
+# GH-1603 round 9 (CodeRabbit). The check used to be
+# `session_artifacts "thoughts/shared/plans"` with no ticket filter, i.e.
+# session-WIDE: the moment any ticket in the session wrote a plans/ doc, every
+# later atomic split in that same session was reclassified plan-of-plans and got
+# the looser {S,M} ceiling. A plan-of-plans run for one epic therefore relaxed
+# the XS/S contract for the next ticket — a live bypass, not a scoping nit.
+#
+# Both decomposition paths name their doc after the parent
+# (`YYYY-MM-DD-GH-NNNN-...`; § Plan-of-plans shape and §Step 7.5), so the write
+# is attributable. Matching is done here rather than via session_artifacts' own
+# substring `ticket` filter because that filter has no digit boundary — a doc
+# for GH-1002 would satisfy a lookup for parent 100. Zero-padding is tolerated
+# on the artifact side (hook-utils.sh::ticket_id_alt_form's convention).
+plans_doc_for_parent() {
+  local path base
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    base="${path##*/}"
+    if [[ "$base" =~ (^|[^0-9])GH-0*"${parent_number}"([^0-9]|$) ]]; then
+      printf '%s' "$path"
+      return 0
+    fi
+  done < <(session_artifacts "thoughts/shared/plans")
+  return 0
+}
+
 # ---- Path classification -----------------------------------------------------
 atomic=1
-if [[ -n "$(session_artifacts "thoughts/shared/plans")" ]]; then
+if [[ -n "$parent_number" ]]; then
+  # Ticket-scoped: only a plans/ doc written for THIS parent selects the
+  # plan-of-plans ceiling.
+  if [[ -n "$(plans_doc_for_parent)" ]]; then
+    atomic=0
+  fi
+elif [[ -n "$(session_artifacts "thoughts/shared/plans")" ]]; then
+  # Scalar `create_issue` (decomposition.md § Child creation, single-child
+  # incremental addition) carries no parentNumber, so the payload cannot be
+  # ticket-scoped. Fall back to the session-wide signal — the best fact
+  # available for that shape, and the same signal this path has always used.
   atomic=0
 fi
 if [[ "${RALPH_SUBCOMMAND:-}" == "epic-split" ]]; then
@@ -126,13 +177,8 @@ fi
 # establishes that the session is on the atomic path.
 split_ledger_put atomic "$atomic"
 
-# Numeric guard: parent_number becomes part of a ledger filename below, and
-# `.tool_input.parentNumber` is caller-supplied.
-parent_number=$(jq_or_block '.tool_input.parentNumber // empty')
-if [[ "$parent_number" =~ ^[0-9]+$ ]]; then
+if [[ -n "$parent_number" ]]; then
   split_ledger_put parent "$parent_number"
-else
-  parent_number=""
 fi
 
 # ---- Parent-size rule (atomic path only) -------------------------------------

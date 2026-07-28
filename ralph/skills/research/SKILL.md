@@ -178,7 +178,7 @@ Autonomous Research-Needed picker. No questions; one issue, locked, researched, 
 4a. **Refine group dependencies** — skip if single-issue group. Else analyze implementation order from code findings: which issue creates foundational code, which can be parallelized. Update `add_dependency` / `remove_dependency` edges if order differs from initial triage; post a comment on the primary issue summarizing the refined order.
 5. **Write doc** — per `findings-format.md`. Required: frontmatter, Prior Work, Files Affected (hook-enforced), Detailed Findings. Optional: Pipeline History, Cross-Repo Scope.
 6. **Playwright baseline (conditional)** — per `playwright-baseline.md`, no user prompt. Commit per the autonomous-mode commit step in that reference.
-7. **Commit + push** — `git add ... && git commit -m "docs(research): GH-NNN research findings" && git push origin main`.
+7. **Commit through a PR** — branch, `git add <the findings doc>`, commit `docs(research): GH-NNN research findings`, `gh pr create`, `scripts/attest-pr.sh`, `scripts/merge-pr.sh`, return to `main`. Full recipe: `../shared/artifact-commit.md`. **Never `git push origin main`** (ruleset-protected, GH-1589) and never bare `gh pr merge`. A PR the gates hold open is not a failed run — report its URL and continue.
 8. **Artifact + advance + outcome** — `create_comment` (artifact per `findings-format.md` § Artifact comment) → `save_issue(workflowState: "__COMPLETE__", command: "ralph_research")` (advances to Ready for Plan) → `knowledge_record_outcome(event_type: "research_completed", ..., query_id: "<from Step 3>")` if available.
 9. **Report** — single block: *Research complete for #NNN: [Title] / Findings: [path] / Status: Ready for Plan / Key recommendation: [one sentence]*.
 

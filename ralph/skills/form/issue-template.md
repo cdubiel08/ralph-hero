@@ -60,7 +60,7 @@ This mirrors the protocol used by `/ralph:research` so the issue's comment histo
 
 Show only a preview of what `/ralph:plan --mode epic` will later build from the parent — **form does not create this tree** (GH-1605). Form's Step 6b creates only the parent issue; decomposition into feature children is entirely `/ralph:plan --mode epic`'s job, per `decomposition.md` § Child creation:
 
-```
+```text
 Proposed epic:
 
 **Parent**: [Epic title] (L)

@@ -135,7 +135,20 @@ return_to_main() {
 # `git add thoughts/shared/ideas` swept in every modified idea file, including
 # unrelated worktree edits — contradicting the "mutates only the idea files it
 # enriches" constraint and publishing that unrelated content in the PR.
-git add -- "${SELECTED_FILES[@]}"
+#
+# The staging is checked for the same reason the commit below is. An unchecked
+# `git add` that fails (a path removed under us, an unreadable file, an index
+# lock held by another process) leaves the index holding whatever it held
+# before; the `git commit` that follows then succeeds against a STALE index —
+# committing nothing, or someone else's staged content — and the pass goes on
+# to report `ENRICHED <N> (PR <url>)` for findings that were never staged.
+# §Step 3 has already flipped those files to `status: forming`, so they are
+# never re-selected: the findings would be lost silently.
+if ! add_err=$(git add -- "${SELECTED_FILES[@]}" 2>&1); then
+  return_to_main
+  printf '%s\n' "ENRICH BLOCKED stage-failed: $(sanitize_diag "$add_err")"
+  exit 0
+fi
 
 # The commit is checked like every other command in this block. An unchecked
 # commit that fails (pre-commit hook, empty staging set, identity not
@@ -177,7 +190,7 @@ fi
 return_to_main
 ```
 
-Open the PR (idempotent across heartbeat ticks — reuse the existing one if still open):
+Open the PR (idempotent across heartbeat ticks — reuse the existing one if still open). **`gh` is the correct boundary here, not the Ralph MCP tools**: `ralph-hero-mcp-server` exposes no pull-request tool at all (its surface is issues, project fields, dependencies, dashboards, and trends), and every PR-level operation in this repo — `scripts/merge-pr.sh`, `scripts/attest-pr.sh`, `review/merge-gate.md`, `impl/pr-creation.md`, `hero/pr-drain.md` — goes through `gh`. The "artifact state through `mcp__plugin_ralph_ralph-github__*`" rule governs issue and board state, which this mode never mutates (§Constraints).
 
 ```bash
 if pr_err=$(gh pr create --base main --head "$BRANCH" \
@@ -218,6 +231,7 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
 - `ENRICH SKIPPED branch-setup-failed` — §Step 2b could not check out `chore/enrich-ideas`; no file was edited.
 - `ENRICH SKIPPED push-rejected` — §Step 4 branch-push **rejection** (non-fast-forward / fetch-first / stale info) survived the one fetch + fast-forward retry; commit stays local on `chore/enrich-ideas` and the checkout returns to `main` so the next heartbeat can retry.
+- `ENRICH BLOCKED stage-failed: <stderr>` — §Step 4 `git add` failed (path vanished, unreadable file, held index lock). Nothing was committed; the commit below it would otherwise have run against a stale index and reported success for unstaged findings. The checkout returns to `main`.
 - `ENRICH BLOCKED commit-failed: <stderr>` — §Step 4 `git commit` failed (pre-commit hook, nothing staged, unconfigured identity, …). The enriched files are already at `status: forming` on the branch but nothing was committed, so the pass is reported as blocked rather than as an `ENRICHED <N> (PR <url>)` that points at a PR containing none of these findings. The checkout returns to `main`.
 - `ENRICH BLOCKED push-failed: <stderr>` — §Step 4 `git push` failed for a **non-retryable** reason (auth, permission, protected branch, network, rate limit). Not retried, not relabeled as `push-rejected`; the commit stays local and the checkout returns to `main`.
 - `ENRICH BLOCKED checkout-main-failed: <stderr>` — §Step 4's return to `main` failed. The commit is safe on `chore/enrich-ideas` but the session is still on that branch, so the next heartbeat will stop at §Step 1's gate until an operator runs `git checkout main`.

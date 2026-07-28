@@ -30,7 +30,7 @@ Verbs that refuse `--auto` entirely (interactive / single-artifact / one-shot):
 
 Refusal text (emit verbatim, then STOP):
 
-```
+```text
 --auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop suitability for the canonical detail.
 ```
 
@@ -40,7 +40,7 @@ Refusal text (emit verbatim, then STOP):
 
 If `$ARGUMENTS` contains BOTH `--auto` AND an explicit `--mode <x>`, emit the following and STOP:
 
-```
+```text
 --auto cannot be combined with explicit --mode; pick one.
 ```
 

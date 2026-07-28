@@ -25,35 +25,44 @@ FAIL=0
 pass() { echo "  PASS: $1"; ((PASS++)) || true; }
 fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 
-# seed_plan_of_plans <session-id> — record a thoughts/shared/plans/ write for
-# that session the way artifact-write-tracker.sh does, putting the hook on the
-# plan-of-plans path.
+# seed_plan_of_plans <session-id> [ticket-number] — record a
+# thoughts/shared/plans/ write for that session the way
+# artifact-write-tracker.sh does, putting the hook on the plan-of-plans path
+# FOR THAT TICKET. The doc name carries the parent number because that is what
+# decomposition.md prescribes on both paths (`YYYY-MM-DD-GH-NNNN-...`) and what
+# the gate's per-parent scoping keys on (GH-1603 round 9).
 seed_plan_of_plans() {
-  local sid="$1" dir doc
-  dir="$SBX/tmp/ralph-session-$1"
+  local sid="$1" ticket="${2:-100}" dir doc
+  dir="$SBX/tmp/ralph-session-$sid"
   mkdir -p "$dir" "$SBX/thoughts/shared/plans"
-  doc="$SBX/thoughts/shared/plans/2026-07-27-epic-plan-of-plans.md"
+  doc="$SBX/thoughts/shared/plans/2026-07-27-GH-${ticket}-epic-plan-of-plans.md"
   : > "$doc"
   printf '%s\n' "$doc" > "$dir/artifacts.list"
 }
 
 # run_case <desc> <expected_exit> <tool_input_json> [ENV=val ...]
 # Optional: SESSION_ID env of this function scopes the hook's session ledger.
+#
+# Exit-code capture uses an if/else around the invocation rather than toggling
+# `set +e`/`set -e` (ast-grep set-plus-e-error-masking-bash), matching the
+# sibling split-hooks-plan-scope.test.sh harness: $? is captured in both
+# branches without ever disabling errexit for the rest of the script.
 run_case() {
   local desc="$1" expected="$2" tool_input="$3"; shift 3
   local json actual sid="${SESSION_ID:-case-$((PASS + FAIL))}"
   json=$(jq -n --arg sid "$sid" --argjson ti "$tool_input" '{session_id: $sid, tool_input: $ti}')
-  set +e
   # -u first so the runner's own shell profile (which may export RALPH_*
   # vars — observed RALPH_REVIEW_PLAN on this machine) can't leak into the
   # "unset"/default cases; per-case overrides in "$@" re-set what's needed.
   # TMPDIR is redirected so the session ledger these hooks write lands in the
   # sandbox, not the developer's real temp dir.
-  env -u RALPH_COMMAND -u RALPH_SUBCOMMAND -u RALPH_VALID_SUB_ESTIMATES \
+  if env -u RALPH_COMMAND -u RALPH_SUBCOMMAND -u RALPH_VALID_SUB_ESTIMATES \
     -u RALPH_VALID_FEATURE_ESTIMATES -u RALPH_MIN_ESTIMATE \
-    TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT= "$@" bash "$HOOK" <<<"$json" >/dev/null 2>&1
-  actual=$?
-  set -e
+    TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT= "$@" bash "$HOOK" <<<"$json" >/dev/null 2>&1; then
+    actual=0
+  else
+    actual=$?
+  fi
   if [[ "$actual" == "$expected" ]]; then
     pass "$desc (exit $actual)"
   else
@@ -66,11 +75,12 @@ stderr_case() {
   local desc="$1" tool_input="$2" needle="$3"; shift 3
   local json out sid="msg-$((PASS + FAIL))"
   json=$(jq -n --arg sid "$sid" --argjson ti "$tool_input" '{session_id: $sid, tool_input: $ti}')
-  set +e
+  # The hook exits 2 on every case this helper drives (it asserts on BLOCK
+  # text), so the assignment is guarded with `|| true` instead of set +e —
+  # stderr is what is being asserted, and the exit code is checked by run_case.
   out=$(env -u RALPH_COMMAND -u RALPH_SUBCOMMAND -u RALPH_VALID_SUB_ESTIMATES \
     -u RALPH_VALID_FEATURE_ESTIMATES -u RALPH_MIN_ESTIMATE \
-    TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT= "$@" bash "$HOOK" <<<"$json" 2>&1 >/dev/null)
-  set -e
+    TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT= "$@" bash "$HOOK" <<<"$json" 2>&1 >/dev/null) || true
   if [[ "$out" == *"$needle"* ]]; then
     pass "$desc"
   else
@@ -163,12 +173,12 @@ SESSION_ID=pop-tighten run_case "epic-split env can only TIGHTEN, never relax" 2
   RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
 # --- Unreadable payload must block, not exit non-blocking (GH-1603 F8) -------
-malformed_actual=0
-set +e
-env -u RALPH_COMMAND -u RALPH_SUBCOMMAND TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT='{"tool_input":' \
-  RALPH_COMMAND=plan bash "$HOOK" </dev/null >/dev/null 2>&1
-malformed_actual=$?
-set -e
+if env -u RALPH_COMMAND -u RALPH_SUBCOMMAND TMPDIR="$SBX/tmp" RALPH_HOOK_INPUT='{"tool_input":' \
+  RALPH_COMMAND=plan bash "$HOOK" </dev/null >/dev/null 2>&1; then
+  malformed_actual=0
+else
+  malformed_actual=$?
+fi
 if [[ "$malformed_actual" == "2" ]]; then
   pass "unparsable hook payload blocks (exit 2), not a non-blocking abort"
 else

@@ -19,9 +19,10 @@
 #     env signal hooks can trust.
 #   * The session split ledger (hook-utils.sh) — split-size-gate.sh writes
 #     `atomic` when it classifies a child-creation call as an atomic split.
-#   * RALPH_SUBCOMMAND=epic-split — kept as an ADDITIVE arming signal for
-#     environments where an operator exports it before launching. It can only
-#     ADD scope, never remove it.
+#     This is the ONLY arming signal (GH-1603 round 9). `RALPH_SUBCOMMAND` is
+#     deliberately NOT read here: it can be exported before the session starts,
+#     which armed the gate ahead of classification and blocked reads this hook
+#     has no business blocking — see the `armed` block below.
 #
 # The get_issue PAYLOAD itself carries no field that separates the atomic-split
 # fetch from the plan-of-plans fetch (or from --mode auto's XS/S picker), so
@@ -66,13 +67,32 @@ min_estimate="${RALPH_MIN_ESTIMATE:-M}"
 # hook-utils.sh so the two enforcement points can never drift.
 allowed=$(split_min_estimate_set)
 
-# Armed = this session is known to be on the atomic-split path. Ledger fact
-# first (written by split-size-gate.sh from a real create payload), env var
-# second (additive only).
+# Armed = this session is known to be on the atomic-split path, established by
+# the ledger fact split-size-gate.sh writes when it classifies a REAL create
+# payload. That write happens at the create boundary, which is strictly after
+# `plan/SKILL.md` § --mode epic Step 0 has classified the ticket.
+#
+# GH-1603 round 9 (CodeRabbit): `RALPH_SUBCOMMAND=epic-split` used to arm this
+# gate too. Because that value can already be exported in an operator's shell
+# before the session launches, the gate was armed BEFORE any classification —
+# so the Step 0 `get_issue` that decides which path to take was itself blocked
+# on an XS/S response, contradicting decomposition.md § Hook contract's
+# "the Step 0 classification read is unguarded". The same stale export blocked
+# `/ralph:plan --mode auto`'s legitimate XS/S picker reads, since RALPH_COMMAND
+# is `plan` for the whole verb and this payload carries nothing that separates
+# the two callers.
+#
+# No enforcement is lost. This gate's block was always the redundant, earlier
+# of two checks: the M/L/XL parent contract is enforced at the create boundary
+# by split-size-gate.sh, off the estimate the recording pass below writes
+# unconditionally (armed or not). What remains armed here is the case the
+# ledger can actually attest — a read taken AFTER this session was classified
+# atomic (re-decomposition, or a second parent in the same session).
+#
+# The env var is still honored ADDITIVELY by split-size-gate.sh, where it can
+# only force the tighter child ceiling and cannot block a read.
 armed=0
 if [[ "$(split_ledger_get atomic)" == "1" ]]; then
-  armed=1
-elif [[ "${RALPH_SUBCOMMAND:-}" == "epic-split" ]]; then
   armed=1
 fi
 

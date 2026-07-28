@@ -102,12 +102,13 @@ After the explorer-agent completes, read the trace at `.playwright-cli/<session>
 
 ## Autonomous-mode commit
 
-In `--mode auto`, after appending the `## UI Baseline` section, commit the updated doc:
+In `--mode auto`, after appending the `## UI Baseline` section, commit the updated doc through the standard artifact-commit path (`../shared/artifact-commit.md`) — **never `git push origin main`**, which the ruleset rejects (GH-1589):
 
 ```bash
 git add thoughts/shared/research/...
 git commit -m "docs(research): add UI baseline for GH-NNN"
-git push origin main
 ```
+
+When the findings doc's own PR from `SKILL.md` § --mode auto Step 7 is still open, this commit belongs on that same branch (push it to the open PR). Otherwise open a fresh `docs/GH-NNN-ui-baseline` PR and merge it with `scripts/merge-pr.sh`.
 
 Interactive mode does NOT commit on the user's behalf — the doc-write commit (if any) is the user's call.

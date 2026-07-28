@@ -93,11 +93,25 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 Director evaluates in this order:
 
 1. Fetch the candidate issue's labels array.
-2. Check for any `trigger:*` label (Priority 1). First match wins.
-3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch --kind pr`; exact-match `blocked:upstream` → fire `caretake --mode watch --kind upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed.
-4. Check for any automation label: `watcher-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
+2. Check for any `trigger:*` label (Priority 1). Highest-precedence match wins, per the **tie-break order** below.
+3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch --kind pr`; exact-match `blocked:upstream` → fire `caretake --mode watch --kind upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed. When both are present, `blocked:pr-*` wins (see tie-break order).
+4. Check for any automation label: `watcher-auto`, `scout-auto`, `process-improvement` (Priority 3). Highest-precedence match wins, per the tie-break order below.
 5. Fall through to `workflow_state` lookup (Priority 4).
 6. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.
+
+### Tie-break order (deterministic, within a priority tier)
+
+"First match wins" is **not** defined by the order GitHub returns labels, nor by the order rows appear in a table — both vary, and routing that varies with them is not reproducible. Multiple labels in one tier resolve by this fixed, declared order. Iterate the list, not the issue's label array; take the first entry the issue carries.
+
+| Tier | Precedence order (highest → lowest) | Rationale |
+|---|---|---|
+| Priority 1 — `trigger:*` | `trigger:caretake` → `trigger:builders` → `trigger:watch` → `trigger:scouts` → `trigger:memorykeepers` | `trigger:caretake` fires the full fan-out and is the broadest remediation, so it wins when an operator has stacked triggers. `trigger:memorykeepers` sorts last because it has no live consumer (§ Trigger-label consumption ownership) and would otherwise strand the tick on a `needs input:` marker while a dispatchable trigger sat unread. |
+| Priority 2 — `blocked:*` | `blocked:pr-*` → `blocked:upstream` | A PR merge is machine-detectable and usually the nearer-term unblock. |
+| Priority 3 — automation | `process-improvement` → `watcher-auto` → `scout-auto` | Specific beats generic: `process-improvement` names an exact mode (`caretake --mode reflect`), the other two name a team. |
+
+**Unselected labels are left in place, untouched.** A tick dispatches exactly one team per issue; only the label that *won* is eligible for consumption, and only under its own ownership rule (§ Trigger-label consumption ownership — `blocked:*` is never consumed at all). Losing labels are neither removed nor recorded, so the next tick re-evaluates the issue against this same table and dispatches the next-highest surviving label. Two stacked triggers therefore drain over two ticks in a defined order; they are never dropped, and they never race.
+
+**Conflicting combinations are not rejected.** Stacking `trigger:builders` and `trigger:caretake` is legal and resolvable — it means "do both, caretake first". There is no error path for it, by design: an operator (or an iOS shortcut) placing a second trigger should not have the first one silently invalidated.
 
 ---
 

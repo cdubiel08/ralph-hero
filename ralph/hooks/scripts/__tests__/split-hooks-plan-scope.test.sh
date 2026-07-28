@@ -64,14 +64,18 @@ done
 # resolves to for that id under this harness's TMPDIR.
 session_dir() { echo "$SBX/tmp/ralph-session-$1"; }
 
-# seed_plan_of_plans <session-id> — record a thoughts/shared/plans/ write for
-# that session, the way artifact-write-tracker.sh does at runtime. This is the
-# signal that puts split-size-gate.sh on the plan-of-plans path.
+# seed_plan_of_plans <session-id> [ticket-number] — record a
+# thoughts/shared/plans/ write for that session, the way
+# artifact-write-tracker.sh does at runtime. This is the signal that puts
+# split-size-gate.sh on the plan-of-plans path FOR THAT TICKET (GH-1603 round
+# 9): the doc name carries the parent number, exactly as decomposition.md
+# § Plan-of-plans shape and §Step 7.5 both prescribe
+# (`YYYY-MM-DD-GH-NNNN-...`).
 seed_plan_of_plans() {
-  local sid="$1" dir doc
+  local sid="$1" ticket="${2:-100}" dir doc
   dir="$(session_dir "$sid")"
   mkdir -p "$dir" "$SBX/thoughts/shared/plans"
-  doc="$SBX/thoughts/shared/plans/2026-07-27-epic-plan-of-plans.md"
+  doc="$SBX/thoughts/shared/plans/2026-07-27-GH-${ticket}-epic-plan-of-plans.md"
   : > "$doc"
   printf '%s\n' "$doc" > "$dir/artifacts.list"
 }
@@ -160,6 +164,36 @@ seed_ledger "parent-big" "parent-100" "L"
 json_big_parent='{"session_id":"parent-big","tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"XS"},{"title":"b","estimate":"XS"}]}}'
 run_case "A8: recorded parent estimate L + atomic batch -> exit 0" 0 \
   "$SIZE_GATE" "$json_big_parent" RALPH_COMMAND=plan
+
+# ---- GH-1603 round 9 (CodeRabbit): the plans ledger is TICKET-scoped --------
+# `session_artifacts "thoughts/shared/plans"` with no ticket filter is
+# session-WIDE: once ANY ticket in the session wrote a plans/ doc, every later
+# atomic split in that same session was downgraded to the looser {S,M} ceiling.
+# That is a live bypass of the XS/S atomic ceiling, not a cosmetic scoping nit —
+# a plan-of-plans run for one epic silently relaxed the next ticket's split.
+seed_plan_of_plans "cross-ticket" 1590
+json_cross_ticket='{"session_id":"cross-ticket","tool_input":{"parentNumber":1591,"children":[{"title":"a","estimate":"M"}]}}'
+run_case "A4a: OTHER ticket's plan-of-plans doc must NOT relax parent 1591's atomic ceiling -> exit 2" 2 \
+  "$SIZE_GATE" "$json_cross_ticket" RALPH_COMMAND=plan
+
+# ...and the same session's OWN ticket still gets the plan-of-plans ceiling.
+seed_plan_of_plans "same-ticket" 1590
+json_same_ticket='{"session_id":"same-ticket","tool_input":{"parentNumber":1590,"children":[{"title":"a","estimate":"M"}]}}'
+run_case "A4b: THIS ticket's own plan-of-plans doc still selects the {S,M} ceiling -> exit 0" 0 \
+  "$SIZE_GATE" "$json_same_ticket" RALPH_COMMAND=plan
+
+# Zero-padded artifact names (GH-0100) must resolve to the same ticket as an
+# unpadded parentNumber — hook-utils.sh::ticket_id_alt_form's padding tolerance.
+seed_plan_of_plans "padded-ticket" 0100
+json_padded_ticket='{"session_id":"padded-ticket","tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"M"}]}}'
+run_case "A4c: zero-padded GH-0100 doc matches parentNumber 100 -> exit 0 ({S,M})" 0 \
+  "$SIZE_GATE" "$json_padded_ticket" RALPH_COMMAND=plan
+
+# Prefix collision: a doc for GH-1002 must not satisfy a lookup for parent 100.
+seed_plan_of_plans "prefix-collide" 1002
+json_prefix_collide='{"session_id":"prefix-collide","tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"M"}]}}'
+run_case "A4d: GH-1002 doc does not match parent 100 (digit-boundary) -> exit 2" 2 \
+  "$SIZE_GATE" "$json_prefix_collide" RALPH_COMMAND=plan
 
 # Out of the plan verb entirely, nothing is enforced.
 json_other_verb='{"session_id":"other-1","tool_input":{"parentNumber":100,"children":[{"title":"a","estimate":"XL"}]}}'
@@ -290,45 +324,50 @@ run_case "C3: armed by ledger + parent estimate S -> exit 2 (too small)" 2 \
 # S-estimate parent walked through the enforcement pass. Discrimination is on
 # payload SHAPE: a `.tool_response` key means PostToolUse regardless of the
 # event name, and ambiguity resolves to the enforcing side.
+seed_ledger "est-noevent" "atomic" "1"
 json_get_issue_no_event=$(jq -n '{
   session_id: "est-noevent",
   tool_response: { content: [ { text: (({number:1,title:"tiny",estimate:"S"}) | tojson) } ] }
 }')
 run_case "C4: armed + EMPTY hook_event_name + response payload -> exit 2 (shape wins)" 2 \
-  "$ESTIMATE_GATE" "$json_get_issue_no_event" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+  "$ESTIMATE_GATE" "$json_get_issue_no_event" RALPH_COMMAND=plan
 
 # Fail-closed family: once armed, an estimate the gate cannot read must block.
+seed_ledger "est-no-estimate" "atomic" "1"
 json_est_no_estimate=$(jq -n '{
   session_id: "est-no-estimate",
   hook_event_name: "PostToolUse",
   tool_response: { content: [ { text: (({number:2,title:"unestimated"}) | tojson) } ] }
 }')
 run_case "C5a: armed + parent with NO estimate -> exit 2 (fail closed)" 2 \
-  "$ESTIMATE_GATE" "$json_est_no_estimate" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+  "$ESTIMATE_GATE" "$json_est_no_estimate" RALPH_COMMAND=plan
 
+seed_ledger "est-null" "atomic" "1"
 json_est_null=$(jq -n '{
   session_id: "est-null",
   hook_event_name: "PostToolUse",
   tool_response: { content: [ { text: (({number:3,title:"null est",estimate:null}) | tojson) } ] }
 }')
 run_case "C5b: armed + parent estimate null -> exit 2 (fail closed)" 2 \
-  "$ESTIMATE_GATE" "$json_est_null" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+  "$ESTIMATE_GATE" "$json_est_null" RALPH_COMMAND=plan
 
+seed_ledger "est-malformed" "atomic" "1"
 json_est_malformed=$(jq -n '{
   session_id: "est-malformed",
   hook_event_name: "PostToolUse",
   tool_response: { content: [ { text: "<html>502 Bad Gateway</html>" } ] }
 }')
 run_case "C5c: armed + malformed (non-JSON) response -> exit 2 (fail closed)" 2 \
-  "$ESTIMATE_GATE" "$json_est_malformed" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+  "$ESTIMATE_GATE" "$json_est_malformed" RALPH_COMMAND=plan
 
+seed_ledger "est-empty" "atomic" "1"
 json_est_empty=$(jq -n '{
   session_id: "est-empty",
   hook_event_name: "PostToolUse",
   tool_response: { content: [] }
 }')
 run_case "C5d: armed + empty tool_response -> exit 2 (fail closed)" 2 \
-  "$ESTIMATE_GATE" "$json_est_empty" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+  "$ESTIMATE_GATE" "$json_est_empty" RALPH_COMMAND=plan
 
 # Unarmed, the same unreadable payloads are a clean pass-through — the gate
 # records what it can and gets out of the way.
@@ -340,16 +379,58 @@ json_unarmed_no_estimate=$(jq -n '{
 run_case "C6: unarmed + parent with NO estimate -> exit 0" 0 \
   "$ESTIMATE_GATE" "$json_unarmed_no_estimate" RALPH_COMMAND=plan
 
+seed_ledger "est-large" "atomic" "1"
 json_get_issue_large=$(jq -n '{
   session_id: "est-large",
   hook_event_name: "PostToolUse",
   tool_response: { content: [ { text: (({number:4,title:"big",estimate:"L"}) | tojson) } ] }
 }')
 run_case "C7: armed + parent estimate L -> exit 0 (allowed)" 0 \
-  "$ESTIMATE_GATE" "$json_get_issue_large" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+  "$ESTIMATE_GATE" "$json_get_issue_large" RALPH_COMMAND=plan
 
 run_case "C8: RALPH_COMMAND=caretake -> exit 0 (out of scope, old split key retired)" 0 \
   "$ESTIMATE_GATE" "$json_get_issue_small" RALPH_COMMAND=caretake RALPH_SUBCOMMAND=split
+
+# ---- GH-1603 round 9 (CodeRabbit): Step 0's classification read is unguarded --
+# decomposition.md § Hook contract promises "the Step 0 classification read is
+# unguarded". A pre-exported RALPH_SUBCOMMAND=epic-split broke that promise: it
+# armed the estimate gate before any classification had happened, so the very
+# `get_issue` that decides which path to take was blocked on an XS/S response.
+# Arming now comes ONLY from the ledger fact split-size-gate.sh writes at the
+# create boundary — i.e. strictly after classification. The M/L/XL parent
+# contract is unaffected: it is enforced at that same create boundary off the
+# estimate this pass records (see C11).
+json_step0_small=$(jq -n '{
+  session_id: "est-step0",
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [ { text: (({number:7,title:"already atomic",estimate:"S"}) | tojson) } ] }
+}')
+run_case "C10: pre-exported epic-split + Step 0 XS/S classification read -> exit 0 (unguarded)" 0 \
+  "$ESTIMATE_GATE" "$json_step0_small" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
+
+# The read is unguarded but NOT unrecorded — the create boundary is where the
+# M/L/XL parent contract fires, and it fires off exactly this recording.
+if [[ "$(cat "$(session_dir est-step0)/split-parent-7" 2>/dev/null || echo MISSING)" == "S" ]]; then
+  pass "C11: the unguarded Step 0 read still recorded estimate S for the create-boundary check"
+else
+  fail "C11: expected recorded parent-7 estimate S, got $(cat "$(session_dir est-step0)/split-parent-7" 2>/dev/null || echo MISSING)"
+fi
+
+run_case "C12: ...and the create boundary then blocks that S parent -> exit 2" 2 \
+  "$SIZE_GATE" '{"session_id":"est-step0","tool_input":{"parentNumber":7,"children":[{"title":"a","estimate":"XS"},{"title":"b","estimate":"XS"}]}}' \
+  RALPH_COMMAND=plan
+
+# Same defect, other blast radius: `/ralph:plan --mode auto` legitimately reads
+# XS/S issues. RALPH_COMMAND=plan is set for the WHOLE verb, so a stale
+# epic-split in an operator's shell profile used to block that picker's reads
+# too (the developer shell here really does export RALPH_* vars).
+json_auto_pick=$(jq -n '{
+  session_id: "est-auto-pick",
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [ { text: (({number:8,title:"xs ticket",estimate:"XS"}) | tojson) } ] }
+}')
+run_case "C13: pre-exported epic-split + plan --mode auto XS read -> exit 0 (not epic scope)" 0 \
+  "$ESTIMATE_GATE" "$json_auto_pick" RALPH_COMMAND=plan RALPH_SUBCOMMAND=epic-split
 
 # The legacy env signal is ADDITIVE — it may arm the tighter contract, and it
 # must never DISARM one. `RALPH_SUBCOMMAND=epic` used to switch all three gates

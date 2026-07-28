@@ -104,7 +104,7 @@ Choose ONE of the **9 structured verdicts**. Every verdict names its successor �
 |---|---|---|
 | `CLOSE-done` | Done | — |
 | `CLOSE-canceled` | Canceled | — |
-| `SPLIT` | (stays Backlog, children created) | `/ralph:plan --mode epic #NNN` |
+| `SPLIT` | (stays Backlog, no children created here) | `/ralph:plan --mode epic #NNN` — the single decomposition path; triage hands off, it does not decompose |
 | `PROMOTE-research` | Research Needed | `/ralph:research --mode auto` |
 | `PROMOTE-plan` | Ready for Plan | `/ralph:plan --mode auto` |
 | `WAIT-pr=NNN` | Backlog + `blocked:pr-NNN` label | `caretake --mode watch --kind pr` (Phase 3, #1406) |
@@ -134,13 +134,15 @@ If `save_issue`, `create_issue`, `add_sub_issue`, or `add_dependency` returns an
 
 Update workflow state accordingly (`command: "ralph_triage"`). Add a comment explaining the closure reason and chosen destination state.
 
-**SPLIT.** First, `list_sub_issues` on the parent. If children already exist and cover the proposed scope, add a comment noting the existing children — do NOT create duplicates. If coverage is partial, create only net-new sub-issues. If no children exist, create XS sub-issues via the three-step pattern:
+**SPLIT.** Triage **never creates children itself.** `/ralph:plan --mode epic` is the single decomposition path (GH-1605) — it owns child sizing, the one-call `create_sub_issues` batch with inline dependency edges, the parent plan-of-plans, and the three `split-*` hooks that enforce the M/L/XL-parent and XS/S-child contracts (`../../plan/decomposition.md` § Atomic split). A second, hook-free child-creation procedure here would bypass every one of those gates and leave operators with two conflicting instructions for one verdict.
 
-1. `create_issue` with a descriptive title.
-2. `add_sub_issue` to link under the original.
-3. Set estimate "XS" and workflow state "Backlog".
+So:
 
-Add a comment on the parent listing sub-issues (reused and/or created). **Do NOT close the original** — the parent stays in Backlog until all children reach Done.
+1. `list_sub_issues` on the parent. If children already exist and cover the scope, this is not a SPLIT — add a comment naming the existing children and pick a different verdict (usually `PROMOTE-plan`).
+2. Otherwise post a `## Triage Decision` comment stating that the issue needs decomposition and naming the sub-deliverables you identified in §Step 3 (as *evidence for the verdict*, not as a child spec — `--mode epic` re-derives the split from the issue body and its own research).
+3. Leave the issue in **Backlog** with the `ralph-triage` label (§Step 6) and hand off: `/ralph:plan --mode epic #NNN`.
+
+**Do NOT close the original** and do NOT advance it — `--mode epic` keeps the parent in Backlog too, and `save_issue`'s `autoAdvanceParent` gate moves it only once all children reach a gate state.
 
 **RE-ESTIMATE.** Update the issue with the new estimate (XS/S/M/L/XL). Add a comment explaining the reasoning. Workflow state remains Backlog.
 
@@ -177,7 +179,7 @@ export RALPH_TRIAGE_ACTION=PROMOTE-research    # → Research Needed
 export RALPH_TRIAGE_ACTION=PROMOTE-plan        # → Ready for Plan
 export RALPH_TRIAGE_ACTION=CLOSE-done          # → Done
 export RALPH_TRIAGE_ACTION=CLOSE-canceled      # → Canceled
-export RALPH_TRIAGE_ACTION=SPLIT               # children created; stays Backlog
+export RALPH_TRIAGE_ACTION=SPLIT               # handed to /ralph:plan --mode epic; stays Backlog
 export RALPH_TRIAGE_ACTION=WAIT-pr             # blocked:pr-NNN; stays Backlog
 export RALPH_TRIAGE_ACTION=WAIT-upstream       # blocked:upstream; stays Backlog
 export RALPH_TRIAGE_ACTION=WAIT-issue          # → Human Needed; add_dependency edge; blocked by OPEN issue
@@ -258,7 +260,7 @@ Emit exactly one token, matching the verdict from §Step 4. One token per verdic
 
 - `TRIAGED CLOSE-done` — closed as done/implemented/duplicate (`## Duplicate Of` comment when a duplicate).
 - `TRIAGED CLOSE-canceled` — closed not-planned.
-- `TRIAGED SPLIT` — children created; issue stays in Backlog with `ralph-triage`.
+- `TRIAGED SPLIT` — decomposition needed; issue stays in Backlog with `ralph-triage`, handed off to `/ralph:plan --mode epic #NNN`. Triage creates no children (GH-1605).
 - `TRIAGED PROMOTE-research` — routed to Research Needed for investigation.
 - `TRIAGED PROMOTE-plan` — routed to Ready for Plan (well-specified, skip research).
 - `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` (the `=NNN` is part of the token; `caretake --mode watch --kind pr` owns it).
