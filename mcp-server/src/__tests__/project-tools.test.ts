@@ -4,6 +4,9 @@
  *
  * Note: list_project_items was removed in GH-454 (redundant with list_issues).
  * Note: list_project_repos, list_projects, copy_project removed in GH-455 (admin tools).
+ * Note: get_project was merged into health_check (GH-1610) — its fields
+ * payload + field-cache side effect now live behind health_check's
+ * includeFields param. Functional coverage: health-check.test.ts.
  */
 
 import { describe, it, expect } from "vitest";
@@ -49,6 +52,10 @@ describe("removed tools not present", () => {
   it("list_project_repos was removed (GH-455)", () => {
     expect(projectToolsSrc).not.toContain("ralph_hero__list_project_repos");
   });
+
+  it("get_project was merged into health_check (GH-1610)", () => {
+    expect(projectToolsSrc).not.toContain("ralph_hero__get_project");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -60,7 +67,7 @@ describe("remaining tools present", () => {
     expect(projectToolsSrc).toContain("ralph_hero__setup_project");
   });
 
-  it("get_project tool remains", () => {
-    expect(projectToolsSrc).toContain("ralph_hero__get_project");
+  it("health_check tool now registered here (GH-1610, moved from index.ts)", () => {
+    expect(projectToolsSrc).toContain("ralph_hero__health_check");
   });
 });

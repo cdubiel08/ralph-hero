@@ -17,9 +17,7 @@ import { createGitHubClient, type GitHubClient } from "./github-client.js";
 import { FieldOptionCache } from "./lib/cache.js";
 import { createDebugLogger, wrapServerToolWithLogging, type DebugLogger } from "./lib/debug-logger.js";
 import { initTelemetry } from "./lib/telemetry.js";
-import { toolSuccess, toolError, resolveProjectOwner } from "./types.js";
 import { resolveRepoFromProject } from "./lib/helpers.js";
-import { detectOrphanRepoIssues, type OrphanRepoIssuesResult } from "./lib/health.js";
 import { registerProjectTools } from "./tools/project-tools.js";
 import { registerIssueTools } from "./tools/issue-tools.js";
 import { registerRelationshipTools } from "./tools/relationship-tools.js";
@@ -29,9 +27,7 @@ import { registerDirectionsTools } from "./tools/directions-tools.js";
 import { registerBatchTools } from "./tools/batch-tools.js";
 import { registerProjectManagementTools } from "./tools/project-management-tools.js";
 import { registerHygieneTools } from "./tools/hygiene-tools.js";
-import { registerDebugTools } from "./tools/debug-tools.js";
 import { registerDecomposeTools } from "./tools/decompose-tools.js";
-import { registerPlanGraphTools } from "./tools/plan-graph-tools.js";
 import { registerActivityTools } from "./tools/activity-tools.js";
 import { registerTrendsTools } from "./tools/trends-tools.js";
 import { registerSreTools } from "./tools/sre-tools.js";
@@ -209,218 +205,6 @@ function initGitHubClient(debugLogger?: DebugLogger | null): GitHubClient {
 }
 
 /**
- * Register core tools on the MCP server.
- * Tool modules from Phases 2-4 will add their own registrations here.
- */
-function registerCoreTools(server: McpServer, client: GitHubClient): void {
-  // Health check tool - comprehensive validation of auth, repo, project, and fields
-  server.tool(
-    "ralph_hero__health_check",
-    "Validate GitHub API connectivity, token permissions, repo access, project access, and required fields. Also surfaces repo-scope mismatch via the `orphanRepoIssues` field when OPEN issues exist in the repo but are NOT on the configured project board (such issues are invisible to discovery tools like next_actions, list_issues, pipeline_dashboard, project_hygiene). The field is omitted entirely when the board contains every OPEN repo issue. Shape when present: `{ count, repoOpen, boardItems, sample: number[], note }` — `sample` is up to 10 orphan issue numbers (ascending) for diagnostic display.",
-    {},
-    async () => {
-      const checks: Record<string, { status: string; detail?: string }> = {};
-
-      // 1. Auth check (repo token)
-      try {
-        const login = await client.getAuthenticatedUser();
-        checks.auth = { status: "ok", detail: `Authenticated as ${login}` };
-      } catch (e) {
-        checks.auth = {
-          status: "fail",
-          detail: `Auth failed: ${e instanceof Error ? e.message : String(e)}`,
-        };
-      }
-
-      // 2. Repo access check
-      if (client.config.owner && client.config.repo) {
-        try {
-          await client.query<{ repository: { nameWithOwner: string } | null }>(
-            `query($owner: String!, $repo: String!) {
-              repository(owner: $owner, name: $repo) { nameWithOwner }
-            }`,
-            { owner: client.config.owner, repo: client.config.repo },
-          );
-          checks.repoAccess = {
-            status: "ok",
-            detail: `${client.config.owner}/${client.config.repo}`,
-          };
-        } catch (e) {
-          checks.repoAccess = {
-            status: "fail",
-            detail: `Cannot access repo: ${e instanceof Error ? e.message : String(e)}. Token may lack 'repo' scope or org access.`,
-          };
-        }
-      } else {
-        checks.repoAccess = {
-          status: "skip",
-          detail: "RALPH_GH_OWNER/RALPH_GH_REPO not set",
-        };
-      }
-
-      // 3. Project access check (uses project token + project owner)
-      const projOwner = resolveProjectOwner(client.config);
-      const projNum = client.config.projectNumber;
-      if (projOwner && projNum) {
-        try {
-          // Try user first, then org
-          let project: {
-            title: string;
-            fields: { nodes: Array<{ name: string }> };
-          } | null = null;
-
-          for (const ownerType of ["user", "organization"]) {
-            try {
-              const result = await client.projectQuery<
-                Record<
-                  string,
-                  {
-                    projectV2: {
-                      title: string;
-                      fields: { nodes: Array<{ name: string }> };
-                    } | null;
-                  }
-                >
-              >(
-                `query($owner: String!, $number: Int!) {
-                  ${ownerType}(login: $owner) {
-                    projectV2(number: $number) {
-                      title
-                      fields(first: 50) {
-                        nodes {
-                          ... on ProjectV2FieldCommon { name }
-                          ... on ProjectV2SingleSelectField { name }
-                        }
-                      }
-                    }
-                  }
-                }`,
-                { owner: projOwner, number: projNum },
-              );
-              project = result[ownerType]?.projectV2 ?? null;
-              if (project) break;
-            } catch {
-              // Try next owner type
-            }
-          }
-
-          if (project) {
-            checks.projectAccess = {
-              status: "ok",
-              detail: `${project.title} (#${projNum})`,
-            };
-
-            // 4. Required fields check
-            const requiredFields = ["Workflow State", "Priority", "Estimate"];
-            const fieldNames = project.fields.nodes.map((f) => f.name);
-            const missing = requiredFields.filter(
-              (f) => !fieldNames.includes(f),
-            );
-            if (missing.length === 0) {
-              checks.requiredFields = {
-                status: "ok",
-                detail: "All required fields present",
-              };
-            } else {
-              checks.requiredFields = {
-                status: "fail",
-                detail: `Missing fields: ${missing.join(", ")}. Run /ralph:setup.`,
-              };
-            }
-          } else {
-            checks.projectAccess = {
-              status: "fail",
-              detail: `Project #${projNum} not found for owner "${projOwner}". Check RALPH_GH_PROJECT_OWNER.`,
-            };
-          }
-        } catch (e) {
-          checks.projectAccess = {
-            status: "fail",
-            detail: `Project access failed: ${e instanceof Error ? e.message : String(e)}. Token may lack 'project' scope.`,
-          };
-        }
-      } else {
-        checks.projectAccess = {
-          status: "skip",
-          detail: "RALPH_GH_PROJECT_NUMBER not set",
-        };
-      }
-
-      // 5. Orphan repo issues check — only runs when both repo and project
-      // access succeeded above. Failures here are non-fatal: orphan detection
-      // is informational and shouldn't downgrade the overall health status,
-      // because the underlying access checks already capture the real failure
-      // mode (broken token, missing project, etc.).
-      let orphanRepoIssues: OrphanRepoIssuesResult | null = null;
-      if (
-        checks.repoAccess?.status === "ok" &&
-        checks.projectAccess?.status === "ok" &&
-        client.config.owner &&
-        client.config.repo &&
-        projOwner &&
-        projNum
-      ) {
-        try {
-          orphanRepoIssues = await detectOrphanRepoIssues(
-            client,
-            client.config.owner,
-            client.config.repo,
-            projOwner,
-            projNum,
-          );
-        } catch (e) {
-          // Non-fatal — log via stderr but don't fail health_check.
-          console.error(
-            `[ralph-hero] Orphan repo issues check failed: ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-      }
-
-      // Token source detection — re-derive which env vars resolved
-      const repoTokenSource = resolveEnv("RALPH_GH_REPO_TOKEN")
-        ? "RALPH_GH_REPO_TOKEN"
-        : resolveEnv("RALPH_HERO_GITHUB_TOKEN")
-          ? "RALPH_HERO_GITHUB_TOKEN"
-          : "gh auth (keychain)";
-
-      const projectTokenSource = resolveEnv("RALPH_GH_PROJECT_TOKEN")
-        ? "RALPH_GH_PROJECT_TOKEN"
-        : repoTokenSource;
-
-      // Summary
-      const allOk = Object.values(checks).every(
-        (c) => c.status === "ok" || c.status === "skip",
-      );
-      return toolSuccess({
-        status: allOk ? "ok" : "issues_found",
-        checks,
-        config: {
-          repoOwner: client.config.owner || "(not set)",
-          repo: client.config.repo || "(not set)",
-          projectOwner: resolveProjectOwner(client.config) || "(not set)",
-          projectNumber: client.config.projectNumber || "(not set)",
-          tokenMode:
-            projectTokenSource !== repoTokenSource
-              ? "dual-token"
-              : "single-token",
-        },
-        tokenSources: {
-          repoToken: repoTokenSource,
-          projectToken: projectTokenSource,
-          note:
-            projectTokenSource !== repoTokenSource
-              ? `Repo operations use ${repoTokenSource}, project operations use ${projectTokenSource}`
-              : `Both repo and project operations use ${repoTokenSource}`,
-        },
-        // Omit the field entirely when there are no orphans, per the field's
-        // contract (`null` from `detectOrphanRepoIssues` means "clean board").
-        ...(orphanRepoIssues ? { orphanRepoIssues } : {}),
-      });
-    },
-  );
-}
-
-/**
  * Main entry point. Creates the MCP server, registers tools,
  * and connects via stdio transport.
  */
@@ -501,10 +285,9 @@ async function main(): Promise<void> {
     wrapServerToolWithLogging(server, debugLogger);
   }
 
-  // Register core tools
-  registerCoreTools(server, client);
-
-  // Phase 2: Project management tools
+  // Project management tools (setup_project, health_check — GH-1610 moved
+  // health_check here from the deleted registerCoreTools; it absorbs
+  // get_project's fields payload behind includeFields)
   registerProjectTools(server, client, fieldCache);
 
   // Phase 3: Issue management tools
@@ -534,21 +317,18 @@ async function main(): Promise<void> {
   // Decompose feature tool (cross-repo decomposition via .ralph-repos.yml)
   registerDecomposeTools(server, client, fieldCache);
 
-  // Plan graph sync tool (sync plan dependency edges to GitHub)
-  registerPlanGraphTools(server, client);
-
   // Activity log reader (recent_activity tool — pure filesystem, no GitHub client)
   registerActivityTools(server);
 
-  // Trends tools (capture_snapshot — JSONL persistence under ~/.ralph-hero/snapshots/)
+  // Trends tools (metrics_trends, incl. {capture: true} — JSONL persistence under ~/.ralph-hero/snapshots/)
   registerTrendsTools(server, client, fieldCache);
 
-  // SRE operation tools (kubectl autoremediation — typed argv, no-shell invariant)
-  registerSreTools(server, client, fieldCache);
-
-  // Debug tools (only when RALPH_DEBUG=true)
-  if (process.env.RALPH_DEBUG === 'true') {
-    registerDebugTools(server, client);
+  // SRE operation tools (only when RALPH_SRE_ENABLE=true — kubectl autoremediation,
+  // typed argv, no-shell invariant; gated because the sre-fixit agent's `tools:`
+  // allowlist is a hard runtime enforcement and misconfigured clusters should not
+  // expose live kubectl mutation ops by default)
+  if (process.env.RALPH_SRE_ENABLE === 'true') {
+    registerSreTools(server, client, fieldCache);
   }
 
   // Connect via stdio transport

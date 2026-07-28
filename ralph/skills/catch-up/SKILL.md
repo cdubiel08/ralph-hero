@@ -21,7 +21,6 @@ allowed-tools:
   - mcp__plugin_ralph_ralph-github__ralph_hero__recent_activity
   - mcp__plugin_ralph_ralph-github__ralph_hero__next_actions
   - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard
-  - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_status_summary
   - mcp__plugin_ralph_ralph-github__ralph_hero__create_status_update
   - mcp__plugin_ralph_ralph-github__ralph_hero__metrics_trends
   - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue

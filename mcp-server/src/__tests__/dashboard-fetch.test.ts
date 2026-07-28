@@ -113,6 +113,50 @@ describe("toDashboardItems", () => {
     expect(item.estimate).toBe("S");
   });
 
+  it("populates workflowStateUpdatedAt from the Workflow State field value's own updatedAt (GH-1617)", () => {
+    const raw = [
+      makeRawIssue({ updatedAt: "2026-07-20T00:00:00Z" }, [
+        {
+          __typename: "ProjectV2ItemFieldSingleSelectValue",
+          name: "In Progress",
+          updatedAt: "2026-07-26T10:00:00Z",
+          field: { name: "Workflow State" },
+        },
+        {
+          __typename: "ProjectV2ItemFieldSingleSelectValue",
+          name: "P1",
+          updatedAt: "2026-01-01T00:00:00Z",
+          field: { name: "Priority" },
+        },
+      ]),
+    ];
+    const [item] = toDashboardItems(raw);
+    // Distinct from content updatedAt AND from the Priority field's updatedAt
+    // — must be sourced specifically from the Workflow State field value.
+    expect(item.workflowStateUpdatedAt).toBe("2026-07-26T10:00:00Z");
+    expect(item.updatedAt).toBe("2026-07-20T00:00:00Z");
+  });
+
+  it("omits workflowStateUpdatedAt when the Workflow State field value carries no updatedAt", () => {
+    const raw = [
+      makeRawIssue({}, [
+        {
+          __typename: "ProjectV2ItemFieldSingleSelectValue",
+          name: "In Progress",
+          field: { name: "Workflow State" },
+        },
+      ]),
+    ];
+    const [item] = toDashboardItems(raw);
+    expect(item.workflowStateUpdatedAt).toBeUndefined();
+  });
+
+  it("omits workflowStateUpdatedAt when there is no Workflow State value at all", () => {
+    const raw = [makeRawIssue({}, [])];
+    const [item] = toDashboardItems(raw);
+    expect(item.workflowStateUpdatedAt).toBeUndefined();
+  });
+
   it("flattens assignees to string[]", () => {
     const raw = [
       makeRawIssue({

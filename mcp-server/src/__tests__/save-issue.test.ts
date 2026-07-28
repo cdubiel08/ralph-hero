@@ -2,15 +2,20 @@
  * Tests for the save_issue unified mutation tool.
  *
  * Covers: schema validation, auto-close logic, semantic intent integration,
- * and structural verification via source code reading.
+ * structural verification via source code reading, and (GH-1615) handler-
+ * level integration tests for the transition-legality choke point.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveState } from "../lib/state-resolution.js";
 import { TERMINAL_STATES, ISSUE_STATE_TO_TERMINAL_WORKFLOW } from "../lib/workflow-states.js";
+import { registerIssueTools } from "../tools/issue-tools.js";
+import type { GitHubClient } from "../github-client.js";
+import { FieldOptionCache } from "../lib/cache.js";
 
 // ---------------------------------------------------------------------------
 // Read source for structural tests
@@ -494,24 +499,28 @@ describe("save_issue reverse-inference structural (GH-1471)", () => {
 // ---------------------------------------------------------------------------
 
 describe("save_issue lock guard integration", () => {
-  it("imports isLockConflict from lock-guard", () => {
-    expect(issueToolsSrc).toContain('import { isLockConflict } from "../lib/lock-guard.js"');
+  it("imports isLockConflict and the GH-1616 helpers from lock-guard", () => {
+    expect(issueToolsSrc).toContain("isLockConflict");
+    expect(issueToolsSrc).toContain("isGuardedLockRelease");
+    expect(issueToolsSrc).toContain("isHeldSinceStale");
+    expect(issueToolsSrc).toContain("describeLockConflict");
+    expect(issueToolsSrc).toContain("describeGuardedRelease");
   });
 
   it("calls isLockConflict in the save_issue handler", () => {
     expect(issueToolsSrc).toContain("isLockConflict");
   });
 
-  it("calls getCurrentFieldValue as part of the lock guard check", () => {
-    // getCurrentFieldValue must be called conditionally inside the lock guard block
-    expect(issueToolsSrc).toContain("getCurrentFieldValue");
+  it("calls getFieldValueDetail (GH-1616) as part of the lock guard check", () => {
+    // getFieldValueDetail replaced the bare getCurrentFieldValue read so the
+    // lock guard can be enriched with holder/heldSince.
+    expect(issueToolsSrc).toContain("getFieldValueDetail");
     // Verify it is used specifically for the Workflow State field in the lock guard
     expect(issueToolsSrc).toContain('"Workflow State"');
   });
 
-  it("returns toolError with actionable message when lock conflict detected", () => {
-    expect(issueToolsSrc).toContain("already in a lock state");
-    expect(issueToolsSrc).toContain("force=true to override");
+  it("returns toolError via describeLockConflict when a lock conflict is detected", () => {
+    expect(issueToolsSrc).toContain("describeLockConflict(");
   });
 
   it("guard is conditional on resolvedWorkflowState being a lock state", () => {
@@ -524,5 +533,707 @@ describe("save_issue lock guard integration", () => {
 
   it("guard is bypassed when args.force is true", () => {
     expect(issueToolsSrc).toContain("!args.force");
+  });
+
+  it("lock-conflict guard runs ahead of issue mutations (step 2b, not step 4)", () => {
+    const lockConflictIdx = issueToolsSrc.indexOf("describeLockConflict(");
+    const issueMutationIdx = issueToolsSrc.indexOf("// 3. Issue state mutations");
+    expect(lockConflictIdx).toBeGreaterThan(0);
+    expect(issueMutationIdx).toBeGreaterThan(0);
+    expect(lockConflictIdx).toBeLessThan(issueMutationIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GH-1615: transition-legality choke point — handler-level integration tests
+// (mirrors the `getTool` pattern used elsewhere in this test suite, e.g.
+// issue-tools.test.ts's get_issue/list_issues integration harness).
+// ---------------------------------------------------------------------------
+
+interface HandlerResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+interface RegisteredTool {
+  handler: (args: unknown, extra: unknown) => Promise<HandlerResult>;
+}
+
+function getSaveIssueHandler(server: McpServer): RegisteredTool {
+  const tools = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })
+    ._registeredTools;
+  const tool = tools?.["ralph_hero__save_issue"];
+  if (!tool) throw new Error("ralph_hero__save_issue not registered");
+  return tool;
+}
+
+function parseSaveIssuePayload(result: HandlerResult): Record<string, unknown> {
+  expect(result.content).toHaveLength(1);
+  return JSON.parse(result.content[0].text) as Record<string, unknown>;
+}
+
+function makeFieldCacheForSaveIssueTests(): FieldOptionCache {
+  const cache = new FieldOptionCache();
+  cache.populate(7, "project-id-1", [
+    {
+      id: "field-ws-id",
+      name: "Workflow State",
+      options: [
+        "Backlog", "Research Needed", "Research in Progress", "Ready for Plan",
+        "Plan in Progress", "Plan in Review", "In Progress", "In Review",
+        "Done", "Canceled", "Human Needed",
+      ].map((name, i) => ({ id: `opt-ws-${i}`, name })),
+    },
+    {
+      id: "field-status-id",
+      name: "Status",
+      options: [
+        { id: "opt-todo", name: "Todo" },
+        { id: "opt-ip", name: "In Progress" },
+        { id: "opt-done", name: "Done" },
+      ],
+    },
+  ]);
+  return cache;
+}
+
+/**
+ * Mock GitHubClient for save_issue integration tests. `currentWorkflowState`
+ * models the live board state: a string for a real value, `null` for "query
+ * succeeded, no Workflow State value on the item" (genuinely unset).
+ * `heldSince`/`holder` (GH-1616) populate the field value's `updatedAt`/
+ * `creator.login` so lock-guard enrichment and the guarded-release gate can
+ * be exercised.
+ */
+function makeSaveIssueMockClient(opts: {
+  currentWorkflowState: string | null;
+  fieldValueQueryShouldFail?: boolean;
+  heldSince?: string;
+  holder?: string;
+}): { client: GitHubClient; mutate: ReturnType<typeof vi.fn>; projectMutate: ReturnType<typeof vi.fn> } {
+  const cacheStore = new Map<string, { value: unknown; expiry: number }>();
+  const projectItemId = "item-1615";
+
+  const query = vi.fn(async (q: string) => {
+    // resolveProjectItemId: `... on Issue { projectItems(first: ...) }`
+    if (q.includes("... on Issue {") && q.includes("projectItems(first:")) {
+      return {
+        node: {
+          projectItems: {
+            nodes: [{ id: projectItemId, project: { id: "project-id-1" } }],
+          },
+        },
+      };
+    }
+    // getFieldValueDetail: `... on ProjectV2Item { fieldValues(first: 20) }`
+    if (q.includes("... on ProjectV2Item {") && q.includes("fieldValues(first: 20)")) {
+      if (opts.fieldValueQueryShouldFail) {
+        throw new Error("simulated current-state fetch failure");
+      }
+      const nodes = opts.currentWorkflowState
+        ? [{
+            __typename: "ProjectV2ItemFieldSingleSelectValue",
+            name: opts.currentWorkflowState,
+            updatedAt: opts.heldSince,
+            creator: opts.holder ? { login: opts.holder } : undefined,
+            field: { name: "Workflow State" },
+          }]
+        : [];
+      return { node: { fieldValues: { nodes } } };
+    }
+    // resolveIssueNodeId: `repository(owner: ...) { issue(number: ...) { id } }`.
+    // This is a READ helper shared by resolveProjectItemId (used by the
+    // transition-legality check's current-state fetch) AND section 3's
+    // issue-mutation path — it never mutates by itself, so its query firing
+    // does not indicate a mutation happened.
+    if (q.includes("repository(owner:") && q.includes("issue(number:")) {
+      return { repository: { issue: { id: "issue-node-1615" } } };
+    }
+    throw new Error(`Unmocked query: ${q.slice(0, 120)}`);
+  });
+
+  const mutate = vi.fn(async () => ({}));
+  const projectMutate = vi.fn(async () => ({}));
+
+  const client = {
+    config: {
+      token: "test",
+      owner: "octocat",
+      repo: "repo",
+      projectNumber: 7,
+      projectOwner: "octocat",
+    },
+    query,
+    projectQuery: vi.fn(async () => {
+      throw new Error("projectQuery should not be called — field cache is pre-populated");
+    }),
+    mutate,
+    projectMutate,
+    getCache: () => ({
+      get: <T>(key: string): T | undefined => {
+        const entry = cacheStore.get(key);
+        if (!entry || Date.now() > entry.expiry) return undefined;
+        return entry.value as T;
+      },
+      set: (key: string, value: unknown, ttlMs?: number) => {
+        cacheStore.set(key, { value, expiry: Date.now() + (ttlMs ?? 30 * 60 * 1000) });
+      },
+      invalidatePrefix: () => {},
+    }),
+    getAuthenticatedUser: vi.fn(),
+    getRateLimitStatus: vi.fn(),
+    restPost: vi.fn(),
+  } as unknown as GitHubClient;
+
+  return { client, mutate, projectMutate };
+}
+
+describe("save_issue transition legality — handler integration (GH-1615)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = makeFieldCacheForSaveIssueTests();
+  });
+
+  it("PLACEMENT TEST: illegal transition + issueState:OPEN + title mutates NOTHING", async () => {
+    const { client, mutate, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "Backlog",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      {
+        number: 1615,
+        issueState: "OPEN",
+        title: "New title",
+        workflowState: "In Review", // Backlog -> In Review is illegal
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Illegal transition for #1615");
+    expect(payload.error).toContain('"Backlog" -> "In Review"');
+    expect(payload.error).toContain("force=true");
+
+    // Zero mutations of any kind: no reopenIssue/updateIssue (client.mutate)
+    // and no updateProjectV2ItemFieldValue (client.projectMutate).
+    expect(mutate).not.toHaveBeenCalled();
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("illegal transition names the legal next states", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Legal next states from \"Backlog\"");
+    expect(payload.error).toContain("Research Needed");
+    expect(payload.error).toContain("Ready for Plan");
+  });
+
+  it("legal transition succeeds and mutates the project field", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: "Ready for Plan" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as { changes: { workflowState: string } };
+    expect(payload.changes.workflowState).toBe("In Progress");
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("force bypasses an illegal transition and marks it forced", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review", force: true },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as {
+      changes: { forcedTransition?: { from: string; to: string } };
+    };
+    expect(payload.changes.forcedTransition).toEqual({ from: "Backlog", to: "In Review" });
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("force on an already-legal transition does NOT add a forcedTransition marker", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Ready for Plan" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress", force: true },
+      {},
+    );
+
+    const payload = parseSaveIssuePayload(result) as { changes: Record<string, unknown> };
+    expect(payload.changes.forcedTransition).toBeUndefined();
+  });
+
+  it("command-less direct-state path is still transition-validated", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    // No `command` — validateDirectState/resolveState are bypassed entirely,
+    // but the transition-legality check still runs (this is the closed gap
+    // research §3 identified: "the command-less path checks only isValidState").
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review" },
+      {},
+    );
+    expect(result.isError).toBe(true);
+  });
+
+  it("command + illegal transition is refused even though the command allows the direct state", async () => {
+    const { client } = makeSaveIssueMockClient({ currentWorkflowState: "Backlog" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    // "In Review" is a valid ralph_impl output state (command-level check
+    // passes), but Backlog -> In Review is still an illegal TRANSITION.
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Review", command: "ralph_impl" },
+      {},
+    );
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Illegal transition");
+  });
+
+  it("TERMINAL-SOURCE TEST: CLOSED_NOT_PLANNED on a Done issue refuses without force and does not close", async () => {
+    const { client, mutate } = makeSaveIssueMockClient({ currentWorkflowState: "Done" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, issueState: "CLOSED_NOT_PLANNED" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Illegal transition for #1615");
+    expect(payload.error).toContain('"Done" -> "Canceled"');
+    // closeIssue is a client.mutate call — must not have fired.
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("TERMINAL-SOURCE TEST: CLOSED_NOT_PLANNED on Done succeeds with force and reports forcedTransition", async () => {
+    const { client, mutate } = makeSaveIssueMockClient({ currentWorkflowState: "Done" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, issueState: "CLOSED_NOT_PLANNED", force: true },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as {
+      changes: { forcedTransition?: { from: string; to: string }; workflowStateInferred?: string };
+    };
+    expect(payload.changes.forcedTransition).toEqual({ from: "Done", to: "Canceled" });
+    // With force, the close mutation DOES fire.
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("TERMINAL-SOURCE TEST: Done -> Done re-close (same-state) still passes without force", async () => {
+    const { client, mutate } = makeSaveIssueMockClient({ currentWorkflowState: "Done" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, issueState: "CLOSED" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as { changes: Record<string, unknown> };
+    expect(payload.changes.forcedTransition).toBeUndefined();
+    expect(payload.changes.workflowStateInferred).toBe("Done");
+    expect(mutate).toHaveBeenCalledTimes(1); // closeIssue still fires (same-state)
+  });
+
+  it("FAIL-CLOSED FETCH TEST: current-state read rejects -> toolError, zero mutations", async () => {
+    const { client, mutate, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "Backlog",
+      fieldValueQueryShouldFail: true,
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("Could not determine the current state");
+    expect(mutate).not.toHaveBeenCalled();
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("FAIL-CLOSED FETCH TEST: item present with no Workflow State value PASSES", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: null });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "Ready for Plan" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as { changes: { workflowState: string } };
+    expect(payload.changes.workflowState).toBe("Ready for Plan");
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("lock guard still fires (transition is legal) and shares the transition check's current-state read", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({ currentWorkflowState: "Plan in Progress" });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    // "Plan in Progress" -> "In Progress" IS a legal transition (JSON edge),
+    // so this exercises the lock guard specifically, not the transition
+    // check: current is a DIFFERENT lock state than the target, a conflict.
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("is locked:");
+    expect(payload.error).toContain('"Plan in Progress"');
+    expect(projectMutate).not.toHaveBeenCalled();
+
+    // getFieldValueDetail's underlying query fires exactly once — shared
+    // between the transition check and the lock guard (GH-1615/GH-1616:
+    // "hoisted so lock guard and transition check share it").
+    const fieldValueCalls = (client.query as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter(
+      ([q]: unknown[]) => typeof q === "string" && q.includes("fieldValues(first: 20)"),
+    );
+    expect(fieldValueCalls).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GH-1616: lock-guard holder identity, loud force, guarded release,
+// same-state reclaim, and the closed two-call takeover.
+// ---------------------------------------------------------------------------
+
+describe("save_issue lock guard enrichment (GH-1616)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = makeFieldCacheForSaveIssueTests();
+  });
+
+  it("lock conflict refusal names the holder and claim time", async () => {
+    const { client } = makeSaveIssueMockClient({
+      currentWorkflowState: "Plan in Progress",
+      holder: "other-agent",
+      heldSince: "2026-07-25T00:00:00Z",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("@other-agent");
+    expect(payload.error).toContain("2026-07-25T00:00:00Z");
+  });
+
+  it("lock conflict refusal degrades gracefully when holder is unknown", async () => {
+    const { client } = makeSaveIssueMockClient({
+      currentWorkflowState: "Plan in Progress",
+      heldSince: "2026-07-25T00:00:00Z",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    const payload = parseSaveIssuePayload(result) as { error: string };
+    expect(payload.error).toContain("unknown");
+  });
+
+  it("force on a lock conflict reports forcedLockOverride with holder + heldSince", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "Plan in Progress",
+      holder: "other-agent",
+      heldSince: "2026-07-25T00:00:00Z",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress", force: true },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as {
+      changes: { forcedLockOverride?: { previousState: string; holder: string | null; heldSince: string | null } };
+    };
+    expect(payload.changes.forcedLockOverride).toEqual({
+      previousState: "Plan in Progress",
+      holder: "other-agent",
+      heldSince: "2026-07-25T00:00:00Z",
+    });
+    expect(projectMutate).toHaveBeenCalled();
+  });
+
+  it("same-state re-claim on a lock state reports lockReclaim, no refusal", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "In Progress",
+      heldSince: "2026-07-26T10:00:00Z",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "In Progress" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as {
+      changes: { lockReclaim?: { heldSince: string | null } };
+    };
+    expect(payload.changes.lockReclaim).toEqual({ heldSince: "2026-07-26T10:00:00Z" });
+
+    // GH-1617 calibration: a same-value write does not refresh the field's
+    // updatedAt, so a lock reclaim must clear-then-set the field (two
+    // projectMutate calls: clear + the aliased set) to force a fresh
+    // timestamp, instead of one same-value write.
+    expect(projectMutate).toHaveBeenCalledTimes(2);
+    const [clearCall] = (projectMutate as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect((clearCall[0] as string)).toContain("clearProjectV2ItemFieldValue");
+  });
+
+  it("non-lock same-state re-assert does NOT trigger lockReclaim or a clear mutation", async () => {
+    const { client, projectMutate } = makeSaveIssueMockClient({
+      currentWorkflowState: "Ready for Plan",
+    });
+    registerIssueTools(server, client, fieldCache);
+    const handler = getSaveIssueHandler(server);
+
+    const result = await handler.handler(
+      { number: 1615, workflowState: "Ready for Plan" },
+      {},
+    );
+
+    expect(result.isError).toBeUndefined();
+    const payload = parseSaveIssuePayload(result) as { changes: Record<string, unknown> };
+    expect(payload.changes.lockReclaim).toBeUndefined();
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  describe("guarded lock release + the closed two-call takeover", () => {
+    it("release edge (Research in Progress -> Research Needed) is refused when the claim is fresh", async () => {
+      const { client, projectMutate } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research in Progress",
+        heldSince: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(), // 1h ago
+      });
+      registerIssueTools(server, client, fieldCache);
+      const handler = getSaveIssueHandler(server);
+
+      const result = await handler.handler(
+        { number: 1615, workflowState: "Research Needed" },
+        {},
+      );
+
+      expect(result.isError).toBe(true);
+      const payload = parseSaveIssuePayload(result) as { error: string };
+      expect(payload.error).toContain("not yet");
+      expect(payload.error).toContain("stale");
+      expect(projectMutate).not.toHaveBeenCalled();
+    });
+
+    it("release edge succeeds when the claim is past the stale threshold, reporting lockReleased", async () => {
+      const { client, projectMutate } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research in Progress",
+        heldSince: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(), // 30h ago > 24h default
+      });
+      registerIssueTools(server, client, fieldCache);
+      const handler = getSaveIssueHandler(server);
+
+      const result = await handler.handler(
+        { number: 1615, workflowState: "Research Needed" },
+        {},
+      );
+
+      expect(result.isError).toBeUndefined();
+      const payload = parseSaveIssuePayload(result) as {
+        changes: { lockReleased?: { previousState: string; forced: boolean } };
+      };
+      expect(payload.changes.lockReleased?.previousState).toBe("Research in Progress");
+      expect(payload.changes.lockReleased?.forced).toBe(false);
+      expect(projectMutate).toHaveBeenCalled();
+    });
+
+    it("release edge succeeds immediately with force=true, reporting lockReleased.forced=true", async () => {
+      const { client } = makeSaveIssueMockClient({
+        currentWorkflowState: "Plan in Progress",
+        heldSince: new Date().toISOString(), // fresh — would refuse without force
+      });
+      registerIssueTools(server, client, fieldCache);
+      const handler = getSaveIssueHandler(server);
+
+      const result = await handler.handler(
+        { number: 1615, workflowState: "Ready for Plan", force: true },
+        {},
+      );
+
+      expect(result.isError).toBeUndefined();
+      const payload = parseSaveIssuePayload(result) as {
+        changes: { lockReleased?: { forced: boolean } };
+      };
+      expect(payload.changes.lockReleased?.forced).toBe(true);
+    });
+
+    it("TAKEOVER TEST: the two-call steal is refused at call 1 against a fresh lock", async () => {
+      // Call 1: Research in Progress -> Research Needed (the release half of
+      // the recipe) against a lock claimed 1h ago.
+      const { client: client1 } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research in Progress",
+        heldSince: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
+      });
+      registerIssueTools(server, client1, fieldCache);
+      const handler1 = getSaveIssueHandler(server);
+      const result1 = await handler1.handler(
+        { number: 1615, workflowState: "Research Needed" },
+        {},
+      );
+      expect(result1.isError).toBe(true);
+
+      // Call 2 (never legitimately reached, since call 1 refused, but
+      // verified independently): a re-claim FROM the queue state is not
+      // itself gated — the takeover is closed at call 1, not call 2.
+      const server2 = new McpServer({ name: "test2", version: "0.0.0" });
+      const { client: client2, projectMutate: projectMutate2 } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research Needed",
+      });
+      registerIssueTools(server2, client2, fieldCache);
+      const tools2 = (server2 as unknown as { _registeredTools: Record<string, RegisteredTool> })
+        ._registeredTools;
+      const handler2 = tools2["ralph_hero__save_issue"];
+      const result2 = await handler2.handler(
+        { number: 1615, workflowState: "Research in Progress" },
+        {},
+      );
+      expect(result2.isError).toBeUndefined();
+      expect(projectMutate2).toHaveBeenCalled();
+    });
+
+    it("TAKEOVER TEST: the same sequence against a lock older than the threshold succeeds and reports lockReleased", async () => {
+      const { client } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research in Progress",
+        heldSince: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(),
+      });
+      registerIssueTools(server, client, fieldCache);
+      const handler = getSaveIssueHandler(server);
+      const result = await handler.handler(
+        { number: 1615, workflowState: "Research Needed" },
+        {},
+      );
+      expect(result.isError).toBeUndefined();
+      const payload = parseSaveIssuePayload(result) as {
+        changes: { lockReleased?: unknown };
+      };
+      expect(payload.changes.lockReleased).toBeDefined();
+    });
+
+    it("TAKEOVER TEST: force on call 1 succeeds and reports lockReleased.forced=true", async () => {
+      const { client } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research in Progress",
+        heldSince: new Date().toISOString(),
+      });
+      registerIssueTools(server, client, fieldCache);
+      const handler = getSaveIssueHandler(server);
+      const result = await handler.handler(
+        { number: 1615, workflowState: "Research Needed", force: true },
+        {},
+      );
+      expect(result.isError).toBeUndefined();
+      const payload = parseSaveIssuePayload(result) as {
+        changes: { lockReleased?: { forced: boolean } };
+      };
+      expect(payload.changes.lockReleased?.forced).toBe(true);
+    });
+
+    it("self-reclaim (same-state) still works and is unaffected by the release gate", async () => {
+      const { client, projectMutate } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research in Progress",
+        heldSince: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(), // fresh
+      });
+      registerIssueTools(server, client, fieldCache);
+      const handler = getSaveIssueHandler(server);
+
+      const result = await handler.handler(
+        { number: 1615, workflowState: "Research in Progress" },
+        {},
+      );
+
+      expect(result.isError).toBeUndefined();
+      const payload = parseSaveIssuePayload(result) as {
+        changes: { lockReclaim?: unknown };
+      };
+      expect(payload.changes.lockReclaim).toBeDefined();
+      expect(projectMutate).toHaveBeenCalled();
+    });
+
+    it("completion exit from a lock state (not a release edge) is unconditional", async () => {
+      const { client } = makeSaveIssueMockClient({
+        currentWorkflowState: "Research in Progress",
+        heldSince: new Date().toISOString(), // fresh — would refuse if this were a release edge
+      });
+      registerIssueTools(server, client, fieldCache);
+      const handler = getSaveIssueHandler(server);
+
+      // "Research in Progress" -> "Ready for Plan" is the COMPLETION edge,
+      // not the guarded release edge (-> "Research Needed").
+      const result = await handler.handler(
+        { number: 1615, workflowState: "Ready for Plan" },
+        {},
+      );
+
+      expect(result.isError).toBeUndefined();
+    });
   });
 });

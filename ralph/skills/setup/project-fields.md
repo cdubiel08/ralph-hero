@@ -18,7 +18,7 @@ The tool seeds each field with the right colors. If colors drift later, update v
 
 When called with a project number that already exists:
 
-- `get_project` first to confirm access.
+- `health_check` with `includeFields: true` first to confirm access.
 - `setup_project` runs in extend mode — it adds any missing fields, never destroys existing ones.
 - If a field exists but with mismatched options (e.g., someone added/removed states), report the diff and stop. Do not silently mutate user configuration.
 

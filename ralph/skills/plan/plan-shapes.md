@@ -147,7 +147,7 @@ Each `## Phase N:` section MUST include:
    - `[phase-N, phase-M]` — blocked by both.
    - `[GH-NNN]` — blocked by a specific issue (cross-plan reference).
    - If omitted, phases are treated as sequential (Phase N depends on Phase N-1).
-   Consumed by orchestrators (hero, autopilot) to decide which phases can dispatch in parallel and by `sync_plan_graph` for graph snapshots.
+   Consumed by orchestrators (hero, autopilot) to decide which phases can dispatch in parallel.
 2. **Overview** — 1-2 sentences describing the phase's outcome.
 3. **Changes Required** — concrete file paths + what changes. Backtick-wrap each path.
 4. **Success Criteria** with TWO subsections:
@@ -160,7 +160,7 @@ File ownership rule: each phase owns a tightly-scoped file set. Phases should no
 
 A `### Tasks` section is an opt-in upgrade for a single phase, not a required plan section. Add one when a phase splits into ≥2 file-disjoint chunks that benefit from parallel sub-agent dispatch or per-task model-tier routing — `/ralph:impl --mode auto` then runs that phase through its task-graph controller (`phase-execution.md`). Phases without `### Tasks` are implemented directly by the same skill; that is the normal shape for most plans, especially XS/S.
 
-Tasks use `#### Task N.M:` subheadings, each carrying four YAML fields below the heading. The fields are consumed by the impl controller when dispatching implementer sub-agents. (The per-phase `depends_on:` annotation is separate: `plan-postcondition.sh` greps for `depends_on.*\[` to warn when `sync_plan_graph` hasn't been called, and `sync_plan_graph` reads only those phase-level annotations — it does not parse task blocks.)
+Tasks use `#### Task N.M:` subheadings, each carrying four YAML fields below the heading. The fields are consumed by the impl controller when dispatching implementer sub-agents. (The per-phase `depends_on:` annotation is separate — it does not parse task blocks.)
 
 ```markdown
 #### Task 1.1: [descriptive name]
@@ -206,7 +206,7 @@ Worked example:
   - [ ] `grep -r "useNewParser" src/` returns ≥1 hit in flags.ts and auth.ts
 ```
 
-Tasks without the four YAML fields still parse — no hook blocks on their absence. `plan-postcondition.sh` warns only when the per-phase `depends_on:` annotation is present but `sync_plan_graph` was not called.
+Tasks without the four YAML fields still parse — no hook blocks on their absence.
 
 ## Group plans (feature = PR unit)
 

@@ -10,7 +10,11 @@ import type { GitHubClient } from "../github-client.js";
 import { FieldOptionCache } from "./cache.js";
 import type { ProjectV2IterationFieldIteration } from "../types.js";
 import { resolveProjectOwner } from "../types.js";
-import { WORKFLOW_STATE_TO_STATUS, stateIndex, isParentGateState } from "./workflow-states.js";
+import {
+  WORKFLOW_STATE_TO_STATUS,
+  isParentGateState,
+  isLegalParentGateAdvance,
+} from "./workflow-states.js";
 import {
   buildBatchResolveQuery,
   buildBatchFieldValueQuery,
@@ -338,30 +342,43 @@ export async function updateProjectItemField(
 // Helper: Get current field value for an issue's project item
 // ---------------------------------------------------------------------------
 
-export async function getCurrentFieldValue(
-  client: GitHubClient,
-  fieldCache: FieldOptionCache,
-  owner: string,
-  repo: string,
-  issueNumber: number,
-  fieldName: string,
-  projectNumber?: number,
-): Promise<string | undefined> {
-  const projectItemId = await resolveProjectItemId(
-    client,
-    fieldCache,
-    owner,
-    repo,
-    issueNumber,
-    projectNumber,
-  );
+/**
+ * Detail returned by `getFieldValueDetail` (GH-1616): the field's current
+ * value name plus holder identity and claim timestamp, sourced from
+ * `ProjectV2ItemFieldValueCommon.creator`/`updatedAt` — the same fetch that
+ * gives `save_issue`'s lock refusals "who" and "since when", and `next_actions`'
+ * stale-lock detection its correct clock (GH-1617, `dashboard-fetch.ts`
+ * fetches the equivalent shape via a different query for the bulk-scan path).
+ *
+ * `name`/`updatedAt`/`creator` all undefined means "query succeeded, no
+ * value on this field" (genuinely unset — legal per `isLegalTransition`).
+ * A fetch that cannot be completed at all (item not on the board, transient
+ * API error) THROWS rather than returning this shape — "no value" and
+ * "could not read" are different answers, and only the caller may decide
+ * which of its own fail-open/fail-closed branches applies (mirrors the
+ * pre-existing `getCurrentFieldValue` contract this function replaces).
+ */
+export interface FieldValueDetail {
+  name?: string;
+  updatedAt?: string;
+  creator?: string;
+}
 
+async function queryFieldValueDetail(
+  client: GitHubClient,
+  itemId: string,
+  fieldName: string,
+  includeCreator: boolean,
+): Promise<FieldValueDetail> {
+  const creatorFragment = includeCreator ? "\n                creator { login }" : "";
   const result = await client.query<{
     node: {
       fieldValues: {
         nodes: Array<{
           __typename?: string;
           name?: string;
+          updatedAt?: string;
+          creator?: { login?: string } | null;
           field?: { name: string };
         }>;
       };
@@ -375,6 +392,7 @@ export async function getCurrentFieldValue(
               ... on ProjectV2ItemFieldSingleSelectValue {
                 __typename
                 name
+                updatedAt${creatorFragment}
                 field { ... on ProjectV2FieldCommon { name } }
               }
             }
@@ -382,7 +400,7 @@ export async function getCurrentFieldValue(
         }
       }
     }`,
-    { itemId: projectItemId },
+    { itemId },
   );
 
   const fieldValue = result.node?.fieldValues?.nodes?.find(
@@ -390,7 +408,72 @@ export async function getCurrentFieldValue(
       fv.field?.name === fieldName &&
       fv.__typename === "ProjectV2ItemFieldSingleSelectValue",
   );
-  return fieldValue?.name;
+
+  return {
+    name: fieldValue?.name,
+    updatedAt: fieldValue?.updatedAt,
+    creator: fieldValue?.creator?.login ?? undefined,
+  };
+}
+
+export async function getFieldValueDetail(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  fieldName: string,
+  projectNumber?: number,
+): Promise<FieldValueDetail> {
+  const projectItemId = await resolveProjectItemId(
+    client,
+    fieldCache,
+    owner,
+    repo,
+    issueNumber,
+    projectNumber,
+  );
+
+  try {
+    return await queryFieldValueDetail(client, projectItemId, fieldName, true);
+  } catch (error) {
+    // GraphQL errors are all-or-nothing per response (a permission failure
+    // on ONE requested field throws for the whole query, via
+    // @octokit/graphql) — degrade gracefully by dropping `creator` rather
+    // than fail closed over a non-essential enrichment field. `heldSince`
+    // (updatedAt) is the load-bearing half of the refusal text; holder
+    // identity is best-effort (research: every local agent shares one
+    // token login, so identity carries little signal on this deployment
+    // regardless).
+    if (process.env.RALPH_DEBUG === "true") {
+      console.error(
+        `[getFieldValueDetail] creator field unavailable, retrying without it: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return await queryFieldValueDetail(client, projectItemId, fieldName, false);
+  }
+}
+
+export async function getCurrentFieldValue(
+  client: GitHubClient,
+  fieldCache: FieldOptionCache,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  fieldName: string,
+  projectNumber?: number,
+): Promise<string | undefined> {
+  const detail = await getFieldValueDetail(
+    client,
+    fieldCache,
+    owner,
+    repo,
+    issueNumber,
+    fieldName,
+    projectNumber,
+  );
+  return detail.name;
 }
 
 // ---------------------------------------------------------------------------
@@ -719,7 +802,10 @@ export async function autoAdvanceParent(
   issueNumber: number,
   gateState: string,
   projectNumber: number,
-): Promise<{ advanced: boolean; parentNumber?: number; toState?: string } | null> {
+): Promise<
+  | { advanced: boolean; parentNumber?: number; toState?: string; skippedReason?: string }
+  | null
+> {
   try {
     // Step A: Fetch parent number (1 query)
     const parentResult = await client.query<{
@@ -821,8 +907,26 @@ export async function autoAdvanceParent(
 
     const parentIdx = allNumbers.length - 1;
     const parentState = extractWorkflowState(fvResult[`fv${parentIdx}`]);
-    if (stateIndex(parentState || "") >= stateIndex(gateState)) {
-      return { advanced: false, parentNumber };
+
+    // GH-1615: replaces the bare `stateIndex(parent) >= stateIndex(gate)`
+    // guard. stateIndex returns -1 for Human Needed / Canceled / unset, so
+    // the old guard always advanced from those states — silently
+    // overwriting an escalation or writing over a parent holding a live
+    // lock, with no lock-guard consultation. isLegalParentGateAdvance keeps
+    // the legitimate multi-hop gate-jump carve-out (this function's whole
+    // purpose) while refusing those two cases explicitly. Stays best-effort:
+    // never throws, never fails the primary save_issue/create_sub_issues
+    // call — a refusal here is a skip, observable via skippedReason and an
+    // optional debug-log line, not an error.
+    const gateCheck = isLegalParentGateAdvance(parentState, gateState);
+    if (!gateCheck.ok) {
+      if (process.env.RALPH_DEBUG === "true") {
+        console.error(
+          `[autoAdvanceParent] skipped advancing parent #${parentNumber} to "${gateState}": ${gateCheck.reason} ` +
+            `(current="${parentState ?? "(unset)"}")`,
+        );
+      }
+      return { advanced: false, parentNumber, skippedReason: gateCheck.reason };
     }
 
     // Step F: Advance parent (1-2 mutations)

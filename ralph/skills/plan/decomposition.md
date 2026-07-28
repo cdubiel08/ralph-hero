@@ -87,7 +87,7 @@ For **post-hoc or incremental edges** (wiring a dependency after the tree alread
 
 Validate the graph for cycles before committing — `create_sub_issues` rejects sibling-index cycles up front (`toolError`, no issues created), but shared-foundation and cross-batch edges still deserve a manual check. If a cycle emerges, rework the feature decomposition (one feature is probably too coarse and should be split).
 
-`sync_plan_graph` remains the post-hoc reconciliation path: it re-derives dependency edges from a plan document and repairs drift between the plan and the board, independent of which call originally created the edges.
+Post-hoc edge repair (fixing drift between the plan and the board after the fact) is manual: re-check the decomposition against `list_sub_issues`/`list_dependencies` and call `add_dependency`/`remove_dependency` directly.
 
 ## Re-decomposition
 

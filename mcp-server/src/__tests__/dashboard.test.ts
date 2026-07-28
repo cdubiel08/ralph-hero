@@ -22,8 +22,8 @@ import {
   type HealthConfig,
   type StreamDashboardSection,
   type IterationDashboardSection,
+  type WorkStream,
 } from "../lib/dashboard.js";
-import type { WorkStream } from "../lib/work-stream-detection.js";
 import { STATE_ORDER } from "../lib/workflow-states.js";
 import { toDashboardItems, type RawDashboardItem } from "../tools/dashboard-tools.js";
 

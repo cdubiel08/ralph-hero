@@ -1,13 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   detectPipelinePosition,
-  detectStreamPipelinePositions,
   type IssueState,
   type PipelinePhase,
-  type StreamPipelineResult,
   type DetectionOptions,
 } from "../lib/pipeline-detection.js";
-import type { WorkStream } from "../lib/work-stream-detection.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -465,82 +462,6 @@ describe("detectPipelinePosition - SPLIT state guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Stream-level pipeline detection
-// ---------------------------------------------------------------------------
-
-function makeStream(id: string, issues: number[], primaryIssue: number): WorkStream {
-  return { id, issues, sharedFiles: [], primaryIssue };
-}
-
-describe("detectStreamPipelinePositions", () => {
-  it("returns one result per stream", () => {
-    const streams = [
-      makeStream("stream-42-44", [42, 44], 42),
-      makeStream("stream-43", [43], 43),
-    ];
-    const issueStates = [
-      makeIssue(42, "In Progress"),
-      makeIssue(43, "Research Needed"),
-      makeIssue(44, "In Progress"),
-    ];
-    const results = detectStreamPipelinePositions(streams, issueStates);
-    expect(results).toHaveLength(2);
-    expect(results[0].streamId).toBe("stream-42-44");
-    expect(results[1].streamId).toBe("stream-43");
-  });
-
-  it("detects correct phase per stream independently", () => {
-    const streams = [
-      makeStream("stream-42-44", [42, 44], 42),
-      makeStream("stream-43", [43], 43),
-    ];
-    const issueStates = [
-      makeIssue(42, "In Progress"),
-      makeIssue(43, "Research Needed"),
-      makeIssue(44, "In Progress"),
-    ];
-    const results = detectStreamPipelinePositions(streams, issueStates);
-    expect(results[0].position.phase).toBe("IMPLEMENT");
-    expect(results[1].position.phase).toBe("RESEARCH");
-  });
-
-  it("filters issueStates to only stream members", () => {
-    const streams = [makeStream("stream-42", [42], 42)];
-    const issueStates = [
-      makeIssue(42, "Ready for Plan"),
-      makeIssue(43, "Research Needed"), // not in stream
-    ];
-    const results = detectStreamPipelinePositions(streams, issueStates);
-    expect(results[0].issues).toHaveLength(1);
-    expect(results[0].issues[0].number).toBe(42);
-    expect(results[0].position.phase).toBe("PLAN");
-  });
-
-  it("sets isGroup=true for multi-issue streams", () => {
-    const streams = [makeStream("stream-42-44", [42, 44], 42)];
-    const issueStates = [
-      makeIssue(42, "Ready for Plan"),
-      makeIssue(44, "Ready for Plan"),
-    ];
-    const results = detectStreamPipelinePositions(streams, issueStates);
-    expect(results[0].position.isGroup).toBe(true);
-    expect(results[0].position.groupPrimary).toBe(42);
-  });
-
-  it("sets isGroup=false for single-issue streams", () => {
-    const streams = [makeStream("stream-43", [43], 43)];
-    const issueStates = [makeIssue(43, "In Progress")];
-    const results = detectStreamPipelinePositions(streams, issueStates);
-    expect(results[0].position.isGroup).toBe(false);
-  });
-
-  it("returns empty array for empty streams input", () => {
-    const results = detectStreamPipelinePositions([], [makeIssue(42, "In Progress")]);
-    expect(results).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Auto mode (RALPH_HERO_AUTO): INTEGRATE phase
 // ---------------------------------------------------------------------------
 
@@ -599,13 +520,6 @@ describe("detectPipelinePosition - auto mode (RALPH_HERO_AUTO)", () => {
     const result = detectSingle(makeIssue(1, "Done"));
     expect(result.suggestedRoster).toEqual({ analyst: 0, builder: 0, integrator: 0 });
   });
-
-  it("detectStreamPipelinePositions threads autoMode through", () => {
-    const streams = [{ id: "stream-1", issues: [1], sharedFiles: [], primaryIssue: 1 }];
-    const states = [makeIssue(1, "In Review")];
-    const results = detectStreamPipelinePositions(streams, states, auto);
-    expect(results[0].position.phase).toBe("INTEGRATE");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -613,39 +527,6 @@ describe("detectPipelinePosition - auto mode (RALPH_HERO_AUTO)", () => {
 // ---------------------------------------------------------------------------
 
 describe("stream-based builder scaling", () => {
-  it("1 stream -> builder = 1", () => {
-    const streams: WorkStream[] = [{ id: "s-1", issues: [1], sharedFiles: [], primaryIssue: 1 }];
-    const states = [makeIssue(1, "Research Needed")];
-    const results = detectStreamPipelinePositions(streams, states);
-    expect(results[0].position.suggestedRoster.builder).toBe(1);
-  });
-
-  it("2 streams -> builder = 2", () => {
-    const streams: WorkStream[] = [
-      { id: "s-1", issues: [1], sharedFiles: [], primaryIssue: 1 },
-      { id: "s-2", issues: [2], sharedFiles: [], primaryIssue: 2 },
-    ];
-    const states = [makeIssue(1, "Research Needed"), makeIssue(2, "Research Needed")];
-    const results = detectStreamPipelinePositions(streams, states);
-    expect(results[0].position.suggestedRoster.builder).toBe(2);
-    expect(results[1].position.suggestedRoster.builder).toBe(2);
-  });
-
-  it("4 streams -> builder = 3 (capped)", () => {
-    const streams: WorkStream[] = [
-      { id: "s-1", issues: [1], sharedFiles: [], primaryIssue: 1 },
-      { id: "s-2", issues: [2], sharedFiles: [], primaryIssue: 2 },
-      { id: "s-3", issues: [3], sharedFiles: [], primaryIssue: 3 },
-      { id: "s-4", issues: [4], sharedFiles: [], primaryIssue: 4 },
-    ];
-    const states = [
-      makeIssue(1, "Research Needed"), makeIssue(2, "Research Needed"),
-      makeIssue(3, "Research Needed"), makeIssue(4, "Research Needed"),
-    ];
-    const results = detectStreamPipelinePositions(streams, states);
-    expect(results[0].position.suggestedRoster.builder).toBe(3);
-  });
-
   it("no stream context (single-issue path) -> builder = 1 (fallback)", () => {
     const result = detectSingle(makeIssue(1, "Research Needed"));
     expect(result.suggestedRoster.builder).toBe(1);

@@ -86,12 +86,11 @@ The plugin bundles an MCP server ([`ralph-hero-mcp-server`](https://www.npmjs.co
 
 ### Tools
 
-The MCP server registers ~32 `ralph_hero__*` tools; the table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `archive_items`, `sync_plan_graph`, `detect_stream_positions`, `remove_dependency`, and the `sre__*` autoremediation set; debug tools register only when `RALPH_DEBUG=true`.
+The MCP server registers exactly 22 `ralph_hero__*` tools by default (26 with `RALPH_SRE_ENABLE=true`; asserted in `tool-registration.test.ts` / `tool-registration-sre-enabled.test.ts`, GH-1614), restating GH-1591's original "≤20" acceptance line to "= 22" with the arithmetic shown there. The table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `remove_dependency`, and the `sre__*` autoremediation set (gated behind `RALPH_SRE_ENABLE=true` — absent by default).
 
 | Tool | Description |
 |------|-------------|
-| `health_check` | Validate API connectivity, tokens, repo/project access, and required fields |
-| `get_project` | Fetch project metadata, fields, and items |
+| `health_check` | Validate API connectivity, tokens, repo/project access, and required fields. `includeFields: true` also fetches project fields/options (absorbs the former `get_project`) |
 | `setup_project` | Create or configure a project with required fields and workflow states |
 | `get_issue` | Get full issue details with project fields, sub-issues, and dependencies |
 | `list_issues` | Query issues with filtering, sorting, and pagination |
@@ -104,13 +103,12 @@ The MCP server registers ~32 `ralph_hero__*` tools; the table below is a curated
 | `add_dependency` | Add a blocking dependency between issues |
 | `list_dependencies` | List blocking and blocked-by relationships |
 | `advance_issue` | Move an issue to the next workflow state with validation |
-| `batch_update` | Bulk-update project fields across multiple issues |
+| `batch_update` | Bulk-update project fields across multiple issues, or archive/unarchive items (explicit selection or filter-driven bulk scan) |
 | `pipeline_dashboard` | Aggregated pipeline view with counts per workflow state and health indicators |
 | `project_hygiene` | Board health report — stale items, orphans, field gaps |
 | `next_actions` | Ranked list of recommended next actions |
 | `recent_activity` | Read per-session activity log |
-| `capture_snapshot` | Capture pipeline snapshot for trend tracking |
-| `metrics_trends` | 1d/7d/30d velocity and WIP trends |
+| `metrics_trends` | 1d/7d/30d velocity and WIP trends; `capture: true` also appends a snapshot row |
 
 ### Architecture
 

@@ -92,14 +92,14 @@ If the dashboard returns no health warnings, omit this section.
 Use the resolved configuration above to decide:
 
 - **`RALPH_HYGIENE_DRY_RUN=true`** (default): report what would be archived. Do NOT call any archive tools.
-- **`RALPH_HYGIENE_DRY_RUN=false` AND eligible count > `RALPH_HYGIENE_THRESHOLD`**: call `ralph_hero__archive_items` with bulk-mode parameters:
-  - `workflowStates: ["Done", "Canceled"]`
-  - `updatedBefore: <ISO date 14 days ago>`
+- **`RALPH_HYGIENE_DRY_RUN=false` AND eligible count > `RALPH_HYGIENE_THRESHOLD`**: call `ralph_hero__batch_update` with a filter-mode archive operation:
+  - `operations: [{action: "archive"}]`
+  - `filter: {workflowStates: ["Done", "Canceled"], updatedBefore: <ISO date 14 days ago>}`
   - `dryRun: false`
 
-  Report archived count from the response.
+  Report `archivedCount` from the response. Parents with any sub-issues are skipped server-side (GH-0870 guard) and reported under `skipped` — do not retry those; they need manual review, not a blind re-archive attempt.
 
-If `archive_items` errors, do NOT retry blindly — emit `HYGIENE BLOCKED <reason>` (see [outcome-tokens.md](../outcome-tokens.md)) and surface the error in the summary.
+If `batch_update` errors, do NOT retry blindly — emit `HYGIENE BLOCKED <reason>` (see [outcome-tokens.md](../outcome-tokens.md)) and surface the error in the summary.
 
 ## §Step 5: Summary + terminal token
 

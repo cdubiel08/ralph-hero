@@ -606,3 +606,199 @@ describe("list_issues state arg behavior (GH-1169)", () => {
     expect(payload.items[0].state).toBe("CLOSED");
   });
 });
+
+// ---------------------------------------------------------------------------
+// get_issue blocking/blockedBy native-dependency regression (GH-1591 Phase 6)
+//
+// get_issue used to map `blocking`/`blockedBy` from the legacy task-list
+// `trackedInIssues`/`trackedIssues` connections instead of the native
+// dependency connections `add_dependency`'s `addBlockedBy` mutation writes
+// (same defect class GH-1470 fixed in dashboard-fetch.ts — see
+// dashboard-fetch.test.ts:127,145 for the analogous regression shape). The
+// fixtures below deliberately populate BOTH the native `blockedBy`/`blocking`
+// connections AND the legacy `trackedIssues`/`trackedInIssues` connections
+// with DIFFERENT node sets, so a reversion to the legacy field is caught by
+// value (wrong numbers in the output), not just by the field's presence.
+// ---------------------------------------------------------------------------
+
+interface RawDependencyNode {
+  number: number;
+  title: string;
+  state: string;
+}
+
+interface GetIssueFixtureOptions {
+  blocking?: RawDependencyNode[];
+  blockedBy?: RawDependencyNode[];
+  trackedIssues?: RawDependencyNode[];
+  trackedInIssues?: RawDependencyNode[];
+}
+
+function buildGetIssueQueryResponse(opts: GetIssueFixtureOptions): unknown {
+  return {
+    repository: {
+      issue: {
+        id: "issue-node-1615",
+        number: 1615,
+        title: "Fix get_issue dependency read",
+        body: "",
+        state: "OPEN",
+        stateReason: null,
+        url: "https://github.com/test-owner/test-repo/issues/1615",
+        createdAt: "2026-07-26T00:00:00Z",
+        updatedAt: "2026-07-26T00:00:00Z",
+        closedAt: null,
+        labels: { nodes: [] },
+        assignees: { nodes: [] },
+        parent: null,
+        subIssuesSummary: null,
+        subIssues: { nodes: [] },
+        // Native dependency connections (what add_dependency writes and
+        // relationship-tools.ts:536-547 already reads correctly).
+        blocking: { nodes: opts.blocking ?? [] },
+        blockedBy: { nodes: opts.blockedBy ?? [] },
+        // Legacy task-list connections. A real GitHub response for the FIXED
+        // query wouldn't include these (they're no longer requested), but
+        // the mock includes them anyway to prove the response mapping reads
+        // from `blocking`/`blockedBy` and ignores these entirely.
+        trackedIssues: { nodes: opts.trackedIssues ?? [] },
+        trackedInIssues: { nodes: opts.trackedInIssues ?? [] },
+        comments: { nodes: [] },
+        projectItems: { nodes: [] },
+      },
+    },
+  };
+}
+
+function createMockClientForGetIssueTest(
+  queryResponse: unknown,
+): GitHubClient {
+  const fullConfig: GitHubClientConfig = {
+    token: "tok",
+    owner: "test-owner",
+    repo: "test-repo",
+    projectNumber: 3,
+    projectOwner: "test-owner",
+  };
+
+  // Single-call scope: with includeGroup:false and includePipeline:false,
+  // get_issue's handler makes exactly one client.query call (the issue
+  // fetch). Deliberately unconditional (not gated on the query text
+  // containing "blocking(first:") so this harness isolates the
+  // RESPONSE-MAPPING regression (does the handler map from the right field
+  // in the response object?) from the query-text regression — both matter,
+  // but the mapping bug is the one this test guards.
+  const query = vi.fn(async () => queryResponse);
+
+  return {
+    config: fullConfig,
+    query,
+    projectQuery: vi.fn(async () => {
+      throw new Error("get_issue with includeGroup:false should not call projectQuery");
+    }),
+    projectMutate: vi.fn(),
+    mutate: vi.fn(),
+    getCache: vi.fn(() => ({
+      get: vi.fn(),
+      set: vi.fn(),
+      invalidate: vi.fn(),
+      invalidateQueries: vi.fn(),
+    })),
+    getAuthenticatedUser: vi.fn(),
+  } as unknown as GitHubClient;
+}
+
+function getGetIssueHandler(server: McpServer): RegisteredTool {
+  const tools = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })
+    ._registeredTools;
+  const tool = tools?.["ralph_hero__get_issue"];
+  if (!tool) throw new Error("ralph_hero__get_issue not registered");
+  return tool;
+}
+
+describe("get_issue blocking/blockedBy reads native dependency connections (GH-1591 Phase 6)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = new FieldOptionCache();
+  });
+
+  it("native blockedBy/blocking edges populate the output", async () => {
+    const client = createMockClientForGetIssueTest(
+      buildGetIssueQueryResponse({
+        blockedBy: [{ number: 1614, title: "Prereq", state: "OPEN" }],
+        blocking: [{ number: 1616, title: "Downstream", state: "OPEN" }],
+        // A legacy task-list reference to a DIFFERENT, unrelated issue.
+        // If the implementation regresses to reading trackedIssues, this
+        // value (9999) would leak into blockedBy instead of 1614.
+        trackedIssues: [{ number: 9999, title: "Unrelated task-list ref", state: "OPEN" }],
+      }),
+    );
+    registerIssueTools(server, client, fieldCache);
+    const handler = getGetIssueHandler(server);
+
+    const result = await handler.handler(
+      {
+        owner: "test-owner",
+        repo: "test-repo",
+        number: 1615,
+        includeGroup: false,
+        includePipeline: false,
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      blocking: Array<{ number: number }>;
+      blockedBy: Array<{ number: number }>;
+    };
+
+    expect(
+      payload.blockedBy.map((b) => b.number),
+      "blockedBy must come from the native dependency connection (1614), not the legacy trackedIssues ref (9999)",
+    ).toEqual([1614]);
+    expect(payload.blocking.map((b) => b.number)).toEqual([1616]);
+  });
+
+  it("task-list trackedIssues/trackedInIssues data does NOT populate blocking/blockedBy", async () => {
+    const client = createMockClientForGetIssueTest(
+      buildGetIssueQueryResponse({
+        // No native dependency edges at all.
+        blockedBy: [],
+        blocking: [],
+        // Only legacy task-list references — this is the exact defect shape
+        // reported live: an issue with task-list mentions but no real
+        // dependency edge reported blockedBy from trackedIssues instead of
+        // an empty array.
+        trackedIssues: [{ number: 1614, title: "Task-list mention only", state: "OPEN" }],
+        trackedInIssues: [{ number: 1616, title: "Task-list mention only", state: "OPEN" }],
+      }),
+    );
+    registerIssueTools(server, client, fieldCache);
+    const handler = getGetIssueHandler(server);
+
+    const result = await handler.handler(
+      {
+        owner: "test-owner",
+        repo: "test-repo",
+        number: 1615,
+        includeGroup: false,
+        includePipeline: false,
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      blocking: Array<{ number: number }>;
+      blockedBy: Array<{ number: number }>;
+    };
+
+    expect(
+      payload.blockedBy,
+      "an issue with only task-list trackedIssues refs (no native dependency edge) must report blockedBy: []",
+    ).toEqual([]);
+    expect(payload.blocking).toEqual([]);
+  });
+});

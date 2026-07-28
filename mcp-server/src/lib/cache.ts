@@ -108,8 +108,10 @@ interface ProjectCacheData {
 
 /**
  * Maps field names to option names to option IDs for Projects V2
- * single-select fields. Populated by get_project, consumed by tools
- * that need to resolve human-readable names to GraphQL node IDs.
+ * single-select fields. Populated lazily via `ensureFieldCache` (most tools)
+ * and eagerly by `setup_project` and `health_check` (with `includeFields:
+ * true` — absorbed the former `get_project` tool in GH-1610); consumed by
+ * tools that need to resolve human-readable names to GraphQL node IDs.
  *
  * Supports multiple projects keyed by project number. When projectNumber
  * is omitted from method calls, the first populated project is used

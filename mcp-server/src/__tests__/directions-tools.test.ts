@@ -11,7 +11,7 @@
  * `dashboard.test.ts` (pure-function-only).
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve as resolvePath } from "node:path";
@@ -492,6 +492,74 @@ describe("ralph_hero__next_actions", () => {
     if (payload.directions.length > 0) {
       expect(payload.directions[0].recommended).toBe(true);
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // GH-1617: lockStaleHours env-default resolution order
+  // -------------------------------------------------------------------------
+
+  describe("lockStaleHours resolution (GH-1617)", () => {
+    const ENV_KEY = "RALPH_LOCK_STALE_HOURS";
+    const original = process.env[ENV_KEY];
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env[ENV_KEY];
+      } else {
+        process.env[ENV_KEY] = original;
+      }
+    });
+
+    function lockStaleFixture(ageHours: number) {
+      return rawIssue({
+        number: 720,
+        title: "In-progress candidate",
+        workflowState: "In Progress",
+        updatedAt: new Date(Date.now() - ageHours * 60 * 60 * 1000).toISOString(),
+      });
+    }
+
+    it("no param, no env: falls back to the 24h constant (10h-old item is NOT lock-stale)", async () => {
+      delete process.env[ENV_KEY];
+      const { client } = createMockClient(
+        { projectNumber: 3 },
+        { itemsByProject: { 3: [lockStaleFixture(10)] } },
+      );
+      registerDirectionsTools(server, client, fieldCache);
+      const tool = getTool(server, "ralph_hero__next_actions");
+
+      const result = await tool.handler(buildArgs({ lockStaleHours: undefined }), {});
+      const payload = parsePayload(result) as { directions: Array<{ kind: string }> };
+      expect(payload.directions.some((d) => d.kind === "lock-stale")).toBe(false);
+    });
+
+    it("no param, env set: RALPH_LOCK_STALE_HOURS wins over the constant (10h-old item IS lock-stale at a 5h env threshold)", async () => {
+      process.env[ENV_KEY] = "5";
+      const { client } = createMockClient(
+        { projectNumber: 3 },
+        { itemsByProject: { 3: [lockStaleFixture(10)] } },
+      );
+      registerDirectionsTools(server, client, fieldCache);
+      const tool = getTool(server, "ralph_hero__next_actions");
+
+      const result = await tool.handler(buildArgs({ lockStaleHours: undefined }), {});
+      const payload = parsePayload(result) as { directions: Array<{ kind: string }> };
+      expect(payload.directions.some((d) => d.kind === "lock-stale")).toBe(true);
+    });
+
+    it("explicit param wins over env", async () => {
+      process.env[ENV_KEY] = "1"; // would surface at 10h if it won
+      const { client } = createMockClient(
+        { projectNumber: 3 },
+        { itemsByProject: { 3: [lockStaleFixture(10)] } },
+      );
+      registerDirectionsTools(server, client, fieldCache);
+      const tool = getTool(server, "ralph_hero__next_actions");
+
+      const result = await tool.handler(buildArgs({ lockStaleHours: 24 }), {});
+      const payload = parsePayload(result) as { directions: Array<{ kind: string }> };
+      expect(payload.directions.some((d) => d.kind === "lock-stale")).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------------

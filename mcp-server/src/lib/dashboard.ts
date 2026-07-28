@@ -18,8 +18,8 @@ import {
   STUCK_THRESHOLD_HOURS,
 } from "./thresholds.js";
 /**
- * WorkStream type matching the shape from work-stream-detection.ts.
- * Defined here to avoid import dependency until GH-323 merges.
+ * WorkStream shape consumed by `pipeline_dashboard`'s optional `streams`
+ * param (pre-computed stream assignments supplied by the caller).
  */
 export interface WorkStream {
   id: string;
@@ -40,6 +40,15 @@ export interface DashboardItem {
   updatedAt: string; // ISO timestamp
   closedAt: string | null; // For Done/Canceled filtering
   workflowState: string | null;
+  /**
+   * ISO timestamp of the Workflow State PROJECT FIELD's own `updatedAt`
+   * (GH-1617) — the claim clock. A field-only claim (e.g. save_issue with
+   * no issue-content mutation) does not bump `updatedAt` above, so
+   * `detectLockStale` must prefer this when present. Undefined for stale
+   * fixtures / items fetched before this field existed — callers fall back
+   * to `updatedAt`.
+   */
+  workflowStateUpdatedAt?: string;
   priority: string | null; // P0, P1, P2, P3
   estimate: string | null; // XS, S, M, L, XL
   assignees: string[];

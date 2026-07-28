@@ -204,7 +204,11 @@ describe("autoAdvanceParent", () => {
     const result = await autoAdvanceParent(
       client, fieldCache, "owner", "repo", 42, "Plan in Review", 3,
     );
-    expect(result).toEqual({ advanced: false, parentNumber: 10 });
+    expect(result).toEqual({
+      advanced: false,
+      parentNumber: 10,
+      skippedReason: "already at or past",
+    });
   });
 
   it("advances parent when all siblings at gate and parent behind", async () => {
@@ -258,5 +262,109 @@ describe("autoAdvanceParent", () => {
       client, fieldCache, "owner", "repo", 42, "Plan in Review", 3,
     );
     expect(result).toEqual({ advanced: false, parentNumber: 10 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isLegalParentGateAdvance matrix (GH-1615)
+//
+// Replaces the bare `stateIndex(parent) >= stateIndex(gate)` guard, which
+// returns -1 for Human Needed / Canceled / unset, so it always "advanced"
+// from those states — silently overwriting an escalation or writing over a
+// live lock. All siblings are fixed at the gate state so the scenario
+// reaches the parent-gate check being exercised.
+// ---------------------------------------------------------------------------
+
+function makeParentGateScenario(
+  parentState: string | null,
+  gateState: string,
+): Array<unknown> {
+  const parentFieldValues = parentState
+    ? [{ __typename: "ProjectV2ItemFieldSingleSelectValue", name: parentState, field: { name: "Workflow State" } }]
+    : [];
+  return [
+    // Step A: parent query
+    { repository: { issue: { parent: { number: 10 } } } },
+    // Step B: siblings query
+    { repository: { issue: { subIssues: { nodes: [{ number: 42 }] } } } },
+    // Step C: batch resolve
+    {
+      i0: { issue: { id: "node-42", projectItems: { nodes: [{ id: "item-42", project: { id: "project-id-123" } }] } } },
+      i1: { issue: { id: "node-10", projectItems: { nodes: [{ id: "item-10", project: { id: "project-id-123" } }] } } },
+    },
+    // Step D: batch field values — sibling at gate, parent at parentState
+    {
+      fv0: { fieldValues: { nodes: [{ __typename: "ProjectV2ItemFieldSingleSelectValue", name: gateState, field: { name: "Workflow State" } }] } },
+      fv1: { fieldValues: { nodes: parentFieldValues } },
+    },
+  ];
+}
+
+describe("autoAdvanceParent isLegalParentGateAdvance matrix", () => {
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    fieldCache = createMockFieldCache();
+  });
+
+  it("does NOT advance a parent at Human Needed (would overwrite an escalation)", async () => {
+    const client = createMockClient(makeParentGateScenario("Human Needed", "Plan in Review"));
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "Plan in Review", 3);
+    expect(result).toEqual({ advanced: false, parentNumber: 10, skippedReason: "parent is escalated" });
+  });
+
+  it("does NOT advance a terminal parent (Done)", async () => {
+    const client = createMockClient(makeParentGateScenario("Done", "Plan in Review"));
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "Plan in Review", 3);
+    expect(result).toEqual({ advanced: false, parentNumber: 10, skippedReason: "parent is terminal" });
+  });
+
+  it("does NOT advance a terminal parent (Canceled)", async () => {
+    const client = createMockClient(makeParentGateScenario("Canceled", "Plan in Review"));
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "Plan in Review", 3);
+    expect(result).toEqual({ advanced: false, parentNumber: 10, skippedReason: "parent is terminal" });
+  });
+
+  it("does NOT advance a parent holding a live lock state", async () => {
+    const client = createMockClient(makeParentGateScenario("Plan in Progress", "In Review"));
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "In Review", 3);
+    expect(result).toEqual({ advanced: false, parentNumber: 10, skippedReason: "parent is locked by an active claim" });
+  });
+
+  it("does NOT advance an unresolvable (unset) parent state", async () => {
+    const client = createMockClient(makeParentGateScenario(null, "Plan in Review"));
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "Plan in Review", 3);
+    expect(result).toEqual({ advanced: false, parentNumber: 10, skippedReason: "parent state unresolvable" });
+  });
+
+  it("ADVANCES a Backlog parent to Ready for Plan (multi-hop gate jump)", async () => {
+    const scenario = makeParentGateScenario("Backlog", "Ready for Plan");
+    const client = createMockClient([
+      ...scenario,
+      { updateProjectV2ItemFieldValue: { projectV2Item: { id: "item-10" } } },
+      { updateProjectV2ItemFieldValue: { projectV2Item: { id: "item-10" } } },
+    ]);
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "Ready for Plan", 3);
+    expect(result).toEqual({ advanced: true, parentNumber: 10, toState: "Ready for Plan" });
+  });
+
+  it("ADVANCES a Backlog parent all the way to In Review (four-gate jump)", async () => {
+    const scenario = makeParentGateScenario("Backlog", "In Review");
+    const client = createMockClient([
+      ...scenario,
+      { updateProjectV2ItemFieldValue: { projectV2Item: { id: "item-10" } } },
+      { updateProjectV2ItemFieldValue: { projectV2Item: { id: "item-10" } } },
+    ]);
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "In Review", 3);
+    expect(result).toEqual({ advanced: true, parentNumber: 10, toState: "In Review" });
+  });
+
+  it("never throws on refusal — resolves with a skip result instead", async () => {
+    const client = createMockClient(makeParentGateScenario("Human Needed", "Plan in Review"));
+    // If autoAdvanceParent threw on refusal, this await would reject and fail
+    // the test with an uncaught exception rather than a failed assertion.
+    const result = await autoAdvanceParent(client, fieldCache, "owner", "repo", 42, "Plan in Review", 3);
+    expect(result).not.toBeNull();
+    expect(result?.advanced).toBe(false);
   });
 });
