@@ -16,7 +16,9 @@
 #                           by split-size-gate.sh (blocked batches, the
 #                           plan-of-plans path, and the single-child
 #                           create_issue path deliberately do not set it)
-#   split-count     = N  -> children reporting created:true in that call
+#   split-count     = N  -> children reporting created AND linked AND
+#                           edgesWired AND no error in that call (the
+#                           full-success conjunction; see split-size-gate.sh)
 #   split-parent    = #  -> parentNumber from the create payload (for messaging)
 #
 # No creation attempt recorded ⇒ nothing to verify ⇒ allow. That is what lets
@@ -102,7 +104,7 @@ requires N ≥ 2).
 
 Recovery options:
   1. Re-run the create_sub_issues call and confirm its response reports
-     created:true for at least 2 children.
+     created + linked + edgesWired (and no error) for at least 2 children.
   2. If the children genuinely exist but were created outside this session,
      re-run with RALPH_FORCE_STOP=true to bypass this check."
 fi
@@ -117,8 +119,10 @@ block "Split postcondition failed: fewer than 2 sub-issues verified
 
 Ticket: $ticket_id
 Expected: At least 2 sub-issues created in one ralph_hero__create_sub_issues
-         call (count the children reporting created:true in its per-child
-         status report; a one-child split is a re-estimate, not a decomposition)
+         call (count the children reporting created AND linked AND
+         edgesWired AND no error in its per-child status report; a one-child
+         split — or a two-child split where one is unlinked/unwired — is a
+         re-estimate, not a decomposition)
 Found: $split_count
 
 The /ralph:plan --mode epic atomic-split path must create ≥2 sub-issues before

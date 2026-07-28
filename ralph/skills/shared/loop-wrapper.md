@@ -62,6 +62,14 @@ Paste this template into the `Skill("loop", args="…")` call in each SKILL.md's
 Replace `{INNER_COMMAND}`, `{PROGRESS_SENTINELS}`, `{TERMINAL_SENTINELS}`, and `{DELAY_BUCKETS}`
 from the manifest row for the skill:mode being wrapped.
 
+**`{INNER_COMMAND}` is the bare verb plus `${STRIPPED_ARGS}` — never re-prefix a `--mode` flag.**
+`STRIPPED_ARGS` is `$ARGUMENTS` with only `--loop [duration]` removed (§ Arg-parsing snippet), and
+`auto-alias.md` § Step-0 stanza rewrites `$ARGUMENTS` to carry the resolved `--mode <x>` *before*
+that snippet runs. So the mode flag is already inside `STRIPPED_ARGS` on every looped surface —
+naming it again makes the loop re-issue `/ralph:<verb> --mode X --mode X` on every tick.
+`ralph/hooks/scripts/__tests__/loop-dispatch-no-double-mode.test.sh` enforces this across every
+`${STRIPPED_ARGS}` dispatch site.
+
 ```
 Skill("loop", args="${LOOP_INTERVAL:+${LOOP_INTERVAL} }{INNER_COMMAND}
 
@@ -79,10 +87,11 @@ state transitions. Do not second-guess its result line or attempt to re-run work
 it declared complete. Cancel the loop via /tasks → delete pending wakeup.")
 ```
 
-**Worked example (impl:auto):**
+**Worked example (impl:auto)** — note the inner command names no mode: `STRIPPED_ARGS` already
+holds `--mode auto` (either typed directly or written there by the `--auto` alias rewrite).
 
 ```
-Skill("loop", args="Run /ralph:impl --mode auto ${STRIPPED_ARGS}
+Skill("loop", args="Run /ralph:impl ${STRIPPED_ARGS}
 
 Continuation rules (LOAD-BEARING):
   Progress sentinels  — re-fire: Phase N/M complete. / Implementation complete for #NNN

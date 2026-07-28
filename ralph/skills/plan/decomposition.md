@@ -129,7 +129,7 @@ When the epic spans multiple repos (`.ralph-repos.yml` present, epic touches mul
 4'. **Create or update sub-issues** — per § Atomic split §Step 6.
 5'. **Establish dependencies + write parent plan-of-plans** — per § Atomic split §§Step 7-7.5. That doc is a *different* artifact from Step 3's: it exists so the new children are autonomously plannable (GH-1416), not as a strategic decomposition of the parent.
 
-6. **Commit the plan-of-plans through a PR** — branch, commit `docs(plan): GH-NNN plan-of-plans`, `gh pr create`, `scripts/attest-pr.sh`, `scripts/merge-pr.sh`, return to `main`. Full recipe and rules: [`../shared/artifact-commit.md`](../shared/artifact-commit.md). **Never `git push origin main`** — the ruleset rejects it (GH-1589) — and never bare `gh pr merge`.
+6. **Commit the plan-of-plans through a PR** — branch, commit `docs(plan): GH-NNN plan-of-plans`, `gh pr create`, then `bash scripts/attest-pr.sh PR_NUMBER` and `bash scripts/merge-pr.sh PR_NUMBER`, return to `main`. Full recipe and rules: [`../shared/artifact-commit.md`](../shared/artifact-commit.md). **Never `git push origin main`** — the ruleset rejects it (GH-1589) — and never bare `gh pr merge`: `bash scripts/merge-pr.sh PR_NUMBER` is the only merge path, and it is what enforces the attestation + CI + review gates.
 7. **Post artifact + advance** — plan-of-plans: `create_comment(## Plan of Plans ...)` on the epic, then `save_issue(workflowState: "Plan in Review", command: "plan")`. Atomic split: per § Atomic split §§Step 8-10 — parent stays in Backlog, child states via `batch_update`. `split-postcondition.sh` reads the created-count from the `create_sub_issues` response itself; nothing to export.
 8. **Optional orchestration** (plan-of-plans only) — optionally dispatch `--mode auto` per child in dependency order. Not auto-cascading by default.
 9. **Report** — plan-of-plans: *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*. Atomic split: terminal token per § Atomic split § Terminal tokens.
@@ -289,7 +289,9 @@ Determine target state for every child: scope clear → `Ready for Plan`; needs 
 SPLIT <N>
 ```
 
-`N` counts **only children reporting `created:true`** in this batch's per-child status report — do NOT add reused (already-existing) children to the count. Nothing to export: `split-size-gate.sh`'s PostToolUse pass reads that same status report and records the count for `split-postcondition.sh`, which requires `N ≥ 2`. A split that creates one net-new child and reuses one pre-existing child is a re-estimate, not a decomposition, and does not satisfy the gate.
+`N` counts **only fully successful children** in this batch's per-child status report: `created:true` **AND** `linked:true` **AND** `edgesWired:true` **AND** no `error` key. Reused (already-existing) children are never added to the count. `create_sub_issues` is partial-failure aware — a child can be created without being linked under the parent, or linked without its dependency edges wired — and a child in either state is not a decomposition, it is an orphan the parent plan would report as success. (`fieldsSet` is deliberately excluded from the conjunction: an unset project field is a cosmetic board defect, not broken parent/child or dependency integration.)
+
+Nothing to export: `split-size-gate.sh`'s PostToolUse pass reads that same status report, applies the **same** conjunction, and records the count for `split-postcondition.sh`, which requires `N ≥ 2`. A split that creates one net-new child and reuses one pre-existing child — or that creates two but links only one — is a re-estimate, not a decomposition, and does not satisfy the gate.
 
 On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. On other graceful skips (no natural boundary, parent already fully split): `SPLIT SKIPPED <reason>`. On an empty queue (§Step 1): `Queue empty.`
 
@@ -318,7 +320,7 @@ Three hook scripts (five registrations — the estimate gate is Pre+Post, the si
 | `split-estimate-gate.sh` | PreToolUse | `ralph_hero__get_issue` | Surface the M/L/XL reminder via stderr once the atomic path is known; exit 0 to allow. |
 | `split-estimate-gate.sh` | PostToolUse | `ralph_hero__get_issue` | Parse `tool_response.content[0].text` and **record** the issue's estimate in the session split ledger. Exit 2 if the atomic path is already armed and the estimate is XS or S. "Armed" means **the ledger says so** — i.e. `split-size-gate.sh` already classified a real create payload as atomic — never an env var (see signal 4). **Fails closed when armed:** a missing, null, or unparsable estimate (and an empty response body) also exits 2 — "cannot read the estimate" is never "estimate is fine". |
 | `split-size-gate.sh` | PreToolUse | `ralph_hero__create_issue` \| `ralph_hero__create_sub_issues` | Classify the path, then block children outside its ceiling — `{XS,S}` atomic, `{S,M}` plan-of-plans — and block any child with **no** estimate on either path. Also blocks when the ledger says this batch's parent is XS/S. |
-| `split-size-gate.sh` | PostToolUse | `ralph_hero__create_sub_issues` | Record how many children reported `created:true`. Never blocks. |
+| `split-size-gate.sh` | PostToolUse | `ralph_hero__create_sub_issues` | Record how many children were **fully successful** — `created` AND `linked` AND `edgesWired` AND no `error` (§Step 11's conjunction; `fieldsSet` excluded). Never blocks. |
 | `split-postcondition.sh` | Stop | (matcher-less) | When the ledger records an atomic creation attempt, require a recorded count ≥ 2. No attempt recorded ⇒ allow. |
 
 **Scope comes from what the hooks can observe, never from a mode env var.** A bare `export` inside a Bash tool call does not propagate to hook subprocesses — only `set-skill-env.sh`'s `CLAUDE_ENV_FILE` writes at SessionStart do, and those are static per skill. The signals actually used:
@@ -334,7 +336,7 @@ Three hook scripts (five registrations — the estimate gate is Pre+Post, the si
 
 ## Terminal tokens
 
-- `SPLIT <N>` — `N ≥ 2` net-new XS/S sub-issues created and linked this invocation (reused pre-existing children are NOT counted toward `N`). `split-postcondition.sh` requires N ≥ 2.
+- `SPLIT <N>` — `N ≥ 2` net-new XS/S sub-issues **created AND linked AND edge-wired, with no per-child `error`**, this invocation (reused pre-existing children are NOT counted toward `N`; neither are partially-integrated ones — see §Step 11 for the exact conjunction). `split-postcondition.sh` requires N ≥ 2 and reads the count `split-size-gate.sh`'s PostToolUse pass records using that same conjunction.
 - `SPLIT SKIPPED already-atomic` — a split gate refused the parent because its estimate was already XS or S. In the common single-parent flow that refusal comes from `split-size-gate.sh` at the create boundary, off the estimate `split-estimate-gate.sh` recorded in §Step 2; `split-estimate-gate.sh` itself refuses the read only once the session is already classified atomic (a re-decomposition or second parent).
 - `SPLIT SKIPPED <reason>` — other graceful skips (no natural decomposition boundary found, parent already fully split, etc.).
 - `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed (queue-pick invocation with no issue number).

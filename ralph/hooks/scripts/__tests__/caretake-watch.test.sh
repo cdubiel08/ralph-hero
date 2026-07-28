@@ -17,7 +17,11 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+# Resolved from this script's own path, not `git rev-parse` — the sibling
+# hero-auto-tick-audience.test.sh moved off git in this same PR because a
+# `.git`-less export (release tarball, `git archive`) has no toplevel to report.
+# Every path below is a fixed relative offset anyway.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 MODE_FILE="${REPO_ROOT}/ralph/skills/caretake/modes/watch.md"
 TOKENS_FILE="${REPO_ROOT}/ralph/skills/caretake/outcome-tokens.md"
 SKILL_FILE="${REPO_ROOT}/ralph/skills/caretake/SKILL.md"

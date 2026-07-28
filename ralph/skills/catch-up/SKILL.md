@@ -40,7 +40,7 @@ The unified orientation verb. The `--mode` flag selects a single-surface alterna
 
 - **`--mode report`** → allowed. Default interval `1d`. Use `catch-up:report` manifest row — heartbeat, no `Queue empty.` terminal; re-fires on clock.
   - Dry-run default: unless `--post` is in `$ARGUMENTS` OR `RALPH_CATCH_UP_HEARTBEAT_POST=true`, append `--dry-run` to `STRIPPED_ARGS` before wrapping (compose + print only; do NOT call `create_status_update`).
-  - Emit `Skill("loop", args="${LOOP_INTERVAL:-1d} /ralph:catch-up --mode report ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
+  - Emit `Skill("loop", args="${LOOP_INTERVAL:-1d} /ralph:catch-up ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP. `STRIPPED_ARGS` already carries the original `--mode report` (the snippet removes only `--loop [duration]`) — do NOT re-prefix it, or the inner command the loop re-issues every tick reads `--mode report --mode report`.
 - **Any other mode** (default/brief) → emit refusal from `loop-wrapper.md` § Refusal message, then STOP. `--mode brief` stays refused here even with `--prepare` set — brief is an interactive sitting; `--prepare`'s daily cadence is owned by the #1555 scheduled task, not `/loop`.
 
 ## Mode dispatch

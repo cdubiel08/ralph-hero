@@ -188,24 +188,42 @@ assert_nofile "$AUTOLOOP" "re-entry cleans autoloop"
 echo
 echo "== postcheck: an unwritable sentinel dir warns on stderr (GH-1603 F9) =="
 # `touch … || true` and `printf … > "$pending" || true` swallowed the write
-# failure, so a read-only TMPDIR silently left the never-terminate Stop gate
+# failure, so an unwritable TMPDIR silently left the never-terminate Stop gate
 # disarmed — the exact watcher death this hook pair exists to catch. The hook
 # still must not block (it is an observer), but it must say something.
-RO_DIR="$TEST_DIR/readonly"
-mkdir -p "$RO_DIR"
-chmod 500 "$RO_DIR"
-ro_out=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}' \
-  | env RALPH_COMMAND=hero RALPH_HOOK_INPUT= TMPDIR="$RO_DIR" bash "$POSTCHECK" 2>&1 >/dev/null)
-ro_ec=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}' \
-  | env RALPH_COMMAND=hero RALPH_HOOK_INPUT= TMPDIR="$RO_DIR" bash "$POSTCHECK" >/dev/null 2>&1; echo $?)
-chmod 700 "$RO_DIR"
-assert_eq "0" "$ro_ec" "postcheck still exits 0 on an unwritable sentinel dir (observer never blocks)"
-case "$ro_out" in
-  *"WARNING could not write autoloop sentinel"*)
-    PASS=$((PASS+1)); echo "  PASS: sentinel-write failure surfaces on stderr" ;;
-  *)
-    FAIL=$((FAIL+1)); echo "  FAIL: sentinel-write failure was swallowed"; echo "    stderr: $ro_out" ;;
-esac
+#
+# CodeRabbit (PR #1620, 2026-07-28): this case used `mkdir -p "$RO_DIR";
+# chmod 500 "$RO_DIR"`. Mode bits deny nothing to UID 0 (CAP_DAC_OVERRIDE), so
+# under a root CI container the sentinel write SUCCEEDED, no warning was
+# emitted, and the assertion went red for an environment reason rather than a
+# regression — verified: 37 passed / 1 failed in `docker run alpine:3` as uid=0.
+#
+# Fixed by making the path unwritable for a reason no privilege bypasses:
+# TMPDIR is a REGULAR FILE, so `$TMPDIR/ralph-hero-autoloop-…` cannot resolve
+# and the write fails with ENOTDIR for every UID, root included. No skip needed
+# — the case now runs everywhere instead of silently not covering root CI.
+RO_DIR="$TEST_DIR/notadir"
+: > "$RO_DIR"
+# Precondition: prove the path really is unwritable in THIS environment before
+# asserting on the hook's reaction. Without it, a future change that made the
+# probe writable again would turn this case into a vacuous pass.
+if ( : > "$RO_DIR/probe" ) 2>/dev/null; then
+  FAIL=$((FAIL+1))
+  echo "  FAIL: unwritable-sentinel probe is writable (uid=$(id -u)) — case cannot test anything"
+else
+  PASS=$((PASS+1)); echo "  PASS: unwritable-sentinel probe is unwritable for uid=$(id -u) (ENOTDIR, privilege-independent)"
+  ro_out=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}' \
+    | env RALPH_COMMAND=hero RALPH_HOOK_INPUT= TMPDIR="$RO_DIR" bash "$POSTCHECK" 2>&1 >/dev/null)
+  ro_ec=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}' \
+    | env RALPH_COMMAND=hero RALPH_HOOK_INPUT= TMPDIR="$RO_DIR" bash "$POSTCHECK" >/dev/null 2>&1; echo $?)
+  assert_eq "0" "$ro_ec" "postcheck still exits 0 on an unwritable sentinel dir (observer never blocks)"
+  case "$ro_out" in
+    *"WARNING could not write autoloop sentinel"*)
+      PASS=$((PASS+1)); echo "  PASS: sentinel-write failure surfaces on stderr" ;;
+    *)
+      FAIL=$((FAIL+1)); echo "  FAIL: sentinel-write failure was swallowed"; echo "    stderr: $ro_out" ;;
+  esac
+fi
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

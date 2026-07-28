@@ -37,11 +37,11 @@ Draft the issue body per `issue-template.md` (use the research-aware variant whe
 
 Decomposition into a tree of children is `/ralph:plan --mode epic`'s job now, not form's — form creates the parent issue and hands off. **Say so before the approval prompt**, so the user is not agreeing to a tree they will not get: present the drafted parent and state that this step creates the parent issue only, with decomposition into children happening in a separate `/ralph:plan --mode epic` step. On approval:
 
-1. Create the parent issue (`create_issue`, `estimate: L`, `workflowState: "Backlog"`).
+1. Create the parent issue (`create_issue`, `workflowState: "Backlog"`) with the estimate **carried from Step 4's complexity assessment** — `L` or `XL`, whichever that assessment produced. Do NOT hardcode `L`: `issue-template.md` § Creation order permits an `XL` parent, and `/ralph:plan --mode epic` reads the parent estimate to size the decomposition fan-out (`issue-template.md`'s fan-out table). An XL epic recorded as L is decomposed as an L — the wrong child count and the wrong child sizes — and nothing downstream can recover the signal, because Step 4's assessment is not persisted anywhere else. If Step 4 assessed the parent below `L` (XS/S/M), this is not an epic: return to the Step 5 picker and take the **GitHub issue** path (Step 6a) instead.
 2. Update the source-file frontmatter with the parent issue link per `issue-template.md`.
 3. Report the issue URL, then **offer the handoff directly** via `AskUserQuestion`: *"Decompose #<parent-number> into a feature tree now?"* — Yes → invoke `Skill("ralph:plan", args="--mode epic #<parent-number>")` in this session; No → report the command for later (`/ralph:plan --mode epic #<parent-number>`). Declining is free; the offer is skipped in headless contexts, which report the command instead. (No `create_sub_issues` call here in either branch — form forwards tree creation to plan epic instead of building it inline; see `../plan/decomposition.md` § Hook contract for why that matters.)
 
-See `issue-template.md` for estimate defaults; see `../plan/decomposition.md` for the tree shape plan epic will produce.
+See `issue-template.md` § Creation order for the L-or-XL parent contract; see `../plan/decomposition.md` for the tree shape plan epic will produce.
 
 ## Step 6c: Hand off to another skill
 

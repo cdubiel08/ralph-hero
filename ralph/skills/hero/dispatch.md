@@ -23,7 +23,8 @@ All targets are skills in the same `ralph` plugin → unqualified names work in 
 
 | Phase | Dispatch | Why |
 |---|---|---|
-| SPLIT, RESEARCH (XS/S single), PLAN, REVIEW (plan), INTEGRATE | `Skill("ralph:<verb>", args="NNN ...")` | Inline — these read/write durable state via MCP and need to share hero's context for resumability |
+| SPLIT, PLAN, REVIEW (plan), INTEGRATE | `Skill("ralph:<verb>", args="NNN ...")` | Inline — these read/write durable state via MCP and need to share hero's context for resumability |
+| RESEARCH (XS/S single) | `Skill("ralph:research", args="--auto NNN")` | Same inline rationale, but the args are **not** a bare `NNN`: the § Phase → verb mapping row above is `/ralph:research --auto`, and a bare `NNN` selects research's *interactive* default mode instead — which stalls the autonomous tick on a question intake. Pass `--auto` explicitly. |
 | RESEARCH (feature/epic unit: estimate M+ or `kind:epic`/`kind:feature`) | `Agent(subagent_type="ralph:research-agent", model="fable", prompt="Research GH-NNN ... follow ${CLAUDE_PLUGIN_ROOT}/skills/research/*.md refs; write findings doc; advance to Ready for Plan")` | Tier routing by unit size (GH-1538): feature/epic research is a fable bookend — the findings doc steers every downstream phase. XS/S singles keep the cheap inline sonnet path. `CLAUDE_CODE_SUBAGENT_MODEL=opus` is the non-Fable rescue (flattens all forks — documented in docs/model-tier-policy.md). |
 | IMPLEMENT | `Skill("ralph:impl", args="NNN --auto --plan-doc PATH")` | The slim plugin uses `--auto` mode (one phase per invocation in an isolated worktree, enforced by `impl-worktree-gate.sh`). The runtime gates worktree isolation; hero does not need a separate Agent() session for this. |
 | PR (within IMPLEMENT) | `Skill("ralph:impl", args="NNN --mode pr")` | PR creation is `/ralph:impl --mode pr` — preserves the loop-runner sentinel `Queue empty.` and the queue-pick semantics from the source `ralph-pr` skill. |

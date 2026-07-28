@@ -85,17 +85,38 @@ needs an explicit XS/S (atomic split) or S/M (plan-of-plans) estimate."
   printf '%s' "$out"
 }
 
-# ---- PostToolUse: record the created count, never block -----------------------
+# ---- PostToolUse: record the FULLY-SUCCESSFUL child count, never block --------
 # split-postcondition.sh needs "how many children were really created". The
 # `RALPH_SPLIT_COUNT=<N>` export decomposition.md used to prescribe is a bare
 # Bash export and never reaches the Stop hook, so the count is taken from the
 # tool's own per-child status report instead.
+#
+# CodeRabbit (PR #1620, 2026-07-28): this counted `created == true` alone, but
+# `create_sub_issues` is partial-failure aware and reports `linked`, `fieldsSet`,
+# `edgesWired`, and `error` per child too. A child that was created but never
+# linked under the parent (or whose dependency edges never got wired) still
+# counted toward `N >= 2` — so a split with broken integration passed the
+# postcondition and the parent plan reported success. The terminal contract in
+# decomposition.md § Step 11 says "created AND linked"; count that.
+#
+# `fieldsSet` is deliberately NOT part of the conjunction: a project field that
+# failed to set is a cosmetic board defect, not a broken parent/child or
+# dependency relationship, and gating the decomposition on it would block a
+# structurally sound split.
 if [[ "$(get_field '.hook_event_name')" == "PostToolUse" ]] || \
    printf '%s' "$RALPH_HOOK_INPUT" | jq -e 'has("tool_response")' >/dev/null 2>&1; then
   response_text=$(get_field '.tool_response.content[0].text')
   if [[ -n "$response_text" ]]; then
     created=$(printf '%s' "$response_text" \
-      | jq -r '[.children[]? | select(.created == true)] | length' 2>/dev/null || echo "")
+      | jq -r 'if (.children? | type) == "array"
+               then [ .children[]
+                      | select(.created == true and .linked == true
+                               and .edgesWired == true and (has("error") | not)) ]
+                    | length
+               else empty end' 2>/dev/null || echo "")
+    # Only reached when the response carries no `.children` array at all (a
+    # shape change or a truncated payload). `summary.created` is the coarsest
+    # available signal there; it is not link-aware, so it is a last resort.
     if [[ -z "$created" || ! "$created" =~ ^[0-9]+$ ]]; then
       created=$(printf '%s' "$response_text" | jq -r '.summary.created // empty' 2>/dev/null || echo "")
     fi

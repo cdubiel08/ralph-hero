@@ -109,6 +109,6 @@ git add thoughts/shared/research/...
 git commit -m "docs(research): add UI baseline for GH-NNN"
 ```
 
-When the findings doc's own PR from `SKILL.md` § --mode auto Step 7 is still open, this commit belongs on that same branch (push it to the open PR). Otherwise open a fresh `docs/GH-NNN-ui-baseline` PR and merge it with `scripts/merge-pr.sh`.
+When the findings doc's own PR from `SKILL.md` § --mode auto Step 7 is still open, this commit belongs on that same branch (push it to the open PR). Otherwise open a fresh `docs/GH-NNN-ui-baseline` PR, attest it with `bash scripts/attest-pr.sh PR_NUMBER`, and merge it with `bash scripts/merge-pr.sh PR_NUMBER` — never bare `gh pr merge`.
 
 Interactive mode does NOT commit on the user's behalf — the doc-write commit (if any) is the user's call.

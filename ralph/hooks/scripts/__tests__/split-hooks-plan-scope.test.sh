@@ -275,22 +275,64 @@ run_case "B7f: ...and Stop is FREE (single-child path has no >=2 contract)" 0 \
   RALPH_COMMAND=plan
 
 # The size gate's PostToolUse pass is what records the count in the first place.
+# Fixture uses the REAL create_sub_issues per-child shape (created / linked /
+# fieldsSet / edgesWired / error) — see mcp-server/src/tools/tree-tools.ts.
 json_post_create=$(jq -n '{
   session_id: "post-count",
   hook_event_name: "PostToolUse",
   tool_response: { content: [ { text: (({
       parentNumber: 100,
-      summary: { total: 3, created: 3 },
-      children: [ {created: true}, {created: true}, {created: false} ]
+      summary: { total: 3, created: 3, linked: 3 },
+      children: [
+        {created: true,  linked: true,  fieldsSet: true,  edgesWired: true},
+        {created: true,  linked: true,  fieldsSet: false, edgesWired: true},
+        {created: false, linked: false, fieldsSet: false, edgesWired: false}
+      ]
     }) | tojson) } ] }
 }')
-run_case "B8: size gate PostToolUse records the created count -> exit 0" 0 \
+run_case "B8: size gate PostToolUse records the fully-successful count -> exit 0" 0 \
   "$SIZE_GATE" "$json_post_create" RALPH_COMMAND=plan
 if [[ "$(cat "$(session_dir post-count)/split-count" 2>/dev/null || echo MISSING)" == "2" ]]; then
-  pass "B9: recorded count is the created:true tally (2), not summary.created (3)"
+  pass "B9: recorded count is the fully-successful tally (2), not summary.created (3); fieldsSet:false does not disqualify"
 else
   fail "B9: expected recorded count 2, got $(cat "$(session_dir post-count)/split-count" 2>/dev/null || echo MISSING)"
 fi
+
+# CodeRabbit (PR #1620, 2026-07-28): a child that was CREATED but never linked
+# under the parent, or whose dependency edges never got wired, or that reported
+# an error, is not a successful decomposition — counting it let a split with
+# broken integration satisfy the `N >= 2` postcondition.
+json_post_partial=$(jq -n '{
+  session_id: "post-count-partial",
+  hook_event_name: "PostToolUse",
+  tool_response: { content: [ { text: (({
+      parentNumber: 101,
+      partialFailure: true,
+      summary: { total: 4, created: 4, linked: 2 },
+      children: [
+        {created: true, linked: true,  fieldsSet: true, edgesWired: true},
+        {created: true, linked: false, fieldsSet: true, edgesWired: false},
+        {created: true, linked: true,  fieldsSet: true, edgesWired: false},
+        {created: true, linked: true,  fieldsSet: true, edgesWired: true, error: "dependency edge rejected"}
+      ]
+    }) | tojson) } ] }
+}')
+run_case "B8b: partially-integrated children -> exit 0 (recorder never blocks)" 0 \
+  "$SIZE_GATE" "$json_post_partial" RALPH_COMMAND=plan
+if [[ "$(cat "$(session_dir post-count-partial)/split-count" 2>/dev/null || echo MISSING)" == "1" ]]; then
+  pass "B9b: unlinked / unwired / errored children are excluded (1, not summary.created 4)"
+else
+  fail "B9b: expected recorded count 1, got $(cat "$(session_dir post-count-partial)/split-count" 2>/dev/null || echo MISSING)"
+fi
+
+# And the postcondition must then BLOCK: one fully-successful child is a
+# re-estimate, not a decomposition. (The PreToolUse pass is what arms the
+# session; this fixture only exercised PostToolUse, so arm it explicitly.)
+seed_ledger "post-count-partial" "attempted" "1"
+run_case "B9c: Stop blocks when only 1 child is fully successful" 2 \
+  "$POSTCONDITION" \
+  '{"session_id":"post-count-partial","hook_event_name":"Stop","stop_hook_active":false}' \
+  RALPH_COMMAND=plan
 
 # =============================================================================
 # Group C — the estimate gate: records always, enforces once armed, and never

@@ -42,29 +42,59 @@ and STOP.
 
 Establish `chore/enrich-ideas` **before** §Step 3 touches a file. Doing it after the edits would run `git checkout -B` / `git merge --ff-only` against a dirty worktree (the merge refuses; the checkout can carry or clobber the edits), and — worse — force-resetting the local branch would silently discard an enrichment commit that a previous pass created but could not push (§Step 4's push-failure rule leaves exactly that).
 
+**This block fails CLOSED.** Every command that decides *which branch the edits land on* is exit-checked, and any failure stops the mode before §Step 3 touches a file. An unchecked `git checkout` that fails (dirty worktree, index lock, missing ref) leaves the session on `main` while §Step 3 edits and §Step 4 commits — enrichment commits on local `main`, then §Step 4 pushes the *unchanged* `$BRANCH` ref and still reports `ENRICHED <N> (PR <url>)` for a PR containing none of the findings. Fetching `origin/main` is checked for the same reason at one remove: it is the base for every create and fast-forward below, and knowingly branching the standing PR off a stale base produces a stale-or-conflicting PR that a later pass cannot distinguish from a real one.
+
 ```bash
 BRANCH="chore/enrich-ideas"
-# Fetch BOTH refs. `origin/main` is the base for every create/fast-forward
-# below; a stale local `origin/main` would branch the standing PR off an
-# outdated base and produce a stale-or-conflicting PR.
-git fetch origin main 2>/dev/null || true
+
+# `origin/main` is the base for every create/fast-forward below — CHECKED.
+# A failed fetch means the base is stale (or the remote is unreachable); either
+# way the branch this block would create is not the branch the PR needs.
+if ! branch_err=$(git fetch origin main 2>&1); then
+  printf '%s\n' "ENRICH SKIPPED branch-setup-failed: fetch-main: $(sanitize_diag "$branch_err")"
+  exit 0
+fi
+# The branch's own remote ref is advisory: absent-on-remote is the normal
+# first-run state, not a failure, so this one stays unchecked by design. The
+# `rev-parse --verify` below is what decides whether it is usable.
 git fetch origin "$BRANCH" 2>/dev/null || true
 
 if git rev-parse --verify --quiet "refs/heads/$BRANCH" >/dev/null; then
   # Local branch exists. NEVER -B it: it may hold a recovered, unpushed
   # enrichment commit. Switch to it as-is and fast-forward onto origin/main
   # only if that is a clean no-merge-commit move.
-  git checkout "$BRANCH"
+  if ! branch_err=$(git checkout "$BRANCH" 2>&1); then
+    printf '%s\n' "ENRICH SKIPPED branch-setup-failed: checkout-local: $(sanitize_diag "$branch_err")"
+    exit 0
+  fi
+  # The fast-forward is the ONE tolerated failure: refusing to ff-only leaves us
+  # on a correct (if behind) branch, which is safe to enrich and push. Every
+  # other failure above moved nothing or moved us somewhere wrong.
   git merge --ff-only origin/main 2>/dev/null || true
 elif git rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null; then
-  git checkout -b "$BRANCH" "origin/$BRANCH"
+  if ! branch_err=$(git checkout -b "$BRANCH" "origin/$BRANCH" 2>&1); then
+    printf '%s\n' "ENRICH SKIPPED branch-setup-failed: checkout-from-remote: $(sanitize_diag "$branch_err")"
+    exit 0
+  fi
   git merge --ff-only origin/main 2>/dev/null || true
 else
-  git checkout -b "$BRANCH" origin/main
+  if ! branch_err=$(git checkout -b "$BRANCH" origin/main 2>&1); then
+    printf '%s\n' "ENRICH SKIPPED branch-setup-failed: checkout-new: $(sanitize_diag "$branch_err")"
+    exit 0
+  fi
+fi
+
+# Post-condition: never proceed on a branch we did not intend to be on. This
+# catches any path where the checkout reported success but did not move (a
+# `git checkout` that resolves to a no-op, a hook that reverted it).
+current_branch=$(git branch --show-current 2>/dev/null || echo "")
+if [[ "$current_branch" != "$BRANCH" ]]; then
+  printf '%s\n' "ENRICH SKIPPED branch-setup-failed: on '$current_branch', expected '$BRANCH'"
+  exit 0
 fi
 ```
 
-If the checkout fails for any reason, STOP before editing and emit `ENRICH SKIPPED branch-setup-failed` — never fall back to enriching on `main`.
+`sanitize_diag()` is the helper §Step 4 defines; **hoist that definition above this block** so the tokens here are sanitized too — the terminal token must stay one verbatim-parseable line wherever it is emitted (outcome-tokens.md § file-level invariant). **Never fall back to enriching on `main`:** on any `branch-setup-failed` path, nothing has been edited yet, the session is left wherever git left it (no commit exists to strand), and the next heartbeat re-enters §Step 1's `main`-only gate cleanly.
 
 ## §Step 3: Enrich each selected file (bounded, serial)
 
@@ -229,7 +259,7 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - `ENRICHED <N> (PR <url>)` — `<N>` files enriched, appended, and stamped this pass; committed to `chore/enrich-ideas` and opened/updated as a PR against `main` (never pushed directly). A noted remainder (§Step 2) belongs in the surrounding summary line, not the token itself.
 - `Queue empty.` — no `status: draft` files found (§Step 2 short-circuit).
 - `ENRICH SKIPPED — branch <name> is not main` — §Step 1 branch-gate short-circuit.
-- `ENRICH SKIPPED branch-setup-failed` — §Step 2b could not check out `chore/enrich-ideas`; no file was edited.
+- `ENRICH SKIPPED branch-setup-failed: <stage>: <sanitized-stderr>` — §Step 2b's fail-closed branch setup stopped before any edit. `<stage>` names which step refused: `fetch-main` (stale/unreachable base), `checkout-local` / `checkout-from-remote` / `checkout-new` (the checkout itself), or the post-condition form `on '<branch>', expected 'chore/enrich-ideas'` (the checkout reported success but did not move). No file was edited and no commit exists, so nothing is stranded.
 - `ENRICH SKIPPED push-rejected` — §Step 4 branch-push **rejection** (non-fast-forward / fetch-first / stale info) survived the one fetch + fast-forward retry; commit stays local on `chore/enrich-ideas` and the checkout returns to `main` so the next heartbeat can retry.
 - `ENRICH BLOCKED stage-failed: <stderr>` — §Step 4 `git add` failed (path vanished, unreadable file, held index lock). Nothing was committed; the commit below it would otherwise have run against a stale index and reported success for unstaged findings. The checkout returns to `main`.
 - `ENRICH BLOCKED commit-failed: <stderr>` — §Step 4 `git commit` failed (pre-commit hook, nothing staged, unconfigured identity, …). The enriched files are already at `status: forming` on the branch but nothing was committed, so the pass is reported as blocked rather than as an `ENRICHED <N> (PR <url>)` that points at a PR containing none of these findings. The checkout returns to `main`.
