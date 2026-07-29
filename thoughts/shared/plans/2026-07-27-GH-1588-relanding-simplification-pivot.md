@@ -233,3 +233,49 @@ None beyond those recorded in the superseded plans (summary-view payload guarant
 - Research sweeps (authoritative inventories): `2026-07-26-GH-159{0,1,2,3}-*.md` (copied onto this branch under `thoughts/shared/research/`).
 - Evidence: `thoughts/shared/reviews/2026-07-27-GH-1619-zero-hook-lifecycle-evidence.md`; PR #1620 review history (12 rounds; digest distilled into § Key Discoveries; branch `feature/GH-1603` tail `61c2f910..53836761`).
 - Issues: #1588 (epic), #1590–#1593 (features), #1603–#1619 (leaves), #1589/PR #1602 (merge gate, Done), GH-1538 (feature=PR unit — layer-sliced here by decision), GH-1544 (decision-hold flow, follow-up target).
+
+## Execution Log
+
+### 2026-07-29 — Phase 1 (PR-A) complete; unplanned release-tooling fix
+
+**Phase 1 landed as intended.** [PR #1624](https://github.com/cdubiel08/ralph-hero/pull/1624) merged at `1a5dfc24` through `scripts/merge-pr.sh` (`attestation=true external=true force=false` — no override). Closes #1609–#1618; #1591 auto-advanced via `advance-parent.yml`. PR #1620 closed with a pivot comment; `feature/GH-1603` preserved.
+
+Shape matched the thesis: 83 files, **93% `mcp-server/src`**, `ralph/` net **−158 lines**.
+
+**The slice hypothesis held.** Review convergence, against #1620's 12 rounds with a non-decaying rate:
+
+| Round | Actionable | Verdict |
+|---|---|---|
+| 1 | 12 | CHANGES_REQUESTED |
+| 2 | 1 | CHANGES_REQUESTED |
+| 3 | 0 | COMMENTED |
+| 4 | 0 | APPROVED |
+
+**Defects the review caught that the plan did not anticipate** (all fixed in PR-A, all in code imported from the verified tip — i.e. they predate this pivot and would have shipped either way):
+
+- 🔴 **Lock destruction** (`issue-tools.ts`) — the GH-1617 claim-clock refresh cleared `Workflow State` and relied on the step-4e aliased batch to restore it. A failure there unwound with the field cleared, and an absent state is permissive to *both* `isLegalTransition` and `isLockConflict` — so the claim being refreshed was silently destroyed and the issue left claimable. Re-set is now immediate and adjacent.
+- 🟠 **Guard bypass** (`batch-tools.ts`) — transition legality and the lock guard validated the *first* `workflow_state` op via `.find()` while step 3 wrote *every* op; a duplicate applied unchecked. Duplicates now refused up front.
+- 🟠 **Destructive preview** (`batch-tools.ts`) — `{issues, dryRun: true}` routed to the explicit path, which never read the flag: a preview performed a real archive and reported `dryRun: false`. Now honored on both paths.
+- 🟠 **Unbounded query** (`tree-tools.ts`) — up to ~2500 unchunked aliases would exceed GitHub's complexity limits and fail a legitimate batch wholesale. Now chunked, under a single `repository(...)` selection.
+- 🟡 **Self-granting checker** — `check-tool-consumers.sh` collected grants from the whole `SKILL.md`, so a fully-prefixed tool name in the *body* satisfied its own grant check, masking the drift the checker exists to catch. Scoped to frontmatter, with a body-only fixture.
+
+Plus the earlier round: `resolveLockStaleHours(0)` marking every lock stale, `isLegalParentGateAdvance` failing open on an unrecognized state, and a `ProjectV2Item` read on the repo endpoint that breaks split-token setups.
+
+**Deviations from the plan as written:**
+
+1. `ralph/hooks/scripts/ralph-state-machine.json` moved into PR-A (plan implied PR-B). The repaired two-way parity test — previously passing vacuously on a nonexistent path — fails without it. All edges are additive; `state-gate.sh` only becomes more permissive.
+2. `caretake/modes/hygiene.md` took main's version, not the tip's. The tip adds a rehomed `capture_snapshot` step because PR-B deletes `trends.md`; in PR-A `trends.md` still exists, so it was retargeted to `metrics_trends {capture: true}` instead. Exactly one snapshot producer exists at every point in the sequence.
+3. `caretake/modes/debug.md` became a retirement stub rather than a prose-neutralized body — its tool is deleted in PR-A and the mode row in PR-B, so a stub prevents an intermediate `main` from instructing an agent to call a tool that no longer exists.
+4. `git checkout <ref> -- <path>` adds and modifies but never deletes; 18 removed files had to be deleted explicitly. Worth knowing for PR-B and PR-C, which use the same import mechanism.
+
+**Unplanned but required — release tooling was broken.** PR-A carried `#minor` for seven tool removals and published as **2.5.204, a patch**. Root cause: `release.yml` detected markers with `\b#minor\b`, and `\b` matches only at a word/non-word transition — a marker preceded by whitespace is non-word followed by non-word, so no boundary exists and the match *never fired*. Every release had silently taken the patch branch. `gh pr merge --merge` puts the PR title in the commit body, so the marker always lands after a space: precisely the case that never matched.
+
+Fixed in [PR #1625](https://github.com/cdubiel08/ralph-hero/pull/1625) (merged `e71c1ce2`) with `(^|[^[:alnum:]])#minor([^[:alnum:]]|$)`, guarded by `scripts/__tests__/release-bump-detection.test.sh` — 14 cases, patterns extracted *from* the workflow so a regression there fails the test rather than drifting from a copy. Verified the guard can fail: 3 failures against the old regex, and it detects a swapped major/minor branch order. **2.6.0 published** via `workflow_dispatch` (npm, `package.json`, `ralph/.mcp.json`, and tag `v2.6.0` all verified consistent).
+
+**Operational notes for PR-B/PR-C:**
+
+- A `Review rate limited` CodeRabbit check does **not** self-heal — clearing the quota only permits a *new* request. Treat it as "needs an explicit `@coderabbitai full review`", never as "wait". Six full reviews on #1624 (several redundant) exhausted the plan quota; let the automatic push review do the work.
+- The `ralph-attestation` status goes stale whenever `validate` runs between the push and the re-attest. Expect one `gh run rerun` per PR; it is not a signal.
+- Bump detection now works from the commit message, so PR-B (`release-ralph`) and PR-C need no manual dispatch.
+
+**Remaining:** Phase 2 (PR-B) and Phase 3 (PR-C) unchanged. Board: 10 of 18 leaves closed; #1590, #1592, #1593 open.
