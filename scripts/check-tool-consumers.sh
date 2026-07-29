@@ -147,7 +147,13 @@ while IFS= read -r dir; do
   # Granted set: allowed-tools frontmatter entries of the form
   # mcp__plugin_ralph_ralph-github__ralph_hero__<name>. Grants live only in
   # SKILL.md — the roster is dir-wide even though prose is scanned per-file.
-  granted=$(grep -oE 'mcp__plugin_ralph_ralph-github__ralph_hero__[a-z_]+' "$skill_md" 2>/dev/null \
+  #
+  # Scoped to the FRONTMATTER block (between the first two `---` lines), not
+  # the whole file: a fully-prefixed tool name written in the SKILL.md *body*
+  # would otherwise satisfy its own grant check and mask a missing
+  # allowed-tools entry — the exact drift this direction exists to catch.
+  granted=$(awk 'BEGIN{d=0} /^---$/{d++; next} d==1' "$skill_md" 2>/dev/null \
+    | grep -oE 'mcp__plugin_ralph_ralph-github__ralph_hero__[a-z_]+' 2>/dev/null \
     | sed 's/^.*ralph_hero__//' | sort -u || true)
 
   # Walk every .md in the dir tree (SKILL.md body below its frontmatter +

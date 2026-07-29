@@ -322,6 +322,24 @@ export async function resolveDependsOnIssuesUpFront(
   const unique = Array.from(new Set(numbers));
   if (unique.length === 0) return [];
 
+  // Chunked like every other multi-item path in this file. `unique` is bounded
+  // only by 50 children x 50 dependsOnIssues each, so an unchunked query could
+  // emit ~2500 aliases, blow GitHub's query-complexity/node limits, and fail
+  // wholesale — refusing an otherwise-legitimate batch with an opaque GraphQL
+  // error, before any mutation runs.
+  const unknown: number[] = [];
+  for (const batch of chunk(unique, MUTATION_CHUNK_SIZE)) {
+    unknown.push(...(await resolveDependsOnChunk(client, owner, repo, batch)));
+  }
+  return unknown;
+}
+
+async function resolveDependsOnChunk(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  unique: number[],
+): Promise<number[]> {
   const varDecls = ["$owner: String!", "$repo: String!"];
   const variables: Record<string, unknown> = { owner, repo };
   const aliases: string[] = [];
@@ -330,19 +348,22 @@ export async function resolveDependsOnIssuesUpFront(
     const numVar = `num${i}`;
     varDecls.push(`$${numVar}: Int!`);
     variables[numVar] = n;
-    aliases.push(
-      `n${i}: repository(owner: $owner, name: $repo) { issue(number: $${numVar}) { id } }`,
-    );
+    // Aliased under ONE repository selection rather than re-resolving
+    // repository(owner, name) per alias — same result, materially lower
+    // query cost.
+    aliases.push(`n${i}: issue(number: $${numVar}) { id }`);
   });
 
-  const queryString = `query(${varDecls.join(", ")}) {\n  ${aliases.join("\n  ")}\n}`;
-  const result = await client.query<
-    Record<string, { issue: { id: string } | null } | null>
-  >(queryString, variables);
+  const queryString =
+    `query(${varDecls.join(", ")}) {\n` +
+    `  repository(owner: $owner, name: $repo) {\n    ${aliases.join("\n    ")}\n  }\n}`;
+  const result = await client.query<{
+    repository: Record<string, { id: string } | null> | null;
+  }>(queryString, variables);
 
   const unknown: number[] = [];
   unique.forEach((n, i) => {
-    const issue = result[`n${i}`]?.issue;
+    const issue = result.repository?.[`n${i}`];
     if (!issue) {
       unknown.push(n);
     } else {
@@ -421,7 +442,7 @@ export function registerTreeTools(
       "no estimate is REFUSED when maxChildEstimate was explicitly set, or created and reported in " +
       "unestimatedChildren when it fell back to the default; every child workflowState must be a known " +
       "workflow state; every dependsOnIssues reference must resolve to an existing issue. " +
-      "workflowState/priority remain passthrough (no policy gating). " +
+      "priority remains passthrough (no policy gating). " +
       "Returns partialFailure:true when any stage partially failed after creation.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),

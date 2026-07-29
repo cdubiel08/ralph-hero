@@ -488,6 +488,35 @@ describe("ralph_hero__batch_update workflow_state transition legality (GH-1615)"
     fieldCache = makeFieldCacheWithWorkflowState();
   });
 
+  // The guard below picks the workflow_state op via `.find(...)` (first match)
+  // but step 3 builds aliased writes for EVERY op, so a second workflow_state
+  // entry would be applied without ever being checked for transition legality
+  // or lock conflict — a direct bypass of this block. Refused up front.
+  it("refuses duplicate field operations (second write would bypass the guards)", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Backlog" },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [
+          { field: "workflow_state", value: "Research Needed" },
+          { field: "workflow_state", value: "In Progress" },
+        ],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result) as { error: string };
+    expect(payload.error).toContain("Duplicate field operation");
+    expect(payload.error).toContain("workflow_state");
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
   it("whole-batch refusal on an unknown workflow_state value (before any API calls)", async () => {
     const { client } = makeBatchFieldOpMockClient({ currentStates: { 10: "Backlog" } });
     registerBatchTools(server, client, fieldCache);

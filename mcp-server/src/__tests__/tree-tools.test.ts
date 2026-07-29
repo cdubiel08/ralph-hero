@@ -703,7 +703,9 @@ describe("ralph_hero__create_sub_issues handler — dependsOnIssues wires edges 
           // in one aliased query before any mutation, and seeds the cache
           // Stage 4's resolveIssueNodeId(999) call below reads from — no
           // second query for the same issue.
-          { n0: { issue: { id: "issue-999-node" } } },
+          // Aliases sit under ONE repository selection (chunked resolution),
+          // not one repository(...) per alias.
+          { repository: { n0: { id: "issue-999-node" } } },
           { repository: { id: "repo-id-1" } },
           { repository: { issue: { id: "parent-node-id" } } },
         ],

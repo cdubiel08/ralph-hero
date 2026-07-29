@@ -462,6 +462,22 @@ export function registerBatchTools(
         }
         const issues = args.issues;
 
+        // Duplicate fields would silently bypass the guards below: step 2
+        // validates transition legality and lock conflicts against the FIRST
+        // workflow_state op (`.find(...)`), while step 3 builds aliased writes
+        // for EVERY op — so a second workflow_state entry lands unchecked.
+        // Refuse up front rather than validating one write and applying two.
+        const dupFields = fieldOps
+          .map((op) => op.field)
+          .filter((f, i, all) => all.indexOf(f) !== i);
+        if (dupFields.length > 0) {
+          return toolError(
+            `Duplicate field operation(s): ${Array.from(new Set(dupFields)).join(", ")}. ` +
+              `Each field may appear at most once per call — only the first entry for a field is ` +
+              `validated, so a duplicate would apply an unchecked write.`,
+          );
+        }
+
         // Validate operations
         for (const op of fieldOps) {
           if (!VALID_FIELDS.includes(op.field)) {
@@ -919,6 +935,7 @@ async function handleArchiveMode(
       action,
       args.issues,
       args.projectItemIds,
+      args.dryRun ?? false,
     );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1041,7 +1058,14 @@ async function runFilterArchive(
   }
 
   // Determine if more eligible items may exist beyond what we collected
-  const hasMore = matched.length >= effectiveMax && hasMorePages;
+  // Two independent reasons the sweep may be incomplete, and BOTH must set
+  // hasMore: the caller's page filled (matched >= effectiveMax), or the scan
+  // hit SCAN_CAP before filling it. Testing only the former reported
+  // `hasMore: false` on a cap-truncated scan, so a caller looping until
+  // `hasMore: false` concluded the sweep was complete with eligible items
+  // still unscanned.
+  const cappedEarly = totalScanned >= SCAN_CAP && hasMorePages;
+  const hasMore = (matched.length >= effectiveMax && hasMorePages) || cappedEarly;
 
   if (matched.length === 0) {
     return toolSuccess({
@@ -1129,6 +1153,7 @@ async function runExplicitArchiveOrUnarchive(
   action: "archive" | "unarchive",
   issues: number[] | undefined,
   projectItemIds: string[] | undefined,
+  dryRun: boolean,
 ) {
   const itemIds: string[] = [];
   const itemMeta: Array<{ number?: number; itemId: string }> = [];
@@ -1162,14 +1187,33 @@ async function runExplicitArchiveOrUnarchive(
 
   if (itemIds.length === 0) {
     return toolSuccess({
-      dryRun: false,
+      dryRun,
       action,
-      archivedCount: 0,
+      ...(dryRun ? { wouldArchive: 0 } : { archivedCount: 0 }),
       items: [],
       skipped: [],
       errors,
       hasMore: false,
       totalScanned: 0,
+    });
+  }
+
+  // Honor dryRun on the explicit-selector path too. It is a top-level param
+  // with no schema-level tie to `filter`, so {issues, dryRun: true} is a valid
+  // call — previously it fell through and archived for real while reporting
+  // `dryRun: false`. Archive is the destructive half of this tool; a preview
+  // that mutates is the worst possible default. Resolution above is read-only,
+  // so the preview still surfaces per-issue resolution errors.
+  if (dryRun) {
+    return toolSuccess({
+      dryRun: true,
+      action,
+      wouldArchive: itemIds.length,
+      items: itemMeta,
+      skipped: [],
+      errors,
+      hasMore: false,
+      totalScanned: itemIds.length,
     });
   }
 

@@ -50,14 +50,14 @@ export function registerDashboardTools(
 ): void {
   server.tool(
     "ralph_hero__pipeline_dashboard",
-    "Generate pipeline status dashboard with issue counts per workflow phase, health indicators, and formatted output. Fetches all project items (full project scan, no silent 500-cap) so phase counts reflect every item regardless of board position. Returns structured data with optional markdown or ASCII rendering. Top-level `boardItems` is the raw count of all project items including PRs (uniform across discovery tools — next_actions, pipeline_dashboard, project_hygiene). Per-phase `count` values reflect that phase's bucket; for `Done` and `Canceled`, the count is bounded by `doneWindowDays` (default 7) and may be smaller than the actual phase membership. Per-iteration `totalIssues` is a distinct concept (iteration-scoped count). Set `view: \"summary\"` for a compact (~1-2KB) programmatic alternative: returns exactly { health, riskScore, velocity, totalIssues, phaseCounts, stuckIssues, wipViolations, blockedDeps } — no per-phase issue arrays, no markdown/ASCII rendering. In summary view, `format`/`groupBy`/`issuesPerPhase`/`includeMetrics`/`includeHealth`/`streams`/`archiveAgeDays` are ignored.",
+    "Generate pipeline status dashboard with issue counts per workflow phase, health indicators, and formatted output. Fetches all project items (full project scan, no silent 500-cap) so phase counts reflect every item regardless of board position. Returns structured data with optional markdown or ASCII rendering. Top-level `boardItems` is the raw count of all project items including PRs (uniform across discovery tools — next_actions, pipeline_dashboard, project_hygiene). Per-phase `count` values reflect that phase's bucket; for `Done` and `Canceled`, the count is bounded by `doneWindowDays` (default 7) and may be smaller than the actual phase membership. Per-iteration `totalIssues` is a distinct concept (iteration-scoped count). Set `view: \"summary\"` for a compact (~1-2KB) programmatic alternative: returns { health, riskScore, velocity, totalIssues, phaseCounts, stuckIssues, wipViolations, blockedDeps }, plus an optional `fetchWarnings` array when a project scan was partially skipped — no per-phase issue arrays, no markdown/ASCII rendering. In summary view, `format`/`groupBy`/`issuesPerPhase`/`includeMetrics`/`includeHealth`/`streams`/`archiveAgeDays` are ignored.",
     {
       view: z
         .enum(["full", "summary"])
         .optional()
         .default("full")
         .describe(
-          "'full' (default) returns the complete dashboard (phases, issues, optional markdown/ASCII). 'summary' returns the compact 8-field status shape (~1-2KB) — ignores format/groupBy/issuesPerPhase/includeMetrics/includeHealth/streams/archiveAgeDays.",
+          "'full' (default) returns the complete dashboard (phases, issues, optional markdown/ASCII). 'summary' returns the compact 8-field status shape (~1-2KB), plus optional `fetchWarnings` on a partial scan — ignores format/groupBy/issuesPerPhase/includeMetrics/includeHealth/streams/archiveAgeDays.",
         ),
       owner: z
         .string()

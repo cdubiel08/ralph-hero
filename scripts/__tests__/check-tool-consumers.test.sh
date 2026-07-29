@@ -93,6 +93,29 @@ else
   fail "Direction A FAIL line missing from output: $out"
 fi
 
+# 1b. A fully-prefixed tool name in the SKILL.md BODY must not satisfy its own
+# grant check. Grants are frontmatter-only; if `granted` were collected from the
+# whole file, this fixture would pass and mask a missing allowed-tools entry.
+root=$(fresh_root)
+skill_md "$root" "plan" "" \
+  "This mode calls \`mcp__plugin_ralph_ralph-github__ralph_hero__save_issue\` to advance the issue."
+tool_ts "$root" "issue" "save_issue"
+cat >"$root/ralph/agents/plan-agent.md" <<'EOF'
+---
+name: plan-agent
+tools: mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
+---
+EOF
+set +e
+out=$(bash "$SCRIPT" "$root" 2>&1)
+actual=$?
+set -e
+if [ "$actual" -eq 1 ]; then
+  pass "body-only prefixed mention does not self-grant (exits 1)"
+else
+  fail "body-only prefixed mention self-granted — expected exit 1, got $actual: $out"
+fi
+
 # 2. Direction B violated: registered tool has zero consumers anywhere.
 root=$(fresh_root)
 skill_md "$root" "plan" "mcp__plugin_ralph_ralph-github__ralph_hero__get_issue" \

@@ -12,7 +12,7 @@ export RALPH_SUBCOMMAND=debug
 
 Emit exactly:
 
-```
+```text
 DEBUG RETIRED — the trace-collation tool was removed in GH-1612.
 ```
 

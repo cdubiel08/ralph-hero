@@ -1812,9 +1812,44 @@ export function registerIssueTools(
                   }`,
                   { projectId, itemId: projectItemId, fieldId },
                 );
+                // The field is UNSET right now. Deferring the re-set to the
+                // aliased batch at step 4e leaves a window where a failure
+                // there (rate limit, 502, token expiry) unwinds to the outer
+                // catch with the lock DESTROYED — and an absent state is
+                // permissive to both isLegalTransition and isLockConflict, so
+                // any agent could then claim the issue. Re-set immediately and
+                // adjacently instead, and if that fails, say so in terms the
+                // caller can act on rather than reporting a generic error.
+                try {
+                  await updateProjectItemField(
+                    client,
+                    fieldCache,
+                    projectItemId,
+                    "Workflow State",
+                    resolvedWorkflowState,
+                    projectNumber,
+                  );
+                } catch (refreshError: unknown) {
+                  const cause =
+                    refreshError instanceof Error
+                      ? refreshError.message
+                      : String(refreshError);
+                  return toolError(
+                    `Lock-claim refresh on #${args.number} cleared "Workflow State" but failed to ` +
+                      `restore it — the field may currently be unset, which leaves the issue ` +
+                      `claimable by any agent. Recovery: re-run ` +
+                      `save_issue(number: ${args.number}, workflowState: "${resolvedWorkflowState}"). ` +
+                      `Cause: ${cause}`,
+                  );
+                }
+                // Re-set already applied above; do not queue a duplicate write
+                // into the aliased batch. `changes.lockReclaim` was recorded at
+                // step 2b-iii and `changes.workflowState` is set below for both
+                // branches.
+              } else {
+                updates.push({ alias: `ws_${opIdx}`, itemId: projectItemId, fieldId, optionId });
+                opIdx++;
               }
-              updates.push({ alias: `ws_${opIdx}`, itemId: projectItemId, fieldId, optionId });
-              opIdx++;
 
               // Status sync (inline, same pattern as batch-tools.ts)
               const targetStatus = WORKFLOW_STATE_TO_STATUS[resolvedWorkflowState];

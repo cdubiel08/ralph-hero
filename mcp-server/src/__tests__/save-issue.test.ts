@@ -1068,12 +1068,19 @@ describe("save_issue lock guard enrichment (GH-1616)", () => {
     expect(payload.changes.lockReclaim).toEqual({ heldSince: "2026-07-26T10:00:00Z" });
 
     // GH-1617 calibration: a same-value write does not refresh the field's
-    // updatedAt, so a lock reclaim must clear-then-set the field (two
-    // projectMutate calls: clear + the aliased set) to force a fresh
-    // timestamp, instead of one same-value write.
-    expect(projectMutate).toHaveBeenCalledTimes(2);
-    const [clearCall] = (projectMutate as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    expect((clearCall[0] as string)).toContain("clearProjectV2ItemFieldValue");
+    // updatedAt, so a lock reclaim must clear-then-set the field to force a
+    // fresh timestamp instead of a same-value no-op write.
+    //
+    // The re-set is issued IMMEDIATELY after the clear (call 2), not deferred
+    // into the aliased batch at step 4e. Deferring left a window where a
+    // failure in that batch unwound with the field still cleared — an absent
+    // state is permissive to both the transition check and the lock guard, so
+    // the claim this call was refreshing would have been silently destroyed
+    // and the issue left claimable by anyone. Call 3 is the Status sync batch.
+    const calls = (projectMutate as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(projectMutate).toHaveBeenCalledTimes(3);
+    expect(calls[0][0] as string).toContain("clearProjectV2ItemFieldValue");
+    expect(calls[1][0] as string).toContain("updateProjectV2ItemFieldValue");
   });
 
   it("non-lock same-state re-assert does NOT trigger lockReclaim or a clear mutation", async () => {

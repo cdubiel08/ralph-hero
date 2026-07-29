@@ -601,6 +601,34 @@ describe("ralph_hero__batch_update archive mode (integration)", () => {
     expect(projectMutate).toHaveBeenCalledTimes(1);
   });
 
+  // `dryRun` is a top-level param with no schema-level tie to `filter`, so
+  // {issues, dryRun: true} is a valid call. It previously fell through to the
+  // explicit path, which never read the flag: the caller got a REAL archive
+  // back, reported as `dryRun: false`. Archive is the destructive half of this
+  // tool — a preview that mutates is the worst possible failure mode.
+  it("dryRun: true on the explicit-selector path previews without archiving", async () => {
+    const { client, projectMutate } = makeMockClient({});
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        operations: [{ action: "archive" }],
+        issues: [42],
+        dryRun: true,
+      },
+      {},
+    );
+
+    expect(result.isError).toBeFalsy();
+    const payload = parsePayload(result);
+    expect(payload.dryRun).toBe(true);
+    expect(payload.wouldArchive).toBe(1);
+    expect(payload.archivedCount).toBeUndefined();
+    // The whole point: zero mutations.
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
   it("explicit projectItemIds[] can be unarchived", async () => {
     const { client, projectMutate } = makeMockClient({});
     registerBatchTools(server, client, fieldCache);
