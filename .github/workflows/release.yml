@@ -93,9 +93,16 @@ jobs:
             echo "type=$MANUAL_BUMP" >> "$GITHUB_OUTPUT"
           else
             COMMIT_MSG=$(git log -1 --pretty=%B)
-            if echo "$COMMIT_MSG" | grep -qiE '\b#major\b'; then
+            # `(^|[^[:alnum:]])#minor([^[:alnum:]]|$)`, NOT `\b#minor\b`.
+            # `\b` matches only at a word/non-word transition, and a marker
+            # written the documented way — whitespace then `#` — is non-word
+            # followed by non-word, so no boundary exists there and the match
+            # never fired. Every release silently took the patch branch,
+            # including PR #1624 (seven tool removals, published as a patch).
+            # Verified: "x #minor" does not match \b#minor\b; "abc#minor" does.
+            if echo "$COMMIT_MSG" | grep -qiE '(^|[^[:alnum:]])#major([^[:alnum:]]|$)'; then
               echo "type=major" >> "$GITHUB_OUTPUT"
-            elif echo "$COMMIT_MSG" | grep -qiE '\b#minor\b'; then
+            elif echo "$COMMIT_MSG" | grep -qiE '(^|[^[:alnum:]])#minor([^[:alnum:]]|$)'; then
               echo "type=minor" >> "$GITHUB_OUTPUT"
             else
               echo "type=patch" >> "$GITHUB_OUTPUT"
