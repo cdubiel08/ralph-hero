@@ -26,8 +26,6 @@ import {
   type RawDashboardItem,
 } from "../lib/dashboard-fetch.js";
 import { toolSuccess, toolError, resolveProjectOwner, resolveProjectNumbers } from "../types.js";
-import { detectWorkStreams, type IssueFileOwnership } from "../lib/work-stream-detection.js";
-import { detectStreamPipelinePositions, type IssueState } from "../lib/pipeline-detection.js";
 import {
   calculateMetrics,
   DEFAULT_METRICS_CONFIG,
@@ -52,8 +50,15 @@ export function registerDashboardTools(
 ): void {
   server.tool(
     "ralph_hero__pipeline_dashboard",
-    "Generate pipeline status dashboard with issue counts per workflow phase, health indicators, and formatted output. Fetches all project items (full project scan, no silent 500-cap) so phase counts reflect every item regardless of board position. Returns structured data with optional markdown or ASCII rendering. Top-level `boardItems` is the raw count of all project items including PRs (uniform across discovery tools — next_actions, pipeline_dashboard, project_hygiene). Per-phase `count` values reflect that phase's bucket; for `Done` and `Canceled`, the count is bounded by `doneWindowDays` (default 7) and may be smaller than the actual phase membership. Per-iteration `totalIssues` is a distinct concept (iteration-scoped count).",
+    "Generate pipeline status dashboard with issue counts per workflow phase, health indicators, and formatted output. Fetches all project items (full project scan, no silent 500-cap) so phase counts reflect every item regardless of board position. Returns structured data with optional markdown or ASCII rendering. Top-level `boardItems` is the raw count of all project items including PRs (uniform across discovery tools — next_actions, pipeline_dashboard, project_hygiene). Per-phase `count` values reflect that phase's bucket; for `Done` and `Canceled`, the count is bounded by `doneWindowDays` (default 7) and may be smaller than the actual phase membership. Per-iteration `totalIssues` is a distinct concept (iteration-scoped count). Set `view: \"summary\"` for a compact (~1-2KB) programmatic alternative: returns { health, riskScore, velocity, totalIssues, phaseCounts, stuckIssues, wipViolations, blockedDeps }, plus an optional `fetchWarnings` array when a project scan was partially skipped — no per-phase issue arrays, no markdown/ASCII rendering. In summary view, `format`/`groupBy`/`issuesPerPhase`/`includeMetrics`/`includeHealth`/`streams`/`archiveAgeDays` are ignored.",
     {
+      view: z
+        .enum(["full", "summary"])
+        .optional()
+        .default("full")
+        .describe(
+          "'full' (default) returns the complete dashboard (phases, issues, optional markdown/ASCII). 'summary' returns the compact 8-field status shape (~1-2KB), plus optional `fetchWarnings` on a partial scan — ignores format/groupBy/issuesPerPhase/includeMetrics/includeHealth/streams/archiveAgeDays.",
+        ),
       owner: z
         .string()
         .optional()
@@ -143,7 +148,7 @@ export function registerDashboardTools(
         )
         .optional()
         .describe(
-          "Pre-computed stream assignments from detect_work_streams. When provided, dashboard includes a Streams section.",
+          "Pre-computed, caller-supplied stream assignments (no in-repo tool currently produces these). When provided, dashboard includes a Streams section.",
         ),
       groupBy: z
         .enum(["repo"])
@@ -205,6 +210,27 @@ export function registerDashboardTools(
           doneWindowDays: args.doneWindowDays ?? 7,
           archiveAgeDays: args.archiveAgeDays ?? 14,
         };
+
+        // Compact summary view — short-circuits before dashboard building,
+        // groupBy, and format handling. Ignores format/groupBy/issuesPerPhase/
+        // includeMetrics/includeHealth/streams/archiveAgeDays per the tool
+        // description; returns buildStatusSummary's shape verbatim (GH-1610
+        // merged the formerly standalone summary tool into this `view` enum).
+        if (args.view === "summary") {
+          const summaryMetricsConfig: MetricsConfig = {
+            ...DEFAULT_METRICS_CONFIG,
+            velocityWindowDays: args.velocityWindowDays ?? 7,
+            atRiskThreshold: args.atRiskThreshold ?? 2,
+            offTrackThreshold: args.offTrackThreshold ?? 6,
+          };
+
+          const summary = buildStatusSummary(allItems, healthConfig, summaryMetricsConfig);
+
+          return toolSuccess({
+            ...summary,
+            ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+          });
+        }
 
         // Build dashboard from merged items
         const dashboard = buildDashboard(allItems, healthConfig, undefined, args.streams);
@@ -287,208 +313,6 @@ export function registerDashboardTools(
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         return toolError(`Failed to generate dashboard: ${message}`);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
-  // ralph_hero__detect_stream_positions
-  // -------------------------------------------------------------------------
-  server.tool(
-    "ralph_hero__detect_stream_positions",
-    "Combined work-stream detection + per-stream pipeline position detection. Takes issue file ownership data and issue workflow states, clusters issues into streams, then detects the pipeline phase for each stream independently.",
-    {
-      issues: z
-        .array(
-          z.object({
-            number: z.number().describe("Issue number"),
-            files: z
-              .array(z.string())
-              .describe("Will Modify file paths from research doc"),
-            blockedBy: z
-              .array(z.number())
-              .describe("GitHub blockedBy issue numbers"),
-          }),
-        )
-        .describe("List of issues with their file ownership and dependencies"),
-      issueStates: z
-        .array(
-          z.object({
-            number: z.number().describe("Issue number"),
-            title: z.string().describe("Issue title"),
-            workflowState: z.string().describe("Current workflow state"),
-            estimate: z.string().nullable().describe("Estimate (XS/S/M/L/XL)"),
-            subIssueCount: z
-              .number()
-              .optional()
-              .default(0)
-              .describe("Number of sub-issues"),
-          }),
-        )
-        .describe("Workflow state data for each issue"),
-    },
-    async (args) => {
-      try {
-        const ownership: IssueFileOwnership[] = args.issues.map((i) => ({
-          number: i.number,
-          files: i.files,
-          blockedBy: i.blockedBy,
-        }));
-
-        const streamResult = detectWorkStreams(ownership);
-
-        const states: IssueState[] = args.issueStates.map((s) => ({
-          number: s.number,
-          title: s.title,
-          workflowState: s.workflowState,
-          estimate: s.estimate,
-          subIssueCount: s.subIssueCount ?? 0,
-        }));
-
-        const positions = detectStreamPipelinePositions(
-          streamResult.streams,
-          states,
-          { autoMode: client.config.autoMode },
-        );
-
-        // Aggregate roster: max analyst/integrator across streams, stream-count-based builder
-        const suggestedRoster = positions.length > 0
-          ? {
-              analyst: Math.max(...positions.map(p => p.position.suggestedRoster.analyst)),
-              builder: Math.min(streamResult.totalStreams, 3),
-              integrator: Math.max(...positions.map(p => p.position.suggestedRoster.integrator)),
-            }
-          : { analyst: 0, builder: 0, integrator: 0 };
-
-        return toolSuccess({
-          streams: positions,
-          totalStreams: streamResult.totalStreams,
-          totalIssues: streamResult.totalIssues,
-          rationale: streamResult.rationale,
-          suggestedRoster,
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to detect stream positions: ${message}`);
-      }
-    },
-  );
-
-  // -------------------------------------------------------------------------
-  // ralph_hero__pipeline_status_summary
-  // -------------------------------------------------------------------------
-  server.tool(
-    "ralph_hero__pipeline_status_summary",
-    "Compact (~1-2KB) programmatic alternative to pipeline_dashboard. Returns exactly { health, riskScore, velocity, totalIssues, phaseCounts, stuckIssues, wipViolations, blockedDeps } — no per-phase issue arrays, no markdown/ASCII rendering. Fetches all project items (full project scan, no silent 500-cap). Use pipeline_dashboard when you need per-issue detail or rendered output; use this tool when you only need the status numbers.",
-    {
-      owner: z
-        .string()
-        .optional()
-        .describe("GitHub owner. Defaults to GITHUB_OWNER env var"),
-      projectNumbers: z
-        .array(z.coerce.number())
-        .optional()
-        .describe(
-          "Project numbers to include. Defaults to RALPH_GH_PROJECT_NUMBERS or single configured project.",
-        ),
-      stuckThresholdHours: z
-        .number()
-        .optional()
-        .default(48)
-        .describe(
-          "Hours before flagging stuck issues (default: 48, unit: hours). Shared with pipeline_dashboard.stuckThresholdHours.",
-        ),
-      wipLimits: z
-        .record(z.coerce.number())
-        .optional()
-        .describe('Per-state WIP limits, e.g. { "In Progress": 3 }'),
-      doneWindowDays: z
-        .number()
-        .optional()
-        .default(7)
-        .describe(
-          "Only count Done issues from last N days (default: 7, unit: days).",
-        ),
-      velocityWindowDays: z
-        .number()
-        .optional()
-        .default(7)
-        .describe(
-          "Days to look back for velocity calculation (default: 7, unit: days).",
-        ),
-      atRiskThreshold: z
-        .number()
-        .optional()
-        .default(2)
-        .describe("Risk score threshold for AT_RISK status (default: 2, unit: count)."),
-      offTrackThreshold: z
-        .number()
-        .optional()
-        .default(6)
-        .describe("Risk score threshold for OFF_TRACK status (default: 6, unit: count)."),
-    },
-    async (args) => {
-      try {
-        const owner = args.owner || resolveProjectOwner(client.config);
-        if (!owner) {
-          return toolError("owner is required");
-        }
-
-        const projectNumbers = args.projectNumbers
-          ?? resolveProjectNumbers(client.config);
-
-        if (projectNumbers.length === 0) {
-          return toolError(
-            "No project numbers configured. Set RALPH_GH_PROJECT_NUMBER or RALPH_GH_PROJECT_NUMBERS.",
-          );
-        }
-
-        const allItems: DashboardItem[] = [];
-        const fetchWarnings: string[] = [];
-
-        if (args.projectNumbers && args.projectNumbers.length > 0) {
-          for (const pn of args.projectNumbers) {
-            const { items, warnings } = await fetchDashboardItems(
-              client,
-              fieldCache,
-              pn,
-            );
-            allItems.push(...items);
-            fetchWarnings.push(...warnings);
-          }
-        } else {
-          const { items, warnings } = await fetchDashboardItems(
-            client,
-            fieldCache,
-          );
-          allItems.push(...items);
-          fetchWarnings.push(...warnings);
-        }
-
-        const healthConfig: HealthConfig = {
-          ...DEFAULT_HEALTH_CONFIG,
-          stuckThresholdHours: args.stuckThresholdHours ?? 48,
-          criticalStuckHours: (args.stuckThresholdHours ?? 48) * 2,
-          wipLimits: args.wipLimits ?? {},
-          doneWindowDays: args.doneWindowDays ?? 7,
-        };
-
-        const metricsConfig: MetricsConfig = {
-          ...DEFAULT_METRICS_CONFIG,
-          velocityWindowDays: args.velocityWindowDays ?? 7,
-          atRiskThreshold: args.atRiskThreshold ?? 2,
-          offTrackThreshold: args.offTrackThreshold ?? 6,
-        };
-
-        const summary = buildStatusSummary(allItems, healthConfig, metricsConfig);
-
-        return toolSuccess({
-          ...summary,
-          ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to generate status summary: ${message}`);
       }
     },
   );

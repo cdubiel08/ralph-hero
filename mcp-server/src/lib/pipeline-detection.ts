@@ -7,7 +7,6 @@
  */
 
 import { LOCK_STATES, TERMINAL_STATES } from "./workflow-states.js";
-import type { WorkStream } from "./work-stream-detection.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,12 +61,6 @@ export interface PipelinePosition {
   isGroup: boolean;
   groupPrimary: number | null;
   suggestedRoster: SuggestedRoster;
-}
-
-export interface StreamPipelineResult {
-  streamId: string;
-  issues: IssueState[];
-  position: PipelinePosition;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,38 +394,6 @@ export function detectPipelinePosition(
     { required: false, met: true, blocking: [] },
     options.streamCount,
   );
-}
-
-// ---------------------------------------------------------------------------
-// Stream-level detection
-// ---------------------------------------------------------------------------
-
-export function detectStreamPipelinePositions(
-  streams: WorkStream[],
-  issueStates: IssueState[],
-  options: DetectionOptions = {},
-): StreamPipelineResult[] {
-  const stateByNumber = new Map<number, IssueState>();
-  for (const state of issueStates) {
-    stateByNumber.set(state.number, state);
-  }
-
-  return streams.map((stream) => {
-    const filteredIssues = stream.issues
-      .map((num) => stateByNumber.get(num))
-      .filter((s): s is IssueState => s !== undefined);
-    const isGroup = filteredIssues.length > 1;
-    const groupPrimary = stream.primaryIssue;
-
-    return {
-      streamId: stream.id,
-      issues: filteredIssues,
-      position: detectPipelinePosition(filteredIssues, isGroup, groupPrimary, {
-        ...options,
-        streamCount: streams.length,
-      }),
-    };
-  });
 }
 
 // ---------------------------------------------------------------------------

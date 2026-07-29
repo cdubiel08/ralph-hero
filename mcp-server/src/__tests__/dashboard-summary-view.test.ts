@@ -1,6 +1,10 @@
 /**
  * Integration tests for `registerDashboardTools` /
- * `ralph_hero__pipeline_status_summary`.
+ * `ralph_hero__pipeline_dashboard {view: "summary"}`.
+ *
+ * GH-1610 merged the standalone `pipeline_status_summary` tool into
+ * `pipeline_dashboard` behind a `view` enum (né `pipeline-status-summary.test.ts`
+ * — retargeted, not deleted, per the plan's preservation requirement).
  *
  * Mocks `client.projectQuery` and exercises the tool's full flow:
  *   ensureFieldCache -> fetchDashboardItems -> buildStatusSummary ->
@@ -222,7 +226,7 @@ function parsePayload(result: HandlerResult): unknown {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("ralph_hero__pipeline_status_summary", () => {
+describe("ralph_hero__pipeline_dashboard {view: \"summary\"}", () => {
   let server: McpServer;
   let fieldCache: FieldOptionCache;
 
@@ -264,9 +268,9 @@ describe("ralph_hero__pipeline_status_summary", () => {
       { itemsByProject: { 3: fixtures() } },
     );
     registerDashboardTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__pipeline_status_summary");
+    const tool = getTool(server, "ralph_hero__pipeline_dashboard");
 
-    const result = await tool.handler({}, {});
+    const result = await tool.handler({ view: "summary" }, {});
     const payload = parsePayload(result) as Record<string, unknown>;
 
     expect(result.isError).toBeUndefined();
@@ -296,9 +300,9 @@ describe("ralph_hero__pipeline_status_summary", () => {
       { itemsByProject: { 3: fixtures() } },
     );
     registerDashboardTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__pipeline_status_summary");
+    const tool = getTool(server, "ralph_hero__pipeline_dashboard");
 
-    const result = await tool.handler({}, {});
+    const result = await tool.handler({ view: "summary" }, {});
     const payload = parsePayload(result) as {
       phaseCounts: Record<string, number>;
       totalIssues: number;
@@ -326,9 +330,12 @@ describe("ralph_hero__pipeline_status_summary", () => {
       { itemsByProject: { 3: manyStuck } },
     );
     registerDashboardTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__pipeline_status_summary");
+    const tool = getTool(server, "ralph_hero__pipeline_dashboard");
 
-    const result = await tool.handler({ stuckThresholdHours: 48 }, {});
+    const result = await tool.handler(
+      { view: "summary", stuckThresholdHours: 48 },
+      {},
+    );
     const payload = parsePayload(result) as {
       stuckIssues: Array<{ number: number }>;
     };
@@ -340,9 +347,57 @@ describe("ralph_hero__pipeline_status_summary", () => {
   it("owner missing returns a tool error", async () => {
     const { client } = createMockClient({ owner: "", projectOwner: "" });
     registerDashboardTools(server, client, fieldCache);
-    const tool = getTool(server, "ralph_hero__pipeline_status_summary");
+    const tool = getTool(server, "ralph_hero__pipeline_dashboard");
+
+    const result = await tool.handler({ view: "summary" }, {});
+    expect(result.isError).toBe(true);
+  });
+
+  it("ignores format — summary view never returns markdown/ascii/formatted", async () => {
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures() } },
+    );
+    registerDashboardTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__pipeline_dashboard");
+
+    const result = await tool.handler(
+      { view: "summary", format: "markdown" },
+      {},
+    );
+    const payload = parsePayload(result) as Record<string, unknown>;
+
+    expect(result.isError).toBeUndefined();
+    expect(payload).not.toHaveProperty("formatted");
+    expect(payload).not.toHaveProperty("markdown");
+    expect(Object.keys(payload).sort()).toEqual(
+      [
+        "health",
+        "riskScore",
+        "velocity",
+        "totalIssues",
+        "phaseCounts",
+        "stuckIssues",
+        "wipViolations",
+        "blockedDeps",
+      ].sort(),
+    );
+  });
+
+  it("default view (\"full\") is unaffected — no view arg still returns the full dashboard shape", async () => {
+    const { client } = createMockClient(
+      { projectNumber: 3 },
+      { itemsByProject: { 3: fixtures() } },
+    );
+    registerDashboardTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__pipeline_dashboard");
 
     const result = await tool.handler({}, {});
-    expect(result.isError).toBe(true);
+    const payload = parsePayload(result) as Record<string, unknown>;
+
+    expect(result.isError).toBeUndefined();
+    // Full dashboard shape has `phases`, not the compact summary keys.
+    expect(payload).toHaveProperty("phases");
+    expect(payload).not.toHaveProperty("riskScore");
   });
 });

@@ -15,6 +15,8 @@ import { FieldOptionCache } from "../lib/cache.js";
 import {
   WORKFLOW_STATE_TO_STATUS,
   isParentGateState,
+  isValidState,
+  VALID_STATES,
 } from "../lib/workflow-states.js";
 import { toolSuccess, toolError } from "../types.js";
 import {
@@ -38,6 +40,19 @@ const FIELD_NAME_MAP = {
   priority: "Priority",
 } as const;
 
+/**
+ * Ordering for the `maxChildEstimate` ceiling check (GH-1618). Mirrors the
+ * `estimate` enum on `childSchema` — smallest to largest.
+ */
+const ESTIMATE_ORDER = ["XS", "S", "M", "L", "XL"] as const;
+type Estimate = (typeof ESTIMATE_ORDER)[number];
+
+/** Default ceiling when `maxChildEstimate` is not supplied (GH-1618). "M"
+ * keeps epic/plan-of-plans decomposition legal (this very group's siblings
+ * are M-estimate children of a non-split surface) while still closing the
+ * L/XL hole every ungated caller left open. */
+const DEFAULT_MAX_CHILD_ESTIMATE: Estimate = "M";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -53,7 +68,11 @@ export const childSchema = z.object({
   estimate: z
     .enum(["XS", "S", "M", "L", "XL"])
     .optional()
-    .describe("Estimate (passthrough; policy gating lives in hooks)"),
+    .describe(
+      "Estimate. Validated up front against the request-level " +
+        "maxChildEstimate ceiling (default \"M\") before any issue is created " +
+        "— see the tool description.",
+    ),
   priority: z.enum(["P0", "P1", "P2", "P3"]).optional().describe("Priority"),
   workflowState: z
     .string()
@@ -283,6 +302,80 @@ export function detectSiblingCycle(
 }
 
 // ---------------------------------------------------------------------------
+// Up-front dependsOnIssues resolvability (GH-1618)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve every distinct `dependsOnIssues` reference across the whole batch
+ * in ONE aliased query, before any mutation. Returns the subset of `numbers`
+ * that did not resolve to an existing issue in `owner/repo`. Successfully
+ * resolved node IDs are seeded into the same cache key `resolveIssueNodeId`
+ * reads, so Stage 4's per-edge resolution below is a cache hit rather than a
+ * second round-trip.
+ */
+export async function resolveDependsOnIssuesUpFront(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  numbers: number[],
+): Promise<number[]> {
+  const unique = Array.from(new Set(numbers));
+  if (unique.length === 0) return [];
+
+  // Chunked like every other multi-item path in this file. `unique` is bounded
+  // only by 50 children x 50 dependsOnIssues each, so an unchunked query could
+  // emit ~2500 aliases, blow GitHub's query-complexity/node limits, and fail
+  // wholesale — refusing an otherwise-legitimate batch with an opaque GraphQL
+  // error, before any mutation runs.
+  const unknown: number[] = [];
+  for (const batch of chunk(unique, MUTATION_CHUNK_SIZE)) {
+    unknown.push(...(await resolveDependsOnChunk(client, owner, repo, batch)));
+  }
+  return unknown;
+}
+
+async function resolveDependsOnChunk(
+  client: GitHubClient,
+  owner: string,
+  repo: string,
+  unique: number[],
+): Promise<number[]> {
+  const varDecls = ["$owner: String!", "$repo: String!"];
+  const variables: Record<string, unknown> = { owner, repo };
+  const aliases: string[] = [];
+
+  unique.forEach((n, i) => {
+    const numVar = `num${i}`;
+    varDecls.push(`$${numVar}: Int!`);
+    variables[numVar] = n;
+    // Aliased under ONE repository selection rather than re-resolving
+    // repository(owner, name) per alias — same result, materially lower
+    // query cost.
+    aliases.push(`n${i}: issue(number: $${numVar}) { id }`);
+  });
+
+  const queryString =
+    `query(${varDecls.join(", ")}) {\n` +
+    `  repository(owner: $owner, name: $repo) {\n    ${aliases.join("\n    ")}\n  }\n}`;
+  const result = await client.query<{
+    repository: Record<string, { id: string } | null> | null;
+  }>(queryString, variables);
+
+  const unknown: number[] = [];
+  unique.forEach((n, i) => {
+    const issue = result.repository?.[`n${i}`];
+    if (!issue) {
+      unknown.push(n);
+    } else {
+      client
+        .getCache()
+        .set(`issue-node-id:${owner}/${repo}#${n}`, issue.id, 30 * 60 * 1000);
+    }
+  });
+  return unknown;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -342,8 +435,15 @@ export function registerTreeTools(
       "(1) create the child issues, (2) link each under the parent and add it to the project board, " +
       "(3) set project fields (workflowState/estimate/priority), (4) wire intra-batch dependency edges. " +
       "Partial-failure aware: returns per-child status {number, url, projectItemId, created, linked, fieldsSet, edgesWired, error} " +
-      "so a caller can repair without re-creating. estimate/priority/workflowState are passthrough " +
-      "(policy gating lives in hooks). Returns partialFailure:true when any stage partially failed.",
+      "so a caller can repair without re-creating. Contract (GH-1618, enforced up front — a violation " +
+      "creates ZERO issues): every child's estimate must be <= maxChildEstimate (defaults to \"M\" when " +
+      "omitted, so no caller can create L/XL children by forgetting the param; pass e.g. \"S\" to arm an " +
+      "atomic-split/ticket-tree contract, or \"XL\" for a deliberately coarse decomposition); a child with " +
+      "no estimate is REFUSED when maxChildEstimate was explicitly set, or created and reported in " +
+      "unestimatedChildren when it fell back to the default; every child workflowState must be a known " +
+      "workflow state; every dependsOnIssues reference must resolve to an existing issue. " +
+      "priority remains passthrough (no policy gating). " +
+      "Returns partialFailure:true when any stage partially failed after creation.",
     {
       owner: z.string().optional().describe("GitHub owner. Defaults to env var"),
       repo: z.string().optional().describe("Repository name. Defaults to env var"),
@@ -354,6 +454,18 @@ export function registerTreeTools(
       parentNumber: z.coerce
         .number()
         .describe("Parent issue number the created children are linked under"),
+      maxChildEstimate: z
+        .enum(["XS", "S", "M", "L", "XL"])
+        .optional()
+        .describe(
+          "Ceiling every child's estimate must be <= (GH-1618). Defaults to " +
+            "\"M\" when omitted — arm \"S\" for atomic-split/ticket-tree contracts, " +
+            "or raise/omit for coarser decompositions (epic feature children are " +
+            "legitimately M). When explicitly set, a child with no estimate is " +
+            "refused; when defaulted, an unestimated child is created and listed " +
+            "in the response's unestimatedChildren. Whole-batch up-front toolError " +
+            "on violation — nothing is created.",
+        ),
       children: z
         .array(childSchema)
         .min(1)
@@ -393,10 +505,88 @@ export function registerTreeTools(
           );
         }
 
+        // ---- Child-estimate ceiling (GH-1618, before any mutation) -----
+        // `maxChildEstimate` is resolved here rather than via a zod
+        // `.default()` so the handler can tell "caller armed it explicitly"
+        // from "fell back to the default" — the two differ on how a missing
+        // child estimate is treated (refused vs. created + reported).
+        const ceilingArmed = args.maxChildEstimate !== undefined;
+        const effectiveCeiling: Estimate =
+          args.maxChildEstimate ?? DEFAULT_MAX_CHILD_ESTIMATE;
+        const ceilingIndex = ESTIMATE_ORDER.indexOf(effectiveCeiling);
+        const unestimatedChildren: number[] = [];
+
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i];
+          if (!child.estimate) {
+            if (ceilingArmed) {
+              return toolError(
+                `Child #${i} ("${child.title}") has no estimate, but maxChildEstimate=${effectiveCeiling} is set — ` +
+                  `the ceiling cannot be verified. No issues were created. Add an estimate ` +
+                  `to every child (XS-${effectiveCeiling}) and retry.`,
+              );
+            }
+            unestimatedChildren.push(i);
+            continue;
+          }
+          if (ESTIMATE_ORDER.indexOf(child.estimate) > ceilingIndex) {
+            return toolError(
+              `Child #${i} ("${child.title}") has estimate ${child.estimate}, which exceeds maxChildEstimate=${effectiveCeiling}. ` +
+                `No issues were created. Split this child further, or raise/omit ` +
+                `maxChildEstimate if this is an epic-level decomposition (feature children ` +
+                `may legitimately be M).`,
+            );
+          }
+        }
+
+        // ---- workflowState validity (before any mutation) --------------
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i];
+          if (child.workflowState && !isValidState(child.workflowState)) {
+            return toolError(
+              `Child #${i} ("${child.title}") has unknown workflowState "${child.workflowState}". ` +
+                `Valid states: ${VALID_STATES.join(", ")}. ` +
+                `No issues were created. Retry with a valid state name, or omit workflowState.`,
+            );
+          }
+        }
+
         const { owner, repo, projectNumber, projectOwner } = resolveFullConfig(
           client,
           args,
         );
+
+        // ---- dependsOnIssues resolvability (before any mutation) -------
+        // Range/self-edge/cycle checks above cover sibling-index dependsOn;
+        // dependsOnIssues references issues OUTSIDE this batch and needs an
+        // actual lookup. One aliased query for the whole batch, before any
+        // mutation — a caller passing a typo'd or deleted issue number gets
+        // a whole-batch refusal instead of a Stage 4 partial failure.
+        const allDependsOnIssues = children.flatMap(
+          (c) => c.dependsOnIssues ?? [],
+        );
+        let unresolvedDependsOnIssues: number[];
+        try {
+          unresolvedDependsOnIssues = await resolveDependsOnIssuesUpFront(
+            client,
+            owner,
+            repo,
+            allDependsOnIssues,
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return toolError(
+            `Could not verify dependsOnIssues references: ${message}. No issues were created.`,
+          );
+        }
+        if (unresolvedDependsOnIssues.length > 0) {
+          return toolError(
+            `dependsOnIssues references unknown issue number(s): ${unresolvedDependsOnIssues
+              .map((n) => `#${n}`)
+              .join(", ")}. No issues were created. Verify the issue numbers exist ` +
+              `in ${owner}/${repo} and retry.`,
+          );
+        }
 
         await ensureFieldCache(client, fieldCache, projectOwner, projectNumber);
 
@@ -877,6 +1067,7 @@ export function registerTreeTools(
           },
           children: childResults,
           ...(advanceNotes.length ? { notes: advanceNotes } : {}),
+          ...(unestimatedChildren.length ? { unestimatedChildren } : {}),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

@@ -1,13 +1,14 @@
 /**
- * MCP tools for project performance trends (Phase 1: snapshot capture).
+ * MCP tools for project performance trends.
  *
- * Phase 1 (GH-1022) registers `ralph_hero__capture_snapshot`, which
- * fetches the current dashboard + metrics and appends one row to the
- * partitioned JSONL file at
- * `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`.
- *
- * Later phases (GH-1024 trend query, GH-1023 cycle-time enrichment)
- * register additional tools on the same module.
+ * `ralph_hero__metrics_trends` is a pure local read of the partitioned
+ * JSONL snapshot store at `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`
+ * by default (`capture: false`, offline-capable). GH-1611 folded the former
+ * standalone snapshot-capture tool into this one behind
+ * `capture: true`: when set, the tool first fetches the live dashboard +
+ * metrics, appends one snapshot row (same path/schema as before), then
+ * computes trends over the freshly-updated file. The persistence contract
+ * (`lib/snapshots.ts`, `snapshots.fixture.jsonl`) is unchanged.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -30,6 +31,7 @@ import {
 import { rollupCycleTimes } from "../lib/cycle-times.js";
 import { parseDateMath } from "../lib/date-math.js";
 import { computeTrends, type TrendSeries } from "../lib/trends.js";
+import { zBoolish } from "../lib/zod-helpers.js";
 import { resolveProjectOwner, toolError, toolSuccess } from "../types.js";
 
 export function registerTrendsTools(
@@ -38,104 +40,14 @@ export function registerTrendsTools(
   fieldCache: FieldOptionCache,
 ): void {
   server.tool(
-    "ralph_hero__capture_snapshot",
-    "Capture a single point-in-time snapshot of the project dashboard + metrics and append it to the partitioned JSONL file at ~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl. Fetches all project items (full project scan, no silent 500-cap) so per-phase WIP and totals reflect every item regardless of board position. Append-only, schema-versioned. Returns the snapshot row that was written.",
-    {
-      projectNumber: z
-        .number()
-        .optional()
-        .describe(
-          "Project number to capture. Defaults to RALPH_GH_PROJECT_NUMBER.",
-        ),
-      windowDays: z
-        .number()
-        .int()
-        .positive()
-        .default(7)
-        .describe(
-          "Velocity / highlights window in days (default: 7, unit: days). Shares the RECENT_WINDOW_DAYS value with hygiene.staleDays, dashboard.doneWindowDays, next_actions.treeRecentDoneDays, and metrics.velocityWindowDays.",
-        ),
-    },
-    async (args) => {
-      try {
-        const owner = resolveProjectOwner(client.config);
-        if (!owner) {
-          return toolError(
-            "RALPH_GH_OWNER and RALPH_GH_PROJECT_NUMBER required",
-          );
-        }
-
-        const projectNumber =
-          args.projectNumber ?? client.config.projectNumber;
-        if (projectNumber === undefined) {
-          return toolError(
-            "RALPH_GH_OWNER and RALPH_GH_PROJECT_NUMBER required",
-          );
-        }
-
-        const windowDays = args.windowDays ?? 7;
-
-        const { items, warnings: fetchWarnings } = await fetchDashboardItems(
-          client,
-          fieldCache,
-          projectNumber,
-        );
-
-        const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG);
-        const metrics = calculateMetrics(items, data, {
-          ...DEFAULT_METRICS_CONFIG,
-          velocityWindowDays: windowDays,
-        });
-
-        // Phase 2 (GH-1023): cycle-time enrichment.
-        // Best-effort: fetch comments for Done-in-window items, parse
-        // transition records, roll up percentiles. Failures are logged
-        // inside fetchTransitionedIssues and never abort the snapshot.
-        const now = Date.now();
-        const cutoffMs = now - windowDays * 24 * 60 * 60 * 1000;
-        const doneInWindow = items.filter((it) => {
-          if (it.workflowState !== "Done" || !it.closedAt) return false;
-          const ts = Date.parse(it.closedAt);
-          return Number.isFinite(ts) && ts >= cutoffMs;
-        });
-
-        const transitioned = await fetchTransitionedIssues(client, doneInWindow);
-        const rollup = rollupCycleTimes(transitioned, now);
-        const includeCycleTime =
-          rollup.sampleSize > 0 ||
-          Object.keys(rollup.perPhaseDwellHours).length > 0;
-
-        const snapshot = toSnapshot({
-          owner,
-          projectNumber,
-          data,
-          metrics,
-          windowDays,
-          ...(includeCycleTime ? { cycleTime: rollup } : {}),
-        });
-
-        await appendSnapshot(snapshot);
-
-        return toolSuccess({
-          ...snapshot,
-          ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return toolError(`Failed to capture snapshot: ${message}`);
-      }
-    },
-  );
-
-  server.tool(
     "ralph_hero__metrics_trends",
-    "Read local snapshot JSONL and return 1d/7d/30d deltas plus sparklines for velocity, riskScore, wipTotal, leadTimeP50Hours.",
+    "Read local snapshot JSONL and return 1d/7d/30d deltas plus sparklines for velocity, riskScore, wipTotal, leadTimeP50Hours. Set `capture: true` to first fetch the live project (full scan, no silent 500-cap), append a new snapshot row to ~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl (absorbs the former standalone snapshot-capture tool), and then compute trends over the just-updated file — the appended row is always returned under `snapshot`, regardless of `format`. That means `capture: true` + `format: \"markdown\"` returns `{snapshot, markdown}`, not `{markdown}` alone; `capture: true` + `format: \"json\"` returns `{snapshot, owner, projectNumber, since, now, series}`. `capture: false` (default) is a pure local read that works with GitHub unreachable and pays no capture cost.",
     {
       projectNumber: z
         .number()
         .optional()
         .describe(
-          "Project number to query. Defaults to RALPH_GH_PROJECT_NUMBER.",
+          "Project number to query/capture. Defaults to RALPH_GH_PROJECT_NUMBER.",
         ),
       since: z
         .string()
@@ -148,6 +60,20 @@ export function registerTrendsTools(
         .enum(["json", "markdown"])
         .default("json")
         .describe("Output format. `markdown` embeds sparklines per metric."),
+      capture: zBoolish()
+        .optional()
+        .default(false)
+        .describe(
+          "If true, fetch the live project and append a snapshot row before computing trends (absorbs the former standalone snapshot-capture tool). Default false — pure local read, offline-capable.",
+        ),
+      windowDays: z
+        .number()
+        .int()
+        .positive()
+        .default(7)
+        .describe(
+          "Velocity / highlights window in days (default: 7, unit: days). Used only when capture: true. Shares the RECENT_WINDOW_DAYS value with hygiene.staleDays, dashboard.doneWindowDays, next_actions.treeRecentDoneDays, and metrics.velocityWindowDays.",
+        ),
     },
     async (args) => {
       try {
@@ -164,6 +90,58 @@ export function registerTrendsTools(
           return toolError(
             "RALPH_GH_OWNER and RALPH_GH_PROJECT_NUMBER required",
           );
+        }
+
+        let snapshot: Snapshot | undefined;
+        let fetchWarnings: string[] = [];
+
+        if (args.capture) {
+          const windowDays = args.windowDays ?? 7;
+
+          const { items, warnings } = await fetchDashboardItems(
+            client,
+            fieldCache,
+            projectNumber,
+          );
+          fetchWarnings = warnings;
+
+          const data = buildDashboard(items, DEFAULT_HEALTH_CONFIG);
+          const metrics = calculateMetrics(items, data, {
+            ...DEFAULT_METRICS_CONFIG,
+            velocityWindowDays: windowDays,
+          });
+
+          // Best-effort cycle-time enrichment: fetch comments for
+          // Done-in-window items, parse transition records, roll up
+          // percentiles. Failures are logged inside
+          // fetchTransitionedIssues and never abort the capture.
+          const captureNow = Date.now();
+          const cutoffMs = captureNow - windowDays * 24 * 60 * 60 * 1000;
+          const doneInWindow = items.filter((it) => {
+            if (it.workflowState !== "Done" || !it.closedAt) return false;
+            const ts = Date.parse(it.closedAt);
+            return Number.isFinite(ts) && ts >= cutoffMs;
+          });
+
+          const transitioned = await fetchTransitionedIssues(
+            client,
+            doneInWindow,
+          );
+          const rollup = rollupCycleTimes(transitioned, captureNow);
+          const includeCycleTime =
+            rollup.sampleSize > 0 ||
+            Object.keys(rollup.perPhaseDwellHours).length > 0;
+
+          snapshot = toSnapshot({
+            owner,
+            projectNumber,
+            data,
+            metrics,
+            windowDays,
+            ...(includeCycleTime ? { cycleTime: rollup } : {}),
+          });
+
+          await appendSnapshot(snapshot);
         }
 
         const sinceDate = args.since
@@ -191,15 +169,21 @@ export function registerTrendsTools(
 
         if (args.format === "markdown") {
           const markdown = renderTrendsMarkdown(series, owner, projectNumber);
-          return toolSuccess({ markdown });
+          return toolSuccess({
+            ...(snapshot ? { snapshot } : {}),
+            markdown,
+            ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
+          });
         }
 
         return toolSuccess({
+          ...(snapshot ? { snapshot } : {}),
           owner,
           projectNumber,
           since: sinceDate.toISOString(),
           now: new Date(now).toISOString(),
           series,
+          ...(fetchWarnings.length > 0 ? { fetchWarnings } : {}),
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

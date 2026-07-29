@@ -3,16 +3,28 @@
  * and batch_update input validation logic.
  *
  * The query/mutation builders are pure functions and can be tested
- * without mocking. Integration behavior (actual GraphQL execution)
- * is tested manually.
+ * without mocking. GH-1615 adds a handler-level integration suite
+ * (mirroring the `getTool` pattern in `bulk-archive.test.ts`) for the new
+ * workflow_state transition-legality refusal path.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as fs from "fs";
+import * as path from "path";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   buildBatchResolveQuery,
   buildBatchMutationQuery,
   buildBatchFieldValueQuery,
+  registerBatchTools,
 } from "../tools/batch-tools.js";
+import type { GitHubClient } from "../github-client.js";
+import { FieldOptionCache } from "../lib/cache.js";
+
+const batchToolsSrc = fs.readFileSync(
+  path.resolve(__dirname, "../tools/batch-tools.ts"),
+  "utf-8",
+);
 
 // ---------------------------------------------------------------------------
 // buildBatchResolveQuery
@@ -319,5 +331,436 @@ describe("buildBatchFieldValueQuery edge cases", () => {
     expect(queryString).toContain("fv19:");
     expect(variables.id_fv0).toBe("item-0");
     expect(variables.id_fv19).toBe("item-19");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration: ralph_hero__batch_update workflow_state transition legality
+// (GH-1615) — mirrors the `getTool` handler-invocation pattern used in
+// bulk-archive.test.ts's archive-mode integration suite.
+// ---------------------------------------------------------------------------
+
+interface HandlerResult {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+interface RegisteredTool {
+  handler: (args: unknown, extra: unknown) => Promise<HandlerResult>;
+}
+
+function getTool(server: McpServer, name: string): RegisteredTool {
+  const tools = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })
+    ._registeredTools;
+  const tool = tools?.[name];
+  if (!tool) throw new Error(`Tool ${name} not registered`);
+  return tool;
+}
+
+function parsePayload(result: HandlerResult): Record<string, unknown> {
+  expect(result.content).toHaveLength(1);
+  return JSON.parse(result.content[0].text) as Record<string, unknown>;
+}
+
+const ALL_WORKFLOW_STATES = [
+  "Backlog",
+  "Research Needed",
+  "Research in Progress",
+  "Ready for Plan",
+  "Plan in Progress",
+  "Plan in Review",
+  "In Progress",
+  "In Review",
+  "Done",
+  "Canceled",
+  "Human Needed",
+];
+
+function makeFieldCacheWithWorkflowState(): FieldOptionCache {
+  const cache = new FieldOptionCache();
+  cache.populate(7, "project-id-1", [
+    {
+      id: "field-ws-id",
+      name: "Workflow State",
+      options: ALL_WORKFLOW_STATES.map((name, i) => ({ id: `opt-${i}`, name })),
+    },
+  ]);
+  return cache;
+}
+
+/**
+ * Mock client for the batch_update field-op path. `currentStates` maps issue
+ * number -> its current Workflow State (or undefined for "no value set").
+ * The field cache is pre-populated (see makeFieldCacheWithWorkflowState), so
+ * ensureFieldCache short-circuits and never issues a projectQuery.
+ */
+function makeBatchFieldOpMockClient(opts: {
+  currentStates: Record<number, string | undefined>;
+  fieldValueQueryShouldFail?: boolean;
+  mutateShouldFail?: boolean;
+  /** GH-1616: per-issue holder/heldSince for the lock-conflict enrichment. */
+  currentHolders?: Record<number, { holder?: string; heldSince?: string }>;
+}): { client: GitHubClient; projectMutate: ReturnType<typeof vi.fn> } {
+  const cacheStore = new Map<string, unknown>();
+  const issueNumbers = Object.keys(opts.currentStates).map(Number);
+
+  const query = vi.fn(async (q: string) => {
+    // buildBatchResolveQuery: aliases i0, i1, ... over repository(owner:...)
+    if (q.includes("repository(owner:") && q.includes("projectItems(first:")) {
+      const result: Record<string, unknown> = {};
+      issueNumbers.forEach((num, i) => {
+        result[`i${i}`] = {
+          issue: {
+            id: `issue-node-${num}`,
+            projectItems: { nodes: [{ id: `item-${num}`, project: { id: "project-id-1" } }] },
+          },
+        };
+      });
+      return result;
+    }
+    // buildBatchFieldValueQuery: aliases are `fv${issueNumber}` (the batch_update
+    // handler keys itemsToCheck by issue number, not loop index — see
+    // batch-tools.ts's `alias: \`fv${num}\`` in the Step 2 field-value fetch).
+    if (q.includes("node(id: $id_fv")) {
+      if (opts.fieldValueQueryShouldFail) {
+        throw new Error("simulated field-value query failure");
+      }
+      const result: Record<string, unknown> = {};
+      issueNumbers.forEach((num) => {
+        const state = opts.currentStates[num];
+        const holderInfo = opts.currentHolders?.[num];
+        result[`fv${num}`] = {
+          fieldValues: {
+            nodes: state
+              ? [{
+                  __typename: "ProjectV2ItemFieldSingleSelectValue",
+                  name: state,
+                  updatedAt: holderInfo?.heldSince,
+                  creator: holderInfo?.holder ? { login: holderInfo.holder } : undefined,
+                  field: { name: "Workflow State" },
+                }]
+              : [],
+          },
+        };
+      });
+      return result;
+    }
+    throw new Error(`Unmocked query: ${q.slice(0, 100)}`);
+  });
+
+  const projectMutate = opts.mutateShouldFail
+    ? vi.fn().mockRejectedValue(new Error("mutation failed"))
+    : vi.fn().mockResolvedValue({});
+
+  const client = {
+    config: {
+      token: "test",
+      owner: "octocat",
+      repo: "repo",
+      projectNumber: 7,
+      projectOwner: "octocat",
+    },
+    query,
+    projectQuery: vi.fn(async () => {
+      throw new Error("projectQuery should not be called — field cache is pre-populated");
+    }),
+    mutate: vi.fn(),
+    projectMutate,
+    getCache: vi.fn(() => ({
+      get: (key: string) => cacheStore.get(key),
+      set: (key: string, value: unknown) => cacheStore.set(key, value),
+      invalidatePrefix: vi.fn(),
+    })),
+    getAuthenticatedUser: vi.fn(),
+    getRateLimitStatus: vi.fn(),
+    restPost: vi.fn(),
+  } as unknown as GitHubClient;
+
+  return { client, projectMutate };
+}
+
+describe("ralph_hero__batch_update workflow_state transition legality (GH-1615)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = makeFieldCacheWithWorkflowState();
+  });
+
+  // The guard below picks the workflow_state op via `.find(...)` (first match)
+  // but step 3 builds aliased writes for EVERY op, so a second workflow_state
+  // entry would be applied without ever being checked for transition legality
+  // or lock conflict — a direct bypass of this block. Refused up front.
+  it("refuses duplicate field operations (second write would bypass the guards)", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Backlog" },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [
+          { field: "workflow_state", value: "Research Needed" },
+          { field: "workflow_state", value: "In Progress" },
+        ],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result) as { error: string };
+    expect(payload.error).toContain("Duplicate field operation");
+    expect(payload.error).toContain("workflow_state");
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("whole-batch refusal on an unknown workflow_state value (before any API calls)", async () => {
+    const { client } = makeBatchFieldOpMockClient({ currentStates: { 10: "Backlog" } });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [{ field: "workflow_state", value: "Not A Real State" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result) as { error: string };
+    expect(payload.error).toContain("Invalid workflow_state value");
+    expect(client.query).not.toHaveBeenCalled();
+  });
+
+  it("per-issue error for an illegal transition; the rest of the batch still mutates", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Backlog", 11: "Ready for Plan" },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10, 11],
+        operations: [{ field: "workflow_state", value: "In Progress" }],
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      succeeded: Array<{ number: number }>;
+      errors: Array<{ number: number; error: string }>;
+      summary: { succeeded: number; errors: number };
+    };
+
+    // #10 Backlog -> In Progress is illegal (not in ALLOWED_TRANSITIONS)
+    expect(payload.errors.map((e) => e.number)).toEqual([10]);
+    expect(payload.errors[0].error).toContain("Illegal transition for #10");
+    expect(payload.errors[0].error).toContain("force: true");
+
+    // #11 Ready for Plan -> In Progress IS legal (added edge c) and mutates
+    expect(payload.succeeded.map((s) => s.number)).toEqual([11]);
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("current-state fetch failure is a whole-batch toolError with zero mutations (fail closed)", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Backlog", 11: "Ready for Plan" },
+      fieldValueQueryShouldFail: true,
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10, 11],
+        operations: [{ field: "workflow_state", value: "In Progress" }],
+      },
+      {},
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = parsePayload(result) as { error: string };
+    expect(payload.error).toContain("Could not determine current workflow state");
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("a genuinely-unset current state (no Workflow State value) PASSES validation", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: undefined },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [{ field: "workflow_state", value: "Ready for Plan" }],
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      succeeded: Array<{ number: number }>;
+      errors: Array<unknown>;
+    };
+    expect(payload.errors).toEqual([]);
+    expect(payload.succeeded.map((s) => s.number)).toEqual([10]);
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("skipIfAtOrPast still skips same-state issues after the (legal) transition check", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "In Review" },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [{ field: "workflow_state", value: "In Review" }],
+        skipIfAtOrPast: true,
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      skipped: Array<{ number: number; reason: string }>;
+      errors: Array<unknown>;
+    };
+    expect(payload.errors).toEqual([]);
+    expect(payload.skipped).toEqual([
+      { number: 10, reason: "Already at target state" },
+    ]);
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  // NOTE: the absence of a `force` escape hatch is asserted behaviorally in the
+  // lock-conflict suite below ("force: true does not bypass..."). A
+  // `not.toContain('force: zBoolish()')` source check is trivially defeated by
+  // any reformatting or an equivalent schema spelling.
+});
+
+// ---------------------------------------------------------------------------
+// GH-1616: batch_update lock-conflict side door — closed.
+// ---------------------------------------------------------------------------
+
+describe("ralph_hero__batch_update lock-conflict guard (GH-1616)", () => {
+  let server: McpServer;
+  let fieldCache: FieldOptionCache;
+
+  beforeEach(() => {
+    server = new McpServer({ name: "test", version: "0.0.0" });
+    fieldCache = makeFieldCacheWithWorkflowState();
+  });
+
+  it("a lock-to-lock conflict lands in errors[] instead of silently mutating; the rest of the batch proceeds", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Plan in Progress", 11: "Ready for Plan" },
+      currentHolders: { 10: { holder: "other-agent", heldSince: "2026-07-25T00:00:00Z" } },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10, 11],
+        operations: [{ field: "workflow_state", value: "In Progress" }],
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      succeeded: Array<{ number: number }>;
+      errors: Array<{ number: number; error: string }>;
+    };
+
+    // #10: Plan in Progress -> In Progress IS a legal JSON transition, but
+    // it's a lock-to-lock conflict — dropped into errors[], not mutated.
+    expect(payload.errors.map((e) => e.number)).toEqual([10]);
+    expect(payload.errors[0].error).toContain("is locked:");
+    expect(payload.errors[0].error).toContain("@other-agent");
+    expect(payload.errors[0].error).toContain("2026-07-25T00:00:00Z");
+
+    // #11: Ready for Plan -> In Progress is legal AND lock-conflict-free
+    // (Ready for Plan is not a lock state) — still mutates.
+    expect(payload.succeeded.map((s) => s.number)).toEqual([11]);
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  // batch_update deliberately has no `force` escape hatch — repair goes through
+  // save_issue(force: true) one issue at a time, so an override is always a
+  // deliberate single-issue act with a recorded marker, never a bulk sweep.
+  it("force: true does not bypass the lock-conflict guard (no bulk override path)", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Plan in Progress" },
+      currentHolders: { 10: { holder: "other-agent", heldSince: "2026-07-25T00:00:00Z" } },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [{ field: "workflow_state", value: "In Progress" }],
+        force: true,
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as {
+      succeeded: Array<{ number: number }>;
+      errors: Array<{ number: number; error: string }>;
+    };
+
+    expect(payload.errors.map((e) => e.number)).toEqual([10]);
+    expect(payload.errors[0].error).toContain("is locked:");
+    expect(payload.succeeded).toEqual([]);
+    expect(projectMutate).not.toHaveBeenCalled();
+  });
+
+  it("does not apply the lock-conflict guard when the target is not a lock state", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "Research in Progress" },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [{ field: "workflow_state", value: "Human Needed" }],
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as { errors: Array<unknown> };
+    expect(payload.errors).toEqual([]);
+    expect(projectMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("same-state re-assert on a lock state is NOT a conflict", async () => {
+    const { client, projectMutate } = makeBatchFieldOpMockClient({
+      currentStates: { 10: "In Progress" },
+    });
+    registerBatchTools(server, client, fieldCache);
+    const tool = getTool(server, "ralph_hero__batch_update");
+
+    const result = await tool.handler(
+      {
+        issues: [10],
+        operations: [{ field: "workflow_state", value: "In Progress" }],
+      },
+      {},
+    );
+
+    const payload = parsePayload(result) as { errors: Array<unknown> };
+    expect(payload.errors).toEqual([]);
+    expect(projectMutate).toHaveBeenCalledTimes(1);
   });
 });

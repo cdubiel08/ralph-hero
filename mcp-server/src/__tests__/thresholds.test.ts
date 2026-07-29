@@ -7,7 +7,7 @@
  * (and any drift is caught at CI time).
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import {
   AGENT_BACKLOG_FALLBACK_PENALTY,
   ARCHIVE_AGE_DAYS,
@@ -20,6 +20,7 @@ import {
   RECENT_WINDOW_DAYS,
   SIMILARITY_THRESHOLD,
   STUCK_THRESHOLD_HOURS,
+  resolveLockStaleHours,
 } from "../lib/thresholds.js";
 import { DEFAULT_RANK_CONFIG } from "../lib/directions.js";
 import { DEFAULT_HEALTH_CONFIG } from "../lib/dashboard.js";
@@ -142,6 +143,57 @@ describe("thresholds — DEFAULT_METRICS_CONFIG sources from shared module", () 
 
   it("offTrackThreshold pulls from OFF_TRACK_THRESHOLD", () => {
     expect(DEFAULT_METRICS_CONFIG.offTrackThreshold).toBe(OFF_TRACK_THRESHOLD);
+  });
+});
+
+describe("resolveLockStaleHours (GH-1617)", () => {
+  const ENV_KEY = "RALPH_LOCK_STALE_HOURS";
+  const original = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env[ENV_KEY];
+    } else {
+      process.env[ENV_KEY] = original;
+    }
+  });
+
+  it("returns the explicit param when provided, ignoring env", () => {
+    process.env[ENV_KEY] = "99";
+    expect(resolveLockStaleHours(6)).toBe(6);
+  });
+
+  it("falls back to the env var when no param is given", () => {
+    process.env[ENV_KEY] = "12";
+    expect(resolveLockStaleHours(undefined)).toBe(12);
+  });
+
+  it("falls back to LOCK_STALE_HOURS when neither param nor env is set", () => {
+    delete process.env[ENV_KEY];
+    expect(resolveLockStaleHours(undefined)).toBe(LOCK_STALE_HOURS);
+  });
+
+  it("ignores a non-numeric env value and falls back to the constant", () => {
+    process.env[ENV_KEY] = "not-a-number";
+    expect(resolveLockStaleHours(undefined)).toBe(LOCK_STALE_HOURS);
+  });
+
+  it("ignores a non-positive env value and falls back to the constant", () => {
+    process.env[ENV_KEY] = "0";
+    expect(resolveLockStaleHours(undefined)).toBe(LOCK_STALE_HOURS);
+    process.env[ENV_KEY] = "-5";
+    expect(resolveLockStaleHours(undefined)).toBe(LOCK_STALE_HOURS);
+  });
+
+  // A param of 0 must NOT short-circuit resolution: age > 0 is true for every
+  // held lock, so honoring it would report the entire board as lock-stale. The
+  // zod schema rejects it too (`.positive()`); this covers the direct-call path.
+  it("ignores a non-positive param and continues resolving (0 would stale every lock)", () => {
+    process.env[ENV_KEY] = "12";
+    expect(resolveLockStaleHours(0)).toBe(12);
+    expect(resolveLockStaleHours(-1)).toBe(12);
+    delete process.env[ENV_KEY];
+    expect(resolveLockStaleHours(0)).toBe(LOCK_STALE_HOURS);
   });
 });
 

@@ -70,13 +70,13 @@ allowed-tools:
   - mcp__plugin_ralph_ralph-github__ralph_hero__add_sub_issue
   - mcp__plugin_ralph_ralph-github__ralph_hero__create_sub_issues
   - mcp__plugin_ralph_ralph-github__ralph_hero__add_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__remove_dependency
+  - mcp__plugin_ralph_ralph-github__ralph_hero__list_dependencies
   - mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue
   - mcp__plugin_ralph_ralph-github__ralph_hero__batch_update
   - mcp__plugin_ralph_ralph-github__ralph_hero__list_sub_issues
   - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph_ralph-github__ralph_hero__project_hygiene
-  - mcp__plugin_ralph_ralph-github__ralph_hero__archive_items
-  - mcp__plugin_ralph_ralph-github__ralph_hero__capture_snapshot
   - mcp__plugin_ralph_ralph-github__ralph_hero__metrics_trends
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_record_outcome
   - mcp__plugin_ralph-knowledge_ralph-knowledge__knowledge_search

@@ -15,6 +15,7 @@ import {
   detectTreeContinue,
   detectLockStale,
   buildReason,
+  buildLockReclaimInstruction,
   DEFAULT_RANK_CONFIG,
   type RankConfig,
   type OpenPR,
@@ -829,6 +830,117 @@ describe("detectLockStale", () => {
       updatedAt: new Date(NOW.getTime() - 5 * HOUR_MS).toISOString(),
     });
     expect(detectLockStale(item, makeConfig())).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectLockStale — claim clock, not content clock (GH-1617)
+// ---------------------------------------------------------------------------
+
+describe("detectLockStale — claim clock (GH-1617)", () => {
+  it("(a) FALSE POSITIVE fixed: field claimed NOW but content updatedAt 3 days old -> NOT stale", () => {
+    const item = makeItem({
+      workflowState: "Plan in Progress",
+      updatedAt: new Date(NOW.getTime() - 3 * 24 * HOUR_MS).toISOString(), // content stale
+      workflowStateUpdatedAt: new Date(NOW.getTime() - 1 * HOUR_MS).toISOString(), // claim fresh
+    });
+    expect(detectLockStale(item, makeConfig())).toBe(false);
+  });
+
+  it("(b) FALSE NEGATIVE fixed: field claimed 25h ago while content updatedAt keeps getting bumped -> STALE", () => {
+    const item = makeItem({
+      workflowState: "Research in Progress",
+      updatedAt: new Date(NOW.getTime() - 1 * HOUR_MS).toISOString(), // content fresh (e.g. a comment)
+      workflowStateUpdatedAt: new Date(NOW.getTime() - 25 * HOUR_MS).toISOString(), // claim stale
+    });
+    expect(detectLockStale(item, makeConfig())).toBe(true);
+  });
+
+  it("(c) falls back to content updatedAt when workflowStateUpdatedAt is absent", () => {
+    const item = makeItem({
+      workflowState: "Plan in Progress",
+      updatedAt: new Date(NOW.getTime() - 25 * HOUR_MS).toISOString(),
+      workflowStateUpdatedAt: undefined,
+    });
+    expect(detectLockStale(item, makeConfig())).toBe(true);
+  });
+
+  it("(d) threshold is overridable via config.lockStaleHours", () => {
+    const item = makeItem({
+      workflowState: "In Progress",
+      workflowStateUpdatedAt: new Date(NOW.getTime() - 5 * HOUR_MS).toISOString(),
+    });
+    expect(detectLockStale(item, makeConfig({ lockStaleHours: 24 }))).toBe(false);
+    expect(detectLockStale(item, makeConfig({ lockStaleHours: 4 }))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildLockReclaimInstruction (GH-1617)
+// ---------------------------------------------------------------------------
+
+describe("buildLockReclaimInstruction", () => {
+  it("names the Research Needed release edge for Research in Progress", () => {
+    const instruction = buildLockReclaimInstruction("Research in Progress");
+    expect(instruction).toContain('"Research Needed"');
+  });
+
+  it("names the Ready for Plan release edge for Plan in Progress", () => {
+    const instruction = buildLockReclaimInstruction("Plan in Progress");
+    expect(instruction).toContain('"Ready for Plan"');
+  });
+
+  it("does NOT suggest a release edge for In Progress (no-rollback asymmetry) — suggests checkpoint/escalate", () => {
+    const instruction = buildLockReclaimInstruction("In Progress");
+    expect(instruction).not.toContain("save_issue(workflowState:");
+    expect(instruction?.toLowerCase()).toContain("checkpoint");
+    expect(instruction?.toLowerCase()).toContain("escalate");
+  });
+
+  it("returns undefined for a non-lock state", () => {
+    expect(buildLockReclaimInstruction("Plan in Review")).toBeUndefined();
+    expect(buildLockReclaimInstruction(null)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rankDirections — lock-stale signals carry heldSince + reclaimInstruction
+// ---------------------------------------------------------------------------
+
+describe("rankDirections — lock-stale signals (GH-1617)", () => {
+  it("carries heldSince (claim clock) and a reclaimInstruction on the lock-stale direction", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 500,
+        workflowState: "Research in Progress",
+        updatedAt: new Date(NOW.getTime() - 1 * HOUR_MS).toISOString(), // content fresh
+        workflowStateUpdatedAt: new Date(NOW.getTime() - 30 * HOUR_MS).toISOString(), // claim stale
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig());
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe("lock-stale");
+    expect(result[0].signals.heldSince).toBe(
+      new Date(NOW.getTime() - 30 * HOUR_MS).toISOString(),
+    );
+    expect(result[0].signals.reclaimInstruction).toContain('"Research Needed"');
+  });
+
+  it("does not surface as lock-stale (no false positive) right after a fresh claim, even with old content updatedAt", () => {
+    const items: DashboardItem[] = [
+      makeItem({
+        number: 501,
+        workflowState: "Plan in Progress",
+        priority: "P2",
+        updatedAt: new Date(NOW.getTime() - 5 * 24 * HOUR_MS).toISOString(),
+        workflowStateUpdatedAt: new Date(NOW.getTime() - 1 * HOUR_MS).toISOString(),
+      }),
+    ];
+    const result = rankDirections(items, [], makeConfig());
+    // Plan in Progress is not an actionable phase and the claim is fresh —
+    // filtered out entirely, same shape as the pre-existing "does not
+    // surface as lock-stale" test above.
+    expect(result.find((d) => d.issue?.number === 501)).toBeUndefined();
   });
 });
 

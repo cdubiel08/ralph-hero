@@ -27,7 +27,7 @@ No linter is configured. TypeScript strict mode is the primary code quality gate
 
 ## CI/CD
 
-**PR checks** (`ci.yml`): Build + test for mcp-server (Node 20/22), ralph-demo, ralph-knowledge. Hook tests from `ralph/hooks/scripts/__tests__` + merge-gate script tests from `scripts/__tests__`. ShellCheck on `ralph/hooks` and `scripts/`. Workflow lint via actionlint + zizmor. MCP pin verification. Doc-roster consistency (`scripts/check-doc-rosters.sh`) — the agent/skill/tool rosters in this file are CI-checked against source, so update them in the same PR as roster changes.
+**PR checks** (`ci.yml`): Build + test for mcp-server (Node 20/22), ralph-demo, ralph-knowledge. Hook tests from `ralph/hooks/scripts/__tests__` + merge-gate script tests from `scripts/__tests__`. ShellCheck on `ralph/hooks` and `scripts/`. Workflow lint via actionlint + zizmor. MCP pin verification. Doc-roster consistency (`scripts/check-doc-rosters.sh`) — the agent/skill/tool rosters in this file are CI-checked against source, so update them in the same PR as roster changes. Tool-consumer drift (`scripts/check-tool-consumers.sh`, GH-1614) — fails on a skill's prose naming a `ralph_hero__*` tool absent from that skill's `allowed-tools` (prose → roster), or a registered tool with zero consumers across every skill's `allowed-tools` and every agent's `tools:` (registration → consumer); `sre__*` tools are allowlisted via an in-script `GATED_TOOLS` list since they're conditionally registered behind `RALPH_SRE_ENABLE`.
 
 **Merge gate (GH-1589)**: `main` is ruleset-protected — all changes land via PR; merge through `bash scripts/merge-pr.sh PR_NUMBER` (never bare `gh pr merge`). The script enforces: no `CHANGES_REQUESTED`, CI green, a valid head_sha-bound attestation comment (post via `scripts/attest-pr.sh`), and a CodeRabbit review (policy: `.github/ralph-merge-policy.json`; dependabot/github-actions exempt from evidence gates). `validate-attestation.yml` republishes the verdict as the required `ralph-attestation` commit status. Escape hatch: `--force "reason"` (posts a durable override comment). Release workflows bypass via the GitHub Actions app.
 
@@ -114,20 +114,18 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | Module | Key tools |
 |--------|-----------|
 | `issue-tools.ts` | list_issues, get_issue, create_issue, save_issue |
-| `project-tools.ts` | setup_project, get_project |
+| `project-tools.ts` | setup_project, health_check |
 | `relationship-tools.ts` | add_sub_issue, add_dependency, advance_issue |
-| `batch-tools.ts` | batch_update |
-| `dashboard-tools.ts` | pipeline_dashboard, detect_stream_positions |
-| `project-management-tools.ts` | archive_items, create_status_update |
+| `batch-tools.ts` | batch_update (field updates + archive/unarchive) |
+| `dashboard-tools.ts` | pipeline_dashboard |
+| `project-management-tools.ts` | create_status_update |
 | `hygiene-tools.ts` | project_hygiene |
 | `decompose-tools.ts` | decompose_feature |
 | `tree-tools.ts` | create_sub_issues |
-| `trends-tools.ts` | capture_snapshot, metrics_trends |
+| `trends-tools.ts` | metrics_trends (incl. `{capture: true}`) |
 | `directions-tools.ts` | next_actions |
-| `plan-graph-tools.ts` | sync_plan_graph |
-| `sre-tools.ts` | sre__scale, sre__rollout_restart, sre__delete_pod, sre__drain |
+| `sre-tools.ts` | sre__scale, sre__rollout_restart, sre__delete_pod, sre__drain (only registered when `RALPH_SRE_ENABLE=true`) |
 | `activity-tools.ts` | recent_activity |
-| `debug-tools.ts` | collate_debug (only registered when RALPH_DEBUG=true) |
 
 **GitHub client** (`github-client.ts`): Wraps `@octokit/graphql` with dual endpoints — `query()`/`mutate()` for repo operations, `projectQuery()`/`projectMutate()` for project operations (may use a separate token). Auto-injects `rateLimit` fragments into non-mutation queries.
 
@@ -147,7 +145,6 @@ All tool names use the `ralph_hero__` prefix. Use `toolSuccess()` and `toolError
 | `lock-guard.ts` | Pure lock-conflict check for `save_issue` |
 | `activity.ts` | Activity log reader (pure filesystem) |
 | `directions.ts` | Pure ranker behind `next_actions` (session-briefing directions) |
-| `plan-graph.ts` | Plan markdown → issue dependency-edge parser (pure) |
 | `snapshots.ts` / `trends.ts` | Snapshot persistence + trend computation |
 | `telemetry.ts` / `debug-logger.ts` | OTel export + JSONL debug logging (both gated by `RALPH_DEBUG=true`) |
 
@@ -169,8 +166,8 @@ Key state categories defined in `workflow-states.ts`:
 
 ### Performance tracking over time
 
-- **Capture**: `ralph_hero__capture_snapshot` appends to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`.
-- **Trends**: `ralph_hero__metrics_trends` returns 1d/7d/30d deltas via `src/lib/trends.ts`.
+- **Capture**: `ralph_hero__metrics_trends` with `capture: true` appends to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl` before computing trends (folded from a former standalone snapshot-capture tool, GH-1611); the appended row is returned under `snapshot` regardless of `format`.
+- **Trends**: `ralph_hero__metrics_trends` (default `capture: false`, pure local read, offline-capable) returns 1d/7d/30d deltas via `src/lib/trends.ts`.
 - **Fixture**: `src/__tests__/fixtures/snapshots.fixture.jsonl` holds 30 synthetic schema-valid rows.
 
 ### Activity log
@@ -246,13 +243,14 @@ When no `RALPH_*_TOKEN` env var is set, the MCP server falls back to `gh auth to
 | `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (e.g. `sonnet`, `opus`, or `fable` if your plan includes it). Defaults to `sonnet`; BLOCKED escalation re-dispatches once at `opus`. |
 | `CLAUDE_CODE_SUBAGENT_MODEL` | No (harness-native, not ralph plumbing) | Escape hatch for the `model: fable` pins on `plan-agent`/`review-agent`: set to `opus` on accounts without Fable. Top precedence in Claude Code's subagent model resolution — it overrides frontmatter AND per-invocation `model` params, so it flattens EVERY subagent tier (locators, impl ladder, BLOCKED re-dispatch). Leave unset if your account has Fable. |
 | `RALPH_DEBUG` | No | Set to `"true"` to enable JSONL debug logging and OpenTelemetry export. |
+| `RALPH_SRE_ENABLE` | No | Must be `"true"` (strict string match, mirroring `RALPH_AUTOPILOT_ENABLE`/`RALPH_DEBUG`) to register the four `sre__*` kubectl autoremediation tools. Prerequisite for the `sre-fixit` agent: its `tools:` allowlist is a hard runtime enforcement, not a request — with the flag unset the four `sre__*` ops are absent from the server entirely and the agent can only read/comment/escalate. No silent fallback by design. |
 | `RALPH_USE_WORKFLOWS` | No | Research-preview prototype flag (GH-1474). Set to `"true"` to route `research` Step 3's investigator fan-out through the saved `research-investigators` Dynamic Workflow (`.claude/workflows/`) instead of inline `Agent()` dispatch. Default off — inline path unchanged. |
 
 **Do NOT put tokens in `.mcp.json`** — the `.mcp.json` has no `env` block; the MCP server inherits the parent environment.
 
 ### OpenTelemetry export (`RALPH_DEBUG=true`)
 
-`mcp-server/src/lib/telemetry.ts` lazily initializes the OTel NodeSDK only when `RALPH_DEBUG=true` (zero overhead otherwise). It exports `ralph_hero.graphql` spans (emitted in `github-client.ts`) over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` — e.g. the local Langfuse harness at `~/projects/langfuse/`. Auto-instrumentation is off; a custom SpanProcessor redacts token-shaped attribute values (`gh[ps]_*` values, `*_TOKEN`/`authorization` keys) before export. The same env var gates JSONL debug logging (`debug-logger.ts`) and the debug tools.
+`mcp-server/src/lib/telemetry.ts` lazily initializes the OTel NodeSDK only when `RALPH_DEBUG=true` (zero overhead otherwise). It exports `ralph_hero.graphql` spans (emitted in `github-client.ts`) over OTLP/HTTP to `OTEL_EXPORTER_OTLP_ENDPOINT` — e.g. the local Langfuse harness at `~/projects/langfuse/`. Auto-instrumentation is off; a custom SpanProcessor redacts token-shaped attribute values (`gh[ps]_*` values, `*_TOKEN`/`authorization` keys) before export. The same env var gates JSONL debug logging (`debug-logger.ts`).
 
 ## GitHub Actions Workflows
 

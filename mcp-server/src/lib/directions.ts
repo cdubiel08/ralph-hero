@@ -30,6 +30,7 @@
 
 import type { DashboardItem } from "./dashboard.js";
 import { LOCK_STATES, STATE_ORDER } from "./workflow-states.js";
+import { LOCK_RELEASE_TARGET } from "./lock-guard.js";
 import {
   AGENT_BACKLOG_FALLBACK_PENALTY,
   HUMAN_TRIAGE_DIRECTION_SCORE,
@@ -132,6 +133,23 @@ export interface DirectionSignals {
    * comment and never carry this field.
    */
   sourceCommentUrl?: string;
+  /**
+   * For `kind: "lock-stale"` only (GH-1617): ISO timestamp of the claim —
+   * the Workflow State field value's own `updatedAt`. Omitted when the
+   * field wasn't populated on the fetch (falls back to content `updatedAt`
+   * for `staleDays`, but there is no claim timestamp to show).
+   */
+  heldSince?: string;
+  /**
+   * For `kind: "lock-stale"` only (GH-1617): concrete reclaim instruction
+   * naming the LEGAL recovery move for this lock state — the release
+   * target for `Research in Progress` / `Plan in Progress` (both gated by
+   * GH-1616's `isGuardedLockRelease`: legal here because this direction
+   * only fires once the claim is already past `lockStaleHours`), or the
+   * no-rollback note for `In Progress` (deliberately no release edge —
+   * checkpoint/escalate instead). Always set when `kind === "lock-stale"`.
+   */
+  reclaimInstruction?: string;
 }
 
 export interface Direction {
@@ -420,13 +438,59 @@ function audiencePenalty(item: DashboardItem, audience: Audience): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true when the candidate is in a lock state and its updatedAt
- * timestamp is older than `config.lockStaleHours`. These items are surfaced
- * as `kind: "lock-stale"` so the user is reminded to unstick them.
+ * Returns true when the candidate is in a lock state and its CLAIM clock is
+ * older than `config.lockStaleHours`. These items are surfaced as `kind:
+ * "lock-stale"` so the user is reminded to unstick them.
+ *
+ * GH-1617: the claim clock is `item.workflowStateUpdatedAt` — the Workflow
+ * State PROJECT FIELD value's own `updatedAt` — not issue-content
+ * `updatedAt`. A field-only claim (the common case: `save_issue` with no
+ * issue-content mutation) never bumps content `updatedAt`, so the old clock
+ * was wrong in both directions: false positive (content touched by an
+ * unrelated comment/label change while the claim itself is fresh) and false
+ * negative (claim genuinely stale while content `updatedAt` looks recent
+ * because something else touched the issue). Falls back to `updatedAt` when
+ * the field is absent (stale fixtures, items fetched before this field
+ * existed) so existing behavior is preserved wherever the new field isn't
+ * populated.
  */
 export function detectLockStale(item: DashboardItem, config: RankConfig): boolean {
   if (!isLockState(item.workflowState)) return false;
-  return ageHours(item.updatedAt, config.now) >= config.lockStaleHours;
+  return ageHours(item.workflowStateUpdatedAt ?? item.updatedAt, config.now) >= config.lockStaleHours;
+}
+
+/**
+ * Concrete reclaim instruction per lock state (GH-1617), named per Design
+ * Decisions in the GH-1592 group plan. `Research in Progress` and `Plan in
+ * Progress` have a release edge (GH-1615 Design Decisions (a)), gated by
+ * GH-1616's `isGuardedLockRelease` on staleness — legal to suggest here
+ * because a `lock-stale` direction only fires once the claim is already
+ * past `lockStaleHours`, i.e. the release WILL pass the gate. `In Progress`
+ * deliberately has no release edge (preserves the no-rollback-on-
+ * impl-failure asymmetry) — the instruction steers toward
+ * checkpoint/inspect-worktree or escalation instead of a rollback suggestion
+ * that would be refused.
+ */
+export function buildLockReclaimInstruction(workflowState: string | null): string | undefined {
+  // Derived from LOCK_RELEASE_TARGET rather than restating its targets: the map
+  // is what save_issue's release gate actually enforces, so a hardcoded copy
+  // here could drift into advising a move the server refuses.
+  const releaseTarget = workflowState ? LOCK_RELEASE_TARGET[workflowState] : undefined;
+  if (releaseTarget) {
+    return (
+      `Stale claim — release it via save_issue(workflowState: "${releaseTarget}") so another ` +
+      "agent can pick it up (the claim's age already clears the release gate), or if you are " +
+      "the holder resuming, re-claim with the same state to refresh the claim clock."
+    );
+  }
+  if (workflowState === "In Progress") {
+    return (
+      "No release edge exists for In Progress (preserves the no-rollback-on-impl-failure " +
+      "asymmetry) — checkpoint or inspect the worktree to confirm whether work is still live, " +
+      "or escalate to Human Needed if it has been abandoned."
+    );
+  }
+  return undefined;
 }
 
 /**
@@ -698,12 +762,21 @@ export function scoreIssue(
   const signals: DirectionSignals = { tags: [...tags] };
 
   if (kind === "lock-stale") {
+    // GH-1617: claim clock, not content clock — see detectLockStale.
+    const claimClock = item.workflowStateUpdatedAt ?? item.updatedAt;
     const days = Math.max(
       1,
-      Math.floor(ageHours(item.updatedAt, config.now) / 24),
+      Math.floor(ageHours(claimClock, config.now) / 24),
     );
     signals.staleDays = days;
     signals.staleThresholdDays = config.lockStaleHours / 24;
+    if (item.workflowStateUpdatedAt !== undefined) {
+      signals.heldSince = item.workflowStateUpdatedAt;
+    }
+    const instruction = buildLockReclaimInstruction(item.workflowState);
+    if (instruction !== undefined) {
+      signals.reclaimInstruction = instruction;
+    }
   } else {
     // For non-lock items, surface the threshold informationally and
     // populate staleDays only when the stale tag fired.
@@ -866,7 +939,9 @@ export function buildReason(
   }
 
   if (kind === "lock-stale") {
-    const hours = Math.round(ageHours(issue.updatedAt, config.now));
+    // GH-1617: claim clock, not content clock — see detectLockStale.
+    const claimClock = issue.workflowStateUpdatedAt ?? issue.updatedAt;
+    const hours = Math.round(ageHours(claimClock, config.now));
     const days = Math.max(1, Math.floor(hours / 24));
     const dayLabel = days === 1 ? "day" : "days";
     return `Stuck in ${issue.workflowState} for ${days} ${dayLabel} — may be blocked`;

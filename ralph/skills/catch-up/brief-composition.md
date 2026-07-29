@@ -11,7 +11,7 @@ The brief composes from exactly two sources — never a third, never a re-scan:
 
 ## Status header
 
-Call `ralph_hero__pipeline_status_summary` (no args beyond project resolution). Render one line covering health, riskScore or velocity, and total issue count. If the tool errors, or the response is missing the fields the header needs, degrade silently: drop to a narrative-only header with no health/velocity clause, and surface no error text to the user. `pipeline_status_summary` is a soft dependency — epic #1550's B→C contract: the summary degrades gracefully.
+Call `ralph_hero__pipeline_dashboard` with `view: "summary"` (no other args beyond project resolution). Render one line covering health, riskScore or velocity, and total issue count. If the tool errors, or the response is missing the fields the header needs, degrade silently: drop to a narrative-only header with no health/velocity clause, and surface no error text to the user. The summary view is a soft dependency — epic #1550's B→C contract: the summary degrades gracefully.
 
 ## Walk order + dispatch table
 
@@ -98,7 +98,7 @@ Create a Claude Code routine (the `/schedule` skill or https://claude.ai/code/ro
 
 - Prompt: `Run /ralph:catch-up --mode brief --prepare` plus the guardrails (follow § Prepare exactly; stop on `Brief already prepared today.`; no other work).
 - Schedule: weekday mornings (cron is UTC — convert from local; avoid the :00 mark).
-- Scope `session_context.allowed_tools` to the prepare surface: `Skill`, `Read`, `Glob`, `Grep`, `Bash`, `PushNotification`, `mcp__plugin_ralph_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_status_summary` — no blanket permission bypass needed.
+- Scope `session_context.allowed_tools` to the prepare surface: `Skill`, `Read`, `Glob`, `Grep`, `Bash`, `PushNotification`, `mcp__plugin_ralph_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard` — no blanket permission bypass needed.
 - Caveat: the Claude Code app/bridge must be running at fire time; verify the first scheduled fire actually pushed. Teardown/pause: https://claude.ai/code/routines.
 
 ### Fallback: launchd (app-independent, the custom option)
@@ -158,6 +158,6 @@ rm ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
 
 ### Hardening note
 
-The runbook ships with `--dangerously-skip-permissions` — the repo's proven `run_headless()` shape (`docs/plans/2026-03-06-ralph-cli-feedback-ux-impl.md`). Migrate to a scoped `--allowedTools` list once the headless plugin-context tool names are verified on this machine — candidates: `mcp__plugin_ralph_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_status_summary`, `PushNotification`. The blast radius under skip-permissions is bounded (`--prepare` is zero-mutation by contract: read-only board queries, one push, one marker-file write), but an untested allowlist risks a silently hung or failed schedule — the worse outcome for a fire-and-forget trigger. Use the Verify step's manual headless run as the moment to test and record the scoped variant.
+The runbook ships with `--dangerously-skip-permissions` — the repo's proven `run_headless()` shape (`docs/plans/2026-03-06-ralph-cli-feedback-ux-impl.md`). Migrate to a scoped `--allowedTools` list once the headless plugin-context tool names are verified on this machine — candidates: `mcp__plugin_ralph_ralph-github__ralph_hero__next_actions`, `mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard`, `PushNotification`. The blast radius under skip-permissions is bounded (`--prepare` is zero-mutation by contract: read-only board queries, one push, one marker-file write), but an untested allowlist risks a silently hung or failed schedule — the worse outcome for a fire-and-forget trigger. Use the Verify step's manual headless run as the moment to test and record the scoped variant.
 
 This launchd plist is the only out-of-band piece — the cos post-mortem lesson (a prior scheduling stack with its own scripts, its own push channel, zero ties to the plugin, deleted without anyone noticing) is honored by keeping every piece of brief logic inside the plugin. The schedule invokes the exact `--mode brief --prepare` mode Feature C already ships; there is no schedule-only code path, so testing the schedule means running `--prepare` by hand.

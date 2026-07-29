@@ -155,24 +155,59 @@ vi.mock("../lib/helpers.js", async (importOriginal) => {
 // guard. The failure messages emitted below ("missing tool: X" / "unexpected
 // new tool: Y") tell you exactly which line to add or remove here.
 //
-// Note: ralph_hero__collate_debug is intentionally NOT in the manifest
-// because debug-tools is registered only when RALPH_DEBUG=true. The test
-// runs without that flag so it should not appear in `registered`.
+// Note: ralph_hero__collate_debug is not in the manifest because the tool
+// (and debug-tools.ts) was deleted in GH-1612 — it no longer exists in
+// source, rather than being gated behind RALPH_DEBUG.
+//
+// Note: the four ralph_hero__sre__* tools are NOT in this manifest — they are
+// gated behind RALPH_SRE_ENABLE=true (GH-1613), mirroring the RALPH_DEBUG
+// pattern collate_debug used before it was deleted outright. Flag-on coverage
+// lives in the sibling file tool-registration-sre-enabled.test.ts (module
+// cache prevents toggling the flag within a single test file).
+//
+// GH-1614 final-count assertion: this manifest must hold exactly 22 names
+// (see the `expect(EXPECTED_TOOLS.length).toBe(22)` case below). Arithmetic,
+// counted directly against source (`grep -c 'server\.tool('` across
+// src/index.ts + src/tools/*.ts, excluding __tests__), NOT the plan's
+// original projection (the plan's research doc projected 21 assuming
+// GH-1591's "≤20" bar forced a 7th merge; that merge was deliberately not
+// taken — see Design Decisions #1 of the GH-1591 group plan):
+//
+//   33  total registrations in source before this wave (32 unconditional +
+//       collate_debug, gated behind RALPH_DEBUG)
+//   -1  GH-1609 (Phase 1): detect_stream_positions
+//   -2  GH-1610 (Phase 2): pipeline_status_summary, get_project
+//   -2  GH-1611 (Phase 3): capture_snapshot, archive_items
+//   -1  GH-1612 (Phase 4): sync_plan_graph (collate_debug is also deleted
+//       this phase, but it was never in the *default* 32 count above — its
+//       removal doesn't change the default-surface arithmetic, only source)
+//   -4  GH-1613 (Phase 5): sre__scale, sre__rollout_restart, sre__delete_pod,
+//       sre__drain — gated behind RALPH_SRE_ENABLE, not deleted (still in
+//       source, absent from the default manifest)
+//   ---
+//   22  default-registered manifest length (this array)
+//   26  total source registrations (22 default + 4 gated sre__*), the
+//       manifest asserted by tool-registration-sre-enabled.test.ts's
+//       flag-ON sibling covering the +4
+//
+// This restates GH-1591's original "Registered tool count ≤20" acceptance
+// line to "= 22, arithmetic shown" — see the #1591 issue comment. Two
+// evidence-backed candidates remain for a later wave rather than being
+// force-cut here: `project_hygiene` -> `pipeline_dashboard` (same
+// `fetchDashboardItems` fetch spine, caretake-only consumer) and
+// `create_status_update` (iff catch-up `--mode report` retires — it has a
+// live consumer and a unique mutation today, see Design Decisions).
 const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__add_dependency",
   "ralph_hero__add_sub_issue",
   "ralph_hero__advance_issue",
-  "ralph_hero__archive_items",
   "ralph_hero__batch_update",
-  "ralph_hero__capture_snapshot",
   "ralph_hero__create_comment",
   "ralph_hero__create_issue",
   "ralph_hero__create_status_update",
   "ralph_hero__create_sub_issues",
   "ralph_hero__decompose_feature",
-  "ralph_hero__detect_stream_positions",
   "ralph_hero__get_issue",
-  "ralph_hero__get_project",
   "ralph_hero__health_check",
   "ralph_hero__list_dependencies",
   "ralph_hero__list_issues",
@@ -180,17 +215,11 @@ const EXPECTED_TOOLS: readonly string[] = [
   "ralph_hero__metrics_trends",
   "ralph_hero__next_actions",
   "ralph_hero__pipeline_dashboard",
-  "ralph_hero__pipeline_status_summary",
   "ralph_hero__project_hygiene",
   "ralph_hero__recent_activity",
   "ralph_hero__remove_dependency",
   "ralph_hero__save_issue",
   "ralph_hero__setup_project",
-  "ralph_hero__sre__delete_pod",
-  "ralph_hero__sre__drain",
-  "ralph_hero__sre__rollout_restart",
-  "ralph_hero__sre__scale",
-  "ralph_hero__sync_plan_graph",
 ];
 
 // ---------------------------------------------------------------------------
@@ -198,8 +227,16 @@ const EXPECTED_TOOLS: readonly string[] = [
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
-  // Ensure debug tools stay out of the captured set.
+  // RALPH_DEBUG still gates JSONL debug logging and OTel export
+  // (lib/debug-logger.ts, lib/telemetry.ts); it no longer gates any tool
+  // registration since collate_debug (debug-tools.ts) was deleted in
+  // GH-1612. Cleared here for hermetic env isolation, not tool gating.
   delete process.env.RALPH_DEBUG;
+
+  // RALPH_SRE_ENABLE gates registerSreTools (GH-1613). Cleared here so this
+  // file always exercises the flag-off surface; the flag-on surface is
+  // covered by tool-registration-sre-enabled.test.ts.
+  delete process.env.RALPH_SRE_ENABLE;
 
   // Provide the minimum env needed for initGitHubClient + main() to succeed.
   // The GitHubClient is mocked, but initGitHubClient still reads these env
@@ -258,9 +295,17 @@ describe("tool registration audit", () => {
     ).toEqual([]);
   });
 
-  it("does not register debug tools when RALPH_DEBUG is unset", () => {
-    // Sanity check that the conditional debug-tools branch in index.ts is
-    // gated as documented.
+  it("never registers collate_debug (deleted in GH-1612)", () => {
+    // Sanity check that the tool is gone from source entirely, not merely
+    // gated behind RALPH_DEBUG.
     expect(registered).not.toContain("ralph_hero__collate_debug");
+  });
+
+  it("locks the default-registered surface at exactly 22 tools (GH-1614, GH-1591 criterion restatement)", () => {
+    // See the arithmetic comment above EXPECTED_TOOLS: 32 default
+    // registrations at wave start, -1 -2 -2 -1 -4 = 22. Restates GH-1591's
+    // "Registered tool count ≤20" acceptance line to "= 22" with the
+    // arithmetic shown, rather than forcing an unjustified 7th cut.
+    expect(EXPECTED_TOOLS.length).toBe(22);
   });
 });

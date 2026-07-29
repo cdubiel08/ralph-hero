@@ -16,7 +16,6 @@ allowed-tools:
   - Bash
   - AskUserQuestion
   - mcp__plugin_ralph_ralph-github__ralph_hero__health_check
-  - mcp__plugin_ralph_ralph-github__ralph_hero__get_project
   - mcp__plugin_ralph_ralph-github__ralph_hero__setup_project
   - mcp__plugin_ralph_ralph-github__ralph_hero__pipeline_dashboard
   - mcp__plugin_ralph_ralph-github__ralph_hero__list_issues
@@ -81,7 +80,7 @@ Interactive GitHub Project V2 bootstrap. **Idempotent** — safe to re-run any t
    - **`broken`** — print the diagnosis (failed check + reason) and the recommended fix from the [setup-state.md](setup-state.md) diagnosis table. `AskUserQuestion`: attempt the fix now / show me the fix, I'll do it myself / cancel. Only continue to steps 4-8 on "attempt the fix now."
    - **`not-set-up`** — explain what setup will do (create a GitHub Project V2, add the required custom fields, write env vars to the Step 1 path) and `AskUserQuestion`: proceed / cancel. Only continue to steps 4-8 on "proceed."
 4. **Determine project owner** — if `projectAccess` failed/skipped, ask via `AskUserQuestion` ("under org" vs "under personal account"). If owners differ, enter split-owner mode — see [token-setup.md](token-setup.md) §dual-token.
-5. **Create-or-verify project** — if arg passed: treat as resume number; `get_project` to verify; `setup_project` in extend mode to add any missing custom fields. If no arg + no `RALPH_GH_PROJECT_NUMBER`: `setup_project` to create. Field schema in [project-fields.md](project-fields.md).
+5. **Create-or-verify project** — if arg passed: treat as resume number; `health_check` with `includeFields: true` to verify; `setup_project` in extend mode to add any missing custom fields. If no arg + no `RALPH_GH_PROJECT_NUMBER`: `setup_project` to create. Field schema in [project-fields.md](project-fields.md).
 6. **Create default views (manual)** — GitHub's GraphQL API does not support view creation. Print step-by-step instructions for Ralph Table + Ralph Kanban from [project-fields.md](project-fields.md).
 7. **Write env vars** — to the target from Step 1. Required: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`. Split-owner adds `RALPH_GH_PROJECT_OWNER`. Project-scoped installs use the two-layer split (scope vars → tracked `.claude/settings.json`, offered via `AskUserQuestion`; tokens/local toggles → gitignored `settings.local.json`) — see [scope-detection.md](scope-detection.md) § Project scope. Token via `gh auth` (no settings entry unless dual-PAT — see [token-setup.md](token-setup.md)).
 8. **Print restart instructions** — MCP server reads env at startup. Restart Claude Code, then re-run `/ralph:setup` to verify.

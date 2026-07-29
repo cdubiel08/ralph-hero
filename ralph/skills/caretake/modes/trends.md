@@ -16,22 +16,21 @@ Parse `$ARGUMENTS` for optional flags:
 
 All arguments are optional. Default behavior: capture a fresh snapshot, then trend over the last 7 days.
 
-## §Step 2: Capture fresh snapshot
-
-Call `ralph_hero__capture_snapshot` with no arguments. The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER` and uses the default 7-day velocity window.
-
-This appends one row to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`. Capture is non-fatal — if the project has zero history, the row written by this call will be the first.
-
-## §Step 3: Query trends
+## §Step 2: Capture and query in one call
 
 Call `ralph_hero__metrics_trends` with:
 
+- `capture: true`
 - `format: "markdown"`
 - `since`: the parsed `--since` value, or `"@today-7d"` by default.
 
-The tool reads the local JSONL file, computes 1d/7d/30d deltas, and renders sparkline-augmented markdown for each metric.
+GH-1611 merged the former standalone `capture_snapshot` tool into the `capture` parameter, and capture happens *before* the trend computation in the same call — so one invocation appends the fresh row and trends over a window that already includes it. (Two calls would work but re-scan the JSONL for nothing.)
 
-## §Step 4: Print output
+The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER`, uses the default 7-day velocity window for the captured row, appends it to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`, then computes 1d/7d/30d deltas and renders sparkline-augmented markdown for each metric.
+
+Capture is non-fatal — if the project has zero history, the row written by this call will be the first.
+
+## §Step 3: Print output
 
 Print the returned `markdown` field directly to stdout. Do not post, do not summarize, do not edit.
 
@@ -46,4 +45,4 @@ The markdown report IS the terminal output. No `result:` line, no terminal token
 - **Read-only.** Trends never mutates GitHub state or any file outside `~/.ralph-hero/snapshots/`.
 - **No terminal token.** Postcondition hooks ignore this mode.
 - **Haiku-class workload.** The source skill declares `model: haiku` because the work is two MCP calls + a stdout print. The caretake top-level `model: sonnet` covers all modes; haiku would be cheaper but the slim plugin runs all modes under the same model for arg-routing simplicity.
-- **Snapshot append is non-fatal.** If the snapshot file is missing or unreadable, `capture_snapshot` creates it; `metrics_trends` degrades to an "insufficient history" report.
+- **Snapshot append is non-fatal.** If the snapshot file is missing or unreadable, `metrics_trends` with `capture: true` creates it; a read-only `metrics_trends` call degrades to an "insufficient history" report.
