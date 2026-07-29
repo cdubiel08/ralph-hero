@@ -115,6 +115,14 @@ if [ "$actual" -eq 1 ]; then
 else
   fail "body-only prefixed mention self-granted — expected exit 1, got $actual: $out"
 fi
+# Exit status alone is too weak a signal here: a checker crash or an unrelated
+# validation error also exits 1, and would silently satisfy this case. Require
+# the same Direction-A diagnostic asserted in test 1.
+if grep -q "FAIL:.*names ralph_hero__save_issue in prose but.*does not grant it" <<<"$out"; then
+  pass "body-only mention fails for the Direction-A reason, not an incidental error"
+else
+  fail "body-only case exited 1 without the Direction-A FAIL line: $out"
+fi
 
 # 2. Direction B violated: registered tool has zero consumers anywhere.
 root=$(fresh_root)
