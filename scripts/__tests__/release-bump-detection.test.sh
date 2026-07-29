@@ -30,11 +30,24 @@ echo "=== release.yml bump-marker detection ==="
 [ -f "$WORKFLOW" ] || { echo "FATAL: $WORKFLOW not found"; exit 1; }
 
 # Pull each pattern out of the workflow's grep invocation.
+#
+# `|| true` is load-bearing: under `set -euo pipefail` a non-matching grep makes
+# the pipeline fail, which aborts the script at the MINOR_RE/MAJOR_RE assignment
+# below — before the explicit "could not extract" diagnostic can print. Without
+# it that failure path is unreachable and a missing pattern surfaces as a bare
+# non-zero exit with no explanation.
 extract_pattern() {
   local marker="$1"
   grep -oE "grep -qiE '[^']*#${marker}[^']*'" "$WORKFLOW" \
     | head -1 \
-    | sed -E "s/^grep -qiE '//; s/'$//"
+    | sed -E "s/^grep -qiE '//; s/'$//" || true
+}
+
+# Line number of the grep line for a marker — used to assert branch ORDER.
+pattern_line() {
+  local marker="$1"
+  grep -nE "grep -qiE '[^']*#${marker}[^']*'" "$WORKFLOW" \
+    | head -1 | cut -d: -f1 || true
 }
 
 MINOR_RE="$(extract_pattern minor)"
@@ -82,9 +95,22 @@ expect_match "$MAJOR_RE" yes "major marker after a space" "feat!: breaking chang
 expect_match "$MAJOR_RE" no "minor marker does not trip major" "feat: thing #minor"
 expect_match "$MAJOR_RE" no "no marker does not trip major" "chore: routine"
 
-# Precedence: release.yml checks major before minor, so a message carrying both
-# must resolve to major. Assert the inputs that decision rests on.
-expect_match "$MAJOR_RE" yes "both markers: major matches" "feat: big #major and #minor"
+# Precedence: a message carrying BOTH markers must resolve to major. That rests
+# on two independent facts, and asserting only the first would still pass if the
+# workflow evaluated minor first:
+#   (a) both patterns match such a message, so the tie is real, and
+#   (b) the major branch is evaluated BEFORE the minor branch in release.yml.
+BOTH="feat: big #major and #minor"
+expect_match "$MAJOR_RE" yes "both markers: major pattern matches" "$BOTH"
+expect_match "$MINOR_RE" yes "both markers: minor pattern also matches (tie is real)" "$BOTH"
+
+MAJOR_LINE="$(pattern_line major)"
+MINOR_LINE="$(pattern_line minor)"
+if [ -n "$MAJOR_LINE" ] && [ -n "$MINOR_LINE" ] && [ "$MAJOR_LINE" -lt "$MINOR_LINE" ]; then
+  pass "major branch is evaluated before minor in release.yml (line $MAJOR_LINE < $MINOR_LINE)"
+else
+  fail "major branch must precede minor in release.yml (major=$MAJOR_LINE minor=$MINOR_LINE); a both-markers message would resolve to minor"
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
