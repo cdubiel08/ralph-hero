@@ -117,11 +117,7 @@ When the epic spans multiple repos (`.ralph-repos.yml` present, epic touches mul
 
 The non-epic side of decomposition (GH-1605, folded from caretake's retired split mode): take ONE large issue (M/L/XL) that does NOT clear the plan-of-plans bar above and decompose it into XS/S sub-issues that ship atomically. `/ralph:plan --mode epic`'s Step 0 classification selects this path.
 
-```bash
-export RALPH_SUBCOMMAND=epic-split
-```
-
-Re-export this **on top of** the Step 0 `RALPH_SUBCOMMAND=epic` value before any `get_issue` / `create_issue` / `create_sub_issues` call — this is what arms the three `split-*` hooks' XS/S ceiling and ≥2-children postcondition (see § Hook contract below). The plan-of-plans path never re-exports this and stays at `epic`, where the same three hooks early-exit — S/M feature children pass (§ Plan-of-plans shape above), and a pure plan-of-plans session can never be blocked by the ≥2-children postcondition.
+This path needs no env arming. Its one hard constraint — XS/S children — is passed explicitly as `create_sub_issues(maxChildEstimate: "S")` and enforced server-side, fail-closed (GH-1618); the plan-of-plans path passes no ceiling, so its S/M feature children are accepted as specced (§ Plan-of-plans shape above).
 
 ### When to split (atomic)
 
@@ -233,7 +229,7 @@ Write to `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md` — the
 
 One `### Feature` subsection per child under `## Feature Decomposition`, each embedding the child's **real issue number AND title** verbatim, plus its scope + acceptance from §Step 6's body. The parent-plan-reuse short-circuit matches a child to its section **by number or title**, so both must appear. Keep `## Feature Sequencing` **identical** to the `## Issue Split` dependency chain posted in §Step 8 — same edges, same order.
 
-This write happens under `RALPH_SUBCOMMAND=epic-split` in **plan** context, where `plan-research-required.sh`'s carve-out (this doc's own shape) is what lets it pass without a linked research doc — the decomposition itself is the research artifact.
+`plan-research-required.sh`'s carve-out (this doc's own shape) is what lets this write pass without a linked research doc — the decomposition itself is the research artifact. The carve-out is content-shaped, keyed on the doc being written, not on any env value.
 
 ### §Step 8: Update original issue
 
@@ -276,7 +272,7 @@ Determine target state for every child: scope clear → `Ready for Plan`; needs 
 SPLIT <N>
 ```
 
-Export `RALPH_SPLIT_COUNT=<N>` (total children created + reused) before Stop — `split-postcondition.sh` requires `N ≥ 2`.
+An atomic split that creates fewer than 2 children is a failed split — report it, do not advance the parent.
 
 On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. On other graceful skips (no natural boundary, parent already fully split): `SPLIT SKIPPED <reason>`. On an empty queue (§Step 1): `Queue empty.`
 
@@ -296,19 +292,24 @@ On the already-atomic short-circuit (§Step 2): `SPLIT SKIPPED already-atomic`. 
 - No implementation, only issue creation.
 - **Parent stays in Backlog** — never advance it manually.
 
-### § Hook contract (GH-1619: demoted to one surviving hook)
+### § Hook contract (GH-1619 + GH-1590: no split-* hooks remain)
 
-`split-estimate-gate.sh` and `split-size-gate.sh` (the GH-1605 re-keyed Pre/PostToolUse gates on `get_issue` / `create_issue` / `create_sub_issues`) were deleted in GH-1619 — the invariants they enforced now live server-side (`create_sub_issues(maxChildEstimate)`, GH-1618) or as workflow-level discipline (the parent-estimate precondition, which was never technically enforceable without inventing a precondition the tool contract doesn't need). One hook survives, still registered in `plan/SKILL.md`:
+`split-estimate-gate.sh` and `split-size-gate.sh` (the GH-1605 re-keyed Pre/PostToolUse gates on `get_issue` / `create_issue` / `create_sub_issues`) were deleted in GH-1619 — the invariants they enforced now live server-side (`create_sub_issues(maxChildEstimate)`, GH-1618) or as workflow-level discipline (the parent-estimate precondition, which was never technically enforceable without inventing a precondition the tool contract doesn't need).
 
-| Hook | Event | Matcher | Scope guard | Purpose |
-|---|---|---|---|---|
-| `split-postcondition.sh` | Stop | (matcher-less) | `RALPH_COMMAND=plan` + `RALPH_SUBCOMMAND=epic-split` | Require `RALPH_SPLIT_COUNT ≥ 2`. |
+The ≥2-children Stop postcondition, the last of them, was deleted in GH-1590. It fired on Stop — which carries no `file_path` — so its only available discriminator was an environment value set by a Step 0 `case` export plus a re-export here. That channel is not dependable: Bash exports across per-call subshells do not reliably reach hook subprocesses (so the gate silently allowed what it was meant to block), and when the value *did* persist it armed the Stop gate for unrelated `/ralph:plan` sessions and blocked them. A ≥2 guarantee delivered through a channel that fails in both directions is ceremony, not safety.
 
-On the **plan-of-plans path** (`RALPH_SUBCOMMAND=epic`, no re-export), this hook hits its scope guard and early-exits `allow` — a pure plan-of-plans session reaching Stop with `RALPH_SPLIT_COUNT` unset can never be blocked by the postcondition.
+What enforces the split contract now:
+
+| Invariant | Enforced by |
+|---|---|
+| XS/S children on the atomic path | `create_sub_issues(maxChildEstimate: "S")` — server-side, fail-closed, up-front (GH-1618) |
+| S/M children on the plan-of-plans path | No ceiling passed; accepted as specced |
+| M/L/XL parent | Workflow-level self-check (§Step 2) |
+| ≥2 children | Prose rule (§ Terminal tokens below): fewer than 2 is a failed split — report it, do not advance the parent |
 
 ## Terminal tokens
 
-- `SPLIT <N>` — `N ≥ 2` XS/S sub-issues created and linked. `split-postcondition.sh` requires N ≥ 2.
+- `SPLIT <N>` — `N ≥ 2` XS/S sub-issues created and linked. An atomic split that creates fewer than 2 children is a failed split — report it, do not advance the parent.
 - `SPLIT SKIPPED already-atomic` — emitted when §Step 2's own check finds the parent already XS/S (no hook blocks this — it's a self-check now, GH-1619).
 - `SPLIT SKIPPED <reason>` — other graceful skips (no natural decomposition boundary found, parent already fully split, etc.).
 - `Queue empty.` — no M/L/XL issues exist in Backlog or Research Needed (queue-pick invocation with no issue number).

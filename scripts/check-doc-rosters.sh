@@ -6,7 +6,7 @@
 # documented in CLAUDE.md / README.md silently diverging from the source files.
 #
 # Three checks, each with a direction chosen for its roster:
-#   - Agents (bidirectional): the `### ralph Plugin — 16 Agents` section in
+#   - Agents (bidirectional): the `### ralph Plugin — 15 Agents` section in
 #     CLAUDE.md lists every agent, so documented set == ralph/agents/*.md set.
 #   - Skills (bidirectional): the `### ralph Plugin — 9 Verbs` table lists every
 #     verb, so documented set == ralph/skills/*/ dirs minus shared & using-html.
@@ -45,13 +45,13 @@ fail() {
 # Check 1: Agents (bidirectional)
 # ---------------------------------------------------------------------------
 # Documented: backtick names on the **N per-phase agents** / **N investigators**
-# bullet lines under the `### ralph Plugin — 16 Agents` heading. We restrict to
+# bullet lines under the `### ralph Plugin — 15 Agents` heading. We restrict to
 # those bullet lines so trailing prose (e.g. `impl-agent`/`RALPH_IMPL_MODEL` in
 # the paragraph below) does not pollute the set.
 echo "=== Agents (CLAUDE.md <-> ${AGENTS_DIR}/) ==="
 
 doc_agents=$(
-  awk '/^### ralph Plugin — 16 Agents/{f=1; next} /^### /{f=0} f' "$CLAUDE_MD" \
+  awk '/^### ralph Plugin — 15 Agents/{f=1; next} /^### /{f=0} f' "$CLAUDE_MD" \
     | grep -E '^\*\*[0-9]+ (per-phase agents|investigators)\*\*' \
     | grep -oE '`[a-z][a-z0-9-]+`' \
     | tr -d '`' \
