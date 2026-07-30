@@ -1,16 +1,14 @@
-# `--mode retro`
+# `--mode reflect`
 
 Capture intra-session friction (errors, retries, workarounds, confusion, repeated manual steps, scope ambiguity) into a `/form`-ingestible research document. Runs inline so it has access to the full conversation history — that history IS the data source.
 
 ```bash
-export RALPH_SUBCOMMAND=retro
+export RALPH_SUBCOMMAND=reflect
 ```
 
-No hook gates retro — it writes a research doc, no GitHub state mutates. The terminal token (see [outcome-tokens.md](../outcome-tokens.md)) is reported for parity with other modes.
+No hook gates reflect — it writes a research doc, no GitHub state mutates. The terminal token (see [outcome-tokens.md](../outcome-tokens.md)) is reported for parity with other modes.
 
-Unlike `--mode postmortem` (team-session structured data via `TaskList`), retro analyzes free-form conversation context. The two are complementary — both can apply to the same session.
-
-## §Step 1: Initial response + postmortem dedup check
+## §Step 1: Initial response
 
 1. **If a scope hint was provided** (via `$ARGUMENTS`): use it to scope the conversation slice analyzed. Note the hint in the doc frontmatter `tags` and `Summary`.
 
@@ -20,35 +18,9 @@ Unlike `--mode postmortem` (team-session structured data via `TaskList`), retro 
    Capturing pain points from this session. Scanning the conversation for friction signals...
 
    (If you want to scope this to a specific section, re-run with a hint, e.g.,
-   `/ralph:caretake --mode retro "the worktree gate debugging part"`. Otherwise
+   `/ralph:caretake --mode reflect "the worktree gate debugging part"`. Otherwise
    I'll analyze the full conversation.)
    ```
-
-### Postmortem dedup check
-
-Before scanning, detect whether the calling session is a team-mode session (in which case `--mode postmortem` is the better tool):
-
-1. Try `TaskList`. If it succeeds AND returns a non-empty list, set `TEAM_SESSION_DETECTED = true`.
-2. Otherwise set `TEAM_SESSION_DETECTED = false`.
-
-If `TEAM_SESSION_DETECTED == true`, surface a recommendation via `AskUserQuestion`:
-
-```
-AskUserQuestion(
-  questions=[{
-    "question": "A team session was detected. --mode postmortem captures structured task-level blockers and may be a better fit. What would you like to do?",
-    "header": "Postmortem vs. Retro",
-    "options": [
-      {"label": "Use --mode postmortem", "description": "Switch to /ralph:caretake --mode postmortem (designed for team sessions)"},
-      {"label": "Continue with retro", "description": "Keep capturing pain points from the conversation context — retro complements postmortem"}
-    ],
-    "multiSelect": false
-  }]
-)
-```
-
-- **"Use --mode postmortem"**: reply `Recommend running /ralph:caretake --mode postmortem instead — it captures TaskList-driven blockers that retro cannot see.` and STOP.
-- **"Continue with retro"**: note the team-session context in the eventual research doc and proceed to §Step 2.
 
 ## §Step 2: Scan conversation context for pain points
 
@@ -128,7 +100,7 @@ Then:
 AskUserQuestion(
   questions=[{
     "question": "How do these pain points look?",
-    "header": "Retro Findings Review",
+    "header": "Reflect Findings Review",
     "options": [
       {"label": "Looks good, write it", "description": "Finalize the research document as-is"},
       {"label": "Drop a pain point", "description": "Remove an entry that isn't really a pain point"},
@@ -144,7 +116,7 @@ Routing: drop/add/re-classify re-displays the list and re-asks until the user pi
 
 ## §Step 5: Write research document
 
-Path: `thoughts/shared/research/YYYY-MM-DD-retro-[description].md` where `[description]` is a kebab-case slug from the dominant pain-point theme.
+Path: `thoughts/shared/research/YYYY-MM-DD-reflect-[description].md` where `[description]` is a kebab-case slug from the dominant pain-point theme.
 
 ```markdown
 ---
@@ -152,15 +124,14 @@ date: YYYY-MM-DD
 status: complete
 type: research
 github_issue: null
-tags: [retro, session-friction, [+ component tags]]
+tags: [reflect, session-friction, [+ component tags]]
 ---
 
-# Retro: [Session Theme]
+# Reflect: [Session Theme]
 
 ## Prior Work
 
 - builds_on:: [[any-related-research-doc]] (research — primary evidence)
-- builds_on:: [[any-related-postmortem]] (report — overlapping ground)
 
 (If no prior work found: `_No prior work found via knowledge graph or thoughts scan._`)
 
@@ -203,7 +174,7 @@ tags: [retro, session-friction, [+ component tags]]
 ### Will Modify
 
 - [Files implicated by anchored pain points]
-- If none: `- None - this retro covers tooling/UX friction with no specific code files implicated.`
+- If none: `- None - this reflect covers tooling/UX friction with no specific code files implicated.`
 
 ### Will Read (Dependencies)
 
@@ -224,8 +195,8 @@ tags: [retro, session-friction, [+ component tags]]
 After writing, confirm to the user:
 
 ```
-Wrote retro to:
-`thoughts/shared/research/YYYY-MM-DD-retro-[description].md`
+Wrote reflect to:
+`thoughts/shared/research/YYYY-MM-DD-reflect-[description].md`
 
 Captured N pain points across [list categories that had findings].
 ```
@@ -237,7 +208,7 @@ Offer downstream actions via `AskUserQuestion`:
 ```
 AskUserQuestion(
   questions=[{
-    "question": "Retro doc written. What would you like to do next?",
+    "question": "Reflect doc written. What would you like to do next?",
     "header": "Next Steps",
     "options": [
       {"label": "Create issue from findings", "description": "Run /ralph:form on this research doc to crystallize findings into a GitHub issue"},
@@ -251,20 +222,19 @@ AskUserQuestion(
 
 Routing:
 
-- **"Create issue from findings"**: invoke `Skill("ralph:form", args="thoughts/shared/research/YYYY-MM-DD-retro-[description].md")`.
-- **"Deep-dive a specific pain point"**: ask which one, dispatch `Agent(subagent_type="ralph:codebase-analyzer", ...)`, append findings to the same retro doc as `## Follow-up Investigation`.
+- **"Create issue from findings"**: invoke `Skill("ralph:form", args="thoughts/shared/research/YYYY-MM-DD-reflect-[description].md")`.
+- **"Deep-dive a specific pain point"**: ask which one, dispatch `Agent(subagent_type="ralph:codebase-analyzer", ...)`, append findings to the same reflect doc as `## Follow-up Investigation`.
 - **"Save for later — done"**: STOP.
 
 ## §Step 7: Record outcome (optional)
 
 ```
 knowledge_record_outcome(
-  event_type="retro_completed",
+  event_type="reflect_completed",
   payload={
     pain_point_count: <N>,
     categories: [<list with findings>],
-    created_doc_path: "thoughts/shared/research/YYYY-MM-DD-retro-[description].md",
-    team_session_detected: <bool>
+    created_doc_path: "thoughts/shared/research/YYYY-MM-DD-reflect-[description].md"
   }
 )
 ```
@@ -274,21 +244,21 @@ If unavailable, skip silently.
 ## §Step 8: Emit terminal token
 
 ```
-RETRO <path>
+REFLECT <path>
 ```
 
-Where `<path>` is the absolute path written in §Step 5. On the team-session-redirect or no-findings short-circuit:
+Where `<path>` is the absolute path written in §Step 5. On the no-findings short-circuit:
 
 ```
-RETRO SKIPPED <reason>
+REFLECT SKIPPED <reason>
 ```
 
 ## §Constraints
 
-- **Inline context is non-negotiable** — retro MUST run inline (no `context: fork`). A forked retro has no conversation to analyze.
+- **Inline context is non-negotiable** — reflect MUST run inline (no `context: fork`). A forked reflect has no conversation to analyze.
 - **Conditional sub-agent dispatch.** Only anchored pain points dispatch `codebase-locator` / `codebase-analyzer`. Tooling/UX/conceptual friction skips sub-agents and uses `None` entries.
 - **No `team_name`** on `Agent()` calls.
-- **Sonnet model for extraction quality** — declared at the caretake top-level `model: sonnet` in SKILL.md frontmatter (retro has no per-mode override).
+- **Sonnet model for extraction quality** — declared at the caretake top-level `model: sonnet` in SKILL.md frontmatter (reflect has no per-mode override).
 - **`## Files Affected` always present** even when no code is implicated.
 - **Long conversations are narrowed, not skipped.** Ask the user to scope or constrain.
 - **Research doc, not idea doc.** Output is `type: research` (not `idea`) so it flows through `/form`'s research-doc intake path.
