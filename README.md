@@ -75,8 +75,8 @@ If you're using explicit `RALPH_GH_REPO_TOKEN` / `RALPH_GH_PROJECT_TOKEN` / `RAL
 | `/ralph:plan` | Create or review an implementation plan |
 | `/ralph:impl` | Implement an approved plan in an isolated worktree |
 | `/ralph:review` | Validate implementation or review a plan |
-| `/ralph:caretake` | Triage, hygiene, unblock, trends, split, debug, report |
-| `/ralph:catch-up` | Session orientation — narrative, dashboard, or status report |
+| `/ralph:caretake` | Triage, hygiene, unblock, report |
+| `/ralph:catch-up` | Session orientation — narrative or status report |
 | `/ralph:form` | Crystallize ideas into structured GitHub issues |
 | `/ralph:setup` | One-time project board setup |
 
@@ -116,7 +116,7 @@ The MCP server registers exactly 22 `ralph_hero__*` tools by default (26 with `R
 mcp-server/              # TypeScript MCP server (published as ralph-hero-mcp-server)
 ralph/                   # Claude Code plugin
 ├── skills/              # 9 fat verbs + experimental hero-fable surface
-├── agents/              # 16 agents (8 per-phase + 8 investigators)
+├── agents/              # 15 agents (7 per-phase + 8 investigators)
 ├── hooks/               # Lifecycle enforcement hooks
 └── .claude-plugin/      # Plugin manifest + .mcp.json
 plugin/
@@ -150,7 +150,7 @@ plugin/
 | `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
 | `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token) |
 | `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
-| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (`sonnet`, `opus`, or `fable`; default `sonnet`; BLOCKED escalation re-dispatches once at `opus`) |
+| `RALPH_IMPL_MODEL` | No | Override the impl dispatch tier — a `.ralph-models.yml` tier name (`cheap`/`standard`/`capable`/`frontier`) or a raw model id (`sonnet`, `opus`, `fable`, `haiku`); default `standard` (= `sonnet`); BLOCKED escalation re-dispatches once at `opus` |
 | `RALPH_REVIEW_PLAN` | No | Plan-review gate (default `auto`, decision-driven: decision-free APPROVED plans auto-advance; plans with open `#### Decision:` blocks hold with a `## Decision Request` comment). `interactive` opts into the whole-plan picker. |
 | `RALPH_REVIEW_MODE` | No | Merge gate (default `auto`: val → code-review → merge → CI watch unattended; `CHANGES_REQUESTED` always blocks). `interactive` opts into report-PR-URLs-and-stop. |
 | `RALPH_AUTOPILOT_ENABLE` | No | Must be `"true"` for `/ralph:hero --mode auto` (enforced by `autopilot-enable-gate.sh`) |

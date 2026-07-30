@@ -1,6 +1,6 @@
 # loop-wrapper.md — Shared `--loop` substrate for ralph slim plugin skills
 
-Reference fragment. SKILL.md bodies copy the snippets below; they do not source this file.
+Reference fragment. All seven `--loop`-capable verb SKILL.md bodies reference this file by pointer for the arg-parsing snippet, the continuation manifest, and the refusal message; none inlines a private copy.
 
 ---
 
@@ -44,17 +44,15 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 | review:merge | `MERGED / …` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain mergeable queue |
 | caretake:triage | `TRIAGED <verdict>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Backlog |
 | caretake:hygiene | `HYGIENE COMPLETE <N>` / `HYGIENE BLOCKED <reason>` | (none — heartbeat; re-fire always) | default interval 1h; 60-270s if changes made | periodic scan |
+| caretake:watch | `WATCH-<KIND> ADVANCED <N>` | (none — heartbeat; re-fire always) | default interval 1h | sweeps pr/upstream/issue kinds; bare invocation runs all three serially |
 | caretake:unblock | `UNBLOCK REQUEST POSTED` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Human Needed queue |
-| caretake:trends | (markdown stdout is the deliverable) | (none — heartbeat; re-fire always) | default interval 6h; schedule accordingly | periodic snapshot |
-| caretake:debug | `DEBUG FILED <N>` / `DEBUG SKIPPED <reason>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Langfuse errors |
-| caretake:split | `SPLIT <N>` / `SPLIT SKIPPED <reason>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain M/L/XL queue |
 | caretake:all | (fan-out, no aggregated sentinel) | (none — heartbeat; re-fire always) | default interval 1h; schedule accordingly | periodic fan-out heartbeat |
 | caretake:default-event | per dispatched mode | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain trigger:* labels (`--issue NNN`-scoped; the bare no-arg fan-out uses `caretake:all`) |
 | catch-up:report | `Status update posted successfully.` | (none — heartbeat; re-fire always) | default interval 1d; schedule accordingly | periodic status post |
-| hero:auto | `result: Dispatched #NNN to <team> via <entrypoint>` AND `result: Queue empty.` (both re-fire) | (none — never terminates; cancel via `/tasks`) | 60-270s on dispatch; **3600s flat** when the queue is idle / `Queue empty` | **NEVER-TERMINATING adaptive watcher** (not a drain). `--mode auto` wraps `--mode classify`; BOTH its result lines re-fire the loop. `result: Queue empty.` is an *idle backoff* signal (sleep at the 1h ceiling, then re-check), NOT a stop. Tight cadence during bursts, 1h floor when idle; runs until the user deletes the pending wakeup via `/tasks`. Re-fire is hook-enforced by `autopilot-stop-gate.sh` (keyed to `RALPH_COMMAND=hero`). |
+| hero:auto | `result: Dispatched #NNN to <team> via <entrypoint>` AND `result: Queue empty.` (both re-fire) | (none — never terminates; cancel via `/tasks`) | 60-270s on dispatch; **3600s flat** when the queue is idle / `Queue empty` | **NEVER-TERMINATING adaptive watcher** (not a drain). `--mode auto` wraps the internal `--tick` step; BOTH its result lines re-fire the loop. `result: Queue empty.` is an *idle backoff* signal (sleep at the 1h ceiling, then re-check), NOT a stop. Tight cadence during bursts, 1h floor when idle; runs until the user deletes the pending wakeup via `/tasks`. Re-fire is hook-enforced by `autopilot-stop-gate.sh` (keyed to `RALPH_COMMAND=hero`). |
 | hero:watch | `result: Watch complete — …` | (none — heartbeat; re-fire always) | default interval 15m; schedule accordingly | polling heartbeat |
 
-**Heartbeat vs. drain continuation rule**: heartbeat / never-terminate modes (caretake:hygiene, caretake:trends, caretake:all, catch-up:report, hero:watch, **hero:auto**) do NOT list `Queue empty.` as a terminal sentinel — they re-fire regardless of whether any work was found. The first five re-fire on a fixed clock; **hero:auto re-fires on an adaptive cadence** (tight during bursts, 3600s flat when idle). Drain modes DO list `Queue empty.` as the signal to end the loop.
+**Heartbeat vs. drain continuation rule**: heartbeat / never-terminate modes (caretake:hygiene, caretake:watch, caretake:all, catch-up:report, hero:watch, **hero:auto**) do NOT list `Queue empty.` as a terminal sentinel — they re-fire regardless of whether any work was found. All but hero:auto re-fire on a fixed clock; **hero:auto re-fires on an adaptive cadence** (tight during bursts, 3600s flat when idle). Drain modes DO list `Queue empty.` as the signal to end the loop.
 
 ---
 
@@ -111,3 +109,25 @@ interactive or single-shot surface.
 ```bash
 printf '%s\n' "--loop is not supported for this mode. Looping is meaningful only for autonomous queue-drainers; this surface is interactive. See ralph/CLAUDE.md § Loop suitability."
 ```
+
+---
+
+## Unsuitable surfaces
+
+Single source (GH-1607) for every `--loop`-unsuitable skill:mode — interactive, single-shot, or single-artifact surfaces that emit the refusal message above rather than a manifest row. `ralph/CLAUDE.md § Loop suitability` points here instead of duplicating this list.
+
+| Skill / Mode | Reason |
+|---|---|
+| `form` all modes | interactive picker |
+| `plan` default | interactive phased plan creation |
+| `plan --mode iterate` | single-plan surgical edit; interactive |
+| `plan --mode epic` | single-epic decomposition |
+| `impl` default | interactive; pauses between phases |
+| `impl --mode address` | single PR feedback cycle |
+| `research` default | interactive question intake |
+| `catch-up` default | interactive orientation |
+| `setup` all modes | one-shot bootstrap |
+| `hero` default | one-shot orchestrator; refuses `--loop`. Use `--auto` → `--mode auto` for the autonomous drain |
+| `hero --mode pr-drain` | single-PR action; loop would re-process same PR |
+| `caretake --mode reflect` | single artifact per session |
+| `caretake --mode unblock --question` | interactive answer collection |

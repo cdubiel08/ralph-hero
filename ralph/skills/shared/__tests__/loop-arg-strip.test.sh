@@ -3,9 +3,10 @@
 # Usage: bash ralph/skills/shared/__tests__/loop-arg-strip.test.sh
 # Exit 0 = all pass; exit 1 = at least one failure.
 #
-# Embeds an identical copy of the snippet (per loop-wrapper.md guidance: copy-paste,
-# not sourced, so each consumer is self-contained). Tests document REAL snippet behavior
-# including the --loop dynamic case (dynamic is not a numeric duration so it stays in
+# GH-1607: extracts the snippet from loop-wrapper.md at test time instead of keeping
+# a third hand-maintained copy (the prior embedded copy had drifted one token —
+# printf '%s' vs the canonical echo). Tests document REAL snippet behavior including
+# the --loop dynamic case (dynamic is not a numeric duration so it stays in
 # STRIPPED_ARGS).
 
 set -uo pipefail
@@ -13,23 +14,41 @@ set -uo pipefail
 PASS=0
 FAIL=0
 
+# Locate repo root from this script's location (ralph/skills/shared/__tests__)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+LOOP_WRAPPER="${REPO_ROOT}/ralph/skills/shared/loop-wrapper.md"
+
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 ok()   { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; echo "      expected: $2"; echo "      got:      $3"; FAIL=$((FAIL + 1)); }
 
-# Run the Phase-1 arg-parsing snippet for the given ARGUMENTS string.
+# Extract the first fenced ```bash block after the "## Arg-parsing snippet" heading.
+# This is the canonical snippet text — NOT a copy. If the heading or fence moves,
+# or the block comes back empty, fail loudly rather than eval a silently-empty string
+# (which would make every fixture below pass trivially on stale local defaults).
+SNIPPET="$(awk '
+  /^## Arg-parsing snippet/ { found=1 }
+  found && /^```bash/ && !in_block { in_block=1; next }
+  in_block && /^```/ { exit }
+  in_block { print }
+' "$LOOP_WRAPPER")"
+
+if [[ -z "$SNIPPET" ]]; then
+  echo "FATAL: could not extract a non-empty arg-parsing snippet from ${LOOP_WRAPPER}" >&2
+  echo "       (expected a \`\`\`bash fence directly under '## Arg-parsing snippet')" >&2
+  exit 1
+fi
+
+# Run the extracted arg-parsing snippet for the given ARGUMENTS string.
 # Outputs three lines: LOOP_RAW=<val>  LOOP_INTERVAL=<val>  STRIPPED_ARGS=<val>
 run_snippet() {
   local ARGUMENTS="$1"
   local LOOP_RAW=""
   local LOOP_INTERVAL=""
   local STRIPPED_ARGS="$ARGUMENTS"
-  if [[ "$ARGUMENTS" =~ (^|[[:space:]])--loop([[:space:]]+([0-9]+[smhd][0-9smhd]*))?([[:space:]]|$) ]]; then
-    LOOP_RAW="1"
-    LOOP_INTERVAL="${BASH_REMATCH[3]}"
-    STRIPPED_ARGS="$(printf '%s' "$ARGUMENTS" | sed -E 's/(^|[[:space:]])--loop([[:space:]]+[0-9]+[smhd][0-9smhd]*)?([[:space:]]|$)/\1/g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-  fi
+  eval "$SNIPPET"
   printf 'LOOP_RAW=%s\nLOOP_INTERVAL=%s\nSTRIPPED_ARGS=%s\n' \
     "$LOOP_RAW" "$LOOP_INTERVAL" "$STRIPPED_ARGS"
 }

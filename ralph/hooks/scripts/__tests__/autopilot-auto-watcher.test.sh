@@ -44,17 +44,17 @@ echo "Testing $POSTCHECK / $WAKEUP / $STOPGATE"
 echo
 echo "== discriminator: non-hero session is a no-op (legacy autopilot uses its own copies) =="
 reset
-ec=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --mode classify"}}' \
+ec=$(echo '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}' \
   | env RALPH_COMMAND=autopilot RALPH_HOOK_INPUT= TMPDIR="$TEST_DIR" bash "$POSTCHECK" >/dev/null 2>&1; echo $?)
 assert_eq "0" "$ec" "postcheck exits 0 for RALPH_COMMAND=autopilot"
 assert_nofile "$AUTOLOOP" "no autoloop armed for non-hero session"
 
 echo
-echo "== postcheck: Skill(loop, ...--mode classify) arms watcher + marks pending =="
+echo "== postcheck: Skill(loop, .../ralph:hero --tick) arms watcher + marks pending =="
 reset
-ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --mode classify on the queue"}}')
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"loop","args":"Run /ralph:hero --tick on the queue"}}')
 assert_eq "0" "$ec" "postcheck exits 0"
-assert_file "$AUTOLOOP" "autoloop armed by Skill(loop,--mode classify)"
+assert_file "$AUTOLOOP" "autoloop armed by Skill(loop,/ralph:hero --tick)"
 assert_file "$PENDING" "pending wakeup marked for the launch tick"
 
 echo
@@ -65,16 +65,16 @@ assert_eq "0" "$ec" "postcheck exits 0"
 assert_nofile "$PENDING" "no pending wakeup when watcher not armed (one-shot/default)"
 
 echo
-echo "== postcheck: armed + 'Dispatched' classify result marks pending =="
+echo "== postcheck: armed + 'Dispatched' tick result marks pending =="
 reset; touch "$AUTOLOOP"
-ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"ralph:hero","args":"--mode classify"},"tool_response":"some text\nresult: Dispatched #42 to builders via impl"}')
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"ralph:hero","args":"--tick"},"tool_response":"some text\nresult: Dispatched #42 to builders via impl"}')
 assert_eq "0" "$ec" "postcheck exits 0"
 assert_file "$PENDING" "Dispatched result marks pending wakeup"
 
 echo
 echo "== postcheck: armed + 'Queue empty' marks pending (never-terminate) =="
 reset; touch "$AUTOLOOP"
-ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"ralph:hero","args":"--mode classify"},"tool_response":"result: Queue empty. No events to dispatch."}')
+ec=$(run "$POSTCHECK" '{"session_id":"'"$SID"'","tool_input":{"skill":"ralph:hero","args":"--tick"},"tool_response":"result: Queue empty. No events to dispatch."}')
 assert_eq "0" "$ec" "postcheck exits 0"
 assert_file "$PENDING" "Queue empty is idle (not terminal) -> still owes a wakeup"
 

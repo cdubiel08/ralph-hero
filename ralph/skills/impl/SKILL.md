@@ -24,10 +24,6 @@ hooks:
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-plan-required.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-worktree-gate.sh"
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh impl impl pr"
     - matcher: "Bash"
       hooks:
         - type: command
@@ -49,8 +45,6 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/impl-postcondition.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
         - type: command
@@ -128,7 +122,7 @@ Read fully (no offset/limit). Detect resumption: scan for existing `- [x]` check
 
 Optional worktree suggestion per [worktree-setup.md §Suggestion](worktree-setup.md). If the user agrees, `EnterWorktree({name: "GH-NNN"})` — this fires the consuming repo's `WorktreeCreate` hook (env symlinks + package builds land automatically where the repo configures that hook) and returns the created path; `cd` into the tool-reported path (do not assume a literal `worktrees/GH-NNN`). Otherwise implement in place.
 
-Transition the linked issue to "In Progress" (skip if already). Post `## Implementation Started` comment.
+Transition the linked issue to "In Progress" (skip if already). **Precondition**: `In Progress` is server-reachable from `Plan in Review`, `Ready for Plan`, `In Review`, or an already-`In Progress` issue (idempotent) — not from `Backlog` / `Research Needed` / `Research in Progress`. If the issue is in one of those earlier states, that's a real pipeline skip: STOP and report it rather than routing around the refusal. Post `## Implementation Started` comment.
 
 ### Step 4: Implement phase by phase
 

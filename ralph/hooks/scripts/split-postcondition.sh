@@ -1,8 +1,12 @@
 #!/bin/bash
 # ralph/hooks/scripts/split-postcondition.sh
-# Stop: Verify /ralph:caretake --mode split created ≥2 sub-issues.
+# Stop: Verify /ralph:plan --mode epic's atomic-split path (GH-1605; formerly
+# caretake's split mode) created ≥2 sub-issues.
 #
-# Plan 6 hardening: scope-guarded (caretake + split).
+# GH-1605: scope-guarded (plan + epic-split — the atomic-split re-export from
+# decomposition.md § Atomic split; a pure plan-of-plans session stays at the
+# Step 0 `epic` value and early-exits here, so it can never be blocked by
+# this postcondition).
 #
 # Environment:
 #   RALPH_TICKET_ID   - Parent ticket being split
@@ -16,10 +20,10 @@
 set -euo pipefail
 source "$(dirname "$0")/hook-utils.sh"
 
-if [[ "${RALPH_COMMAND:-}" != "caretake" ]]; then
+if [[ "${RALPH_COMMAND:-}" != "plan" ]]; then
   allow
 fi
-if [[ "${RALPH_SUBCOMMAND:-}" != "split" ]]; then
+if [[ "${RALPH_SUBCOMMAND:-}" != "epic-split" ]]; then
   allow
 fi
 
@@ -51,8 +55,8 @@ Expected: At least 2 sub-issues created in one ralph_hero__create_sub_issues
          status report; a one-child split is a re-estimate, not a decomposition)
 Found: RALPH_SPLIT_COUNT=${split_count}
 
-The /ralph:caretake --mode split body must create ≥2 sub-issues before
-completing — see ralph/skills/caretake/outcome-tokens.md (\"SPLIT <N>\" requires
-N ≥ 2) and ralph/skills/caretake/split-decomposition.md.
+The /ralph:plan --mode epic atomic-split path must create ≥2 sub-issues before
+completing — see ralph/skills/plan/decomposition.md § Atomic split (\"SPLIT <N>\"
+requires N ≥ 2).
 If this is a false positive (sub-issues were created but not tracked),
 re-run with RALPH_FORCE_STOP=true to bypass this check."

@@ -8,7 +8,7 @@ export RALPH_SUBCOMMAND=enrich
 
 This is the background half of the capture custody chain: `/ralph:form --mode draft` (#1559) writes `status: draft` + `captured`; this mode grounds each draft in codebase/prior-art/issue context before the daily brief (#1553, downstream reader) ever sees it.
 
-No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode watch-pr`) — it mutates only file contents under `thoughts/shared/ideas/`, never workflow state. The terminal token is emitted by convention, not hook-enforced.
+No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode watch`) — it mutates only file contents under `thoughts/shared/ideas/`, never workflow state. The terminal token is emitted by convention, not hook-enforced.
 
 ## §Step 1: Verify branch
 
@@ -78,7 +78,7 @@ git commit -m "chore(ideas): enrich <N> idea file(s)"
 git push origin main
 ```
 
-**Push-failure rule.** On a non-fast-forward reject, run `git pull --rebase origin main` and retry the push once. If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local (findings are not lost; on the next pass those files are already at `status: forming` and will be skipped, so re-run manually or wait for git state to reconcile). Commit-to-main precedent: `modes/postmortem.md` already commits + pushes from a caretake mode.
+**Push-failure rule.** On a non-fast-forward reject, run `git pull --rebase origin main` and retry the push once. If the retry also fails, emit `ENRICH SKIPPED push-rejected` — the commit stays local (findings are not lost; on the next pass those files are already at `status: forming` and will be skipped, so re-run manually or wait for git state to reconcile).
 
 ## §Step 5: Emit terminal token
 

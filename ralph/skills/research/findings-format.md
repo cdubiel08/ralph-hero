@@ -174,16 +174,97 @@ Post via `create_comment(number: NNN, body: ...)`. The `## Research Document` he
 
 ## Per-mode required-sections matrix
 
-| Section | Default (interactive) | `--mode auto` | `--mode prove` |
+| Section | Default (interactive) | `--mode auto` | Claim-shaped question (default intake) |
 |---|---|---|---|
-| Frontmatter | required | required | n/a (no doc) |
-| Prior Work | required | required | n/a |
-| Research Question | required | required | (Claim instead) |
-| Summary | required | required | (Verdict instead) |
-| Detailed Findings | required | required | (Evidence Chains instead) |
-| Files Affected | recommended | **required** (hook-enforced) | n/a |
-| Pipeline History | optional | optional | n/a |
-| Cross-Repo Scope | optional | optional | n/a |
-| UI Baseline | conditional | conditional | n/a |
+| Frontmatter | required | required | required |
+| Prior Work | required | required | required |
+| Research Question | required | required | required (Claim as the question) |
+| Summary | required | required | required (Verdict-first, § Claim-check shape) |
+| Detailed Findings | required | required | required (Evidence Chains, § Claim-check shape) |
+| Files Affected | recommended | **required** (hook-enforced) | recommended |
+| Pipeline History | optional | optional | optional |
+| Cross-Repo Scope | optional | optional | optional |
+| UI Baseline | conditional | conditional | conditional |
 
-`--mode prove` does not write a doc — it produces an inline verdict block per `prove-claim.md` § Report template.
+A claim-shaped question ("prove X", "verify Y", "is it true that Z") is not a
+distinct mode — it goes through the same default intake and sub-agent dispatch
+as any other question. Only `## Summary` and `## Detailed Findings` change
+shape, per § Claim-check shape below; the doc still gets written and follows
+the normal section order.
+
+## Claim-check shape
+
+When the research question is a claim rather than an open-ended question,
+apply this evidence discipline to the `## Summary` and `## Detailed Findings`
+sections instead of writing free-form prose. This does not change Step 1-4 of
+the default flow (intake, sub-agent dispatch, synthesis) — it only shapes how
+the synthesis is written up in Step 5/6.
+
+### Evidence weighting
+
+Before writing the verdict, weigh sub-agent and `thoughts/` findings by source
+strength:
+
+| Type | Weight | Interpretation |
+|---|---|---|
+| Live codebase (via `codebase-analyzer`/`codebase-locator`) | Primary | What the code actually does right now. Strongest evidence. |
+| `research` doc | Primary | Findings, prior art, discovered facts, decisions made. |
+| `review` doc | Secondary | Post-implementation observations. More reliable than plans for "did it work?" questions. |
+| `plan` doc | Weak | Intended future state. A plan describing Feature X does NOT prove Feature X exists or works. |
+| `idea` doc | Weakest | Unvetted proposals. Use only to establish that a concept was considered. |
+
+Always qualify conclusions by the source type of the supporting evidence. Do
+not speculate beyond what the code and documents say.
+
+### Summary shape (verdict-first)
+
+```markdown
+## Summary
+
+**Claim**: [original claim, verbatim]
+
+**Verdict**: [supported | contradicted | partially supported | insufficient evidence]
+
+**Confidence**: [0.0 – 1.0] — [brief calibration note]
+```
+
+Confidence calibration:
+
+| Range | Meaning | Typical evidence profile |
+|---|---|---|
+| 0.8 – 1.0 | High | Multiple corroborating primary sources with direct quotes/code refs; no contradicting evidence found |
+| 0.5 – 0.7 | Medium | Some supporting evidence but gaps; key support from secondary sources; one weak contradicting signal |
+| 0.2 – 0.4 | Low | Sparse evidence; support mostly from weak sources; no direct confirmation |
+| 0.0 – 0.1 | Insufficient | No meaningful evidence found after broad search |
+
+### Detailed Findings shape (evidence chains)
+
+```markdown
+## Detailed Findings
+
+### Evidence Chains
+
+[For each supporting or contradicting piece:]
+- **Source**: [file:line or doc title] ([type], [date if a doc]) — [path/permalink]
+  > "[verbatim quote or code excerpt]"
+  **Relevance**: [one sentence on why this bears on the claim]
+
+### Source Type Qualifications
+[Note if key evidence comes from weak source types, e.g. "The primary evidence
+is from plan documents, which describe intent not reality."]
+
+### What Would Change This Verdict
+[State what additional evidence would shift the verdict and where it might be found.]
+```
+
+### Anti-patterns
+
+1. **Community co-membership is not evidence.** Two documents in the same
+   knowledge-graph cluster are structurally nearby, not necessarily
+   semantically related to the claim — always read the actual documents.
+2. **Path/hub-node existence is not evidence.** A graph path or a
+   high-connectivity document between two topics does not confirm the claim.
+3. **Plan documents are not proof of reality.** A plan describing an approach
+   is evidence of intent, not outcome.
+4. **Paraphrase is not evidence.** Only verbatim quotes and direct code
+   references count as evidence in the chain.

@@ -60,4 +60,4 @@ This tells the reader that the picture is partial (oldest events fell off the wi
 
 ## Output contract
 
-Return only the narrative text — no frontmatter, no headers, no metadata. The caller (the interactive `/ralph:catch-up` default flow, the `--mode narrative` branch, or a programmatic invoker like `cos`) takes the text as-is.
+Return only the narrative text — no frontmatter, no headers, no metadata. The caller (the interactive `/ralph:catch-up` default flow, or a programmatic invoker like `cos`) takes the text as-is.

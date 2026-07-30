@@ -73,7 +73,7 @@ Single XS/S issues outside any group skip the fable bookends entirely
 | Phase | MCP `phase` value | What it does |
 |---|---|---|
 | START | (none) | Entry point — call `get_issue(includePipeline=true)` and read `phase` |
-| SPLIT | `SPLIT` | One or more M/L/XL issues need decomposition. Dispatch `/ralph:caretake --mode split #NNN` per issue. After all complete, re-detect. |
+| SPLIT | `SPLIT` | One or more M/L/XL issues need decomposition. Dispatch `/ralph:plan --auto --mode epic #NNN` per issue (GH-1605 — routes to the atomic-split path when the issue doesn't clear the plan-of-plans bar). After all complete, re-detect. |
 | RESEARCH | `RESEARCH` | All "Research Needed" leaves run in parallel via `/ralph:research --auto NNN` |
 | PLAN | `PLAN` | After research converges, plan per primary issue via `/ralph:plan --auto NNN [--research-doc PATH]` |
 | REVIEW | `REVIEW` | Plan-review gate. When `RALPH_REVIEW_PLAN=auto`, dispatch `/ralph:plan --mode review NNN`. When `interactive`, surface AskUserQuestion picker. |

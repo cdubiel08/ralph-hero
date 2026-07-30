@@ -159,8 +159,8 @@ expanded=$(eval echo "$localDir")  # ~/projects/foo → /Users/dubiel/projects/f
 
 If `git pull` fails with a merge conflict during reuse, do NOT attempt to resolve in-flow:
 
-1. `save_issue(workflowState="__ESCALATE__")` for the primary issue.
+1. `save_issue(workflowState="__ESCALATE__", command="ralph_impl")` for the primary issue. (The `command` is required — without it `save_issue` takes the direct-state-name branch, and `"__ESCALATE__"` is not a valid state name, so the call is rejected before any of this plan's transition validation even runs.)
 2. Post a comment with the conflicted files list (`git status --porcelain | grep '^UU'`).
 3. STOP. Human resolution required.
 
-Auto-mode locks (`__LOCK__`) are released by `lock-release-on-failure.sh` (Stop hook) if the flow stops without committing — so the issue returns to "Ready for Plan" or "In Progress" rather than being stuck in `__LOCK__`.
+Auto-mode locks (`__LOCK__`) have no unconditional backward-release edge server-side (GH-1616) — a stuck `In Progress` claim surfaces as a stale-lock signal in the orchestrator's next-actions ranking (GH-1617) for a human or `hero` to reclaim via `save_issue(force: true)`, not by a Stop hook. There is deliberately no automatic release from `In Progress` (the no-rollback asymmetry the state machine preserves).

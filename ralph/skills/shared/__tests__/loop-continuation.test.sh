@@ -56,10 +56,11 @@ row_has_queue_empty() {
 
 HEARTBEAT_MODES=(
   "caretake:hygiene"
-  "caretake:trends"
+  "caretake:watch"
   "caretake:all"
   "catch-up:report"
   "hero:watch"
+  "hero:auto"
 )
 
 for mode in "${HEARTBEAT_MODES[@]}"; do
@@ -91,10 +92,7 @@ DRAIN_MODES=(
   "review:merge"
   "caretake:triage"
   "caretake:unblock"
-  "caretake:debug"
-  "caretake:split"
   "caretake:default-event"
-  "hero:auto"
 )
 
 for mode in "${DRAIN_MODES[@]}"; do

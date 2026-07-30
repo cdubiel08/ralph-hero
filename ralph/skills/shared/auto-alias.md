@@ -1,6 +1,6 @@
 # auto-alias.md — Per-verb `--auto` alias for ralph slim plugin skills
 
-Reference fragment. SKILL.md bodies copy the logic below; they do not source this file.
+Reference fragment. Every alias-table verb's SKILL.md references this file by pointer for the alias table, the refusal targets, and the Step-0 stanza; none inlines a private copy.
 
 ---
 
@@ -31,7 +31,7 @@ Verbs that refuse `--auto` entirely (interactive / single-artifact / one-shot):
 Refusal text (emit verbatim, then STOP):
 
 ```
---auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table.
+--auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop suitability for the canonical detail.
 ```
 
 ---

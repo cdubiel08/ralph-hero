@@ -1,13 +1,13 @@
 # Hero Dispatch Contract
 
-> Consulted by `/ralph:hero` default mode Step 3 (execution loop) and `--mode classify` (single dispatch). Maps each phase to the verb that runs it.
+> Consulted by `/ralph:hero` default mode Step 3 (execution loop) and the `--mode auto` tick (single dispatch). Maps each phase to the verb that runs it.
 
 ## Phase → verb mapping
 
 | Phase | Verb | Args |
 |---|---|---|
-| SPLIT | `/ralph:caretake --mode split` | `#NNN` |
-| RESEARCH | `/ralph:research --auto` | `NNN` (or `NNN --mode prove` for claim-checks) |
+| SPLIT | `/ralph:plan --auto --mode epic` | `#NNN` |
+| RESEARCH | `/ralph:research --auto` | `NNN` |
 | PLAN (XS/S/M) | `/ralph:plan --auto` | `NNN [--research-doc PATH]` |
 | PLAN (L/XL epic) | `/ralph:plan --auto --mode epic` | `NNN [--research-doc PATH]` |
 | REVIEW (plan) | `/ralph:plan --mode review` | `NNN [--plan-doc PATH]` |
@@ -17,7 +17,7 @@
 
 All targets are skills in the same `ralph` plugin → unqualified names work in `Skill()` calls.
 
-**Group unit (GH-1538):** PLAN, IMPLEMENT, PR, and INTEGRATE operate on the *plan group*, not the individual leaf. Once a sibling group plan exists (frontmatter `github_issues`), hero treats all members as one pipeline unit: one plan task, one worktree/branch, one PR closing every member. On the classify/auto path, SKIP any issue whose group is already in flight — a sibling group plan covering it exists and its train (plan → phases → PR) is the vehicle; dispatching the member separately would fork a duplicate PR.
+**Group unit (GH-1538):** PLAN, IMPLEMENT, PR, and INTEGRATE operate on the *plan group*, not the individual leaf. Once a sibling group plan exists (frontmatter `github_issues`), hero treats all members as one pipeline unit: one plan task, one worktree/branch, one PR closing every member. On the auto-tick path, SKIP any issue whose group is already in flight — a sibling group plan covering it exists and its train (plan → phases → PR) is the vehicle; dispatching the member separately would fork a duplicate PR.
 
 ## Skill() vs Agent()
 
@@ -38,7 +38,19 @@ Read `${RALPH_IMPL_MODEL:-sonnet}`. Default is sonnet; override via env or shell
 impl_model="${RALPH_IMPL_MODEL:-sonnet}"
 ```
 
-Pass the resolved model explicitly to dispatched verbs that respect it. Default is `sonnet`; opus is used on BLOCKED-escalation (when impl returns `IMPL BLOCKED needs=opus`).
+`RALPH_IMPL_MODEL` accepts EITHER a `.ralph-models.yml` tier name OR a raw Claude Code model id — the two vocabularies are disjoint, so interpretation is unambiguous (GH-1593). Rendered tier table (`claude-code` harness, `agent` surface — see `docs/model-tier-policy.md` § Per-session overrides):
+
+| Tier name | Resolves to |
+|---|---|
+| cheap | haiku |
+| standard | sonnet |
+| capable | opus |
+| frontier | fable |
+
+- `RALPH_IMPL_MODEL=capable` → resolves to opus via the table above.
+- `RALPH_IMPL_MODEL=opus` → not a tier name, used as-is (legacy raw model id).
+
+Pass the resolved model explicitly to dispatched verbs that respect it. Default is `sonnet` (tier `standard`); opus is used on BLOCKED-escalation (when impl returns `IMPL BLOCKED needs=opus`).
 
 ## BLOCKED escalation
 

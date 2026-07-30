@@ -13,9 +13,10 @@
 # terminal stop; the loop only ends when the user cancels via /tasks.
 #
 # Two session-scoped sentinels:
-#   autoloop  — armed when we observe Skill("loop", "…--mode classify…"), the
-#               --mode auto launch. Gates the Stop hook so one-shot
-#               `--mode classify` and `--mode default` runs are never blocked.
+#   autoloop  — armed when we observe Skill("loop", …) carrying the hero
+#               `--tick` inner command (see the grep below), the --mode auto
+#               launch. Gates the Stop hook so one-shot `--tick` and
+#               `--mode default` runs are never blocked.
 #   pending   — set on every tick that still owes a ScheduleWakeup; cleared by
 #               autopilot-wakeup-clear.sh when the call fires.
 #
@@ -48,12 +49,13 @@ skill_name=$(get_field '.tool_input.skill')
 skill_bare="${skill_name##*:}"
 skill_args=$(get_field '.tool_input.args')
 
-# Arm the watcher when the auto loop launches: Skill("loop", "…--mode classify…").
-# `--mode auto` wraps `--mode classify` inside /loop, so the classify token in
-# the loop args uniquely identifies the auto watcher (vs. --mode watch, which
-# wraps `--mode watch`, or a bare one-shot classify with no loop wrapper).
+# Arm the watcher when the auto loop launches: Skill("loop", "…") wrapping the
+# hero tick inner command below. `--mode auto` wraps the internal `--tick` step
+# inside /loop, so this token uniquely identifies the auto watcher (vs.
+# --mode watch, which wraps `--mode watch`, or a bare one-shot `--tick` with
+# no loop wrapper).
 loop_started=0
-if [[ "$skill_bare" == "loop" ]] && printf '%s' "$skill_args" | grep -q -- '--mode classify'; then
+if [[ "$skill_bare" == "loop" ]] && printf '%s' "$skill_args" | grep -q -- '/ralph:hero --tick'; then
   touch -- "$autoloop" 2>/dev/null || true
   loop_started=1
 fi
@@ -74,10 +76,10 @@ response_text=$(printf '%s' "$RALPH_HOOK_INPUT" | jq -r '
 result_line=$(printf '%s\n' "$response_text" | grep -E '^result:' | tail -n 1 || true)
 
 # Every productive tick owes a wakeup. Under the never-terminate contract BOTH
-# classify result lines (`Dispatched #…` and `Queue empty.`) require one — the
+# tick result lines (`Dispatched #…` and `Queue empty.`) require one — the
 # latter backs off to the 1h ceiling rather than stopping. Mark pending when the
-# loop launches OR when either classify result line appears, so the guard holds
-# whether the next tick re-fires Skill("loop") or re-runs classify directly.
+# loop launches OR when either tick result line appears, so the guard holds
+# whether the next tick re-fires Skill("loop") or re-runs the tick directly.
 if [[ "$loop_started" -eq 1 ]] || printf '%s' "$result_line" | grep -qE 'Dispatched #|Queue empty'; then
   printf '%s\n' "${result_line:-loop launch}" > "$pending" 2>/dev/null || true
 fi

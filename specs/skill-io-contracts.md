@@ -66,8 +66,8 @@ Defines the inputs, outputs, preconditions, and postconditions for every `ralph-
 | Requirement | Enablement |
 |-------------|------------|
 | `ralph-triage` MUST require `Backlog` state | [x] `triage-state-gate.sh` |
-| `ralph-split` MUST require `Backlog` or `Research Needed` state | [x] `split-size-gate.sh` |
-| `ralph-split` MUST require M/L/XL estimate | [x] `split-estimate-gate.sh` |
+| `ralph-split` (folded into `/ralph:plan --mode epic`, GH-1605) child estimates MUST be `XS`/`S` | [x] `create_sub_issues(maxChildEstimate: "S")` — server-side, fail-closed (GH-1618); superseded the client-side `split-size-gate.sh` (deleted GH-1619) |
+| `ralph-split` (folded into `/ralph:plan --mode epic`) parent estimate SHOULD be M/L/XL | [ ] not enforced — workflow-level judgment call only; no technical gate replaces the deleted `split-estimate-gate.sh` (GH-1592 What We're NOT Doing #4 records this as a deliberate scope boundary, not an oversight) |
 | `ralph-research` MUST require `Research Needed` state | [x] `research-state-gate.sh` |
 | `ralph-research` MUST require no existing research doc for this issue | [x] `pre-artifact-validator.sh` |
 | `ralph-plan` MUST require `Ready for Plan` state | [x] `plan-state-gate.sh` |

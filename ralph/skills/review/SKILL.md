@@ -9,10 +9,6 @@ hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh RALPH_COMMAND=review"
   PreToolUse:
-    - matcher: "mcp__plugin_ralph_ralph-github__ralph_hero__save_issue|mcp__plugin_ralph_ralph-github__ralph_hero__advance_issue"
-      hooks:
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/state-gate.sh review merge code_review"
     - matcher: "Bash"
       hooks:
         - type: command
@@ -28,8 +24,6 @@ hooks:
     - hooks:
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/closeout-postcondition.sh"
-        - type: command
-          command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/lock-release-on-failure.sh"
         - type: command
           command: "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/doc-structure-validator.sh"
 allowed-tools:
@@ -97,7 +91,7 @@ Export `RALPH_TICKET_ID="GH-${TARGET}"` when `TARGET` is an issue number.
    - `ERROR: *` → retry once, then `FINISH BLOCKED`.
 4. **Step 3a: Code Review Fix Cycle (max 1)** — per [§Code Review Fix Cycle](auto-vs-interactive.md): dispatch `Agent(subagent_type="ralph:impl-agent", prompt="Address PR review feedback for GH-NNN — Address Mode. Follow ${CLAUDE_PLUGIN_ROOT}/skills/impl/address-mode.md exactly.")`, re-invoke `Skill("code-review:code-review", "PR_NUMBER")` once, re-read verdict. Still `NEEDS_FIX` → `FINISH BLOCKED — review unresolved after 1 fix cycle`. The orchestrator does NOT loop the leaf — that's `--mode code`'s 3-round prerogative.
 4.7. **Behavior Verification (feature close-out, conditional)** — per [behavior-verification.md](behavior-verification.md): group plan + UI-surface diff + ralph-playwright installed → dispatch the opus behavior agent; `BEHAVIOR FAIL` blocks (`FINISH BLOCKED — behavior verification failed`); PASS/SKIP continue. Single XS/S PRs and non-UI diffs skip silently.
-4.9. **Attest (GH-1589)** — post the merge attestation per [merge-gate.md §Attestation & adversarial review](merge-gate.md): `bash scripts/attest-pr.sh PR_NUMBER --test "<verification command>::<exit code>::<summary>" --review-verdict <Step 3 verdict> --reviewer "<reviewer identity>"` with one `--test` per command actually run in Steps 2-4 (real exit codes — the validator and merge gate both check them) and `--class` entries for the adversarial lenses that ran. Re-run after ANY later push — the attestation is `head_sha`-bound.
+4.9. **Attest (GH-1589)** — post the merge attestation per [merge-gate.md §Attestation & adversarial review](merge-gate.md): `bash scripts/attest-pr.sh PR_NUMBER --test "<verification command>::<exit code>::<summary>" --review-verdict <Step 3 verdict> --reviewer "<reviewer identity>"` with one `--test` per command actually run in Steps 2-4 (real exit codes — the validator and merge gate both check them) and `--class` entries for the adversarial lenses that ran. **Spend trail (GH-1593, optional, non-gating):** append one `--model-tier "impl::<tier>::<model>"` for the impl dispatch this PR ran under — `standard`/sonnet by default, or `capable`/opus if `IMPL BLOCKED` forced a re-dispatch (record what actually ran, escalations included) — and one `--model-tier "review::<tier>::<model>"` for this session's own tier (`capable`/best, or `frontier`/fable if running under `/ralph:hero-fable`). Omit either entry if the tier genuinely isn't known at attest time — `validate-attestation.sh` never fails an attestation for a missing `models[]` field. Re-run after ANY later push — the attestation is `head_sha`-bound.
 5. **Merge** — `Agent(subagent_type="ralph:merge-agent", prompt="Merge PR for GH-NNN. PR URL: <url>. Follow the merge procedure in ${CLAUDE_PLUGIN_ROOT}/skills/review/merge-gate.md exactly; emit MERGED / MERGE BLOCKED / NOT READY.")`. Parse output: `MERGED` → continue; `MERGE BLOCKED|NOT READY` → STOP and report.
 6. **CI Watch** — `Monitor` per [merge-gate.md §CI Watch](merge-gate.md). **Substitute `MERGE_SHA` literally** into the command string (Monitor subshell does NOT inherit shell vars). Parse last notification: `CI PASSED:` / `CI FAILED:` / `CI SKIPPED:` / no-terminal-line → `CI PENDING`.
 7. **Report** — `FINISHED / Issue: #NNN / PR: <url> / Validation: PASS / Merge: Done / CI: <verdict>`.
@@ -131,7 +125,7 @@ Export `RALPH_TICKET_ID="GH-${TARGET}"` when `TARGET` is an issue number.
 4. **Merge** — `bash scripts/merge-pr.sh PR_NUMBER`. Parse `MERGE GATE PASS` / `MERGE GATE FAIL — <gate>` (legacy `MERGE BLOCKED` emitted alongside). On success capture `MERGE_SHA` via `gh pr view PR_NUMBER --json mergeCommit --jq '.mergeCommit.oid'`. If the gate blocks on a missing/stale attestation, post it first (default-mode Step 4.9 / [merge-gate.md §Attestation](merge-gate.md)) — standalone merges of un-attested PRs are supposed to block.
 5. **Worktree cleanup** — `git worktree remove worktrees/GH-NNN --force`. Cross-repo: remove sibling worktrees per [merge-gate.md §Cross-repo](merge-gate.md).
 6. **Transition issue to Done** — `save_issue(workflowState="__CLOSE__", command="ralph_merge")` (the `__CLOSE__` semantic intent maps `"*": "Done"` per `state-resolution.ts`). Group merges: per-child transition. Do NOT advance parent (server-side GH Action handles it — see [§Parent advancement](merge-gate.md)).
-7. **Cross-repo unblock** — per [§Cross-repo](merge-gate.md): identify sibling repos with `awaits` dependency on this issue; advance / comment per registry `dependency-flow`.
+7. **Cross-repo unblock** — per [§Cross-repo](merge-gate.md): identify sibling repos with `awaits` dependency on this issue; advance / comment per registry `dependency-flow` — a target workflow state MUST be named and the sibling read (`get_issue`) before any write (see merge-gate.md §Cross-repo).
 8. **Post artifact comment + record outcome** — `## Merged` comment with URL + SHA. `knowledge_record_outcome(event_type="pr_merged", ...)`.
 9. **Report** — `MERGED / Issue: #NNN / PR: <url> / SHA: <sha>`. Merge-mode terminates here; default-mode continues to CI watch.
 

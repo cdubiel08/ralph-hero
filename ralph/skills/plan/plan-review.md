@@ -131,7 +131,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then open "<plan-local-path>"; else xdg-open
 
 **Auto** (`--review-plan auto` or env `RALPH_REVIEW_PLAN=auto`):
 
-**Held-plan idempotency check — BEFORE the full plan read, rubric pass, or any critique dispatch.** The autopilot classify tick re-dispatches review for every Plan in Review issue on every pass; without this pre-check a held plan burns a full-plan read and a fresh critique sub-agent per tick. Scan the issue's comments for an existing `## Decision Request`:
+**Held-plan idempotency check — BEFORE the full plan read, rubric pass, or any critique dispatch.** The autopilot auto tick re-dispatches review for every Plan in Review issue on every pass; without this pre-check a held plan burns a full-plan read and a fresh critique sub-agent per tick. Scan the issue's comments for an existing `## Decision Request`:
 
 - Present, with NO later human comment → emit `PLAN AWAITING DECISION` and STOP. No critique dispatch, no re-post, no re-notify.
 - Present, with a later human comment → check the reply against each open `#### Decision:` block. It counts as answers ONLY if it actually addresses them (names a choice, picks an option, or gives direction for each open block — a bump, question, or unrelated note does NOT). Answers → fold into the plan (as in the interactive flow — resolved-decisions list, `human-decided YYYY-MM-DD`, sentinel restored when none remain), and only when NO open blocks remain proceed with the APPROVED transition to In Progress (the held plan already passed its critique); partially answered → fold what was answered, re-emit `PLAN AWAITING DECISION` (no re-post). Not answers → emit `PLAN AWAITING DECISION` and STOP.
@@ -167,7 +167,7 @@ The sub-agent's output IS the critique doc (with the workflow body fixing the fr
 | NEEDS_ITERATION | `save_issue(workflowState: "Plan in Progress", command: "review")` | Planner re-engages via `--mode iterate` |
 | Open in editor | No transition; re-loops the picker | Lets the reviewer read the full plan before deciding |
 
-The `state-gate.sh` hook (registered on `save_issue` with the plan/plan_epic/review command keys) validates the transition against ralph-state-machine.json.
+`save_issue` validates the transition against the issue's live current state server-side (GH-1615); the `ralph_review` command allowlist permits `Plan in Progress` as an output specifically for the NEEDS_ITERATION re-lock.
 
 ## Anti-patterns
 

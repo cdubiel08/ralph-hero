@@ -1,13 +1,13 @@
 ---
 description: Orientation companion — catches you up on what changed since you last
-  checked, surfaces ranked next actions with a recommended pick, renders the
-  pipeline dashboard, composes and posts a status report, or walks the full
-  human queue (decisions, unblocks, incubating thoughts) in one sitting. Use
-  whenever the user asks "what's going on", "what should I work on", "catch me
-  up", "show me the board", "post a status update", "daily brief", "walk the
-  queue", "empty the human queue", or starts a session wanting orientation.
-  --mode flag selects narrative / dashboard / report / brief sub-surfaces.
-argument-hint: "[--mode {narrative,dashboard,report,brief}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends] [--prepare] [--loop [duration]]"
+  checked, surfaces ranked next actions with a recommended pick, composes and
+  posts a status report, or walks the full human queue (decisions, unblocks,
+  incubating thoughts) in one sitting. Use whenever the user asks "what's
+  going on", "what should I work on", "catch me up", "show me the board",
+  "post a status update", "daily brief", "walk the queue", "empty the human
+  queue", or starts a session wanting orientation. --mode flag selects
+  report / brief sub-surfaces.
+argument-hint: "[--mode {report,brief}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends] [--prepare] [--loop [duration]]"
 context: inline
 allowed-tools:
   - Read
@@ -44,15 +44,13 @@ The unified orientation verb. The `--mode` flag selects a single-surface alterna
 - **`--mode report`** → allowed. Default interval `1d`. Use `catch-up:report` manifest row — heartbeat, no `Queue empty.` terminal; re-fires on clock.
   - Dry-run default: unless `--post` is in `$ARGUMENTS` OR `RALPH_CATCH_UP_HEARTBEAT_POST=true`, append `--dry-run` to `STRIPPED_ARGS` before wrapping (compose + print only; do NOT call `create_status_update`).
   - Emit `Skill("loop", args="${LOOP_INTERVAL:-1d} /ralph:catch-up --mode report ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
-- **Any other mode** (default/narrative/dashboard/brief) → emit refusal from `loop-wrapper.md` § Refusal message, then STOP. `--mode brief` stays refused here even with `--prepare` set — brief is an interactive sitting; `--prepare`'s daily cadence is owned by the #1555 scheduled task, not `/loop`.
+- **Any other mode** (default/brief) → emit refusal from `loop-wrapper.md` § Refusal message, then STOP. `--mode brief` stays refused here even with `--prepare` set — brief is an interactive sitting; `--prepare`'s daily cadence is owned by the #1555 scheduled task, not `/loop`.
 
 ## Mode dispatch
 
 | Mode | Behavior |
 |---|---|
 | (default, no `--mode`) | Narrative paragraph + AskUserQuestion picker over `next_actions`, then Agent dispatch |
-| `--mode narrative` | 2-4 sentence narrative only, no picker, no dispatch |
-| `--mode dashboard` | Raw `pipeline_dashboard` render (markdown / ascii / json) |
 | `--mode report` | Compose status update; post via `create_status_update` (pass `--dry-run` to skip posting) |
 | `--mode brief` | Daily sitting: status header + human-queue walk (decisions → unblocks → thoughts) + read-only flagged tail |
 | `--help` / `-h` | Print this table and exit |
@@ -108,25 +106,6 @@ If `CLAUDE_NONINTERACTIVE` is set or `AskUserQuestion` is unavailable, skip the 
 Based on the picked option, dispatch via `Agent()` or `Skill()` per the dispatch table in `next-action-ranking.md`. For "Work through these in order", dispatch sequentially in `directions[]` order, noting before each subsequent dispatch: *"Earlier actions may have changed board state."*
 
 After dispatch completes, output `Session complete.`
-
-## --mode narrative
-
-Dispatch the same `Agent(subagent_type="ralph:catch-up-agent")` as the default flow's Step 1 (same inline prompt pointing at `${CLAUDE_PLUGIN_ROOT}/skills/catch-up/narrative-synthesis.md`). Return only the narrative text (or the empty-case sentence from `narrative-synthesis.md`). No picker, no dispatch.
-
-Consult `narrative-synthesis.md` for tone rules. The single output is prose or the empty-case sentence — no metadata, no headers.
-
-## --mode dashboard
-
-Parse the trailing argument (after `--mode dashboard`) as the output format. Default to `markdown`. Valid formats: `markdown`, `ascii`, `json`.
-
-Call `ralph_hero__pipeline_dashboard` with `format=<parsed>, includeHealth=true, issuesPerPhase=5`.
-
-Render per `dashboard-render.md`:
-
-- If `format == "json"`: emit `JSON.stringify(dashboard, null, 2)` inside a fenced ```json``` block. Stop.
-- If `format == "markdown"` or `format == "ascii"`: emit `dashboard.formatted` verbatim. Surface critical health warnings under a `### Critical Health Warnings (N)` heading after the formatted block.
-
-The negative-constraint surface (no analyst commentary, no Key Findings, no recommendations) is load-bearing — consult `dashboard-render.md` before generating output.
 
 ## --mode report
 
