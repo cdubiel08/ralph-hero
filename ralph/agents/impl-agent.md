@@ -1,6 +1,6 @@
 ---
 name: impl-agent
-description: Implement issues - executes one phase per invocation in an isolated worktree, handles PR review feedback. Default sonnet per docs/model-tier-policy.md. The dispatcher passes the full procedure inline (worktree setup, phase execution, plan compliance, address-mode classification) via the ralph/skills/impl/*.md sibling refs. Escalates to opus on BLOCKED. Honors the IMPL BLOCKED verdict-prefix contract.
+description: Implement issues - executes one phase per invocation in an isolated worktree, handles PR review feedback. Defaults to sonnet. The dispatcher passes the full procedure inline (worktree setup, phase execution, plan compliance, address-mode classification) via the ralph/skills/impl/*.md sibling refs. Escalates to opus on BLOCKED. Honors the IMPL BLOCKED verdict-prefix contract.
 model: sonnet
 tools: Read, Write, Edit, Glob, Grep, Bash, Agent, mcp__plugin_ralph_ralph-github__ralph_hero__get_issue, mcp__plugin_ralph_ralph-github__ralph_hero__list_issues, mcp__plugin_ralph_ralph-github__ralph_hero__save_issue, mcp__plugin_ralph_ralph-github__ralph_hero__create_comment, mcp__plugin_ralph_ralph-github__ralph_hero__list_sub_issues
 ---

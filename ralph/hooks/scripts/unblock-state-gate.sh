@@ -11,7 +11,7 @@
 #     ## Unblock Request comment and STOPS. Any workflowState write from this
 #     path is a bug and gets blocked.
 #
-# Plan 6 hardening applied: scope guards + is_semantic_intent passthrough.
+# Scope guards + is_semantic_intent passthrough.
 #
 # Exit codes:
 #   0 - Valid transition target (or out of scope)

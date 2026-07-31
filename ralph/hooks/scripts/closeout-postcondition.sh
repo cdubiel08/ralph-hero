@@ -2,7 +2,7 @@
 # ralph/hooks/scripts/closeout-postcondition.sh
 # Stop: Ensure /ralph:review emitted a terminal verdict before allowing stop.
 #
-# Mode-discriminated by tool-input shape (Plan 4 lesson: no mid-flow env flipping).
+# Mode-discriminated by tool-input shape — never by mid-flow env flipping.
 # Scans the transcript for any of the four modes' terminal verdict tokens:
 #
 #   val mode    — VALIDATION PASS | VALIDATION FIX | VALIDATION FAIL

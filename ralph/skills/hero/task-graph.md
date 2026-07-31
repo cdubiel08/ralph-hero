@@ -47,7 +47,7 @@ T-N+1:  Create PR GH-[PRIMARY]                → blockedBy: [last impl task]
 T-N+2:  Finish GH-[PRIMARY]                   → blockedBy: [PR task]
 ```
 
-> **Decision hold (GH-1544):** under the default `RALPH_REVIEW_PLAN=auto`, a
+> **Decision hold:** under the default `RALPH_REVIEW_PLAN=auto`, a
 > "Review plan" task can terminate in `PLAN AWAITING DECISION` — the plan is
 > APPROVED but holds in Plan in Review on open `#### Decision:` blocks. The
 > downstream impl tasks stay `blockedBy` the review task and the pipeline
@@ -76,7 +76,7 @@ After all plans are written, read each plan's `## Phase N:` headings and their `
 
 This replaces default sequential ordering with a graph-driven ordering that enables parallel dispatch of independent phases.
 
-## PR-task cardinality (GH-1538)
+## PR-task cardinality
 
 Exactly ONE `Create PR GH-[PRIMARY]` task per plan group. Member issues
 NEVER get their own PR task — their work ships in the group's single PR

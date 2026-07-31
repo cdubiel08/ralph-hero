@@ -13,14 +13,11 @@
 # that survives the per-call subshell isolation of the Bash tool — bare
 # `export` in this script's own process is throwaway.
 #
-# Mirrors plugin/ralph-hero/hooks/scripts/set-skill-env.sh. The earlier
-# slim version omitted the CLAUDE_ENV_FILE write, which silently broke
-# every hook in ralph/hooks/scripts/ that gated on RALPH_COMMAND
-# (state-gate.sh scope args, plan-postcondition mode branch, etc.) —
-# they all hit their scope-guard
-# `if [[ "${RALPH_COMMAND:-}" != "<verb>" ]]; then allow` and exited 0
-# without ever running their validation. Surfaced by Plan 11 PR #1398
-# code review.
+# The CLAUDE_ENV_FILE write is load-bearing: without it every hook that
+# gates on RALPH_COMMAND (state-gate.sh scope args, plan-postcondition's
+# mode branch, etc.) hits its scope guard
+# `if [[ "${RALPH_COMMAND:-}" != "<verb>" ]]; then allow` and exits 0
+# without ever running its validation.
 #
 # Exit codes:
 #   0 — always (silent no-op when CLAUDE_ENV_FILE is unset, e.g. when

@@ -3,10 +3,9 @@
 # PreToolUse:Bash — FUNNEL raw `gh pr merge` invocations to the verified
 # merge path (scripts/merge-pr.sh).
 #
-# GH-1589 demotion (epic #1588): this hook no longer verifies anything
-# itself. It used to fetch reviewDecision + carve-outs over the network
-# (254 lines, Claude-Code-only — zero protection for any other harness).
-# Truth enforcement now lives in layers every harness shares:
+# This hook verifies nothing itself — a Claude-Code-only network check would
+# give zero protection to any other harness. Truth enforcement lives in layers
+# every harness shares:
 #   - scripts/merge-pr.sh      — client-side gates (review, CI, attestation,
 #                                external review), plain bash + gh + jq
 #   - validate-attestation.yml — server-side ralph-attestation commit status
@@ -43,7 +42,7 @@ fi
 # Bare `gh pr merge` ANYWHERE in the command (including chained after
 # merge-pr.sh via && / ; / |) funnels to the script. Checked BEFORE the
 # merge-pr.sh allowlist so a mixed command cannot ride through on that
-# substring (CodeRabbit finding, PR #1602).
+# substring.
 if echo "$cmd" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge\b'; then
   block "merge-review-decision-gate: use the verified merge path, not bare \`gh pr merge\`.
 
@@ -56,7 +55,7 @@ The script enforces the merge gates (CHANGES_REQUESTED block, CI checks
 green, attestation valid + head_sha-bound, external review present) from
 any shell — see ralph/skills/review/merge-gate.md. A documented escape
 hatch exists: scripts/merge-pr.sh PR_NUMBER --force \"reason\" posts a
-durable override comment before merging (GH-1589)."
+durable override comment before merging."
 fi
 
 # The verified path (and everything else) passes through untouched.

@@ -4,12 +4,7 @@
 
 ## Detect
 
-Read `~/.claude/plugins/installed_plugins.json`. Find the most recent entry for the ralph family — try both new and legacy names:
-
-- New (slim): `"ralph@ralph"`
-- Legacy: `"ralph-hero@ralph-hero"`
-
-Use the latest entry's `"scope"` field.
+Read `~/.claude/plugins/installed_plugins.json`. Find the most recent entry keyed `"ralph@ralph"` (or `"ralph-hero@ralph-hero"` on machines that still carry the older install). Use that entry's `"scope"` field.
 
 ## Decide target path
 

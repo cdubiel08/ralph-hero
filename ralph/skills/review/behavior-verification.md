@@ -1,6 +1,6 @@
 # Behavior verification (feature close-out)
 
-Opus browser/BDD stage between code review and merge (GH-1538, decision
+Opus browser/BDD stage between code review and merge (decision
 D3). Verifies the *delivered behavior* — not the code — of a feature
 group's PR against the plan's Manual Verification items and the
 feature's acceptance criteria, via ralph-playwright.
@@ -47,9 +47,7 @@ Agent(
 ```
 
 Model note: opus (not the session pin, not haiku) — behavior judgment on
-a live UI needs vision + agentic browsing above the deterministic tier,
-but is not a fable bookend; see `docs/model-tier-policy.md` §Tier routing
-by unit size.
+a live UI needs vision + agentic browsing above the deterministic tier.
 
 ## §Verdict handling
 

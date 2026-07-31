@@ -6,12 +6,12 @@ This reference is consulted by `/ralph:catch-up --mode brief` — the interactiv
 
 The brief composes from exactly two sources — never a third, never a re-scan:
 
-1. **Board queue** — ONE `ralph_hero__next_actions` call with `enumerate: "human-queue"`. This returns every direction the ranker would ever surface (plan-decision holds, human-needed unblocks, stale locks, PRs, actionable issues), unsliced: `rank` runs 1..N, `limit` is ignored, `audience` is forced to `"human"` server-side. `plan-decision` and `human-needed-unblock` entries carry `signals.sourceCommentUrl`. **The brief never re-ranks, re-filters, or re-scans this output** — epic #1550's A→C contract is one scan, one ranking. `catch-up --mode brief` is the tool's documented ONE canonical caller for `enumerate: "human-queue"`; every other caller uses the default ranked-top-N path (`next-action-ranking.md`) and must not adopt this mode.
+1. **Board queue** — ONE `ralph_hero__next_actions` call with `enumerate: "human-queue"`. This returns every direction the ranker would ever surface (plan-decision holds, human-needed unblocks, stale locks, PRs, actionable issues), unsliced: `rank` runs 1..N, `limit` is ignored, `audience` is forced to `"human"` server-side. `plan-decision` and `human-needed-unblock` entries carry `signals.sourceCommentUrl`. **The brief never re-ranks, re-filters, or re-scans this output** — one scan, one ranking. `catch-up --mode brief` is the tool's documented ONE canonical caller for `enumerate: "human-queue"`; every other caller uses the default ranked-top-N path (`next-action-ranking.md`) and must not adopt this mode.
 2. **Thought queue** — glob `thoughts/shared/ideas/*.md`, filter to frontmatter `status: draft` or `status: forming`, sort oldest-`captured` first (a missing `captured` sorts as unknown-age, per `../form/intake-shapes.md` § Idea-file lifecycle contract). **Thoughts cannot come from the board** — capture never mutates board state, so incubating ideas are structurally invisible to `next_actions`; pushing them into the enumeration tool would couple the MCP server to a thoughts-directory layout it otherwise never reads. Composing two sources instead of one is deliberate — do not "simplify" this to a single call.
 
 ## Status header
 
-Call `ralph_hero__pipeline_dashboard` with `view: "summary"` (no other args beyond project resolution). Render one line covering health, riskScore or velocity, and total issue count. If the tool errors, or the response is missing the fields the header needs, degrade silently: drop to a narrative-only header with no health/velocity clause, and surface no error text to the user. The summary view is a soft dependency — epic #1550's B→C contract: the summary degrades gracefully.
+Call `ralph_hero__pipeline_dashboard` with `view: "summary"` (no other args beyond project resolution). Render one line covering health, riskScore or velocity, and total issue count. If the tool errors, or the response is missing the fields the header needs, degrade silently: drop to a narrative-only header with no health/velocity clause, and surface no error text to the user. The summary view is a soft dependency.
 
 ## Walk order + dispatch table
 
@@ -120,7 +120,7 @@ sed \
 launchctl load ~/Library/LaunchAgents/com.$(whoami).brief-prepare.plist
 ```
 
-**Env prerequisite**: the plist's `ProgramArguments` runs `/bin/bash -lc`, and a non-interactive login shell does NOT source the interactive zsh profile (`.zshrc`) the way a Terminal session does — RALPH_* scope vars exported only there never reach the scheduled run. Per root `CLAUDE.md` § Environment Variables, the scope vars (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`, `RALPH_GH_PROJECT_OWNER`) MUST live in the tracked `<repo>/.claude/settings.json`, not only a gitignored `settings.local.json` or a shell profile export — otherwise the headless run is board-blind and fails with `owner is required`.
+**Env prerequisite**: the plist's `ProgramArguments` runs `/bin/bash -lc`, and a non-interactive login shell does NOT source the interactive zsh profile (`.zshrc`) the way a Terminal session does — RALPH_* scope vars exported only there never reach the scheduled run. The scope vars (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`, `RALPH_GH_PROJECT_OWNER`) MUST live in the tracked `<repo>/.claude/settings.json`, not only a gitignored `settings.local.json` or a shell profile export — otherwise the headless run is board-blind and fails with `owner is required`.
 
 ### Verify
 

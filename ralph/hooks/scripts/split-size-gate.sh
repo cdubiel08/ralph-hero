@@ -3,10 +3,10 @@
 # PreToolUse (ralph_hero__create_issue | ralph_hero__create_sub_issues): Validate
 # that sub-tickets created by /ralph:caretake --mode split are XS/S only.
 #
-# Plan 6 hardening: scope-guarded (caretake + split). Larger estimates would
-# undermine the atomic-decomposition contract — block them at the MCP boundary.
+# Scope-guarded (caretake + split). Larger estimates would undermine the
+# atomic-decomposition contract — block them at the MCP boundary.
 #
-# GH-1565: create_sub_issues batches N children in a single call, each with
+# create_sub_issues batches N children in a single call, each with
 # its own optional .estimate — there is no single scalar estimate to read, so
 # this hook branches on whether the payload carries a `children` array and,
 # if so, validates every child's estimate instead of the top-level scalar.

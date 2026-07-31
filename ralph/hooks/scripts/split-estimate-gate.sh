@@ -6,7 +6,7 @@
 #   - PostToolUse: parse the get_issue response and BLOCK if the fetched issue's
 #     estimate is XS or S.
 #
-# Plan 6 hardening: RALPH_COMMAND scope guard (caretake only) + RALPH_SUBCOMMAND
+# RALPH_COMMAND scope guard (caretake only) + RALPH_SUBCOMMAND
 # scope check (split only). Pipeline-heavy jq stages append `|| true` so the
 # no-match path under `set -euo pipefail` flows to a controlled warn/allow.
 #

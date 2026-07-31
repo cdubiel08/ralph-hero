@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/autopilot-stop-gate.sh
-# Stop — for the slim `ralph:hero --mode auto` never-terminating watcher, block
+# Stop — for the `ralph:hero --mode auto` never-terminating watcher, block
 # session exit when a loop tick returns without scheduling the next wakeup, so
 # the silent-drop failure mode becomes a noisy, recoverable one. `--mode auto`
 # never self-terminates — the only clean exit is the user cancelling via /tasks.
@@ -16,7 +16,6 @@
 # ralph-hero plugin / Director path is deprecated. Uses stop_hook_active for
 # re-entry safety following the pattern in team-stop-gate.sh.
 #
-# See GH-1346 and thoughts/shared/research/2026-05-21-autopilot-loop-handoff.md.
 #
 # Exit codes:
 #   0 - Allow stop (not in the watcher, or the tick scheduled its wakeup)
@@ -27,7 +26,7 @@ source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-# Only the slim hero verb.
+# Only the hero verb.
 [[ "${RALPH_COMMAND:-}" == "hero" ]] || exit 0
 
 session_id=$(get_field '.session_id')

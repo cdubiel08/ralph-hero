@@ -2,7 +2,7 @@
 # ralph/hooks/scripts/triage-postcondition.sh
 # Stop: Verify /ralph:caretake --mode triage emitted a terminal token.
 #
-# Plan 6 hardening: scope-guarded so non-triage caretake modes (hygiene, unblock,
+# Scope-guarded so non-triage caretake modes (hygiene, unblock,
 # split, postmortem, retro, trends, debug) pass through cleanly. Reads the
 # JSONL transcript for one of the documented TRIAGED tokens or `Queue empty.`
 # (see ralph/skills/caretake/outcome-tokens.md). The grep pipeline appends
@@ -41,10 +41,10 @@ if [[ -z "$transcript_path" ]] || [[ ! -f "$transcript_path" ]]; then
 fi
 
 # Extract assistant text from the JSONL transcript. The grep + jq pipeline is
-# pipeline-heavy under set -euo pipefail; append `|| true` per Plan 6 lesson.
+# pipeline-heavy under set -euo pipefail; append `|| true`.
 transcript_text=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' "$transcript_path" 2>/dev/null || true)
 
-# Match any of the documented terminal tokens. The 8 structured verdicts (#1417)
+# Match any of the documented terminal tokens. The structured verdicts
 # are matched verbatim; the legacy alternations (routed/duplicate/canceled/…) are
 # retained for back-compat so older transcripts and the parallel plugin surface
 # don't regress. WAIT-pr requires a literal "=NNN" numeric suffix (PR numbers are

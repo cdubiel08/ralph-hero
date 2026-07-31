@@ -1,6 +1,6 @@
 # `--mode split`
 
-Take ONE large issue (M/L/XL), research its scope, and decompose it into XS/S sub-issues that can be implemented atomically. This is the non-epic side of decomposition — epic-tier work (3+ tiers) is handled by `/ralph:plan --mode epic` (Plan 4).
+Take ONE large issue (M/L/XL), research its scope, and decompose it into XS/S sub-issues that can be implemented atomically. This is the non-epic side of decomposition — epic-tier work (3+ tiers) is handled by `/ralph:plan --mode epic`.
 
 ```bash
 export RALPH_SUBCOMMAND=split
@@ -129,7 +129,7 @@ Sub-issue body template:
 
 ## §Step 7.5: Write parent plan-of-plans
 
-When the split produced **2+ children** (the normal `SPLIT <N>` path — skip on the re-estimate / `SPLIT SKIPPED` path, which creates no children), write a parent plan-of-plans so the children are autonomously plannable. Without it, `/ralph:plan --mode auto` has neither a per-child research doc nor a parent plan to consume, so each child stalls and the cluster escalates to **Human Needed** (GH-1416).
+When the split produced **2+ children** (the normal `SPLIT <N>` path — skip on the re-estimate / `SPLIT SKIPPED` path, which creates no children), write a parent plan-of-plans so the children are autonomously plannable. Without it, `/ralph:plan --mode auto` has neither a per-child research doc nor a parent plan to consume, so each child stalls and the cluster escalates to **Human Needed**.
 
 Write to `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md` — the `<parent>` number is what the parent-plan-reuse glob `*GH-NNNN-*.md` keys on. Shape: [../../plan/decomposition.md](../../plan/decomposition.md) § Plan-of-plans shape — frontmatter `type: plan-of-plans`; sections `## Strategic Context`, `## Shared Constraints`, `## Feature Decomposition`, `## Integration Strategy`, `## Feature Sequencing`, `## What We're NOT Doing`. Model the wording on `/ralph:plan --mode epic` Step 3 (`ralph/skills/plan/SKILL.md`).
 
@@ -137,7 +137,7 @@ One `### Feature` subsection per child under `## Feature Decomposition`, each em
 
 Keep `## Feature Sequencing` **identical** to the `## Issue Split` dependency chain posted in §Step 8 — same edges, same order; the two artifacts must not diverge.
 
-This write happens in **caretake** context, where the plan skill's `plan-research-required.sh` Write gate is not armed — that is why split can emit a `plans/` doc with no research doc. The doc passes `doc-structure-validator.sh` because that hook recognizes the plan-of-plans shape (GH-1416).
+This write happens in **caretake** context, where the plan skill's `plan-research-required.sh` Write gate is not armed — that is why split can emit a `plans/` doc with no research doc. The doc passes `doc-structure-validator.sh` because that hook recognizes the plan-of-plans shape.
 
 ## §Step 8: Update original issue
 

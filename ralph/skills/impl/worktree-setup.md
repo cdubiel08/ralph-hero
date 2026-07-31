@@ -2,9 +2,9 @@
 
 How `/ralph:impl` creates, reuses, and isolates worktrees. Default mode is interactive (suggestion + reuse); auto mode is the full lifecycle (epic detection, base-branch detection, cross-repo).
 
-**Creation mechanism (all modes, GH-1583):** worktrees are created via the built-in `EnterWorktree` tool, never a raw `git worktree add`, so the consuming repo's `WorktreeCreate` hook fires and provisions the tree (env/credential symlinks, package builds — whatever that repo's hook does). `EnterWorktree({name: "<WORKTREE_ID>"})` creates under that repo's `.claude/worktrees/<WORKTREE_ID>` and returns the path — capture it; never hardcode `worktrees/<WORKTREE_ID>` or assume a specific parent directory. `EnterWorktree({path: "<existing-path>"})` enters an *existing* worktree (the "enter what a script just made" flow) — this is how the CLI-script fallback below composes with the tool.
+**Creation mechanism (all modes):** worktrees are created via the built-in `EnterWorktree` tool, never a raw `git worktree add`, so the consuming repo's `WorktreeCreate` hook fires and provisions the tree (env/credential symlinks, package builds — whatever that repo's hook does). `EnterWorktree({name: "<WORKTREE_ID>"})` creates under that repo's `.claude/worktrees/<WORKTREE_ID>` and returns the path — capture it; never hardcode `worktrees/<WORKTREE_ID>` or assume a specific parent directory. `EnterWorktree({path: "<existing-path>"})` enters an *existing* worktree (the "enter what a script just made" flow) — this is how the CLI-script fallback below composes with the tool.
 
-**Branch contract.** Ralph's `--mode pr` always resolves `feature/<WORKTREE_ID>` (SKILL.md `--mode pr` step 5). Whether `EnterWorktree({name})` produces that branch depends on the consuming repo's own `WorktreeCreate` hook configuration (e.g. landcrawler-ai's `LANDCRAWLER_WORKTREE_BRANCH_MAP=GH-*:feature/` — see that repo's `.claude/hooks/worktree-create.sh`). After creating, verify the branch:
+**Branch contract.** Ralph's `--mode pr` always resolves `feature/<WORKTREE_ID>` (SKILL.md `--mode pr` step 5). Whether `EnterWorktree({name})` produces that branch depends on the consuming repo's own `WorktreeCreate` hook — some repos map `GH-*` ids onto a `feature/` prefix, some don't. After creating, verify the branch:
 
 ```bash
 ACTUAL_BRANCH=$(git -C "$WORKTREE_PATH" branch --show-current)
@@ -67,7 +67,7 @@ If `git pull` fails with a merge conflict, do NOT attempt to resolve — escalat
 | Epic member (no stream, no group plan) | `GH-[EPIC_NUMBER]` |
 | Single issue | `GH-[issue-number]` |
 
-Precedence is the table order: stream > **group plan** > epic member > single. The group row outranks the epic-member row (GH-1538) — a sibling group plan is the authoritative shipping unit, and its `GH-[primary_issue]` ID is what `--mode pr` queue-pick resolves, so both halves agree on one worktree, one branch, one PR per group. The epic-member row applies only when NO group plan declares the member.
+Precedence is the table order: stream > **group plan** > epic member > single. The group row outranks the epic-member row — a sibling group plan is the authoritative shipping unit, and its `GH-[primary_issue]` ID is what `--mode pr` queue-pick resolves, so both halves agree on one worktree, one branch, one PR per group. The epic-member row applies only when NO group plan declares the member.
 
 **Step 3: Base-branch detection.** If plan frontmatter or task description contains `base_branch: feature/GH-XX`, use that as the worktree's base (a stacked branch). Otherwise the base is whatever the consuming repo's `WorktreeCreate` hook resolves by default (typically `origin/<default-branch>`; see that repo's hook config) — never hardcode `origin/main` here.
 
@@ -132,17 +132,17 @@ EnterWorktree({name: "GH-NNN"})
 
 Apply the branch-verification + Option-2 fallback from the creation-mechanism note above per repo (each repo's hook, if configured, may or may not map this id pattern independently).
 
-Example for `#601` spanning ralph-hero + landcrawler-ai — the tool reports each repo's own `.claude/worktrees/GH-601`:
+The tool reports each repo's own `.claude/worktrees/<WORKTREE_ID>`:
 
 ```
-~/projects/ralph-hero/.claude/worktrees/GH-601/
-~/projects/landcrawler-ai/.claude/worktrees/GH-601/
+<localDir-of-repo-a>/.claude/worktrees/GH-NNN/
+<localDir-of-repo-b>/.claude/worktrees/GH-NNN/
 ```
 
 **Step 3: Export `RALPH_WORKTREE_PATHS`.** Colon-separated absolute paths (the tool-reported paths from Step 2, not a guessed convention) so `impl-worktree-gate.sh` accepts Write/Edit calls into any of them:
 
 ```bash
-export RALPH_WORKTREE_PATHS="/Users/dubiel/projects/ralph-hero/.claude/worktrees/GH-601:/Users/dubiel/projects/landcrawler-ai/.claude/worktrees/GH-601"
+export RALPH_WORKTREE_PATHS="<abs-path-repo-a>/.claude/worktrees/GH-NNN:<abs-path-repo-b>/.claude/worktrees/GH-NNN"
 ```
 
 **Step 4: Pass mapping to builder sub-agents.** Include the per-repo worktree directories in the dispatch prompt so the implementer knows which files go where.
@@ -152,7 +152,7 @@ export RALPH_WORKTREE_PATHS="/Users/dubiel/projects/ralph-hero/.claude/worktrees
 `.ralph-repos.yml` may use `~` in `localDir` values (`~/projects/foo`). **Always expand to absolute paths** before exporting `RALPH_WORKTREE_PATHS`. The hook compares against `tool_input.file_path`, which is always absolute — a tilde-prefixed entry will never match and writes will be blocked.
 
 ```bash
-expanded=$(eval echo "$localDir")  # ~/projects/foo → /Users/dubiel/projects/foo
+expanded=$(eval echo "$localDir")  # ~/projects/foo → /home/user/projects/foo
 ```
 
 ## §Escalation on merge conflict

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Plan 8: Append one line per /ralph:hero -> child-verb dispatch to the activity
-# log for observability. Same event shape as the deleted record-activity.sh
-# (GH-1438) but scoped to Skill()
-# dispatches issued under RALPH_COMMAND=hero. The activity log is consumed by
-# /ralph:catch-up and friends.
+# Append one line per /ralph:hero -> child-verb dispatch to the activity log,
+# scoped to Skill() dispatches issued under RALPH_COMMAND=hero. The activity
+# log is consumed by /ralph:catch-up.
 #
 # Exit codes:
 #   0 - Always (observer; never blocks)

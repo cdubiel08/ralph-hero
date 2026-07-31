@@ -2,7 +2,7 @@
 # ralph/hooks/scripts/closeout-scout-gate.sh
 # PreToolUse(Bash): Gate `merge-pr.sh` / `gh pr merge` on the Scout Report verdict.
 #
-# Contract (Plan 5 producer / Plan 6 consumer):
+# Contract:
 #   - /ralph:impl --mode pr posts a `## Scout Trigger` comment when the PR touches
 #     frontend globs (the producer side).
 #   - This hook is the consumer side: when a merge command is invoked and the PR
@@ -57,7 +57,7 @@ fi
 
 COMMENTS_JSON=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments' 2>/dev/null || echo "[]")
 
-# Is there a Scout Trigger comment? (Plan 5 producer side.)
+# Is there a Scout Trigger comment?
 if ! echo "$COMMENTS_JSON" | jq -e '.[] | select(.body | startswith("## Scout Trigger"))' >/dev/null 2>&1; then
   # No Scout Trigger requested — advisory not invoked. Allow.
   exit 0

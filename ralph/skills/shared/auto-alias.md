@@ -1,4 +1,4 @@
-# auto-alias.md — Per-verb `--auto` alias for ralph slim plugin skills
+# auto-alias.md — Per-verb `--auto` alias
 
 Reference fragment. SKILL.md bodies copy the logic below; they do not source this file.
 

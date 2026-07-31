@@ -67,12 +67,12 @@ When cross-repo scope is detected:
 1. Pass the additional repo directories to sub-agents in their spawn prompts. Example:
    ```
    Additional repo directories to search:
-   - ralph-hero: ~/projects/ralph-hero
-   - landcrawler-ai: ~/projects/landcrawler-ai
+   - api-service: <localDir>
+   - web-client: <localDir>
    ```
 2. Sub-agents use standard `Read`, `Grep`, `Glob` against those paths — no new tooling.
 3. For autonomous mode: also run a cross-repo dependency-detection pass. Grep for import/require statements referencing each repo's package name across the other repos. Compare against the registry's `dependency-flow` edges. Flag discrepancies in the research doc under `## Dependency Discrepancy`.
-4. File paths in the doc's `## Files Affected` section use the repo-qualified form (`ralph-hero:src/...`, `landcrawler-ai:src/...`) per `findings-format.md`.
+4. File paths in the doc's `## Files Affected` section use the repo-qualified form (`api-service:src/...`, `web-client:src/...`) per `findings-format.md`.
 
 If `.ralph-repos.yml` does not exist, proceed in single-repo mode — no special handling.
 

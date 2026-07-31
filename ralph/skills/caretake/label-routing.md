@@ -8,29 +8,27 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 | Label present | Dispatch | Notes |
 |---|---|---|
-| `trigger:caretake` | Full fan-out (all 8 modes serially) | Operator override; consume after dispatch |
+| `trigger:caretake` | Full fan-out (all modes serially) | Operator override; consume after dispatch |
 | `stale` | `Skill("ralph:caretake", args="--mode hygiene")` | Hygiene mode finds stale items by definition |
-| `status-update-needed` | `Skill("ralph:catch-up", args="--mode report")` | Report lives in catch-up (Plan 1), not caretake |
+| `status-update-needed` | `Skill("ralph:catch-up", args="--mode report")` | Report lives in catch-up, not caretake |
 | `trends-check` | `Skill("ralph:caretake", args="--mode trends")` | Read-only — markdown to stdout |
 | `needs-triage` | `Skill("ralph:caretake", args="--mode triage #NNN")` | Pass through the issue number |
 | `human-needed` | `Skill("ralph:caretake", args="--mode unblock --question #NNN")` | Autonomous request — posts `## Unblock Request` |
 | `process-improvement` | `Skill("ralph:caretake", args="--mode retro")` | Manual retro flow scoped to the issue |
-| `debug-auto` | `Skill("ralph:caretake", args="--mode debug")` | Triggered by recurring-failure clustering |
 | `needs-split` | `Skill("ralph:caretake", args="--mode split #NNN")` | M/L/XL parent ready for decomposition |
 | (none / default) | `Skill("ralph:caretake", args="--mode triage #NNN")` | Untriaged issue with no explicit label hint |
 
 ## Full fan-out (`trigger:caretake`)
 
-When `trigger:caretake` is present, the dispatcher invokes **all eight modes serially** so the operator gets a complete board sweep from one command. Order matters — modes that mutate state run before modes that read state:
+When `trigger:caretake` is present, the dispatcher invokes **every mode serially** so the operator gets a complete board sweep from one command. Order matters — modes that mutate state run before modes that read state:
 
 1. `Skill("ralph:caretake", args="--mode hygiene")` — archive candidates, WIP violations, field gaps
 2. `Skill("ralph:caretake", args="--mode triage #NNN")` — assess the issue that carries the trigger label
 3. `Skill("ralph:caretake", args="--mode split #NNN")` — only if the triage outcome was `TRIAGED needs-split`
 4. `Skill("ralph:caretake", args="--mode unblock --question")` — pick the oldest Human Needed and post a fresh `## Unblock Request` (autonomous path)
-5. `Skill("ralph:caretake", args="--mode debug")` — collate Langfuse errors (if `RALPH_DEBUG=true`)
-6. `Skill("ralph:caretake", args="--mode postmortem")` — only if a team session just finished (`TaskList` non-empty)
-7. `Skill("ralph:caretake", args="--mode retro")` — only if inline conversation context is available
-8. `Skill("ralph:catch-up", args="--mode report")` — final status update so the operator sees the consolidated outcome
+5. `Skill("ralph:caretake", args="--mode postmortem")` — only if a team session just finished (`TaskList` non-empty)
+6. `Skill("ralph:caretake", args="--mode retro")` — only if inline conversation context is available
+7. `Skill("ralph:catch-up", args="--mode report")` — final status update so the operator sees the consolidated outcome
 
 Skip modes that no-op cleanly (e.g., `postmortem` with no `TaskList` data); always run hygiene + triage + report.
 
@@ -45,7 +43,7 @@ save_issue(
 )
 ```
 
-Idempotency rule: only `trigger:caretake` is consumed unconditionally. Other labels (`stale`, `debug-auto`, `process-improvement`, `needs-split`) describe issue **state** and are owned by other systems (hygiene scans, dream-reflect clustering, triage). The caretaker does not consume those — it acts on them and lets the owner system re-apply or clear them.
+Idempotency rule: only `trigger:caretake` is consumed unconditionally. Other labels (`stale`, `process-improvement`, `needs-split`) describe issue **state** and are owned by other systems (hygiene scans, dream-reflect clustering, triage). The caretaker does not consume those — it acts on them and lets the owner system re-apply or clear them.
 
 ## `## Caretaker Action` comment shape
 

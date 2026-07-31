@@ -12,10 +12,10 @@ argument-hint: "[--mode auto|prove] [<question|#NNN|claim>] [--playwright|--no-p
 context: inline
 model: sonnet
 hooks:
-  # branch-gate.sh is intentionally not declared here. In the slim plugin it's
-  # patched to no-op when RALPH_REQUIRED_BRANCH is unset, and the autonomous
-  # flow's Step 1 does its own explicit branch check via Bash anyway. Wiring it
-  # in frontmatter would also fire on interactive/prove Bash calls.
+  # branch-gate.sh is intentionally not declared here: it no-ops when
+  # RALPH_REQUIRED_BRANCH is unset, the autonomous flow's Step 1 does its own
+  # explicit branch check via Bash, and wiring it in frontmatter would also
+  # fire on interactive/prove Bash calls.
   SessionStart:
     - hooks:
         - type: command
@@ -121,7 +121,7 @@ Skip silently if the tools are unavailable — degrade to `thoughts-locator` fil
 
 ### Step 3: Parallel sub-agent dispatch
 
-**Workflow path (research-preview prototype, GH-1474):** if `RALPH_USE_WORKFLOWS` is `"true"` (check via `echo "$RALPH_USE_WORKFLOWS"`), dispatch the saved workflow instead of the inline `Agent()` block below: `Workflow({name: "research-investigators"}, {question: "<research question>", repoDirs: [<extra repo dirs, if any>], includeWeb: <true only when the user asked for external research>})`. Dispatch from the depth-0 skill body only (never from inside an `Agent()`). The workflow runs as a background task — wait for its completion notification before Step 4; its return value is the investigator findings map. Prototype caveats: agentType names are plugin-prefixed (`ralph:<name>`); workers keep their system prompt, `model:` pin, and MCP tools, but built-in Grep/Glob are replaced by Bash inside workflows (investigators degrade to `grep`/`find` automatically). On any dispatch error, fall back to the inline path below. Flag unset (the default) → inline path, unchanged:
+**Workflow path (research preview):** if `RALPH_USE_WORKFLOWS` is `"true"` (check via `echo "$RALPH_USE_WORKFLOWS"`), dispatch the saved workflow instead of the inline `Agent()` block below: `Workflow({name: "research-investigators"}, {question: "<research question>", repoDirs: [<extra repo dirs, if any>], includeWeb: <true only when the user asked for external research>})`. Dispatch from the depth-0 skill body only (never from inside an `Agent()`). The workflow runs as a background task — wait for its completion notification before Step 4; its return value is the investigator findings map. Prototype caveats: agentType names are plugin-prefixed (`ralph:<name>`); workers keep their system prompt, `model:` pin, and MCP tools, but built-in Grep/Glob are replaced by Bash inside workflows (investigators degrade to `grep`/`find` automatically). On any dispatch error, fall back to the inline path below. Flag unset (the default) → inline path, unchanged:
 
 Consult `research-shapes.md` for the sub-agent palette. Spawn the relevant agents in parallel via multiple `Agent()` calls in a single message:
 

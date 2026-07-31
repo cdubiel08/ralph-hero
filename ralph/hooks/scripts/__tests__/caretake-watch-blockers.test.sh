@@ -138,7 +138,7 @@ assert_file_contains "no Stop postcondition hook (parity) note in outcome-tokens
 echo ""
 echo "--- Assertion 8: triage.md cross-ref updated to live (not future) ---"
 assert_file_contains "triage.md names watch-blockers as the live consumer" "$TRIAGE_FILE" \
-  "caretake --mode watch-blockers"
+  "mode watch-blockers"
 # Confirm the old "Gap C ... future" language is gone
 if grep -q "no watcher yet" "$TRIAGE_FILE" 2>/dev/null; then
   fail "triage.md still has stale 'no watcher yet' language — should be updated to live"

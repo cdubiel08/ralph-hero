@@ -6,7 +6,7 @@ Resolve Backlog items parked by the `WAIT-upstream` triage verdict. Scan issues 
 export RALPH_SUBCOMMAND=watch-upstream
 ```
 
-This is the downstream consumer that makes the `WAIT-upstream` verdict non-dead-ending: an item waits on a *named, watched external condition* and advances when it resolves. Phase 1 (#1404) produces the `blocked:upstream` label + records the URL in a `## Triage Decision` comment; this mode resolves it.
+This is the downstream consumer that makes the `WAIT-upstream` verdict non-dead-ending: an item waits on a *named, watched external condition* and advances when it resolves. `--mode triage` produces the `blocked:upstream` label + records the URL in a `## Triage Decision` comment; this mode resolves it.
 
 No `Stop` hook gates this mode (parity with `--mode watch-pr`/`hygiene`/`trends`) — it mutates only the `blocked:upstream`-parked items it owns. The terminal token is emitted by convention, not hook-enforced.
 
@@ -38,7 +38,7 @@ and STOP.
 
 ## §Step 3: Read the blocker condition
 
-For each parked item, read its **`## Triage Decision`** comment (this is where #1404's `WAIT-upstream` records the URL + condition — NOT a `## Blocker` comment, which does not exist). Extract:
+For each parked item, read its **`## Triage Decision`** comment — this is where the `WAIT-upstream` verdict records the URL + condition. Extract:
 
 - the **upstream URL** (e.g. a GitHub issue/PR URL, a package-registry URL, or a plain HTTP resource), and
 - the **condition** that resolves the block (e.g. "external issue closed", "package `foo` ≥ 2.0 released").
@@ -59,7 +59,7 @@ Determine whether the condition is **confidently met**. Only a confident MET adv
 
 **Advance (condition confidently met).** Strip the `blocked:upstream` label and apply the deferred verdict:
 
-1. Determine the deferred verdict. **Default `PROMOTE-plan`** (the common case). If the issue carries an explicit `## Deferred Verdict: <verdict>` comment, honor it instead. (Phase 1 / #1404 writes a `## Triage Decision` comment, not a `## Deferred Verdict` comment, so the default applies unless a later phase adds the explicit comment.)
+1. Determine the deferred verdict. **Default `PROMOTE-plan`** (the common case). If the issue carries an explicit `## Deferred Verdict: <verdict>` comment, honor it instead. Triage writes `## Triage Decision`, not `## Deferred Verdict`, so the default normally applies.
 2. Map the verdict to its target. watch-upstream **only auto-applies the promote family**: `PROMOTE-plan`→`"Ready for Plan"`, `PROMOTE-research`→`"Research Needed"`. Default `PROMOTE-plan`→Ready for Plan. A `CLOSE-*` or `WAIT-*` deferred verdict is **NOT** auto-applied here — this watcher never closes issues (see §Constraints), and shouldn't auto-close on a speculative comment — so route those via the **escalate** branch instead (post a `## Escalation` noting the deferred verdict needs human confirmation before close/re-wait).
 3. Read the issue's current labels; `save_issue(number: NNN, workflowState: <verdict target>, command: "ralph_triage", labels: <current labels minus blocked:upstream, also dropping ralph-triage so the item is re-pickable in its new state>)`. The explicit `labels` array is required (save_issue replaces the full set; omitting it leaves `blocked:upstream` attached). Note: `command: "ralph_triage"` is passed for semantic parity, but `state-gate.sh` does **not** gate this mode (it scopes to `RALPH_SUBCOMMAND=triage`; watch-upstream's is `watch-upstream`) — its transitions are unguarded, so pass only valid target states.
 4. Post a `## Watch-Upstream Resolution` comment: condition `<condition>` met at `<url>` → label stripped, verdict `<verdict>` applied.
@@ -85,4 +85,4 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - **Conservative advance** — never false-advance. When the condition can't be confidently confirmed met, leave the item parked.
 - Mutates only parked items — never creates or closes issues, never touches items without a `blocked:upstream` label.
 - No code changes.
-- Heartbeat / `--loop` fan-out is wired in Phase 4 (#1408); until then this mode runs only via explicit `--mode watch-upstream` dispatch.
+- Runs inside the `--mode all` heartbeat fan-out, or via explicit `--mode watch-upstream` dispatch.

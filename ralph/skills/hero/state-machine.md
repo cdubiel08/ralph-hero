@@ -52,7 +52,7 @@
 +-------------------------------------------------------------------+
 ```
 
-## The epic outer cycle (GH-1538)
+## The epic outer cycle
 
 Feature/epic work runs as two nested cycles with fable bookends:
 

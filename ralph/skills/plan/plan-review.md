@@ -103,7 +103,7 @@ options: <from the block's Options, agent recommendation FIRST>
 
 Fold each answer into the plan (surgical `Edit`, iterate-mode discipline): move the answered block to the resolved-decisions list as `**<title>** — … **Decided: <choice>.** (human-decided YYYY-MM-DD)`; when no open blocks remain, restore the sentinel `None — no open design decisions.`
 
-**Confirm picker** — after the decisions (or immediately, for decision-free plans), a single 3-option picker replaces the old 4-option whole-plan flow — kept for rubric-level rejections independent of decisions:
+**Confirm picker** — after the decisions (or immediately, for decision-free plans), a 3-option picker carries rubric-level rejections, independent of the decisions:
 
 ```
 question: "Plan review verdict for #NNN?"
@@ -127,7 +127,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then open "<plan-local-path>"; else xdg-open
 
 **Issues sub-picker** (`Request changes`) — `multiSelect: true` over *Insufficient research / Wrong approach / Missing requirements / Scope issues*, then a free-text prompt ("provide specifics the planner must act on; skip to use categories only"). The free-text is the primary feedback in the NEEDS_ITERATION critique + GitHub comment; the categories are a secondary tag list.
 
-> The old whole-plan pickers (4-option, and the 5-label picker before it) collapse here: plan-shaping feedback that used to ride "Approve with edits" now lives in the decisions section itself — an ambiguity worth human input is a `#### Decision:` block, answered through its own picker, not a post-hoc edit request. "Request changes" carries rubric-level rejections.
+> There is no "approve with edits" option by design: plan-shaping feedback belongs in the decisions section, where an ambiguity worth human input is a `#### Decision:` block answered through its own picker. "Request changes" carries rubric-level rejections only.
 
 **Auto** (`--review-plan auto` or env `RALPH_REVIEW_PLAN=auto`):
 
@@ -137,7 +137,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then open "<plan-local-path>"; else xdg-open
 - Present, with a later human comment → check the reply against each open `#### Decision:` block. It counts as answers ONLY if it actually addresses them (names a choice, picks an option, or gives direction for each open block — a bump, question, or unrelated note does NOT). Answers → fold into the plan (as in the interactive flow — resolved-decisions list, `human-decided YYYY-MM-DD`, sentinel restored when none remain), and only when NO open blocks remain proceed with the APPROVED transition to In Progress (the held plan already passed its critique); partially answered → fold what was answered, re-emit `PLAN AWAITING DECISION` (no re-post). Not answers → emit `PLAN AWAITING DECISION` and STOP.
 - Absent → before dispatching a fresh critique, check for an existing critique doc for this issue under `thoughts/shared/reviews/` with `decisions_open > 0` (the comment may have been edited or deleted — `review-no-dup.sh` would block a duplicate critique write anyway). If found, re-post the `## Decision Request` from the plan's open blocks WITHOUT re-critiquing, then emit `PLAN AWAITING DECISION`. Otherwise proceed to the critique dispatch below.
 
-Dispatch a sub-agent for delegated critique, tier-routed by unit size (GH-1538):
+Dispatch a sub-agent for delegated critique, tier-routed by unit size:
 
 - **Single XS/S plan** — `Agent(subagent_type="ralph:review-agent", model="opus", prompt=...)`. Singles skip fable; opus covers a small plan's rubric pass.
 - **Group plan (`github_issues:`), M single, or plan-of-plans** — same call with NO `model` param, so the agent's frontmatter `model: fable` applies (the independent critique of a feature/epic plan is a judgment bookend). Non-Fable accounts rescue via `CLAUDE_CODE_SUBAGENT_MODEL=opus` (it flattens the singles route too — acceptable).

@@ -2,8 +2,8 @@
 
 Two execution paths inside one mode body. Both operate on the same artifact — the `## Unblock Request` comment on a Human Needed issue — but from opposite sides of the producer/consumer contract:
 
-- **Default (interactive)** — port of `unblock`. Read the `## Unblock Request` comment, walk a human through its questions via `AskUserQuestion`, post `## Unblock Resolution`, transition the issue back into the pipeline.
-- **`--question` (autonomous request)** — port of `ralph-unblock`. Pick the oldest Human Needed issue, compose 1-5 specific blocking questions, post `## Unblock Request`, STOP. Does NOT transition state.
+- **Default (interactive)** — read the `## Unblock Request` comment, walk a human through its questions via `AskUserQuestion`, post `## Unblock Resolution`, transition the issue back into the pipeline.
+- **`--question` (autonomous request)** — pick the oldest Human Needed issue, compose 1-5 specific blocking questions, post `## Unblock Request`, STOP. Does NOT transition state.
 
 ```bash
 if echo "$ARGUMENTS" | grep -q -- '--question'; then

@@ -32,7 +32,7 @@ When `ARG` resolves to a path, or when the user mentions specific files in a fre
 
 ## Research-as-evidence rule
 
-Applies whenever a research doc enters the session (rules 1-2 above, or a group member's linked research). The doc is often authored at a lower tier than the plan session (sonnet reconnaissance vs `best` planning — `docs/model-tier-policy.md`), so treat it as **evidence, not the frame**:
+Applies whenever a research doc enters the session (rules 1-2 above, or a group member's linked research). The doc is often authored at a lower tier than the plan session (sonnet reconnaissance vs `best` planning), so treat it as **evidence, not the frame**:
 
 - **Verify before load-bearing.** Any claim a phase will rest on (a file:line reference, an "X works like Y" assertion) gets spot-checked against the current code before it shapes the plan. Verification is cheap; a phase built on a stale or wrong claim is not.
 - **Opinions are non-binding.** The doc's Summary and any "Key recommendation" are the researcher's take, not a constraint. Re-derive the approach from the Detailed Findings and Code References yourself; agreeing with the researcher is fine, inheriting their conclusion without deriving it is not.
@@ -51,7 +51,7 @@ If `LINKED_ISSUE` is set and the issue has no linked research doc:
 
 ## Sibling-group planning (auto mode)
 
-Consulted by `--mode auto` Step 2a. The feature is the PR unit (GH-1538):
+Consulted by `--mode auto` Step 2a. The feature is the PR unit:
 when a picked issue belongs to a decomposed parent, plan the whole open
 sibling set as ONE group plan instead of one plan per child — the group
 converges on one worktree, one branch, one PR closing every member.

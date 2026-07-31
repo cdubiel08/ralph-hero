@@ -3,14 +3,11 @@
 # PreToolUse:Write|Edit — sanity-check plan-doc shape when writing under
 # thoughts/shared/plans/.
 #
-# Closes GH-1380. The source-plugin design used `RALPH_COMMAND=plan_epic`
-# at SessionStart to set `RALPH_PLAN_TYPE=plan-of-plans`, then this
-# validator gated `save_issue` on the env var. The slim plugin collapses
-# to a single `RALPH_COMMAND=plan` with `--mode epic` as a body-level
-# flag — so SessionStart can never know which tier is being authored.
-# The env-driven validator therefore silently no-opped on every run.
+# SessionStart sets a single `RALPH_COMMAND=plan`; `--mode epic` is a
+# body-level flag, so SessionStart cannot know which plan tier is being
+# authored and an env-driven gate would silently no-op.
 #
-# Slim redesign: self-discriminate from the plan-doc shape being written.
+# Instead: self-discriminate from the plan-doc shape being written.
 # Fire on PreToolUse:Write AND Edit, inspect the post-write/post-edit
 # content for the two recognized shapes:
 #   - `## Feature Decomposition` → plan-of-plans (epic shape)
