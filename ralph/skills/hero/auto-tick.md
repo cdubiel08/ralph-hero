@@ -6,7 +6,9 @@ Director-only step: classify one event, dispatch the correct verb, stop. Full ev
 
 ## Procedure
 
-1. **Parse + detect input source.** `--issue NNN` → `TARGET_ISSUE=NNN`, skip to step 3. `RemoteTrigger` tool input (deprecated) → extract `issue_number`+`team`, set `DISPATCH_REASON=RemoteTrigger`, skip to step 4. Otherwise → step 2.
+1. **Parse + detect input source.** `--issue NNN` → `TARGET_ISSUE=NNN`, skip to step 3. Otherwise → step 2.
+
+   > The former `RemoteTrigger` branch was removed in GH-1590. It jumped straight to step 4 carrying only `issue_number` and `team`, but step 4 dispatches `Skill(ENTRYPOINT, …)` — and `ENTRYPOINT` (plus `DISPATCH_ARG` for the `blocked:*` tier) is only ever set by step 3's classification, so the branch could not construct a dispatch. Any remote trigger now enters at step 3 like every other input and gets classified properly.
 
 2. **Read the queue.**
 
@@ -34,7 +36,7 @@ Director-only step: classify one event, dispatch the correct verb, stop. Full ev
    - **All other tiers** → `Skill(ENTRYPOINT, args="NNN")` (bare issue number).
    - **Unimplemented team** (memorykeepers) → emit `needs input: team <name> not yet implemented; skipping dispatch.`
 
-5. **Consume label.** Only the `trigger:*` tier sets `CONSUMED_LABEL`; when it is set, call `save_issue({ number: TARGET_ISSUE, labels: ISSUE_LABELS minus CONSUMED_LABEL })`. The `blocked:*` tier (`CONSUMED_LABEL=none` — the watcher owns that label's lifecycle), the automation-label tier, and the `RemoteTrigger` path all skip this step.
+5. **Consume label.** Only the `trigger:*` tier sets `CONSUMED_LABEL`; when it is set, call `save_issue({ number: TARGET_ISSUE, labels: ISSUE_LABELS minus CONSUMED_LABEL })`. The `blocked:*` tier (`CONSUMED_LABEL=none` — the watcher owns that label's lifecycle) and the automation-label tier both skip this step.
 
 6. **Emit the result marker.**
 

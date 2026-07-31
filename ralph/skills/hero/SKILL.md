@@ -135,18 +135,17 @@ Route to the matching mode section below. The dispatcher does NOT rewrite termin
 
 ## --mode auto
 
-Autonomous **never-terminating adaptive watcher** via `/loop` dynamic mode. This mode does NOT drain-and-stop: it loops until the user deliberately cancels via `/tasks`. While the queue has actionable work it re-fires on a tight cadence; when the queue is idle it backs off to a 1h ceiling and keeps watching, so new issues, merged-PR fallout, or `trigger:*` labels are picked up within at most an hour. Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message.
+Autonomous never-terminating adaptive watcher via `/loop` dynamic mode. Opt-in enforced by `autopilot-enable-gate.sh` — if `RALPH_AUTOPILOT_ENABLE != true`, the `Skill("loop", …)` call exits 2 with a deterministic message.
 
-Emit `Skill("loop", args="Run /ralph:hero --tick on the next-most-important event on the project queue\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:auto manifest row>")`. Fill `{INNER_COMMAND}` = `Run /ralph:hero --tick on the next-most-important event on the project queue`, `{PROGRESS_SENTINELS}` = `result: Dispatched #NNN to <team> via <entrypoint>` (the line the tick step emits on every successful dispatch — see step 6 of § Auto tick below). There are **no terminal sentinels** — this loop never ends on its own.
+Emit:
 
-**Continuation rules (LOAD-BEARING):**
-- `result: Dispatched #NNN …` → busy/burst → `ScheduleWakeup` 60-270s (warm-cache continuation; drains as fast as the queue produces work).
-- `result: Queue empty.` → **idle, NOT terminal** → `ScheduleWakeup` **3600s flat** (the 1h ceiling), then re-check. Do NOT end the loop.
-- **Every tick MUST call `ScheduleWakeup`** — there is no clean self-exit. `autopilot-stop-gate.sh` (keyed to `RALPH_COMMAND=hero`, armed once `Skill("loop", …/ralph:hero --tick…)` is observed) blocks session exit with a loud message if a tick returns without a wakeup. Never 300s (`autopilot-wakeup-clear.sh` rejects it). Cancel only via `/tasks` → delete the pending wakeup.
+```
+Skill("loop", args="Run /ralph:hero --tick on the next-most-important event on the project queue\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:auto manifest row>")
+```
 
-Do not maintain an iteration counter — `/loop` and the `--tick` step own that.
+Then STOP. The inner step is [auto-tick.md](auto-tick.md).
 
-> **Use the `hero:auto` row, NOT `hero:default`.** `--mode auto` wraps the internal `--tick` step, whose result lines are `result: Dispatched #NNN …` and `result: Queue empty.` — not the `result: Hero complete …` / `result: Hero paused …` lines on the `hero:default` row. The `hero:auto` row treats BOTH tick result lines as re-fire signals (Dispatched → tight cadence, Queue empty → 1h idle backoff) so the watcher never falls through to a terminal stop.
+**The loop contract is single-sourced in [../shared/loop-wrapper.md](../shared/loop-wrapper.md) § Continuation-rules manifest, `hero:auto` row** — sentinels, adaptive cadence, the never-terminating semantics of `result: Queue empty.`, cancellation, and the four `autopilot-*` hooks that enforce re-fire. Read that row; do not restate its rules here. Use the **`hero:auto`** row, not `hero:default` — `--mode auto` wraps `--tick`, whose result lines differ from default mode's.
 
 ## Auto tick (internal — dispatched only by --mode auto's loop wrapper)
 

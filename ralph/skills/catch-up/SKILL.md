@@ -7,7 +7,7 @@ description: Orientation companion — catches you up on what changed since you 
   "post a status update", "daily brief", "walk the queue", "empty the human
   queue", or starts a session wanting orientation. --mode flag selects
   report / brief sub-surfaces.
-argument-hint: "[--mode {report,brief}] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends] [--prepare] [--loop [duration]]"
+argument-hint: "[--mode {report,brief}] [--post] [--dry-run] [--window N] [--status ON_TRACK|AT_RISK|OFF_TRACK] [--with-trends] [--prepare] [--loop [duration]]"
 context: inline
 allowed-tools:
   - Read

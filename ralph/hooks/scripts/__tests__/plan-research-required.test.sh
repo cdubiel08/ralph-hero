@@ -94,6 +94,13 @@ run_case "## Feature Decomposition heading (no type:) allows without research do
   "$PLANS/2026-07-26-GH-4-epic.md" $'---\nestimate: L\n---\n\n## Feature Decomposition\n'
 run_case "fence-wrapped plan-of-plans example does NOT carve out (ordinary plan still blocked)" 2 \
   "$PLANS/2026-07-26-GH-5-plan.md" $'---\nestimate: M\n---\n\nExample shape:\n```markdown\ntype: plan-of-plans\n## Feature Decomposition\n```\n'
+# GH-1590: `type:` is read from the LEADING FRONTMATTER ONLY. Before that
+# scoping, an ordinary implementation plan bypassed the research gate just by
+# mentioning `type: plan-of-plans` in body prose outside any fence.
+run_case "body-text type: plan-of-plans does NOT carve out (frontmatter-scoped)" 2 \
+  "$PLANS/2026-07-26-GH-6-plan.md" $'---\nestimate: M\n---\n\n## Overview\n\ntype: plan-of-plans\n\nAn ordinary plan that merely mentions the token in prose.\n'
+run_case "type: plan-of-plans with no frontmatter block does NOT carve out" 2 \
+  "$PLANS/2026-07-26-GH-7-plan.md" $'type: plan-of-plans\n\nNo frontmatter fence opens this document.\n'
 
 # --- Path-derived rooting (GH-1556) --------------------------------------------
 # Workspace-root repro: CLAUDE_PROJECT_DIR points at $SBX, but the target file

@@ -119,7 +119,7 @@ Read `.ralph-repos.yml` to discover sibling repos with `awaits` dependency on th
 For each sibling:
 
 1. Resolve `localDir` (tilde-expanded to absolute path — the cleanup `cd` would silently fail otherwise).
-2. If a sibling worktree exists at `<localDir>/worktrees/GH-NNN`, remove it after merge.
+2. Remove the sibling worktree after merge, using the **path recorded when it was created or reused** (`impl/worktree-setup.md` § Reuse path — `EnterWorktree` reports the created path; for this repo's layout that is `<localDir>/.claude/worktrees/GH-NNN`, not `<localDir>/worktrees/GH-NNN`). Do not reconstruct the path from a hardcoded template: a guessed path that does not exist makes `git worktree remove` a silent no-op and leaves the worktree behind. If no recorded path is available, resolve it from `git -C <localDir> worktree list` before removing.
 3. If the registry declares `dependency-flow` for this sibling, advance the sibling's state or post the unblock comment per the flow spec. **This is the one MCP-mediated caller whose target state this feature (GH-1592) does not prove legal**: `.ralph-repos.yml`'s `dependency-flow` schema does not enumerate a target workflow state, so the flow MUST name an explicit target state and `get_issue` the sibling first to read its actual current state before writing — do not invent a target. If the registry entry cannot express a target state for this sibling, post the unblock comment only and do not write workflow state.
 
 Tilde expansion: `localDir` values in the registry may use `~`; always expand to absolute paths before `cd` / `git worktree remove`. The path comparison against `file_path` (in hooks) requires absolute.

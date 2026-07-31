@@ -67,7 +67,18 @@ content_probe_stripped=$(printf '%s\n' "$content_probe" | awk '
     next
   }
   !f { print }')
-if printf '%s\n' "$content_probe_stripped" | grep -qE '^type:[[:space:]]*plan-of-plans' \
+# `type:` is read ONLY from the leading YAML frontmatter block (the lines
+# between the first `---` and its closing `---`). Scanning the whole document
+# would let an ordinary implementation plan bypass this gate just by writing
+# `type: plan-of-plans` in prose. The `## Feature Decomposition` carve-out
+# below stays document-wide on purpose: that heading IS the plan-of-plans
+# shape, and doc-structure-validator.sh enforces it at Stop.
+content_probe_frontmatter=$(printf '%s\n' "$content_probe" | awk '
+  NR == 1 && $0 !~ /^---[[:space:]]*$/ { exit }
+  NR == 1 { next }
+  /^---[[:space:]]*$/ { exit }
+  { print }')
+if printf '%s\n' "$content_probe_frontmatter" | grep -qE '^type:[[:space:]]*plan-of-plans[[:space:]]*$' \
    || printf '%s\n' "$content_probe_stripped" | grep -qE '^## Feature Decomposition([[:space:]]|$)'; then
   allow_with_context "Plan-of-plans shape detected (type: plan-of-plans or ## Feature Decomposition) — research requirement waived; doc-structure-validator.sh enforces the plan-of-plans shape at Stop."
 fi

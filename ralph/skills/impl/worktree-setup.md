@@ -151,8 +151,14 @@ export RALPH_WORKTREE_PATHS="/Users/dubiel/projects/ralph-hero/.claude/worktrees
 
 `.ralph-repos.yml` may use `~` in `localDir` values (`~/projects/foo`). **Always expand to absolute paths** before exporting `RALPH_WORKTREE_PATHS`. The hook compares against `tool_input.file_path`, which is always absolute — a tilde-prefixed entry will never match and writes will be blocked.
 
+Expand with parameter substitution, **never `eval`** — `localDir` comes from `.ralph-repos.yml`, and `eval echo "$localDir"` would execute any command substitution embedded in that value (`~/$(rm -rf ...)`). Only a bare `~` or a leading `~/` is a tilde to expand; everything else is a literal path:
+
 ```bash
-expanded=$(eval echo "$localDir")  # ~/projects/foo → /Users/dubiel/projects/foo
+case "$localDir" in
+  "~")   expanded="$HOME" ;;
+  "~/"*) expanded="$HOME/${localDir#"~/"}" ;;
+  *)     expanded="$localDir" ;;
+esac
 ```
 
 ## §Escalation on merge conflict
