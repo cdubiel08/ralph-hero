@@ -319,8 +319,10 @@ export function ghGraphQL<T = any>(
   query: string,
   variables: Record<string, unknown>,
 ): T {
+  // --hostname keeps API traffic on the same host the scope gate verified —
+  // a GHE config must not silently query github.com.
   const r = ctx.exec(
-    ["gh", "api", "graphql", "--input", "-"],
+    ["gh", "api", "graphql", "--hostname", ctx.cfg.host, "--input", "-"],
     JSON.stringify({ query, variables }),
   );
   if (r.code !== 0) {

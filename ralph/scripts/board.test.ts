@@ -248,9 +248,16 @@ class FakeGh {
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
 
+  expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
+
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
     const cmd = argv.join(" ");
-    if (cmd.startsWith("gh api graphql")) return this.graphql(JSON.parse(stdin!));
+    if (cmd.startsWith("gh api graphql")) {
+      if (!cmd.includes(`--hostname ${this.expectedHost}`)) {
+        return { code: 1, stdout: "", stderr: `wrong or missing --hostname (want ${this.expectedHost}): ${cmd}` };
+      }
+      return this.graphql(JSON.parse(stdin!));
+    }
     if (cmd.startsWith("gh auth status")) return ok("");
     if (cmd.startsWith("git") && cmd.includes("remote"))
       return ok("git@github.com:cdubiel08/ralph-hero.git\n");
@@ -648,10 +655,11 @@ describe("guards at the CLI boundary", () => {
     expect(run(["doctor"], ctx)).toBeTypeOf("number"); // read path still works anywhere
   });
 
-  it("run(): a configured GHE host makes the scope gate accept that host", () => {
+  it("run(): a configured GHE host is used by BOTH the scope gate and the API transport", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
     ctx.cfg.host = "ghe.corp";
+    gh.expectedHost = "ghe.corp"; // fake refuses graphql not addressed to the GHE host
     ctx.exec = (argv, stdin) => {
       if (argv.join(" ").includes("remote get-url"))
         return { code: 0, stdout: "git@ghe.corp:cdubiel08/ralph-hero.git\n", stderr: "" };
