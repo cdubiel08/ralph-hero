@@ -7,7 +7,8 @@ This repo ships **two independently-versioned artifacts**, each released
 automatically on merge to `main` (see [CONTRIBUTING.md](https://github.com/cdubiel08/ralph-hero/blob/main/CONTRIBUTING.md) § Releases):
 
 - **`ralph`** — the Claude Code plugin. Tags: `ralph-vX.Y.Z` (via `release-ralph.yml`).
-- **`ralph-hero-mcp-server`** — the npm package. Tags: `vX.Y.Z` (via `release.yml`).
+- **`ralph-knowledge`** — npm package. Tags: `knowledge-vX.Y.Z` (via `release-knowledge.yml`).
+  (The former `ralph-hero-mcp-server` npm artifact was retired in GH-1662 and is deprecated.)
 
 Because releases are tag-driven and automated, this changelog is **human-maintained**:
 add entries under `## [Unreleased]` as you land user-visible changes; reconcile them
@@ -15,6 +16,18 @@ to a version heading when that artifact next releases. Full tag history:
 <https://github.com/cdubiel08/ralph-hero/tags>.
 
 ## [Unreleased]
+
+### Changed — the v2 rewrite (GH-1662)
+
+- **ralph is now v2**: two skills (`/ralph:work`, `/ralph:board`), one read-only
+  investigator agent, the typed `ralph/scripts/board` CLI as the sole board
+  mutation path (6-state machine, claims with TTL, scope gate, doctor), a
+  server-side `state-guard.yml` corrective wall, and a scheduler-owned
+  `tick.sh` loop. Enforcement is code, not prose.
+- **Removed**: the 9-verb skill surface, 16 agents, 40 hook scripts, the
+  sentinel/loop protocol, 5 board-sync workflows, and the entire
+  `mcp-server/` (the `ralph-hero-mcp-server` npm package is deprecated).
+- Design record: `thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
 
 ### Added
 

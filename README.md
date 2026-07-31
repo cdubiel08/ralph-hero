@@ -1,33 +1,36 @@
-# Ralph Hero
+# Ralph
 
-A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that turns Claude into an autonomous software engineer. Ralph triages issues, researches codebases, writes implementation plans, codes in isolated worktrees, creates PRs, and merges — all driven by a GitHub Projects V2 board.
+A [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that turns Claude into an autonomous software engineer, driven by a GitHub Projects V2 board. Ralph claims an issue, works it at whatever depth the unit demands — research, plan, code, verify, in the driver's own judgment — opens a PR, runs the merge gates, and moves on.
 
 > *The naive hero picks tickets, does their best work, and moves on.*
 
 ## How It Works
 
-Ralph manages GitHub issues through a structured workflow state machine:
+Six board states, one typed CLI, no prescribed phases:
 
+```text
+Backlog → In Progress → In Review → Done
+              ↕︎              ↓
+         Human Needed ←──────┘        Canceled
 ```
-Backlog → Research Needed → Research in Progress → Ready for Plan
-       → Plan in Progress → Plan in Review → In Progress → In Review → Done
-```
 
-Each transition is enforced by hooks and validated by the MCP server. Issues flow through phases — triage, research, planning, review, implementation, and merge — autonomous by default, with a human checkpoint only when a plan raises an open design decision (it holds in Plan in Review with a `## Decision Request` comment until you answer) or a reviewer requests changes on the PR (`CHANGES_REQUESTED` always blocks merge).
+- **`ralph/scripts/board`** is the sole board mutation path: transition legality, claims with TTL (no `--force` anywhere — a stale claim is the only override), a scope gate refusing writes from the wrong repo, and a `doctor` invariant sweep. ~1,100 lines of TypeScript with a vitest contract suite, shipped inside the plugin — no npm dependency.
+- **`/ralph:work`** drives one issue end-to-end under an 8-rule contract (claim before work, board truthful, findings outlive the transcript, gates are run not predicted, …). Frontier-model bookends dispatch in-session on large units only.
+- **`/ralph:board`** is the human surface: orientation, intake, answering blocked items.
+- **`state-guard.yml`** corrects drift server-side (issue events + a 15-minute reconciler), commenting every correction. A weekly `doctor.yml` sweep makes silence impossible.
+- **The loop** is a scheduler-owned `tick.sh`: one issue per tick, worktree-per-job, hard timeout, subscription-billing guard, opt-in via `install-loop.sh --enable`. No sentinels, no self-scheduling sessions.
 
-**Autonomous mode** (`/ralph:hero`): Ralph drives an issue tree end-to-end, splitting large tickets, researching each sub-issue, creating plans, and implementing them.
-
-**Interactive mode**: Use individual skills like `/ralph:plan` or `/ralph:impl` with human-in-the-loop verification at each step.
+Human checkpoints: anything the contract doesn't grant (destructive ops, spend, out-of-scope work) lands in **Human Needed** with the exact decision needed as a comment; `CHANGES_REQUESTED` on a PR always blocks merge.
 
 ## Installation
 
 ### Prerequisites
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
-- Node.js 20+
-- A GitHub Personal Access Token with `repo` and `project` scopes
+- Node.js 20+ (for the board CLI's tsx runner; or bun)
+- `gh` CLI authenticated with `repo` + `project` scopes (`gh auth login -s repo,project`)
 
-### Install the Plugin
+### Install
 
 ```bash
 claude plugins add cdubiel08/ralph-hero --plugin ralph
@@ -35,141 +38,84 @@ claude plugins add cdubiel08/ralph-hero --plugin ralph
 
 ### Configure
 
-Add your GitHub token and project settings to `.claude/settings.local.json` (gitignored):
+**Auth is the gh keyring only** — `gh auth login -s repo,project`. Never put GitHub tokens in `.claude/settings.json`, `.claude/settings.local.json`, or any committed file; the board CLI has no token variable to set.
+
+Board coordinates go in ONE of two places (`.ralph.json` wins when both exist):
+
+Your repo's tracked `.claude/settings.json` (env-block shape):
 
 ```json
 {
   "env": {
-    "RALPH_HERO_GITHUB_TOKEN": "ghp_your_token_here",
     "RALPH_GH_OWNER": "your-github-username",
+    "RALPH_GH_REPO": "your-repo",
     "RALPH_GH_PROJECT_NUMBER": "1"
   }
 }
 ```
 
-### Set Up Your Project Board
+Or a repo-root `.ralph.json` (flat shape — note the different schema):
 
+```json
+{ "owner": "your-github-username", "repo": "your-repo", "projectNumber": 1 }
 ```
-/ralph:setup
-```
 
-This creates a GitHub Projects V2 board with the required custom fields: **Workflow State**, **Priority**, and **Estimate**.
-
-## Token Expired?
+Then create the board fields once:
 
 ```bash
-gh auth refresh -s repo,project,read:org
+ralph/scripts/board setup
 ```
-
-Then restart Claude Code.
-
-If you're using explicit `RALPH_GH_REPO_TOKEN` / `RALPH_GH_PROJECT_TOKEN` / `RALPH_HERO_GITHUB_TOKEN`: regenerate the PAT at https://github.com/settings/tokens, update `~/.claude/settings.json` (or `.claude/settings.local.json`), restart Claude Code.
 
 ## Skills
 
 | Skill | Description |
 |-------|-------------|
-| `/ralph:hero` | Drive an issue through the full lifecycle end-to-end (autonomous) |
-| `/ralph:hero-fable` | Experimental rail-free surface for Fable: outcome + boundaries + artifact contract, no prescribed phases (`/ralph:hero --model fable` forwards here) |
-| `/ralph:research` | Investigate an issue, create a research document, update issue state |
-| `/ralph:plan` | Create or review an implementation plan |
-| `/ralph:impl` | Implement an approved plan in an isolated worktree |
-| `/ralph:review` | Validate implementation or review a plan |
-| `/ralph:caretake` | Triage, hygiene, unblock, trends, split, debug, report |
-| `/ralph:catch-up` | Session orientation — narrative, dashboard, or status report |
-| `/ralph:form` | Crystallize ideas into structured GitHub issues |
-| `/ralph:setup` | One-time project board setup |
+| `/ralph:work` | Drive one issue (or described outcome) end-to-end — the only execution verb |
+| `/ralph:board` | Orientation, intake, answering Human Needed items, board doctor |
 
-## MCP Server
+Plus one read-only `investigator` agent for parallel fan-out, and four optional saved Workflows (`research-panel`, `plan-critique`, `tree-impl`, `adversarial-review`) the driver may invoke — never prescribed.
 
-The plugin bundles an MCP server ([`ralph-hero-mcp-server`](https://www.npmjs.com/package/ralph-hero-mcp-server)) that provides GitHub Projects V2 tools to Claude Code via the [Model Context Protocol](https://modelcontextprotocol.io/).
+## The Board CLI
 
-### Tools
-
-The MCP server registers exactly 22 `ralph_hero__*` tools by default (26 with `RALPH_SRE_ENABLE=true`; asserted in `tool-registration.test.ts` / `tool-registration-sre-enabled.test.ts`, GH-1614), restating GH-1591's original "≤20" acceptance line to "= 22" with the arithmetic shown there. The table below is a curated subset of the most-used ones (issue/project CRUD, relationships, dashboards, trends). Additional tools include `create_sub_issues`, `decompose_feature`, `remove_dependency`, and the `sre__*` autoremediation set (gated behind `RALPH_SRE_ENABLE=true` — absent by default).
-
-| Tool | Description |
-|------|-------------|
-| `health_check` | Validate API connectivity, tokens, repo/project access, and required fields. `includeFields: true` also fetches project fields/options (absorbs the former `get_project`) |
-| `setup_project` | Create or configure a project with required fields and workflow states |
-| `get_issue` | Get full issue details with project fields, sub-issues, and dependencies |
-| `list_issues` | Query issues with filtering, sorting, and pagination |
-| `save_issue` | Create or update issues with project field values (workflow state, priority, estimate) |
-| `create_issue` | Create a new issue and add it to the project |
-| `create_comment` | Add a comment to an issue |
-| `create_status_update` | Post a status update to the project |
-| `add_sub_issue` | Add a sub-issue relationship |
-| `list_sub_issues` | List sub-issues of a parent |
-| `add_dependency` | Add a blocking dependency between issues |
-| `list_dependencies` | List blocking and blocked-by relationships |
-| `advance_issue` | Move an issue to the next workflow state with validation |
-| `batch_update` | Bulk-update project fields across multiple issues, or archive/unarchive items (explicit selection or filter-driven bulk scan) |
-| `pipeline_dashboard` | Aggregated pipeline view with counts per workflow state and health indicators |
-| `project_hygiene` | Board health report — stale items, orphans, field gaps |
-| `next_actions` | Ranked list of recommended next actions |
-| `recent_activity` | Read per-session activity log |
-| `metrics_trends` | 1d/7d/30d velocity and WIP trends; `capture: true` also appends a snapshot row |
-
-### Architecture
-
+```text
+board get / list / next / tree          reads (next = ranked queue + blocker report)
+board create / claim / release / move / cancel / reopen / link / dep / comment
+board adopt / reconcile / parent-check  reality-sync + rollup lanes (state-guard uses these)
+board doctor [--fix] [--strict]         invariant sweep
+board setup                             field bootstrap (idempotent)
 ```
-mcp-server/              # TypeScript MCP server (published as ralph-hero-mcp-server)
-ralph/                   # Claude Code plugin
-├── skills/              # 9 fat verbs + experimental hero-fable surface
-├── agents/              # 16 agents (8 per-phase + 8 investigators)
-├── hooks/               # Lifecycle enforcement hooks
-└── .claude-plugin/      # Plugin manifest + .mcp.json
+
+Every mutation echoes the resulting board state. Foreign-repo items on a shared board are surfaced and never touched; archived items are skipped everywhere.
+
+## Merge Gate
+
+`main` should be ruleset-protected; merges go through `scripts/merge-pr.sh`, which verifies CI, review state, and a head-SHA-bound attestation (`scripts/attest-pr.sh`) carrying real test exit codes. `validate-attestation.yml` republishes the verdict server-side. Agents attempt the gate and trust its verdict — never pre-judge it.
+
+## Configuration Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `RALPH_GH_OWNER` / `RALPH_GH_REPO` / `RALPH_GH_PROJECT_NUMBER` | Yes | Board coordinates (tracked settings or `.ralph.json`) |
+| `RALPH_GH_HOST` | No | GitHub Enterprise host (default `github.com`) — used by both the scope gate and API transport |
+| `RALPH_LOCK_TTL_MIN` | No | Claim staleness threshold, minutes (default 120) |
+| `RALPH_CLAIM_HOLDER` | No | Claim holder identity (default `user@host`) |
+| `RALPH_TICK_RUNNER` | No | Loop transport (default `claude -p --model sonnet`); any command accepting a prompt |
+| `RALPH_TICK_TIMEOUT_MIN` | No | Hard per-tick timeout (default 45) |
+| `RALPH_ALLOW_API_BILLING` | No | Must be `"true"` for tick to spawn with `ANTHROPIC_API_KEY` set (guards subscription users against silent API billing) |
+
+Autopilot opt-in is `autopilot=true` in `~/.ralph/config`, written by `install-loop.sh --enable`.
+
+## Repository Layout
+
+```text
+ralph/                   # The Claude Code plugin (skills, agent, hooks, board CLI, loop)
 plugin/
-├── ralph-knowledge/     # Semantic search over thoughts/ documents
+├── ralph-knowledge/     # Semantic search over thoughts/ documents (own MCP server)
 ├── ralph-playwright/    # Polymorphic UI testing
 └── ralph-demo/          # Sprint demo video generation
 ```
 
-## CI/CD
-
-| Workflow | Trigger | Description |
-|----------|---------|-------------|
-| `ci.yml` | PR to main | Build + test; hook tests; workflow lint |
-| `release.yml` | mcp-server/ changes on main | Auto-bump version, publish to npm with provenance, pin ralph/.mcp.json |
-| `release-ralph.yml` | ralph/ changes on main | Bump ralph plugin version + tag |
-| `route-issues.yml` | Issue opened | Route new issues to project board |
-| `sync-issue-state.yml` | Issue state change | Sync GitHub issue state with project workflow |
-| `sync-pr-merge.yml` | PR merged | Move linked issues to Done |
-| `sync-project-state.yml` | Project field change | Sync project state changes back to issues |
-| `advance-parent.yml` | Sub-issue state change | Auto-advance parent when all children reach a gate state |
-
-## Configuration
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `RALPH_HERO_GITHUB_TOKEN` | No (defaults to `gh auth token`) | GitHub PAT with `repo` + `project` scopes |
-| `RALPH_GH_OWNER` | Yes | GitHub owner (user or org) |
-| `RALPH_GH_PROJECT_NUMBER` | Yes | GitHub Projects V2 number |
-| `RALPH_GH_REPO` | No | Repository name (inferred from project if omitted) |
-| `RALPH_GH_PROJECT_NUMBERS` | No | Comma-separated project numbers for cross-project dashboard |
-| `RALPH_GH_PROJECT_OWNER` | No | Project owner if different from repo owner |
-| `RALPH_GH_REPO_TOKEN` | No | Separate repo token (falls back to main token) |
-| `RALPH_GH_PROJECT_TOKEN` | No | Separate project token (falls back to repo token) |
-| `RALPH_IMPL_MODEL` | No | Override model for `impl-agent` (`sonnet`, `opus`, or `fable`; default `sonnet`; BLOCKED escalation re-dispatches once at `opus`) |
-| `RALPH_REVIEW_PLAN` | No | Plan-review gate (default `auto`, decision-driven: decision-free APPROVED plans auto-advance; plans with open `#### Decision:` blocks hold with a `## Decision Request` comment). `interactive` opts into the whole-plan picker. |
-| `RALPH_REVIEW_MODE` | No | Merge gate (default `auto`: val → code-review → merge → CI watch unattended; `CHANGES_REQUESTED` always blocks). `interactive` opts into report-PR-URLs-and-stop. |
-| `RALPH_AUTOPILOT_ENABLE` | No | Must be `"true"` for `/ralph:hero --mode auto` (enforced by `autopilot-enable-gate.sh`) |
-| `RALPH_DEBUG` | No | Enable JSONL debug logging + OpenTelemetry export |
-
-Set all variables in `.claude/settings.local.json` under the `"env"` key. Do not put tokens in `.mcp.json`.
-
-## Development
-
-```bash
-cd mcp-server
-npm install
-npm run build
-npm test
-```
-
-Tests use [Vitest](https://vitest.dev/).
-
-**Release process**: Merges to `main` that touch `mcp-server/src/**` automatically bump the version, publish to npm, and pin `ralph/.mcp.json`. Include `#minor` or `#major` in a commit message for larger version bumps.
+v1 (9 verb skills, 16 agents, 40 hooks, a 20k-line MCP server) was replaced in GH-1662; the npm package `ralph-hero-mcp-server` is deprecated. Design record: `thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
 
 ## Security
 

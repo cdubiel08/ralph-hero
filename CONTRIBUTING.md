@@ -1,11 +1,11 @@
 # Contributing to ralph-hero
 
-Thanks for contributing. This repo holds the **`ralph`** Claude Code plugin, its **`ralph-hero-mcp-server`** npm package, and a few sibling sub-plugins. This guide is the contributor entry point; deeper architecture lives in [`CLAUDE.md`](https://github.com/cdubiel08/ralph-hero/blob/main/CLAUDE.md).
+Thanks for contributing. This repo holds the **`ralph`** Claude Code plugin (v2: two skills + the `ralph/scripts/board` CLI, no MCP server) and a few sibling sub-plugins. This guide is the contributor entry point; deeper architecture lives in [`CLAUDE.md`](https://github.com/cdubiel08/ralph-hero/blob/main/CLAUDE.md).
 
 ## Project layout
 
 ```
-mcp-server/          # TypeScript MCP server, published to npm as ralph-hero-mcp-server
+ralph/               # The plugin: skills, agent, hooks, board CLI, loop scripts
 ralph/               # The Claude Code plugin (9 verb skills, agents, hooks)
 plugin/
 ├── ralph-knowledge/ # Semantic search over thoughts/ (MCP server)
@@ -17,13 +17,12 @@ See the [README](https://github.com/cdubiel08/ralph-hero/blob/main/README.md) fo
 
 ## Dev setup
 
-The MCP server is the main build target. From `mcp-server/`:
+The board CLI is the main build target. From the repo root:
 
 ```bash
 npm install
-npm run build        # TypeScript -> dist/ (tsc)
-npm test             # vitest
-npx vitest run src/__tests__/cache.test.ts   # single test file
+npx vitest run ralph/scripts/board.test.ts   # the board CLI contract suite
+npx tsc --noEmit                             # typecheck
 ```
 
 The **ralph-knowledge** plugin builds from `plugin/ralph-knowledge/` (`npm install && npm run build && npm test`).
@@ -40,7 +39,6 @@ No linter is configured — TypeScript strict mode is the primary code-quality g
 
 Releases are **fully automated** on merge to `main`; two artifacts version independently:
 
-- **`ralph-hero-mcp-server` (npm):** `release.yml` fires when a merge touches `mcp-server/src/**`. It auto-bumps `mcp-server/package.json`, publishes to npm with provenance, and pins `ralph/.mcp.json`. Tags look like `vX.Y.Z`.
 - **`ralph` plugin:** `release-ralph.yml` fires when a merge touches `ralph/**`. It bumps `ralph/.claude-plugin/plugin.json` and tags `ralph-vX.Y.Z`.
 
 Include `#minor` or `#major` in a commit message for a larger-than-patch bump.

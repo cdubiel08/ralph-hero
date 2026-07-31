@@ -10,18 +10,8 @@
 version: 2
 
 updates:
-  # ---- npm: ralph-hero MCP server (relocated to top-level mcp-server/ in GH-1436) ----
-  - package-ecosystem: "npm"
-    directory: "/mcp-server"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    groups:
-      ralph-hero-mcp-server-minor-patch:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
+  # (The former /mcp-server npm entry was removed with the directory itself
+  # in the v2 rewrite, GH-1662.)
 
   # ---- npm: ralph-knowledge plugin ----
   - package-ecosystem: "npm"
