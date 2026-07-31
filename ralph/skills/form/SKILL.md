@@ -66,7 +66,7 @@ If `LINKED_ISSUE` is set, fetch the linked issue's title and current workflow st
 
 ## Default flow
 
-Steps 2-6 (understand → research → present context → output picker → the four output shapes) are in [default-flow.md](default-flow.md).
+Steps 2-6 (understand → research → present context → output picker → the output shapes) are in [default-flow.md](default-flow.md). The picker offers **5 options** routing to **4** Step-6 sub-steps — *Implementation plan* and *Research topic* both hand off via Step 6c.
 
 ## --mode draft
 

@@ -57,7 +57,7 @@ Tier-escalation path (model-driven BLOCKED). When the implementer's internal ret
 IMPL BLOCKED model=<current> needs=opus reason=<short-reason>
 ```
 
-Do NOT call `save_issue(workflowState="__ESCALATE__")` in this path — leave the issue in "In Progress" so hero can re-dispatch with `model="opus"` once. The `impl-postcondition.sh` Stop hook greps the transcript for the unanchored `IMPL BLOCKED ` token (the marker is embedded inside a JSON `"text":"..."` field in the JSONL transcript and never appears at column 0) and accepts it as a non-error terminal state.
+Do NOT call `save_issue(workflowState="__ESCALATE__")` in this path — leave the issue in "In Progress" so hero can re-dispatch with `model="opus"` once. The `impl-postcondition.sh` Stop hook greps the transcript for the unanchored `IMPL BLOCKED` token **including its trailing space** (the space is part of the match — it separates the prefix from `model=`; a code span cannot render a trailing space, so it is stated here rather than shown) (the marker is embedded inside a JSON `"text":"..."` field in the JSONL transcript and never appears at column 0) and accepts it as a non-error terminal state.
 
 If the current dispatching model IS already opus, fall through to the existing escalate-to-Human-Needed path (`save_issue(workflowState="__ESCALATE__", command="ralph_impl")` — the `command` is required; without it the call is rejected today by `isValidState`, before this plan's transition check even runs). A double-BLOCKED at opus is a real escalation, not a tier issue.
 

@@ -65,11 +65,11 @@ validate_doc() {
           next
         }
         !f { print }' "$doc")
-      if printf '%s\n' "$plan_body" | grep -qE "^type:[[:space:]]*plan-of-plans" \
-         || printf '%s\n' "$plan_body" | grep -qE "^## Feature Decomposition([[:space:]]|$)"; then
+      if grep -qE "^type:[[:space:]]*plan-of-plans" <<< "$plan_body" \
+         || grep -qE "^## Feature Decomposition([[:space:]]|$)" <<< "$plan_body"; then
         # Plan-of-plans shape — sections per ralph/skills/plan/decomposition.md § Plan-of-plans shape.
-        printf '%s\n' "$plan_body" | grep -qE "^## Feature Decomposition([[:space:]]|$)" || doc_errors+=("Missing: '## Feature Decomposition' section (plan-of-plans shape)")
-        printf '%s\n' "$plan_body" | grep -qE "^## Feature Sequencing([[:space:]]|$)" || doc_errors+=("Missing: '## Feature Sequencing' section (plan-of-plans shape)")
+        grep -qE "^## Feature Decomposition([[:space:]]|$)" <<< "$plan_body" || doc_errors+=("Missing: '## Feature Decomposition' section (plan-of-plans shape)")
+        grep -qE "^## Feature Sequencing([[:space:]]|$)" <<< "$plan_body" || doc_errors+=("Missing: '## Feature Sequencing' section (plan-of-plans shape)")
       else
         # Regular plan shape. Section names match ralph/skills/plan/plan-shapes.md § Section order.
         grep -qE "^## Phase [0-9]" "$doc" || doc_errors+=("Missing: '## Phase N:' header pattern (e.g., '## Phase 1: ...')")
@@ -81,13 +81,13 @@ validate_doc() {
       # The block/sentinel check is scoped to the section itself (sentinel
       # text quoted elsewhere in the doc must not satisfy it), and the
       # sentinel tolerates dash variants (em/en/hyphen) and spacing.
-      if ! printf '%s\n' "$plan_body" | grep -qE "^## Design Decisions"; then
+      if ! grep -qE "^## Design Decisions" <<< "$plan_body"; then
         doc_errors+=("Missing: '## Design Decisions & Open Ambiguities' section (see plan-shapes.md § Design decisions anatomy)")
       else
         local decisions_section
         decisions_section=$(printf '%s\n' "$plan_body" | awk '/^## Design Decisions/ { f = 1; next } /^## / { f = 0 } f { print }')
-        if ! printf '%s\n' "$decisions_section" | grep -qE "^#### Decision:" \
-           && ! printf '%s\n' "$decisions_section" | grep -qiE "None[[:space:]]*(—|–|-)[[:space:]]*no open design decisions\."; then
+        if ! grep -qE "^#### Decision:" <<< "$decisions_section" \
+           && ! grep -qiE "None[[:space:]]*(—|–|-)[[:space:]]*no open design decisions\." <<< "$decisions_section"; then
           doc_errors+=("Missing: decisions section needs either a '#### Decision:' block or the sentinel 'None — no open design decisions.' inside the section itself (see plan-shapes.md § Design decisions anatomy)")
         fi
       fi

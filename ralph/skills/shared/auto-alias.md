@@ -1,6 +1,9 @@
 # auto-alias.md — Per-verb `--auto` alias for ralph slim plugin skills
 
-Reference fragment. Every alias-table verb's SKILL.md references this file by pointer for the alias table, the refusal targets, and the Step-0 stanza; none inlines a private copy.
+Reference fragment, and the canonical source for all three sections below. Two different contracts apply, so the distinction is spelled out rather than left implicit:
+
+- **§ Alias table and § Refusal targets are pointer-only.** No verb inlines a private copy of either; a verb's SKILL.md cites this file and reads the rows from here. Changing a row here changes behavior everywhere.
+- **§ Step-0 stanza is a template that each verb DOES inline** into its own Step 0 (it has to — the stanza runs as part of the verb's own arg parsing). This file is its canonical wording; the inlined copies must match it, and `ralph/skills/shared/__tests__/auto-alias.test.sh` guards the refusal strings against drift.
 
 ---
 

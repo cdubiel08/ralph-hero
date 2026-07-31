@@ -1,5 +1,5 @@
 ---
-description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with decision-gated human plan approval (open design decisions route to the human; decision-free plans flow through) and autonomous merge by default. Four modes:default(one-shot), --mode auto (autopilot drain via /loop, internally ticking a director-only dispatch step), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
+description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with decision-gated human plan approval (open design decisions route to the human; decision-free plans flow through) and autonomous merge by default. Four modes:default(one-shot), --mode auto (never-terminating autopilot watcher via /loop, internally ticking a director-only dispatch step), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
 argument-hint: "[<issue-number> | --mode <auto|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>] [--loop [duration]] [--auto] [--model fable]"
 context: inline
 model: sonnet
@@ -74,7 +74,7 @@ The only autonomous entrypoint in the ralph slim plugin. Drives one issue end-to
 | Mode | Trigger | Role |
 |---|---|---|
 | **default** | `/ralph:hero NNN` or `/ralph:hero` (picks top-ranked) | One-shot: research → plan → review → impl → PR → merge |
-| **`--mode auto`** | `/ralph:hero --mode auto` | Drain the backlog via `/loop` (dynamic); each tick internally classifies one event and dispatches the correct verb |
+| **`--mode auto`** | `/ralph:hero --mode auto` | Never-terminating adaptive watcher via `/loop` (dynamic); each tick internally classifies one event and dispatches the correct verb. Idles at a 1h ceiling rather than stopping — cancel via `/tasks`. |
 | **`--mode watch`** | `/ralph:hero --mode watch [--issue NNN]` | Watcher heartbeat — dispatch gcp-incident-triage / log-reader / sre-fixit |
 | **`--mode pr-drain`** | `/ralph:hero --mode pr-drain --pr NNN` | Drain a PR (Dependabot/stale/unlinked) — classify, gate, act |
 
@@ -103,10 +103,12 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 ```bash
 case "$ARGUMENTS" in
   --mode\ auto*)        export RALPH_SUBCOMMAND=auto ;;
-  # --tick shares the `auto` scope so the autopilot-* hooks (which gate on
-  # RALPH_COMMAND=hero + RALPH_SUBCOMMAND=auto) behave identically for the
-  # loop launch and every tick it dispatches. Step 1 routes the two to
-  # DIFFERENT bodies — see the --tick test there.
+  # --tick shares the `auto` scope because autopilot-enable-gate.sh gates the
+  # loop dispatch on RALPH_COMMAND=hero AND RALPH_SUBCOMMAND=auto; giving
+  # --tick its own value would fail that gate. (The other three autopilot-*
+  # hooks — stop-gate, wakeup-clear, director-postcheck — key on
+  # RALPH_COMMAND alone and are indifferent to this value.) Step 1 routes the
+  # loop launch and the tick to DIFFERENT bodies — see the --tick test there.
   --tick*)              export RALPH_SUBCOMMAND=auto ;;
   --mode\ watch*)       export RALPH_SUBCOMMAND=watch ;;
   --mode\ pr-drain*)    export RALPH_SUBCOMMAND=pr-drain ;;

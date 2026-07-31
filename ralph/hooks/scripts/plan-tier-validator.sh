@@ -105,11 +105,11 @@ stripped=$(printf '%s\n' "$content" | awk '
 has_feature_decomp=false
 has_phase_section=false
 
-if printf '%s\n' "$stripped" | grep -qE '^## Feature Decomposition([[:space:]]|$)'; then
+if grep -qE '^## Feature Decomposition([[:space:]]|$)' <<< "$stripped"; then
   has_feature_decomp=true
 fi
 
-if printf '%s\n' "$stripped" | grep -qE '^## Phase [0-9]+'; then
+if grep -qE '^## Phase [0-9]+' <<< "$stripped"; then
   has_phase_section=true
 fi
 

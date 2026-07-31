@@ -78,8 +78,15 @@ content_probe_frontmatter=$(printf '%s\n' "$content_probe" | awk '
   NR == 1 { next }
   /^---[[:space:]]*$/ { exit }
   { print }')
-if printf '%s\n' "$content_probe_frontmatter" | grep -qE '^type:[[:space:]]*plan-of-plans[[:space:]]*$' \
-   || printf '%s\n' "$content_probe_stripped" | grep -qE '^## Feature Decomposition([[:space:]]|$)'; then
+# Here-strings, NOT `printf | grep -q`. Under `set -o pipefail`, `grep -q`
+# exits at the first match and closes the pipe; if the payload exceeds the
+# pipe buffer (~64KB), printf takes SIGPIPE, the pipeline reports 141, and
+# the `if` reads a genuine MATCH as no-match. Verified: a 1MB doc whose
+# match is on line 1 returns rc=141 through a pipeline and matches
+# correctly through a here-string. A large plan-of-plans would otherwise
+# lose its carve-out and be falsely blocked.
+if grep -qE '^type:[[:space:]]*plan-of-plans[[:space:]]*$' <<< "$content_probe_frontmatter" \
+   || grep -qE '^## Feature Decomposition([[:space:]]|$)' <<< "$content_probe_stripped"; then
   allow_with_context "Plan-of-plans shape detected (type: plan-of-plans or ## Feature Decomposition) — research requirement waived; doc-structure-validator.sh enforces the plan-of-plans shape at Stop."
 fi
 
