@@ -38,7 +38,11 @@ claude plugins add cdubiel08/ralph-hero --plugin ralph
 
 ### Configure
 
-Scope settings in your repo's tracked `.claude/settings.json` (or a repo-root `.ralph.json`):
+**Auth is the gh keyring only** — `gh auth login -s repo,project`. Never put GitHub tokens in `.claude/settings.json`, `.claude/settings.local.json`, or any committed file; the board CLI has no token variable to set.
+
+Board coordinates go in ONE of two places (`.ralph.json` wins when both exist):
+
+Your repo's tracked `.claude/settings.json` (env-block shape):
 
 ```json
 {
@@ -48,6 +52,12 @@ Scope settings in your repo's tracked `.claude/settings.json` (or a repo-root `.
     "RALPH_GH_PROJECT_NUMBER": "1"
   }
 }
+```
+
+Or a repo-root `.ralph.json` (flat shape — note the different schema):
+
+```json
+{ "owner": "your-github-username", "repo": "your-repo", "projectNumber": 1 }
 ```
 
 Then create the board fields once:
