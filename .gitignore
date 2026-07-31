@@ -36,4 +36,3 @@ plugin/*/*/coverage/
 mcp-server/dist/
 mcp-server/coverage/
 node_modules/
-mcp-server/node_modules/

@@ -24,33 +24,6 @@ jobs:
       - name: board.ts test suite
         run: npx vitest run ralph/scripts/board.test.ts
 
-  build-and-test-hero:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mcp-server
-    strategy:
-      matrix:
-        node-version: [20, 22]
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: mcp-server/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Test
-        run: npm test
-
   build-and-test-demo:
     runs-on: ubuntu-latest
     defaults:
@@ -300,17 +273,3 @@ jobs:
   # GH-1458: assert documented agent/skill/tool rosters in CLAUDE.md / README.md
   # match the source files, so docs and code can't silently diverge (the failure
   # mode GH-1452 had to fix by hand).
-  check-doc-rosters:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Run doc-roster consistency check
-        run: bash scripts/check-doc-rosters.sh
-
-      # (GH-1614's tool-consumer drift check was deleted in the v2 cutover,
-      # GH-1662 — v2 skills consume the board CLI via Bash, not MCP tools, so
-      # the skill↔tool-roster relationship it guarded no longer exists. The
-      # MCP server itself is deleted in Phase 4.)

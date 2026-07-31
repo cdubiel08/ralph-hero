@@ -31,8 +31,6 @@ Phase 3 (GH-1662) adds `scripts/tick.sh` + `scripts/install-loop.sh` — the sch
 ```bash
 npx vitest run ralph/scripts/board.test.ts && npx tsc --noEmit
 shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
-bash scripts/check-doc-rosters.sh
-cd mcp-server && npx vitest run src/__tests__/skill-frontmatter.test.ts
 ```
 
 ## Install model

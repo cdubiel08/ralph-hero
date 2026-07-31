@@ -1,6 +1,6 @@
 # Security Policy
 
-`ralph-hero` is a public [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that publishes the [`ralph-hero-mcp-server`](https://www.npmjs.com/package/ralph-hero-mcp-server) and [`ralph-knowledge`](https://www.npmjs.com/package/ralph-knowledge) packages to npm. We take security issues in those packages, the plugin code, and the supporting workflows seriously.
+`ralph-hero` is a public [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) that publishes the [`ralph-knowledge`](https://www.npmjs.com/package/ralph-knowledge) package to npm. (The former `ralph-hero-mcp-server` package was retired in the v2 rewrite, GH-1662, and is deprecated on npm.) We take security issues in those packages, the plugin code, and the supporting workflows seriously.
 
 ## Supported Versions
 
@@ -8,7 +8,6 @@ Both npm packages are auto-released on every merge to `main`, so only the **curr
 
 | Package | Supported |
 |---------|-----------|
-| `ralph-hero-mcp-server` | Current major only (latest published version) |
 | `ralph-knowledge` | Current major only (latest published version) |
 
 Older majors are not patched. If a vulnerability is found in a previous major, the fix will land in the current major and users should upgrade.
@@ -45,7 +44,7 @@ Dependency updates are managed by [Dependabot](https://docs.github.com/en/code-s
 
 ### npm publishing (OIDC trusted publishing)
 
-Both `ralph-hero-mcp-server` and `ralph-knowledge` are published to npm using [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers). The release workflows ([`release.yml`](.github/workflows/release.yml) and [`release-knowledge.yml`](.github/workflows/release-knowledge.yml)) request a short-lived OIDC token from GitHub at publish time (via `id-token: write` job permission), and npm verifies the token against the trusted-publisher configuration on each package.
+`ralph-knowledge` is published to npm using [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers). The release workflow ([`release-knowledge.yml`](.github/workflows/release-knowledge.yml)) requests a short-lived OIDC token from GitHub at publish time (via `id-token: write` job permission), and npm verifies the token against the trusted-publisher configuration on the package.
 
 **There is no static `NPM_TOKEN` to rotate.** The `NPM_TOKEN` repository secret was removed once the first OIDC publish was verified. See [#1035](https://github.com/cdubiel08/ralph-hero/issues/1035) (S8: Migrate npm publish to OIDC trusted publishing) for the migration.
 
