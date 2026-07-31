@@ -207,6 +207,23 @@ Pick PostToolUse over PreToolUse when the data the gate needs to evaluate lives 
 | Validate `tool_response` shape or content | PostToolUse |
 | Verify a side-effect succeeded with the expected payload | PostToolUse |
 
+### Contract surface
+
+There is no prose spec directory. Workflow contracts live in executable, CI-checked sources — read these, not a narrative restatement of them:
+
+| Contract | Source of truth |
+|----------|-----------------|
+| Per-command valid input/output states, lock states, pre/postconditions, semantic intents | `ralph/hooks/scripts/ralph-state-machine.json` |
+| State ordering, allowed transitions, Status sync, parent gates | `mcp-server/src/lib/workflow-states.ts` |
+| Per-skill tool grants and hook registration | each `ralph/skills/<verb>/SKILL.md` frontmatter (`allowed-tools`, `hooks`) |
+| Per-agent tool enforcement | each `ralph/agents/<name>.md` frontmatter (`tools:`) |
+| Terminal outcome tokens | `ralph/skills/caretake/outcome-tokens.md` |
+| Autonomous loop contract | `ralph/skills/shared/loop-wrapper.md` |
+
+Enforced by `scripts/check-doc-rosters.sh`, `scripts/check-tool-consumers.sh`, and `mcp-server/src/__tests__/skill-frontmatter.test.ts`.
+
+**Removed: `specs/` (2026-07-31).** Nine RFC-2119 spec files (`README`, `agent-permissions`, `artifact-metadata`, `document-protocols`, `issue-lifecycle`, `skill-io-contracts`, `skill-permissions`, `task-schema`, `team-schema`) described the pre-slim `plugin/ralph-hero/` architecture — `ralph-{triage,split,val,pr,merge,hygiene}` skills, the `team`/worker coordination protocol (deprecated in aaf5e953), and `skills/shared/fragments/` `` !`cat` `` injection. They had zero consumers outside themselves and their "Enablement" columns named 34 hook scripts that no longer exist, so they read as authoritative while being wrong. Historical references to `specs/*.md` under `thoughts/` and `docs/plans/` are point-in-time records and were deliberately left intact.
+
 ## Key Implementation Gotchas
 
 - **`@octokit/graphql` v9 reserves `query`, `method`, and `url`** as option keys. Never use these as GraphQL variable names.
