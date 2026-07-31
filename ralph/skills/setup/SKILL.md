@@ -1,7 +1,7 @@
 ---
 description: |
-  One-time setup for Ralph in this repo and on this machine. Three modes — default / `--mode project` (GitHub Project V2 bootstrap; custom fields, env vars, install-scope settings), `--mode cli` (install global `ralph` command + shell completions), `--mode repos` (bootstrap .ralph-repos.yml multi-repo registry). Triggers on "set up ralph", "configure ralph", "install ralph CLI", "create the project board", "bootstrap repos.yml", "fix missing workflow states", "owner is required", "ralph board tools fail in a worktree".
-argument-hint: "[<project-number> | --mode <project|cli|repos>] [path]"
+  One-time setup for Ralph in this repo and on this machine. Two modes — default / `--mode project` (GitHub Project V2 bootstrap; custom fields, env vars, install-scope settings), `--mode repos` (bootstrap .ralph-repos.yml multi-repo registry). Triggers on "set up ralph", "configure ralph", "create the project board", "bootstrap repos.yml", "fix missing workflow states", "owner is required", "ralph board tools fail in a worktree".
+argument-hint: "[<project-number> | --mode <project|repos>] [path]"
 context: inline
 model: haiku
 hooks:
@@ -25,22 +25,20 @@ allowed-tools:
 
 # /ralph:setup — One-time setup in one verb
 
-Interactive bootstrap. Three modes; pick by need:
+Interactive bootstrap. Two modes; pick by need:
 
 | Mode | Trigger | Role |
 |---|---|---|
 | **default** / `--mode project` | `/ralph:setup [project-number]` | GitHub Project V2 bootstrap: custom fields, env vars, install-scope settings |
-| **`--mode cli`** | `/ralph:setup --mode cli` | Install global `ralph` command + shell completions |
 | **`--mode repos`** | `/ralph:setup --mode repos [path]` | Bootstrap `.ralph-repos.yml` for multi-repo portfolio |
 
-References: [scope-detection.md](scope-detection.md), [setup-state.md](setup-state.md), [project-fields.md](project-fields.md), [token-setup.md](token-setup.md), [cli-install.md](cli-install.md), [repos-registry.md](repos-registry.md).
+References: [scope-detection.md](scope-detection.md), [setup-state.md](setup-state.md), [project-fields.md](project-fields.md), [token-setup.md](token-setup.md), [repos-registry.md](repos-registry.md).
 
 ## Configuration (resolved at load time)
 
 - Owner: !`echo ${RALPH_GH_OWNER:-NOT_SET}`
 - Repo: !`echo ${RALPH_GH_REPO:-NOT_SET}`
 - Project: !`echo ${RALPH_GH_PROJECT_NUMBER:-NOT_SET}`
-- Shell: !`basename "${SHELL:-/bin/bash}"`
 
 ## Step 0: Parse arguments + set subcommand scope
 
@@ -59,7 +57,6 @@ References: [scope-detection.md](scope-detection.md), [setup-state.md](setup-sta
 ```bash
 case "$ARGUMENTS" in
   --mode\ project*)  export RALPH_SUBCOMMAND=project ;;
-  --mode\ cli*)      export RALPH_SUBCOMMAND=cli ;;
   --mode\ repos*)    export RALPH_SUBCOMMAND=repos ;;
   *)                 export RALPH_SUBCOMMAND=project ;;
 esac
@@ -105,20 +102,6 @@ Or on STOP (declined to proceed, or paused mid-flow):
 
 ```
 result: Setup paused at <step> — <reason>. Resume: /ralph:setup [NNN]
-```
-
-## --mode cli
-
-Install the global `ralph` command and shell completions. Detailed steps in [cli-install.md](cli-install.md).
-
-1. **Locate plugin** — cache at `~/.claude/plugins/cache/ralph/ralph/<version>/`. Latest version (`sort -V | tail -1`) wins.
-2. **Install binary** — copy `scripts/ralph-cli.sh` → `~/.local/bin/ralph`, `mkdir -p` + `chmod +x`.
-3. **Detect shell + install completions** — `basename "$SHELL"`. zsh → `ralph-completions.zsh`; bash → `ralph-completions.bash`; other shells skip.
-4. **Check environment** — record `PATH_OK` (is `~/.local/bin` in `$PATH`?), `COMPINIT_OK` (zsh only — `compinit` in `~/.zshrc`?), `JUST_OK` (`command -v just`).
-5. **Print per-shell summary** — conditional on the flags. End with `ralph doctor` + `/ralph:setup` as next steps.
-
-```
-result: CLI installed — ~/.local/bin/ralph. Restart shell or `source ~/.zshrc`.
 ```
 
 ## --mode repos
