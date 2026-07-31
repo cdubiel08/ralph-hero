@@ -35,4 +35,5 @@ plugin/*/*/coverage/
 # `dist/` is never committed — see CLAUDE.md "What This Is").
 mcp-server/dist/
 mcp-server/coverage/
+node_modules/
 mcp-server/node_modules/
