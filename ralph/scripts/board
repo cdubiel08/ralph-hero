@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
-# board — runner shim for board.ts. Prefers bun, then repo-local tsx, then npx tsx.
+# board — runner shim for board.ts. Prefers bun, then a local tsx (plugin-root
+# or repo-root), then a version-pinned npx tsx.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TS="$DIR/board.ts"
-ROOT="$(cd "$DIR/../.." && pwd)"
+PLUGIN_ROOT="$(cd "$DIR/.." && pwd)"   # installed-plugin layout: <plugin>/scripts/board
+REPO_ROOT="$(cd "$DIR/../.." && pwd)"  # in-repo layout: <repo>/ralph/scripts/board
+
+# Keep in sync with the tsx devDependency in the repo-root package.json. Pinned
+# so the npx path can't resolve the caller repo's tsx or a floating registry
+# release — the board CLI must behave identically wherever it runs.
+TSX_VERSION="4.19.0"
 
 if command -v bun >/dev/null 2>&1; then
   exec bun "$TS" "$@"
-elif [ -x "$ROOT/node_modules/.bin/tsx" ]; then
-  exec "$ROOT/node_modules/.bin/tsx" "$TS" "$@"
+elif [ -x "$PLUGIN_ROOT/node_modules/.bin/tsx" ]; then
+  exec "$PLUGIN_ROOT/node_modules/.bin/tsx" "$TS" "$@"
+elif [ -x "$REPO_ROOT/node_modules/.bin/tsx" ]; then
+  exec "$REPO_ROOT/node_modules/.bin/tsx" "$TS" "$@"
 elif command -v npx >/dev/null 2>&1; then
-  # Installed-plugin case: no repo node_modules to fall back on.
-  exec npx --yes tsx "$TS" "$@"
+  # Installed-plugin case: no local node_modules to fall back on. Exact version
+  # spec, so a cached copy is reused offline and a mismatched local tsx is
+  # bypassed rather than silently preferred.
+  exec npx --yes "tsx@$TSX_VERSION" "$TS" "$@"
 else
-  echo "board: no runtime found — install bun (or node/npx), or run 'npm install' at $ROOT for the pinned tsx" >&2
+  echo "board: no runtime found — install bun (or node/npx), or run 'npm install' at $REPO_ROOT for the pinned tsx" >&2
   exit 69
 fi
