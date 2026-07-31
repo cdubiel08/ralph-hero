@@ -30,13 +30,13 @@ Defines per-agent tool whitelists, PreToolUse gates, and the permission layering
 | All three layers MUST be enforced simultaneously — each is additive restriction | [x] Claude Code runtime + plugin hooks |
 | Plugin agent frontmatter MUST NOT include `hooks`, `mcpServers`, or `permissionMode` | [x] Plugin agent schema constraint |
 
-### Agent: research-agent / plan-agent / split-agent / triage-agent (analyst tier)
+### Agent: research-agent / plan-agent (analyst tier)
 
 | Property | Value |
 |----------|-------|
 | **Model** | sonnet |
 | **Color** | green |
-| **Role** | Triage, split, research, plan |
+| **Role** | Research, plan |
 
 **Tool Whitelist**:
 
@@ -108,7 +108,7 @@ Defines per-agent tool whitelists, PreToolUse gates, and the permission layering
 | Builder MUST have PreToolUse gate on Write and Edit tools | [x] `require-skill-context.sh` registered in agent `.md` |
 | Builder MUST NOT write or edit files outside a skill context | [x] `require-skill-context.sh` |
 
-### Agent: pr-agent / merge-agent / val-agent (integrator tier)
+### Agent: merge-agent / val-agent (integrator tier)
 
 | Property | Value |
 |----------|-------|

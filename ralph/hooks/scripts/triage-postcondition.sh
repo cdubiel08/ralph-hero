@@ -2,8 +2,8 @@
 # ralph/hooks/scripts/triage-postcondition.sh
 # Stop: Verify /ralph:caretake --mode triage emitted a terminal token.
 #
-# Plan 6 hardening: scope-guarded so non-triage caretake modes (hygiene, unblock,
-# split, postmortem, retro, trends, debug) pass through cleanly. Reads the
+# Plan 6 hardening: scope-guarded so non-triage caretake modes (hygiene,
+# unblock, reflect, watch, enrich, all) pass through cleanly. Reads the
 # JSONL transcript for one of the documented TRIAGED tokens or `Queue empty.`
 # (see ralph/skills/caretake/outcome-tokens.md). The grep pipeline appends
 # `|| true` so the missing-match case under `set -euo pipefail` flows to the
