@@ -188,6 +188,7 @@ export interface Config {
   owner: string;
   repo: string;
   projectNumber: number;
+  host: string; // remote host the scope gate requires (GHE via .ralph.json)
   lockTtlMin: number;
   holder: string;
 }
@@ -227,6 +228,7 @@ export function loadConfig(repoRoot: string): Config {
   let owner = "";
   let repo = "";
   let projectNumber = 0;
+  let host = "github.com";
 
   const ralphJson = join(repoRoot, ".ralph.json");
   const settingsJson = join(repoRoot, ".claude", "settings.json");
@@ -235,11 +237,13 @@ export function loadConfig(repoRoot: string): Config {
     owner = c.owner ?? "";
     repo = c.repo ?? "";
     projectNumber = Number(c.projectNumber ?? 0);
+    host = c.host ?? host;
   } else if (existsSync(settingsJson)) {
     const env = JSON.parse(readFileSync(settingsJson, "utf8")).env ?? {};
     owner = env.RALPH_GH_OWNER ?? "";
     repo = env.RALPH_GH_REPO ?? "";
     projectNumber = Number(env.RALPH_GH_PROJECT_NUMBER ?? 0);
+    host = env.RALPH_GH_HOST ?? host;
   }
 
   if (!owner || !repo || !projectNumber) {
@@ -253,6 +257,7 @@ export function loadConfig(repoRoot: string): Config {
     owner,
     repo,
     projectNumber,
+    host,
     lockTtlMin: parseTtlMin(process.env.RALPH_LOCK_TTL_MIN),
     holder:
       process.env.RALPH_CLAIM_HOLDER ??
@@ -788,9 +793,13 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // makes the loser find out and back off instead of believing it holds
     // the item. A residual window remains (documented in the design).
     const after = fetchIssue(ctx, issue.number);
-    if (to === "In Progress" && after.claim && after.claim.holder !== ctx.cfg.holder) {
+    if (to === "In Progress" && after.claim?.holder !== ctx.cfg.holder) {
+      // Either a rival's write landed last, or a concurrent clear wiped the
+      // claim — in both cases this session does NOT hold the item.
       throw new RefusalError(
-        `lost the claim race on #${issue.number} to ${after.claim.holder} — pick other work`,
+        after.claim
+          ? `lost the claim race on #${issue.number} to ${after.claim.holder} — pick other work`
+          : `claim on #${issue.number} vanished after the write (concurrent clear) — pick other work`,
       );
     }
 
@@ -1087,7 +1096,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   // scope
   const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
   if (remote.code !== 0) add("scope", "warn", "no origin remote");
-  else if (scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo)) add("scope", "ok", remote.stdout.trim());
+  else if (scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) add("scope", "ok", remote.stdout.trim());
   else add("scope", "fail", `origin ${remote.stdout.trim()} != configured ${ctx.cfg.owner}/${ctx.cfg.repo}`);
 
   // cache vs live schema
@@ -1408,7 +1417,7 @@ export function run(argv: string[], ctx: Ctx): number {
   // which mutates. Plain reads work from any clone (doctor reports scope).
   if (MUTATING.has(cmd) || (cmd === "doctor" && flags.fix)) {
     const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
-    if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo)) {
+    if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) {
       throw new RefusalError(
         `scope check failed: origin "${remote.stdout.trim()}" does not match configured ` +
           `${ctx.cfg.owner}/${ctx.cfg.repo} — refusing to mutate another repo's board`,

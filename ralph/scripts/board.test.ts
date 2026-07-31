@@ -240,6 +240,7 @@ class FakeGh {
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
+  vanishClaim = false; // simulate a concurrent clear landing after our write
 
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
     const cmd = argv.join(" ");
@@ -369,8 +370,12 @@ class FakeGh {
         fi.state = String(variables.optionId).replace("OPT_", "");
         this.mutations.push(`setState(#${itemNum}, ${fi.state})`);
       } else if (variables.fieldId === "F_claim" && fi) {
-        // A concurrent writer's claim can land last (no CAS on Projects V2).
-        fi.claim = this.raceClaimTo ? `${this.raceClaimTo}|${new Date().toISOString()}` : variables.text;
+        // A concurrent writer's claim (or clear) can land last — no CAS on Projects V2.
+        fi.claim = this.vanishClaim
+          ? null
+          : this.raceClaimTo
+            ? `${this.raceClaimTo}|${new Date().toISOString()}`
+            : variables.text;
         this.mutations.push(`setClaim(#${itemNum})`);
       } else {
         this.mutations.push(`setField(${variables.fieldId})`);
@@ -432,6 +437,7 @@ function makeCtx(gh: FakeGh, holder = "me@test"): Ctx {
     owner: "cdubiel08",
     repo: "ralph-hero",
     projectNumber: 13,
+    host: "github.com",
     lockTtlMin: 120,
     holder,
   };
@@ -551,6 +557,12 @@ describe("transition engine", () => {
     gh.raceClaimTo = "rival@other";
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/lost the claim race.*rival@other/);
   });
+
+  it("claim read-back also rejects a VANISHED claim (concurrent clear)", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.vanishClaim = true;
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/vanished/);
+  });
 });
 
 describe("parent gate", () => {
@@ -605,6 +617,20 @@ describe("guards at the CLI boundary", () => {
     expect(() => run(["comment", "1", "-m", "x"], ctx)).toThrow(RefusalError);
     expect(() => run(["doctor", "--fix"], ctx)).toThrow(RefusalError);
     expect(run(["doctor"], ctx)).toBeTypeOf("number"); // read path still works anywhere
+  });
+
+  it("run(): a configured GHE host makes the scope gate accept that host", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.cfg.host = "ghe.corp";
+    ctx.exec = (argv, stdin) => {
+      if (argv.join(" ").includes("remote get-url"))
+        return { code: 0, stdout: "git@ghe.corp:cdubiel08/ralph-hero.git\n", stderr: "" };
+      return gh.exec(argv, stdin);
+    };
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(run(["comment", "1", "-m", "x"], ctx)).toBe(0);
+    expect(gh.comments.some((c) => c.body === "x")).toBe(true);
   });
 });
 
