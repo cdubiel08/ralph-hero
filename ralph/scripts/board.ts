@@ -1,0 +1,1439 @@
+/**
+ * board.ts — the sole sanctioned mutation path for the ralph v2 board.
+ *
+ * Design (normative): thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md
+ * Plan: thoughts/shared/plans/2026-07-31-GH-1662-ralph-v2-minimal-harness.md
+ *
+ * Invariants carried here, not in prose:
+ *   - transition legality checked against live state in the same invocation
+ *   - claim = "{holder}|{iso8601}" in the Claim text field; TTL is the only side
+ *     door — there is deliberately NO --force flag anywhere in this CLI
+ *   - scope check: the configured owner/repo must match `git remote get-url origin`
+ *   - every mutation echoes the resulting state (per-write proof-of-fire)
+ *   - `get` reads exactly the fields `move`/`claim` write (parity)
+ *
+ * Run: ralph/scripts/board <cmd> ...   (shim: bun > local tsx > npx tsx)
+ */
+
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, hostname, userInfo } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// ---------------------------------------------------------------------------
+// State machine
+// ---------------------------------------------------------------------------
+
+export const STATES = [
+  "Backlog",
+  "In Progress",
+  "In Review",
+  "Human Needed",
+  "Done",
+  "Canceled",
+] as const;
+export type State = (typeof STATES)[number];
+
+/** Legal transitions. Done/Canceled exit only via `reopen`. */
+export const MACHINE: Record<State, readonly State[]> = {
+  Backlog: ["In Progress", "Canceled"],
+  "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
+  "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
+  "Human Needed": ["In Progress", "Backlog", "Canceled"],
+  Done: ["Backlog"],
+  Canceled: ["Backlog"],
+};
+
+/** Legacy (v1) states still meaningful to `migrate` and `doctor`. */
+export const LEGACY_STATES = [
+  "Research Needed",
+  "Research in Progress",
+  "Ready for Plan",
+  "Plan in Progress",
+  "Plan in Review",
+] as const;
+
+/** Best-effort sync to the built-in Status field (UI coherence only). */
+export const STATUS_SYNC: Record<State, string> = {
+  Backlog: "Todo",
+  "In Progress": "In Progress",
+  "In Review": "In Progress",
+  "Human Needed": "In Progress",
+  Done: "Done",
+  Canceled: "Done",
+};
+
+export function isState(s: string): s is State {
+  return (STATES as readonly string[]).includes(s);
+}
+
+export function legalTransition(from: State, to: State): boolean {
+  return MACHINE[from].includes(to);
+}
+
+/** Human-friendly state arg: "in-progress" / "In Progress" / "wip" all resolve. */
+export function parseStateArg(raw: string): State | null {
+  const norm = raw.trim().toLowerCase().replace(/[-_]+/g, " ");
+  const aliases: Record<string, State> = {
+    backlog: "Backlog",
+    "in progress": "In Progress",
+    wip: "In Progress",
+    "in review": "In Review",
+    review: "In Review",
+    "human needed": "Human Needed",
+    human: "Human Needed",
+    blocked: "Human Needed",
+    done: "Done",
+    canceled: "Canceled",
+    cancelled: "Canceled",
+  };
+  return aliases[norm] ?? null;
+}
+
+/** migrate: v1 state → v2 state. `hasDecisionRequest` = issue has a
+ *  "## Decision Request" comment (the held-plan marker). */
+export function migrateMapping(
+  oldState: string,
+  hasDecisionRequest: boolean,
+): State | null {
+  switch (oldState) {
+    case "Research Needed":
+    case "Ready for Plan":
+      return "Backlog";
+    // v1 lock states carry no v2 claim → treat as stale, back to the queue.
+    case "Research in Progress":
+    case "Plan in Progress":
+      return "Backlog";
+    case "Plan in Review":
+      return hasDecisionRequest ? "Human Needed" : "Backlog";
+    default:
+      return isState(oldState) ? (oldState as State) : null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Claims
+// ---------------------------------------------------------------------------
+
+export interface Claim {
+  holder: string;
+  since: Date;
+}
+
+export function encodeClaim(holder: string, since: Date): string {
+  return `${holder}|${since.toISOString()}`;
+}
+
+export function parseClaim(value: string | null | undefined): Claim | null {
+  if (!value) return null;
+  const idx = value.lastIndexOf("|");
+  if (idx < 1) return null;
+  const since = new Date(value.slice(idx + 1));
+  if (Number.isNaN(since.getTime())) return null;
+  return { holder: value.slice(0, idx), since };
+}
+
+export function claimAgeMin(claim: Claim, now: Date): number {
+  return (now.getTime() - claim.since.getTime()) / 60_000;
+}
+
+export function claimIsStale(claim: Claim, now: Date, ttlMin: number): boolean {
+  return claimAgeMin(claim, now) >= ttlMin;
+}
+
+// ---------------------------------------------------------------------------
+// Queue ranking
+// ---------------------------------------------------------------------------
+
+export interface QueueItem {
+  number: number;
+  title: string;
+  state: string;
+  priority: string | null; // "P0".."P3"
+  hasParent: boolean;
+  openBlockers: number[];
+  claim: Claim | null;
+}
+
+/** Backlog, unblocked, unclaimed — P0 first, parented work before new roots,
+ *  then oldest. Blocked items are excluded but reported separately. */
+export function rankNext(items: QueueItem[]): {
+  eligible: QueueItem[];
+  blocked: QueueItem[];
+} {
+  const backlog = items.filter((i) => i.state === "Backlog" && !i.claim);
+  const blocked = backlog.filter((i) => i.openBlockers.length > 0);
+  const eligible = backlog
+    .filter((i) => i.openBlockers.length === 0)
+    .sort((a, b) => {
+      const pa = a.priority ?? "P9";
+      const pb = b.priority ?? "P9";
+      if (pa !== pb) return pa < pb ? -1 : 1;
+      if (a.hasParent !== b.hasParent) return a.hasParent ? -1 : 1;
+      return a.number - b.number;
+    });
+  return { eligible, blocked };
+}
+
+// ---------------------------------------------------------------------------
+// Config + scope
+// ---------------------------------------------------------------------------
+
+export interface Config {
+  owner: string;
+  repo: string;
+  projectNumber: number;
+  lockTtlMin: number;
+  holder: string;
+}
+
+export function scopeMatches(
+  remoteUrl: string,
+  owner: string,
+  repo: string,
+): boolean {
+  const m = remoteUrl
+    .trim()
+    .match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/);
+  if (!m) return false;
+  return (
+    m[1].toLowerCase() === owner.toLowerCase() &&
+    m[2].toLowerCase() === repo.toLowerCase()
+  );
+}
+
+function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return startDir;
+    dir = parent;
+  }
+}
+
+/** Config precedence: .ralph.json > tracked .claude/settings.json env block.
+ *  process.env fills only lockTtlMin/holder (never scope — scope is repo-anchored). */
+export function loadConfig(repoRoot: string): Config {
+  let owner = "";
+  let repo = "";
+  let projectNumber = 0;
+
+  const ralphJson = join(repoRoot, ".ralph.json");
+  const settingsJson = join(repoRoot, ".claude", "settings.json");
+  if (existsSync(ralphJson)) {
+    const c = JSON.parse(readFileSync(ralphJson, "utf8"));
+    owner = c.owner ?? "";
+    repo = c.repo ?? "";
+    projectNumber = Number(c.projectNumber ?? 0);
+  } else if (existsSync(settingsJson)) {
+    const env = JSON.parse(readFileSync(settingsJson, "utf8")).env ?? {};
+    owner = env.RALPH_GH_OWNER ?? "";
+    repo = env.RALPH_GH_REPO ?? "";
+    projectNumber = Number(env.RALPH_GH_PROJECT_NUMBER ?? 0);
+  }
+
+  if (!owner || !repo || !projectNumber) {
+    throw new UsageError(
+      "config missing: need owner/repo/projectNumber from .ralph.json or .claude/settings.json env " +
+        "(RALPH_GH_OWNER, RALPH_GH_REPO, RALPH_GH_PROJECT_NUMBER)",
+    );
+  }
+
+  return {
+    owner,
+    repo,
+    projectNumber,
+    lockTtlMin: Number(process.env.RALPH_LOCK_TTL_MIN ?? 120),
+    holder:
+      process.env.RALPH_CLAIM_HOLDER ??
+      `${userInfo().username}@${hostname()}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Exec + gh transport (injected for tests)
+// ---------------------------------------------------------------------------
+
+export interface ExecResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+export type ExecFn = (argv: string[], stdin?: string) => ExecResult;
+
+export const realExec: ExecFn = (argv, stdin) => {
+  const [cmd, ...args] = argv;
+  const r = spawnSync(cmd, args, {
+    input: stdin,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+};
+
+export class UsageError extends Error {}
+export class RefusalError extends Error {} // invariant refusal — exit 2
+
+export interface Ctx {
+  exec: ExecFn;
+  cfg: Config;
+  repoRoot: string;
+  cacheDir: string;
+  now: () => Date;
+}
+
+export function ghGraphQL<T = any>(
+  ctx: Ctx,
+  query: string,
+  variables: Record<string, unknown>,
+): T {
+  const r = ctx.exec(
+    ["gh", "api", "graphql", "--input", "-"],
+    JSON.stringify({ query, variables }),
+  );
+  if (r.code !== 0) {
+    throw new Error(`gh api graphql failed (exit ${r.code}): ${r.stderr.trim() || r.stdout.trim()}`);
+  }
+  const body = JSON.parse(r.stdout);
+  if (body.errors?.length) {
+    throw new Error(`GraphQL: ${body.errors.map((e: any) => e.message).join("; ")}`);
+  }
+  return body.data as T;
+}
+
+// ---------------------------------------------------------------------------
+// Field cache (~/.ralph/cache/board-{owner}-{project}.json)
+// ---------------------------------------------------------------------------
+
+interface FieldInfo {
+  id: string;
+  dataType: string;
+  options?: Record<string, string>; // name → optionId
+}
+interface BoardCache {
+  projectId: string;
+  repositoryId: string;
+  fields: Record<string, FieldInfo>; // field name → info
+  fetchedAt: string;
+}
+
+const STATE_FIELD = "Workflow State";
+const CLAIM_FIELD = "Claim";
+const STATUS_FIELD = "Status";
+
+function cachePath(ctx: Ctx): string {
+  return join(ctx.cacheDir, `board-${ctx.cfg.owner}-${ctx.cfg.projectNumber}.json`);
+}
+
+export function refreshCache(ctx: Ctx): BoardCache {
+  const fieldsQ = `query($owner: String!, $number: Int!) {
+    OWNER_TYPE(login: $owner) {
+      projectV2(number: $number) {
+        id
+        fields(first: 50) {
+          nodes {
+            ... on ProjectV2FieldCommon { id name dataType }
+            ... on ProjectV2SingleSelectField { id name dataType options { id name } }
+          }
+        }
+      }
+    }
+  }`;
+  let project: any = null;
+  for (const ownerType of ["user", "organization"]) {
+    try {
+      const data = ghGraphQL(ctx, fieldsQ.replace("OWNER_TYPE", ownerType), {
+        owner: ctx.cfg.owner,
+        number: ctx.cfg.projectNumber,
+      });
+      project = data[ownerType]?.projectV2;
+      if (project) break;
+    } catch {
+      /* try next owner type */
+    }
+  }
+  if (!project) {
+    throw new Error(
+      `project ${ctx.cfg.owner}/#${ctx.cfg.projectNumber} not found (checked user + organization)`,
+    );
+  }
+
+  const repoData = ghGraphQL(
+    ctx,
+    `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { id } }`,
+    { owner: ctx.cfg.owner, repo: ctx.cfg.repo },
+  );
+
+  const fields: Record<string, FieldInfo> = {};
+  for (const f of project.fields.nodes) {
+    if (!f?.name) continue;
+    fields[f.name] = {
+      id: f.id,
+      dataType: f.dataType,
+      options: f.options
+        ? Object.fromEntries(f.options.map((o: any) => [o.name, o.id]))
+        : undefined,
+    };
+  }
+
+  const cache: BoardCache = {
+    projectId: project.id,
+    repositoryId: repoData.repository.id,
+    fields,
+    fetchedAt: ctx.now().toISOString(),
+  };
+  mkdirSync(ctx.cacheDir, { recursive: true });
+  writeFileSync(cachePath(ctx), JSON.stringify(cache, null, 2));
+  return cache;
+}
+
+export function ensureCache(ctx: Ctx): BoardCache {
+  const p = cachePath(ctx);
+  if (existsSync(p)) {
+    try {
+      return JSON.parse(readFileSync(p, "utf8"));
+    } catch {
+      /* corrupt — refresh */
+    }
+  }
+  return refreshCache(ctx);
+}
+
+/** Run an op that may fail on a stale cache; refresh once and retry. */
+function withCache<T>(ctx: Ctx, op: (cache: BoardCache) => T): T {
+  try {
+    return op(ensureCache(ctx));
+  } catch (e) {
+    if (e instanceof RefusalError || e instanceof UsageError) throw e;
+    return op(refreshCache(ctx));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Issue read (parity: this is THE read shape; move/claim write these fields)
+// ---------------------------------------------------------------------------
+
+export interface Issue {
+  number: number;
+  nodeId: string;
+  itemId: string | null; // project item in OUR project
+  title: string;
+  url: string;
+  issueState: "OPEN" | "CLOSED";
+  stateReason: string | null;
+  state: string | null; // Workflow State field (may be legacy pre-migration)
+  claim: Claim | null;
+  estimate: string | null;
+  priority: string | null;
+  labels: string[];
+  parent: { number: number; title: string } | null;
+  children: Array<{ number: number; title: string; issueState: string; state: string | null }>;
+  blockedBy: Array<{ number: number; issueState: string; repo: string }>;
+  prs: Array<{ number: number; url: string; state: string; merged: boolean }>;
+}
+
+const FIELD_VALUES_FRAGMENT = `fieldValues(first: 20) {
+  nodes {
+    ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+    ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
+  }
+}`;
+
+function fieldValueMap(fieldValues: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const v of fieldValues?.nodes ?? []) {
+    const name = v?.field?.name;
+    if (!name) continue;
+    if (typeof v.name === "string") out[name] = v.name;
+    else if (typeof v.text === "string") out[name] = v.text;
+  }
+  return out;
+}
+
+export function fetchIssue(ctx: Ctx, number: number): Issue {
+  return withCache(ctx, (cache) => {
+    const data = ghGraphQL(
+      ctx,
+      `query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          issue(number: $number) {
+            id title url number state stateReason
+            labels(first: 20) { nodes { name } }
+            parent { number title }
+            subIssues(first: 50) {
+              nodes {
+                number title state
+                projectItems(first: 10) { nodes { project { id } ${FIELD_VALUES_FRAGMENT} } }
+              }
+            }
+            blockedBy(first: 20) { nodes { number state repository { nameWithOwner } } }
+            closedByPullRequestsReferences(first: 10) { nodes { number url state merged } }
+            projectItems(first: 20) { nodes { id project { id } ${FIELD_VALUES_FRAGMENT} } }
+          }
+        }
+      }`,
+      { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number },
+    );
+    const issue = data.repository?.issue;
+    if (!issue) throw new UsageError(`issue #${number} not found in ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+
+    const item = (issue.projectItems?.nodes ?? []).find(
+      (n: any) => n.project?.id === cache.projectId,
+    );
+    const fv = fieldValueMap(item?.fieldValues);
+
+    return {
+      number: issue.number,
+      nodeId: issue.id,
+      itemId: item?.id ?? null,
+      title: issue.title,
+      url: issue.url,
+      issueState: issue.state,
+      stateReason: issue.stateReason ?? null,
+      state: fv[STATE_FIELD] ?? null,
+      claim: parseClaim(fv[CLAIM_FIELD]),
+      estimate: fv["Estimate"] ?? null,
+      priority: fv["Priority"] ?? null,
+      labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
+      parent: issue.parent ? { number: issue.parent.number, title: issue.parent.title } : null,
+      children: (issue.subIssues?.nodes ?? []).map((c: any) => {
+        const cItem = (c.projectItems?.nodes ?? []).find(
+          (n: any) => n.project?.id === cache.projectId,
+        );
+        return {
+          number: c.number,
+          title: c.title,
+          issueState: c.state,
+          state: fieldValueMap(cItem?.fieldValues)[STATE_FIELD] ?? null,
+        };
+      }),
+      blockedBy: (issue.blockedBy?.nodes ?? []).map((b: any) => ({
+        number: b.number,
+        issueState: b.state,
+        repo: b.repository?.nameWithOwner ?? "",
+      })),
+      prs: (issue.closedByPullRequestsReferences?.nodes ?? []).map((p: any) => ({
+        number: p.number,
+        url: p.url,
+        state: p.state,
+        merged: p.merged,
+      })),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mutation primitives
+// ---------------------------------------------------------------------------
+
+function requireItem(issue: Issue): string {
+  if (!issue.itemId) {
+    throw new RefusalError(
+      `#${issue.number} is not on the project board — add it first (board create adds automatically)`,
+    );
+  }
+  return issue.itemId;
+}
+
+function setSingleSelect(
+  ctx: Ctx,
+  cache: BoardCache,
+  itemId: string,
+  fieldName: string,
+  optionName: string,
+): void {
+  const field = cache.fields[fieldName];
+  const optionId = field?.options?.[optionName];
+  if (!field || !optionId) {
+    throw new Error(`field "${fieldName}" option "${optionName}" not in cache`);
+  }
+  ghGraphQL(
+    ctx,
+    `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId, itemId: $itemId, fieldId: $fieldId,
+        value: { singleSelectOptionId: $optionId }
+      }) { projectV2Item { id } }
+    }`,
+    { projectId: cache.projectId, itemId, fieldId: field.id, optionId },
+  );
+}
+
+function setText(ctx: Ctx, cache: BoardCache, itemId: string, fieldName: string, text: string): void {
+  const field = cache.fields[fieldName];
+  if (!field) throw new Error(`field "${fieldName}" not in cache`);
+  ghGraphQL(
+    ctx,
+    `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $text: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId, itemId: $itemId, fieldId: $fieldId, value: { text: $text }
+      }) { projectV2Item { id } }
+    }`,
+    { projectId: cache.projectId, itemId, fieldId: field.id, text },
+  );
+}
+
+function clearField(ctx: Ctx, cache: BoardCache, itemId: string, fieldName: string): void {
+  const field = cache.fields[fieldName];
+  if (!field) throw new Error(`field "${fieldName}" not in cache`);
+  ghGraphQL(
+    ctx,
+    `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!) {
+      clearProjectV2ItemFieldValue(input: {
+        projectId: $projectId, itemId: $itemId, fieldId: $fieldId
+      }) { projectV2Item { id } }
+    }`,
+    { projectId: cache.projectId, itemId, fieldId: field.id },
+  );
+}
+
+function addComment(ctx: Ctx, subjectId: string, body: string): void {
+  ghGraphQL(
+    ctx,
+    `mutation($subjectId: ID!, $body: String!) {
+      addComment(input: { subjectId: $subjectId, body: $body }) { clientMutationId }
+    }`,
+    { subjectId, body },
+  );
+}
+
+function closeIssue(ctx: Ctx, nodeId: string, reason: "COMPLETED" | "NOT_PLANNED"): void {
+  ghGraphQL(
+    ctx,
+    `mutation($issueId: ID!, $stateReason: IssueClosedStateReason) {
+      closeIssue(input: { issueId: $issueId, stateReason: $stateReason }) { issue { id } }
+    }`,
+    { issueId: nodeId, stateReason: reason },
+  );
+}
+
+function reopenIssue(ctx: Ctx, nodeId: string): void {
+  ghGraphQL(
+    ctx,
+    `mutation($issueId: ID!) { reopenIssue(input: { issueId: $issueId }) { issue { id } } }`,
+    { issueId: nodeId },
+  );
+}
+
+/** Best-effort built-in Status sync; never fails the mutation. */
+function syncStatus(ctx: Ctx, cache: BoardCache, itemId: string, state: State): void {
+  try {
+    setSingleSelect(ctx, cache, itemId, STATUS_FIELD, STATUS_SYNC[state]);
+  } catch {
+    /* best-effort */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transition engine — every state write funnels through here
+// ---------------------------------------------------------------------------
+
+interface MoveOpts {
+  why?: string; // mandatory for Human Needed / release / cancel
+  steal?: boolean; // claim only
+  isReopen?: boolean;
+}
+
+/** Guard for leaving In Progress: caller must hold the claim, or it is stale. */
+function guardHolder(ctx: Ctx, issue: Issue): void {
+  const claim = issue.claim;
+  if (!claim) return; // no claim — nothing to guard
+  if (claim.holder === ctx.cfg.holder) return;
+  if (claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin)) return;
+  throw new RefusalError(
+    `#${issue.number} is claimed by ${claim.holder} (${claimAgeMin(claim, ctx.now()).toFixed(0)} min ago, ` +
+      `TTL ${ctx.cfg.lockTtlMin} min). Wait for TTL expiry or have the holder release it.`,
+  );
+}
+
+export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
+  return withCache(ctx, (cache) => {
+    const from = issue.state;
+
+    if (from !== null && !isState(from)) {
+      throw new RefusalError(
+        `#${issue.number} is in legacy state "${from}" — run \`board migrate\` (Phase 2) before mutating it`,
+      );
+    }
+    if (from !== null && !opts.isReopen && !legalTransition(from as State, to)) {
+      throw new RefusalError(
+        `illegal transition for #${issue.number}: "${from}" → "${to}". ` +
+          `Legal: ${MACHINE[from as State].join(", ") || "(none — use reopen)"}`,
+      );
+    }
+    if (from !== null && opts.isReopen && !["Done", "Canceled"].includes(from)) {
+      throw new RefusalError(`reopen is for Done/Canceled issues; #${issue.number} is "${from}"`);
+    }
+    if (to === "Human Needed" && !opts.why) {
+      throw new UsageError(
+        `moving to Human Needed requires --why "<the exact decision needed>" — it becomes the escalation comment`,
+      );
+    }
+
+    const itemId = requireItem(issue);
+    const leavingInProgress = from === "In Progress" && to !== "In Progress";
+    const enteringInProgress = to === "In Progress";
+
+    if (leavingInProgress) guardHolder(ctx, issue);
+    if (enteringInProgress) {
+      const claim = issue.claim;
+      if (claim && claim.holder !== ctx.cfg.holder) {
+        const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
+        if (!stale) {
+          throw new RefusalError(
+            `#${issue.number} is claimed by ${claim.holder} ` +
+              `(${claimAgeMin(claim, ctx.now()).toFixed(0)} min ago, TTL ${ctx.cfg.lockTtlMin} min). ` +
+              `Pick other work, or wait for TTL and use \`board claim ${issue.number} --steal\`.`,
+          );
+        }
+        if (!opts.steal) {
+          throw new RefusalError(
+            `#${issue.number} has a STALE claim by ${claim.holder}. ` +
+              `Re-run with --steal to take it over (posts an eviction comment).`,
+          );
+        }
+        addComment(
+          ctx,
+          issue.nodeId,
+          `\`board\`: stale claim by \`${claim.holder}\` (since ${claim.since.toISOString()}) ` +
+            `evicted by \`${ctx.cfg.holder}\` after TTL ${ctx.cfg.lockTtlMin} min.`,
+        );
+      }
+    }
+
+    // Comments BEFORE state write so an interrupted run leaves evidence, not a bare state.
+    if (opts.why) {
+      const header = to === "Human Needed" ? "Decision needed" : to === "Canceled" ? "Canceled" : "Parked";
+      addComment(ctx, issue.nodeId, `**${header}** (\`board\` by \`${ctx.cfg.holder}\`):\n\n${opts.why}`);
+    }
+
+    // Claim field: entering In Progress sets it (clear-then-set — the value carries
+    // the timestamp, so we never depend on the field's own updatedAt); leaving clears.
+    if (cache.fields[CLAIM_FIELD]) {
+      if (enteringInProgress) {
+        clearField(ctx, cache, itemId, CLAIM_FIELD);
+        setText(ctx, cache, itemId, CLAIM_FIELD, encodeClaim(ctx.cfg.holder, ctx.now()));
+      } else if (leavingInProgress) {
+        clearField(ctx, cache, itemId, CLAIM_FIELD);
+      }
+    }
+
+    setSingleSelect(ctx, cache, itemId, STATE_FIELD, to);
+    syncStatus(ctx, cache, itemId, to);
+
+    if (to === "Done") closeIssue(ctx, issue.nodeId, "COMPLETED");
+    if (to === "Canceled") closeIssue(ctx, issue.nodeId, "NOT_PLANNED");
+    if (opts.isReopen && issue.issueState === "CLOSED") reopenIssue(ctx, issue.nodeId);
+
+    // Mutation echo: re-read so the caller sees what the board now says (parity).
+    const after = fetchIssue(ctx, issue.number);
+
+    // Parent gate: a child reaching In Review/Done may advance the parent.
+    if ((to === "In Review" || to === "Done") && after.parent) {
+      try {
+        parentCheck(ctx, after.parent.number);
+      } catch {
+        /* advisory here; state-guard + doctor re-run it */
+      }
+    }
+    return after;
+  });
+}
+
+/** Parent gate: all children terminal (Done/Canceled) → parent advances to
+ *  In Review (from Backlog/In Progress/Human Needed), with a comment. */
+export function parentCheck(ctx: Ctx, parentNumber: number): string {
+  const parent = fetchIssue(ctx, parentNumber);
+  if (parent.children.length === 0) return `#${parentNumber}: no children`;
+  if (parent.state === null || !isState(parent.state)) return `#${parentNumber}: not on v2 board`;
+  if (["In Review", "Done", "Canceled"].includes(parent.state)) {
+    return `#${parentNumber}: already ${parent.state}`;
+  }
+  const open = parent.children.filter((c) => c.issueState === "OPEN");
+  if (open.length > 0) {
+    return `#${parentNumber}: ${open.length}/${parent.children.length} children still open`;
+  }
+  guardHolder(ctx, parent);
+  return withCache(ctx, (cache) => {
+    const itemId = requireItem(parent);
+    if (cache.fields[CLAIM_FIELD] && parent.state === "In Progress") {
+      clearField(ctx, cache, itemId, CLAIM_FIELD);
+    }
+    setSingleSelect(ctx, cache, itemId, STATE_FIELD, "In Review");
+    syncStatus(ctx, cache, itemId, "In Review");
+    addComment(
+      ctx,
+      parent.nodeId,
+      `\`board\`: all ${parent.children.length} children closed — parent advanced to In Review.`,
+    );
+    return `#${parentNumber}: advanced to In Review (all ${parent.children.length} children closed)`;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// List / next
+// ---------------------------------------------------------------------------
+
+export function listItems(ctx: Ctx): QueueItem[] {
+  return withCache(ctx, (cache) => {
+    const items: QueueItem[] = [];
+    let after: string | null = null;
+    for (;;) {
+      const data: any = ghGraphQL(
+        ctx,
+        `query($projectId: ID!, $after: String) {
+          node(id: $projectId) {
+            ... on ProjectV2 {
+              items(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  content {
+                    ... on Issue {
+                      number title state
+                      repository { nameWithOwner }
+                      parent { number }
+                      blockedBy(first: 10) { nodes { number state } }
+                    }
+                  }
+                  ${FIELD_VALUES_FRAGMENT}
+                }
+              }
+            }
+          }
+        }`,
+        { projectId: cache.projectId, after },
+      );
+      const page = data.node?.items;
+      for (const n of page?.nodes ?? []) {
+        const c = n.content;
+        if (!c?.number || c.state !== "OPEN") continue;
+        const fv = fieldValueMap(n.fieldValues);
+        items.push({
+          number: c.number,
+          title: c.title,
+          state: fv[STATE_FIELD] ?? "(none)",
+          priority: fv["Priority"] ?? null,
+          hasParent: !!c.parent,
+          openBlockers: (c.blockedBy?.nodes ?? [])
+            .filter((b: any) => b.state === "OPEN")
+            .map((b: any) => b.number),
+          claim: parseClaim(fv[CLAIM_FIELD]),
+        });
+      }
+      if (!page?.pageInfo?.hasNextPage) break;
+      after = page.pageInfo.endCursor;
+    }
+    return items;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Create / link / dep
+// ---------------------------------------------------------------------------
+
+export interface CreateOpts {
+  title: string;
+  body?: string;
+  parent?: number;
+  estimate?: string;
+  state?: State;
+}
+
+export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
+  return withCache(ctx, (cache) => {
+    const created = ghGraphQL(
+      ctx,
+      `mutation($repositoryId: ID!, $title: String!, $body: String) {
+        createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body }) {
+          issue { id number url }
+        }
+      }`,
+      { repositoryId: cache.repositoryId, title: opts.title, body: opts.body ?? "" },
+    );
+    const issue = created.createIssue.issue;
+
+    const added = ghGraphQL(
+      ctx,
+      `mutation($projectId: ID!, $contentId: ID!) {
+        addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+      }`,
+      { projectId: cache.projectId, contentId: issue.id },
+    );
+    const itemId = added.addProjectV2ItemById.item.id;
+
+    setSingleSelect(ctx, cache, itemId, STATE_FIELD, opts.state ?? "Backlog");
+    syncStatus(ctx, cache, itemId, opts.state ?? "Backlog");
+    if (opts.estimate) {
+      try {
+        setSingleSelect(ctx, cache, itemId, "Estimate", opts.estimate);
+      } catch (e) {
+        process.stderr.write(`warn: estimate not set: ${(e as Error).message}\n`);
+      }
+    }
+    if (opts.parent) {
+      const parent = fetchIssue(ctx, opts.parent);
+      ghGraphQL(
+        ctx,
+        `mutation($parentId: ID!, $childId: ID!) {
+          addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
+        }`,
+        { parentId: parent.nodeId, childId: issue.id },
+      );
+    }
+    return fetchIssue(ctx, issue.number);
+  });
+}
+
+export function linkParent(ctx: Ctx, parentNumber: number, childNumber: number): void {
+  const parent = fetchIssue(ctx, parentNumber);
+  const child = fetchIssue(ctx, childNumber);
+  ghGraphQL(
+    ctx,
+    `mutation($parentId: ID!, $childId: ID!) {
+      addSubIssue(input: { issueId: $parentId, subIssueId: $childId }) { issue { id } }
+    }`,
+    { parentId: parent.nodeId, childId: child.nodeId },
+  );
+}
+
+export function setDependency(ctx: Ctx, blockedNumber: number, blockingNumber: number, remove = false): void {
+  const blocked = fetchIssue(ctx, blockedNumber);
+  const blocking = fetchIssue(ctx, blockingNumber);
+  const mutation = remove ? "removeBlockedBy" : "addBlockedBy";
+  ghGraphQL(
+    ctx,
+    `mutation($blockedId: ID!, $blockingId: ID!) {
+      ${mutation}(input: { issueId: $blockedId, blockingIssueId: $blockingId }) { issue { id } }
+    }`,
+    { blockedId: blocked.nodeId, blockingId: blocking.nodeId },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Doctor
+// ---------------------------------------------------------------------------
+
+export interface DoctorReport {
+  ok: boolean;
+  checks: Array<{ name: string; level: "ok" | "warn" | "fail"; detail: string }>;
+}
+
+export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {}): DoctorReport {
+  const checks: DoctorReport["checks"] = [];
+  const add = (name: string, level: "ok" | "warn" | "fail", detail: string) =>
+    checks.push({ name, level, detail });
+
+  // auth
+  const auth = ctx.exec(["gh", "auth", "status"]);
+  add("gh-auth", auth.code === 0 ? "ok" : "fail", auth.code === 0 ? "authenticated" : auth.stderr.trim());
+
+  // scope
+  const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
+  if (remote.code !== 0) add("scope", "warn", "no origin remote");
+  else if (scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo)) add("scope", "ok", remote.stdout.trim());
+  else add("scope", "fail", `origin ${remote.stdout.trim()} != configured ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+
+  // cache vs live schema
+  let cache: BoardCache | null = null;
+  try {
+    cache = refreshCache(ctx);
+    add("cache", "ok", `projectId ${cache.projectId.slice(0, 12)}…, ${Object.keys(cache.fields).length} fields`);
+  } catch (e) {
+    add("cache", "fail", (e as Error).message);
+  }
+
+  if (cache) {
+    const stateField = cache.fields[STATE_FIELD];
+    if (!stateField?.options) add("state-field", "fail", `"${STATE_FIELD}" field missing`);
+    else {
+      const names = Object.keys(stateField.options);
+      const missing = STATES.filter((s) => !names.includes(s));
+      const legacy = names.filter((n) => !isState(n));
+      if (missing.length) add("state-field", "fail", `missing options: ${missing.join(", ")}`);
+      else if (legacy.length)
+        add(
+          "state-field",
+          opts.strict ? "fail" : "warn",
+          `legacy options present (pre-migration OK): ${legacy.join(", ")}`,
+        );
+      else add("state-field", "ok", "6-state option set");
+    }
+    add(
+      "claim-field",
+      cache.fields[CLAIM_FIELD] ? "ok" : opts.strict ? "fail" : "warn",
+      cache.fields[CLAIM_FIELD] ? "present" : `"${CLAIM_FIELD}" text field missing (board setup creates it)`,
+    );
+
+    // item sweep: legacy states, claim anomalies, stale claims
+    try {
+      const items = listItems(ctx);
+      const legacyItems = items.filter((i) => i.state !== "(none)" && !isState(i.state));
+      const noState = items.filter((i) => i.state === "(none)");
+      const claimAnomalies = items.filter((i) => i.claim && i.state !== "In Progress");
+      const stale = items.filter(
+        (i) => i.claim && claimIsStale(i.claim, ctx.now(), ctx.cfg.lockTtlMin),
+      );
+      add(
+        "legacy-items",
+        legacyItems.length === 0 ? "ok" : opts.strict ? "fail" : "warn",
+        legacyItems.length === 0
+          ? "none"
+          : `${legacyItems.length} open items in legacy states: ${legacyItems.slice(0, 10).map((i) => `#${i.number}(${i.state})`).join(" ")}`,
+      );
+      add("stateless-items", noState.length === 0 ? "ok" : "warn", noState.length === 0 ? "none" : `${noState.length} open items with no ${STATE_FIELD}: ${noState.slice(0, 10).map((i) => `#${i.number}`).join(" ")}`);
+      add("claim-anomalies", claimAnomalies.length === 0 ? "ok" : "warn", claimAnomalies.length === 0 ? "none" : claimAnomalies.map((i) => `#${i.number}(${i.state})`).join(" "));
+      add("stale-claims", stale.length === 0 ? "ok" : "warn", stale.length === 0 ? "none" : stale.map((i) => `#${i.number} by ${i.claim!.holder}`).join(" "));
+
+      if (opts.fix && cache.fields[CLAIM_FIELD]) {
+        for (const i of [...claimAnomalies, ...stale]) {
+          const issue = fetchIssue(ctx, i.number);
+          if (!issue.itemId) continue;
+          clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
+          if (issue.state === "In Progress" && issue.claim && claimIsStale(issue.claim, ctx.now(), ctx.cfg.lockTtlMin)) {
+            setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, "Backlog");
+            syncStatus(ctx, cache, issue.itemId, "Backlog");
+            addComment(
+              ctx,
+              issue.nodeId,
+              `\`board doctor --fix\`: stale claim by \`${issue.claim.holder}\` released; returned to Backlog.`,
+            );
+          }
+          add("fix", "ok", `#${i.number}: claim cleared`);
+        }
+      }
+    } catch (e) {
+      add("item-sweep", "fail", (e as Error).message);
+    }
+  }
+
+  // heartbeat (Phase 3 writes it; absence is fine before then)
+  const hb = join(homedir(), ".ralph", "heartbeat");
+  if (existsSync(hb)) {
+    const ageMin = (ctx.now().getTime() - Number(readFileSync(hb, "utf8").trim()) * 1000) / 60_000;
+    add("heartbeat", ageMin < 60 ? "ok" : "warn", `${ageMin.toFixed(0)} min old`);
+  } else {
+    add("heartbeat", "ok", "absent (loop not installed)");
+  }
+
+  // state-guard proof-of-fire (Phase 2 workflow; tolerate absence)
+  const runs = ctx.exec([
+    "gh", "run", "list", "--workflow", "state-guard.yml", "--limit", "5",
+    "--json", "conclusion,updatedAt",
+  ]);
+  if (runs.code === 0) {
+    try {
+      const parsed = JSON.parse(runs.stdout);
+      const bad = parsed.filter((r: any) => r.conclusion && r.conclusion !== "success");
+      if (parsed.length === 0) add("state-guard", "warn", "no runs recorded");
+      else add("state-guard", bad.length === 0 ? "ok" : "fail", bad.length === 0 ? `last ${parsed.length} runs green` : `${bad.length}/${parsed.length} recent runs not successful`);
+    } catch {
+      add("state-guard", "warn", "run list unparseable");
+    }
+  } else {
+    add("state-guard", "ok", "workflow absent (pre-Phase-2)");
+  }
+
+  const ok = !checks.some((c) => c.level === "fail");
+  return { ok, checks };
+}
+
+// ---------------------------------------------------------------------------
+// Setup + migrate
+// ---------------------------------------------------------------------------
+
+export function setup(ctx: Ctx): string[] {
+  const notes: string[] = [];
+  const cache = refreshCache(ctx);
+
+  const stateField = cache.fields[STATE_FIELD];
+  if (!stateField) {
+    ghGraphQL(
+      ctx,
+      `mutation($projectId: ID!, $name: String!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+        createProjectV2Field(input: {
+          projectId: $projectId, name: $name, dataType: SINGLE_SELECT, singleSelectOptions: $options
+        }) { projectV2Field { ... on ProjectV2SingleSelectField { id } } }
+      }`,
+      {
+        projectId: cache.projectId,
+        name: STATE_FIELD,
+        options: STATES.map((s) => ({ name: s, color: "GRAY", description: "" })),
+      },
+    );
+    notes.push(`created "${STATE_FIELD}" single-select with the 6 v2 states`);
+  } else {
+    const names = Object.keys(stateField.options ?? {});
+    const missing = STATES.filter((s) => !names.includes(s));
+    if (missing.length) {
+      notes.push(
+        `MANUAL: add option(s) ${missing.join(", ")} to "${STATE_FIELD}" in the board UI ` +
+          `(the API cannot edit an existing field's option set)`,
+      );
+    }
+    const legacy = names.filter((n) => !isState(n));
+    if (legacy.length) {
+      notes.push(
+        `MANUAL (after migrate): delete legacy option(s) ${legacy.join(", ")} from "${STATE_FIELD}" in the board UI`,
+      );
+    }
+  }
+
+  if (!cache.fields[CLAIM_FIELD]) {
+    ghGraphQL(
+      ctx,
+      `mutation($projectId: ID!, $name: String!) {
+        createProjectV2Field(input: { projectId: $projectId, name: $name, dataType: TEXT }) {
+          projectV2Field { ... on ProjectV2FieldCommon { id } }
+        }
+      }`,
+      { projectId: cache.projectId, name: CLAIM_FIELD },
+    );
+    notes.push(`created "${CLAIM_FIELD}" text field`);
+  }
+
+  refreshCache(ctx);
+  if (notes.length === 0) notes.push("nothing to do — board already set up");
+  return notes;
+}
+
+export function migrate(ctx: Ctx, opts: { apply?: boolean } = {}): string[] {
+  const out: string[] = [];
+  const items = listItems(ctx);
+  const legacyItems = items.filter((i) => i.state !== "(none)" && !isState(i.state));
+  const stateless = items.filter((i) => i.state === "(none)");
+
+  return withCache(ctx, (cache) => {
+    for (const i of [...legacyItems, ...stateless]) {
+      let hasDecisionRequest = false;
+      if (i.state === "Plan in Review") {
+        const comments = ghGraphQL(
+          ctx,
+          `query($owner: String!, $repo: String!, $number: Int!) {
+            repository(owner: $owner, name: $repo) {
+              issue(number: $number) { comments(last: 50) { nodes { body } } }
+            }
+          }`,
+          { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number: i.number },
+        );
+        hasDecisionRequest = (comments.repository?.issue?.comments?.nodes ?? []).some((c: any) =>
+          c.body?.includes("## Decision Request"),
+        );
+      }
+      const target = i.state === "(none)" ? "Backlog" : migrateMapping(i.state, hasDecisionRequest);
+      if (!target) {
+        out.push(`#${i.number}: unmapped state "${i.state}" — SKIPPED (fix by hand)`);
+        continue;
+      }
+      out.push(`#${i.number}: "${i.state}" → "${target}"${opts.apply ? "" : " (dry-run)"}`);
+      if (opts.apply) {
+        const issue = fetchIssue(ctx, i.number);
+        if (!issue.itemId) continue;
+        setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
+        syncStatus(ctx, cache, issue.itemId, target);
+        addComment(
+          ctx,
+          issue.nodeId,
+          `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
+        );
+      }
+    }
+    if (out.length === 0) out.push("nothing to migrate — all open items already in v2 states");
+    return out;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+const HELP = `board — the ralph v2 board CLI (sole sanctioned mutation path)
+
+reads
+  get NNN [--json]            issue: state, claim, parent/children, blockers, PRs
+  list [--state S] [--json]   open items on the board
+  next [--json]               top-ranked actionable Backlog item (+ blocked report)
+  tree NNN                    subtree with states
+
+mutations
+  create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
+  claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
+  release NNN -m "why"        In Progress → Backlog; parking comment required
+  move NNN <state> [--why W]  any legal transition; Human Needed requires --why
+  cancel NNN -m "why"         any open state → Canceled (closes as not-planned)
+  reopen NNN                  Done/Canceled → Backlog (reopens the issue)
+  link PARENT CHILD           add sub-issue edge
+  dep NNN --on MMM [--rm]     NNN is blocked by MMM (--rm removes)
+  comment NNN -m "body"
+
+maintenance
+  parent-check NNN            advance parent if all children closed
+  doctor [--fix] [--strict]   invariant sweep; --fix clears/releases bad claims
+  setup                       create Workflow State / Claim fields (idempotent)
+  migrate [--apply]           v1 11-state → v2 6-state collapse (dry-run by default)
+
+There is no --force flag. A stale claim (TTL ${process.env.RALPH_LOCK_TTL_MIN ?? 120} min) is the only override path.`;
+
+interface ParsedArgs {
+  positional: string[];
+  flags: Record<string, string | boolean>;
+}
+
+export function parseArgs(argv: string[]): ParsedArgs {
+  const positional: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "-m") {
+      flags.m = argv[++i] ?? "";
+    } else if (a.startsWith("--")) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("--") && !["json", "steal", "rm", "fix", "strict", "apply"].includes(key)) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = true;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  if ("force" in flags) {
+    throw new UsageError("there is no --force. A stale claim (TTL) is the only override path — by design.");
+  }
+  return { positional, flags };
+}
+
+function issueLine(i: Issue): string {
+  const claim = i.claim ? ` claim=${i.claim.holder}@${i.claim.since.toISOString()}` : "";
+  const parent = i.parent ? ` parent=#${i.parent.number}` : "";
+  const blockers = i.blockedBy.filter((b) => b.issueState === "OPEN").map((b) => `#${b.number}`);
+  const blocked = blockers.length ? ` blockedBy=${blockers.join(",")}` : "";
+  return `#${i.number} [${i.state ?? "no-state"}]${claim}${parent}${blocked} ${i.title}`;
+}
+
+function requireNumber(p: string | undefined, what = "issue number"): number {
+  const n = Number(p);
+  if (!p || !Number.isInteger(n) || n <= 0) throw new UsageError(`${what} required`);
+  return n;
+}
+
+export function run(argv: string[], ctx: Ctx): number {
+  const [cmd, ...rest] = argv;
+  const { positional, flags } = parseArgs(rest);
+  const out = (s: string) => process.stdout.write(s + "\n");
+  const json = (v: unknown) => out(JSON.stringify(v, null, 2));
+
+  switch (cmd) {
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      out(HELP);
+      return 0;
+
+    case "get": {
+      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      if (flags.json) json(issue);
+      else {
+        out(issueLine(issue));
+        for (const c of issue.children) out(`  child #${c.number} [${c.state ?? c.issueState}] ${c.title}`);
+        for (const p of issue.prs) out(`  pr #${p.number} ${p.merged ? "merged" : p.state} ${p.url}`);
+      }
+      return 0;
+    }
+
+    case "list": {
+      let items = listItems(ctx);
+      if (typeof flags.state === "string") {
+        const s = parseStateArg(flags.state);
+        items = items.filter((i) => i.state === (s ?? flags.state));
+      }
+      if (flags.json) json(items);
+      else for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holder}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
+      return 0;
+    }
+
+    case "next": {
+      const { eligible, blocked } = rankNext(listItems(ctx));
+      if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked });
+      else if (eligible.length === 0) out(`queue empty${blocked.length ? ` (${blocked.length} blocked: ${blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`);
+      else {
+        out(`next: #${eligible[0].number} ${eligible[0].title}`);
+        for (const i of eligible.slice(1, 6)) out(`  then #${i.number} ${i.title}`);
+        if (blocked.length) out(`  blocked: ${blocked.map((b) => `#${b.number}←${b.openBlockers.map((n) => `#${n}`).join("+")}`).join(" ")}`);
+      }
+      return 0;
+    }
+
+    case "tree": {
+      const root = fetchIssue(ctx, requireNumber(positional[0]));
+      out(issueLine(root));
+      for (const c of root.children) out(`  #${c.number} [${c.state ?? c.issueState}] ${c.title}`);
+      return 0;
+    }
+
+    case "create": {
+      if (typeof flags.title !== "string" || !flags.title) throw new UsageError("--title required");
+      const state = typeof flags.state === "string" ? parseStateArg(flags.state) : null;
+      if (typeof flags.state === "string" && !state) throw new UsageError(`unknown state "${flags.state}"`);
+      const issue = createIssue(ctx, {
+        title: flags.title,
+        body: typeof flags.body === "string" ? flags.body : undefined,
+        parent: typeof flags.parent === "string" ? requireNumber(flags.parent, "--parent") : undefined,
+        estimate: typeof flags.estimate === "string" ? flags.estimate : undefined,
+        state: state ?? undefined,
+      });
+      out(issueLine(issue));
+      out(issue.url);
+      return 0;
+    }
+
+    case "claim": {
+      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const after = transition(ctx, issue, "In Progress", { steal: !!flags.steal });
+      out(issueLine(after));
+      return 0;
+    }
+
+    case "release": {
+      if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`release requires -m "<where you stopped and what's next>"`);
+      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const after = transition(ctx, issue, "Backlog", { why: flags.m });
+      out(issueLine(after));
+      return 0;
+    }
+
+    case "move": {
+      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const to = positional[1] ? parseStateArg(positional[1]) : null;
+      if (!to) throw new UsageError(`move requires a target state (${STATES.join(" | ")})`);
+      const after = transition(ctx, issue, to, { why: typeof flags.why === "string" ? flags.why : undefined });
+      out(issueLine(after));
+      return 0;
+    }
+
+    case "cancel": {
+      if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`cancel requires -m "<reason>"`);
+      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const after = transition(ctx, issue, "Canceled", { why: flags.m });
+      out(issueLine(after));
+      return 0;
+    }
+
+    case "reopen": {
+      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      const after = transition(ctx, issue, "Backlog", { isReopen: true });
+      out(issueLine(after));
+      return 0;
+    }
+
+    case "link": {
+      const parent = requireNumber(positional[0], "parent number");
+      const child = requireNumber(positional[1], "child number");
+      linkParent(ctx, parent, child);
+      out(`#${child} is now a sub-issue of #${parent}`);
+      return 0;
+    }
+
+    case "dep": {
+      const blocked = requireNumber(positional[0]);
+      const blocking = requireNumber(typeof flags.on === "string" ? flags.on : undefined, "--on <blocking issue>");
+      setDependency(ctx, blocked, blocking, !!flags.rm);
+      out(`#${blocked} ${flags.rm ? "no longer" : "is"} blocked by #${blocking}`);
+      return 0;
+    }
+
+    case "comment": {
+      if (typeof flags.m !== "string" || !flags.m) throw new UsageError(`comment requires -m "<body>"`);
+      const issue = fetchIssue(ctx, requireNumber(positional[0]));
+      addComment(ctx, issue.nodeId, flags.m);
+      out(`commented on #${issue.number}`);
+      return 0;
+    }
+
+    case "parent-check": {
+      out(parentCheck(ctx, requireNumber(positional[0])));
+      return 0;
+    }
+
+    case "doctor": {
+      const report = doctor(ctx, { fix: !!flags.fix, strict: !!flags.strict });
+      if (flags.json) json(report);
+      else {
+        for (const c of report.checks) out(`${c.level === "ok" ? "✓" : c.level === "warn" ? "⚠" : "✗"} ${c.name}: ${c.detail}`);
+        out(report.ok ? "doctor: OK" : "doctor: FAIL");
+      }
+      return report.ok ? 0 : 1;
+    }
+
+    case "setup": {
+      for (const n of setup(ctx)) out(n);
+      return 0;
+    }
+
+    case "migrate": {
+      for (const n of migrate(ctx, { apply: !!flags.apply })) out(n);
+      if (!flags.apply) out("(dry-run — re-run with --apply to write)");
+      return 0;
+    }
+
+    default:
+      throw new UsageError(`unknown command "${cmd}" — run \`board help\``);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entry
+// ---------------------------------------------------------------------------
+
+const isMain =
+  typeof process.argv[1] === "string" &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+  try {
+    const repoRoot = findRepoRoot(process.cwd());
+    const cfg = loadConfig(repoRoot);
+    const ctx: Ctx = {
+      exec: realExec,
+      cfg,
+      repoRoot,
+      cacheDir: join(homedir(), ".ralph", "cache"),
+      now: () => new Date(),
+    };
+
+    // Scope check before ANY command that can mutate (reads are exempt so
+    // doctor/get work from any clone; doctor reports scope explicitly).
+    const cmd = process.argv[2];
+    const MUTATING = new Set([
+      "create", "claim", "release", "move", "cancel", "reopen",
+      "link", "dep", "comment", "parent-check", "setup", "migrate",
+    ]);
+    if (MUTATING.has(cmd)) {
+      const remote = realExec(["git", "-C", repoRoot, "remote", "get-url", "origin"]);
+      if (remote.code !== 0 || !scopeMatches(remote.stdout, cfg.owner, cfg.repo)) {
+        process.stderr.write(
+          `scope check failed: origin "${remote.stdout.trim()}" does not match configured ` +
+            `${cfg.owner}/${cfg.repo} — refusing to mutate another repo's board\n`,
+        );
+        process.exit(2);
+      }
+    }
+
+    process.exit(run(process.argv.slice(2), ctx));
+  } catch (e) {
+    if (e instanceof UsageError) {
+      process.stderr.write(`usage: ${e.message}\n`);
+      process.exit(64);
+    }
+    if (e instanceof RefusalError) {
+      process.stderr.write(`refused: ${e.message}\n`);
+      process.exit(2);
+    }
+    process.stderr.write(`error: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+}
