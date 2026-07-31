@@ -67,26 +67,17 @@ content_probe_stripped=$(printf '%s\n' "$content_probe" | awk '
     next
   }
   !f { print }')
-# `type:` is read ONLY from the leading YAML frontmatter block (the lines
-# between the first `---` and its closing `---`). Scanning the whole document
-# would let an ordinary implementation plan bypass this gate just by writing
-# `type: plan-of-plans` in prose. The `## Feature Decomposition` carve-out
-# below stays document-wide on purpose: that heading IS the plan-of-plans
-# shape, and doc-structure-validator.sh enforces it at Stop.
-content_probe_frontmatter=$(printf '%s\n' "$content_probe" | awk '
-  NR == 1 && $0 !~ /^---[[:space:]]*$/ { exit }
-  NR == 1 { next }
-  /^---[[:space:]]*$/ { exit }
-  { print }')
-# Here-strings, NOT `printf | grep -q`. Under `set -o pipefail`, `grep -q`
-# exits at the first match and closes the pipe; if the payload exceeds the
-# pipe buffer (~64KB), printf takes SIGPIPE, the pipeline reports 141, and
-# the `if` reads a genuine MATCH as no-match. Verified: a 1MB doc whose
-# match is on line 1 returns rc=141 through a pipeline and matches
-# correctly through a here-string. A large plan-of-plans would otherwise
-# lose its carve-out and be falsely blocked.
-if grep -qE '^type:[[:space:]]*plan-of-plans[[:space:]]*$' <<< "$content_probe_frontmatter" \
-   || grep -qE '^## Feature Decomposition([[:space:]]|$)' <<< "$content_probe_stripped"; then
+# Shape discriminator is SHARED with doc-structure-validator.sh and
+# plan-tier-validator.sh via hook-utils.sh's is_plan_of_plans(). All three
+# MUST agree: this waiver is documented as compensated by
+# doc-structure-validator enforcing the plan-of-plans shape at Stop, and a
+# compensating control that disagrees about which shape applies compensates
+# for nothing. The helper owns both the frontmatter scoping of `type:` (a
+# document-wide match let an ordinary plan bypass this gate by naming the
+# token in prose) and the here-string form (a `printf | grep -q` pipeline
+# under `set -o pipefail` reports 141 on SIGPIPE for payloads past the pipe
+# buffer, turning a genuine match into a no-match).
+if is_plan_of_plans "$content_probe_stripped"; then
   allow_with_context "Plan-of-plans shape detected (type: plan-of-plans or ## Feature Decomposition) — research requirement waived; doc-structure-validator.sh enforces the plan-of-plans shape at Stop."
 fi
 

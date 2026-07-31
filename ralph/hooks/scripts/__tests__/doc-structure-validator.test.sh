@@ -124,6 +124,29 @@ ec=$(run_hook s-gone)
 [[ "$ec" == "0" ]] && pass "list entry whose file was deleted allows" \
   || fail "deleted file entry — expected 0, got $ec"
 
+# --- Shape discriminator is frontmatter-scoped (GH-1590) ----------------------------
+# The plan-of-plans branch demands ## Feature Decomposition + ## Feature Sequencing;
+# the regular-plan branch demands ## Phase N. Before is_plan_of_plans() was shared
+# with plan-research-required.sh, `type:` matched ANYWHERE, so an ordinary plan that
+# merely mentioned the token in prose was judged against the WRONG branch — and the
+# two hooks disagreed about the shape of the same document.
+doc="$SBX/proj/thoughts/shared/plans/${TODAY}-GH-8-prose.md"
+printf '%s' $'---\nestimate: M\n---\n\n## Overview\n\ntype: plan-of-plans\n\nOrdinary plan; the token is prose.\n\n## Phase 1: do a thing\n\n#### Automated Verification\n- [ ] tests pass\n\n#### Manual Verification\n- [ ] eyeball it\n\n## Design Decisions & Open Ambiguities\n\nNone — no open design decisions.\n' > "$doc"
+record s-prose "$doc"
+ec=$(run_hook s-prose)
+[[ "$ec" == "0" ]] && pass "body-text 'type: plan-of-plans' is judged as a REGULAR plan (frontmatter-scoped)" \
+  || fail "prose type: mention — expected 0 (regular-plan branch satisfied), got $ec"
+
+# Frontmatter `type:` DOES select the plan-of-plans branch — and that branch's
+# requirements are then enforced (this doc has Phase headers but no Feature
+# Decomposition, so it must block).
+doc="$SBX/proj/thoughts/shared/plans/${TODAY}-GH-9-fm.md"
+printf '%s' $'---\ntype: plan-of-plans\n---\n\n## Phase 1: do a thing\n\n- [ ] step\n\n## Design Decisions & Open Ambiguities\n\nNone — no open design decisions.\n' > "$doc"
+record s-fm "$doc"
+ec=$(run_hook s-fm)
+[[ "$ec" == "2" ]] && pass "frontmatter type: selects the plan-of-plans branch (missing sections block)" \
+  || fail "frontmatter type: — expected 2, got $ec"
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [[ "$FAIL" -eq 0 ]] || exit 1

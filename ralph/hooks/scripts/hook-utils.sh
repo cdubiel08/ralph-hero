@@ -308,3 +308,46 @@ is_semantic_intent() {
   esac
 }
 
+
+# ---------------------------------------------------------------------------
+# Plan-of-plans shape discriminator (GH-1590)
+# ---------------------------------------------------------------------------
+# TWO hooks decide "is this doc a plan-of-plans?" and MUST agree:
+# plan-research-required.sh (waives the research requirement) and
+# doc-structure-validator.sh (picks which required sections to enforce at
+# Stop). The waiver is documented as compensated by doc-structure-validator
+# enforcing the plan-of-plans shape, and a compensating control that
+# disagrees about which shape applies compensates for nothing — they drifted
+# exactly that way (GH-1590 scoped the first to frontmatter and left the
+# second matching prose), which is why the logic lives here now.
+#
+# plan-tier-validator.sh deliberately does NOT use this: it keys on the
+# presence of `## Feature Decomposition` alone, for tier selection rather
+# than shape validation, and a frontmatter-only plan-of-plans is correctly
+# out of its scope.
+#
+# Two independently-sufficient signals, deliberately scoped differently:
+#
+#   - `type: plan-of-plans` — read from the LEADING YAML FRONTMATTER ONLY.
+#     Matching it document-wide let an ordinary plan take the plan-of-plans
+#     path just by naming the token in prose.
+#   - `## Feature Decomposition` — matched document-wide (outside code fences).
+#     That heading IS the shape, so a doc carrying it is one regardless of
+#     frontmatter.
+#
+# Args: $1 = fence-stripped document body (callers strip fences first, since
+# they each already do so for their own reasons).
+# Returns 0 when the doc is a plan-of-plans, 1 otherwise.
+is_plan_of_plans() {
+  local stripped="$1"
+  local frontmatter
+  frontmatter=$(awk '
+    NR == 1 && $0 !~ /^---[[:space:]]*$/ { exit }
+    NR == 1 { next }
+    /^---[[:space:]]*$/ { exit }
+    { print }' <<< "$stripped")
+
+  grep -qE '^type:[[:space:]]*plan-of-plans[[:space:]]*$' <<< "$frontmatter" && return 0
+  grep -qE '^## Feature Decomposition([[:space:]]|$)' <<< "$stripped" && return 0
+  return 1
+}

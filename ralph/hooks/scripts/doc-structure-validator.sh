@@ -65,8 +65,13 @@ validate_doc() {
           next
         }
         !f { print }' "$doc")
-      if grep -qE "^type:[[:space:]]*plan-of-plans" <<< "$plan_body" \
-         || grep -qE "^## Feature Decomposition([[:space:]]|$)" <<< "$plan_body"; then
+      # Shared discriminator (hook-utils.sh) — see is_plan_of_plans(). This
+      # hook is plan-research-required.sh's compensating control, so the two
+      # must not disagree about which shape a doc is. Matching `type:`
+      # document-wide here (as this did) made a prose mention flip an
+      # ordinary plan onto the plan-of-plans branch, demanding Feature
+      # Decomposition/Sequencing instead of Phase headers.
+      if is_plan_of_plans "$plan_body"; then
         # Plan-of-plans shape — sections per ralph/skills/plan/decomposition.md § Plan-of-plans shape.
         grep -qE "^## Feature Decomposition([[:space:]]|$)" <<< "$plan_body" || doc_errors+=("Missing: '## Feature Decomposition' section (plan-of-plans shape)")
         grep -qE "^## Feature Sequencing([[:space:]]|$)" <<< "$plan_body" || doc_errors+=("Missing: '## Feature Sequencing' section (plan-of-plans shape)")
