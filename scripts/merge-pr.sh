@@ -294,6 +294,19 @@ fi
 # window cannot merge an unreviewed commit (TOCTOU; CodeRabbit finding).
 # ---------------------------------------------------------------------------
 echo "Merging PR #$PR_NUMBER @ ${head_sha:0:8}..."
-gh pr merge "$PR_NUMBER" --merge --delete-branch --match-head-commit "$head_sha"
+# `--delete-branch` merges remotely, then attempts LOCAL cleanup (checkout of
+# main + branch delete). In a worktree layout that cleanup fails ("'main' is
+# already used by worktree ...") and gh exits nonzero AFTER the merge already
+# succeeded — a false negative (GH-1677). The PR's actual state is the truth:
+# on a nonzero exit, re-query it before declaring failure.
+if ! gh pr merge "$PR_NUMBER" --merge --delete-branch --match-head-commit "$head_sha"; then
+  merged_state=$(gh pr view "$PR_NUMBER" --json state --jq .state 2>/dev/null || echo "UNKNOWN")
+  if [ "$merged_state" = "MERGED" ]; then
+    echo "PR #$PR_NUMBER merged successfully (local branch cleanup skipped — main is checked out in another worktree)."
+    exit 0
+  fi
+  echo "MERGE FAILED — gh pr merge exited nonzero and PR #$PR_NUMBER state is $merged_state, not MERGED." >&2
+  exit 1
+fi
 
 echo "PR #$PR_NUMBER merged successfully."

@@ -35,7 +35,13 @@ serve() {
   if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$f"; else cat "$f"; fi
 }
 case "${1:-} ${2:-}" in
-  "pr view") serve pr_view.json ;;
+  "pr view")
+    if [[ -f "$GH_STUB_DIR/merge_attempted" && -f "$GH_STUB_DIR/pr_view_after.json" ]]; then
+      serve pr_view_after.json
+    else
+      serve pr_view.json
+    fi
+    ;;
   "pr checks")
     if [[ -f "$GH_STUB_DIR/pr_checks.json" ]]; then cat "$GH_STUB_DIR/pr_checks.json"; else echo "[]"; fi
     exit "${GH_STUB_CHECKS_EXIT:-0}"
@@ -45,7 +51,11 @@ case "${1:-} ${2:-}" in
       if [[ "${args[$i]}" == "--body" ]]; then printf '%s\n---\n' "${args[$((i + 1))]}" >>"$GH_STUB_DIR/comments.log"; fi
     done
     ;;
-  "pr merge") echo "merged" ;;
+  "pr merge")
+    touch "$GH_STUB_DIR/merge_attempted"
+    echo "merged"
+    exit "${GH_STUB_MERGE_EXIT:-0}"
+    ;;
   "api user") if [[ -n "$jq_expr" ]]; then echo "testuser"; else echo '{"login":"testuser"}'; fi ;;
   *)
     echo "stub: unhandled gh $*" >&2
@@ -299,6 +309,24 @@ if grep -q -- "--match-head-commit $SHA" "$LAST_DIR/gh.log" 2>/dev/null; then
 else
   fail "merge missing --match-head-commit pin: $(grep 'pr merge' "$LAST_DIR/gh.log" 2>/dev/null)"
 fi
+
+# 20. GH-1677: gh pr merge exits nonzero on LOCAL branch cleanup (main held by
+# a sibling worktree) AFTER the remote merge succeeded — the PR state is the
+# truth, so the script must re-query and succeed.
+setup_worktree_cleanup_fail() {
+  setup_green "$1"
+  printf '{"state":"MERGED"}' >"$1/pr_view_after.json"
+}
+GH_STUB_MERGE_EXIT=1 run_case "worktree cleanup failure is not a merge failure" 0 "$POLICY" setup_worktree_cleanup_fail
+expect_out "worktree cleanup skip is loud" "local branch cleanup skipped"
+
+# 21. GH-1677 inverse: a merge that ACTUALLY failed (PR still open) stays a failure.
+setup_merge_actually_failed() {
+  setup_green "$1"
+  printf '{"state":"OPEN"}' >"$1/pr_view_after.json"
+}
+GH_STUB_MERGE_EXIT=1 run_case "genuine merge failure still fails" 1 "$POLICY" setup_merge_actually_failed
+expect_out "genuine failure names the state" "MERGE FAILED"
 
 # ---------------------------------------------------------------------------
 echo
