@@ -536,7 +536,7 @@ for repo in "${DISCOVERED_REPOS[@]}"; do
     fi
   done
 done
-```
+```text
 
 If a checkout is not found automatically, prompt the user:
 > "I couldn't find a local checkout for `{repo}`. Where is it on disk? (Enter path or 'skip')"
@@ -616,7 +616,7 @@ Repos involved:
 - `downstream-app` (~/projects/downstream-app) — [what changes are needed]
 
 Dependency relationship: ralph-hero → downstream-app (downstream-app imports from ralph-hero)
-```
+```text
 
 This section is consumed by the plan and impl skills to set up per-repo worktrees and wire `blockedBy` dependencies.
 ```
@@ -782,7 +782,7 @@ cd ~/projects/downstream-app/worktrees/GH-601
 git add path/to/changed-file.ts
 git commit -m "feat: [description of downstream-app changes]"
 git push -u origin feature/GH-601
-```
+```text
 ```
 
 - [ ] **Step 3: Update Link Formatting section**
