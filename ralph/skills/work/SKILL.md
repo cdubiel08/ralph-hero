@@ -45,6 +45,8 @@ sonnet is the default for everything; haiku for mechanical fan-out. Frontier (`f
 
 The board is the only memory the next session has. Write to it, not to me.
 
+(The enforceable rules here are enforced in code — claims, transitions, scope by `board.ts`; drift correction by `state-guard.yml`; the merge gates by `scripts/merge-pr.sh`. This section exists so you understand the system you're inside, and because rules 4-6 — findings, decisions, provenance — are yours alone: no code can write down what you learned.)
+
 1. **Claim before work.** Nothing mutates before `board claim NNN` succeeds.
 2. **Board truthful at all times.** In Progress while working; Human Needed the moment you hit an ungranted decision; In Review when the PR is up. Done means merged.
 3. **Exit only at surfaced states.** Deliver a mergeable increment (→ In Review), escalate, or `board release NNN -m "<where you stopped, what's next>"`. Never exit holding a claim.
@@ -58,7 +60,7 @@ The board is the only memory the next session has. Write to it, not to me.
 
 Verify your own work before calling it done — you know what that requires better than a checklist does. Post a close-out comment (outcome, key decisions, deferrals, artifact links), set the final state via `board`, and end with exactly one line:
 
-```
+```text
 ralph: GH-NNN <done|review|escalated|released> — <one clause>
 ```
 

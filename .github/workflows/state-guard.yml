@@ -1,10 +1,10 @@
 # state-guard — the server-side corrective wall for the ralph v2 board (GH-1662).
 #
 # Two lanes (design §3, thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md):
-#   event lane      — issue/PR events GitHub actually emits: adopt new issues to
-#                     Backlog, reconcile closed/reopened reality onto the board
-#                     field (Closes #NNN closes the ISSUE; only this maps it to
-#                     the board), run the parent gate.
+#   event lane      — issue events: adopt new issues to Backlog, reconcile
+#                     closed/reopened reality onto the board field (a merged
+#                     PR's `Closes #NNN` auto-close arrives here as
+#                     `issues: closed`), run the parent gate.
 #   reconciler lane — cron sweep for field-level drift no event reports
 #                     (Projects V2 emits no usable Actions trigger).
 #
@@ -18,8 +18,6 @@ name: state-guard
 on:
   issues:
     types: [opened, closed, reopened]
-  pull_request:
-    types: [closed]
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch: {}
@@ -28,8 +26,11 @@ permissions:
   contents: read
   issues: write
 
+# One concurrency key per issue (or the sweep). A merged PR needs no lane of
+# its own: `Closes #NNN` auto-close emits `issues: closed`, which reconciles —
+# a PR-keyed lane would race the issue-keyed one on the same item.
 concurrency:
-  group: state-guard-${{ github.event.issue.number || github.event.pull_request.number || 'sweep' }}
+  group: state-guard-${{ github.event.issue.number || 'sweep' }}
   cancel-in-progress: false
 
 jobs:
@@ -47,29 +48,18 @@ jobs:
         run: npm ci
 
       - name: Event lane — adopt / reconcile / parent gate
-        if: github.event_name == 'issues' || github.event_name == 'pull_request'
+        if: github.event_name == 'issues'
         env:
           GH_TOKEN: ${{ secrets.ROUTING_PAT }}
           RALPH_CLAIM_HOLDER: state-guard
-          EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
           ISSUE: ${{ github.event.issue.number }}
-          PR: ${{ github.event.pull_request.number }}
-          MERGED: ${{ github.event.pull_request.merged }}
         run: |
           board() { npx tsx ralph/scripts/board.ts "$@"; }
-          if [ "$EVENT" = "issues" ]; then
-            case "$ACTION" in
-              opened)          board adopt "$ISSUE" ;;
-              closed|reopened) board reconcile "$ISSUE" ;;
-            esac
-          elif [ "$EVENT" = "pull_request" ] && [ "$MERGED" = "true" ]; then
-            # Belt-and-braces: reconcile every issue the merged PR closes.
-            for n in $(gh pr view "$PR" --json closingIssuesReferences \
-                        --jq '.closingIssuesReferences[].number'); do
-              board reconcile "$n"
-            done
-          fi
+          case "$ACTION" in
+            opened)          board adopt "$ISSUE" ;;
+            closed|reopened) board reconcile "$ISSUE" ;;
+          esac
 
       - name: Reconciler lane — field-drift sweep
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

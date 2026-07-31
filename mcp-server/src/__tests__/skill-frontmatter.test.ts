@@ -81,11 +81,15 @@ describe("agents", () => {
       expect(scalar(block, "model")).toBeTruthy();
     });
 
-    it("has a hard tools allowlist that stays read-only (no Write/Edit)", () => {
+    it("has a hard tools allowlist with NO mutating tool — no Write/Edit/Bash", () => {
       const tools = listItems(block, "tools");
       expect(tools.length).toBeGreaterThan(0);
+      // Bash would permit arbitrary file/git/gh mutations, which would make
+      // the read-only claim contractual rather than enforced. Runtime
+      // enforcement means the allowlist itself cannot mutate.
       expect(tools).not.toContain("Write");
       expect(tools).not.toContain("Edit");
+      expect(tools).not.toContain("Bash");
     });
   });
 });

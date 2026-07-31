@@ -4,7 +4,7 @@
 
 ralph v2 (GH-1662): two skills, one agent, one board CLI, two courtesy hooks. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
 
-```
+```text
 ralph/
 ├── skills/work/        # the execution verb — outcome, boundaries, contract
 ├── skills/board/       # human surface — orientation, intake, answers, doctor
@@ -12,11 +12,12 @@ ralph/
 ├── agents/investigator.md  # read-only fan-out worker (hard tools: allowlist)
 ├── scripts/board(.ts)  # THE board mutation path — typed 6-state machine,
 │                       #   claims with TTL, scope gate, doctor; vitest-covered
-├── scripts/tick.sh     # one autonomous iteration (Phase 3); scheduler owns cadence
 ├── hooks/funnel-*.sh   # courtesy redirects to board.ts / merge-pr.sh —
 │                       #   NOT enforcement; board.ts + state-guard.yml are
 └── .claude-plugin/     # manifest
 ```
+
+Phase 3 (GH-1662) adds `scripts/tick.sh` + `scripts/install-loop.sh` — the scheduler-owned autonomous loop. Not present yet.
 
 ## Conventions
 
