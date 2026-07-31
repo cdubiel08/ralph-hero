@@ -12,7 +12,7 @@ Apply in priority order — first match wins. Rules 1-4 apply to `MODE ∈ {defa
 
 3. **Existing-plan path** — `ARG` is a path under `thoughts/shared/plans/*.md`. Prompt explicitly via `AskUserQuestion` (do NOT auto-route — preserving vs overwriting a plan is destructive enough to warrant confirmation):
 
-   ```
+   ```text
    question: "This is an existing plan. What do you want to do?"
    header: "Existing plan detected"
    options:

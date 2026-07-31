@@ -27,7 +27,7 @@ When `git status` shows files modified or created that are NOT in the current ph
 
 1. **Do not stage them.** Skip.
 2. Emit a warning to stderr (and optionally the issue's `## Drift Log` comment if running in auto mode):
-   ```
+   ```text
    WARNING: Unexpected files not in Phase [N] ownership:
    - path/to/unexpected-file
    Skipping. These may belong to another agent or phase.

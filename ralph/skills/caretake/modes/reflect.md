@@ -14,7 +14,7 @@ No hook gates reflect — it writes a research doc, no GitHub state mutates. The
 
 2. **If no arguments provided**, respond briefly:
 
-   ```
+   ```text
    Capturing pain points from this session. Scanning the conversation for friction signals...
 
    (If you want to scope this to a specific section, re-run with a hint, e.g.,

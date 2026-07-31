@@ -65,7 +65,7 @@ Signals that the issue is cross-repo:
 When cross-repo scope is detected:
 
 1. Pass the additional repo directories to sub-agents in their spawn prompts. Example:
-   ```
+   ```text
    Additional repo directories to search:
    - ralph-hero: ~/projects/ralph-hero
    - landcrawler-ai: ~/projects/landcrawler-ai

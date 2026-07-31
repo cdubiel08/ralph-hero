@@ -47,7 +47,7 @@ If the requested action is not in the list, do NOT dispatch sre-fixit. Escalate 
 2. If empty, emit `result: heartbeat: 0 alerts dispatched` and stop.
 3. For each issue, dispatch per the table above (sequential — avoids race conditions on shared board state).
 4. Emit:
-   ```
+   ```text
    result: heartbeat: N alerts dispatched
    ```
 

@@ -12,7 +12,7 @@ Director-only step: classify one event, dispatch the correct verb, stop. Full ev
 
 2. **Read the queue.**
 
-   ```
+   ```js
    next_actions({ audience: "agent" })
    ```
 
@@ -40,7 +40,7 @@ Director-only step: classify one event, dispatch the correct verb, stop. Full ev
 
 6. **Emit the result marker.**
 
-   ```
+   ```text
    result: Dispatched #NNN to <team> via <entrypoint>. (reason: <DISPATCH_REASON>)
    ```
 

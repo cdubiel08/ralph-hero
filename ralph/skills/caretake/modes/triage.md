@@ -45,7 +45,7 @@ and STOP.
 1. **Read the issue body and comments thoroughly.**
 2. **Dispatch parallel sub-tasks for assessment.** Use the `Agent` tool to check the codebase and GitHub concurrently:
 
-   ```
+   ```js
    Agent(subagent_type="ralph:codebase-locator",
          prompt="Search for [keywords from issue title]. Does this feature/fix already exist?")
    ```
@@ -158,7 +158,7 @@ Add a `## Triage Decision` comment naming the exact condition being waited on.
 - **If OPEN**: set `workflowState: "Human Needed"` (`command: "ralph_triage"`). Then:
   1. Ensure the `add_dependency` edge exists: call `add_dependency` with `blockedByNumber: NNN` if not already present.
   2. Post a `## Escalation` comment naming #NNN and the machine-readable advance condition:
-     ```
+     ```text
      Blocked by #NNN ([title]). Move to Ready for Plan once #NNN closes.
      ```
   3. Apply `ralph-triage` label.
