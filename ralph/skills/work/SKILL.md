@@ -19,7 +19,7 @@ allowed-tools:
 
 This skill does not tell you how to work. It tells you what must be true while you work and when you stop. Sequence your own path — research, plan, code, verify — at the depth the outcome demands. There is no prescribed phase order; a one-line fix needs no plan doc, an epic needs decomposition. Your judgment, sized to the unit.
 
-The board CLI is `ralph/scripts/board` (run `board help` once). It is the sole sanctioned board mutation path; it enforces transitions, claims, and scope so you don't have to reason about them — a refusal from it is the system working, not an obstacle to route around.
+The board CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder resolves to wherever this plugin is installed, so it works from any repo; never substitute a repo-relative path. Run `${CLAUDE_PLUGIN_ROOT}/scripts/board help` once; below, `board` is shorthand for that same path. It is the sole sanctioned board mutation path; it enforces transitions, claims, and scope so you don't have to reason about them — a refusal from it is the system working, not an obstacle to route around.
 
 ## Intake
 

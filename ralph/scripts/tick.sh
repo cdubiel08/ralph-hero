@@ -12,7 +12,9 @@ set -euo pipefail
 
 RALPH_HOME="${RALPH_HOME:-$HOME/.ralph}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BOARD="$REPO_ROOT/ralph/scripts/board"
+# board sits beside this script — resolve it that way, not off REPO_ROOT, so the
+# tick works when the plugin is installed outside the ralph-hero checkout.
+BOARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/board"
 TIMEOUT_MIN="${RALPH_TICK_TIMEOUT_MIN:-45}"
 RUNNER="${RALPH_TICK_RUNNER:-claude -p --model sonnet --permission-mode acceptEdits}"
 

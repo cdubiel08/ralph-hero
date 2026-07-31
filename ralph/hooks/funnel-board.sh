@@ -4,6 +4,12 @@
 # are the guarantees; this just keeps honest sessions on the sanctioned path.
 set -euo pipefail
 
+# The redirect must name a path the model can actually run from any repo.
+# CLAUDE_PLUGIN_ROOT is exported to hook processes; fall back to this script's
+# own location (hooks/ and scripts/ are siblings under the plugin root).
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+BOARD="$PLUGIN_ROOT/scripts/board"
+
 INPUT=$(cat)
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -n "$CMD" ] || exit 0
@@ -23,8 +29,8 @@ BLOCKED_PATTERNS=(
 )
 
 for p in "${BLOCKED_PATTERNS[@]}"; do
-  if [[ "$CMD" == *"$p"* && "$CMD" != *"ralph/scripts/board"* ]]; then
-    echo "Board mutations go through the CLI: ralph/scripts/board <cmd> (run 'ralph/scripts/board help')." >&2
+  if [[ "$CMD" == *"$p"* && "$CMD" != *"scripts/board"* ]]; then
+    echo "Board mutations go through the CLI: $BOARD <cmd> (run '$BOARD help')." >&2
     exit 2
   fi
 done
