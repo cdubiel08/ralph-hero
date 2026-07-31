@@ -484,6 +484,7 @@ export interface Issue {
   number: number;
   nodeId: string;
   itemId: string | null; // project item in OUR project
+  archived: boolean; // archived items reject all writes
   title: string;
   url: string;
   issueState: "OPEN" | "CLOSED";
@@ -538,7 +539,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
             }
             blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
             closedByPullRequestsReferences(first: 10) { nodes { number url state merged } }
-            projectItems(first: 20) { nodes { id project { id } ${FIELD_VALUES_FRAGMENT} } }
+            projectItems(first: 20) { nodes { id isArchived project { id } ${FIELD_VALUES_FRAGMENT} } }
           }
         }
       }`,
@@ -556,6 +557,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       number: issue.number,
       nodeId: issue.id,
       itemId: item?.id ?? null,
+      archived: item?.isArchived ?? false,
       title: issue.title,
       url: issue.url,
       issueState: issue.state,
@@ -602,6 +604,11 @@ function requireItem(issue: Issue): string {
   if (!issue.itemId) {
     throw new RefusalError(
       `#${issue.number} is not on the project board — add it first (board create adds automatically)`,
+    );
+  }
+  if (issue.archived) {
+    throw new RefusalError(
+      `#${issue.number}'s project item is ARCHIVED — GitHub rejects all writes to it. Unarchive it in the board UI first.`,
     );
   }
   return issue.itemId;
@@ -887,6 +894,7 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
 export function adopt(ctx: Ctx, number: number): Issue {
   const cache = mutationCache(ctx, [[STATE_FIELD, "Backlog"]]);
   let issue = fetchIssue(ctx, number);
+  if (issue.archived) return issue; // archived items reject writes — no-op
   if (!issue.itemId) {
     const added = ghGraphQL(
       ctx,
@@ -916,6 +924,9 @@ export function reconcile(ctx: Ctx, number: number): string {
     if (!issue.itemId) {
       adopt(ctx, number);
       return `#${number}: adopted to board (Backlog)`;
+    }
+    if (issue.archived) {
+      return `#${number}: project item archived — skipped (unarchive in the board UI to reconcile)`;
     }
 
     const target: State | null =
@@ -1373,12 +1384,20 @@ export function migrate(ctx: Ctx, opts: { apply?: boolean } = {}): string[] {
       }
       setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
       syncStatus(ctx, cache, issue.itemId, target);
-      addComment(
-        ctx,
-        issue.nodeId,
-        `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
-      );
-      out.push(`#${i.number}: "${i.state}" → "${target}"`);
+      // The state converged; the audit comment is best-effort. A comment
+      // failure must NOT report the migration as FAILED — the item would
+      // leave the candidate set (state now valid) with no repair path.
+      let note = "";
+      try {
+        addComment(
+          ctx,
+          issue.nodeId,
+          `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
+        );
+      } catch (e) {
+        note = ` (migrated; audit comment failed — ${(e as Error).message})`;
+      }
+      out.push(`#${i.number}: "${i.state}" → "${target}"${note}`);
     } catch (e) {
       // One unwritable item (archived, permissions) must not strand the rest.
       out.push(`#${i.number}: FAILED — ${(e as Error).message}`);

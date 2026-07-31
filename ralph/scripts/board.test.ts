@@ -247,6 +247,7 @@ class FakeGh {
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
+  failNextComment = false;
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
 
@@ -302,7 +303,12 @@ class FakeGh {
           fi.onBoard === false
             ? []
             : [
-                { id: `ITEM_${fi.number}`, project: { id: PROJECT_ID }, fieldValues: fieldValues(fi.state, fi.claim) },
+                {
+                  id: `ITEM_${fi.number}`,
+                  isArchived: fi.archived ?? false,
+                  project: { id: PROJECT_ID },
+                  fieldValues: fieldValues(fi.state, fi.claim),
+                },
               ],
       },
     };
@@ -406,6 +412,10 @@ class FakeGh {
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
     if (query.includes("addComment")) {
+      if (this.failNextComment) {
+        this.failNextComment = false;
+        return { code: 1, stdout: "", stderr: "simulated comment failure" };
+      }
       this.comments.push({ body: variables.body });
       this.mutations.push("addComment");
       return data({ addComment: { clientMutationId: null } });
@@ -765,6 +775,25 @@ describe("doctor + migrate", () => {
     const lines = migrate(ctx);
     expect(lines.some((l) => l.includes("#2"))).toBe(true);
     expect(lines.some((l) => l.includes("#1"))).toBe(false);
+  });
+
+  it("direct mutations refuse archived items with a clean message, not a raw API error", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", archived: true });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/ARCHIVED.*Unarchive/);
+    expect(reconcile(ctx, 1)).toMatch(/archived — skipped/);
+  });
+
+  it("migrate: a failed audit comment does NOT report the migration as FAILED", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Ready for Plan" });
+    gh.failNextComment = true;
+    const lines = migrate(ctx, { apply: true });
+    expect(gh.issues.get(1)!.state).toBe("Backlog"); // state converged
+    expect(lines[0]).toMatch(/audit comment failed/);
+    expect(lines[0]).not.toMatch(/FAILED —/);
   });
 
   it("migrate: dry-run by default; Decision Request routes Plan in Review to Human Needed", () => {
