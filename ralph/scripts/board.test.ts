@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -183,8 +183,14 @@ describe("scopeMatches", () => {
     expect(scopeMatches("", "cdubiel08", "ralph-hero")).toBe(false);
   });
 
-  it("host is configurable for GHE remotes", () => {
+  it("host is configurable for GHE remotes, including SSH on a non-default port", () => {
     expect(scopeMatches("git@ghe.corp:cdubiel08/ralph-hero.git", "cdubiel08", "ralph-hero", "ghe.corp")).toBe(true);
+    expect(scopeMatches("ssh://git@ghe.corp:22/cdubiel08/ralph-hero.git", "cdubiel08", "ralph-hero", "ghe.corp")).toBe(true);
+    expect(scopeMatches("ssh://git@ghe.corp:2222/cdubiel08/ralph-hero.git", "cdubiel08", "ralph-hero", "ghe.corp")).toBe(true);
+  });
+
+  it("deep paths and subgroup-style remotes are refused (exactly owner/repo)", () => {
+    expect(scopeMatches("https://github.com/cdubiel08/group/ralph-hero.git", "cdubiel08", "ralph-hero")).toBe(false);
   });
 });
 
@@ -562,6 +568,29 @@ describe("transition engine", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
     gh.vanishClaim = true;
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/vanished/);
+  });
+
+  it("a stale cache lacking the Claim field refreshes before the skip decision — the claim IS written", () => {
+    // Simulates: cache snapshot taken before `board setup` created Claim;
+    // the live schema has it. The skip-if-absent decision must see live truth.
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    writeFileSync(
+      join(ctx.cacheDir, "board-cdubiel08-ralph-hero-13.json"),
+      JSON.stringify({
+        projectId: "PVT_test",
+        repositoryId: "R_test",
+        fields: {
+          "Workflow State": {
+            id: "F_state", dataType: "SINGLE_SELECT",
+            options: Object.fromEntries([...STATES, ...LEGACY_STATES].map((s) => [s, `OPT_${s}`])),
+          },
+        },
+        fetchedAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(after.claim?.holder).toBe("me@test");
+    expect(gh.mutations).toContain("setClaim(#1)");
   });
 });
 

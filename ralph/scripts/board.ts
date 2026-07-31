@@ -194,21 +194,27 @@ export interface Config {
 }
 
 /** Host + owner + repo must all match — a matching owner/repo on a mirror or
- *  another forge must not pass the gate. Host defaults to github.com. */
+ *  another forge must not pass the gate. Host defaults to github.com.
+ *  Handles scheme'd URLs (https/ssh/git, optional port — GHE commonly serves
+ *  SSH on a non-default port) and scp-style remotes (which cannot carry a
+ *  port; their colon is the path separator). */
 export function scopeMatches(
   remoteUrl: string,
   owner: string,
   repo: string,
   host = "github.com",
 ): boolean {
-  const m = remoteUrl
-    .trim()
-    .match(/^(?:https?:\/\/(?:[^@/]+@)?|ssh:\/\/(?:[^@/]+@)?|[^@/]+@)?([^/:]+)[:/]+([^/:]+)\/([^/:]+?)(?:\.git)?\/?$/);
+  const url = remoteUrl.trim();
+  const m =
+    url.match(/^(?:https?|ssh|git):\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/) ??
+    url.match(/^(?:[^@/]+@)?([^/:]+):(.+)$/);
   if (!m) return false;
+  const segs = m[2].replace(/\/+$/, "").replace(/\.git$/, "").split("/");
+  if (segs.length !== 2) return false;
   return (
     m[1].toLowerCase() === host.toLowerCase() &&
-    m[2].toLowerCase() === owner.toLowerCase() &&
-    m[3].toLowerCase() === repo.toLowerCase()
+    segs[0].toLowerCase() === owner.toLowerCase() &&
+    segs[1].toLowerCase() === repo.toLowerCase()
   );
 }
 
@@ -442,12 +448,22 @@ function withCache<T>(ctx: Ctx, op: (cache: BoardCache) => T): T {
 /** MUTATING ops resolve cache freshness BEFORE the first write: verify every
  *  (field, option) the op will need; refresh once if anything is missing;
  *  hard-error if still missing. The op itself then runs with NO retry, so a
- *  failure mid-write never replays earlier writes. */
-function mutationCache(ctx: Ctx, needs: Array<[field: string, option?: string]>): BoardCache {
+ *  failure mid-write never replays earlier writes.
+ *
+ *  `optionalFields` are fields the op will use IF they exist (the Claim field
+ *  before `board setup` runs). Their absence from the cache also triggers the
+ *  one refresh — so a skip-if-absent decision is made against live schema,
+ *  never a stale snapshot — but confirmed absence is not an error. */
+function mutationCache(
+  ctx: Ctx,
+  needs: Array<[field: string, option?: string]>,
+  optionalFields: string[] = [],
+): BoardCache {
   const satisfied = (c: BoardCache) =>
     needs.every(([f, o]) => c.fields[f] && (o === undefined || c.fields[f].options?.[o]));
+  const optionalKnown = (c: BoardCache) => optionalFields.every((f) => c.fields[f]);
   let cache = ensureCache(ctx);
-  if (!satisfied(cache)) cache = refreshCache(ctx);
+  if (!satisfied(cache) || !optionalKnown(cache)) cache = refreshCache(ctx);
   if (!satisfied(cache)) {
     const missing = needs.filter(([f, o]) => !cache.fields[f] || (o !== undefined && !cache.fields[f].options?.[o]));
     throw new Error(
@@ -708,7 +724,7 @@ function guardHolder(ctx: Ctx, issue: Issue): void {
 
 export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
   // Cache freshness resolved BEFORE any write; the body never retries.
-  const cache = mutationCache(ctx, [[STATE_FIELD, to]]);
+  const cache = mutationCache(ctx, [[STATE_FIELD, to]], [CLAIM_FIELD]);
   {
     const from = issue.state;
 
@@ -835,7 +851,7 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
     return `#${parentNumber}: ${open.length}/${parent.children.length} children still open`;
   }
   guardHolder(ctx, parent);
-  const cache = mutationCache(ctx, [[STATE_FIELD, "In Review"]]);
+  const cache = mutationCache(ctx, [[STATE_FIELD, "In Review"]], [CLAIM_FIELD]);
   const itemId = requireItem(parent);
   if (cache.fields[CLAIM_FIELD] && parent.state === "In Progress") {
     clearField(ctx, cache, itemId, CLAIM_FIELD);
@@ -883,7 +899,11 @@ export function adopt(ctx: Ctx, number: number): Issue {
 
 /** Sync board state to issue reality. Returns a description of what changed. */
 export function reconcile(ctx: Ctx, number: number): string {
-  const cache = mutationCache(ctx, [[STATE_FIELD, "Done"], [STATE_FIELD, "Canceled"], [STATE_FIELD, "Backlog"]]);
+  const cache = mutationCache(
+    ctx,
+    [[STATE_FIELD, "Done"], [STATE_FIELD, "Canceled"], [STATE_FIELD, "Backlog"]],
+    [CLAIM_FIELD],
+  );
   {
     const issue = fetchIssue(ctx, number);
     if (!issue.itemId) {
@@ -1097,7 +1117,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
   const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
   if (remote.code !== 0) add("scope", "warn", "no origin remote");
   else if (scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) add("scope", "ok", remote.stdout.trim());
-  else add("scope", "fail", `origin ${remote.stdout.trim()} != configured ${ctx.cfg.owner}/${ctx.cfg.repo}`);
+  else add("scope", "fail", `origin ${remote.stdout.trim()} != configured ${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo}`);
 
   // cache vs live schema
   let cache: BoardCache | null = null;
@@ -1137,6 +1157,12 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       const noState = items.filter((i) => i.state === "(none)");
       const claimAnomalies = items.filter((i) => i.claim && i.state !== "In Progress");
       const terminalDrift = items.filter((i) => ["Done", "Canceled"].includes(i.state));
+      // In Progress with no claim: either UI-driven human work (fine) or the
+      // shape a failed claim write leaves behind. Surface it; never auto-fix —
+      // yanking a human's WIP back to Backlog would be hostile.
+      const claimlessWip = cache.fields[CLAIM_FIELD]
+        ? items.filter((i) => i.state === "In Progress" && !i.claim)
+        : [];
       const stale = items.filter(
         (i) => i.claim && claimIsStale(i.claim, ctx.now(), ctx.cfg.lockTtlMin),
       );
@@ -1151,6 +1177,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       add("claim-anomalies", claimAnomalies.length === 0 ? "ok" : "warn", claimAnomalies.length === 0 ? "none" : claimAnomalies.map((i) => `#${i.number}(${i.state})`).join(" "));
       add("stale-claims", stale.length === 0 ? "ok" : "warn", stale.length === 0 ? "none" : stale.map((i) => `#${i.number} by ${i.claim!.holder}`).join(" "));
       add("terminal-drift", terminalDrift.length === 0 ? "ok" : "warn", terminalDrift.length === 0 ? "none" : `open issues in terminal board states: ${terminalDrift.map((i) => `#${i.number}(${i.state})`).join(" ")}`);
+      add("claimless-wip", claimlessWip.length === 0 ? "ok" : "warn", claimlessWip.length === 0 ? "none" : `In Progress without a claim (human WIP or a failed claim write): ${claimlessWip.map((i) => `#${i.number}`).join(" ")}`);
 
       if (opts.fix) {
         for (const i of terminalDrift) add("fix", "ok", reconcile(ctx, i.number));
@@ -1420,7 +1447,7 @@ export function run(argv: string[], ctx: Ctx): number {
     if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo, ctx.cfg.host)) {
       throw new RefusalError(
         `scope check failed: origin "${remote.stdout.trim()}" does not match configured ` +
-          `${ctx.cfg.owner}/${ctx.cfg.repo} — refusing to mutate another repo's board`,
+          `${ctx.cfg.host}/${ctx.cfg.owner}/${ctx.cfg.repo} — refusing to mutate another repo's board`,
       );
     }
   }
