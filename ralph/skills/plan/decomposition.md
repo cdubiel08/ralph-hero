@@ -12,7 +12,7 @@ The numbered flow `/ralph:plan --mode epic` runs. Step 0 picks the path; the sec
 
 **Plan-of-plans path:**
 
-3. **Write plan-of-plans** — per § Plan-of-plans shape. Required: Strategic Context, Shared Constraints, Feature Decomposition (3-7 features), Integration Strategy, Feature Sequencing, What We're NOT Doing.
+3. **Write plan-of-plans** — per § Plan-of-plans shape. Required: Strategic Context, Shared Constraints, Feature Decomposition (3-7 features), Integration Strategy, Feature Sequencing, What We're NOT Doing, and Design Decisions & Open Ambiguities (hook-enforced at Stop; write the sentinel `None — no open design decisions.` if the decomposition raised none).
 4. **Create feature children** — per § Child creation. Create every feature in ONE `create_sub_issues(parentNumber: <epic>, children: [{title, body, estimate, workflowState: "Backlog", dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]}, ...])` call — one entry per feature in Feature Decomposition order; wire sequencing inline via each child's `dependsOn` (sibling indices) and `dependsOnIssues` (pre-existing blockers) per § Dependency-edge rules. Read the per-child status report and repair only children that report `error`.
 5. **Update plan-of-plans** — annotate each `### Feature` with the assigned child issue number + URL.
 
@@ -250,7 +250,7 @@ Sub-issue body template:
 
 When the split produced **2+ children** (skip on the re-estimate / `SPLIT SKIPPED` path — no children created, nothing to plan), write a parent plan-of-plans so the children are autonomously plannable. Without it, `/ralph:plan --mode auto` has neither a per-child research doc nor a parent plan to consume, so each child stalls (GH-1416).
 
-Write to `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md` — the `<parent>` number is what the parent-plan-reuse glob `*GH-NNNN-*.md` keys on (`intake-routing.md` § Parent-plan reuse). Shape: § Plan-of-plans shape above — frontmatter `type: plan-of-plans`; sections `## Strategic Context`, `## Shared Constraints`, `## Feature Decomposition`, `## Integration Strategy`, `## Feature Sequencing`, `## What We're NOT Doing`.
+Write to `thoughts/shared/plans/YYYY-MM-DD-GH-<parent>-plan-of-plans.md` — the `<parent>` number is what the parent-plan-reuse glob `*GH-NNNN-*.md` keys on (`intake-routing.md` § Parent-plan reuse). Shape: § Plan-of-plans shape above — frontmatter `type: plan-of-plans`; sections `## Strategic Context`, `## Shared Constraints`, `## Feature Decomposition`, `## Integration Strategy`, `## Feature Sequencing`, `## What We're NOT Doing`, and `## Design Decisions & Open Ambiguities`. **The decisions section is not optional here.** It is in the § Plan-of-plans shape template above and `doc-structure-validator.sh` enforces it at Stop, so omitting it makes the split fail its own postcondition — write the sentinel `None — no open design decisions.` when the decomposition raised none.
 
 One `### Feature` subsection per child under `## Feature Decomposition`, each embedding the child's **real issue number AND title** verbatim, plus its scope + acceptance from §Step 6's body. The parent-plan-reuse short-circuit matches a child to its section **by number or title**, so both must appear. Keep `## Feature Sequencing` **identical** to the `## Issue Split` dependency chain posted in §Step 8 — same edges, same order.
 

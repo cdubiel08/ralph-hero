@@ -34,6 +34,8 @@ Inspect the fetched issue and route to the first matching row:
 | Issue body contains a `langfuse-trace:` URL | `Agent(subagent_type="ralph:log-reader", prompt="Investigate issue #NNN: <title>. <body>")` |
 | Issue has label `watcher-investigate` | `Agent(subagent_type="ralph:log-reader", prompt="Investigate issue #NNN: <title>. <body>")` |
 | Issue has label `watcher-remediate` AND proposed action matches the sre-fixit allowlist | `Agent(subagent_type="ralph:sre-fixit", prompt="Remediate issue #NNN: <title>. <body>")` |
+
+Rows are evaluated **top to bottom, first match wins** — not in the order labels happen to appear on the issue, which GitHub does not guarantee. An issue carrying BOTH `watcher-investigate` and `watcher-remediate` therefore routes to `log-reader`: investigate before you remediate.
 | No row matches | Escalate to `Human Needed` with a `needs input:` comment explaining which marker or label is missing |
 
 Dispatch rows must not overlap. A single issue should match at most one row. Priority is top-to-bottom: gcp-policy wins over langfuse-trace wins over labels.

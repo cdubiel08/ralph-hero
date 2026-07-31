@@ -77,9 +77,10 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 Director evaluates in this order:
 
 1. Fetch the candidate issue's labels array.
-2. Check for any `trigger:*` label (Priority 1). First match wins.
-3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch --kind pr`; exact-match `blocked:upstream` → fire `caretake --mode watch --kind upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed.
-4. Check for any automation label: `watcher-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
+2. Check for any `trigger:*` label (Priority 1). If several are present, take the **lexicographically smallest** label name.
+   > **"First match" must not mean "first in the labels array."** GitHub does not guarantee a stable order for an issue's labels, so array order would make dispatch nondeterministic — the same issue could route to different teams on consecutive ticks. Within every tier below, resolve ties by the rule stated for that tier, never by array position.
+3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch --kind pr`; exact-match `blocked:upstream` → fire `caretake --mode watch --kind upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed. If an issue carries both families, `blocked:pr-*` wins — it names a concrete PR whose merge resolves it, whereas `blocked:upstream` has no bounded resolver.
+4. Check for any automation label (Priority 3) in **this listed order**, first present wins: `watcher-auto`, then `scout-auto`, then `process-improvement`.
 5. Fall through to `workflow_state` lookup (Priority 4).
 6. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.
 

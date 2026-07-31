@@ -48,7 +48,7 @@ Default is `sonnet`; opus is used on BLOCKED-escalation (when impl returns `IMPL
 
 ## BLOCKED escalation
 
-After `/ralph:impl --auto` returns, inspect the terminal verdict. If it contains the prefix `IMPL BLOCKED ` (full format: `IMPL BLOCKED model=<x> needs=opus reason=<short>` — match on the prefix, not the full string, so detection cannot drift from the emitted format):
+After `/ralph:impl --auto` returns, inspect the terminal verdict. If it contains the prefix `IMPL BLOCKED` **including its trailing space** — a code span cannot render a trailing space, so it is stated here; `impl-postcondition.sh:34` greps for it — then act. Full format is `IMPL BLOCKED model=<x> needs=opus reason=<short>`; match on the prefix, not the full string, so detection cannot drift from the emitted format:
 
 1. If this dispatch's model was NOT opus AND no prior opus retry has occurred for this issue:
    re-dispatch the same issue with `RALPH_IMPL_MODEL=opus`:
