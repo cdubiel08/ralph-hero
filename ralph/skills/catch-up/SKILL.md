@@ -25,6 +25,10 @@ allowed-tools:
   - mcp__plugin_ralph_ralph-github__ralph_hero__metrics_trends
   - mcp__plugin_ralph_ralph-github__ralph_hero__get_issue
   - mcp__plugin_ralph_ralph-github__ralph_hero__create_comment
+  # save_issue: the `lock-stale` direction releases a stale claim inline before
+  # dispatching the verb for the released state (next-action-ranking.md § Dispatch).
+  # This is catch-up's only board mutation; every other direction delegates.
+  - mcp__plugin_ralph_ralph-github__ralph_hero__save_issue
 ---
 
 # /ralph:catch-up — Orientation
