@@ -29,7 +29,7 @@ Phrasing that works: *"Document the current implementation without suggesting im
 
 When the ralph-knowledge MCP tools are available, run prior-art discovery before the parallel sub-agent dispatch (Step 2 in default flow, Step 3c/3d in autonomous flow). Brief-first pattern keeps context tight.
 
-```
+```js
 knowledge_recall(query="<topic>", role="researcher", type="research", brief=true)
 knowledge_recall(query="<topic>", role="researcher", type="plan",     brief=true)
 knowledge_query_outcomes(component_area="<area>", aggregate=true)  # if a component area is identifiable

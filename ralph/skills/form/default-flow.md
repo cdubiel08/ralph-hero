@@ -13,7 +13,7 @@ Read the idea (from the file resolved in Step 1, or treat the inline argument as
 
 Present your understanding to the user and wait for confirmation:
 
-```
+```text
 Here's what I understand:
 
 **Core idea**: [one sentence]

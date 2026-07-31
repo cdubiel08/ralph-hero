@@ -94,7 +94,7 @@ The `doc-structure-validator.sh` review-branch checks for `APPROVED|NEEDS_ITERAT
 
 **Decisions-first pickers** — if the plan has open `#### Decision:` blocks, present one `AskUserQuestion` per decision (max 4 questions per call; batch further calls if more):
 
-```
+```text
 question: <the block's Context, condensed to one question>
 header: "Decision: <short title>"          # MUST be Decision:-prefixed — naming contract below
 options: <from the block's Options, agent recommendation FIRST>
@@ -105,7 +105,7 @@ Fold each answer into the plan (surgical `Edit`, iterate-mode discipline): move 
 
 **Confirm picker** — after the decisions (or immediately, for decision-free plans), a single 3-option picker replaces the old 4-option whole-plan flow — kept for rubric-level rejections independent of decisions:
 
-```
+```text
 question: "Plan review verdict for #NNN?"
 header: "Plan Review"
 options:
@@ -142,7 +142,7 @@ Dispatch a sub-agent for delegated critique, tier-routed by unit size (GH-1538):
 - **Single XS/S plan** — `Agent(subagent_type="ralph:review-agent", model="opus", prompt=...)`. Singles skip fable; opus covers a small plan's rubric pass.
 - **Group plan (`github_issues:`), M single, or plan-of-plans** — same call with NO `model` param, so the agent's frontmatter `model: fable` applies (the independent critique of a feature/epic plan is a judgment bookend). Non-Fable accounts rescue via `CLAUDE_CODE_SUBAGENT_MODEL=opus` (it flattens the singles route too — acceptable).
 
-```
+```js
 Agent(
   subagent_type="ralph:review-agent",
   model="opus",   # single XS/S only — OMIT for group / M / plan-of-plans units

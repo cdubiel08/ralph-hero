@@ -60,7 +60,7 @@ This mirrors the protocol used by `/ralph:research` so the issue's comment histo
 
 For Step 6b:
 
-```
+```text
 Proposed ticket tree:
 
 **Parent**: [Epic title] (L)

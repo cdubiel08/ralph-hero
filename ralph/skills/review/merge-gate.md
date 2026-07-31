@@ -128,7 +128,7 @@ Tilde expansion: `localDir` values in the registry may use `~`; always expand to
 
 **Skill MUST NOT advance the parent.** Parent auto-advance is handled server-side by the `advance-parent.yml` GitHub Action when ALL children reach Done. Skills only transition the child(ren) via:
 
-```
+```js
 save_issue(number=NNN, workflowState="__CLOSE__", command="ralph_merge")
 ```
 
@@ -140,7 +140,7 @@ After a merge whose closed issue(s) have an epic parent, check whether it
 was the LAST open child: `list_sub_issues(parent)` — if every child is now
 CLOSED, dispatch the fable epic-validation bookend BEFORE reporting:
 
-```
+```js
 Agent(
   subagent_type="ralph:val-agent",
   model="fable",
@@ -193,7 +193,7 @@ Use the `Monitor` tool — a streaming-notification primitive. The Monitor runs 
 
 **CRITICAL — literal SHA substitution.** Monitor runs the command in its own subshell and does NOT inherit shell-local variables from prior Bash calls. The `$MERGE_SHA` token below must be replaced with the actual SHA captured in §Merge mechanics before invoking Monitor.
 
-```
+```js
 Monitor(
   command='last_status=""
 while true; do

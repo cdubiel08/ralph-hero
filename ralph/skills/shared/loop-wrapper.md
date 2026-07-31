@@ -62,7 +62,7 @@ Paste this template into the `Skill("loop", args="…")` call in each SKILL.md's
 Replace `{INNER_COMMAND}`, `{PROGRESS_SENTINELS}`, `{TERMINAL_SENTINELS}`, and `{DELAY_BUCKETS}`
 from the manifest row for the skill:mode being wrapped.
 
-```
+```js
 Skill("loop", args="${LOOP_INTERVAL:+${LOOP_INTERVAL} }{INNER_COMMAND}
 
 Continuation rules (LOAD-BEARING):
@@ -81,7 +81,7 @@ it declared complete. Cancel the loop via /tasks → delete pending wakeup.")
 
 **Worked example (impl:auto):**
 
-```
+```js
 Skill("loop", args="Run /ralph:impl --mode auto ${STRIPPED_ARGS}
 
 Continuation rules (LOAD-BEARING):

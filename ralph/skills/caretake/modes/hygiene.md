@@ -40,7 +40,7 @@ The tool returns seven categories in one response:
 
 Print the full hygiene report from the `project_hygiene` response. Shape:
 
-```
+```text
 Hygiene Report
 ==============
 
@@ -79,7 +79,7 @@ Summary:
 
 Append the dashboard's `health` section warnings to the report:
 
-```
+```text
 Health Warnings: [from dashboard health section]
   [CRITICAL] lock_collision: #44 stuck in __LOCK__ state for 4 hours
   [WARNING] oversized_in_pipeline: #55 (XL) in In Progress
@@ -109,7 +109,7 @@ Call `ralph_hero__metrics_trends` with `capture: true` (no other arguments). The
 
 Output the summary block and then emit exactly one terminal token (see [outcome-tokens.md](../outcome-tokens.md)).
 
-```
+```text
 Hygiene complete.
   Items scanned: [totalScanned from project_hygiene]
   Archive eligible: N

@@ -53,7 +53,7 @@ Per-task retry budget: **3 attempts**. After three, escalate to Human Needed (`_
 
 Tier-escalation path (model-driven BLOCKED). When the implementer's internal retry budget is exhausted at the highest tier WITHIN this invocation AND the current dispatching model is NOT opus, emit a structured terminal line BEFORE stopping:
 
-```
+```text
 IMPL BLOCKED model=<current> needs=opus reason=<short-reason>
 ```
 

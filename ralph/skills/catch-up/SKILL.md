@@ -35,7 +35,7 @@ The unified orientation verb. The `--mode` flag selects a single-surface alterna
 
 **`--auto` refusal** — if `--auto` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/auto-alias.md` § Refusal targets):
 
-```
+```text
 --auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop suitability for the canonical detail.
 ```
 
@@ -67,7 +67,7 @@ You compose three primitives:
 
 Dispatch:
 
-```
+```js
 Agent(
   subagent_type="ralph:catch-up-agent",
   description="Catch-up narrative",

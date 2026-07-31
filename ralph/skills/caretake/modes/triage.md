@@ -16,7 +16,7 @@ git branch --show-current
 
 If NOT on `main`, STOP and emit:
 
-```
+```text
 TRIAGED skipped — branch <name> is not main
 ```
 
@@ -34,7 +34,7 @@ Triage must run from main to avoid accidental commits on feature branches.
 
 **Select** (when Query 0 was empty) the first issue from Query 2 whose number is NOT in `triaged_numbers`. If no untriaged issue is found, emit:
 
-```
+```text
 Queue empty.
 ```
 
@@ -63,7 +63,7 @@ and STOP.
 
 Hard precondition: if the selected issue is NOT in Backlog (or null), emit:
 
-```
+```text
 TRIAGED skipped — <workflowState> is outside triage scope
 ```
 

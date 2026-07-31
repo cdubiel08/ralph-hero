@@ -72,7 +72,7 @@ The `impl-staging-gate.sh` hook gates `Bash` calls across all worktrees uniforml
 
 When reality doesn't match the plan exactly, STOP and surface the gap. Do NOT silently adapt:
 
-```
+```text
 Issue in Phase [N]:
 Expected: [what the plan says]
 Found:    [actual situation]

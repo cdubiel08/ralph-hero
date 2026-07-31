@@ -59,6 +59,6 @@ Granted by default — everything the repo's normal development loop implies: re
 
 Verify your own work before calling it done — you know what that requires better than a checklist does. Then post a close-out comment on the issue (outcome, key decisions with where the journal lives, deferrals, artifact links), set the final workflow state, and report:
 
-```
+```text
 result: hero-fable — GH-NNN <outcome status>. Decisions journaled: <n>. Deferred: <none | list>.
 ```

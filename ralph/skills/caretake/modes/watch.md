@@ -24,7 +24,7 @@ git branch --show-current
 
 If NOT on `main`, STOP the entire invocation (no kind can safely mutate state from a feature branch) and emit, for each kind that would have run:
 
-```
+```text
 WATCH-<KIND> SKIPPED — branch <name> is not main
 ```
 

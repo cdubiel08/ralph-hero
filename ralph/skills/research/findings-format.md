@@ -152,7 +152,7 @@ Consumed by plan and impl skills to set up per-repo worktrees and wire `blockedB
 
 When converting local file references to permalinks (Step 7), the shape is:
 
-```
+```text
 https://github.com/$RALPH_GH_OWNER/$RALPH_GH_REPO/blob/<commit>/<file>#L<line>
 ```
 
@@ -232,10 +232,10 @@ Confidence calibration:
 
 | Range | Meaning | Typical evidence profile |
 |---|---|---|
-| 0.7 – 1.0 | High | Multiple corroborating primary sources with direct quotes/code refs; no contradicting evidence found |
-| 0.5 – 0.69 | Medium | Some supporting evidence but gaps; key support from secondary sources; one weak contradicting signal |
-| 0.2 – 0.49 | Low | Sparse evidence; support mostly from weak sources; no direct confirmation |
-| 0.0 – 0.19 | Insufficient | No meaningful evidence found after broad search |
+| ≥ 0.7 | High | Multiple corroborating primary sources with direct quotes/code refs; no contradicting evidence found |
+| ≥ 0.5 and < 0.7 | Medium | Some supporting evidence but gaps; key support from secondary sources; one weak contradicting signal |
+| ≥ 0.2 and < 0.5 | Low | Sparse evidence; support mostly from weak sources; no direct confirmation |
+| < 0.2 | Insufficient | No meaningful evidence found after broad search |
 
 ### Detailed Findings shape (evidence chains)
 

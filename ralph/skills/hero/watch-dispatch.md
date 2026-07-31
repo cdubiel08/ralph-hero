@@ -12,7 +12,7 @@ Before dispatching any sub-skill or subagent, verify the issue body contains at 
 
 If none present, post a `needs input:` comment and escalate to Human Needed:
 
-```
+```text
 needs input: issue #NNN has no trace ID and no LQL snippet. Provide a trace ID (projects/<proj>/traces/<id>) or a gcloud logging read query before /ralph:hero --mode watch can proceed.
 ```
 
@@ -59,21 +59,21 @@ After each sub-skill or subagent dispatch completes, emit a terminal result line
 
 **On success (sub-skill/agent returned a result):**
 
-```
+```text
 result: #NNN dispatched to <sub-skill> — outcome: <summary>
 # outcome-recorder(decision=watch-dispatched, result=<outcome>, trace_id=<id-if-known>)
 ```
 
 **On escalation (no dispatch row matched or sre-fixit pre-check failed):**
 
-```
+```text
 result: #NNN escalated to Human Needed — no matching dispatch condition
 # outcome-recorder(decision=watch-escalated, result=human-needed, trace_id=<id-if-known>)
 ```
 
 **On SOUL refusal (no trace ID or LQL snippet):**
 
-```
+```text
 result: #NNN blocked — SOUL refusal: no trace ID or LQL snippet present
 # outcome-recorder(decision=watch-refused, result=missing-evidence, trace_id=none)
 ```

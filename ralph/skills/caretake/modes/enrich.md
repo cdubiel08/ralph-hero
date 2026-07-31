@@ -18,7 +18,7 @@ git branch --show-current
 
 If NOT on `main`, STOP and emit:
 
-```
+```text
 ENRICH SKIPPED — branch <name> is not main
 ```
 
@@ -30,7 +30,7 @@ Glob `thoughts/shared/ideas/*.md`. Read each file's frontmatter; select files wi
 
 If no `status: draft` file is found, emit:
 
-```
+```text
 Queue empty.
 ```
 

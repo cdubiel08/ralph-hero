@@ -45,7 +45,7 @@ Remediation, triage, and follow-up analysis belong to `/ralph:caretake` — NOT 
 
 ## Negative example (do NOT produce output like this)
 
-```
+```markdown
 ### Critical Issues
 
 **48 CRITICAL health warnings** — issues stuck beyond 96-hour threshold:
@@ -65,7 +65,7 @@ The "Key Findings" block, the "should be split" recommendation, the "can be arch
 
 ## Correct shape
 
-```
+```text
 [dashboard.formatted verbatim]
 
 ### Critical Health Warnings (N)

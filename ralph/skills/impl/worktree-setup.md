@@ -17,7 +17,7 @@ ACTUAL_BRANCH=$(git -C "$WORKTREE_PATH" branch --show-current)
 
 Default-mode worktree setup is **optional UX** — the user can implement in place if they prefer. Prompt:
 
-```
+```text
 Would you like me to set up an isolated worktree for this implementation?
 
 This creates a separate working directory (via the built-in worktree tool,
@@ -29,7 +29,7 @@ Or we can implement directly in the current directory if you prefer.
 
 If the user agrees:
 
-```
+```js
 EnterWorktree({name: "GH-NNN"})
 ```
 
@@ -39,7 +39,7 @@ EnterWorktree({name: "GH-NNN"})
 
 If a worktree for `GH-NNN` already exists (recorded from a prior creation, or discovered via `git worktree list`), reuse it instead of creating a new one:
 
-```
+```js
 EnterWorktree({path: "<recorded worktree path>"})
 ```
 
@@ -126,7 +126,7 @@ When the research doc has a "Cross-Repo Scope" section, the implementation spans
 
 **Step 2: Create worktrees in each repo.** For each repo, `cd <localDir>` then create via the tool (so that repo's own `WorktreeCreate` hook — if any — fires):
 
-```
+```js
 EnterWorktree({name: "GH-NNN"})
 ```
 
@@ -134,7 +134,7 @@ Apply the branch-verification + Option-2 fallback from the creation-mechanism no
 
 Example for `#601` spanning ralph-hero + landcrawler-ai — the tool reports each repo's own `.claude/worktrees/GH-601`:
 
-```
+```text
 ~/projects/ralph-hero/.claude/worktrees/GH-601/
 ~/projects/landcrawler-ai/.claude/worktrees/GH-601/
 ```

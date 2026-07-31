@@ -46,13 +46,13 @@ References: [scope-detection.md](scope-detection.md), [setup-state.md](setup-sta
 
 **`--auto` refusal** — if `--auto` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/auto-alias.md` § Refusal targets):
 
-```
+```text
 --auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop suitability for the canonical detail.
 ```
 
 **`--loop` refusal** — if `--loop` appears in `$ARGUMENTS`, emit the following and STOP (see `ralph/skills/shared/loop-wrapper.md` § Refusal message):
 
-```
+```text
 --loop is not supported for this mode. Looping is meaningful only for autonomous queue-drainers; this surface is interactive. See ralph/CLAUDE.md § Loop suitability.
 ```
 
@@ -85,25 +85,25 @@ Interactive GitHub Project V2 bootstrap. **Idempotent** — safe to re-run any t
 7. **Write env vars** — to the target from Step 1. Required: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`. Split-owner adds `RALPH_GH_PROJECT_OWNER`. Project-scoped installs use the two-layer split (scope vars → tracked `.claude/settings.json`, offered via `AskUserQuestion`; tokens/local toggles → gitignored `settings.local.json`) — see [scope-detection.md](scope-detection.md) § Project scope. Token via `gh auth` (no settings entry unless dual-PAT — see [token-setup.md](token-setup.md)).
 8. **Print restart instructions** — MCP server reads env at startup. Restart Claude Code, then re-run `/ralph:setup` to verify.
 
-```
+```text
 result: Setup complete — project #NNN created/verified, env written to <path>. Restart Claude Code.
 ```
 
 Or on `healthy` (no-op status check):
 
-```
+```text
 result: Setup already healthy — project #NNN "<title>", owner <owner>, repo <repo>. Nothing to do.
 ```
 
 Or on `broken` (diagnosed, not auto-fixed):
 
-```
+```text
 result: Setup broken — <check> failed (<reason>). Recommended fix: <fix>. <declined/deferred — see fix instructions above>.
 ```
 
 Or on STOP (declined to proceed, or paused mid-flow):
 
-```
+```text
 result: Setup paused at <step> — <reason>. Resume: /ralph:setup [NNN]
 ```
 
@@ -117,7 +117,7 @@ Install the global `ralph` command and shell completions. Detailed steps in [cli
 4. **Check environment** — record `PATH_OK` (is `~/.local/bin` in `$PATH`?), `COMPINIT_OK` (zsh only — `compinit` in `~/.zshrc`?), `JUST_OK` (`command -v just`).
 5. **Print per-shell summary** — conditional on the flags. End with `ralph doctor` + `/ralph:setup` as next steps.
 
-```
+```text
 result: CLI installed — ~/.local/bin/ralph. Restart shell or `source ~/.zshrc`.
 ```
 
@@ -131,7 +131,7 @@ Bootstrap `.ralph-repos.yml` from real project data. Detailed flow + YAML schema
 4. **Detect patterns** — same-domain pairs → optionally create `cross-repo-feature` decomposition patterns with `dependency-flow` edges.
 5. **Write file** — YAML output to target path. Merge mode preserves existing repos + appends new ones.
 
-```
+```text
 result: Registry written — <path>. <N> repos, <M> patterns.
 ```
 

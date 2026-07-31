@@ -103,6 +103,10 @@ References: [state-machine.md](state-machine.md), [task-graph.md](task-graph.md)
 ```bash
 case "$ARGUMENTS" in
   --mode\ auto*)        export RALPH_SUBCOMMAND=auto ;;
+  # --tick shares the `auto` scope so the autopilot-* hooks (which gate on
+  # RALPH_COMMAND=hero + RALPH_SUBCOMMAND=auto) behave identically for the
+  # loop launch and every tick it dispatches. Step 1 routes the two to
+  # DIFFERENT bodies — see the --tick test there.
   --tick*)              export RALPH_SUBCOMMAND=auto ;;
   --mode\ watch*)       export RALPH_SUBCOMMAND=watch ;;
   --mode\ pr-drain*)    export RALPH_SUBCOMMAND=pr-drain ;;
@@ -120,9 +124,11 @@ if [[ "$RALPH_SUBCOMMAND" == "default" && "$ARGUMENTS" == *--loop* ]]; then
 fi
 ```
 
-## Step 1: Dispatch by `RALPH_SUBCOMMAND`
+## Step 1: Dispatch
 
-Route to the matching mode section below. The dispatcher does NOT rewrite terminal `result:` lines — the harness reads them directly.
+**If `$ARGUMENTS` contains `--tick`, go to § Auto tick and run [auto-tick.md](auto-tick.md). Do NOT fall through to § --mode auto.** This test comes first and is load-bearing: `--tick` deliberately shares `RALPH_SUBCOMMAND=auto` with `--mode auto` so the four `autopilot-*` hooks see one consistent scope, but the two run *different* bodies. `--mode auto` emits `Skill("loop", …)`; the tick is the per-event step that loop dispatches. Routing `--tick` into § --mode auto would spawn a nested loop on every tick instead of classifying one event.
+
+Otherwise route by `RALPH_SUBCOMMAND` to the matching mode section below. The dispatcher does NOT rewrite terminal `result:` lines — the harness reads them directly.
 
 ## Default mode — one-shot orchestrator
 
@@ -139,7 +145,7 @@ Autonomous never-terminating adaptive watcher via `/loop` dynamic mode. Opt-in e
 
 Emit:
 
-```
+```js
 Skill("loop", args="Run /ralph:hero --tick on the next-most-important event on the project queue\n\n<continuation prompt from loop-wrapper.md § Continuation-prompt template, hero:auto manifest row>")
 ```
 

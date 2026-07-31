@@ -209,7 +209,7 @@ If existing children were found in §Step 3, compare against the proposal: reuse
 
 **Create new** — one batch call for every net-new child:
 
-```
+```js
 create_sub_issues(parentNumber: <parent-number>, maxChildEstimate: "S", children: [
   {title, body, estimate: <XS|S>, workflowState: "Ready for Plan" | omit,
    dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]},
@@ -293,7 +293,7 @@ Determine target state for every child: scope clear → `Ready for Plan`; needs 
 
 ### §Step 11: Emit terminal tokens
 
-```
+```text
 SPLIT <N>
 ```
 
