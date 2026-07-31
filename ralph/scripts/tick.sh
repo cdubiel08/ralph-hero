@@ -32,24 +32,40 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ "${RALPH_ALLOW_API_BILLING:-}" != "true"
   exit 3
 fi
 
-# --- One tick at a time per machine (portable: no flock on stock macOS) -----
-# noclobber makes create+write one atomic O_EXCL operation, so the pid exists
-# the instant the lock does — no mkdir-then-write gap for a racer to misread
-# as stale. The read-back verify closes the residual rm/retake race: whoever's
-# pid is in the file proceeds; everyone else skips (fail closed).
+# --- One tick at a time per machine ------------------------------------------
+# Preferred: flock (Linux, or brew coreutils on macOS) — a real atomic lock
+# with stale-owner recovery for free (the fd dies with the process).
+# Fallback (stock macOS has no flock): noclobber pidfile. O_EXCL create+write
+# is one atomic op, takeover of a dead holder is compare-and-delete (re-read
+# immediately before rm; only remove if the content is still the stale pid we
+# judged dead — a contender that suspended across another taker's acquisition
+# sees a changed pid and backs off), and a read-back verify guards the tail.
+# A microsecond cat→rm window remains; the per-issue claim guard in board.ts
+# is the mutual-exclusion backstop that makes any residual overlap refuse
+# per-item rather than double-work.
 LOCK="$RALPH_HOME/tick.pid"
-take_lock() { ( set -o noclobber; echo $$ > "$LOCK" ) 2>/dev/null; }
-if ! take_lock; then
-  HOLDER_PID=$(cat "$LOCK" 2>/dev/null || echo "")
-  if [ -n "$HOLDER_PID" ] && kill -0 "$HOLDER_PID" 2>/dev/null; then
-    echo "tick: previous tick (pid $HOLDER_PID) still running — skipping" >&2
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCK"
+  if ! flock -n 9; then
+    echo "tick: previous tick still running (flock held) — skipping" >&2
     exit 0
   fi
-  rm -f "$LOCK"   # stale lock from a crashed tick
-  take_lock || { echo "tick: lock race — skipping" >&2; exit 0; }
+else
+  take_lock() { ( set -o noclobber; echo $$ > "$LOCK" ) 2>/dev/null; }
+  if ! take_lock; then
+    HOLDER_PID=$(cat "$LOCK" 2>/dev/null || echo "")
+    if [ -n "$HOLDER_PID" ] && kill -0 "$HOLDER_PID" 2>/dev/null; then
+      echo "tick: previous tick (pid $HOLDER_PID) still running — skipping" >&2
+      exit 0
+    fi
+    if [ "$(cat "$LOCK" 2>/dev/null)" = "$HOLDER_PID" ]; then
+      rm -f "$LOCK"   # compare-and-delete: still the stale pid we judged dead
+    fi
+    take_lock || { echo "tick: lock race — skipping" >&2; exit 0; }
+  fi
+  [ "$(cat "$LOCK" 2>/dev/null)" = "$$" ] || { echo "tick: lock race — skipping" >&2; exit 0; }
+  trap 'rm -f "$LOCK"' EXIT
 fi
-[ "$(cat "$LOCK" 2>/dev/null)" = "$$" ] || { echo "tick: lock race — skipping" >&2; exit 0; }
-trap 'rm -f "$LOCK"' EXIT
 
 date +%s > "$RALPH_HOME/heartbeat"
 
