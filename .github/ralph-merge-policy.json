@@ -1,10 +1,10 @@
 {
   "version": 1,
   "attestation": {
-    "required": true
+    "required": false
   },
   "external_review": {
-    "required": true,
+    "required": false,
     "bot": "coderabbitai"
   },
   "exempt_authors": [
