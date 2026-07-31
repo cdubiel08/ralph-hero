@@ -1,6 +1,6 @@
 # Decomposition
 
-Epic → feature decomposition for `/ralph:plan --mode epic`. Folds `ralph-plan-epic`'s plan-of-plans shape and the epic-decomposition side of `ralph-split`. Atomic splitting (M/L/XL → S/XS) is NOT here — that's `/ralph:caretake --mode split` (Plan 7).
+Epic → feature decomposition for `/ralph:plan --mode epic`. Atomic splitting (M/L/XL → S/XS) is NOT here — that's `/ralph:caretake --mode split`.
 
 ## When epic-mode applies
 
@@ -72,7 +72,7 @@ Estimate defaults:
 | L | 3-5 S children |
 | XL | 3-5 M children, OR 6-10 S children |
 
-**A feature child is the PR unit** (GH-1538): size each feature so it ships as one coherent PR — S or M is fine. A feature's internal tasks are plan *phases* (executed one per tick by `/ralph:impl --mode auto`, committed per phase on one branch), NEVER further sub-issues. Do not decompose a feature into task-level children to "help the autonomous loop" — smaller issues do not make the loop safer, they multiply PRs, CI runs, and review overhead (~55–75 billed CI minutes per PR regardless of diff size).
+**A feature child is the PR unit**: size each feature so it ships as one coherent PR — S or M is fine. A feature's internal tasks are plan *phases* (executed one per tick by `/ralph:impl --mode auto`, committed per phase on one branch), NEVER further sub-issues. Do not decompose a feature into task-level children to "help the autonomous loop" — smaller issues do not make the loop safer, they multiply PRs, CI runs, and review overhead (~55–75 billed CI minutes per PR regardless of diff size).
 
 ## Dependency-edge rules
 
@@ -100,7 +100,7 @@ When an epic was previously decomposed and you're re-running `--mode epic`:
 5. **Create new children** — for features without an existing match.
 6. **Rewire dependencies** — `list_dependencies(epic-number)` and reconcile against the new Feature Sequencing.
 
-The plan-of-plans doc is overwritten with the new structure; the old version is in git history.
+The plan-of-plans doc is overwritten with the new structure; the prior version stays recoverable from git history.
 
 ## Cross-repo epic
 
@@ -115,7 +115,7 @@ When the epic spans multiple repos (`.ralph-repos.yml` present, epic touches mul
 
 1. **Over-decomposition** — 10+ children for an L epic. Usually means features are too granular; merge.
 2. **Under-decomposition** — 1-2 huge children. Defeats the point of epic-mode; should be a regular plan.
-2a. **Task-issues** — creating sub-issues for work that will ship in the same PR anyway. Tasks inside one feature are plan phases, not issues (GH-1538). A child issue is justified only when it must ship independently: separate PR/revert scope, different surface or repo, or genuinely parallel implementation streams.
+2a. **Task-issues** — creating sub-issues for work that will ship in the same PR anyway. Tasks inside one feature are plan phases, not issues. A child issue is justified only when it must ship independently: separate PR/revert scope, different surface or repo, or genuinely parallel implementation streams.
 3. **Cycles** — A → B and B → A. The decomposition is wrong; one feature must subsume the other or be split.
 4. **Shared mutable state across children** — if Features A and B both modify the same file, they're not really independent. Either sequence them or merge.
 5. **Plan-of-plans without sequencing** — listing features without a dependency order means downstream can't dispatch them. Always include `## Feature Sequencing` even if "all independent" (state that explicitly).

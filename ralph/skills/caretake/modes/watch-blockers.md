@@ -6,7 +6,7 @@ Resolve items parked by the `WAIT-issue=NNN` triage verdict. Scan OPEN items in 
 export RALPH_SUBCOMMAND=watch-blockers
 ```
 
-This is the downstream consumer that makes the `WAIT-issue=NNN` verdict non-dead-ending: an item waits on a *named, watched dependency edge* and advances automatically when all blockers close. Triage (#1472) produces the `add_dependency` edge + a `## Escalation` comment naming the blocker; this mode resolves it.
+This is the downstream consumer that makes the `WAIT-issue=NNN` verdict non-dead-ending: an item waits on a *named, watched dependency edge* and advances automatically when all blockers close. `--mode triage` produces the `add_dependency` edge + a `## Escalation` comment naming the blocker; this mode resolves it.
 
 No `Stop` hook gates this mode (parity with `--mode watch-pr`/`watch-upstream`/`hygiene`/`trends`) — it mutates only the dependency-parked items it owns. The terminal token is emitted by convention, not hook-enforced.
 
@@ -29,12 +29,12 @@ watch-blockers mutates workflow state, so it must run from `main`. (Distinct fro
 Two complementary sweeps, union the results (dedup by issue number):
 
 1. `list_issues(profile: "analyst-triage", workflowState: "Human Needed", limit: 250)` — the canonical `WAIT-issue=NNN` parking state.
-2. `list_issues(profile: "analyst-triage", workflowState: "Backlog", limit: 250)` — forward-compat for the Gap-A relaxation (a future `WAIT-issue` may park Backlog+edge per triage.md Gap A cross-ref).
+2. `list_issues(profile: "analyst-triage", workflowState: "Backlog", limit: 250)` — catches dependency-parked items that were left in Backlog with an edge rather than moved to Human Needed.
 
 For each candidate, identify its blocker(s) from **either** signal (prefer the edge; fall back to the `## Escalation` text):
 
 - **Edge:** `list_dependencies(number: NNN)` → inspect the `blockedBy` connection; each node carries `number` + `state`.
-- **`## Escalation` body convention (#1472):** read the issue's body/comments for a `## Escalation` block; parse the blocker number from the `Blocked by #NNN` line and the advance target from `Move to <state> once #NNN closes` (default `Ready for Plan` when no explicit target is named).
+- **`## Escalation` body convention:** read the issue's body/comments for a `## Escalation` block; parse the blocker number from the `Blocked by #NNN` line and the advance target from `Move to <state> once #NNN closes` (default `Ready for Plan` when no explicit target is named).
 
 If neither signal yields a blocker number, **skip** the item (it is not dependency-parked; not counted in `<m>`).
 
@@ -88,4 +88,4 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - Mutates only dependency-parked items — never creates or closes issues, never touches items without a blocker signal.
 - No code changes.
 - Rate-limit awareness: the sweep does one `list_dependencies` (or `get_issue`) per candidate across two `list_issues` queries (limit 250 each). On a large board this is a meaningful number of API calls per heartbeat tick — parity with watch-upstream's sweep shape; the proactive rate-limiter in the MCP server will warn at 100 remaining and block at 50.
-- Heartbeat fan-out is wired in SKILL.md (Phase 3, #1473); the mode runs via explicit `--mode watch-blockers` dispatch or as part of `--mode all`.
+- Runs inside the `--mode all` heartbeat fan-out, or via explicit `--mode watch-blockers` dispatch.

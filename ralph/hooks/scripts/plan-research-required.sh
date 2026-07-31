@@ -2,10 +2,6 @@
 # ralph/hooks/scripts/plan-research-required.sh
 # PreToolUse (Write): Block plan creation if no research doc — estimate-aware.
 #
-# This is the slim-only copy. It is intentionally AHEAD of the byte-identical
-# plugin/ralph-hero/ twin: the estimate-threshold + human-override waiver paths
-# below exist only here until the main plugin catches up.
-#
 # Allow-paths, in order:
 #   1. Path not under /plans/                      -> allow
 #   2. RALPH_REQUIRES_RESEARCH != "true"           -> allow (global off-switch)

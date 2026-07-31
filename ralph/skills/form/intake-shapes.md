@@ -37,7 +37,7 @@ The research doc already contains codebase analysis, code references, and archit
 
 This avoids re-investigating while still grounding the idea in the project context.
 
-> **Intentional enrichment vs source skill** — the source plugin's research-input branch ran `thoughts-locator` only (no analyzer). The slim plugin adds `thoughts-analyzer` because a user feeding a research doc into `/ralph:form` typically wants prior-art decisions surfaced too, not just adjacent documents — that produces a better-grounded issue. Token cost is bounded: the analyzer runs on the top-N `thoughts-locator` hits, not the corpus.
+> **Why the analyzer runs here** — a user feeding a research doc into `/ralph:form` typically wants prior-art decisions surfaced, not just adjacent documents; `thoughts-locator` alone would return the latter. Token cost is bounded: the analyzer runs on the top-N locator hits, not the corpus.
 
 ### For `INPUT_TYPE == "idea"`
 
@@ -115,7 +115,7 @@ Tag generously — tags are how `/ralph:form` will rediscover related ideas late
 
 ## Idea-file lifecycle contract
 
-Idea-file frontmatter is a shared interface across three surfaces: `/ralph:form --mode draft` (writer at capture), `/ralph:caretake --mode enrich` (background writer), and the daily brief (#1553, downstream reader — not yet built). This section is the contract those surfaces read and write against.
+Idea-file frontmatter is a shared interface across three surfaces: `/ralph:form --mode draft` (writer at capture), `/ralph:caretake --mode enrich` (background writer), and `/ralph:catch-up --mode brief` (downstream reader). This section is the contract those surfaces read and write against.
 
 **Status progression:**
 

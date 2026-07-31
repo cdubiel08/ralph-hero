@@ -1,6 +1,6 @@
 #!/bin/bash
 # ralph-hero/hooks/scripts/autopilot-director-postcheck.sh
-# PostToolUse:Skill — arms the never-terminate enforcement for the slim
+# PostToolUse:Skill — arms the never-terminate enforcement for the
 # `ralph:hero --mode auto` watcher and marks each loop tick as owing a
 # follow-up ScheduleWakeup. The Stop hook (autopilot-stop-gate.sh) reads the
 # sentinels written here to catch the silent-drop failure mode: a tick returns
@@ -21,11 +21,7 @@
 #
 # Discrimination is keyed to RALPH_COMMAND=hero (set reliably via
 # CLAUDE_ENV_FILE at SessionStart) plus the Skill payload — NOT RALPH_SUBCOMMAND
-# (a plain Step-0 export that does not propagate to hook processes). The legacy
-# ralph-hero plugin / Director-dispatch path is deprecated and uses its own
-# hook copies under plugin/ralph-hero/.
-#
-# See GH-1346 and thoughts/shared/research/2026-05-21-autopilot-loop-handoff.md.
+# (a plain Step-0 export that does not propagate to hook processes).
 #
 # Exit codes:
 #   0 - Always (observer, never blocks)
@@ -35,7 +31,7 @@ source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-# Only the slim hero verb. RALPH_COMMAND is set via CLAUDE_ENV_FILE and is the
+# Only the hero verb. RALPH_COMMAND is set via CLAUDE_ENV_FILE and is the
 # one env signal hooks can trust.
 [[ "${RALPH_COMMAND:-}" == "hero" ]] || exit 0
 

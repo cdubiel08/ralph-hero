@@ -1,5 +1,5 @@
 ---
-description: Autonomous orchestrator for the ralph slim plugin. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with decision-gated human plan approval (open design decisions route to the human; decision-free plans flow through) and autonomous merge by default. Five modes:default(one-shot), --mode auto (autopilot drain via /loop), --mode classify (director-only dispatch), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
+description: Autonomous orchestrator. Drives a GitHub issue through the full lifecycle (research → plan → impl → review → merge) with decision-gated human plan approval (open design decisions route to the human; decision-free plans flow through) and autonomous merge by default. Five modes:default(one-shot), --mode auto (autopilot drain via /loop), --mode classify (director-only dispatch), --mode watch (watcher heartbeat), --mode pr-drain (PR triage). Triggers on "run the hero", "drain the backlog", "classify this issue", "dispatch this", "watch the alerts", "drain this PR", "auto mode", "ship this ticket".
 argument-hint: "[<issue-number> | --mode <auto|classify|watch|pr-drain>] [--issue NNN] [--pr NNN] [--since <window>] [--loop [duration]] [--auto] [--model fable]"
 context: inline
 model: sonnet
@@ -81,7 +81,7 @@ allowed-tools:
 
 # /ralph:hero — Orchestrator in one verb
 
-The only autonomous entrypoint in the ralph slim plugin. Drives one issue end-to-end by default, or fans out to four mode-specific orchestrations.
+The only autonomous entrypoint. Drives one issue end-to-end by default, or fans out to four mode-specific orchestrations.
 
 | Mode | Trigger | Role |
 |---|---|---|
@@ -150,11 +150,11 @@ Route to the matching mode section below. The dispatcher does NOT rewrite termin
 
 Director-only mode: classify one event, dispatch the correct verb, stop. Full taxonomy in [event-classes.md](event-classes.md).
 
-1. **Parse + detect input source.** `--issue NNN` → `TARGET_ISSUE=NNN`, skip to step 3. `RemoteTrigger` tool input (deprecated) → extract `issue_number`+`team`, set `DISPATCH_REASON=RemoteTrigger`, skip to step 4. Otherwise → step 2.
+1. **Parse + detect input source.** `--issue NNN` → `TARGET_ISSUE=NNN`, skip to step 3. Otherwise → step 2.
 2. **Read `next_actions({ audience: "agent" })`.** Empty queue → emit `result: Queue empty. No events to dispatch.` STOP. Pick top-ranked direction; resolve `TARGET_ISSUE` per [event-classes.md](event-classes.md) (kind rules). **Audience MUST be `agent` (not the `human` default):** this is the autonomous orchestrator path (and the engine of `--mode auto`), so it must get the XS/S estimate penalty (`audiencePenalty` in `directions.ts`) and the Backlog/null-state triage fallback (the agent-only `scored.length === 0` branch). With the human default, hero ranks XL like XS and idles on `Queue empty.` while Backlog has untriaged work. Sibling-file audit: `dispatch.md` and `watch-dispatch.md` have no other queue-read call sites.
 3. **Fetch + classify.** `get_issue({ number: TARGET_ISSUE })`. Apply [event-classes.md](event-classes.md) priority order: `trigger:*` labels → **`blocked:*` labels (watcher routing)** → automation labels → `workflow_state`. Set `TEAM`, `ENTRYPOINT`, `DISPATCH_REASON`, `CONSUMED_LABEL`, and (for `blocked:*`) `DISPATCH_ARG`. For the `blocked:*` tier: a label prefix-matching `blocked:pr-` → `TEAM=caretakers`, `ENTRYPOINT=ralph:caretake`, `DISPATCH_ARG="--mode watch-pr"`, `DISPATCH_REASON=blocked:pr`, `CONSUMED_LABEL=none`; exact `blocked:upstream` → `DISPATCH_ARG="--mode watch-upstream"`, `DISPATCH_REASON=blocked:upstream`, `CONSUMED_LABEL=none`.
 4. **Dispatch.** For the `blocked:*` tier, `Skill(ENTRYPOINT, args=DISPATCH_ARG)` — i.e. `Skill("ralph:caretake", args="--mode watch-pr")` or `Skill("ralph:caretake", args="--mode watch-upstream")`, a **board-wide watcher sweep** NOT scoped to `NNN` (the watcher modes ignore an issue arg). For all other tiers, `Skill(ENTRYPOINT, args="NNN")` (bare issue number). Unimplemented team (memorykeepers) → emit `needs input: team <name> not yet implemented; skipping dispatch.`
-5. **Consume label.** If `CONSUMED_LABEL` set (only the `trigger:*` tier sets it): `save_issue({ number: TARGET_ISSUE, labels: ISSUE_LABELS minus CONSUMED_LABEL })`. The `blocked:*` tier (`CONSUMED_LABEL=none` — the watcher owns the label lifecycle), automation labels, and `RemoteTrigger` paths skip this step.
+5. **Consume label.** If `CONSUMED_LABEL` set (only the `trigger:*` tier sets it): `save_issue({ number: TARGET_ISSUE, labels: ISSUE_LABELS minus CONSUMED_LABEL })`. The `blocked:*` tier (`CONSUMED_LABEL=none` — the watcher owns the label lifecycle) and the automation-label tier skip this step.
 6. **Emit result marker:** `result: Dispatched #NNN to <team> via <entrypoint>. (reason: <DISPATCH_REASON>)`.
 
 ## --mode auto
@@ -174,7 +174,7 @@ Do not maintain an iteration counter — `/loop` and `--mode classify` own that.
 
 ## --mode watch
 
-Watcher team entrypoint. Full dispatch table + SOUL refusal preconditions + heartbeat shape in [watch-dispatch.md](watch-dispatch.md).
+Watcher team entrypoint. Full dispatch table + evidence preconditions + heartbeat shape in [watch-dispatch.md](watch-dispatch.md).
 
 **`--loop` gate** — detect `--loop [interval]` (snippet from `loop-wrapper.md` § Arg-parsing snippet). If present: default interval `15m` (see `RALPH_WATCH_HEARTBEAT_MIN`). Use `hero:watch` manifest row — heartbeat, no `Queue empty.` terminal sentinel; re-fires unless `RALPH_WATCH_DISABLE=true` or user cancels via `/tasks`. Emit `Skill("loop", args="${LOOP_INTERVAL:-15m} /ralph:hero --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
 
@@ -186,7 +186,7 @@ case "$ARGUMENTS" in
 esac
 ```
 
-- **Direct (`--issue NNN` or bare number):** fetch issue → SOUL refusal preconditions ([watch-dispatch.md](watch-dispatch.md) §SOUL refusal) → dispatch table first-match-wins ([watch-dispatch.md](watch-dispatch.md) §Dispatch table) → sre-fixit pre-check if applicable → emit terminal result line.
+- **Direct (`--issue NNN` or bare number):** fetch issue → evidence preconditions ([watch-dispatch.md](watch-dispatch.md) §Evidence preconditions) → dispatch table first-match-wins ([watch-dispatch.md](watch-dispatch.md) §Dispatch table) → sre-fixit pre-check if applicable → emit terminal result line.
 - **Heartbeat (no arg):** follow [watch-dispatch.md](watch-dispatch.md) §Heartbeat mode. Bounded loop — only processes issues from the initial `list_issues` call.
 
 ## --mode pr-drain
@@ -204,4 +204,4 @@ Drain a pull request that `--mode classify` cannot dispatch (Dependabot bumps, s
 
 ## Notes
 
-`RALPH_SUBCOMMAND` is set once at Step 0. Hooks discriminate against it to no-op when a different mode is active. `ralph` is the sole plugin; `plugin/ralph-hero/` was deleted in GH-1438.
+`RALPH_SUBCOMMAND` is set once at Step 0. Hooks discriminate against it to no-op when a different mode is active.

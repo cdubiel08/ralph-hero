@@ -26,7 +26,7 @@ Skip this rule only when the user explicitly says "don't read X yet" or when the
 
 ## Blocker semantics (autonomous mode picker)
 
-`--mode auto`'s Step 2 picker filters to unblocked issues. The slim plugin reuses the source rule:
+`--mode auto`'s Step 2 picker filters to unblocked issues:
 
 - An issue is blocked only if `blockedBy` points to issues **outside** its group that are not in a Done state.
 - Within-group `blockedBy` is for phase ordering, not blocking — it does not disqualify the issue from selection.

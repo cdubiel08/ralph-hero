@@ -16,7 +16,7 @@
 #   - the option labels contain both an "Approve..." and a "Request changes"
 #     entry (the primary picker's signature per plan-review.md).
 #
-# Decisions-picker naming contract (GH-1544): the decision pickers introduced
+# Decisions-picker naming contract: the decision pickers
 # by plan-review.md § Interactive vs auto use `Decision:`-prefixed headers and
 # never pair "Approve"/"Request changes" labels, so they pass this detection
 # untouched — by design, no bypass logic needed here. The contract lives in

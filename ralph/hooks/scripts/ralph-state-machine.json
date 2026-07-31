@@ -37,7 +37,7 @@
       "is_lock_state": true
     },
     "Plan in Review": {
-      "description": "Plan under review (decision-gated, GH-1544): decision-free plans auto-advance to In Progress; plans with open design decisions hold here with a ## Decision Request comment until the human replies",
+      "description": "Plan under review (decision-gated): decision-free plans auto-advance to In Progress; plans with open design decisions hold here with a ## Decision Request comment until the human replies",
       "allowed_transitions": ["In Progress", "Ready for Plan", "Human Needed", "Plan in Progress", "Done", "Canceled"],
       "required_by_commands": ["ralph_review", "ralph_split"],
       "produces_for_commands": ["ralph_plan", "ralph_review"],

@@ -53,22 +53,22 @@ For each discovered repo, ask the user via `AskUserQuestion`:
 
 ## Step 4: Detect decomposition patterns
 
-Heuristic: if two or more repos share a domain (e.g., `landcrawler-ai` + `landcrawler-toolkit` are both `data`), offer to create a `cross-repo-feature` pattern. Each pattern carries a list of repos and an optional `dependency-flow` edge.
+Heuristic: if two or more repos share a domain, offer to create a `cross-repo-feature` pattern. Each pattern carries a list of repos and an optional `dependency-flow` edge.
 
 Pattern shape:
 
 ```yaml
 patterns:
   cross-repo-feature:
-    description: Feature that spans the data platform
+    description: Feature that spans the API and its clients
     decomposition:
-      - repo: landcrawler-ai
+      - repo: api-service
         role: implementation
-      - repo: landcrawler-toolkit
+      - repo: web-client
         role: consumer
     dependency-flow:
-      - from: landcrawler-ai
-        to: landcrawler-toolkit
+      - from: api-service
+        to: web-client
 ```
 
 The pattern is consumed by `decompose_feature` (proposes sub-issues with the right blocking relationships).
@@ -81,23 +81,23 @@ YAML output. Merge mode: read the existing file, deep-merge new repos into the `
 
 ```yaml
 repos:
-  ralph-hero:
-    localDir: /Users/dubiel/projects/ralph-hero
+  api-service:
+    localDir: /abs/path/to/api-service
     domain: infra
     tech: TypeScript
     defaultLabels: [team:platform]
-    defaultAssignees: [cdubiel08]
+    defaultAssignees: [octocat]
     defaultEstimate: S
-  landcrawler-ai:
-    localDir: /Users/dubiel/projects/landcrawler-ai
-    domain: data
-    tech: Python
-    defaultLabels: [team:data]
+  web-client:
+    localDir: /abs/path/to/web-client
+    domain: frontend
+    tech: TypeScript
+    defaultLabels: [team:web]
     defaultEstimate: M
 
 patterns:
   cross-repo-feature:
-    description: Feature spans data platform
+    description: Feature spans the API and its clients
     decomposition: [...]
     dependency-flow: [...]
 ```

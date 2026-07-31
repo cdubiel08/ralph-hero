@@ -2,7 +2,7 @@
 # ralph/hooks/scripts/split-postcondition.sh
 # Stop: Verify /ralph:caretake --mode split created ≥2 sub-issues.
 #
-# Plan 6 hardening: scope-guarded (caretake + split).
+# Scope-guarded (caretake + split).
 #
 # Environment:
 #   RALPH_TICKET_ID   - Parent ticket being split

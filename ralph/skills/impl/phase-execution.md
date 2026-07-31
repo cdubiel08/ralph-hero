@@ -7,7 +7,7 @@ A phase is the atomic unit of implementation. It executes on one of two first-cl
 - **Direct** (no `### Tasks` — the common case): implement the phase inline. See §Direct execution.
 - **Task-graph** (`### Tasks` present): the plan opted this phase into parallel sub-agent dispatch. See §Task graph.
 
-Check for the section, pick the path, and execute. Do not narrate the choice or characterize the plan's format — the absence of `### Tasks` is a normal plan shape, not a defect or a legacy artifact.
+Check for the section, pick the path, and execute. Do not narrate the choice or characterize the plan's format — the absence of `### Tasks` is a normal plan shape, not a defect.
 
 ## §Direct execution
 
@@ -70,7 +70,7 @@ After all tasks pass the reviewer step:
 3. `APPROVED` → proceed to Step 4. `NEEDS_FIXES` → dispatch fixer; Critical issues block, Important issues get fixed inline, Minor issues are logged.
 4. Post `## Phase N Review` comment on the issue with reviewer verdict + diff summary.
 5. If drift accumulated, post `## Drift Log — Phase N` comment summarizing off-ownership writes (read from `${TMPDIR}/ralph-drift-${RALPH_TICKET_ID}.log`).
-6. Run the phase's automated verification via a **haiku test-runner fork** (GH-1538): `Agent(subagent_type="general-purpose", model="haiku", prompt="Run each of these Automated Verification commands from <worktree-path>: <commands>. For EACH command report PASS or FAIL with the actual parsed result (test counts, exit status) — never infer PASS from exit 0 or tail output alone; quote the failing output verbatim on FAIL.")`. This keeps raw test output out of the controller's context and puts a results-parsing discipline between "command exited" and "check passed". On any FAIL: attempt one fix in the controller, re-run via the same fork; if still failing, commit what works and STOP for human intervention.
+6. Run the phase's automated verification via a **haiku test-runner fork**: `Agent(subagent_type="general-purpose", model="haiku", prompt="Run each of these Automated Verification commands from <worktree-path>: <commands>. For EACH command report PASS or FAIL with the actual parsed result (test counts, exit status) — never infer PASS from exit 0 or tail output alone; quote the failing output verbatim on FAIL.")`. This keeps raw test output out of the controller's context and puts a results-parsing discipline between "command exited" and "check passed". On any FAIL: attempt one fix in the controller, re-run via the same fork; if still failing, commit what works and STOP for human intervention.
 
 ## §Resumption
 

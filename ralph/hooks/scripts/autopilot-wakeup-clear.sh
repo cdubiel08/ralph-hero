@@ -2,14 +2,11 @@
 # ralph-hero/hooks/scripts/autopilot-wakeup-clear.sh
 # PreToolUse:ScheduleWakeup — validate the wakeup call and clear the
 # pending-wakeup sentinel that autopilot-director-postcheck.sh wrote for the
-# current `ralph:hero --mode auto` tick. Combines the GH-1140 anti-pattern
-# check (delaySeconds != 300) with the sentinel-clear behavior.
-#
-# See GH-1346 and thoughts/shared/research/2026-05-21-autopilot-loop-handoff.md.
+# current `ralph:hero --mode auto` tick. Also rejects the delaySeconds=300
+# anti-pattern.
 #
 # Keyed to RALPH_COMMAND=hero (set reliably via CLAUDE_ENV_FILE); passes through
-# for any other session that uses ScheduleWakeup(). The legacy ralph-hero
-# plugin / Director path is deprecated and uses its own hook copies.
+# for any other session that uses ScheduleWakeup().
 #
 # Exit codes:
 #   0 - Allowed (pending mark cleared)
@@ -20,7 +17,7 @@ source "$(dirname "$0")/hook-utils.sh"
 
 read_input > /dev/null
 
-# Only the slim hero verb.
+# Only the hero verb.
 [[ "${RALPH_COMMAND:-}" == "hero" ]] || exit 0
 
 delay_seconds=$(get_field '.tool_input.delaySeconds')

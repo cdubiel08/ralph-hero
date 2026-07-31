@@ -1,6 +1,6 @@
 ---
-description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "collate debug errors", "filer Langfuse errors", "split this issue", "decompose ticket", "enrich idea files". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/debug/split/watch-pr/watch-upstream/watch-blockers/enrich) each route to a dedicated mode body under `modes/`.
-argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|debug|split|watch-pr|watch-upstream|watch-blockers|enrich|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
+description: All board maintenance, grooming, and reflection in one verb. Triggers on "triage backlog", "clean up board", "scan for stale", "status check", "post-mortem", "capture friction", "retro the session", "trend report", "snapshot metrics", "unblock issue", "answer unblock questions", "split this issue", "decompose ticket", "enrich idea files". Default mode is event-driven (reads `--issue NNN` labels and fans out via Skill). Named modes (triage/hygiene/unblock/postmortem/retro/trends/split/watch-pr/watch-upstream/watch-blockers/enrich) each route to a dedicated mode body under `modes/`; `debug` is retired and only reports so.
+argument-hint: "[--issue NNN | --mode <triage|hygiene|unblock|postmortem|retro|trends|split|watch-pr|watch-upstream|watch-blockers|enrich|all>] [#NNN] [--since <window>] [--auto-confirm] [--question] [--loop [duration]] [--auto]"
 context: inline
 model: sonnet
 hooks:
@@ -85,7 +85,7 @@ allowed-tools:
 
 # /ralph:caretake — Board steward in one verb
 
-All board maintenance flows through this one entrypoint. Twelve named modes plus a default event-driven dispatcher. Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out.
+All board maintenance flows through this one entrypoint. Twelve named modes plus a default event-driven dispatcher (`debug` is retired and only reports so). Each mode is a separate body under `modes/`; this top-level SKILL.md only owns arg parsing, dispatch routing, and the heartbeat fan-out.
 
 | Mode | Trigger | Role |
 |---|---|---|
@@ -97,7 +97,7 @@ All board maintenance flows through this one entrypoint. Twelve named modes plus
 | **postmortem** | `/ralph:caretake --mode postmortem [--plan-doc <path>]` | TaskList-driven structured session post-mortem |
 | **retro** | `/ralph:caretake --mode retro` | Capture intra-session friction into research doc |
 | **trends** | `/ralph:caretake --mode trends [--since 30d]` | Snapshot + markdown trend report (read-only stdout) |
-| **debug** | `/ralph:caretake --mode debug [--since 24h] [--auto-confirm]` | Collate Langfuse errors → file `debug-auto` issues |
+| **debug** | `/ralph:caretake --mode debug` | Retired — emits `DEBUG RETIRED` and stops |
 | **split** | `/ralph:caretake --mode split [#NNN]` | Split M/L/XL → multiple XS/S sub-issues |
 | **watch-pr** | `/ralph:caretake --mode watch-pr` | Resolve `blocked:pr-NNN` items when their PR merges (advance) or closes-unmerged (escalate) |
 | **watch-upstream** | `/ralph:caretake --mode watch-upstream` | Resolve `blocked:upstream` items when their external condition resolves (advance) or URL is dead/unparseable (escalate) |
@@ -119,9 +119,9 @@ References: [label-routing.md](label-routing.md) (default-mode dispatch table), 
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode triage` to `$ARGUMENTS` (verb=caretake alias row). Continue to `--loop` detection with the rewritten args.
 
 **`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set, route by mode (all use continuation-prompt template from `loop-wrapper.md`):
-- `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row; `--mode debug` → `caretake:debug` row; `--mode split` → `caretake:split` row. Emit `Skill("loop", …)` then STOP.
+- `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row; `--mode split` → `caretake:split` row. Emit `Skill("loop", …)` then STOP.
 - No args (no `--issue`) → bare invocation runs the **heartbeat fan-out** (`RALPH_SUBCOMMAND=all`; see the dispatch body), so loop it with the `caretake:all` heartbeat row — default interval `1h`, **no `Queue empty.` terminal**, re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:all row>")` then STOP. (The `caretake:default-event` row is the `--issue NNN`-scoped trigger-drain path — NOT the bare no-arg fan-out.)
-- `--issue NNN` present, `--mode postmortem`, `--mode retro`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
+- `--issue NNN` present, `--mode postmortem`, `--mode retro`, `--mode debug` (retired), or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
 - **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode all ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
 - **`--mode trends`** → periodic snapshot heartbeat; default interval `6h`. Use `caretake:trends` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-6h} /ralph:caretake --mode trends ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
 
@@ -163,7 +163,7 @@ Each mode body ends by emitting its terminal token (see [outcome-tokens.md](outc
 - [modes/postmortem.md](modes/postmortem.md) — TaskList-driven session post-mortem
 - [modes/retro.md](modes/retro.md) — intra-session friction → research doc
 - [modes/trends.md](modes/trends.md) — snapshot + markdown trend report
-- [modes/debug.md](modes/debug.md) — collate Langfuse errors
+- [modes/debug.md](modes/debug.md) — retired
 - [modes/split.md](modes/split.md) — M/L/XL → XS/S sub-issues
 - [modes/watch-pr.md](modes/watch-pr.md) — resolve `blocked:pr-NNN` items on PR merge/close
 - [modes/watch-upstream.md](modes/watch-upstream.md) — resolve `blocked:upstream` items on external condition
@@ -181,7 +181,7 @@ The harness reads these from the transcript; do not paraphrase. Full table in [o
 - postmortem: `POSTMORTEM <path>` | `POSTMORTEM SKIPPED <reason>`
 - retro: `RETRO <path>` | `RETRO SKIPPED <reason>`
 - trends: no terminal token (markdown output is the deliverable)
-- debug: `DEBUG FILED <N>` | `DEBUG SKIPPED <reason>`
+- debug: `DEBUG RETIRED` (mode has no implementation)
 - split: `SPLIT <N>` | `SPLIT SKIPPED <reason>`
 - watch-pr: `WATCH-PR ADVANCED <N>` | `WATCH-PR IDLE` | `WATCH-PR SKIPPED — branch <name> is not main`
 - watch-upstream: `WATCH-UPSTREAM ADVANCED <N>` | `WATCH-UPSTREAM IDLE` | `WATCH-UPSTREAM SKIPPED — branch <name> is not main`
@@ -191,5 +191,3 @@ The harness reads these from the transcript; do not paraphrase. Full table in [o
 ## Notes
 
 - **`RALPH_SUBCOMMAND` is set by each mode body** (not by SessionStart). Hooks discriminate against it to no-op when a different mode is active. SessionStart only sets `RALPH_COMMAND=caretake`, which guards all caretake-prefixed hooks at the plugin level.
-- **Mode bodies port source-skill workflows verbatim** where possible. Plan 7 is a structural fold; capability changes are out of scope.
-- **`ralph` is the sole plugin.** `plugin/ralph-hero/` was deleted in GH-1438.

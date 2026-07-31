@@ -41,7 +41,7 @@ When called with a project number that already exists:
 2. Name: `Ralph Kanban`
 3. Column field → **Workflow State**
 4. Filter: `-workflow-state:Canceled,Done,"Research in Progress","Plan in Progress"`
-   (Plan in Review stays VISIBLE — under decision-gated approval (GH-1544) a
+   (Plan in Review stays VISIBLE — under decision-gated approval a
    held plan waits there with a `## Decision Request` comment for the human;
    filtering it out would hide the pipeline's primary decision surface.)
 5. Save

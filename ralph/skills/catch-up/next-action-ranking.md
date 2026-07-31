@@ -23,7 +23,6 @@ For each direction's description (used in the picker), and for the introductory 
 
 **Never quote `direction.reason` verbatim.** Reach for `signals` first, then bring in the title for human-meaningful context.
 
-> Internal: `direction.reason` exists only as a back-compat field for non-skill callers and is `@deprecated`.
 
 ## Signal cue table
 

@@ -2,13 +2,9 @@
 # ralph/hooks/scripts/postmortem-completeness.sh
 # Stop: Validate post-mortem content emitted by /ralph:caretake --mode postmortem.
 #
-# Renamed from team-postmortem-completeness.sh on Plan 7 port — the slim plugin
-# has no `team` concept; this gate runs against the artifact written by the
-# postmortem mode body. Drops the TeamDelete tool-name check (Stop-event, no tool
-# context) and the TEAM_MARKER tmp-file lookup (slim plugin uses the
-# RALPH_POSTMORTEM_PATH env var the mode body sets directly).
+# Reads the artifact path from the RALPH_POSTMORTEM_PATH env var the mode body
+# sets directly.
 #
-# Plan 6 hardening:
 #   - Scope-guarded (caretake + postmortem).
 #   - grep pipelines append `|| true` so missing-section matches don't crash
 #     under set -euo pipefail.

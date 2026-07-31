@@ -120,4 +120,4 @@ result: Registry written — <path>. <N> repos, <M> patterns.
 
 ## Notes
 
-`RALPH_SUBCOMMAND` is set once at Step 0. SessionStart only sets `RALPH_COMMAND=setup`. No state-gate hooks — setup is not in the workflow pipeline. `ralph` is the sole plugin; `plugin/ralph-hero/` was deleted in GH-1438.
+`RALPH_SUBCOMMAND` is set once at Step 0. SessionStart only sets `RALPH_COMMAND=setup`. No state-gate hooks — setup is not in the workflow pipeline.

@@ -14,7 +14,7 @@
 #   <scope>        RALPH_COMMAND value this gate is active for. Multi-mode
 #                  sessions (e.g. /ralph:hero dispatching child verbs) keep
 #                  earlier skills' hooks registered, so the env scope guard is
-#                  still required on top of per-skill registration (GH-1413).
+#                  still required on top of per-skill registration.
 #   [:subcommand]  optional RALPH_SUBCOMMAND narrowing (e.g. caretake:triage).
 #   <command-key>  one or more command keys in ralph-state-machine.json
 #                  (short form "plan" resolves to "ralph_plan"). The allowlist

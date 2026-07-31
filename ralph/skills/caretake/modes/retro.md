@@ -117,7 +117,7 @@ Display a concise summary (one line per pain point) and use `AskUserQuestion` to
 ```
 Found N pain points across this session:
 
-1. [API confusion / blocking] Plugin permissions don't propagate to subagent dispatches → plugin/ralph-hero/skills/research/SKILL.md
+1. [API confusion / blocking] Plugin permissions don't propagate to subagent dispatches → ralph/skills/research/SKILL.md
 2. [Missing tooling / annoying] Worktree creation and rebase is a 4-command dance — no one-shot automation
 ...
 ```

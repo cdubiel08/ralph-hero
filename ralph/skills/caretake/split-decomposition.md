@@ -15,7 +15,7 @@ Do NOT split when:
 - The work is genuinely atomic (one file, one PR, one acceptance criterion).
 - The scope is unclear (route to `--mode triage` → Research Needed instead).
 - The parent is already fully split (children exist that cover the entire scope).
-- The children would merge in one PR anyway (single surface, shared revert scope) — that's a multi-phase plan, not a split (GH-1538). Splitting is for work that must ship independently: separate PR/revert scope, different surfaces or repos, or genuinely parallel implementation streams. Sub-deliverables that land together are plan phases.
+- The children would merge in one PR anyway (single surface, shared revert scope) — that's a multi-phase plan, not a split. Splitting is for work that must ship independently: separate PR/revert scope, different surfaces or repos, or genuinely parallel implementation streams. Sub-deliverables that land together are plan phases.
 
 ## §Decomposition heuristics
 
@@ -50,7 +50,7 @@ Pick from the rubric — do NOT default every child to XS. The `split-size-gate.
 
 When the strategy table maps to a per-artifact decomposition where each child owns multiple authored files (skill audits, fragment extractions, multi-file content updates), pick **S**. Reserve **XS** for genuinely single-file or one-edit children.
 
-Note (GH-1538): XS/S children of one split parent are batch-planned downstream as ONE group plan (`plan --mode auto` § Sibling-group planning) and ship as ONE PR — per-child estimates therefore size *phases* of that plan, not separate PR-sized deliverables.
+XS/S children of one split parent are batch-planned downstream as ONE group plan (`plan --mode auto` § Sibling-group planning) and ship as ONE PR — per-child estimates therefore size *phases* of that plan, not separate PR-sized deliverables.
 
 ## §Dependency wiring
 
@@ -70,7 +70,7 @@ Dependencies are orthogonal to workflow state. A child blocked by a sibling stil
 
 ## §Plan-of-plans emission
 
-A multi-child split (`SPLIT <N>`, N ≥ 2) writes a **parent plan-of-plans** in [modes/split.md](modes/split.md) §Step 7.5. This is what makes split children autonomously plannable — closes GH-1416.
+A multi-child split (`SPLIT <N>`, N ≥ 2) writes a **parent plan-of-plans** in [modes/split.md](modes/split.md) §Step 7.5. This is what makes split children autonomously plannable.
 
 **When it fires:** every split that creates ≥ 2 children. It does **not** fire on the re-estimate / `SPLIT SKIPPED` path (no children created, nothing to plan).
 
@@ -78,17 +78,17 @@ A multi-child split (`SPLIT <N>`, N ≥ 2) writes a **parent plan-of-plans** in 
 
 **Shape:** the plan-of-plans shape in [../plan/decomposition.md](../plan/decomposition.md) § Plan-of-plans shape (`type: plan-of-plans` frontmatter; `## Feature Decomposition` + `## Feature Sequencing` are the load-bearing sections). `doc-structure-validator.sh` validates this shape (it self-discriminates plan-of-plans from regular plans by `type:`/`## Feature Decomposition`, fence-stripped).
 
-**Match contract:** one `### Feature` per child, each carrying the child's **real issue number AND title** — parent-plan reuse matches a child to its section *by number or title*. Without both, the reuse short-circuit can't bind the child and it falls back to the research-required path (the deadlock GH-1416 fixes).
+**Match contract:** one `### Feature` per child, each carrying the child's **real issue number AND title** — parent-plan reuse matches a child to its section *by number or title*. Without both, the reuse short-circuit can't bind the child and it falls back to the research-required path.
 
 **Consistency:** `## Feature Sequencing` must equal the `## Issue Split` comment's dependency chain (§Step 8) — same edges, same order.
 
 **Why split (not plan) writes it:** split runs in **caretake** context, where the plan skill's `plan-research-required.sh` Write gate is not armed, so it can write a `plans/` doc with no research doc. The plan skill itself cannot (its own gate blocks the write).
 
-**Group-plan handoff (GH-1538):** the plan-of-plans is a sequencing/traceability artifact, not the executable plan. Downstream, `plan --mode auto` detects the split siblings via § Sibling-group planning (`ralph/skills/plan/intake-routing.md`) and authors ONE group plan covering every open Ready-for-Plan child — the children converge on one worktree, one branch, one PR.
+**Group-plan handoff:** the plan-of-plans is a sequencing/traceability artifact, not the executable plan. Downstream, `plan --mode auto` detects the split siblings via § Sibling-group planning (`ralph/skills/plan/intake-routing.md`) and authors ONE group plan covering every open Ready-for-Plan child — the children converge on one worktree, one branch, one PR.
 
 ## §Hook contracts
 
-Four `split-*` hooks gate this mode. Each scopes on `RALPH_SUBCOMMAND=split` (or legacy `RALPH_COMMAND=split` for the parallel period).
+Four `split-*` hooks gate this mode. Each scopes on `RALPH_SUBCOMMAND=split`.
 
 | Hook | Event | Matcher | Purpose |
 |---|---|---|---|

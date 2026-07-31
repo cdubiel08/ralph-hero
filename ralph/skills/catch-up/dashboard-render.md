@@ -1,6 +1,6 @@
 # Dashboard render
 
-This reference is consulted by `/ralph:catch-up --mode dashboard`. It carries the pipeline-render rules and the load-bearing negative-constraint prose ported verbatim from `plugin/ralph-hero/skills/status/SKILL.md`.
+This reference is consulted by `/ralph:catch-up --mode dashboard`. It carries the pipeline-render rules and their negative constraints.
 
 ## pipeline_dashboard call shape
 

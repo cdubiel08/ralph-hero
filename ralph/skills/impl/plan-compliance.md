@@ -1,6 +1,6 @@
 # Plan compliance
 
-How `/ralph:impl` follows the plan's File Ownership Summary, stages files, and handles drift. The slim plugin pushes enforcement into hooks; this reference describes the workflow body's responsibilities.
+How `/ralph:impl` follows the plan's File Ownership Summary, stages files, and handles drift. Enforcement lives in hooks; this reference describes the workflow body's responsibilities.
 
 ## §File Ownership
 
@@ -16,9 +16,9 @@ The hook does NOT enforce the positive case (you must enumerate). It enforces th
 Example staged-add session:
 
 ```bash
-# Plan's File Ownership table lists: ralph/skills/impl/SKILL.md, ralph/hooks/scripts/state-gate.sh
-git add ralph/skills/impl/SKILL.md ralph/hooks/scripts/state-gate.sh
-git commit -m "feat(ralph): Plan 5 Phase 1 — /ralph:impl scaffold + hook ports"
+# Plan's File Ownership table lists exactly these two files
+git add src/api/handler.ts src/api/__tests__/handler.test.ts
+git commit -m "feat(api): Phase 1 — request handler + tests"
 ```
 
 ## §Drift Log
@@ -63,7 +63,7 @@ When the plan spans multiple repos (research doc has a "Cross-Repo Scope" sectio
 
 1. **Commit and push separately in each repo's worktree.** Each repo gets its own PR.
 2. Stage specific files only — never `git add -A`/`.`/`--all` in any repo.
-3. Commit messages identify the repo: `feat(ralph-hero): [change]` vs `feat(landcrawler-ai): [change]`.
+3. Commit messages identify the repo: `feat(<repo-a>): [change]` vs `feat(<repo-b>): [change]`.
 4. Push each branch separately: `cd <repo's recorded worktree path> && git push -u origin feature/GH-NNN` (the tool-reported path from [worktree-setup.md §Cross-repo](worktree-setup.md), e.g. `<repo>/.claude/worktrees/GH-NNN`).
 
 The `impl-staging-gate.sh` hook gates `Bash` calls across all worktrees uniformly via `RALPH_COMMAND=impl`; no per-repo configuration needed.

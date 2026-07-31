@@ -6,7 +6,7 @@ Resolve Backlog items parked by the `WAIT-pr` triage verdict. Scan issues carryi
 export RALPH_SUBCOMMAND=watch-pr
 ```
 
-This is the downstream consumer that makes the `WAIT-pr` verdict non-dead-ending: an item waits on a *named, watched condition* (the PR) and advances automatically when that condition resolves. Phase 1 (#1404) produces the `blocked:pr-NNN` label + a `## Triage Decision` comment; this mode resolves it.
+This is the downstream consumer that makes the `WAIT-pr` verdict non-dead-ending: an item waits on a *named, watched condition* (the PR) and advances automatically when that condition resolves. `--mode triage` produces the `blocked:pr-NNN` label + a `## Triage Decision` comment; this mode resolves it.
 
 No `Stop` hook gates this mode (parity with `--mode hygiene`/`--mode trends`) — it mutates only the `blocked:pr-*`-parked items it owns. The terminal token is emitted by convention, not hook-enforced.
 
@@ -58,7 +58,7 @@ If `gh pr view` errors (PR not found / inaccessible), leave the item untouched a
 
 **Advance (PR merged).** Strip the `blocked:pr-NNN` label and apply the deferred verdict:
 
-1. Determine the deferred verdict. **Default `PROMOTE-plan`** (the common case — the item was waiting only on the PR). If the issue carries an explicit `## Deferred Verdict: <verdict>` comment, honor that verdict instead. (Phase 1 / #1404 does not write a `## Deferred Verdict` comment — it writes `## Triage Decision`, which names the *condition* but not a machine-parseable successor verdict — so the default applies unless a later phase adds the explicit comment.)
+1. Determine the deferred verdict. **Default `PROMOTE-plan`** (the common case — the item was waiting only on the PR). If the issue carries an explicit `## Deferred Verdict: <verdict>` comment, honor that verdict instead. Triage writes `## Triage Decision`, which names the *condition* but not a machine-parseable successor verdict, so the default normally applies.
 2. Map the verdict to its target workflow state (same mapping as triage's 8-verdict schema): `PROMOTE-plan`→`"Ready for Plan"`, `PROMOTE-research`→`"Research Needed"`, `CLOSE-done`→`"Done"`, `CLOSE-canceled`→`"Canceled"`. The default verdict is `PROMOTE-plan`→Ready for Plan. If an honored `## Deferred Verdict` is itself a `WAIT-*` verdict, leave the item parked and note it (a PR-blocked item shouldn't defer to another wait).
 3. Read the issue's current labels; `save_issue(number: NNN, workflowState: <verdict target>, command: "ralph_triage", labels: <current labels minus blocked:pr-NNN, also dropping ralph-triage so the item is re-pickable in its new state>)`. The explicit `labels` array is required (save_issue replaces the full set; omitting it leaves `blocked:pr-NNN` attached). Note: `command: "ralph_triage"` is passed for semantic parity, but `state-gate.sh` does **not** gate this mode (it scopes to `RALPH_SUBCOMMAND=triage`; watch-pr's is `watch-pr`) — watch-pr's transitions are unguarded, so pass only valid target states.
 4. Post a `## Watch-PR Resolution` comment: PR #NNN merged → label stripped, verdict `<verdict>` applied.
@@ -83,4 +83,4 @@ Emit exactly one (see [outcome-tokens.md](../outcome-tokens.md)):
 - One sweep per invocation; process only the `blocked:pr-*`-labelled Backlog items found by the initial `list_issues` call.
 - Mutates only parked items — never creates or closes issues, never touches items without a `blocked:pr-*` label.
 - No code changes.
-- Heartbeat / `--loop` fan-out is wired in Phase 4 (#1408); until then this mode runs only via explicit `--mode watch-pr` dispatch.
+- Runs inside the `--mode all` heartbeat fan-out, or via explicit `--mode watch-pr` dispatch.

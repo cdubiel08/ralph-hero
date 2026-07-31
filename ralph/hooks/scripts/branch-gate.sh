@@ -5,7 +5,7 @@
 # Environment:
 #   RALPH_REQUIRED_BRANCH - Branch that must be active. UNSET = no-op (allow all).
 #     Differs from the source ralph-hero copy, which defaulted to "main". The
-#     slim plugin keeps this gate inert in interactive + prove modes so feature
+#     this gate stays inert in interactive + prove modes so feature
 #     branches don't trip every Bash call. The autonomous workflow exports
 #     RALPH_REQUIRED_BRANCH=main explicitly when it needs the gate active.
 #

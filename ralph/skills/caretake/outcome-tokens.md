@@ -2,34 +2,29 @@
 
 Each mode body emits exactly one terminal token on its final line. The harness extractor reads these from the transcript verbatim — do not paraphrase or wrap in prose. Postcondition hooks under `ralph/hooks/scripts/*-postcondition.sh` grep the transcript for the tokens listed here.
 
-Sections are filled across Plans 7 phases 3-8. Trends mode is read-only and emits no token.
+Trends mode is read-only and emits no token.
 
 ## Triage terminal tokens
 
-The **9 structured verdicts** (#1417 + #1472) each emit a verbatim `TRIAGED <verdict>` token — the verdict name appears after `TRIAGED `, case-preserving. These are the tokens new triage runs emit:
+Each of the 9 structured verdicts emits a verbatim `TRIAGED <verdict>` token — the verdict name appears after `TRIAGED `, case-preserving:
 
 - `TRIAGED CLOSE-done` — closed as done/implemented/duplicate; references a `## Duplicate Of` comment when a duplicate.
 - `TRIAGED CLOSE-canceled` — closed not-planned (tech changed, product direction shifted, etc.).
 - `TRIAGED SPLIT` — children created; issue stays in Backlog with the `ralph-triage` label so `--mode split` / the picker doesn't re-select it.
 - `TRIAGED PROMOTE-research` — routed to Research Needed for investigation.
 - `TRIAGED PROMOTE-plan` — issue well-specified; routed to Ready for Plan (research skipped).
-- `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` + `ralph-triage`; the `=NNN` PR number is part of the token. Phase 3 (#1406) watch-pr strips the label when the PR merges.
-- `TRIAGED WAIT-upstream` — parked in **Backlog** with `blocked:upstream` + `ralph-triage`; the upstream URL is recorded in the `## Triage Decision` comment, not the token (URLs are unwieldy in a terminal token). Phase 3 (#1407) watch-upstream resolves it.
-- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN + `add_dependency` edge written + `ralph-triage` applied; the `=NNN` issue number is part of the token. **NOT parked in Backlog** — the picker's Backlog-fallback would re-surface it on every autopilot tick (no watcher owns OPEN-issue blockers until Gap C `watch-blockers` ships). Once Gap A (#1470) and Gap C ship, this target relaxes to Backlog+edge. The `WAIT-issue` family member distinguishes OPEN-issue blockers from PR/upstream blockers: WAIT-pr and WAIT-upstream stay Backlog (watched); WAIT-issue goes Human Needed (unwatched until Gap C).
+- `TRIAGED WAIT-pr=NNN` — parked in **Backlog** with `blocked:pr-NNN` + `ralph-triage`; the `=NNN` PR number is part of the token. `--mode watch-pr` strips the label when the PR merges.
+- `TRIAGED WAIT-upstream` — parked in **Backlog** with `blocked:upstream` + `ralph-triage`; the upstream URL is recorded in the `## Triage Decision` comment, not the token (URLs are unwieldy in a terminal token). `--mode watch-upstream` resolves it.
+- `TRIAGED WAIT-issue=NNN` — moved to **Human Needed** with `## Escalation` naming #NNN + `add_dependency` edge written + `ralph-triage` applied; the `=NNN` issue number is part of the token. **Not parked in Backlog** — the picker's Backlog-fallback would re-surface it on every autopilot tick. `--mode watch-blockers` advances it when the blocker closes.
 - `TRIAGED WAIT-decision` — escalated to Human Needed with a `## Escalation` comment naming the decision required; `ralph-triage` applied.
 - `Queue empty.` — no untriaged Backlog issues remain.
 
-**Legacy tokens (still accepted by the postcondition for back-compat; new runs should not emit them):** Phase 6 (#1410) **removed** the legacy `RALPH_TRIAGE_ACTION=KEEP` path — the plugin hook now exits 2 on bare `KEEP`. These terminal *tokens* stay valid so older transcripts and the parallel plugin surface don't regress (none of them is `KEEP`, which was never a terminal token).
+Two more tokens are valid outside the verdict set:
 
-- `TRIAGED routed → Research Needed` / `→ Ready for Plan` / `→ In Progress` — superseded by `PROMOTE-research` / `PROMOTE-plan` (the direct-to-In-Progress route is folded into `PROMOTE-plan`).
-- `TRIAGED duplicate` — superseded by `CLOSE-done`.
-- `TRIAGED canceled` — superseded by `CLOSE-canceled`.
-- `TRIAGED needs-split` — superseded by `SPLIT`.
-- `TRIAGED escalated` — superseded by `WAIT-decision`.
-- `TRIAGED re-estimated` — emitted by the orthogonal `RE-ESTIMATE` action; issue stays in Backlog with `ralph-triage`.
+- `TRIAGED re-estimated` — the orthogonal `RE-ESTIMATE` action; issue stays in Backlog with `ralph-triage`.
 - `TRIAGED skipped — branch <name> is not main` — §Step 1 short-circuit; triage refuses to run on a feature branch.
 
-`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens (9 verdict tokens + legacy set + `Queue empty.`). The `RALPH_TRIAGE_ACTION` allowlist (checked by the legacy plugin hook's §Step 5; the slim hook ignores the env var) is: `CLOSE-done | CLOSE-canceled | SPLIT | PROMOTE-research | PROMOTE-plan | WAIT-pr | WAIT-upstream | WAIT-issue | WAIT-decision` plus legacy `ROUTE_TO_RESEARCH | ROUTE_TO_PLAN | ROUTE_TO_IMPL | CLOSE | HUMAN | CANCEL | RE-ESTIMATE` (bare `KEEP` is rejected as of Phase 6 / #1410).
+`triage-postcondition.sh` (Stop hook) greps the transcript for one of these tokens. It accepts an older token vocabulary as well; do not emit it.
 ## Hygiene terminal tokens
 
 - `HYGIENE COMPLETE <N archived>` — scan ran cleanly; `N` is the archive count (0 if dry-run or threshold not exceeded).
@@ -54,7 +49,7 @@ Unblock has two sub-modes selected by the `--question` flag; each emits its own 
 `unblock-state-gate.sh` (interactive only) and `unblock-request-postcondition.sh` (autonomous only) each gate on `RALPH_SUBCOMMAND_VARIANT` to discriminate which path is active.
 ## Postmortem terminal tokens
 
-- `POSTMORTEM <path>` — doc written, `<path>` absolute (e.g., `/Users/dubiel/projects/ralph-hero/thoughts/shared/reports/2026-05-23-ralph-team-foo.md`). Plan documents patched with `post_mortem::` edges; `process-improvement` issues filed for blockers.
+- `POSTMORTEM <path>` — doc written, `<path>` absolute (`<repo>/thoughts/shared/reports/YYYY-MM-DD-<slug>.md`). Plan documents patched with `post_mortem::` edges; `process-improvement` issues filed for blockers.
 - `POSTMORTEM SKIPPED no-session-data` — §Step 1 short-circuit; `TaskList` unavailable or returned empty.
 - `POSTMORTEM SKIPPED <reason>` — other graceful skips (missing primary issue, MCP failures during outcome recording, etc.).
 
@@ -75,11 +70,7 @@ Trends is read-only — the markdown report printed to stdout is the deliverable
 
 ## Debug terminal tokens
 
-- `DEBUG FILED <N>` — `N = issuesCreated + issuesUpdated`; emitted on the final line of §Step 6 after the tool returns `dryRun: false`.
-- `DEBUG SKIPPED preflight: RALPH_DEBUG not active` — §Step 1 short-circuit; user must restart Claude Code with `RALPH_DEBUG=true`.
-- `DEBUG SKIPPED preflight: Langfuse unreachable` — §Step 1 short-circuit; user must start the local Langfuse stack.
-- `DEBUG SKIPPED no-errors-in-window` — §Step 4; dry-run returned `errorGroups === 0`.
-- `DEBUG SKIPPED user-declined` — §Step 5; user picked `Skip` on the `AskUserQuestion` confirm prompt.
+- `DEBUG RETIRED` — the only token this mode emits, and it is terminal. `--mode debug` is not loop-suitable; SKILL.md's `--loop` gate refuses it. See [modes/debug.md](modes/debug.md).
 
 ## Split terminal tokens
 

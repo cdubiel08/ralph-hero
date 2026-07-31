@@ -17,15 +17,15 @@
 
 All targets are skills in the same `ralph` plugin → unqualified names work in `Skill()` calls.
 
-**Group unit (GH-1538):** PLAN, IMPLEMENT, PR, and INTEGRATE operate on the *plan group*, not the individual leaf. Once a sibling group plan exists (frontmatter `github_issues`), hero treats all members as one pipeline unit: one plan task, one worktree/branch, one PR closing every member. On the classify/auto path, SKIP any issue whose group is already in flight — a sibling group plan covering it exists and its train (plan → phases → PR) is the vehicle; dispatching the member separately would fork a duplicate PR.
+**Group unit:** PLAN, IMPLEMENT, PR, and INTEGRATE operate on the *plan group*, not the individual leaf. Once a sibling group plan exists (frontmatter `github_issues`), hero treats all members as one pipeline unit: one plan task, one worktree/branch, one PR closing every member. On the classify/auto path, SKIP any issue whose group is already in flight — a sibling group plan covering it exists and its train (plan → phases → PR) is the vehicle; dispatching the member separately would fork a duplicate PR.
 
 ## Skill() vs Agent()
 
 | Phase | Dispatch | Why |
 |---|---|---|
 | SPLIT, RESEARCH (XS/S single), PLAN, REVIEW (plan), INTEGRATE | `Skill("ralph:<verb>", args="NNN ...")` | Inline — these read/write durable state via MCP and need to share hero's context for resumability |
-| RESEARCH (feature/epic unit: estimate M+ or `kind:epic`/`kind:feature`) | `Agent(subagent_type="ralph:research-agent", model="fable", prompt="Research GH-NNN ... follow ${CLAUDE_PLUGIN_ROOT}/skills/research/*.md refs; write findings doc; advance to Ready for Plan")` | Tier routing by unit size (GH-1538): feature/epic research is a fable bookend — the findings doc steers every downstream phase. XS/S singles keep the cheap inline sonnet path. `CLAUDE_CODE_SUBAGENT_MODEL=opus` is the non-Fable rescue (flattens all forks — documented in docs/model-tier-policy.md). |
-| IMPLEMENT | `Skill("ralph:impl", args="NNN --auto --plan-doc PATH")` | The slim plugin uses `--auto` mode (one phase per invocation in an isolated worktree, enforced by `impl-worktree-gate.sh`). The runtime gates worktree isolation; hero does not need a separate Agent() session for this. |
+| RESEARCH (feature/epic unit: estimate M+ or `kind:epic`/`kind:feature`) | `Agent(subagent_type="ralph:research-agent", model="fable", prompt="Research GH-NNN ... follow ${CLAUDE_PLUGIN_ROOT}/skills/research/*.md refs; write findings doc; advance to Ready for Plan")` | Tier routing by unit size: feature/epic research is a fable bookend — the findings doc steers every downstream phase. XS/S singles keep the cheap inline sonnet path. `CLAUDE_CODE_SUBAGENT_MODEL=opus` is the non-Fable rescue (flattens all forks — documented in docs/model-tier-policy.md). |
+| IMPLEMENT | `Skill("ralph:impl", args="NNN --auto --plan-doc PATH")` | `--auto` runs one phase per invocation in an isolated worktree, enforced by `impl-worktree-gate.sh`. The runtime gates worktree isolation; hero does not need a separate Agent() session for this. |
 | PR (within IMPLEMENT) | `Skill("ralph:impl", args="NNN --mode pr")` | PR creation is `/ralph:impl --mode pr` — preserves the loop-runner sentinel `Queue empty.` and the queue-pick semantics from the source `ralph-pr` skill. |
 
 > Agent-based dispatch is available via the thin `subagent_type=ralph:impl-agent` shells now living in `ralph/agents/` (these preload no skill — the dispatcher passes the worker prose inline; see the `review` / `catch-up` dispatch sites). Hero itself prefers `Skill()` dispatch because it keeps the hero session in control of the resumability protocol.
@@ -85,7 +85,7 @@ Decisions-first (per `plan-review.md` § Interactive vs auto): present one `Deci
 
 After all PRs created, read `$RALPH_REVIEW_MODE` (default `auto`):
 
-**`auto`** (default; unset or `auto`): dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics (it's Plan 6's verb) — including the epic close-out validation when the merge closes an epic's last child (fable val-agent, `ralph/skills/review/merge-gate.md` § Epic close-out validation). `CHANGES_REQUESTED` on the PR remains the human veto (hard-blocked by `scripts/merge-pr.sh` gate 1 regardless of this dial — GH-1589).
+**`auto`** (default; unset or `auto`): dispatch `Skill("ralph:review", args="NNN")` per primary issue. `/ralph:review` owns code-review + merge mechanics — including the epic close-out validation when the merge closes an epic's last child (fable val-agent, `ralph/skills/review/merge-gate.md` § Epic close-out validation). `CHANGES_REQUESTED` on the PR remains the human veto — `scripts/merge-pr.sh` gate 1 hard-blocks it regardless of this dial.
 
 **`interactive`** (opt-out): report PR URLs, STOP. Human must re-run `/ralph:hero NNN` or `/ralph:review NNN`.
 
@@ -128,10 +128,10 @@ When the root issue spans repos (detected during research or from issue body):
 
 ### Evidence-based dependency detection
 
-During tree expansion, if research found imports between repos not declared in the registry (e.g., `import { X } from 'ralph-hero'` in landcrawler-ai):
+During tree expansion, if research found imports between repos not declared in the registry:
 
 - Treat repos as dependent (add `blockedBy` to the downstream sub-issue)
-- Surface to the human: "I found imports from ralph-hero in landcrawler-ai. Your registry doesn't declare this dependency — want me to add it?"
+- Surface to the human: "I found imports from `<repo-a>` in `<repo-b>`. Your registry doesn't declare this dependency — want me to add it?"
 - If human confirms, suggest adding a `dependency-flow` edge to the pattern
 
 Default for unknown relationships: if no evidence of dependency is found and no `dependency-flow` edge exists, treat repos as independent and run in parallel.

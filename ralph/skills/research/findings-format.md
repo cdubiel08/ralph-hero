@@ -119,7 +119,7 @@ Rules:
 - `Will Read` = files this issue depends on but won't change.
 - Each path must be backtick-wrapped (`doc-structure-validator.sh` regex: `` `[^`]+` ``).
 - Both subsections required even if empty (use `None` if no files apply).
-- Cross-repo: prefix paths with repo key — `ralph-hero:mcp-server/src/lib/repo-registry.ts`, `landcrawler-ai:src/api/client.ts`. Required for downstream work-stream detection.
+- Cross-repo: prefix paths with repo key — `api-service:src/lib/client.ts`, `web-client:src/hooks/use-api.ts`. Required for downstream work-stream detection.
 
 ## Pipeline History (optional, autonomous-only)
 
@@ -140,10 +140,10 @@ Populated from `knowledge_query_outcomes` results in autonomous Step 3c. Omit en
 ## Cross-Repo Scope
 
 Repos involved:
-- `ralph-hero` (~/projects/ralph-hero) — [what changes are needed]
-- `landcrawler-ai` (~/projects/landcrawler-ai) — [what changes are needed]
+- `api-service` (<localDir>) — [what changes are needed]
+- `web-client` (<localDir>) — [what changes are needed]
 
-Dependency relationship: ralph-hero → landcrawler-ai (landcrawler-ai imports from ralph-hero)
+Dependency relationship: api-service → web-client (web-client imports from api-service)
 ```
 
 Consumed by plan and impl skills to set up per-repo worktrees and wire `blockedBy` dependencies.

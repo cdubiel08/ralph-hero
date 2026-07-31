@@ -12,9 +12,9 @@ Plan-doc structure consumed by default, `--mode auto`, and `--mode epic` (with e
 
 Examples:
 
-- With issue: `2026-05-23-GH-1364-ralph-plan-4-plan.md`
+- With issue: `2026-05-23-GH-0142-token-refresh-plan.md`
 - Without issue: `2026-05-23-multi-tenant-tokens.md`
-- Plan-of-plans (epic): `2026-05-23-GH-1300-epic-mobile-app-decomposition.md`
+- Plan-of-plans (epic): `2026-05-23-GH-0150-epic-mobile-app-decomposition.md`
 
 ## Frontmatter
 
@@ -210,7 +210,7 @@ Tasks without the four YAML fields still parse — no hook blocks on their absen
 
 ## Group plans (feature = PR unit)
 
-A group plan covers a set of sibling issues that ship as ONE PR (GH-1538).
+A group plan covers a set of sibling issues that ship as ONE PR.
 It is a **standard plan** — same required sections, same
 `doc-structure-validator.sh` branch — distinguished only by frontmatter and
 the phase↔member convention:
@@ -251,7 +251,7 @@ Epic mode writes a different shape — see `decomposition.md` § Plan-of-plans s
 | L | 7-10 phases | Multi-tier; `--mode epic` required |
 | XL | Plan of plans | Always `--mode epic` |
 
-Plan 4 `--mode auto` targets XS/S only — advisory in the body, no hook enforcement (the slim plugin's `plan-tier-validator.sh` only catches shape corruption, not estimate gating). Default and iterate modes accept M too. L+ requires `--mode epic`.
+`--mode auto` targets XS/S only — advisory, not hook-enforced (`plan-tier-validator.sh` catches shape corruption, not estimate gating). Default and iterate modes accept M too. L+ requires `--mode epic`.
 
 ## Per-mode required-sections matrix
 

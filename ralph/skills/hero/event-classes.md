@@ -24,19 +24,18 @@ These labels are written by triage's `WAIT-pr`/`WAIT-upstream` verdicts and park
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
-| any | `blocked:pr-*` (prefix-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch-pr")` — board-wide sweep, no issue scoping. Label persists. Producer: triage `WAIT-pr` (#1404); consumer: watch-pr (#1406). |
-| any | `blocked:upstream` (exact-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch-upstream")` — board-wide sweep. Label persists. Producer: triage `WAIT-upstream` (#1404); consumer: watch-upstream (#1407). |
+| any | `blocked:pr-*` (prefix-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch-pr")` — board-wide sweep, no issue scoping. Label persists. Produced by triage `WAIT-pr`, consumed by `--mode watch-pr`. |
+| any | `blocked:upstream` (exact-match) | caretakers | Fire `Skill("ralph:caretake", args="--mode watch-upstream")` — board-wide sweep. Label persists. Produced by triage `WAIT-upstream`, consumed by `--mode watch-upstream`. |
 
-## Priority 3 — Automation labels (label exists, producer pending until noted)
+## Priority 3 — Automation labels
 
 These labels are written by automated producers (event shims, dream-loop classifier, monitoring bridges). They signal that a specific team should handle the issue without requiring a manual trigger.
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
-| any | `watcher-auto` | watchers | Label applied manually or by a custom monitoring bridge (see `ralph/hooks/` for the watcher entrypoint). `ralph:hero --mode watch` handles the team dispatch. |
-| any | `debug-auto` | watchers | Label written by `ralph:caretake --mode debug` (invoked from Watcher heartbeat). Observability follow-ups are owned by watchers. |
-| any | `scout-auto` | scouts | Label applied manually or by a custom CI step. Dispatches `ralph-playwright` skills directly (a11y-scan / test-e2e / storybook-test / visual-diff). (`playwright-auto.yml` and the nightly scout script were retired with `plugin/ralph-hero/` in GH-1438.) |
-| any | `process-improvement` | caretakers | Label written by dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). Feature G ships `ralph:caretake`. |
+| any | `watcher-auto` | watchers | Label applied manually or by a custom monitoring bridge. `ralph:hero --mode watch` handles the team dispatch. |
+| any | `scout-auto` | scouts | Label applied manually or by a custom CI step. Dispatches `ralph-playwright` skills directly (a11y-scan / test-e2e / storybook-test / visual-diff). |
+| any | `process-improvement` | caretakers | Label written by the dream-loop cluster classifier (`scripts/dream/reflect.py::emit_process_improvement_issue`). |
 
 ## Priority 4 — Workflow state (fallback routing)
 
@@ -44,7 +43,7 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 
 | workflow_state | labels | team | notes |
 |----------------|--------|------|-------|
-| `Backlog` | none | caretakers | New issues need triage. Caretakers handle intake and routing. Feature G ships `ralph:caretake`; until then Director emits `needs input:` marker. |
+| `Backlog` | none | caretakers | New issues need triage. Caretakers handle intake and routing. |
 | `Research Needed` | none | builders | Issue is queued for research. Hero handles the full analyst → builder pipeline. |
 | `Research in Progress` | none | builders | Research is underway. Hero manages continuation. |
 | `Ready for Plan` | none | builders | Research complete; issue needs a plan. Hero handles planning. |
@@ -52,7 +51,7 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 | `Plan in Review` | none | builders | Plan needs review. Hero handles the review gate. |
 | `In Progress` | none | builders | Active implementation. Hero orchestrates impl-agent. |
 | `In Review` | none | builders | PR open, awaiting review. Hero manages the merge gate. |
-| `Human Needed` | none | caretakers | Issue is blocked and needs human attention. Caretakers handle the unblock flow. Feature G ships `ralph:caretake`; until then Director emits `needs input:` marker. |
+| `Human Needed` | none | caretakers | Issue is blocked and needs human attention. Caretakers handle the unblock flow. |
 | `Done` | none | — | Terminal state. Director skips — no dispatch needed. |
 | `Canceled` | none | — | Terminal state. Director skips — no dispatch needed. |
 
@@ -63,10 +62,10 @@ When no trigger, blocked, or automation labels are present, Director routes by w
 | team | skill entrypoint | status |
 |------|-----------------|--------|
 | builders | `ralph:hero` | live |
-| watchers | `ralph:hero --mode watch` | pending Feature C (GH-1270) |
+| watchers | `ralph:hero --mode watch` | live |
 | scouts | `Skill("ralph-playwright:a11y-scan")` / `Skill("ralph-playwright:test-e2e")` / `Skill("ralph-playwright:storybook-test")` / `Skill("ralph-playwright:visual-diff")` | live |
 | memorykeepers | manual `dream-now` | no skill yet; Director emits `needs input:` |
-| caretakers | `ralph:caretake` | pending Feature G (GH-1274) |
+| caretakers | `ralph:caretake` | live |
 
 ---
 
@@ -77,19 +76,18 @@ Director evaluates in this order:
 1. Fetch the candidate issue's labels array.
 2. Check for any `trigger:*` label (Priority 1). First match wins.
 3. Check for a `blocked:*` label (Priority 2): prefix-match `blocked:pr-` → fire `caretake --mode watch-pr`; exact-match `blocked:upstream` → fire `caretake --mode watch-upstream`. Dispatch is a board-wide watcher sweep (no issue scoping); the label is NOT consumed.
-4. Check for any automation label: `watcher-auto`, `debug-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
+4. Check for any automation label: `watcher-auto`, `scout-auto`, `process-improvement` (Priority 3). First match wins.
 5. Fall through to `workflow_state` lookup (Priority 4).
-6. If the resolved team's entrypoint does not yet exist, emit `needs input: team <name> not yet implemented (Feature <X>); skipping dispatch` and continue to the next event.
+6. If the resolved team's entrypoint does not exist, emit `needs input: team <name> has no entrypoint; skipping dispatch` and continue to the next event.
 
 ---
 
 ## Producers
 
-This table is the canonical inventory of automated label producers as of Feature D (GH-1271). New producers should add a row here when they land.
+Canonical inventory of automated label producers. New producers add a row here when they land.
 
 | Label | Producer file | Trigger condition |
 |-------|---------------|-------------------|
-| `watcher-auto` | manual or custom monitoring bridge | GCP Cloud Monitoring alert (or equivalent) delivered to the board; the automated bridge was retired with `plugin/ralph-hero/` in GH-1438 |
-| `debug-auto` | `ralph:caretake --mode debug` (invoked from Watcher heartbeat) | Langfuse error grouping with ≥ N occurrences in window (default: 3) |
+| `watcher-auto` | manual, or a custom monitoring bridge | Cloud-monitoring alert (or equivalent) delivered to the board |
 | `process-improvement` | `scripts/dream/reflect.py::emit_process_improvement_issue` | Dream-loop cluster of size ≥ threshold (default: 5) with ≥ N% `tool_use_error` or `verdict: BLOCKED` signals (default: 30%) |
-| `scout-auto` | manual or custom CI step | PR opened/synchronized/reopened with UI-touching changes; `playwright-auto.yml` and the nightly scout script were retired with `plugin/ralph-hero/` in GH-1438 |
+| `scout-auto` | manual, or a custom CI step | PR opened/synchronized/reopened with UI-touching changes |

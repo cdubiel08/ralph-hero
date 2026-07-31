@@ -76,7 +76,7 @@ validate_doc() {
         grep -qE "^#### (Automated|Manual) Verification" "$doc" || doc_errors+=("Missing: '#### Automated Verification' or '#### Manual Verification' subsections")
         grep -qE "^- \[ \]" "$doc" || doc_errors+=("Missing: success-criteria checkboxes '- [ ] ...'")
       fi
-      # Decisions contract (GH-1544) — both plan shapes, fence-stripped body so
+      # Decisions contract — both plan shapes, fence-stripped body so
       # docs that show the format in fenced examples don't false-positive.
       # The block/sentinel check is scoped to the section itself (sentinel
       # text quoted elsewhere in the doc must not satisfy it), and the

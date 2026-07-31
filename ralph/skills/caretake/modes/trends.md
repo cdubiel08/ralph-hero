@@ -24,7 +24,7 @@ Call `ralph_hero__metrics_trends` with:
 - `format: "markdown"`
 - `since`: the parsed `--since` value, or `"@today-7d"` by default.
 
-GH-1611 merged the former standalone `capture_snapshot` tool into the `capture` parameter, and capture happens *before* the trend computation in the same call — so one invocation appends the fresh row and trends over a window that already includes it. (Two calls would work but re-scan the JSONL for nothing.)
+Capture happens *before* the trend computation inside the same call, so one invocation appends the fresh row and trends over a window that already includes it.
 
 The tool picks up the current project from `RALPH_GH_OWNER` / `RALPH_GH_PROJECT_NUMBER`, uses the default 7-day velocity window for the captured row, appends it to `~/.ralph-hero/snapshots/<owner>/<projectNumber>.jsonl`, then computes 1d/7d/30d deltas and renders sparkline-augmented markdown for each metric.
 
@@ -44,5 +44,5 @@ The markdown report IS the terminal output. No `result:` line, no terminal token
 
 - **Read-only.** Trends never mutates GitHub state or any file outside `~/.ralph-hero/snapshots/`.
 - **No terminal token.** Postcondition hooks ignore this mode.
-- **Haiku-class workload.** The source skill declares `model: haiku` because the work is two MCP calls + a stdout print. The caretake top-level `model: sonnet` covers all modes; haiku would be cheaper but the slim plugin runs all modes under the same model for arg-routing simplicity.
+- **Haiku-class workload.** The work is two MCP calls plus a stdout print. It runs under caretake's top-level `model: sonnet` like every other mode — a per-mode model pin would buy little and complicate arg routing.
 - **Snapshot append is non-fatal.** If the snapshot file is missing or unreadable, `metrics_trends` with `capture: true` creates it; a read-only `metrics_trends` call degrades to an "insufficient history" report.

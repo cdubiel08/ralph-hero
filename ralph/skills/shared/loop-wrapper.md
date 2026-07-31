@@ -1,4 +1,4 @@
-# loop-wrapper.md — Shared `--loop` substrate for ralph slim plugin skills
+# loop-wrapper.md — Shared `--loop` substrate
 
 Reference fragment. SKILL.md bodies copy the snippets below; they do not source this file.
 
@@ -46,7 +46,6 @@ One row per loop-suitable `skill:mode`. Heartbeat modes re-fire on a clock; drai
 | caretake:hygiene | `HYGIENE COMPLETE <N>` / `HYGIENE BLOCKED <reason>` | (none — heartbeat; re-fire always) | default interval 1h; 60-270s if changes made | periodic scan |
 | caretake:unblock | `UNBLOCK REQUEST POSTED` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Human Needed queue |
 | caretake:trends | (markdown stdout is the deliverable) | (none — heartbeat; re-fire always) | default interval 6h; schedule accordingly | periodic snapshot |
-| caretake:debug | `DEBUG FILED <N>` / `DEBUG SKIPPED <reason>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain Langfuse errors |
 | caretake:split | `SPLIT <N>` / `SPLIT SKIPPED <reason>` | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain M/L/XL queue |
 | caretake:all | (fan-out, no aggregated sentinel) | (none — heartbeat; re-fire always) | default interval 1h; schedule accordingly | periodic fan-out heartbeat |
 | caretake:default-event | per dispatched mode | `Queue empty.` | 60-270s on progress; 1200-1800s idle | drain trigger:* labels (`--issue NNN`-scoped; the bare no-arg fan-out uses `caretake:all`) |

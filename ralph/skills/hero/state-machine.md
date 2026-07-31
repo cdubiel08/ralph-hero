@@ -52,7 +52,7 @@
 +-------------------------------------------------------------------+
 ```
 
-## The epic outer cycle (GH-1538)
+## The epic outer cycle
 
 Feature/epic work runs as two nested cycles with fable bookends:
 
@@ -65,8 +65,7 @@ Feature/epic work runs as two nested cycles with fable bookends:
   ONE PR closing every member → fable plan-vs-delivery val at close-out.
 
 Single XS/S issues outside any group skip the fable bookends entirely
-(sonnet plan, opus critique, sonnet val) — see
-`docs/model-tier-policy.md` § Tier routing by unit size.
+(sonnet plan, opus critique, sonnet val).
 
 ## Phases
 
