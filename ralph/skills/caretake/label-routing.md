@@ -8,7 +8,7 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 | Label present | Dispatch | Notes |
 |---|---|---|
-| `trigger:caretake` | Issue-scoped fan-out (see below) | Operator override; consume after dispatch |
+| `trigger:caretake` | Issue-triggered sweep (see below) | Operator override; consume after dispatch |
 | `stale` | `Skill("ralph:caretake", args="--mode hygiene")` | Hygiene mode finds stale items by definition |
 | `status-update-needed` | `Skill("ralph:catch-up", args="--mode report")` | Report lives in catch-up, not caretake |
 | `trends-check` | `Skill("ralph:caretake", args="--mode trends")` | Read-only — markdown to stdout |
@@ -20,7 +20,7 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 ## Full fan-out (`trigger:caretake`)
 
-When `trigger:caretake` is present, the dispatcher runs the **issue-scoped** sweep below — the modes that can act on one named issue, plus a closing report. This is deliberately narrower than the board-wide heartbeat (`--mode all`, see [SKILL.md](SKILL.md) § Step 1), which additionally runs the watch-* modes, enrich, and trends. Order matters — modes that mutate state run before modes that read state:
+When `trigger:caretake` is present, the dispatcher runs the sweep below. It is *triggered* by issue `NNN`, but not every step is scoped to it — hygiene sweeps the whole board, `unblock --question` picks the oldest eligible Human Needed issue regardless of `NNN`, and postmortem/retro read session context rather than any issue. Each step below marks its scope. This is still narrower than the board-wide heartbeat (`--mode all`, see [SKILL.md](SKILL.md) § Step 1), which additionally runs the watch-* modes, enrich, and trends. Order matters — modes that mutate state run before modes that read state:
 
 1. `Skill("ralph:caretake", args="--mode hygiene")` — archive candidates, WIP violations, field gaps
 2. `Skill("ralph:caretake", args="--mode triage #NNN")` — assess the issue that carries the trigger label

@@ -192,7 +192,7 @@ Ask the user via AskUserQuestion what to do next:
 2. **Fetch issue + worktree** — `feature/<WORKTREE_ID>` branch. Detect cross-repo per [pr-creation.md §Cross-repo](pr-creation.md) if multiple worktrees exist.
 3. **Push branch** — `git push -u origin feature/<WORKTREE_ID>` from the worktree.
 4. **Compose PR body** — `## Summary` (optional delegation per [pr-creation.md §Delegated Summary](pr-creation.md)) + `## Plan` (link) + `## Test plan` (from Success Criteria) + `Closes #NNN` (one per sub-issue for groups).
-5. **Create PR** — `gh pr create --title "GH-NNN: <title>" --body-file <body> --head feature/GH-NNN --base main`. Capture URL.
+5. **Create PR** — `gh pr create --title "<WORKTREE_ID>: <title>" --body-file <body> --head feature/<WORKTREE_ID> --base main`. Capture URL. Use `<WORKTREE_ID>`, not the picked issue number — for a group they differ, and only `feature/<WORKTREE_ID>` was pushed in step 3.
 6. **Advance issues** to "In Review" via `save_issue` (standalone: own state; group: every child; never advance parent — server-side workflow handles that).
 7. **Record outcome** — `knowledge_record_outcome(event_type="pr_created", issue_number=NNN, verdict="created", payload={pr_url, branch, repo})`.
 8. **Evaluate UI heuristic** — per [pr-creation.md §Scout Trigger](pr-creation.md). Post `## Scout Trigger` advisory comment if any frontend glob matches.
