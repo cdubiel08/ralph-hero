@@ -9,6 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  adopt,
   claimIsStale,
   type Config,
   type Ctx,
@@ -23,6 +24,7 @@ import {
   migrateMapping,
   parentCheck,
   parseArgs,
+  reconcile,
   parseClaim,
   parseStateArg,
   type QueueItem,
@@ -197,6 +199,8 @@ interface FakeIssue {
   state?: string | null;
   claim?: string | null;
   issueState?: "OPEN" | "CLOSED";
+  stateReason?: string | null;
+  onBoard?: boolean; // default true
   parent?: number;
   children?: Array<{ number: number; issueState: "OPEN" | "CLOSED"; state?: string | null }>;
   comments?: string[];
@@ -232,7 +236,7 @@ class FakeGh {
       title: `Issue ${fi.number}`,
       url: `https://github.com/cdubiel08/ralph-hero/issues/${fi.number}`,
       state: fi.issueState ?? "OPEN",
-      stateReason: null,
+      stateReason: fi.stateReason ?? null,
       labels: { nodes: [] },
       parent: fi.parent ? { number: fi.parent, title: `Issue ${fi.parent}` } : null,
       subIssues: {
@@ -249,9 +253,12 @@ class FakeGh {
       closedByPullRequestsReferences: { nodes: [] },
       comments: { nodes: (fi.comments ?? []).map((body) => ({ body })) },
       projectItems: {
-        nodes: [
-          { id: `ITEM_${fi.number}`, project: { id: PROJECT_ID }, fieldValues: fieldValues(fi.state, fi.claim) },
-        ],
+        nodes:
+          fi.onBoard === false
+            ? []
+            : [
+                { id: `ITEM_${fi.number}`, project: { id: PROJECT_ID }, fieldValues: fieldValues(fi.state, fi.claim) },
+              ],
       },
     };
   }
@@ -374,6 +381,9 @@ class FakeGh {
     }
     if (query.includes("addProjectV2ItemById")) {
       const num = Number(String(variables.contentId).replace("I_", ""));
+      const fi = this.issues.get(num);
+      if (fi) fi.onBoard = true;
+      this.mutations.push(`addToBoard(#${num})`);
       return data({ addProjectV2ItemById: { item: { id: `ITEM_${num}` } } });
     }
     return { code: 1, stdout: "", stderr: `unhandled query: ${query.slice(0, 120)}` };
@@ -503,6 +513,51 @@ describe("parent gate", () => {
     expect(parentCheck(ctx, 10)).toMatch(/advanced to In Review/);
     expect(gh.mutations).toContain("setState(#10, In Review)");
     expect(gh.comments.some((c) => c.body.includes("children closed"))).toBe(true);
+  });
+});
+
+describe("reality-sync lane (adopt + reconcile)", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("adopt puts an off-board issue on the board in Backlog", () => {
+    gh.issues.set(1, { number: 1, onBoard: false, state: null });
+    const after = adopt(ctx, 1);
+    expect(gh.mutations).toContain("addToBoard(#1)");
+    expect(after.state).toBe("Backlog");
+  });
+
+  it("reconcile: closed-as-completed wins over any board state, bypassing the intent table", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog", issueState: "CLOSED", stateReason: "COMPLETED" });
+    expect(reconcile(ctx, 1)).toMatch(/→ "Done"/);
+    expect(gh.issues.get(1)!.state).toBe("Done");
+    expect(gh.comments.some((c) => c.body.includes("board reconcile"))).toBe(true);
+  });
+
+  it("reconcile: closed-as-not-planned → Canceled; clears any claim", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Progress", issueState: "CLOSED", stateReason: "NOT_PLANNED",
+      claim: encodeClaim("dead@host", NOW),
+    });
+    reconcile(ctx, 1);
+    expect(gh.issues.get(1)!.state).toBe("Canceled");
+    expect(gh.issues.get(1)!.claim).toBeNull();
+  });
+
+  it("reconcile: reopened issue stuck in a terminal board state returns to Backlog", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN" });
+    expect(reconcile(ctx, 1)).toMatch(/→ "Backlog"/);
+  });
+
+  it("reconcile: leaves legacy states to migrate, reports no-drift honestly", () => {
+    gh.issues.set(1, { number: 1, state: "Ready for Plan", issueState: "OPEN" });
+    expect(reconcile(ctx, 1)).toMatch(/migrate/);
+    gh.issues.set(2, { number: 2, state: "In Progress" });
+    expect(reconcile(ctx, 2)).toMatch(/no drift/);
   });
 });
 

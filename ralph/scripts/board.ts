@@ -773,6 +773,85 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Adopt + reconcile — the reality-sync lane (used by state-guard.yml).
+//
+// `transition` governs agent INTENT and is guarded by the MACHINE table.
+// `reconcile` syncs board state to GitHub REALITY (issue closed/reopened) and
+// deliberately bypasses the table — a human closing an issue from Backlog is
+// legal reality even though Backlog→Done is an illegal intent transition.
+// Every correction posts a comment. Still no --force anywhere.
+// ---------------------------------------------------------------------------
+
+/** Ensure the issue is on the board with a state; new items land in Backlog. */
+export function adopt(ctx: Ctx, number: number): Issue {
+  return withCache(ctx, (cache) => {
+    let issue = fetchIssue(ctx, number);
+    if (!issue.itemId) {
+      const added = ghGraphQL(
+        ctx,
+        `mutation($projectId: ID!, $contentId: ID!) {
+          addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+        }`,
+        { projectId: cache.projectId, contentId: issue.nodeId },
+      );
+      issue = { ...issue, itemId: added.addProjectV2ItemById.item.id };
+    }
+    if (issue.state === null) {
+      setSingleSelect(ctx, cache, issue.itemId!, STATE_FIELD, "Backlog");
+      syncStatus(ctx, cache, issue.itemId!, "Backlog");
+    }
+    return fetchIssue(ctx, number);
+  });
+}
+
+/** Sync board state to issue reality. Returns a description of what changed. */
+export function reconcile(ctx: Ctx, number: number): string {
+  return withCache(ctx, (cache) => {
+    const issue = fetchIssue(ctx, number);
+    if (!issue.itemId) {
+      adopt(ctx, number);
+      return `#${number}: adopted to board (Backlog)`;
+    }
+
+    const target: State | null =
+      issue.issueState === "CLOSED"
+        ? issue.stateReason === "NOT_PLANNED"
+          ? "Canceled"
+          : "Done"
+        : issue.state !== null && ["Done", "Canceled"].includes(issue.state)
+          ? "Backlog" // reopened but board still terminal
+          : issue.state === null
+            ? "Backlog"
+            : null;
+
+    if (target === null || issue.state === target) {
+      if (issue.issueState === "OPEN" && issue.state !== null && !isState(issue.state)) {
+        return `#${number}: legacy state "${issue.state}" — migrate's job, not reconcile's`;
+      }
+      return `#${number}: no drift`;
+    }
+
+    if (issue.claim && cache.fields[CLAIM_FIELD]) clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
+    setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
+    syncStatus(ctx, cache, issue.itemId, target);
+    addComment(
+      ctx,
+      issue.nodeId,
+      `\`board reconcile\`: issue is ${issue.issueState === "CLOSED" ? `closed (${issue.stateReason ?? "completed"})` : "open"} ` +
+        `but board said "${issue.state ?? "(none)"}" — corrected to "${target}".`,
+    );
+    if (target === "Done" && issue.parent) {
+      try {
+        parentCheck(ctx, issue.parent.number);
+      } catch {
+        /* advisory */
+      }
+    }
+    return `#${number}: "${issue.state ?? "(none)"}" → "${target}" (reality sync)`;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // List / next
 // ---------------------------------------------------------------------------
 
@@ -972,6 +1051,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       const legacyItems = items.filter((i) => i.state !== "(none)" && !isState(i.state));
       const noState = items.filter((i) => i.state === "(none)");
       const claimAnomalies = items.filter((i) => i.claim && i.state !== "In Progress");
+      const terminalDrift = items.filter((i) => ["Done", "Canceled"].includes(i.state));
       const stale = items.filter(
         (i) => i.claim && claimIsStale(i.claim, ctx.now(), ctx.cfg.lockTtlMin),
       );
@@ -985,7 +1065,11 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       add("stateless-items", noState.length === 0 ? "ok" : "warn", noState.length === 0 ? "none" : `${noState.length} open items with no ${STATE_FIELD}: ${noState.slice(0, 10).map((i) => `#${i.number}`).join(" ")}`);
       add("claim-anomalies", claimAnomalies.length === 0 ? "ok" : "warn", claimAnomalies.length === 0 ? "none" : claimAnomalies.map((i) => `#${i.number}(${i.state})`).join(" "));
       add("stale-claims", stale.length === 0 ? "ok" : "warn", stale.length === 0 ? "none" : stale.map((i) => `#${i.number} by ${i.claim!.holder}`).join(" "));
+      add("terminal-drift", terminalDrift.length === 0 ? "ok" : "warn", terminalDrift.length === 0 ? "none" : `open issues in terminal board states: ${terminalDrift.map((i) => `#${i.number}(${i.state})`).join(" ")}`);
 
+      if (opts.fix) {
+        for (const i of terminalDrift) add("fix", "ok", reconcile(ctx, i.number));
+      }
       if (opts.fix && cache.fields[CLAIM_FIELD]) {
         for (const i of [...claimAnomalies, ...stale]) {
           const issue = fetchIssue(ctx, i.number);
@@ -1168,6 +1252,9 @@ mutations
   comment NNN -m "body"
 
 maintenance
+  adopt NNN                   ensure issue is on the board (new items → Backlog)
+  reconcile NNN               sync board state to issue reality (closed→Done/Canceled,
+                              reopened→Backlog); the state-guard event lane
   parent-check NNN            advance parent if all children closed
   doctor [--fix] [--strict]   invariant sweep; --fix clears/releases bad claims
   setup                       create Workflow State / Claim fields (idempotent)
@@ -1354,6 +1441,17 @@ export function run(argv: string[], ctx: Ctx): number {
       return 0;
     }
 
+    case "adopt": {
+      const issue = adopt(ctx, requireNumber(positional[0]));
+      out(issueLine(issue));
+      return 0;
+    }
+
+    case "reconcile": {
+      out(reconcile(ctx, requireNumber(positional[0])));
+      return 0;
+    }
+
     case "parent-check": {
       out(parentCheck(ctx, requireNumber(positional[0])));
       return 0;
@@ -1410,7 +1508,8 @@ if (isMain) {
     const cmd = process.argv[2];
     const MUTATING = new Set([
       "create", "claim", "release", "move", "cancel", "reopen",
-      "link", "dep", "comment", "parent-check", "setup", "migrate",
+      "link", "dep", "comment", "adopt", "reconcile", "parent-check",
+      "setup", "migrate",
     ]);
     if (MUTATING.has(cmd)) {
       const remote = realExec(["git", "-C", repoRoot, "remote", "get-url", "origin"]);
