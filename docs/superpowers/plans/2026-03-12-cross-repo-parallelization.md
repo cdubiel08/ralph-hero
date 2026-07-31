@@ -66,8 +66,8 @@ Add to the `RepoRegistrySchema` describe block in `repo-registry.test.ts` after 
           tech: ["typescript"],
           paths: ["plugin/ralph-hero/mcp-server"],
         },
-        "landcrawler-ai": {
-          localDir: "~/projects/landcrawler-ai",
+        "downstream-app": {
+          localDir: "~/projects/downstream-app",
           domain: "backend",
         },
       },
@@ -76,7 +76,7 @@ Add to the `RepoRegistrySchema` describe block in `repo-registry.test.ts` after 
     expect(result.success).toBe(true);
     if (!result.success) throw new Error("expected success");
     expect(result.data.repos["ralph-hero"].localDir).toBe("~/projects/ralph-hero");
-    expect(result.data.repos["landcrawler-ai"].localDir).toBe("~/projects/landcrawler-ai");
+    expect(result.data.repos["downstream-app"].localDir).toBe("~/projects/downstream-app");
   });
 ```
 
@@ -161,13 +161,13 @@ repos:
   ralph-hero:
     localDir: ~/projects/ralph-hero
     domain: platform
-  landcrawler-ai:
-    localDir: ~/projects/landcrawler-ai
+  downstream-app:
+    localDir: ~/projects/downstream-app
     domain: backend
 `;
     const registry = parseRepoRegistry(yaml);
     expect(registry.repos["ralph-hero"].localDir).toBe("~/projects/ralph-hero");
-    expect(registry.repos["landcrawler-ai"].localDir).toBe("~/projects/landcrawler-ai");
+    expect(registry.repos["downstream-app"].localDir).toBe("~/projects/downstream-app");
   });
 ```
 
@@ -236,7 +236,7 @@ describe("detectWorkStreams - cross-repo file keys", () => {
   it("does not cluster issues with same file path in different repos", () => {
     const result = detectWorkStreams([
       makeOwnership(42, ["src/types.ts"], [], "ralph-hero"),
-      makeOwnership(43, ["src/types.ts"], [], "landcrawler-ai"),
+      makeOwnership(43, ["src/types.ts"], [], "downstream-app"),
     ]);
 
     expect(result.totalStreams).toBe(2);
@@ -536,7 +536,7 @@ for repo in "${DISCOVERED_REPOS[@]}"; do
     fi
   done
 done
-```
+```text
 
 If a checkout is not found automatically, prompt the user:
 > "I couldn't find a local checkout for `{repo}`. Where is it on disk? (Enter path or 'skip')"
@@ -592,8 +592,8 @@ Before dispatching sub-agents, check if the issue may span multiple repos:
      ```
      Additional repo directories to search:
      - ralph-hero: ~/projects/ralph-hero
-     - landcrawler-ai: ~/projects/landcrawler-ai
-     ```
+     - downstream-app: ~/projects/downstream-app
+     ```text
    - Sub-agents use standard `Read`, `Grep`, `Glob` with those paths — no new tooling
 
 4. **If single-repo:** Proceed unchanged (existing behavior).
@@ -613,10 +613,10 @@ If cross-repo scope was detected during research, include this section in the re
 
 Repos involved:
 - `ralph-hero` (~/projects/ralph-hero) — [what changes are needed]
-- `landcrawler-ai` (~/projects/landcrawler-ai) — [what changes are needed]
+- `downstream-app` (~/projects/downstream-app) — [what changes are needed]
 
-Dependency relationship: ralph-hero → landcrawler-ai (landcrawler-ai imports from ralph-hero)
-```
+Dependency relationship: ralph-hero → downstream-app (downstream-app imports from ralph-hero)
+```text
 
 This section is consumed by the plan and impl skills to set up per-repo worktrees and wire `blockedBy` dependencies.
 ```
@@ -628,7 +628,7 @@ In the research document template where "Files Affected" is documented, add guid
 ```markdown
 For cross-repo issues, prefix file paths with the repo key:
 - `ralph-hero:plugin/ralph-hero/mcp-server/src/lib/repo-registry.ts`
-- `landcrawler-ai:src/api/client.ts`
+- `downstream-app:src/api/client.ts`
 
 This repo-qualified format is required for correct work-stream detection when the hero skill clusters cross-repo issues.
 ```
@@ -736,29 +736,29 @@ If the research document includes a "Cross-Repo Scope" section:
    ```bash
    cd {localDir}
    git worktree add worktrees/GH-{issue_number} -b feature/GH-{issue_number}
-   ```
+   ```text
 
-   Example for GH-601 spanning ralph-hero and landcrawler-ai:
+   Example for GH-601 spanning ralph-hero and downstream-app:
    ```
    ~/projects/ralph-hero/worktrees/GH-601/
-   ~/projects/landcrawler-ai/worktrees/GH-601/
-   ```
+   ~/projects/downstream-app/worktrees/GH-601/
+   ```text
 
 3. **Set `RALPH_WORKTREE_PATHS`:** Export a colon-separated list of all active worktree **absolute** paths (tilde expanded) so the impl-worktree-gate hook allows writes to any of them:
    ```bash
    # IMPORTANT: Expand ~ to absolute paths — the hook uses string prefix matching
-   export RALPH_WORKTREE_PATHS="/home/user/projects/ralph-hero/worktrees/GH-601:/home/user/projects/landcrawler-ai/worktrees/GH-601"
-   ```
+   export RALPH_WORKTREE_PATHS="/home/user/projects/ralph-hero/worktrees/GH-601:/home/user/projects/downstream-app/worktrees/GH-601"
+   ```text
    > **Tilde expansion:** `localDir` values in the registry may use `~`. Always expand to absolute paths before setting `RALPH_WORKTREE_PATHS`, since the hook compares against `file_path` which is always absolute.
 
 4. **Pass worktree mapping to builder:** Include in the builder spawn prompt:
    ```
    Worktree directories:
    - ralph-hero: ~/projects/ralph-hero/worktrees/GH-601
-   - landcrawler-ai: ~/projects/landcrawler-ai/worktrees/GH-601
+   - downstream-app: ~/projects/downstream-app/worktrees/GH-601
 
    Make changes to each repo in its respective worktree directory.
-   ```
+   ```text
 
 **Single-repo (default):** If no cross-repo scope, behavior is unchanged — one worktree in the current repo.
 ```
@@ -777,12 +777,12 @@ git add path/to/changed-file1.ts path/to/changed-file2.ts
 git commit -m "feat: [description of ralph-hero changes]"
 git push -u origin feature/GH-601
 
-# landcrawler-ai changes
-cd ~/projects/landcrawler-ai/worktrees/GH-601
+# downstream-app changes
+cd ~/projects/downstream-app/worktrees/GH-601
 git add path/to/changed-file.ts
-git commit -m "feat: [description of landcrawler-ai changes]"
+git commit -m "feat: [description of downstream-app changes]"
 git push -u origin feature/GH-601
-```
+```text
 ```
 
 - [ ] **Step 3: Update Link Formatting section**
@@ -819,7 +819,7 @@ If the issue has cross-repo scope (multiple worktrees exist for this issue):
        echo "Found worktree in $(basename $repo_dir)"
      fi
    done
-   ```
+   ```text
 
 2. **Create one PR per repo:** For each repo with a worktree:
    ```bash
@@ -838,7 +838,7 @@ If the issue has cross-repo scope (multiple worktrees exist for this issue):
    Closes #{issue_number}
    EOF
    )"
-   ```
+   ```text
 
 3. **Cross-reference PRs:** After creating all PRs, edit each PR body to include links to the other PRs. The merge order comes from the `dependency-flow` in the registry pattern.
 
@@ -936,7 +936,7 @@ When the root issue spans repos (detected during research or from issue body):
    - pattern: {matched pattern name}
    - dryRun: true
    Report the proposal back.
-   ```
+   ```text
 
 3. **Review proposal:** Read the sub-agent's result and verify:
    - Correct repos identified
@@ -953,7 +953,7 @@ When the root issue spans repos (detected during research or from issue body):
    - pattern: {matched pattern name}
    - dryRun: false
    Report created issue numbers and dependency wiring.
-   ```
+   ```text
    This creates the sub-issues on GitHub and wires `blockedBy` relationships.
 
 5. **Add to project board:** The `decompose_feature` tool automatically adds created issues to the project and wires dependencies.
@@ -974,11 +974,11 @@ Add after the decomposition section:
 
 During tree expansion, if research found evidence of cross-repo dependencies not declared in the registry:
 
-1. **Check research document** for mentions of imports between repos (e.g., `import { X } from 'ralph-hero'` found in landcrawler-ai code).
+1. **Check research document** for mentions of imports between repos (e.g., `import { X } from 'ralph-hero'` found in downstream-app code).
 
 2. **If undeclared dependency found:**
    - Treat repos as dependent (add `blockedBy` to the downstream sub-issue)
-   - Surface to the human: "I found imports from ralph-hero in landcrawler-ai. Your registry doesn't declare this dependency — want me to add it?"
+   - Surface to the human: "I found imports from ralph-hero in downstream-app. Your registry doesn't declare this dependency — want me to add it?"
    - If human confirms, suggest adding a `dependency-flow` edge to the pattern
 
 3. **Default for unknown relationships:** If no evidence of dependency is found and no `dependency-flow` edge exists, treat repos as independent and run in parallel.
@@ -1029,7 +1029,7 @@ After merging a PR, check if cross-repo dependents are now unblocked:
 2. **If cross-repo dependents exist:**
    - Check each dependent's `blockedBy` list via `get_issue`
    - If the merged issue was the only blocker, the dependent is now actionable
-   - Post a comment on the parent issue via `create_comment`: "GH-601 (ralph-hero) merged. GH-602 (landcrawler-ai) is now unblocked and ready for implementation."
+   - Post a comment on the parent issue via `create_comment`: "GH-601 (ralph-hero) merged. GH-602 (downstream-app) is now unblocked and ready for implementation."
 
 3. **This is informational only.** The downstream issue becomes actionable through the normal pipeline (picked up by `/ralph-hero` or the next loop iteration). No automated cascade triggering.
 
@@ -1079,7 +1079,7 @@ When cross-repo scope is detected (during the registry lookup substep added to t
    - Grep for import/require statements referencing the other repo's package name
    - Check package.json dependencies for cross-references
    - Look for shared types, API clients, or SDK references
-   ```
+   ```text
 
 2. **Compare against registry:** Check if found dependencies match the `dependency-flow` edges in the registry pattern.
 
@@ -1087,11 +1087,11 @@ When cross-repo scope is detected (during the registry lookup substep added to t
    ```markdown
    ## Dependency Discrepancy
 
-   Found: `landcrawler-ai` imports from `ralph-hero` (package: `ralph-hero-mcp-server`)
-   Registry: No `dependency-flow` edge declared between ralph-hero and landcrawler-ai
+   Found: `downstream-app` imports from `ralph-hero` (package: `ralph-hero-mcp-server`)
+   Registry: No `dependency-flow` edge declared between ralph-hero and downstream-app
 
-   Recommendation: Add `ralph-hero -> landcrawler-ai` to the pattern's dependency-flow
-   ```
+   Recommendation: Add `ralph-hero -> downstream-app` to the pattern's dependency-flow
+   ```text
 
 This information is consumed by the hero skill during tree expansion (Task 10, Step 2) to override the default "assume independent" behavior when evidence contradicts the registry.
 ```

@@ -22,7 +22,7 @@ No new platform. No new concepts for the human to learn. Widen five narrow assum
 
 **Change:** When ralph-hero detects an issue spans repos (during research phase), subsequent agents receive the relevant repo paths from the registry in their prompt context. Agents use standard `Read`, `Grep`, and `Glob` tools with those paths to search across repos. No new tooling required — agents already can read any accessible directory.
 
-**Detection:** During research, agents check if files or modules referenced in the issue exist in other repos listed in `.ralph-repos.yml`. The registry's `localDir` field on each repo entry provides the on-disk checkout location (e.g., `~/projects/landcrawler-ai`). If cross-repo scope is detected, the research document notes which repos are involved and their local directories.
+**Detection:** During research, agents check if files or modules referenced in the issue exist in other repos listed in `.ralph-repos.yml`. The registry's `localDir` field on each repo entry provides the on-disk checkout location (e.g., `~/projects/downstream-app`). If cross-repo scope is detected, the research document notes which repos are involved and their local directories.
 
 **Files affected:**
 - `plugin/ralph-hero/skills/ralph-research/SKILL.md` — add registry lookup during research to identify cross-repo scope; include repo paths in research document
@@ -37,7 +37,7 @@ No new platform. No new concepts for the human to learn. Widen five narrow assum
 
 **Worktree naming:** Same convention, scoped by repo:
 - `~/projects/ralph-hero/worktrees/GH-601`
-- `~/projects/landcrawler-ai/worktrees/GH-601`
+- `~/projects/downstream-app/worktrees/GH-601`
 
 If an issue only touches one repo (the common case), behavior is unchanged — one worktree in that repo.
 
@@ -66,7 +66,7 @@ This PR is part of GH-600. Related PRs:
 
 **Merge unblocking:** After merging a PR via `ralph-merge`, Ralph checks if cross-repo dependents exist (via `blockedBy` relationships). If an upstream PR's merge unblocks a downstream issue, Ralph notifies the human. This is informational only — the downstream issue becomes actionable through the normal pipeline, not through automated cascade triggering.
 
-**Upstream PR rejection:** If an upstream PR is rejected, downstream blocked issues remain in their blocked state. Ralph notifies the human: "PR #45 was rejected. GH-602 (landcrawler-ai) remains blocked pending resolution."
+**Upstream PR rejection:** If an upstream PR is rejected, downstream blocked issues remain in their blocked state. Ralph notifies the human: "PR #45 was rejected. GH-602 (downstream-app) remains blocked pending resolution."
 
 **Files affected:**
 - `plugin/ralph-hero/skills/ralph-pr/SKILL.md` — detect repo from worktree path, create PR in correct repo, resolve link URLs from registry
@@ -77,15 +77,15 @@ This PR is part of GH-600. Related PRs:
 
 **Today:** `blockedBy` sequences issues within one project board. The `decompose_feature` MCP tool already creates per-repo sub-issues and wires `blockedBy` from `dependency-flow` in registry patterns, but it is not integrated into the hero orchestration flow.
 
-**Change:** The hero skill invokes `decompose_feature` during tree expansion when an issue spans repos. This reuses the existing tool rather than reimplementing decomposition logic. The tool's `dependency-flow` field in registry patterns (e.g., `"ralph-hero -> landcrawler-ai"`) drives `blockedBy` wiring via GitHub's `addBlockedBy` mutation.
+**Change:** The hero skill invokes `decompose_feature` during tree expansion when an issue spans repos. This reuses the existing tool rather than reimplementing decomposition logic. The tool's `dependency-flow` field in registry patterns (e.g., `"ralph-hero -> downstream-app"`) drives `blockedBy` wiring via GitHub's `addBlockedBy` mutation.
 
 **When repos are independent** (no `dependency-flow` edge or unknown relationship): sub-issues run in parallel. No `blockedBy` links between them.
 
 **When repos have a `dependency-flow` edge:** sequential execution. Downstream sub-issue is blocked by upstream sub-issue.
 
-**Evidence-based override:** If research finds direct imports between repos that the registry doesn't declare (e.g., `import { X } from 'ralph-hero'` in landcrawler-ai but no `dependency-flow` edge), Ralph treats them as dependent and surfaces: "I found imports from ralph-hero in landcrawler-ai. Your registry doesn't declare this dependency — want me to add it?"
+**Evidence-based override:** If research finds direct imports between repos that the registry doesn't declare (e.g., `import { X } from 'ralph-hero'` in downstream-app but no `dependency-flow` edge), Ralph treats them as dependent and surfaces: "I found imports from ralph-hero in downstream-app. Your registry doesn't declare this dependency — want me to add it?"
 
-**Stream detection namespacing:** The `work-stream-detection.ts` Union-Find currently keys files as `file:${path}`. With cross-repo issues, `src/types.ts` in ralph-hero and `src/types.ts` in landcrawler-ai are different files. File keys must be repo-qualified: `file:${repo}:${path}`.
+**Stream detection namespacing:** The `work-stream-detection.ts` Union-Find currently keys files as `file:${path}`. With cross-repo issues, `src/types.ts` in ralph-hero and `src/types.ts` in downstream-app are different files. File keys must be repo-qualified: `file:${repo}:${path}`.
 
 **Files affected:**
 - `plugin/ralph-hero/skills/hero/SKILL.md` — invoke `decompose_feature` during tree expansion for cross-repo issues
@@ -98,7 +98,7 @@ This PR is part of GH-600. Related PRs:
 
 **Change:** ralph-hero reads the registry during research to know what other repos exist, where they live, and how they relate. This is a read-only lookup — no new mutations, no new MCP tools.
 
-**One schema addition:** A `localDir` field on `RepoEntrySchema` to store the on-disk checkout location (e.g., `~/projects/landcrawler-ai`). The existing `paths` field means "monorepo sub-paths within this repo" (e.g., `packages/core`), not filesystem locations. Agents need the actual checkout directory to `Read`/`Grep`/`Glob` across repos and to create worktrees.
+**One schema addition:** A `localDir` field on `RepoEntrySchema` to store the on-disk checkout location (e.g., `~/projects/downstream-app`). The existing `paths` field means "monorepo sub-paths within this repo" (e.g., `packages/core`), not filesystem locations. Agents need the actual checkout directory to `Read`/`Grep`/`Glob` across repos and to create worktrees.
 
 ```yaml
 repos:
@@ -128,11 +128,11 @@ No new commands. Same workflow. Ralph surfaces cross-repo context naturally:
 
 Ralph: GH-600 involves changes in 2 repos:
   - ralph-hero — new MCP tool
-  - landcrawler-ai — consume the tool (depends on ralph-hero)
+  - downstream-app — consume the tool (depends on ralph-hero)
 
 Creating sub-issues:
   GH-601 ralph-hero     — starts now
-  GH-602 landcrawler-ai — starts after GH-601 merges
+  GH-602 downstream-app — starts after GH-601 merges
 ```
 
 When repos are independent:
