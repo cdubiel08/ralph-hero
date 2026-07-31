@@ -81,9 +81,9 @@ result: #NNN escalated to Human Needed — no matching dispatch condition
 # outcome-recorder(decision=watch-escalated, result=human-needed, trace_id=<id-if-known>)
 ```
 
-**On SOUL refusal (no trace ID or LQL snippet):**
+**On SOUL refusal (none of the accepted forms present — see § SOUL refusal preconditions):**
 
 ```text
-result: #NNN blocked — SOUL refusal: no trace ID or LQL snippet present
+result: #NNN blocked — SOUL refusal: no trace ID, LQL snippet, langfuse-trace URL, or watcher-* routing label present
 # outcome-recorder(decision=watch-refused, result=missing-evidence, trace_id=none)
 ```

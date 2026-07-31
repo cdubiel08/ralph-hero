@@ -92,12 +92,18 @@ References: [../shared/event-taxonomy.md](../shared/event-taxonomy.md) (default-
 - If `--auto` in `$ARGUMENTS` AND `--mode` also present → emit `--auto cannot be combined with explicit --mode; pick one.` and STOP.
 - If `--auto` in `$ARGUMENTS` → strip `--auto` token, prepend `--mode triage` to `$ARGUMENTS` (verb=caretake alias row). Continue to `--loop` detection with the rewritten args.
 
-**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set, route by mode (all use continuation-prompt template from `loop-wrapper.md`):
-- `--mode triage` → `caretake:triage` row; `--mode hygiene` → `caretake:hygiene` row; `--mode unblock` (no `--question`) → `caretake:unblock` row. Emit `Skill("loop", …)` then STOP.
-- No args (no `--issue`) → bare invocation runs the **heartbeat fan-out** (`RALPH_SUBCOMMAND=all`; see the dispatch body), so loop it with the `caretake:all` heartbeat row — default interval `1h`, **no `Queue empty.` terminal**, re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:all row>")` then STOP. (The `caretake:default-event` row is the `--issue NNN`-scoped trigger-drain path — NOT the bare no-arg fan-out.)
-- `--issue NNN` present, `--mode reflect`, or `--mode unblock --question` → emit refusal from `loop-wrapper.md` § Refusal message, then STOP.
-- **`--mode all`** → heartbeat; default interval `1h`. Use `caretake:all` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode all ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest>")` then STOP.
-- **`--mode watch`** (with or without `--kind`) → heartbeat; default interval `1h`. Use `caretake:watch` manifest row — no `Queue empty.` terminal; re-fires on clock. Emit `Skill("loop", args="${LOOP_INTERVAL:-1h} /ralph:caretake --mode watch ${STRIPPED_ARGS}\n\n<continuation from loop-wrapper.md manifest, caretake:watch row>")` then STOP.
+**`--loop` gate** — run the arg-parsing snippet from `ralph/skills/shared/loop-wrapper.md` § Arg-parsing snippet (sets `LOOP_RAW`, `LOOP_INTERVAL`, `STRIPPED_ARGS`). If `LOOP_RAW` is set, pick the manifest row and emit `Skill("loop", …)` with that row's continuation prompt, then STOP:
+
+| Invocation | Manifest row |
+|---|---|
+| `--mode triage` | `caretake:triage` |
+| `--mode hygiene` | `caretake:hygiene` |
+| `--mode unblock` (no `--question`) | `caretake:unblock` |
+| `--mode watch` (with or without `--kind`) | `caretake:watch` |
+| `--mode all`, or no args | `caretake:all` |
+| `--issue NNN` present, `--mode reflect`, `--mode unblock --question` | none — emit the refusal from `loop-wrapper.md` § Refusal message |
+
+**Cadence, terminal sentinels, and re-fire semantics live in the manifest row, not here** — read [`../shared/loop-wrapper.md`](../shared/loop-wrapper.md) § Continuation-rules manifest and do not restate its values in this file. Note `caretake:default-event` is the `--issue NNN`-scoped trigger-drain row, NOT the bare no-arg fan-out (that is `caretake:all`).
 
 ```bash
 # Parse $ARGUMENTS into mode + flags. Each mode body sets RALPH_SUBCOMMAND itself

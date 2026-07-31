@@ -1,6 +1,13 @@
 # Caretake terminal tokens
 
-Each mode body emits exactly one terminal token on its final line. The harness extractor reads these from the transcript verbatim — do not paraphrase or wrap in prose. Postcondition hooks under `ralph/hooks/scripts/*-postcondition.sh` grep the transcript for the tokens listed here.
+Each mode body emits its terminal token(s) at the end of the run, verbatim — the harness extractor reads them from the transcript, so do not paraphrase or wrap them in prose.
+
+**Cardinality is one token per mode body, not one per invocation.** Most modes run one body and so emit exactly one token. Two do not, and both are documented in their own sections below:
+
+- `--mode watch` bare runs three kind-bodies serially → three tokens, plus one informational summary line (prose, not a token).
+- `--mode all` fans out to several child modes → one token per child, consolidated into the heartbeat report.
+
+Postcondition hooks under `ralph/hooks/scripts/*-postcondition.sh` grep the transcript for the tokens listed here.
 
 Sections are filled across Plans 7 phases 3-8.
 
@@ -87,10 +94,10 @@ enrich has no `Stop` postcondition hook (parity with watch/hygiene) — it mutat
 
 ## Loop continuation
 
-When a caretake mode is wrapped via `--loop` (see `ralph/skills/shared/loop-wrapper.md` for the canonical continuation-rules manifest), the `/loop` runtime reads each invocation's terminal token to decide whether to re-fire or stop.
+How each token drives `/loop` — drain vs heartbeat semantics, terminal sentinels, and delay buckets — is single-sourced in [`../shared/loop-wrapper.md`](../shared/loop-wrapper.md) § Continuation-rules manifest (GH-1607). Read the row for the `caretake:<mode>` you are running; this file defines *which tokens exist*, the manifest defines *what they mean to the loop*.
 
-**Drain modes** (triage, unblock, caretake:default-event): `Queue empty.` is the sole termination signal. Every other terminal token (including progress tokens and `BLOCKED` variants) causes `/loop` to schedule the next tick at the appropriate delay bucket and re-fire.
+Two caretake-specific facts that are not loop semantics and so live here:
 
-**Heartbeat modes** (hygiene, watch, all): these modes have no `Queue empty.` termination signal. `/loop` re-fires on a clock regardless of the token emitted — even when the invocation did nothing. The user cancels by deleting the pending wakeup via `/tasks`. Watch and enrich run as serial children of `--mode all` (not independently looped there) and emit their tokens into the consolidated heartbeat report — enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain. `--mode watch` can also be looped directly (`--loop`), in which case a bare invocation sweeps all three kinds every tick.
+- **Watch and enrich run as serial children of `--mode all`**, not as independently looped modes in that path; they emit their tokens into the consolidated heartbeat report. Enrich drains its `status: draft` queue across successive heartbeat ticks (5-file cap per pass), emitting `Queue empty.` once no drafts remain.
+- **Non-loop invocations are unaffected** — every token semantic above applies to standalone caretake calls; the loop-continuation layer only activates when `--loop` was passed to the outermost invocation.
 
-**Non-loop invocations** are unaffected: all token semantics above apply to standalone caretake calls; the loop-continuation layer only activates when `--loop` was passed to the outermost invocation.

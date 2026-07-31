@@ -67,12 +67,14 @@ content_probe_stripped=$(printf '%s\n' "$content_probe" | awk '
     next
   }
   !f { print }')
-# Shape discriminator is SHARED with doc-structure-validator.sh and
-# plan-tier-validator.sh via hook-utils.sh's is_plan_of_plans(). All three
-# MUST agree: this waiver is documented as compensated by
-# doc-structure-validator enforcing the plan-of-plans shape at Stop, and a
-# compensating control that disagrees about which shape applies compensates
-# for nothing. The helper owns both the frontmatter scoping of `type:` (a
+# Shape discriminator is SHARED with doc-structure-validator.sh via
+# hook-utils.sh's is_plan_of_plans(). The two MUST agree: this waiver is
+# documented as compensated by doc-structure-validator enforcing the
+# plan-of-plans shape at Stop, and a compensating control that disagrees
+# about which shape applies compensates for nothing. (plan-tier-validator.sh
+# deliberately does NOT use the helper — it keys on the `## Feature
+# Decomposition` heading alone, for tier selection rather than shape
+# validation.) The helper owns both the frontmatter scoping of `type:` (a
 # document-wide match let an ordinary plan bypass this gate by naming the
 # token in prose) and the here-string form (a `printf | grep -q` pipeline
 # under `set -o pipefail` reports 141 on SIGPIPE for payloads past the pipe
