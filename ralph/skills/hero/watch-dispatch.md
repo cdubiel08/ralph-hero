@@ -9,11 +9,19 @@ Before dispatching any sub-skill or subagent, verify the issue body contains at 
 - A trace ID matching `projects/[^/]+/traces/[a-f0-9]+`
 - A literal `gcloud logging read ...` snippet
 - A `<!-- gcp-policy: ... -->` marker (which implies an upstream alert source that gcp-incident-triage will query)
+- A `langfuse-trace:` URL
+
+...or the issue carries one of the routing **labels** the dispatch table keys on:
+
+- `watcher-investigate`
+- `watcher-remediate`
+
+**Every route's trigger in § Dispatch table below must be accepted here, and vice versa — the two lists are one contract.** Three triggers were missing from this precondition while the table routed on them (`langfuse-trace:`, and both labels), so a well-formed Langfuse or labeled watcher issue was refused *here* and escalated to Human Needed before its route could ever run. The labels are deliberately sufficient on their own: a `watcher-*` label is an explicit human/automation routing decision, and `log-reader` / `sre-fixit` read the body themselves.
 
 If none present, post a `needs input:` comment and escalate to Human Needed:
 
 ```text
-needs input: issue #NNN has no trace ID and no LQL snippet. Provide a trace ID (projects/<proj>/traces/<id>) or a gcloud logging read query before /ralph:hero --mode watch can proceed.
+needs input: issue #NNN has no trace ID, LQL snippet, langfuse-trace URL, or watcher-* routing label. Provide a trace ID (projects/<proj>/traces/<id>), a gcloud logging read query, a langfuse-trace: URL, or apply watcher-investigate / watcher-remediate before /ralph:hero --mode watch can proceed.
 ```
 
 ## Dispatch table
