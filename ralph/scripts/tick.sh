@@ -33,18 +33,23 @@ if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ "${RALPH_ALLOW_API_BILLING:-}" != "true"
 fi
 
 # --- One tick at a time per machine (portable: no flock on stock macOS) -----
-LOCKDIR="$RALPH_HOME/tick.lock"
-take_lock() { mkdir "$LOCKDIR" 2>/dev/null && echo $$ > "$LOCKDIR/pid"; }
+# noclobber makes create+write one atomic O_EXCL operation, so the pid exists
+# the instant the lock does — no mkdir-then-write gap for a racer to misread
+# as stale. The read-back verify closes the residual rm/retake race: whoever's
+# pid is in the file proceeds; everyone else skips (fail closed).
+LOCK="$RALPH_HOME/tick.pid"
+take_lock() { ( set -o noclobber; echo $$ > "$LOCK" ) 2>/dev/null; }
 if ! take_lock; then
-  HOLDER_PID=$(cat "$LOCKDIR/pid" 2>/dev/null || echo "")
+  HOLDER_PID=$(cat "$LOCK" 2>/dev/null || echo "")
   if [ -n "$HOLDER_PID" ] && kill -0 "$HOLDER_PID" 2>/dev/null; then
     echo "tick: previous tick (pid $HOLDER_PID) still running — skipping" >&2
     exit 0
   fi
-  rm -rf "$LOCKDIR"   # stale lock from a crashed tick
+  rm -f "$LOCK"   # stale lock from a crashed tick
   take_lock || { echo "tick: lock race — skipping" >&2; exit 0; }
 fi
-trap 'rm -rf "$LOCKDIR"' EXIT
+[ "$(cat "$LOCK" 2>/dev/null)" = "$$" ] || { echo "tick: lock race — skipping" >&2; exit 0; }
+trap 'rm -f "$LOCK"' EXIT
 
 date +%s > "$RALPH_HOME/heartbeat"
 

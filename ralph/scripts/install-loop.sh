@@ -36,10 +36,15 @@ EOF
     fi
     ;;
   --disable)
-    launchctl unload "$PLIST" 2>/dev/null || true
-    rm -f "$PLIST"
-    sed -i '' '/^autopilot=true$/d' "$RALPH_HOME/config" 2>/dev/null || true
-    echo "loop disabled (schedule removed, autopilot=false)"
+    if [ "$(uname)" = "Darwin" ]; then
+      launchctl unload "$PLIST" 2>/dev/null || true
+      rm -f "$PLIST"
+      sed -i '' '/^autopilot=true$/d' "$RALPH_HOME/config" 2>/dev/null || true
+      echo "loop disabled (launchd job removed, autopilot=false)"
+    else
+      sed -i '/^autopilot=true$/d' "$RALPH_HOME/config" 2>/dev/null || true
+      echo "autopilot=false — tick.sh now refuses to run; remove the crontab line manually (crontab -e)"
+    fi
     ;;
   *)
     echo "usage: install-loop.sh --enable | --disable" >&2
