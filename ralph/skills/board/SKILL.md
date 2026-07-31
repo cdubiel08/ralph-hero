@@ -12,7 +12,7 @@ allowed-tools:
 
 # /ralph:board — orientation, intake, answers, health
 
-The CLI is `ralph/scripts/board`; the Projects V2 UI is the dashboard. This skill is a thin human front-end — judgment stays with the user.
+The CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder resolves to wherever this plugin is installed, so it works from any repo; never substitute a repo-relative path. Below, `board` is shorthand for it. The Projects V2 UI is the dashboard. This skill is a thin human front-end — judgment stays with the user.
 
 - **status / empty args** — `board list`, then a 3-5 sentence read: what's in flight (claims + age), what's blocked on a human, what's next. No dashboards; the board UI renders itself.
 - **next** — `board next`, one-line recommendation, offer to dispatch `Skill("ralph:work", args="NNN")`.

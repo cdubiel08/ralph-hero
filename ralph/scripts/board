@@ -9,7 +9,10 @@ if command -v bun >/dev/null 2>&1; then
   exec bun "$TS" "$@"
 elif [ -x "$ROOT/node_modules/.bin/tsx" ]; then
   exec "$ROOT/node_modules/.bin/tsx" "$TS" "$@"
+elif command -v npx >/dev/null 2>&1; then
+  # Installed-plugin case: no repo node_modules to fall back on.
+  exec npx --yes tsx "$TS" "$@"
 else
-  echo "board: no runtime found — install bun, or run 'npm install' at $ROOT for the pinned tsx" >&2
+  echo "board: no runtime found — install bun (or node/npx), or run 'npm install' at $ROOT for the pinned tsx" >&2
   exit 69
 fi
