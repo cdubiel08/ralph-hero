@@ -330,7 +330,7 @@ What enforces the split contract now:
 | XS/S children on the atomic path | `create_sub_issues(maxChildEstimate: "S")` — server-side, fail-closed, up-front (GH-1618) |
 | S/M children on the plan-of-plans path | No ceiling passed; accepted as specced |
 | M/L/XL parent | Workflow-level self-check (§Step 2) |
-| ≥2 children | Prose rule (§ Terminal tokens below): fewer than 2 is a failed split — report it, do not advance the parent |
+| ≥2 children | **Prose rule today** (§ Terminal tokens below): fewer than 2 is a failed split — report it, do not advance the parent. Server-side enforcement is designed and tracked in [GH-1651](https://github.com/cdubiel08/ralph-hero/issues/1651): a `minChildren` parameter on `create_sub_issues`, symmetric with `maxChildEstimate` — the count arrives as a call argument, so unlike the deleted Stop gate it needs no env discriminator. |
 
 ## Terminal tokens
 
