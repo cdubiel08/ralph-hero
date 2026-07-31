@@ -114,6 +114,7 @@ describe("claims", () => {
 describe("rankNext", () => {
   const item = (n: number, over: Partial<QueueItem> = {}): QueueItem => ({
     number: n,
+    repo: "cdubiel08/ralph-hero",
     title: `t${n}`,
     state: "Backlog",
     priority: null,
@@ -227,6 +228,7 @@ const PROJECT_ID = "PVT_test";
 
 interface FakeIssue {
   number: number;
+  archived?: boolean;
   state?: string | null;
   claim?: string | null;
   issueState?: "OPEN" | "CLOSED";
@@ -353,6 +355,7 @@ class FakeGh {
           items: {
             pageInfo: { hasNextPage: false, endCursor: null },
             nodes: [...this.issues.values()].map((fi) => ({
+              isArchived: fi.archived ?? false,
               content: {
                 number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
                 repository: { nameWithOwner: "cdubiel08/ralph-hero" },
@@ -571,6 +574,18 @@ describe("transition engine", () => {
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/lost the claim race.*rival@other/);
   });
 
+  it("claim from In Progress is (re)acquisition: adopts claimless WIP, refuses a live foreign claim", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress" }); // claimless WIP (pre-v2 or UI-driven)
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(after.claim?.holder).toBe("me@test");
+
+    gh.issues.set(2, {
+      number: 2, state: "In Progress",
+      claim: encodeClaim("other@host", new Date(NOW.getTime() - 5 * 60_000)),
+    });
+    expect(() => transition(ctx, fetchIssue(ctx, 2), "In Progress")).toThrow(/other@host/);
+  });
+
   it("claim read-back also rejects a VANISHED claim (concurrent clear)", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
     gh.vanishClaim = true;
@@ -740,6 +755,16 @@ describe("doctor + migrate", () => {
     doctor(ctx, { fix: true });
     expect(gh.issues.get(1)!.state).toBe("Backlog");
     expect(gh.comments.some((c) => c.body.includes("stale claim"))).toBe(true);
+  });
+
+  it("archived items are invisible to list/next/migrate — they cannot be written", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Ready for Plan", archived: true });
+    gh.issues.set(2, { number: 2, state: "Ready for Plan" });
+    const lines = migrate(ctx);
+    expect(lines.some((l) => l.includes("#2"))).toBe(true);
+    expect(lines.some((l) => l.includes("#1"))).toBe(false);
   });
 
   it("migrate: dry-run by default; Decision Request routes Plan in Review to Human Needed", () => {
