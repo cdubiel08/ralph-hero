@@ -12,6 +12,7 @@ import {
   adopt,
   claimIsStale,
   type Config,
+  createIssue,
   type Ctx,
   doctor,
   encodeClaim,
@@ -24,12 +25,14 @@ import {
   migrateMapping,
   parentCheck,
   parseArgs,
-  reconcile,
   parseClaim,
   parseStateArg,
+  parseTtlMin,
   type QueueItem,
   rankNext,
+  reconcile,
   RefusalError,
+  run,
   scopeMatches,
   STATES,
   transition,
@@ -41,14 +44,14 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("state machine", () => {
-  it("encodes exactly the designed transition table", () => {
+  it("encodes exactly the designed transition table — terminal states have no move edges", () => {
     expect(MACHINE).toEqual({
       Backlog: ["In Progress", "Canceled"],
       "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
       "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
       "Human Needed": ["In Progress", "Backlog", "Canceled"],
-      Done: ["Backlog"],
-      Canceled: ["Backlog"],
+      Done: [],
+      Canceled: [],
     });
   });
 
@@ -61,6 +64,8 @@ describe("state machine", () => {
       ["Human Needed", "In Review"],
       ["Human Needed", "Done"],
       ["Done", "In Progress"],
+      ["Done", "Backlog"], // exit is reopen, never move
+      ["Canceled", "Backlog"],
       ["Canceled", "Done"],
     ];
     for (const [from, to] of illegal) {
@@ -114,6 +119,7 @@ describe("rankNext", () => {
     priority: null,
     hasParent: false,
     openBlockers: [],
+    blockersTruncated: false,
     claim: null,
     ...over,
   });
@@ -127,10 +133,11 @@ describe("rankNext", () => {
       item(5, { openBlockers: [3] }),
       item(6, { claim: { holder: "other", since: new Date() } }),
       item(7, { state: "In Review" }),
+      item(8, { blockersTruncated: true }), // truncated blocker list = blocked (fail closed)
     ];
     const { eligible, blocked } = rankNext(items);
     expect(eligible.map((i) => i.number)).toEqual([3, 2, 4, 10]);
-    expect(blocked.map((i) => i.number)).toEqual([5]);
+    expect(blocked.map((i) => i.number)).toEqual([5, 8]);
   });
 });
 
@@ -156,10 +163,11 @@ describe("migrateMapping (11 → 6)", () => {
 });
 
 describe("scopeMatches", () => {
-  it("accepts https/ssh forms of the configured repo, case-insensitively", () => {
+  it("accepts https/ssh forms of the configured repo, case-insensitively, incl. trailing slash", () => {
     for (const url of [
       "https://github.com/cdubiel08/ralph-hero.git",
       "https://github.com/cdubiel08/ralph-hero",
+      "https://github.com/cdubiel08/ralph-hero/",
       "git@github.com:cdubiel08/ralph-hero.git",
       "ssh://git@github.com/CDubiel08/Ralph-Hero.git",
     ]) {
@@ -167,10 +175,27 @@ describe("scopeMatches", () => {
     }
   });
 
-  it("refuses other repos and garbage", () => {
+  it("refuses other repos, OTHER HOSTS with matching owner/repo, and garbage", () => {
     expect(scopeMatches("git@github.com:other/ralph-hero.git", "cdubiel08", "ralph-hero")).toBe(false);
     expect(scopeMatches("https://github.com/cdubiel08/other.git", "cdubiel08", "ralph-hero")).toBe(false);
+    expect(scopeMatches("https://gitlab.example.com/cdubiel08/ralph-hero.git", "cdubiel08", "ralph-hero")).toBe(false);
+    expect(scopeMatches("git@internal-mirror:cdubiel08/ralph-hero.git", "cdubiel08", "ralph-hero")).toBe(false);
     expect(scopeMatches("", "cdubiel08", "ralph-hero")).toBe(false);
+  });
+
+  it("host is configurable for GHE remotes", () => {
+    expect(scopeMatches("git@ghe.corp:cdubiel08/ralph-hero.git", "cdubiel08", "ralph-hero", "ghe.corp")).toBe(true);
+  });
+});
+
+describe("parseTtlMin", () => {
+  it("valid values pass; unset/empty/garbage/non-positive fall back to 120", () => {
+    expect(parseTtlMin("60")).toBe(60);
+    expect(parseTtlMin(undefined)).toBe(120);
+    expect(parseTtlMin("")).toBe(120); // "" → 0 would make every claim instantly stealable
+    expect(parseTtlMin("120min")).toBe(120); // NaN would make no claim ever expire
+    expect(parseTtlMin("0")).toBe(120);
+    expect(parseTtlMin("-5")).toBe(120);
   });
 });
 
@@ -203,6 +228,7 @@ interface FakeIssue {
   onBoard?: boolean; // default true
   parent?: number;
   children?: Array<{ number: number; issueState: "OPEN" | "CLOSED"; state?: string | null }>;
+  childrenTruncated?: boolean;
   comments?: string[];
 }
 
@@ -212,6 +238,8 @@ class FakeGh {
   mutations: string[] = [];
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
+  failNextStateWrite = false; // transport-failure injection
+  raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
 
   exec: (argv: string[], stdin?: string) => ExecResult = (argv, stdin) => {
     const cmd = argv.join(" ");
@@ -240,6 +268,7 @@ class FakeGh {
       labels: { nodes: [] },
       parent: fi.parent ? { number: fi.parent, title: `Issue ${fi.parent}` } : null,
       subIssues: {
+        pageInfo: { hasNextPage: fi.childrenTruncated ?? false },
         nodes: (fi.children ?? []).map((c) => ({
           number: c.number,
           title: `Issue ${c.number}`,
@@ -333,10 +362,15 @@ class FakeGh {
       const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
       const fi = this.issues.get(itemNum);
       if (variables.optionId && variables.fieldId === "F_state" && fi) {
+        if (this.failNextStateWrite) {
+          this.failNextStateWrite = false;
+          return { code: 1, stdout: "", stderr: "simulated transport failure" };
+        }
         fi.state = String(variables.optionId).replace("OPT_", "");
         this.mutations.push(`setState(#${itemNum}, ${fi.state})`);
       } else if (variables.fieldId === "F_claim" && fi) {
-        fi.claim = variables.text;
+        // A concurrent writer's claim can land last (no CAS on Projects V2).
+        fi.claim = this.raceClaimTo ? `${this.raceClaimTo}|${new Date().toISOString()}` : variables.text;
         this.mutations.push(`setClaim(#${itemNum})`);
       } else {
         this.mutations.push(`setField(${variables.fieldId})`);
@@ -493,6 +527,30 @@ describe("transition engine", () => {
     gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
     expect(() => transition(ctx, fetchIssue(ctx, 1), "Backlog", { isReopen: true })).toThrow(/reopen is for/);
   });
+
+  it("reopen from Done reopens the GitHub issue too — a bare move cannot exit a terminal state", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "CLOSED" });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Backlog")).toThrow(/use reopen/);
+    const after = transition(ctx, fetchIssue(ctx, 1), "Backlog", { isReopen: true });
+    expect(after.state).toBe("Backlog");
+    expect(gh.mutations).toContain("reopenIssue");
+  });
+
+  it("a mid-write transport failure throws WITHOUT replaying earlier writes", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    gh.failNextStateWrite = true;
+    expect(() =>
+      transition(ctx, fetchIssue(ctx, 1), "Human Needed", { why: "decision X" }),
+    ).toThrow(/transport failure|gh api graphql failed/);
+    // The escalation comment was posted exactly once — no retry replay.
+    expect(gh.comments.filter((c) => c.body.includes("decision X"))).toHaveLength(1);
+  });
+
+  it("claim race: the loser detects the overwrite on read-back and backs off", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.raceClaimTo = "rival@other";
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/lost the claim race.*rival@other/);
+  });
 });
 
 describe("parent gate", () => {
@@ -513,6 +571,40 @@ describe("parent gate", () => {
     expect(parentCheck(ctx, 10)).toMatch(/advanced to In Review/);
     expect(gh.mutations).toContain("setState(#10, In Review)");
     expect(gh.comments.some((c) => c.body.includes("children closed"))).toBe(true);
+  });
+
+  it("fails closed on a truncated children list — never gates on partial data", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(10, {
+      number: 10, state: "In Progress", claim: encodeClaim("me@test", NOW),
+      children: [{ number: 11, issueState: "CLOSED", state: "Done" }],
+      childrenTruncated: true,
+    });
+    expect(parentCheck(ctx, 10)).toMatch(/refusing to gate on a truncated list/);
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
+  });
+});
+
+describe("guards at the CLI boundary", () => {
+  it("create refuses terminal states — an OPEN issue must never sit in Done", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    expect(() => createIssue(ctx, { title: "x", state: "Done" })).toThrow(UsageError);
+  });
+
+  it("run(): scope gate covers mutations AND doctor --fix, not plain reads", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.exec = (argv, stdin) => {
+      if (argv.join(" ").includes("remote get-url"))
+        return { code: 0, stdout: "git@github.com:someone-else/other.git\n", stderr: "" };
+      return gh.exec(argv, stdin);
+    };
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    expect(() => run(["comment", "1", "-m", "x"], ctx)).toThrow(RefusalError);
+    expect(() => run(["doctor", "--fix"], ctx)).toThrow(RefusalError);
+    expect(run(["doctor"], ctx)).toBeTypeOf("number"); // read path still works anywhere
   });
 });
 

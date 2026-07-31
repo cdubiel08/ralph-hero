@@ -16,7 +16,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,14 +35,16 @@ export const STATES = [
 ] as const;
 export type State = (typeof STATES)[number];
 
-/** Legal transitions. Done/Canceled exit only via `reopen`. */
+/** Legal transitions. Done/Canceled have NO move edges — the only exit is
+ *  `reopen`, which also reopens the GitHub issue (a bare move would leave a
+ *  closed issue sitting in Backlog, invisible to list/next). */
 export const MACHINE: Record<State, readonly State[]> = {
   Backlog: ["In Progress", "Canceled"],
   "In Progress": ["In Review", "Human Needed", "Backlog", "Canceled"],
   "In Review": ["Done", "In Progress", "Human Needed", "Canceled"],
   "Human Needed": ["In Progress", "Backlog", "Canceled"],
-  Done: ["Backlog"],
-  Canceled: ["Backlog"],
+  Done: [],
+  Canceled: [],
 };
 
 /** Legacy (v1) states still meaningful to `migrate` and `doctor`. */
@@ -153,19 +155,21 @@ export interface QueueItem {
   priority: string | null; // "P0".."P3"
   hasParent: boolean;
   openBlockers: number[];
+  blockersTruncated: boolean; // fail closed: truncated blocker list = blocked
   claim: Claim | null;
 }
 
 /** Backlog, unblocked, unclaimed — P0 first, parented work before new roots,
- *  then oldest. Blocked items are excluded but reported separately. */
+ *  then oldest. Blocked items are excluded but reported separately; an item
+ *  whose blocker list was truncated counts as blocked (fail closed). */
 export function rankNext(items: QueueItem[]): {
   eligible: QueueItem[];
   blocked: QueueItem[];
 } {
   const backlog = items.filter((i) => i.state === "Backlog" && !i.claim);
-  const blocked = backlog.filter((i) => i.openBlockers.length > 0);
+  const blocked = backlog.filter((i) => i.openBlockers.length > 0 || i.blockersTruncated);
   const eligible = backlog
-    .filter((i) => i.openBlockers.length === 0)
+    .filter((i) => i.openBlockers.length === 0 && !i.blockersTruncated)
     .sort((a, b) => {
       const pa = a.priority ?? "P9";
       const pb = b.priority ?? "P9";
@@ -188,18 +192,22 @@ export interface Config {
   holder: string;
 }
 
+/** Host + owner + repo must all match — a matching owner/repo on a mirror or
+ *  another forge must not pass the gate. Host defaults to github.com. */
 export function scopeMatches(
   remoteUrl: string,
   owner: string,
   repo: string,
+  host = "github.com",
 ): boolean {
   const m = remoteUrl
     .trim()
-    .match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/);
+    .match(/^(?:https?:\/\/(?:[^@/]+@)?|ssh:\/\/(?:[^@/]+@)?|[^@/]+@)?([^/:]+)[:/]+([^/:]+)\/([^/:]+?)(?:\.git)?\/?$/);
   if (!m) return false;
   return (
-    m[1].toLowerCase() === owner.toLowerCase() &&
-    m[2].toLowerCase() === repo.toLowerCase()
+    m[1].toLowerCase() === host.toLowerCase() &&
+    m[2].toLowerCase() === owner.toLowerCase() &&
+    m[3].toLowerCase() === repo.toLowerCase()
   );
 }
 
@@ -245,11 +253,22 @@ export function loadConfig(repoRoot: string): Config {
     owner,
     repo,
     projectNumber,
-    lockTtlMin: Number(process.env.RALPH_LOCK_TTL_MIN ?? 120),
+    lockTtlMin: parseTtlMin(process.env.RALPH_LOCK_TTL_MIN),
     holder:
       process.env.RALPH_CLAIM_HOLDER ??
       `${userInfo().username}@${hostname()}`,
   };
+}
+
+/** TTL is the only override path in this CLI, so a bad value must not fail
+ *  silently: "" → 0 would make every claim instantly stealable; "120min" →
+ *  NaN would make no claim ever expire. Invalid input warns and uses 120. */
+export function parseTtlMin(raw: string | undefined): number {
+  if (raw === undefined) return 120;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  process.stderr.write(`warn: RALPH_LOCK_TTL_MIN="${raw}" is not a positive number — using 120\n`);
+  return 120;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +343,9 @@ const CLAIM_FIELD = "Claim";
 const STATUS_FIELD = "Status";
 
 function cachePath(ctx: Ctx): string {
-  return join(ctx.cacheDir, `board-${ctx.cfg.owner}-${ctx.cfg.projectNumber}.json`);
+  // repo is part of the key: the cache stores repositoryId, and two repos
+  // sharing one project would otherwise create issues in the wrong repo.
+  return join(ctx.cacheDir, `board-${ctx.cfg.owner}-${ctx.cfg.repo}-${ctx.cfg.projectNumber}.json`);
 }
 
 export function refreshCache(ctx: Ctx): BoardCache {
@@ -401,7 +422,9 @@ export function ensureCache(ctx: Ctx): BoardCache {
   return refreshCache(ctx);
 }
 
-/** Run an op that may fail on a stale cache; refresh once and retry. */
+/** READ-ONLY ops: run against the cache; on any failure refresh once and
+ *  retry. Never wrap a mutation in this — a mid-write retry would replay
+ *  comments/closes/field writes. Mutations use mutationCache() instead. */
 function withCache<T>(ctx: Ctx, op: (cache: BoardCache) => T): T {
   try {
     return op(ensureCache(ctx));
@@ -409,6 +432,24 @@ function withCache<T>(ctx: Ctx, op: (cache: BoardCache) => T): T {
     if (e instanceof RefusalError || e instanceof UsageError) throw e;
     return op(refreshCache(ctx));
   }
+}
+
+/** MUTATING ops resolve cache freshness BEFORE the first write: verify every
+ *  (field, option) the op will need; refresh once if anything is missing;
+ *  hard-error if still missing. The op itself then runs with NO retry, so a
+ *  failure mid-write never replays earlier writes. */
+function mutationCache(ctx: Ctx, needs: Array<[field: string, option?: string]>): BoardCache {
+  const satisfied = (c: BoardCache) =>
+    needs.every(([f, o]) => c.fields[f] && (o === undefined || c.fields[f].options?.[o]));
+  let cache = ensureCache(ctx);
+  if (!satisfied(cache)) cache = refreshCache(ctx);
+  if (!satisfied(cache)) {
+    const missing = needs.filter(([f, o]) => !cache.fields[f] || (o !== undefined && !cache.fields[f].options?.[o]));
+    throw new Error(
+      `project is missing ${missing.map(([f, o]) => (o ? `option "${o}" on field "${f}"` : `field "${f}"`)).join(", ")} — run \`board setup\``,
+    );
+  }
+  return cache;
 }
 
 // ---------------------------------------------------------------------------
@@ -430,7 +471,9 @@ export interface Issue {
   labels: string[];
   parent: { number: number; title: string } | null;
   children: Array<{ number: number; title: string; issueState: string; state: string | null }>;
+  childrenTruncated: boolean; // >50 children — parentCheck fails closed on this
   blockedBy: Array<{ number: number; issueState: string; repo: string }>;
+  blockersTruncated: boolean;
   prs: Array<{ number: number; url: string; state: string; merged: boolean }>;
 }
 
@@ -463,12 +506,13 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
             labels(first: 20) { nodes { name } }
             parent { number title }
             subIssues(first: 50) {
+              pageInfo { hasNextPage }
               nodes {
                 number title state
                 projectItems(first: 10) { nodes { project { id } ${FIELD_VALUES_FRAGMENT} } }
               }
             }
-            blockedBy(first: 20) { nodes { number state repository { nameWithOwner } } }
+            blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
             closedByPullRequestsReferences(first: 10) { nodes { number url state merged } }
             projectItems(first: 20) { nodes { id project { id } ${FIELD_VALUES_FRAGMENT} } }
           }
@@ -509,11 +553,13 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
           state: fieldValueMap(cItem?.fieldValues)[STATE_FIELD] ?? null,
         };
       }),
+      childrenTruncated: issue.subIssues?.pageInfo?.hasNextPage ?? false,
       blockedBy: (issue.blockedBy?.nodes ?? []).map((b: any) => ({
         number: b.number,
         issueState: b.state,
         repo: b.repository?.nameWithOwner ?? "",
       })),
+      blockersTruncated: issue.blockedBy?.pageInfo?.hasNextPage ?? false,
       prs: (issue.closedByPullRequestsReferences?.nodes ?? []).map((p: any) => ({
         number: p.number,
         url: p.url,
@@ -627,7 +673,14 @@ function syncStatus(ctx: Ctx, cache: BoardCache, itemId: string, state: State): 
 }
 
 // ---------------------------------------------------------------------------
-// Transition engine — every state write funnels through here
+// Transition engine — the INTENT lane.
+//
+// Three sanctioned write lanes, all typed, all evidenced:
+//   transition()  — agent intent, guarded by the MACHINE table + claim guard
+//   reconcile()   — reality sync (issue closed/reopened wins over the table)
+//   parentCheck() — rollup (children all closed → parent to In Review,
+//                   deliberately multi-hop past the table)
+// Nothing else writes the state field.
 // ---------------------------------------------------------------------------
 
 interface MoveOpts {
@@ -649,7 +702,9 @@ function guardHolder(ctx: Ctx, issue: Issue): void {
 }
 
 export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {}): Issue {
-  return withCache(ctx, (cache) => {
+  // Cache freshness resolved BEFORE any write; the body never retries.
+  const cache = mutationCache(ctx, [[STATE_FIELD, to]]);
+  {
     const from = issue.state;
 
     if (from !== null && !isState(from)) {
@@ -727,8 +782,17 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     if (to === "Canceled") closeIssue(ctx, issue.nodeId, "NOT_PLANNED");
     if (opts.isReopen && issue.issueState === "CLOSED") reopenIssue(ctx, issue.nodeId);
 
-    // Mutation echo: re-read so the caller sees what the board now says (parity).
+    // Mutation echo: re-read so the caller sees what the board now says
+    // (parity) — and, for claims, VERIFY the write won. GitHub has no
+    // compare-and-swap: two racers can both pass the pre-check; the re-read
+    // makes the loser find out and back off instead of believing it holds
+    // the item. A residual window remains (documented in the design).
     const after = fetchIssue(ctx, issue.number);
+    if (to === "In Progress" && after.claim && after.claim.holder !== ctx.cfg.holder) {
+      throw new RefusalError(
+        `lost the claim race on #${issue.number} to ${after.claim.holder} — pick other work`,
+      );
+    }
 
     // Parent gate: a child reaching In Review/Done may advance the parent.
     if ((to === "In Review" || to === "Done") && after.parent) {
@@ -739,11 +803,14 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       }
     }
     return after;
-  });
+  }
 }
 
-/** Parent gate: all children terminal (Done/Canceled) → parent advances to
- *  In Review (from Backlog/In Progress/Human Needed), with a comment. */
+/** Parent gate — the ROLLUP lane (third of three write lanes; see the
+ *  transition-engine comment). All children terminal → parent advances to
+ *  In Review, deliberately multi-hop (a Backlog parent whose children all
+ *  shipped must surface for review — the v1 carve-out that proved out).
+ *  Fails CLOSED when the children list is truncated. */
 export function parentCheck(ctx: Ctx, parentNumber: number): string {
   const parent = fetchIssue(ctx, parentNumber);
   if (parent.children.length === 0) return `#${parentNumber}: no children`;
@@ -751,25 +818,27 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
   if (["In Review", "Done", "Canceled"].includes(parent.state)) {
     return `#${parentNumber}: already ${parent.state}`;
   }
+  if (parent.childrenTruncated) {
+    return `#${parentNumber}: more than ${parent.children.length} children — refusing to gate on a truncated list`;
+  }
   const open = parent.children.filter((c) => c.issueState === "OPEN");
   if (open.length > 0) {
     return `#${parentNumber}: ${open.length}/${parent.children.length} children still open`;
   }
   guardHolder(ctx, parent);
-  return withCache(ctx, (cache) => {
-    const itemId = requireItem(parent);
-    if (cache.fields[CLAIM_FIELD] && parent.state === "In Progress") {
-      clearField(ctx, cache, itemId, CLAIM_FIELD);
-    }
-    setSingleSelect(ctx, cache, itemId, STATE_FIELD, "In Review");
-    syncStatus(ctx, cache, itemId, "In Review");
-    addComment(
-      ctx,
-      parent.nodeId,
-      `\`board\`: all ${parent.children.length} children closed — parent advanced to In Review.`,
-    );
-    return `#${parentNumber}: advanced to In Review (all ${parent.children.length} children closed)`;
-  });
+  const cache = mutationCache(ctx, [[STATE_FIELD, "In Review"]]);
+  const itemId = requireItem(parent);
+  if (cache.fields[CLAIM_FIELD] && parent.state === "In Progress") {
+    clearField(ctx, cache, itemId, CLAIM_FIELD);
+  }
+  setSingleSelect(ctx, cache, itemId, STATE_FIELD, "In Review");
+  syncStatus(ctx, cache, itemId, "In Review");
+  addComment(
+    ctx,
+    parent.nodeId,
+    `\`board\`: all ${parent.children.length} children closed — parent advanced to In Review (rollup lane).`,
+  );
+  return `#${parentNumber}: advanced to In Review (all ${parent.children.length} children closed)`;
 }
 
 // ---------------------------------------------------------------------------
@@ -784,29 +853,29 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
 
 /** Ensure the issue is on the board with a state; new items land in Backlog. */
 export function adopt(ctx: Ctx, number: number): Issue {
-  return withCache(ctx, (cache) => {
-    let issue = fetchIssue(ctx, number);
-    if (!issue.itemId) {
-      const added = ghGraphQL(
-        ctx,
-        `mutation($projectId: ID!, $contentId: ID!) {
-          addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
-        }`,
-        { projectId: cache.projectId, contentId: issue.nodeId },
-      );
-      issue = { ...issue, itemId: added.addProjectV2ItemById.item.id };
-    }
-    if (issue.state === null) {
-      setSingleSelect(ctx, cache, issue.itemId!, STATE_FIELD, "Backlog");
-      syncStatus(ctx, cache, issue.itemId!, "Backlog");
-    }
-    return fetchIssue(ctx, number);
-  });
+  const cache = mutationCache(ctx, [[STATE_FIELD, "Backlog"]]);
+  let issue = fetchIssue(ctx, number);
+  if (!issue.itemId) {
+    const added = ghGraphQL(
+      ctx,
+      `mutation($projectId: ID!, $contentId: ID!) {
+        addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+      }`,
+      { projectId: cache.projectId, contentId: issue.nodeId },
+    );
+    issue = { ...issue, itemId: added.addProjectV2ItemById.item.id };
+  }
+  if (issue.state === null) {
+    setSingleSelect(ctx, cache, issue.itemId!, STATE_FIELD, "Backlog");
+    syncStatus(ctx, cache, issue.itemId!, "Backlog");
+  }
+  return fetchIssue(ctx, number);
 }
 
 /** Sync board state to issue reality. Returns a description of what changed. */
 export function reconcile(ctx: Ctx, number: number): string {
-  return withCache(ctx, (cache) => {
+  const cache = mutationCache(ctx, [[STATE_FIELD, "Done"], [STATE_FIELD, "Canceled"], [STATE_FIELD, "Backlog"]]);
+  {
     const issue = fetchIssue(ctx, number);
     if (!issue.itemId) {
       adopt(ctx, number);
@@ -848,7 +917,7 @@ export function reconcile(ctx: Ctx, number: number): string {
       }
     }
     return `#${number}: "${issue.state ?? "(none)"}" → "${target}" (reality sync)`;
-  });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -873,7 +942,7 @@ export function listItems(ctx: Ctx): QueueItem[] {
                       number title state
                       repository { nameWithOwner }
                       parent { number }
-                      blockedBy(first: 10) { nodes { number state } }
+                      blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state } }
                     }
                   }
                   ${FIELD_VALUES_FRAGMENT}
@@ -898,6 +967,7 @@ export function listItems(ctx: Ctx): QueueItem[] {
           openBlockers: (c.blockedBy?.nodes ?? [])
             .filter((b: any) => b.state === "OPEN")
             .map((b: any) => b.number),
+          blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
           claim: parseClaim(fv[CLAIM_FIELD]),
         });
       }
@@ -921,7 +991,13 @@ export interface CreateOpts {
 }
 
 export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
-  return withCache(ctx, (cache) => {
+  if (opts.state && ["Done", "Canceled"].includes(opts.state)) {
+    throw new UsageError(
+      `cannot create an issue in terminal state "${opts.state}" — create it open, then move/cancel it`,
+    );
+  }
+  const cache = mutationCache(ctx, [[STATE_FIELD, opts.state ?? "Backlog"]]);
+  {
     const created = ghGraphQL(
       ctx,
       `mutation($repositoryId: ID!, $title: String!, $body: String) {
@@ -962,7 +1038,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
       );
     }
     return fetchIssue(ctx, issue.number);
-  });
+  }
 }
 
 export function linkParent(ctx: Ctx, parentNumber: number, childNumber: number): void {
@@ -1071,7 +1147,9 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         for (const i of terminalDrift) add("fix", "ok", reconcile(ctx, i.number));
       }
       if (opts.fix && cache.fields[CLAIM_FIELD]) {
-        for (const i of [...claimAnomalies, ...stale]) {
+        // An item can be both a claim anomaly and stale — fix each once.
+        const fixTargets = new Map([...claimAnomalies, ...stale].map((i) => [i.number, i]));
+        for (const i of fixTargets.values()) {
           const issue = fetchIssue(ctx, i.number);
           if (!issue.itemId) continue;
           clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
@@ -1184,48 +1262,54 @@ export function setup(ctx: Ctx): string[] {
 
 export function migrate(ctx: Ctx, opts: { apply?: boolean } = {}): string[] {
   const out: string[] = [];
+  // Cache resolved before any write; the loop never retries, and a report
+  // line is pushed only AFTER the write it describes succeeds.
+  const cache = mutationCache(ctx, STATES.map((s) => [STATE_FIELD, s] as [string, string]));
   const items = listItems(ctx);
   const legacyItems = items.filter((i) => i.state !== "(none)" && !isState(i.state));
   const stateless = items.filter((i) => i.state === "(none)");
 
-  return withCache(ctx, (cache) => {
-    for (const i of [...legacyItems, ...stateless]) {
-      let hasDecisionRequest = false;
-      if (i.state === "Plan in Review") {
-        const comments = ghGraphQL(
-          ctx,
-          `query($owner: String!, $repo: String!, $number: Int!) {
-            repository(owner: $owner, name: $repo) {
-              issue(number: $number) { comments(last: 50) { nodes { body } } }
-            }
-          }`,
-          { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number: i.number },
-        );
-        hasDecisionRequest = (comments.repository?.issue?.comments?.nodes ?? []).some((c: any) =>
-          c.body?.includes("## Decision Request"),
-        );
-      }
-      const target = i.state === "(none)" ? "Backlog" : migrateMapping(i.state, hasDecisionRequest);
-      if (!target) {
-        out.push(`#${i.number}: unmapped state "${i.state}" — SKIPPED (fix by hand)`);
-        continue;
-      }
-      out.push(`#${i.number}: "${i.state}" → "${target}"${opts.apply ? "" : " (dry-run)"}`);
-      if (opts.apply) {
-        const issue = fetchIssue(ctx, i.number);
-        if (!issue.itemId) continue;
-        setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
-        syncStatus(ctx, cache, issue.itemId, target);
-        addComment(
-          ctx,
-          issue.nodeId,
-          `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
-        );
-      }
+  for (const i of [...legacyItems, ...stateless]) {
+    let hasDecisionRequest = false;
+    if (i.state === "Plan in Review") {
+      const comments = ghGraphQL(
+        ctx,
+        `query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            issue(number: $number) { comments(last: 50) { nodes { body } } }
+          }
+        }`,
+        { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number: i.number },
+      );
+      hasDecisionRequest = (comments.repository?.issue?.comments?.nodes ?? []).some((c: any) =>
+        c.body?.includes("## Decision Request"),
+      );
     }
-    if (out.length === 0) out.push("nothing to migrate — all open items already in v2 states");
-    return out;
-  });
+    const target = i.state === "(none)" ? "Backlog" : migrateMapping(i.state, hasDecisionRequest);
+    if (!target) {
+      out.push(`#${i.number}: unmapped state "${i.state}" — SKIPPED (fix by hand)`);
+      continue;
+    }
+    if (!opts.apply) {
+      out.push(`#${i.number}: "${i.state}" → "${target}" (dry-run)`);
+      continue;
+    }
+    const issue = fetchIssue(ctx, i.number);
+    if (!issue.itemId) {
+      out.push(`#${i.number}: not on the board — SKIPPED`);
+      continue;
+    }
+    setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
+    syncStatus(ctx, cache, issue.itemId, target);
+    addComment(
+      ctx,
+      issue.nodeId,
+      `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
+    );
+    out.push(`#${i.number}: "${i.state}" → "${target}"`);
+  }
+  if (out.length === 0) out.push("nothing to migrate — all open items already in v2 states");
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,7 +1344,8 @@ maintenance
   setup                       create Workflow State / Claim fields (idempotent)
   migrate [--apply]           v1 11-state → v2 6-state collapse (dry-run by default)
 
-There is no --force flag. A stale claim (TTL ${process.env.RALPH_LOCK_TTL_MIN ?? 120} min) is the only override path.`;
+There is no --force flag. A stale claim (TTL 120 min; RALPH_LOCK_TTL_MIN
+overrides) is the only override path.`;
 
 interface ParsedArgs {
   positional: string[];
@@ -1307,11 +1392,29 @@ function requireNumber(p: string | undefined, what = "issue number"): number {
   return n;
 }
 
+const MUTATING = new Set([
+  "create", "claim", "release", "move", "cancel", "reopen",
+  "link", "dep", "comment", "adopt", "reconcile", "parent-check",
+  "setup", "migrate",
+]);
+
 export function run(argv: string[], ctx: Ctx): number {
   const [cmd, ...rest] = argv;
   const { positional, flags } = parseArgs(rest);
   const out = (s: string) => process.stdout.write(s + "\n");
   const json = (v: unknown) => out(JSON.stringify(v, null, 2));
+
+  // Scope gate before ANY command that can write — including doctor --fix,
+  // which mutates. Plain reads work from any clone (doctor reports scope).
+  if (MUTATING.has(cmd) || (cmd === "doctor" && flags.fix)) {
+    const remote = ctx.exec(["git", "-C", ctx.repoRoot, "remote", "get-url", "origin"]);
+    if (remote.code !== 0 || !scopeMatches(remote.stdout, ctx.cfg.owner, ctx.cfg.repo)) {
+      throw new RefusalError(
+        `scope check failed: origin "${remote.stdout.trim()}" does not match configured ` +
+          `${ctx.cfg.owner}/${ctx.cfg.repo} — refusing to mutate another repo's board`,
+      );
+    }
+  }
 
   switch (cmd) {
     case undefined:
@@ -1487,9 +1590,16 @@ export function run(argv: string[], ctx: Ctx): number {
 // Entry
 // ---------------------------------------------------------------------------
 
-const isMain =
-  typeof process.argv[1] === "string" &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// Robust against relative argv[1] (npm scripts) and symlinked paths — a
+// false-negative here would make the CLI exit 0 silently doing nothing.
+const isMain = (() => {
+  if (typeof process.argv[1] !== "string") return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  }
+})();
 
 if (isMain) {
   try {
@@ -1502,26 +1612,6 @@ if (isMain) {
       cacheDir: join(homedir(), ".ralph", "cache"),
       now: () => new Date(),
     };
-
-    // Scope check before ANY command that can mutate (reads are exempt so
-    // doctor/get work from any clone; doctor reports scope explicitly).
-    const cmd = process.argv[2];
-    const MUTATING = new Set([
-      "create", "claim", "release", "move", "cancel", "reopen",
-      "link", "dep", "comment", "adopt", "reconcile", "parent-check",
-      "setup", "migrate",
-    ]);
-    if (MUTATING.has(cmd)) {
-      const remote = realExec(["git", "-C", repoRoot, "remote", "get-url", "origin"]);
-      if (remote.code !== 0 || !scopeMatches(remote.stdout, cfg.owner, cfg.repo)) {
-        process.stderr.write(
-          `scope check failed: origin "${remote.stdout.trim()}" does not match configured ` +
-            `${cfg.owner}/${cfg.repo} — refusing to mutate another repo's board\n`,
-        );
-        process.exit(2);
-      }
-    }
-
     process.exit(run(process.argv.slice(2), ctx));
   } catch (e) {
     if (e instanceof UsageError) {
