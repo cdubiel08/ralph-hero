@@ -70,7 +70,7 @@ Trends is read-only — the markdown report printed to stdout is the deliverable
 
 ## Debug terminal tokens
 
-- `DEBUG RETIRED` — the only token this mode emits. See [modes/debug.md](modes/debug.md).
+- `DEBUG RETIRED` — the only token this mode emits, and it is terminal. `--mode debug` is not loop-suitable; SKILL.md's `--loop` gate refuses it. See [modes/debug.md](modes/debug.md).
 
 ## Split terminal tokens
 

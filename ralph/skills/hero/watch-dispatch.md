@@ -1,6 +1,6 @@
 # Watch Mode Dispatch
 
-> Consulted by `/ralph:hero --mode watch`. Defines the dispatch table for routing watcher events to gcp-incident-triage / debug-collate / log-reader / sre-fixit, the evidence preconditions, and the heartbeat fan-out shape.
+> Consulted by `/ralph:hero --mode watch`. Defines the dispatch table for routing watcher events to gcp-incident-triage / log-reader / sre-fixit, the evidence preconditions, and the heartbeat fan-out shape.
 
 ## Evidence preconditions
 
@@ -8,12 +8,13 @@ Before dispatching any sub-skill or subagent, verify the issue body contains at 
 
 - A trace ID matching `projects/[^/]+/traces/[a-f0-9]+`
 - A literal `gcloud logging read ...` snippet
+- A `langfuse-trace:` URL
 - A `<!-- gcp-policy: ... -->` marker (which implies an upstream alert source that gcp-incident-triage will query)
 
 If none present, post a `needs input:` comment and escalate to Human Needed:
 
 ```
-needs input: issue #NNN has no trace ID and no LQL snippet. Provide a trace ID (projects/<proj>/traces/<id>) or a gcloud logging read query before /ralph:hero --mode watch can proceed.
+needs input: issue #NNN has no trace ID and no LQL snippet. Provide a trace ID (projects/<proj>/traces/<id>), a langfuse-trace: URL, or a gcloud logging read query before /ralph:hero --mode watch can proceed.
 ```
 
 ## Dispatch table

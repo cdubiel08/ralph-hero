@@ -71,7 +71,7 @@ Sources of truth: [`ralph/skills/shared/loop-wrapper.md`](skills/shared/loop-wra
 | `caretake --mode hygiene` | Yes | — | `1h` | heartbeat (no `Queue empty.`) | periodic scan |
 | `caretake --mode unblock` | Yes | — | dynamic | `Queue empty.` | autonomous path only (no `--question`) |
 | `caretake --mode trends` | Yes | — | `6h` | heartbeat (no `Queue empty.`) | periodic snapshot |
-| `caretake --mode debug` | Yes | — | dynamic | `Queue empty.` | drain Langfuse errors |
+| `caretake --mode debug` | No | — | — | — | retired; emits `DEBUG RETIRED` and stops |
 | `caretake --mode split` | Yes | — | dynamic | `Queue empty.` | drain M/L/XL queue |
 | `caretake --mode watch-pr` | Yes | — | — | heartbeat (no `Queue empty.`) | sweep `blocked:pr-NNN` items; usually runs inside the `--mode all` fan-out |
 | `caretake --mode watch-upstream` | Yes | — | — | heartbeat (no `Queue empty.`) | sweep `blocked:upstream` items; usually runs inside the `--mode all` fan-out |

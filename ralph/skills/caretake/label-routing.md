@@ -8,7 +8,7 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 | Label present | Dispatch | Notes |
 |---|---|---|
-| `trigger:caretake` | Full fan-out (all modes serially) | Operator override; consume after dispatch |
+| `trigger:caretake` | Issue-scoped fan-out (see below) | Operator override; consume after dispatch |
 | `stale` | `Skill("ralph:caretake", args="--mode hygiene")` | Hygiene mode finds stale items by definition |
 | `status-update-needed` | `Skill("ralph:catch-up", args="--mode report")` | Report lives in catch-up, not caretake |
 | `trends-check` | `Skill("ralph:caretake", args="--mode trends")` | Read-only — markdown to stdout |
@@ -20,7 +20,7 @@ The dispatcher walks this table top-to-bottom and stops at the first matching la
 
 ## Full fan-out (`trigger:caretake`)
 
-When `trigger:caretake` is present, the dispatcher invokes **every mode serially** so the operator gets a complete board sweep from one command. Order matters — modes that mutate state run before modes that read state:
+When `trigger:caretake` is present, the dispatcher runs the **issue-scoped** sweep below — the modes that can act on one named issue, plus a closing report. This is deliberately narrower than the board-wide heartbeat (`--mode all`, see [SKILL.md](SKILL.md) § Step 1), which additionally runs the watch-* modes, enrich, and trends. Order matters — modes that mutate state run before modes that read state:
 
 1. `Skill("ralph:caretake", args="--mode hygiene")` — archive candidates, WIP violations, field gaps
 2. `Skill("ralph:caretake", args="--mode triage #NNN")` — assess the issue that carries the trigger label

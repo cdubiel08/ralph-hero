@@ -2,7 +2,7 @@
 
 How `/ralph:impl` creates, reuses, and isolates worktrees. Default mode is interactive (suggestion + reuse); auto mode is the full lifecycle (epic detection, base-branch detection, cross-repo).
 
-**Creation mechanism (all modes):** worktrees are created via the built-in `EnterWorktree` tool, never a raw `git worktree add`, so the consuming repo's `WorktreeCreate` hook fires and provisions the tree (env/credential symlinks, package builds — whatever that repo's hook does). `EnterWorktree({name: "<WORKTREE_ID>"})` creates under that repo's `.claude/worktrees/<WORKTREE_ID>` and returns the path — capture it; never hardcode `worktrees/<WORKTREE_ID>` or assume a specific parent directory. `EnterWorktree({path: "<existing-path>"})` enters an *existing* worktree (the "enter what a script just made" flow) — this is how the CLI-script fallback below composes with the tool.
+**Creation mechanism (default path, all modes):** worktrees are created via the built-in `EnterWorktree` tool rather than a raw `git worktree add`, so the consuming repo's `WorktreeCreate` hook fires and provisions the tree (env/credential symlinks, package builds — whatever that repo's hook does). `EnterWorktree({name: "<WORKTREE_ID>"})` creates under that repo's `.claude/worktrees/<WORKTREE_ID>` and returns the path — capture it; never hardcode `worktrees/<WORKTREE_ID>` or assume a specific parent directory. `EnterWorktree({path: "<existing-path>"})` enters an *existing* worktree (the "enter what a script just made" flow) — this is how the CLI-script fallback below composes with the tool. **One documented exception:** the stacked-branch path (§Auto-mode, custom `BASE_BRANCH_ARG`) must use raw `git worktree add`, because the tool has no base-branch parameter; it provisions manually and then enters via `EnterWorktree({path})` so the session and gate hooks treat the tree identically.
 
 **Branch contract.** Ralph's `--mode pr` always resolves `feature/<WORKTREE_ID>` (SKILL.md `--mode pr` step 5). Whether `EnterWorktree({name})` produces that branch depends on the consuming repo's own `WorktreeCreate` hook — some repos map `GH-*` ids onto a `feature/` prefix, some don't. After creating, verify the branch:
 
@@ -134,7 +134,7 @@ Apply the branch-verification + Option-2 fallback from the creation-mechanism no
 
 The tool reports each repo's own `.claude/worktrees/<WORKTREE_ID>`:
 
-```
+```text
 <localDir-of-repo-a>/.claude/worktrees/GH-NNN/
 <localDir-of-repo-b>/.claude/worktrees/GH-NNN/
 ```
@@ -152,7 +152,13 @@ export RALPH_WORKTREE_PATHS="<abs-path-repo-a>/.claude/worktrees/GH-NNN:<abs-pat
 `.ralph-repos.yml` may use `~` in `localDir` values (`~/projects/foo`). **Always expand to absolute paths** before exporting `RALPH_WORKTREE_PATHS`. The hook compares against `tool_input.file_path`, which is always absolute — a tilde-prefixed entry will never match and writes will be blocked.
 
 ```bash
-expanded=$(eval echo "$localDir")  # ~/projects/foo → /home/user/projects/foo
+# Expand a leading ~/ only. Never `eval` — localDir comes from a
+# repo-controlled file, and eval would execute any metacharacters in it.
+case "$localDir" in
+  "~/"*) expanded="$HOME/${localDir#\~/}" ;;
+  "~")   expanded="$HOME" ;;
+  *)     expanded="$localDir" ;;
+esac
 ```
 
 ## §Escalation on merge conflict
