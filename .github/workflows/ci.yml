@@ -134,7 +134,9 @@ jobs:
           # Glob both naming conventions used today (*.test.sh and test-*.sh).
           # Each file runs in its own subshell so a `set -e` exit in one test
           # cannot abort the suite. First non-zero rc propagates.
-          find ralph/hooks/scripts/__tests__ scripts/__tests__ \
+          # (ralph/hooks/scripts/__tests__ deleted in the v2 cutover, GH-1662 —
+          # the two surviving funnel hooks are covered by shellcheck-hooks.)
+          find scripts/__tests__ \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \
             | sort -z \
@@ -308,10 +310,7 @@ jobs:
       - name: Run doc-roster consistency check
         run: bash scripts/check-doc-rosters.sh
 
-      # GH-1614: two-direction tool-surface drift check — prose naming a
-      # tool a skill doesn't grant (uncallable on the autonomous path), and
-      # a registered tool with zero rostered consumers (dead weight).
-      # check-doc-rosters.sh above is docs<->source only; this is
-      # source<->skill-surface.
-      - name: Run tool-consumer drift check
-        run: bash scripts/check-tool-consumers.sh
+      # (GH-1614's tool-consumer drift check was deleted in the v2 cutover,
+      # GH-1662 — v2 skills consume the board CLI via Bash, not MCP tools, so
+      # the skill↔tool-roster relationship it guarded no longer exists. The
+      # MCP server itself is deleted in Phase 4.)
