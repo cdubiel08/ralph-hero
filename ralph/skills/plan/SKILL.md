@@ -173,26 +173,7 @@ The single decomposition surface (GH-1605). Folds `ralph-plan-epic` (plan-of-pla
 - **Plan-of-plans** (the common case) — issue is `kind:epic`/`kind:feature`-labeled, or its body describes 3+ distinct features/surfaces (`decomposition.md` § When epic-mode applies). Writes a plan-of-plans doc + creates S/M feature children with dependency edges.
 - **Atomic split** — issue is M/L/XL but does NOT clear the plan-of-plans bar (no natural 3+-feature decomposition; body describes sub-deliverables of one feature). Decomposes into XS/S sub-issues per `decomposition.md` § Atomic split. The XS/S ceiling on this path is enforced server-side by `create_sub_issues(maxChildEstimate: "S")` (GH-1618), which refuses the whole call up front; the plan-of-plans path passes no ceiling and its S/M feature children are accepted as specced.
 
-0. **Classify** — read the issue body + labels; decide plan-of-plans vs atomic split per `decomposition.md` § When epic-mode applies / § Atomic split § When to split. When ambiguous, prefer plan-of-plans if 2+ independent features can be named without inventing scope; otherwise atomic split.
-1. **Lock epic** — the epic arrives in whatever state it sits in (`--mode epic` has no queue-pick filter; a direct `#NNN` invocation can hit any state, including `Backlog` — see [§ Legal claim path](#legal-claim-path) below). Run that fragment instead of writing `__LOCK__` unconditionally; from `In Progress` / `In Review` / terminal there is no legal path — STOP and tell the human.
-2. **Context gathering** — read epic body + comments + any linked research. Spawn `codebase-locator` for affected areas; spawn `thoughts-locator` for prior plans on the same epic. Wait for ALL.
-
-**Plan-of-plans path:**
-
-3. **Write plan-of-plans** — per `decomposition.md` § Plan-of-plans shape. Required: Strategic Context, Shared Constraints, Feature Decomposition (3-7 features), Integration Strategy, Feature Sequencing, What We're NOT Doing.
-4. **Create feature children** — per `decomposition.md` § Child creation. Create every feature in ONE `create_sub_issues(parentNumber: <epic>, children: [{title, body, estimate, workflowState: "Backlog", dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]}, ...])` call — one entry per feature in Feature Decomposition order; wire sequencing inline via each child's `dependsOn` (sibling indices) and `dependsOnIssues` (pre-existing blockers) per `decomposition.md` § Dependency-edge rules. Read the per-child status report and repair only children that report `error`.
-5. **Update plan-of-plans** — annotate each `### Feature` with the assigned child issue number + URL.
-
-**Atomic-split path:**
-
-3'. **Research scope + propose split** — per `decomposition.md` § Atomic split §§Step 1-5 (verify M/L/XL estimate, discover existing children, research scope, propose XS/S sub-issues).
-4'. **Create or update sub-issues** — per `decomposition.md` § Atomic split §Step 6. `create_sub_issues(maxChildEstimate: "S")` refuses the whole call up front (server-side, GH-1618) if any child estimate exceeds `S`.
-5'. **Establish dependencies + write parent plan-of-plans** — per `decomposition.md` § Atomic split §§Step 7-7.5. The parent plan-of-plans doc this writes is a *different* artifact from Step 3's — it exists so the newly created children are autonomously plannable (closes GH-1416), not a strategic decomposition of the parent itself.
-
-6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
-7. **Post artifact + advance** — plan-of-plans: `create_comment(## Plan of Plans ...)` on the epic; `save_issue(workflowState: "Plan in Review", command: "plan")`. Atomic split: `create_comment(## Issue Split ...)` per `decomposition.md` § Atomic split §Step 8; **keep the parent in Backlog** (do NOT call `save_issue` with a `workflowState` argument on it); set child workflow states via `batch_update` per §Step 10. An atomic split that creates fewer than 2 children is a failed split — report it, do not advance the parent.
-8. **Optional orchestration** (plan-of-plans only) — for each child in dependency order, optionally dispatch `--mode auto` to plan that feature. The user/orchestrator picks whether to chain — this mode does not auto-cascade by default.
-9. **Report** — plan-of-plans: *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*. Atomic split: terminal token `SPLIT <N>` / `SPLIT SKIPPED <reason>` per `decomposition.md` § Atomic split § Terminal tokens.
+The full numbered flow — classify → lock → context → the two paths → commit, artifact, report — is in [decomposition.md](decomposition.md) § Mode flow.
 
 ## --mode iterate
 

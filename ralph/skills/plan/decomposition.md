@@ -2,6 +2,31 @@
 
 Epic → feature decomposition for `/ralph:plan --mode epic`. Folds `ralph-plan-epic`'s plan-of-plans shape, the epic-decomposition side of `ralph-split`, AND (GH-1605) the atomic-split side — formerly caretake's split mode — into one surface. § When epic-mode applies below covers the plan-of-plans shape; § Atomic split covers the M/L/XL → XS/S path.
 
+## Mode flow
+
+The numbered flow `/ralph:plan --mode epic` runs. Step 0 picks the path; the sections below define every artifact it references. Relocated here from `SKILL.md` in GH-1590 (SKILL.md is dispatch + skeleton only — `ralph/CLAUDE.md` § Conventions).
+
+0. **Classify** — read the issue body + labels; decide plan-of-plans vs atomic split per § When epic-mode applies / § Atomic split § When to split. When ambiguous, prefer plan-of-plans if 2+ independent features can be named without inventing scope; otherwise atomic split.
+1. **Lock epic** — the epic arrives in whatever state it sits in (`--mode epic` has no queue-pick filter; a direct `#NNN` invocation can hit any state, including `Backlog` — see [SKILL.md § Legal claim path](SKILL.md#legal-claim-path)). Run that fragment instead of writing `__LOCK__` unconditionally; from `In Progress` / `In Review` / terminal there is no legal path — STOP and tell the human.
+2. **Context gathering** — read epic body + comments + any linked research. Spawn `codebase-locator` for affected areas; spawn `thoughts-locator` for prior plans on the same epic. Wait for ALL.
+
+**Plan-of-plans path:**
+
+3. **Write plan-of-plans** — per § Plan-of-plans shape. Required: Strategic Context, Shared Constraints, Feature Decomposition (3-7 features), Integration Strategy, Feature Sequencing, What We're NOT Doing.
+4. **Create feature children** — per § Child creation. Create every feature in ONE `create_sub_issues(parentNumber: <epic>, children: [{title, body, estimate, workflowState: "Backlog", dependsOn: [<sibling indices>], dependsOnIssues: [<existing issue numbers>]}, ...])` call — one entry per feature in Feature Decomposition order; wire sequencing inline via each child's `dependsOn` (sibling indices) and `dependsOnIssues` (pre-existing blockers) per § Dependency-edge rules. Read the per-child status report and repair only children that report `error`.
+5. **Update plan-of-plans** — annotate each `### Feature` with the assigned child issue number + URL.
+
+**Atomic-split path:**
+
+3'. **Research scope + propose split** — per § Atomic split §§Step 1-5 (verify M/L/XL estimate, discover existing children, research scope, propose XS/S sub-issues).
+4'. **Create or update sub-issues** — per § Atomic split §Step 6. `create_sub_issues(maxChildEstimate: "S")` refuses the whole call up front (server-side, GH-1618) if any child estimate exceeds `S`.
+5'. **Establish dependencies + write parent plan-of-plans** — per § Atomic split §§Step 7-7.5. The parent plan-of-plans doc this writes is a *different* artifact from Step 3's — it exists so the newly created children are autonomously plannable (closes GH-1416), not a strategic decomposition of the parent itself.
+
+6. **Commit + push** — `git add ... && git commit -m "docs(plan): GH-NNN plan-of-plans" && git push origin main`.
+7. **Post artifact + advance** — plan-of-plans: `create_comment(## Plan of Plans ...)` on the epic; `save_issue(workflowState: "Plan in Review", command: "plan")`. Atomic split: `create_comment(## Issue Split ...)` per § Atomic split §Step 8; **keep the parent in Backlog** (do NOT call `save_issue` with a `workflowState` argument on it); set child workflow states via `batch_update` per §Step 10. An atomic split that creates fewer than 2 children is a failed split — report it, do not advance the parent.
+8. **Optional orchestration** (plan-of-plans only) — for each child in dependency order, optionally dispatch `--mode auto` to plan that feature. The user/orchestrator picks whether to chain — this mode does not auto-cascade by default.
+9. **Report** — plan-of-plans: *Plan-of-plans complete for #NNN: [Title] / Children: N created / Sequence: A → B → C*. Atomic split: terminal token `SPLIT <N>` / `SPLIT SKIPPED <reason>` per § Atomic split § Terminal tokens.
+
 ## When epic-mode applies
 
 - Issue labeled `kind:epic` or `kind:feature` with estimate L or XL.

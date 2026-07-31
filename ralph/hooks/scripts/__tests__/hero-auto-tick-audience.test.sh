@@ -18,10 +18,12 @@
 # under test is "the autonomous path reads with audience: agent", which is
 # exactly as load-bearing after the fold as before it.
 #
-# Strategy: grep structural invariants over ralph/skills/hero/SKILL.md.
-# The default-mode picker call site legitimately keeps next_actions({})
-# (it feeds an interactive AskUserQuestion), so the negative assertion is
-# SCOPED to the "## Auto tick" section rather than the whole file.
+# GH-1590 additionally moved the tick procedure out of SKILL.md into the
+# auto-tick.md sibling (SKILL.md is dispatch + skeleton only, per
+# ralph/CLAUDE.md). This guard follows the call site there. SKILL.md is
+# still checked for the bare-call regression, because its default-mode
+# picker legitimately keeps next_actions({}) and must not be confused
+# with the autonomous read.
 
 set -euo pipefail
 
@@ -30,6 +32,7 @@ FAIL=0
 
 REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 SKILL_FILE="${REPO_ROOT}/ralph/skills/hero/SKILL.md"
+TICK_FILE="${REPO_ROOT}/ralph/skills/hero/auto-tick.md"
 
 pass() {
   echo "  PASS: $1"
@@ -52,17 +55,12 @@ assert_file_contains() {
   fi
 }
 
-# Extract the body of the "## Auto tick" section (lines after the header,
-# up to but not including the next "## " heading). The start pattern
-# requires the heading to end, or continue with a space or "(", so a
-# future sibling heading like "## Auto tick-drain" cannot prefix-match and
-# fold its body into the block (which would latently false-pass 3/4).
+# The tick procedure lives in its own file now, so the "block" is simply
+# that file. Keeping the indirection (rather than grepping TICK_FILE
+# inline) means a future move back into a section only changes this one
+# function.
 auto_tick_block() {
-  awk '
-    /^## Auto tick([[:space:]]|\(|$)/ { f=1; next }
-    /^## / { f=0 }
-    f
-  ' "$SKILL_FILE"
+  cat "$TICK_FILE"
 }
 
 echo "=== hero-auto-tick-audience regression guard (GH-1479, GH-1590) ==="
@@ -75,35 +73,40 @@ if [[ -s "$SKILL_FILE" ]]; then
 else
   fail "hero SKILL.md missing or empty: $SKILL_FILE"
 fi
-
-# -----------------------------------------------------------------------
-echo ""
-echo "--- Assertion 2: autonomous call site passes audience: agent ---"
-assert_file_contains "SKILL.md contains next_actions({ audience: \"agent\" })" \
-  "$SKILL_FILE" 'next_actions({ audience: "agent" })'
-
-# -----------------------------------------------------------------------
-echo ""
-echo "--- Assertion 3: the agent-audience call lives in the Auto tick section ---"
-BLOCK="$(auto_tick_block)"
-if [[ -z "$BLOCK" ]]; then
-  fail "Auto tick section not found in hero SKILL.md (heading renamed or removed?)"
-elif printf '%s\n' "$BLOCK" | grep -qF 'next_actions({ audience: "agent" })'; then
-  pass "Auto tick section reads the queue with audience: agent"
+if [[ -s "$TICK_FILE" ]]; then
+  pass "hero auto-tick.md exists and is non-empty"
 else
-  fail "Auto tick section does NOT request audience: agent (regressed to human default?)"
+  fail "hero auto-tick.md missing or empty: $TICK_FILE"
 fi
 
 # -----------------------------------------------------------------------
 echo ""
-echo "--- Assertion 4: Auto tick section has no bare next_actions({}) ---"
+echo "--- Assertion 2: autonomous call site passes audience: agent ---"
+assert_file_contains "auto-tick.md contains next_actions({ audience: \"agent\" })" \
+  "$TICK_FILE" 'next_actions({ audience: "agent" })'
+
+# -----------------------------------------------------------------------
+echo ""
+echo "--- Assertion 3: the agent-audience call lives in auto-tick.md ---"
+BLOCK="$(auto_tick_block)"
+if [[ -z "$BLOCK" ]]; then
+  fail "auto-tick.md is empty or unreadable: $TICK_FILE"
+elif printf '%s\n' "$BLOCK" | grep -qF 'next_actions({ audience: "agent" })'; then
+  pass "auto-tick.md reads the queue with audience: agent"
+else
+  fail "auto-tick.md does NOT request audience: agent (regressed to human default?)"
+fi
+
+# -----------------------------------------------------------------------
+echo ""
+echo "--- Assertion 4: the autonomous path has no bare next_actions({}) ---"
 # Negative guard: the autonomous path must not be the human default.
-# Scoped to the auto-tick block — the default-mode picker keeps the bare
+# Scoped to auto-tick.md — SKILL.md's default-mode picker keeps the bare
 # call legitimately, so a whole-file check would be wrong.
 if printf '%s\n' "$BLOCK" | grep -qF 'next_actions({})'; then
-  fail "Auto tick section still has a bare next_actions({}) (human-default regression)"
+  fail "auto-tick.md still has a bare next_actions({}) (human-default regression)"
 else
-  pass "Auto tick section has no bare next_actions({})"
+  pass "auto-tick.md has no bare next_actions({})"
 fi
 
 # -----------------------------------------------------------------------
