@@ -51,8 +51,8 @@ fail() {
 echo "=== Agents (CLAUDE.md <-> ${AGENTS_DIR}/) ==="
 
 doc_agents=$(
-  awk '/^### ralph Plugin — 16 Agents/{f=1; next} /^### /{f=0} f' "$CLAUDE_MD" \
-    | grep -E '^\*\*[0-9]+ (per-phase agents|investigators)\*\*' \
+  awk '/^### ralph Plugin — Agents/{f=1; next} /^### /{f=0} f' "$CLAUDE_MD" \
+    | grep -E '^\*\*[0-9]+ (per-phase )?agents?( |\*)' \
     | grep -oE '`[a-z][a-z0-9-]+`' \
     | tr -d '`' \
     | sort -u
@@ -88,7 +88,7 @@ fi
 echo "=== Skills (CLAUDE.md <-> ${SKILLS_DIR}/) ==="
 
 doc_skills=$(
-  awk '/^### ralph Plugin — 9 Verbs/{f=1; next} /^### /{f=0} f' "$CLAUDE_MD" \
+  awk '/^### ralph Plugin — Verbs/{f=1; next} /^### /{f=0} f' "$CLAUDE_MD" \
     | grep -oE '/ralph:[a-z-]+' \
     | sed 's#/ralph:##' \
     | sort -u

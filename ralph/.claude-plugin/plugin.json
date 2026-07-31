@@ -1,7 +1,7 @@
 {
   "name": "ralph",
   "version": "0.1.68",
-  "description": "The naive hero picks tickets, does their best work, and moves on. 9 fat skills with flat-sibling references, hooks-enforced state, and MCP-driven artifacts over a GitHub Projects V2 board.",
+  "description": "ralph v2 \u2014 one work verb, one board CLI, a 6-state machine. The driving model sequences its own research/plan/build/verify; board.ts is the sole board mutation path (typed transitions, claims with TTL, scope gate); enforcement is code, not prose.",
   "author": {
     "name": "Chad Dubiel",
     "url": "https://github.com/cdubiel08"

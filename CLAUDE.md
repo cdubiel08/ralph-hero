@@ -62,31 +62,20 @@ plugin/
     └── remotion/        # React-based video compositing (pnpm)
 ```
 
-### ralph Plugin — 9 Verbs
+### ralph Plugin — Verbs
+
+v2 (GH-1662): two skills. The driving model sequences its own research/plan/build/verify — there is no prescribed phase pipeline and no per-phase verb.
 
 | Verb | Model tier | Purpose |
 |------|-----------|---------|
-| `/ralph:catch-up` | inherit (haiku narrative agent) | Orientation: narrative + picker or single-surface mode |
-| `/ralph:form` | inherit | Issue intake: dedup, draft, tree |
-| `/ralph:research` | sonnet (feature/epic units: fable fork) | Research: interactive or autonomous queue-drain |
-| `/ralph:plan` | best (fable→opus); single XS/S auto-plans fork sonnet | Planning: interactive, auto, epic, iterate, review |
-| `/ralph:impl` | sonnet session / complexity ladder (haiku-opus) + haiku test-runner | Implementation: auto, pr, address |
-| `/ralph:review` | best (fable→opus); singles reviewed at opus, group val at fable | Review: val, code, merge, behavior verification |
-| `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
-| `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
-| `/ralph:setup` | haiku | Bootstrap: project setup, repo-registry |
+| `/ralph:work` | sonnet | The execution verb: drive one issue (or described outcome) end-to-end under the 8-rule contract in its SKILL.md. Frontier (`fable`→`opus`) enters only as in-session bookend `Agent()` dispatches on feature/epic units; XS/S singles never touch frontier. |
+| `/ralph:board` | sonnet | Human surface: orientation, intake, answering Human Needed items, `board doctor`. |
 
-Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable; opt-in, requires Fable access) — isolated rail-free path (no prescribed phases, no gate hooks; artifact contract instead). `/ralph:hero --model fable` forwards to it. Design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`.
+All board mutations go through `ralph/scripts/board` (the typed CLI — transitions, claims with TTL, scope gate; design record: `thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`). Optional fan-out equipment lives in `.claude/workflows/` (research-panel, plan-critique, tree-impl, adversarial-review) — granted, never prescribed. `CLAUDE_CODE_SUBAGENT_MODEL=opus` remains the harness escape hatch for non-Fable accounts.
 
-The plan/review skill sessions pin `model: best` (Fable 5 where entitled, else latest Opus); `plan-agent`/`review-agent` pin `model: fable` — non-Fable accounts set `CLAUDE_CODE_SUBAGENT_MODEL=opus` as the escape hatch for the `Agent()`-fork path. Autonomous paths additionally route tiers by unit size — feature/epic cycles get fable bookends (research, plan, critique, plan-vs-delivery val); single XS/S issue-PR pairs skip fable entirely. Rationale + routing table: [`docs/model-tier-policy.md`](docs/model-tier-policy.md).
+### ralph Plugin — Agents
 
-### ralph Plugin — 16 Agents
-
-**8 per-phase agents** (in `ralph/agents/`): `catch-up-agent`, `impl-agent`, `merge-agent`, `plan-agent`, `research-agent`, `review-agent`, `triage-agent`, `val-agent`
-
-**8 investigators** (in `ralph/agents/`): `codebase-analyzer`, `codebase-locator`, `codebase-pattern-finder`, `log-reader`, `sre-fixit`, `thoughts-analyzer`, `thoughts-locator`, `web-search-researcher`
-
-On `IMPL BLOCKED needs=opus` verdict, the hero re-dispatches `impl-agent` once at `model="opus"`. Override the default impl tier via `RALPH_IMPL_MODEL`. Model-tier rationale: [`docs/model-tier-policy.md`](docs/model-tier-policy.md).
+**1 agent** (in `ralph/agents/`): `investigator` — read-only fan-out worker (hard `tools:` allowlist: Read/Grep/Glob/Bash), dispatched in parallel for codebase/thoughts investigation. Everything else is inline `Agent(model=…)` at the driver's judgment.
 
 ### MCP Server Internals
 

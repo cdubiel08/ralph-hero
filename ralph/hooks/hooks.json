@@ -1,22 +1,16 @@
 {
   "hooks": {
-    "SessionStart": [
+    "PreToolUse": [
       {
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/set-skill-env.sh"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "mcp__plugin_ralph_ralph-github__ralph_hero__recent_activity",
-        "hooks": [
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/funnel-board.sh"
+          },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/cursor-advance-catch-up.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/funnel-merge.sh"
           }
         ]
       }

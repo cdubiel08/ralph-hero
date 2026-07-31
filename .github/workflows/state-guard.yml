@@ -1,0 +1,79 @@
+# state-guard — the server-side corrective wall for the ralph v2 board (GH-1662).
+#
+# Two lanes (design §3, thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md):
+#   event lane      — issue/PR events GitHub actually emits: adopt new issues to
+#                     Backlog, reconcile closed/reopened reality onto the board
+#                     field (Closes #NNN closes the ISSUE; only this maps it to
+#                     the board), run the parent gate.
+#   reconciler lane — cron sweep for field-level drift no event reports
+#                     (Projects V2 emits no usable Actions trigger).
+#
+# Board writes need ROUTING_PAT (classic PAT with project scope) — GITHUB_TOKEN
+# cannot write a personal-account Projects V2 board. Every correction posts an
+# issue comment; enforcement is visible. `board doctor` checks this workflow's
+# run conclusions, so a rotten PAT is loud, not silent.
+
+name: state-guard
+
+on:
+  issues:
+    types: [opened, closed, reopened]
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: state-guard-${{ github.event.issue.number || github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+
+      - name: Install workspace dev deps
+        run: npm ci
+
+      - name: Event lane — adopt / reconcile / parent gate
+        if: github.event_name == 'issues' || github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.ROUTING_PAT }}
+          RALPH_CLAIM_HOLDER: state-guard
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          ISSUE: ${{ github.event.issue.number }}
+          PR: ${{ github.event.pull_request.number }}
+          MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          board() { npx tsx ralph/scripts/board.ts "$@"; }
+          if [ "$EVENT" = "issues" ]; then
+            case "$ACTION" in
+              opened)          board adopt "$ISSUE" ;;
+              closed|reopened) board reconcile "$ISSUE" ;;
+            esac
+          elif [ "$EVENT" = "pull_request" ] && [ "$MERGED" = "true" ]; then
+            # Belt-and-braces: reconcile every issue the merged PR closes.
+            for n in $(gh pr view "$PR" --json closingIssuesReferences \
+                        --jq '.closingIssuesReferences[].number'); do
+              board reconcile "$n"
+            done
+          fi
+
+      - name: Reconciler lane — field-drift sweep
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.ROUTING_PAT }}
+          RALPH_CLAIM_HOLDER: state-guard
+        run: npx tsx ralph/scripts/board.ts doctor --fix
