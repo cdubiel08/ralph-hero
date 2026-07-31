@@ -74,7 +74,7 @@ plugin/
 | `/ralph:review` | best (fable→opus); singles reviewed at opus, group val at fable | Review: val, code, merge, behavior verification |
 | `/ralph:caretake` | sonnet | Caretaking: triage, hygiene, unblock, trends, split, debug, report |
 | `/ralph:hero` | sonnet | Orchestrator: auto (adaptive queue-drainer) + watch + classify + pr-drain |
-| `/ralph:setup` | haiku | Bootstrap: project setup, CLI install, repo-registry |
+| `/ralph:setup` | haiku | Bootstrap: project setup, repo-registry |
 
 Plus one experimental surface outside the 9-verb set: `/ralph:hero-fable` (fable; opt-in, requires Fable access) — isolated rail-free path (no prescribed phases, no gate hooks; artifact contract instead). `/ralph:hero --model fable` forwards to it. Design record: `thoughts/shared/ideas/2026-06-10-fable-native-ralph-artifact-contracts.md`.
 

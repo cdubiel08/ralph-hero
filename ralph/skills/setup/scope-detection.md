@@ -47,7 +47,7 @@ Do NOT suggest exporting `RALPH_GH_OWNER`/`RALPH_GH_REPO`/`RALPH_GH_PROJECT_NUMB
 
 After detection, tell the user:
 
-- User-scoped: "Ralph is installed at user scope — config will be written to `~/.claude/settings.json` so the CLI works from any directory."
+- User-scoped: "Ralph is installed at user scope — config will be written to `~/.claude/settings.json` so Ralph's board tools work from any directory."
 - Project-scoped: "Ralph is installed at project scope — scope vars go to the tracked `.claude/settings.json` (so worktrees and fresh clones inherit them); tokens and machine-local toggles go to the gitignored `.claude/settings.local.json`."
 - Undetermined: "Could not detect install scope. Writing to `.claude/settings.local.json` (project-scoped) — you can rerun with the user-scope install if you want global access."
 
@@ -55,4 +55,4 @@ After detection, tell the user:
 
 `gh auth` tokens live in the system keychain and don't need a settings entry. Non-token env vars (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`, optional split-owner overrides) MUST live in a settings file the MCP server reads at startup.
 
-If the user is on a user-scoped install but the setup writes to `settings.local.json`, the CLI will silently behave differently inside vs. outside the project root — a common source of "ralph doctor works here but not there" reports. The project-scoped analog is the worktree gap above: scope vars living only in the gitignored local file make every worktree session board-blind.
+If the user is on a user-scoped install but the setup writes to `settings.local.json`, Ralph's board tools will silently behave differently inside vs. outside the project root — a common source of "it works here but not there" reports. The project-scoped analog is the worktree gap above: scope vars living only in the gitignored local file make every worktree session board-blind.
