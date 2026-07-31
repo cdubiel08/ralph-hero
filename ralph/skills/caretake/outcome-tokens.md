@@ -64,7 +64,7 @@ Reflect has no Stop postcondition hook — the mode is an artifact-writer and do
 
 ## Watch terminal tokens
 
-One token per kind processed (`KIND` ∈ `PR` / `UPSTREAM` / `ISSUE`) — one line for `--kind <x>`, three lines in `pr`/`upstream`/`issue` order for a bare invocation:
+One token per kind processed (`KIND` ∈ `PR` / `UPSTREAM` / `ISSUE`) — one line for `--kind <x>`, three lines in `pr`/`upstream`/`issue` order for a bare invocation. A bare invocation additionally emits **one informational summary line** after the three tokens (`watch.md` §Step 2); it is prose, not a terminal token, and harnesses must not grep it as one:
 
 - `WATCH-PR ADVANCED <N>` — `<N>` items **resolved this sweep**: merged-PR items promoted (default `PROMOTE-plan` → Ready for Plan) PLUS closed-unmerged items escalated (`WAIT-decision` → Human Needed). Open/still-waiting items are NOT counted.
 - `WATCH-PR IDLE` — scan ran cleanly; no Backlog items carry a `blocked:pr-*` label.
