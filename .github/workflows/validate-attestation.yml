@@ -32,9 +32,19 @@ permissions:
   contents: read
   statuses: write
 
+# cancel-in-progress must stay FALSE: the push-triggered run, the attestation
+# comment posted ~1s later, and every other PR comment (even runs whose job
+# then skips — concurrency cancels BEFORE the job-level `if` evaluates) share
+# this group. With `true`, 50% of real validations were observed cancelled
+# 1-10s in, leaving a cancelled `validate` check on the head that blocked
+# merge-pr.sh until a manual re-run (GH-1662 session, 2026-07-31). Queuing is
+# safe: the posted status is bound to the SHA the verdict was computed
+# against, so a delayed run cannot publish a stale verdict to a newer head.
+# If a queued real run ever gets superseded by a marker-less comment run
+# during a burst, the fallback is a distinct group for marker-less comments.
 concurrency:
   group: validate-attestation-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
