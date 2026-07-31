@@ -114,6 +114,7 @@ describe("claims", () => {
 describe("rankNext", () => {
   const item = (n: number, over: Partial<QueueItem> = {}): QueueItem => ({
     number: n,
+    repo: "cdubiel08/ralph-hero",
     title: `t${n}`,
     state: "Backlog",
     priority: null,
@@ -227,6 +228,7 @@ const PROJECT_ID = "PVT_test";
 
 interface FakeIssue {
   number: number;
+  archived?: boolean;
   state?: string | null;
   claim?: string | null;
   issueState?: "OPEN" | "CLOSED";
@@ -245,6 +247,7 @@ class FakeGh {
   comments: Array<{ body: string }> = [];
   issues = new Map<number, FakeIssue>();
   failNextStateWrite = false; // transport-failure injection
+  failNextComment = false;
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
 
@@ -300,7 +303,12 @@ class FakeGh {
           fi.onBoard === false
             ? []
             : [
-                { id: `ITEM_${fi.number}`, project: { id: PROJECT_ID }, fieldValues: fieldValues(fi.state, fi.claim) },
+                {
+                  id: `ITEM_${fi.number}`,
+                  isArchived: fi.archived ?? false,
+                  project: { id: PROJECT_ID },
+                  fieldValues: fieldValues(fi.state, fi.claim),
+                },
               ],
       },
     };
@@ -353,6 +361,7 @@ class FakeGh {
           items: {
             pageInfo: { hasNextPage: false, endCursor: null },
             nodes: [...this.issues.values()].map((fi) => ({
+              isArchived: fi.archived ?? false,
               content: {
                 number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
                 repository: { nameWithOwner: "cdubiel08/ralph-hero" },
@@ -403,6 +412,10 @@ class FakeGh {
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
     if (query.includes("addComment")) {
+      if (this.failNextComment) {
+        this.failNextComment = false;
+        return { code: 1, stdout: "", stderr: "simulated comment failure" };
+      }
       this.comments.push({ body: variables.body });
       this.mutations.push("addComment");
       return data({ addComment: { clientMutationId: null } });
@@ -569,6 +582,18 @@ describe("transition engine", () => {
     gh.issues.set(1, { number: 1, state: "Backlog" });
     gh.raceClaimTo = "rival@other";
     expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/lost the claim race.*rival@other/);
+  });
+
+  it("claim from In Progress is (re)acquisition: adopts claimless WIP, refuses a live foreign claim", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress" }); // claimless WIP (pre-v2 or UI-driven)
+    const after = transition(ctx, fetchIssue(ctx, 1), "In Progress");
+    expect(after.claim?.holder).toBe("me@test");
+
+    gh.issues.set(2, {
+      number: 2, state: "In Progress",
+      claim: encodeClaim("other@host", new Date(NOW.getTime() - 5 * 60_000)),
+    });
+    expect(() => transition(ctx, fetchIssue(ctx, 2), "In Progress")).toThrow(/other@host/);
   });
 
   it("claim read-back also rejects a VANISHED claim (concurrent clear)", () => {
@@ -740,6 +765,35 @@ describe("doctor + migrate", () => {
     doctor(ctx, { fix: true });
     expect(gh.issues.get(1)!.state).toBe("Backlog");
     expect(gh.comments.some((c) => c.body.includes("stale claim"))).toBe(true);
+  });
+
+  it("archived items are invisible to list/next/migrate — they cannot be written", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Ready for Plan", archived: true });
+    gh.issues.set(2, { number: 2, state: "Ready for Plan" });
+    const lines = migrate(ctx);
+    expect(lines.some((l) => l.includes("#2"))).toBe(true);
+    expect(lines.some((l) => l.includes("#1"))).toBe(false);
+  });
+
+  it("direct mutations refuse archived items with a clean message, not a raw API error", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", archived: true });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(/ARCHIVED.*Unarchive/);
+    expect(reconcile(ctx, 1)).toMatch(/archived — skipped/);
+  });
+
+  it("migrate: a failed audit comment does NOT report the migration as FAILED", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Ready for Plan" });
+    gh.failNextComment = true;
+    const lines = migrate(ctx, { apply: true });
+    expect(gh.issues.get(1)!.state).toBe("Backlog"); // state converged
+    expect(lines[0]).toMatch(/audit comment failed/);
+    expect(lines[0]).not.toMatch(/FAILED —/);
   });
 
   it("migrate: dry-run by default; Decision Request routes Plan in Review to Human Needed", () => {

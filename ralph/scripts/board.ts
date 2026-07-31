@@ -150,6 +150,7 @@ export function claimIsStale(claim: Claim, now: Date, ttlMin: number): boolean {
 
 export interface QueueItem {
   number: number;
+  repo: string; // nameWithOwner — the board is cross-repo capable
   title: string;
   state: string;
   priority: string | null; // "P0".."P3"
@@ -483,6 +484,7 @@ export interface Issue {
   number: number;
   nodeId: string;
   itemId: string | null; // project item in OUR project
+  archived: boolean; // archived items reject all writes
   title: string;
   url: string;
   issueState: "OPEN" | "CLOSED";
@@ -537,7 +539,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
             }
             blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
             closedByPullRequestsReferences(first: 10) { nodes { number url state merged } }
-            projectItems(first: 20) { nodes { id project { id } ${FIELD_VALUES_FRAGMENT} } }
+            projectItems(first: 20) { nodes { id isArchived project { id } ${FIELD_VALUES_FRAGMENT} } }
           }
         }
       }`,
@@ -555,6 +557,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       number: issue.number,
       nodeId: issue.id,
       itemId: item?.id ?? null,
+      archived: item?.isArchived ?? false,
       title: issue.title,
       url: issue.url,
       issueState: issue.state,
@@ -601,6 +604,11 @@ function requireItem(issue: Issue): string {
   if (!issue.itemId) {
     throw new RefusalError(
       `#${issue.number} is not on the project board — add it first (board create adds automatically)`,
+    );
+  }
+  if (issue.archived) {
+    throw new RefusalError(
+      `#${issue.number}'s project item is ARCHIVED — GitHub rejects all writes to it. Unarchive it in the board UI first.`,
     );
   }
   return issue.itemId;
@@ -735,7 +743,11 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
         `#${issue.number} is in legacy state "${from}" — run \`board migrate\` (Phase 2) before mutating it`,
       );
     }
-    if (from !== null && !opts.isReopen && !legalTransition(from as State, to)) {
+    // Same-state In Progress is claim (re)acquisition, not a transition:
+    // adopting claimless WIP or refreshing one's own claim. Fully guarded by
+    // the claim checks below; the state write is a harmless same-value set.
+    const isClaimRefresh = from === "In Progress" && to === "In Progress";
+    if (from !== null && !opts.isReopen && !isClaimRefresh && !legalTransition(from as State, to)) {
       throw new RefusalError(
         `illegal transition for #${issue.number}: "${from}" → "${to}". ` +
           `Legal: ${MACHINE[from as State].join(", ") || "(none — use reopen)"}`,
@@ -882,6 +894,7 @@ export function parentCheck(ctx: Ctx, parentNumber: number): string {
 export function adopt(ctx: Ctx, number: number): Issue {
   const cache = mutationCache(ctx, [[STATE_FIELD, "Backlog"]]);
   let issue = fetchIssue(ctx, number);
+  if (issue.archived) return issue; // archived items reject writes — no-op
   if (!issue.itemId) {
     const added = ghGraphQL(
       ctx,
@@ -911,6 +924,9 @@ export function reconcile(ctx: Ctx, number: number): string {
     if (!issue.itemId) {
       adopt(ctx, number);
       return `#${number}: adopted to board (Backlog)`;
+    }
+    if (issue.archived) {
+      return `#${number}: project item archived — skipped (unarchive in the board UI to reconcile)`;
     }
 
     const target: State | null =
@@ -955,6 +971,20 @@ export function reconcile(ctx: Ctx, number: number): string {
 // List / next
 // ---------------------------------------------------------------------------
 
+/** Items from OTHER repos on this (cross-repo capable) board. board.ts
+ *  resolves issues by bare number within cfg.repo, so a foreign item under
+ *  the same number is a DIFFERENT issue — every sweep and the ranker must
+ *  scope to own-repo items or risk mutating the wrong issue (the recorded
+ *  wrong-repo failure mode, GH-1405 class; observed live with #12 during
+ *  the GH-1662 migrate). Foreign items are surfaced by doctor, never touched. */
+export function ownRepo(ctx: Ctx, items: QueueItem[]): { own: QueueItem[]; foreign: QueueItem[] } {
+  const self = `${ctx.cfg.owner}/${ctx.cfg.repo}`.toLowerCase();
+  const own: QueueItem[] = [];
+  const foreign: QueueItem[] = [];
+  for (const i of items) (i.repo.toLowerCase() === self ? own : foreign).push(i);
+  return { own, foreign };
+}
+
 export function listItems(ctx: Ctx): QueueItem[] {
   return withCache(ctx, (cache) => {
     const items: QueueItem[] = [];
@@ -968,6 +998,7 @@ export function listItems(ctx: Ctx): QueueItem[] {
               items(first: 100, after: $after) {
                 pageInfo { hasNextPage endCursor }
                 nodes {
+                  isArchived
                   content {
                     ... on Issue {
                       number title state
@@ -987,10 +1018,13 @@ export function listItems(ctx: Ctx): QueueItem[] {
       const page = data.node?.items;
       for (const n of page?.nodes ?? []) {
         const c = n.content;
-        if (!c?.number || c.state !== "OPEN") continue;
+        // Archived items are still returned by the items connection but
+        // cannot be written ("The item is archived") — skip them everywhere.
+        if (n.isArchived || !c?.number || c.state !== "OPEN") continue;
         const fv = fieldValueMap(n.fieldValues);
         items.push({
           number: c.number,
+          repo: c.repository?.nameWithOwner ?? "",
           title: c.title,
           state: fv[STATE_FIELD] ?? "(none)",
           priority: fv["Priority"] ?? null,
@@ -1154,7 +1188,14 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
 
     // item sweep: legacy states, claim anomalies, stale claims
     try {
-      const items = listItems(ctx);
+      const { own: items, foreign } = ownRepo(ctx, listItems(ctx));
+      add(
+        "foreign-items",
+        "ok",
+        foreign.length === 0
+          ? "none"
+          : `${foreign.length} item(s) from other repos on this board (informational; board.ts never touches them): ${foreign.map((i) => `${i.repo}#${i.number}`).join(" ")}`,
+      );
       const legacyItems = items.filter((i) => i.state !== "(none)" && !isState(i.state));
       const noState = items.filter((i) => i.state === "(none)");
       const claimAnomalies = items.filter((i) => i.claim && i.state !== "In Progress");
@@ -1303,9 +1344,12 @@ export function migrate(ctx: Ctx, opts: { apply?: boolean } = {}): string[] {
   // Cache resolved before any write; the loop never retries, and a report
   // line is pushed only AFTER the write it describes succeeds.
   const cache = mutationCache(ctx, STATES.map((s) => [STATE_FIELD, s] as [string, string]));
-  const items = listItems(ctx);
-  const legacyItems = items.filter((i) => i.state !== "(none)" && !isState(i.state));
-  const stateless = items.filter((i) => i.state === "(none)");
+  const { own, foreign } = ownRepo(ctx, listItems(ctx));
+  for (const f of foreign) {
+    out.push(`#${f.number} (${f.repo}): foreign-repo item — never touched by migrate`);
+  }
+  const legacyItems = own.filter((i) => i.state !== "(none)" && !isState(i.state));
+  const stateless = own.filter((i) => i.state === "(none)");
 
   for (const i of [...legacyItems, ...stateless]) {
     let hasDecisionRequest = false;
@@ -1332,19 +1376,32 @@ export function migrate(ctx: Ctx, opts: { apply?: boolean } = {}): string[] {
       out.push(`#${i.number}: "${i.state}" → "${target}" (dry-run)`);
       continue;
     }
-    const issue = fetchIssue(ctx, i.number);
-    if (!issue.itemId) {
-      out.push(`#${i.number}: not on the board — SKIPPED`);
-      continue;
+    try {
+      const issue = fetchIssue(ctx, i.number);
+      if (!issue.itemId) {
+        out.push(`#${i.number}: not on the board — SKIPPED`);
+        continue;
+      }
+      setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
+      syncStatus(ctx, cache, issue.itemId, target);
+      // The state converged; the audit comment is best-effort. A comment
+      // failure must NOT report the migration as FAILED — the item would
+      // leave the candidate set (state now valid) with no repair path.
+      let note = "";
+      try {
+        addComment(
+          ctx,
+          issue.nodeId,
+          `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
+        );
+      } catch (e) {
+        note = ` (migrated; audit comment failed — ${(e as Error).message})`;
+      }
+      out.push(`#${i.number}: "${i.state}" → "${target}"${note}`);
+    } catch (e) {
+      // One unwritable item (archived, permissions) must not strand the rest.
+      out.push(`#${i.number}: FAILED — ${(e as Error).message}`);
     }
-    setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, target);
-    syncStatus(ctx, cache, issue.itemId, target);
-    addComment(
-      ctx,
-      issue.nodeId,
-      `\`board migrate\`: workflow state "${i.state}" → "${target}" (v2 6-state collapse, GH-1662).`,
-    );
-    out.push(`#${i.number}: "${i.state}" → "${target}"`);
   }
   if (out.length === 0) out.push("nothing to migrate — all open items already in v2 states");
   return out;
@@ -1474,18 +1531,22 @@ export function run(argv: string[], ctx: Ctx): number {
     }
 
     case "list": {
-      let items = listItems(ctx);
+      const { own, foreign } = ownRepo(ctx, listItems(ctx));
+      let items = own;
       if (typeof flags.state === "string") {
         const s = parseStateArg(flags.state);
         items = items.filter((i) => i.state === (s ?? flags.state));
       }
-      if (flags.json) json(items);
-      else for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holder}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
+      if (flags.json) json({ items, foreign });
+      else {
+        for (const i of items) out(`#${i.number} [${i.state}]${i.claim ? ` claim=${i.claim.holder}` : ""}${i.openBlockers.length ? ` blockedBy=${i.openBlockers.map((n) => `#${n}`).join(",")}` : ""} ${i.title}`);
+        for (const f of foreign) out(`${f.repo}#${f.number} [${f.state}] (foreign repo — read-only here) ${f.title}`);
+      }
       return 0;
     }
 
     case "next": {
-      const { eligible, blocked } = rankNext(listItems(ctx));
+      const { eligible, blocked } = rankNext(ownRepo(ctx, listItems(ctx)).own);
       if (flags.json) json({ next: eligible[0] ?? null, queue: eligible, blocked });
       else if (eligible.length === 0) out(`queue empty${blocked.length ? ` (${blocked.length} blocked: ${blocked.map((b) => `#${b.number}`).join(" ")})` : ""}`);
       else {
