@@ -162,9 +162,9 @@ Append to the SAME doc. Update frontmatter (`last_updated`, `last_updated_note`)
 
 ## --mode auto
 
-Autonomous Research-Needed picker. No questions; one issue, locked, researched, advanced. Frontmatter `hooks:` gates the flow (branch-gate, postcondition + doc-validator on Stop); transition legality and lock claim/release are enforced server-side by `save_issue` (GH-1615/GH-1616). XS/S only, 15-minute budget.
+Autonomous Research-Needed picker. No questions; one issue, locked, researched, advanced. Frontmatter `hooks:` gates the flow (postcondition + doc-validator on Stop); transition legality and lock claim/release are enforced server-side by `save_issue` (GH-1615/GH-1616). The branch check is **Step 1's own explicit `git branch --show-current`**, not a hook — `branch-gate.sh` is deliberately not registered here (see the frontmatter comment: it no-ops unless `RALPH_REQUIRED_BRANCH` is set, and registering it would fire on interactive Bash calls too). XS/S only, 15-minute budget.
 
-1. **Branch check** — `git branch --show-current` must be `main`; `branch-gate.sh` also blocks non-allowlisted Bash.
+1. **Branch check** — `git branch --show-current` must be `main`. This check is performed here, in the flow; there is no branch hook armed for this skill.
 2. **Select issue** — `ARG=#NNN` → `get_issue`; else `list_issues(profile: "analyst-research", limit: 50)`, filter XS/Small + unblocked (per `intake-routing.md` § Blocker semantics — fetch each blocker, do not infer), pick highest priority. None eligible → exit cleanly.
 3. **Lock + registry + knowledge graph** — `save_issue(workflowState: "__LOCK__", command: "ralph_research")` → read `.ralph-repos.yml` if present (`research-shapes.md` § Cross-repo addendum) → knowledge-graph dispatch (`research-shapes.md` § Knowledge-graph dispatch shape); save `query_id` for Step 7.
 4. **Parallel sub-agent research** — same dispatch as default Step 3, no review picker. Wait for ALL, synthesize.
