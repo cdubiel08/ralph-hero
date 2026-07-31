@@ -1,7 +1,7 @@
 {
   "name": "ralph",
-  "version": "0.1.68",
-  "description": "ralph v2 \u2014 one work verb, one board CLI, a 6-state machine. The driving model sequences its own research/plan/build/verify; board.ts is the sole board mutation path (typed transitions, claims with TTL, scope gate); enforcement is code, not prose.",
+  "version": "0.1.69",
+  "description": "ralph v2 — one work verb, one board CLI, a 6-state machine. The driving model sequences its own research/plan/build/verify; board.ts is the sole board mutation path (typed transitions, claims with TTL, scope gate); enforcement is code, not prose.",
   "author": {
     "name": "Chad Dubiel",
     "url": "https://github.com/cdubiel08"
