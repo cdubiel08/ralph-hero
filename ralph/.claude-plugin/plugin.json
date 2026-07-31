@@ -1,6 +1,6 @@
 {
   "name": "ralph",
-  "version": "0.1.66",
+  "version": "0.1.67",
   "description": "The naive hero picks tickets, does their best work, and moves on. 9 fat skills with flat-sibling references, hooks-enforced state, and MCP-driven artifacts over a GitHub Projects V2 board.",
   "author": {
     "name": "Chad Dubiel",
