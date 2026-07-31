@@ -593,7 +593,7 @@ Before dispatching sub-agents, check if the issue may span multiple repos:
      Additional repo directories to search:
      - ralph-hero: ~/projects/ralph-hero
      - downstream-app: ~/projects/downstream-app
-     ```
+     ```text
    - Sub-agents use standard `Read`, `Grep`, `Glob` with those paths — no new tooling
 
 4. **If single-repo:** Proceed unchanged (existing behavior).
@@ -736,19 +736,19 @@ If the research document includes a "Cross-Repo Scope" section:
    ```bash
    cd {localDir}
    git worktree add worktrees/GH-{issue_number} -b feature/GH-{issue_number}
-   ```
+   ```text
 
    Example for GH-601 spanning ralph-hero and downstream-app:
    ```
    ~/projects/ralph-hero/worktrees/GH-601/
    ~/projects/downstream-app/worktrees/GH-601/
-   ```
+   ```text
 
 3. **Set `RALPH_WORKTREE_PATHS`:** Export a colon-separated list of all active worktree **absolute** paths (tilde expanded) so the impl-worktree-gate hook allows writes to any of them:
    ```bash
    # IMPORTANT: Expand ~ to absolute paths — the hook uses string prefix matching
    export RALPH_WORKTREE_PATHS="/home/user/projects/ralph-hero/worktrees/GH-601:/home/user/projects/downstream-app/worktrees/GH-601"
-   ```
+   ```text
    > **Tilde expansion:** `localDir` values in the registry may use `~`. Always expand to absolute paths before setting `RALPH_WORKTREE_PATHS`, since the hook compares against `file_path` which is always absolute.
 
 4. **Pass worktree mapping to builder:** Include in the builder spawn prompt:
@@ -758,7 +758,7 @@ If the research document includes a "Cross-Repo Scope" section:
    - downstream-app: ~/projects/downstream-app/worktrees/GH-601
 
    Make changes to each repo in its respective worktree directory.
-   ```
+   ```text
 
 **Single-repo (default):** If no cross-repo scope, behavior is unchanged — one worktree in the current repo.
 ```
@@ -819,7 +819,7 @@ If the issue has cross-repo scope (multiple worktrees exist for this issue):
        echo "Found worktree in $(basename $repo_dir)"
      fi
    done
-   ```
+   ```text
 
 2. **Create one PR per repo:** For each repo with a worktree:
    ```bash
@@ -838,7 +838,7 @@ If the issue has cross-repo scope (multiple worktrees exist for this issue):
    Closes #{issue_number}
    EOF
    )"
-   ```
+   ```text
 
 3. **Cross-reference PRs:** After creating all PRs, edit each PR body to include links to the other PRs. The merge order comes from the `dependency-flow` in the registry pattern.
 
@@ -936,7 +936,7 @@ When the root issue spans repos (detected during research or from issue body):
    - pattern: {matched pattern name}
    - dryRun: true
    Report the proposal back.
-   ```
+   ```text
 
 3. **Review proposal:** Read the sub-agent's result and verify:
    - Correct repos identified
@@ -953,7 +953,7 @@ When the root issue spans repos (detected during research or from issue body):
    - pattern: {matched pattern name}
    - dryRun: false
    Report created issue numbers and dependency wiring.
-   ```
+   ```text
    This creates the sub-issues on GitHub and wires `blockedBy` relationships.
 
 5. **Add to project board:** The `decompose_feature` tool automatically adds created issues to the project and wires dependencies.
@@ -1079,7 +1079,7 @@ When cross-repo scope is detected (during the registry lookup substep added to t
    - Grep for import/require statements referencing the other repo's package name
    - Check package.json dependencies for cross-references
    - Look for shared types, API clients, or SDK references
-   ```
+   ```text
 
 2. **Compare against registry:** Check if found dependencies match the `dependency-flow` edges in the registry pattern.
 
@@ -1091,7 +1091,7 @@ When cross-repo scope is detected (during the registry lookup substep added to t
    Registry: No `dependency-flow` edge declared between ralph-hero and downstream-app
 
    Recommendation: Add `ralph-hero -> downstream-app` to the pattern's dependency-flow
-   ```
+   ```text
 
 This information is consumed by the hero skill during tree expansion (Task 10, Step 2) to override the default "assume independent" behavior when evidence contradicts the registry.
 ```
