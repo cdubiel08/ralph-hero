@@ -172,4 +172,4 @@ Post-mortem reports are the only persistent artifact from a team session. Task d
 
 - [task-schema.md](task-schema.md) — TaskCreate/TaskUpdate fields, metadata keys, stop-gate integration
 - [agent-permissions.md](agent-permissions.md) — Per-agent tool whitelists and PreToolUse gates
-- [skill-io-contracts.md](skill-io-contracts.md) — Per-skill contracts that workers execute
+- Per-skill contracts that workers execute — the `ralph/skills/<verb>/SKILL.md` frontmatter (hook registration + `allowed-tools`) and [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json) (successors to the deleted `skill-io-contracts.md`)

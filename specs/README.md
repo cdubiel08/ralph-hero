@@ -61,7 +61,6 @@ Requirements use RFC 2119 language: **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 | Spec | Governs |
 |------|---------|
 | [artifact-metadata.md](artifact-metadata.md) | File naming patterns, frontmatter schemas, Artifact Comment Protocol |
-| [skill-io-contracts.md](skill-io-contracts.md) | Per-skill inputs, outputs, preconditions, postconditions |
 | [skill-permissions.md](skill-permissions.md) | Tool access matrix per skill, plugin-level hook overlay |
 | [agent-permissions.md](agent-permissions.md) | Per-agent tool whitelists, PreToolUse gates, stop gates |
 
@@ -79,11 +78,26 @@ Requirements use RFC 2119 language: **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 | [task-schema.md](task-schema.md) | TaskCreate/TaskUpdate fields, metadata keys, lifecycle |
 | [team-schema.md](team-schema.md) | TeamCreate schema, roster sizing, spawn protocol, shutdown |
 
+### Removed specs
+
+`skill-io-contracts.md` was deleted. Do not re-create it. It described the `ralph-*` skill generation that shipped from `plugin/ralph-hero/` (deleted in GH-1438) — 27 references to skills that no longer exist, zero mentions of the current 9 verbs, half its named gate hooks gone, and an env-var table that contradicted the tracked-`settings.json` scope-var requirement. It had no consumer outside this directory.
+
+Its content now lives in enforced, machine-readable form:
+
+| What the spec claimed to govern | Live source |
+|---|---|
+| Per-skill input/output states, lock states, preconditions, postconditions | [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json), read by the generic `state-gate.sh` |
+| Which precondition/postcondition hooks a skill runs | The `hooks:` block in each `ralph/skills/<verb>/SKILL.md` frontmatter |
+| Command-level result reporting schema | [`../ralph/skills/caretake/outcome-tokens.md`](../ralph/skills/caretake/outcome-tokens.md) (terminal tokens) and [`../ralph/skills/shared/loop-wrapper.md`](../ralph/skills/shared/loop-wrapper.md) (continuation rules) |
+| Environment variables | Root [`../CLAUDE.md`](../CLAUDE.md) § Environment Variables — scope vars go in the **tracked** `<project>/.claude/settings.json`, tokens and machine-local toggles in the gitignored `settings.local.json` (see [`../ralph/skills/setup/scope-detection.md`](../ralph/skills/setup/scope-detection.md)) |
+
+`state-gate.sh`'s own header records why prose duplication was the wrong shape: it replaced a per-verb gate family that "duplicated the state machine's `valid_output_states` as ten drifting bash literals." A prose spec is the same duplication with no test behind it.
+
 ## How to Use Specs
 
 ### When developing a new skill
 
-1. Read [skill-io-contracts.md](skill-io-contracts.md) for the skill's required inputs, outputs, preconditions, and postconditions
+1. Read [`../ralph/CLAUDE.md`](../ralph/CLAUDE.md) § Adding a new verb, then add the verb's command entry to [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json) for its input/output states, lock states, preconditions, and postconditions
 2. Read [skill-permissions.md](skill-permissions.md) for the tool access whitelist
 3. Read [artifact-metadata.md](artifact-metadata.md) for file naming and frontmatter requirements
 4. Read [document-protocols.md](document-protocols.md) for document structure requirements (if the skill produces artifacts)
@@ -104,18 +118,19 @@ Requirements use RFC 2119 language: **MUST**, **MUST NOT**, **SHOULD**, **SHOULD
 
 ## Maturity Baseline
 
-Enforcement coverage as of 2026-03-01. Each `[x]` requirement is enforced by a hook; each `[ ]` is a gap forming the backlog for future enforcement work.
+Enforcement coverage as of 2026-03-01, less the `skill-io-contracts.md` row (31 `[x]` / 5 `[ ]`) dropped when that spec was deleted. Each `[x]` requirement is enforced by a hook; each `[ ]` is a gap forming the backlog for future enforcement work.
 
 | Spec | Enforced (`[x]`) | Gap (`[ ]`) | % Enforced |
 |------|-----------------|------------|------------|
 | artifact-metadata.md | 11 | 32 | 26% |
-| skill-io-contracts.md | 31 | 5 | 86% |
 | skill-permissions.md | 6 | 5 | 55% |
 | agent-permissions.md | 13 | 0 | 100% |
 | issue-lifecycle.md | 18 | 7 | 72% |
 | document-protocols.md | 10 | 14 | 42% |
 | task-schema.md | 3 | 12 | 20% |
 | team-schema.md | 3 | 15 | 17% |
-| **Total** | **95** | **90** | **51%** |
+| **Total** | **64** | **85** | **43%** |
+
+These counts have not been re-derived since 2026-03-01 and predate the 9-verb restructure; treat them as historical, not as a current audit.
 
 Largest gap areas: artifact-metadata.md (file naming, frontmatter field validation, artifact comment linking), task-schema.md and team-schema.md (coordination protocol is convention-only). These gaps form the backlog for Phase 5+ enforcement issues.

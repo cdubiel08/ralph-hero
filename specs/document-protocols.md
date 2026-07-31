@@ -133,5 +133,5 @@ Quality criteria are defined in `quality-standards.md` and referenced by skill p
 ## Cross-References
 
 - [artifact-metadata.md](artifact-metadata.md) — File naming patterns, frontmatter schemas, Artifact Comment Protocol
-- [skill-io-contracts.md](skill-io-contracts.md) — Which skills produce which documents (postconditions)
+- [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json) — per-command `postconditions` declaring which skill produces which document; the enforcing `*-postcondition.sh` Stop hooks are registered in each `ralph/skills/<verb>/SKILL.md` frontmatter (successor to the deleted `skill-io-contracts.md`)
 - [issue-lifecycle.md](issue-lifecycle.md) — State transitions that trigger document creation (e.g., Research Needed triggers research, Ready for Plan triggers planning)

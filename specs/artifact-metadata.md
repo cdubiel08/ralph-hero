@@ -126,5 +126,5 @@ When a skill needs to locate a linked artifact:
 
 ## Cross-References
 
-- [skill-io-contracts.md](skill-io-contracts.md) — which skills create which artifact types
+- [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json) — `artifact_patterns` plus the per-command postconditions naming which skill creates which artifact type (successor to the deleted `skill-io-contracts.md`)
 - [document-protocols.md](document-protocols.md) — detailed content requirements per document type (Phase 2)

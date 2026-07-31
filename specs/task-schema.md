@@ -150,6 +150,6 @@ The hook:
 
 ## Cross-References
 
-- [skill-io-contracts.md](skill-io-contracts.md) — Command-level result schemas and per-skill postconditions
+- [`../ralph/skills/caretake/outcome-tokens.md`](../ralph/skills/caretake/outcome-tokens.md) — the terminal-token contract that replaced the command-level result schema; per-skill postconditions live in [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json) (successors to the deleted `skill-io-contracts.md`)
 - [agent-permissions.md](agent-permissions.md) — Which agents run which skills (determines which task types each worker handles)
 - [team-schema.md](team-schema.md) — TeamCreate ordering, worker spawn protocol, shutdown sequence

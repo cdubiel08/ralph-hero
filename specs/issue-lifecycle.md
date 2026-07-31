@@ -219,6 +219,6 @@ States not in the canonical order: Canceled, Human Needed. These are off-pipelin
 
 ## Cross-References
 
-- [skill-io-contracts.md](skill-io-contracts.md) — Per-skill preconditions and postconditions that reference workflow states
+- [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json) — per-command `valid_input_states` / `valid_output_states` / `lock_states` / `preconditions` / `postconditions`, enforced by the generic `state-gate.sh` (successor to the deleted `skill-io-contracts.md`, which duplicated these as prose)
 - [agent-permissions.md](agent-permissions.md) — Which agents run which skills (and therefore which state transitions they can trigger)
 - [document-protocols.md](document-protocols.md) — Document creation requirements triggered by state transitions

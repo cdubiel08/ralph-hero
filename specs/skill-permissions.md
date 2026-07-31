@@ -96,5 +96,5 @@ These hooks are registered in `hooks.json` and apply across ALL skills, regardle
 
 ## Cross-References
 
-- [skill-io-contracts.md](skill-io-contracts.md) — what each skill does (inputs/outputs)
+- [`../ralph/CLAUDE.md`](../ralph/CLAUDE.md) — what each of the 9 verbs does, its modes, and its terminal sentinels; per-skill inputs/outputs live in the `ralph/skills/<verb>/SKILL.md` frontmatter and [`../ralph/hooks/scripts/ralph-state-machine.json`](../ralph/hooks/scripts/ralph-state-machine.json) (successors to the deleted `skill-io-contracts.md`)
 - [agent-permissions.md](agent-permissions.md) — agent-level permissions layered on top of skill permissions
