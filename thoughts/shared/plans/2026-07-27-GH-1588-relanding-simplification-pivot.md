@@ -278,4 +278,31 @@ Fixed in [PR #1625](https://github.com/cdubiel08/ralph-hero/pull/1625) (merged `
 - The `ralph-attestation` status goes stale whenever `validate` runs between the push and the re-attest. Expect one `gh run rerun` per PR; it is not a signal.
 - Bump detection now works from the commit message, so PR-B (`release-ralph`) and PR-C need no manual dispatch.
 
-**Remaining:** Phase 2 (PR-B) and Phase 3 (PR-C) unchanged. Board: 10 of 18 leaves closed; #1590, #1592, #1593 open.
+**Remaining at the time of writing:** Phase 2 (PR-B) and Phase 3 (PR-C) unchanged. Board: 10 of 18 leaves closed; #1590, #1592, #1593 open.
+
+### 2026-07-31 — Phase 2 (PR-B) opened as [PR #1647](https://github.com/cdubiel08/ralph-hero/pull/1647)
+
+Branch `feature/GH-1603-plugin-sweep` off `origin/main` @ `a09a5109`. 91 files, +6,048/−2,932; **`ralph/` net −1,430** (1,481 added / 2,911 removed). Zero `mcp-server/` changes — the layer slice held exactly as designed. Closes #1603–#1608 + #1619.
+
+**The board needed reconciling first.** #1604–#1608 were sitting in `In Review` against the closed, unmerged PR #1620. Reset to `In Progress`, then locked, then advanced to `In Review` on PR creation.
+
+**Simplification deltas landed as planned**, plus one thing the plan did not anticipate: before deleting the Step 0 `RALPH_SUBCOMMAND` export, I confirmed `split-postcondition.sh` was the **only** one of `plan`'s 11 registered hooks reading that variable. It was — so the export removal strands nothing. Worth stating because the plan authorized the deletion without establishing that the export had no other consumer.
+
+**Five defects found while landing, none of which the plan predicted:**
+
+1. **A red test on the imported tree.** `hero-classify-audience.test.sh` was failing: GH-1606 folded `--mode classify` into `--tick`, so its `## --mode classify` section extractor matched nothing. The plan named this file as "port to the `run_case` harness" — that was the wrong diagnosis. It is a static-grep doc test, not a hook-invocation test; `run_case` (SBX/REPO/NOGIT sandbox roots) does not apply. What it actually needed was **retargeting to the moved call site**. Same for `caretake-watch.test.sh` — also static-grep, also not a harness candidate. Renamed to `hero-auto-tick-audience.test.sh`. It also had a **latent fail-open**: an empty section block made assertion 4 pass vacuously. Now fails loudly.
+
+2. **`check-doc-rosters.sh` hardcodes the agent count in its heading regex** (`### ralph Plugin — 16 Agents`) and exited 1 on the imported tree, since the roster is now 15. `scripts/` was not in the plan's Phase 2 import list. Imported **only that file** — deliberately not the rest of `scripts/`, because the model-tier scripts belong to PR-C and `release-bump-detection.test.sh` is **newer on main than at the tip** (it landed in PR #1625). A blanket `scripts/` import would have silently reverted the release-bump fix.
+
+3. **`git checkout <ref> -- <path>` misses renames, not just deletions.** Phase 1's log already warned that it "adds and modifies but never deletes". The sharper lesson: selecting files from `git diff --name-status` `M`/`A`/`D` rows **also drops every `R` row**, because git collapses renames into one entry matching none of the three. `modes/retro.md → modes/reflect.md` was skipped entirely — the tree kept the stale `retro.md` (still cross-referencing `postmortem`, deleted in Phase 1) and had no `reflect.md`. Caught by the deletion sweep, not by any test. **Always run `git diff --name-status -M -C` and handle `R` explicitly.**
+
+4. **A single-sourcing defect in GH-1607's own remit.** `catch-up`, `form`, and `setup` each print an `--auto` refusal citing `§ Loop and --auto suitability matrix` — a heading GH-1607 renamed to `§ Loop suitability` — and the wording had drifted from the canonical string in `auto-alias.md` (`...for the canonical table` vs `...for the canonical detail`). Now byte-identical to the canonical source.
+
+5. **The altitude move created two broken references,** caught by re-reading the moved text in its new home rather than by any check: steps reading "per `decomposition.md` § X" from *inside* `decomposition.md`, and a same-file anchor `[§ Legal claim path](#legal-claim-path)` pointing at a section that lives in `SKILL.md`. Added a link validator over all touched files (0 broken).
+
+**Zero-hook evidence re-run was load-bearing, not ceremonial.** The original ran against `feature/GH-1593`; PR-A's review then fixed four defects in exactly the modules it exercises (`issue-tools.ts` lock destruction, `batch-tools.ts` guard bypass + destructive dry-run preview, `tree-tools.ts` unbounded query) — 25 files changed in `mcp-server/src` between the two heads. All twelve checks across five invariant classes still hold. Two differences, both improvements: §2c's refusal gained a `Refused move to "<target>".` clause, and §4c is **new coverage** — the release gate on a non-stale claim, which the original only asserted in prose. Five sandbox issues created and all canceled (verified closed). The addendum also records the two script defects in my first pass rather than quietly dropping the sections they broke.
+
+**Phase 4 §1 follow-ups filed early** (while the PR awaits review), linked from #1588: #1648 (decision-hold authentication), #1649 (untrusted watch content — design), #1650 (enrich git-flow extraction), #1651 (`RALPH_SUBCOMMAND` → payload/ledger arming).
+
+**Operational note, correcting Phase 1's.** Phase 1 advised treating a rate-limited CodeRabbit as "needs an explicit `@coderabbitai full review`, never wait". That is right about it not self-healing but wrong as a loop: **each request consumes the next window and slides availability further out** (observed: 40 min → 25 min remaining after a second request). The correct handling is to request **once**, then wait out the stated window. PR-A's own advice to "let the automatic push review do the work" is the operative half.
+
