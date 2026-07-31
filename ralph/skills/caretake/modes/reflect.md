@@ -62,7 +62,7 @@ For pain points with a clear codebase anchor, ground them via sub-agents. For pa
 
 **Dispatch shape (no `team_name`):**
 
-```
+```js
 Agent(subagent_type="ralph:codebase-locator",
       prompt="Find files related to [pain-point area]")
 
@@ -76,7 +76,7 @@ Dispatch in parallel where multiple anchored pain points reference different are
 
 If `knowledge_recall` is available, run a brief dedup check for each high-severity pain point:
 
-```
+```js
 knowledge_recall(query="[pain point summary]", role="researcher", type="research", brief=true, limit=3)
 ```
 
@@ -86,7 +86,7 @@ If a close match is found, mention it in the `Prior Work` section. Fall back to 
 
 Display a concise summary (one line per pain point) and use `AskUserQuestion` to gather feedback. This catches misclassifications and gives the user a chance to drop or refine entries.
 
-```
+```text
 Found N pain points across this session:
 
 1. [API confusion / blocking] Plugin permissions don't propagate to subagent dispatches → plugin/ralph-hero/skills/research/SKILL.md
@@ -96,7 +96,7 @@ Found N pain points across this session:
 
 Then:
 
-```
+```js
 AskUserQuestion(
   questions=[{
     "question": "How do these pain points look?",
@@ -194,7 +194,7 @@ tags: [reflect, session-friction, [+ component tags]]
 
 After writing, confirm to the user:
 
-```
+```text
 Wrote reflect to:
 `thoughts/shared/research/YYYY-MM-DD-reflect-[description].md`
 
@@ -205,7 +205,7 @@ Captured N pain points across [list categories that had findings].
 
 Offer downstream actions via `AskUserQuestion`:
 
-```
+```js
 AskUserQuestion(
   questions=[{
     "question": "Reflect doc written. What would you like to do next?",
@@ -228,7 +228,7 @@ Routing:
 
 ## §Step 7: Record outcome (optional)
 
-```
+```js
 knowledge_record_outcome(
   event_type="reflect_completed",
   payload={
@@ -243,13 +243,13 @@ If unavailable, skip silently.
 
 ## §Step 8: Emit terminal token
 
-```
+```text
 REFLECT <path>
 ```
 
 Where `<path>` is the absolute path written in §Step 5. On the no-findings short-circuit:
 
-```
+```text
 REFLECT SKIPPED <reason>
 ```
 

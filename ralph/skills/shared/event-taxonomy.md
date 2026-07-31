@@ -130,7 +130,7 @@ Skip modes that no-op cleanly; always run hygiene + triage + report.
 
 After dispatch (single-label or full fan-out), the dispatcher MUST remove the routing label so the issue is not re-picked on the next caretaker sweep. Use `save_issue` with the remaining label set:
 
-```
+```js
 save_issue(
   number: NNN,
   labels: [...remaining-labels-without-trigger:caretake]
@@ -143,7 +143,7 @@ Idempotency rule: only `trigger:caretake` is consumed unconditionally. Other lab
 
 After dispatch (success or failure), post one comment on the issue:
 
-```
+```markdown
 ## Caretaker Action
 
 Mode: <mode-or-fanout>

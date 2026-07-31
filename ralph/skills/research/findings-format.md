@@ -232,10 +232,10 @@ Confidence calibration:
 
 | Range | Meaning | Typical evidence profile |
 |---|---|---|
-| 0.8 – 1.0 | High | Multiple corroborating primary sources with direct quotes/code refs; no contradicting evidence found |
-| 0.5 – 0.7 | Medium | Some supporting evidence but gaps; key support from secondary sources; one weak contradicting signal |
-| 0.2 – 0.4 | Low | Sparse evidence; support mostly from weak sources; no direct confirmation |
-| 0.0 – 0.1 | Insufficient | No meaningful evidence found after broad search |
+| 0.7 – 1.0 | High | Multiple corroborating primary sources with direct quotes/code refs; no contradicting evidence found |
+| 0.5 – 0.69 | Medium | Some supporting evidence but gaps; key support from secondary sources; one weak contradicting signal |
+| 0.2 – 0.49 | Low | Sparse evidence; support mostly from weak sources; no direct confirmation |
+| 0.0 – 0.19 | Insufficient | No meaningful evidence found after broad search |
 
 ### Detailed Findings shape (evidence chains)
 

@@ -75,8 +75,8 @@ If you're using explicit `RALPH_GH_REPO_TOKEN` / `RALPH_GH_PROJECT_TOKEN` / `RAL
 | `/ralph:plan` | Create or review an implementation plan |
 | `/ralph:impl` | Implement an approved plan in an isolated worktree |
 | `/ralph:review` | Validate implementation or review a plan |
-| `/ralph:caretake` | Triage, hygiene, unblock, report |
-| `/ralph:catch-up` | Session orientation — narrative or status report |
+| `/ralph:caretake` | Triage, hygiene, unblock, reflect, watch, enrich |
+| `/ralph:catch-up` | Session orientation — narrative, status report, or daily brief |
 | `/ralph:form` | Crystallize ideas into structured GitHub issues |
 | `/ralph:setup` | One-time project board setup |
 

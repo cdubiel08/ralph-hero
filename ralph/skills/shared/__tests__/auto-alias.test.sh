@@ -26,7 +26,7 @@ resolve_auto() {
   case "$verb" in
     form|catch-up|setup)
       if [[ "$ARGUMENTS" =~ (^|[[:space:]])--auto([[:space:]]|$) ]]; then
-        MSG="--auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop and --auto suitability matrix for the canonical table."
+        MSG="--auto is not supported for this verb (interactive / single-artifact / one-shot). See ralph/CLAUDE.md § Loop suitability for the canonical detail."
         printf 'ARGUMENTS=%s\nMSG=%s\n' "$ARGUMENTS" "$MSG"
         return
       fi
