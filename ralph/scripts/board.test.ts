@@ -4,7 +4,7 @@
  * Pure core + injected exec; no network.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import {
   fetchIssue,
   legalTransition,
   LEGACY_STATES,
+  listItems,
   MACHINE,
   migrate,
   migrateMapping,
@@ -122,8 +123,10 @@ describe("rankNext", () => {
     priority: null,
     hasParent: false,
     openBlockers: [],
+    openBlockerLabels: [],
     blockersTruncated: false,
     claim: null,
+    claimRaw: null,
     ...over,
   });
 
@@ -141,6 +144,11 @@ describe("rankNext", () => {
     const { eligible, blocked } = rankNext(items);
     expect(eligible.map((i) => i.number)).toEqual([3, 2, 4, 10]);
     expect(blocked.map((i) => i.number)).toEqual([5, 8]);
+  });
+
+  it("priority sort is numeric, not lexicographic — P10 ranks after P2", () => {
+    const items = [item(1, { priority: "P10" }), item(2, { priority: "P2" }), item(3, { priority: "P0" })];
+    expect(rankNext(items).eligible.map((i) => i.number)).toEqual([3, 2, 1]);
   });
 });
 
@@ -231,6 +239,8 @@ const PROJECT_ID = "PVT_test";
 interface FakeIssue {
   number: number;
   archived?: boolean;
+  repo?: string; // nameWithOwner in the bulk items view; defaults to the own repo
+  blockedBy?: Array<{ number: number; state: "OPEN" | "CLOSED"; repo?: string }>;
   state?: string | null;
   claim?: string | null;
   issueState?: "OPEN" | "CLOSED";
@@ -240,6 +250,7 @@ interface FakeIssue {
   children?: Array<{ number: number; issueState: "OPEN" | "CLOSED"; state?: string | null }>;
   childrenTruncated?: boolean;
   comments?: string[];
+  prs?: Array<{ number: number; merged: boolean }>;
 }
 
 /** Minimal in-memory board: answers the exact queries board.ts issues and
@@ -252,8 +263,11 @@ class FakeGh {
   failNextComment = false;
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
+  stickyClaim = false; // simulate a claim clear silently not sticking
+  dropCreates = false; // simulate a field create acking but not sticking
   omitFields: string[] = []; // simulate a fresh board missing these fields
   createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
+  linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
 
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
@@ -300,7 +314,14 @@ class FakeGh {
         })),
       },
       blockedBy: { nodes: [] },
-      closedByPullRequestsReferences: { nodes: [] },
+      closedByPullRequestsReferences: {
+        nodes: (fi.prs ?? []).map((p) => ({
+          number: p.number,
+          url: `https://github.com/cdubiel08/ralph-hero/pull/${p.number}`,
+          state: p.merged ? "MERGED" : "OPEN",
+          merged: p.merged,
+        })),
+      },
       comments: { nodes: (fi.comments ?? []).map((body) => ({ body })) },
       projectItems: {
         nodes:
@@ -356,13 +377,20 @@ class FakeGh {
     }
     if (query.includes("createProjectV2Field")) {
       const dataType = query.includes("dataType: TEXT") ? "TEXT" : "SINGLE_SELECT";
-      this.createdFields.push({
-        name: variables.name,
-        dataType,
-        options: (variables.options as Array<{ name: string }> | undefined)?.map((o) => o.name),
-      });
+      if (!this.dropCreates) {
+        this.createdFields.push({
+          name: variables.name,
+          dataType,
+          options: (variables.options as Array<{ name: string }> | undefined)?.map((o) => o.name),
+        });
+      }
       this.mutations.push(`createField(${variables.name})`);
       return data({ createProjectV2Field: { projectV2Field: { id: `F_${variables.name}` } } });
+    }
+    if (query.includes("repositories(first")) {
+      return data({
+        node: { repositories: { nodes: this.linkedRepos.map((r) => ({ nameWithOwner: r })) } },
+      });
     }
     if (query.includes("repository(owner") && query.includes("{ id }") && !query.includes("issue(number")) {
       return data({ repository: { id: "R_test" } });
@@ -385,9 +413,16 @@ class FakeGh {
               isArchived: fi.archived ?? false,
               content: {
                 number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
-                repository: { nameWithOwner: "cdubiel08/ralph-hero" },
+                repository: { nameWithOwner: fi.repo ?? "cdubiel08/ralph-hero" },
                 parent: fi.parent ? { number: fi.parent } : null,
-                blockedBy: { nodes: [] },
+                blockedBy: {
+                  pageInfo: { hasNextPage: false },
+                  nodes: (fi.blockedBy ?? []).map((b) => ({
+                    number: b.number,
+                    state: b.state,
+                    repository: { nameWithOwner: b.repo ?? "cdubiel08/ralph-hero" },
+                  })),
+                },
               },
               fieldValues: {
                 nodes: [
@@ -428,7 +463,7 @@ class FakeGh {
     if (query.includes("clearProjectV2ItemFieldValue")) {
       const itemNum = Number(String(variables.itemId).replace("ITEM_", ""));
       const fi = this.issues.get(itemNum);
-      if (fi && variables.fieldId === "F_claim") fi.claim = null;
+      if (fi && variables.fieldId === "F_claim" && !this.stickyClaim) fi.claim = null;
       this.mutations.push(`clearField(#${itemNum}, ${variables.fieldId})`);
       return data({ clearProjectV2ItemFieldValue: { projectV2Item: { id: variables.itemId } } });
     }
@@ -568,13 +603,55 @@ describe("transition engine", () => {
   });
 
   it("Done closes the issue as COMPLETED; Canceled as NOT_PLANNED", () => {
-    gh.issues.set(1, { number: 1, state: "In Review" });
+    gh.issues.set(1, { number: 1, state: "In Review", prs: [{ number: 101, merged: true }] });
     transition(ctx, fetchIssue(ctx, 1), "Done");
     expect(gh.mutations).toContain("closeIssue(#1, COMPLETED)");
 
     gh.issues.set(2, { number: 2, state: "Backlog" });
     transition(ctx, fetchIssue(ctx, 2), "Canceled", { why: "superseded" });
     expect(gh.mutations).toContain("closeIssue(#2, NOT_PLANNED)");
+  });
+
+  it("Done requires evidence: no merged linked PR and no --why is refused before any write", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", prs: [{ number: 101, merged: false }] });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(UsageError);
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(/merged linked PR.*--why/s);
+    expect(gh.mutations).toEqual([]);
+  });
+
+  it("Done with a merged linked PR proceeds without --why and posts no extra comment", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", prs: [{ number: 101, merged: true }] });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.comments).toEqual([]);
+  });
+
+  it("Done without a PR but with --why posts the completion comment BEFORE the state write", () => {
+    gh.issues.set(1, { number: 1, state: "In Review" });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done", { why: "docs-only change, no PR" });
+    expect(after.state).toBe("Done");
+    const comment = gh.comments.find((c) => c.body.includes("Completed without merged PR"));
+    expect(comment?.body).toContain("docs-only change, no PR");
+    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setState(#1, Done)"));
+  });
+
+  it("leaving In Progress verifies the clear on read-back — a surviving self-held claim is refused", () => {
+    gh.stickyClaim = true;
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Review")).toThrow(RefusalError);
+
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: encodeClaim("me@test", NOW) });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Review")).toThrow(/did not stick/);
+  });
+
+  it("a state-write failure after the claim write rolls the claim back before rethrowing", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.failNextStateWrite = true;
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "In Progress")).toThrow(
+      /transport failure|gh api graphql failed/,
+    );
+    expect(gh.issues.get(1)!.claim).toBeNull(); // rollback cleared the orphan claim
+    expect(gh.mutations.filter((m) => m === "clearField(#1, F_claim)")).toHaveLength(2);
   });
 
   it("reopen only from terminal states", () => {
@@ -838,6 +915,152 @@ describe("doctor + migrate", () => {
   });
 });
 
+describe("doctor hardening (closed drift, fix gating, resilience, garbled claims)", () => {
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+  });
+
+  it("closed issue stuck at In Review is closed-drift; --fix reconciles it to Done with a comment", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", issueState: "CLOSED", stateReason: "COMPLETED" });
+
+    const report = doctor(ctx);
+    const check = report.checks.find((c) => c.name === "closed-drift");
+    expect(check?.level).toBe("warn");
+    expect(check?.detail).toContain("#1(In Review)");
+
+    doctor(ctx, { fix: true });
+    expect(gh.issues.get(1)!.state).toBe("Done");
+    expect(gh.comments.some((c) => c.body.includes("board reconcile"))).toBe(true);
+  });
+
+  it("closed items never leak into the queue — list/next see only open issues", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog", issueState: "CLOSED", stateReason: "COMPLETED" });
+
+    const items = listItems(ctx);
+    expect(items.map((i) => i.number)).toEqual([1]);
+    expect(rankNext(items).eligible.map((i) => i.number)).toEqual([1]);
+  });
+
+  it("--fix clears a STALE claim-anomaly but leaves a fresh one (transition mid-write) alone", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", claim: encodeClaim("racer@host", NOW) });
+    gh.issues.set(2, {
+      number: 2, state: "In Review",
+      claim: encodeClaim("dead@host", new Date(NOW.getTime() - 999 * 60_000)),
+    });
+
+    const report = doctor(ctx, { fix: true });
+    expect(report.checks.find((c) => c.name === "claim-anomalies")?.detail).toContain("#1(In Review)");
+    expect(gh.issues.get(1)!.claim).toBe(encodeClaim("racer@host", NOW)); // fresh — untouched
+    expect(gh.issues.get(2)!.claim).toBeNull(); // stale — cleared
+  });
+
+  it("one unwritable item gets its own fail line; the rest of the sweep still fixes", () => {
+    gh.issues.set(1, { number: 1, state: "Done", issueState: "OPEN" }); // terminal drift ×2
+    gh.issues.set(2, { number: 2, state: "Done", issueState: "OPEN" });
+    gh.failNextStateWrite = true; // #1's reconcile write dies
+
+    const report = doctor(ctx, { fix: true });
+    const fails = report.checks.filter((c) => c.name === "fix" && c.level === "fail");
+    expect(fails).toHaveLength(1);
+    expect(fails[0].detail).toContain("#1");
+    expect(gh.issues.get(2)!.state).toBe("Backlog"); // sweep survived #1
+    expect(report.ok).toBe(false);
+  });
+
+  it("garbled claim text is claim-garbled (warn) and never auto-cleared, even under --fix", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress", claim: "not-a-claim" });
+
+    const report = doctor(ctx, { fix: true });
+    const check = report.checks.find((c) => c.name === "claim-garbled");
+    expect(check?.level).toBe("warn");
+    expect(check?.detail).toContain("#1");
+    expect(gh.issues.get(1)!.claim).toBe("not-a-claim"); // surfaced, not fixed
+  });
+
+  it("foreign-repo items are an informational ok line, named with their repo", () => {
+    gh.issues.set(1, { number: 1, state: "Backlog" });
+    gh.issues.set(2, { number: 2, state: "Backlog", repo: "someone-else/theirs" });
+
+    const check = doctor(ctx).checks.find((c) => c.name === "foreign-items");
+    expect(check?.level).toBe("ok"); // informational, never a gate
+    expect(check?.detail).toContain("someone-else/theirs#2");
+    expect(check?.detail).toContain("never touches them");
+  });
+
+  it("claimless WIP warns and --fix leaves it alone — never yank a human's In Progress", () => {
+    gh.issues.set(1, { number: 1, state: "In Progress" }); // no claim
+
+    const report = doctor(ctx, { fix: true });
+    const check = report.checks.find((c) => c.name === "claimless-wip");
+    expect(check?.level).toBe("warn");
+    expect(check?.detail).toContain("#1");
+    expect(gh.issues.get(1)!.state).toBe("In Progress"); // untouched
+    expect(gh.mutations).toEqual([]); // no fix wrote anything
+  });
+
+  it("items with no Workflow State are stateless-items (warn)", () => {
+    gh.issues.set(1, { number: 1, state: null });
+
+    const check = doctor(ctx).checks.find((c) => c.name === "stateless-items");
+    expect(check?.level).toBe("warn");
+    expect(check?.detail).toContain("#1");
+  });
+
+  it("a fail-level check makes report.ok false and the CLI exit nonzero", () => {
+    gh.omitFields = ["Workflow State"]; // state-field missing = invariant breach
+
+    const report = doctor(ctx);
+    expect(report.checks.find((c) => c.name === "state-field")?.level).toBe("fail");
+    expect(report.ok).toBe(false);
+
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      expect(run(["doctor"], ctx)).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("next: cross-repo blocker labels", () => {
+  it("a cross-repo blocker renders owner/repo#N in text and --json; own-repo stays #N; both block", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "Backlog",
+      blockedBy: [
+        { number: 5, state: "OPEN", repo: "other/repo" },
+        { number: 6, state: "OPEN" }, // own repo
+        { number: 7, state: "CLOSED", repo: "other/repo" }, // closed — not a blocker
+      ],
+    });
+    gh.issues.set(2, { number: 2, state: "Backlog" }); // eligible, so the blocked: line prints
+
+    const lines: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      lines.push(String(s));
+      return true;
+    });
+    try {
+      run(["next", "--json"], ctx);
+      const parsed = JSON.parse(lines.join(""));
+      expect(parsed.next.number).toBe(2);
+      expect(parsed.blocked[0].openBlockers).toEqual([5, 6]); // numbers keep ranking semantics
+      expect(parsed.blocked[0].openBlockerLabels).toEqual(["other/repo#5", "#6"]);
+
+      lines.length = 0;
+      run(["next"], ctx);
+      expect(lines.join("")).toContain("blocked: #1←other/repo#5+#6");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Setup — full field provisioning, host conventions respected
 // ---------------------------------------------------------------------------
@@ -847,18 +1070,19 @@ describe("setup", () => {
     const gh = new FakeGh();
     const ctx = makeCtx(gh);
     gh.omitFields = ["Workflow State", "Claim", "Estimate", "Priority"];
-    const notes = setup(ctx);
+    const { ok, notes } = setup(ctx);
     for (const f of ["Workflow State", "Claim", "Estimate", "Priority"]) {
       expect(gh.mutations).toContain(`createField(${f})`);
     }
     expect(notes.some((n) => n.includes('"Estimate" single-select (XS S M L XL)'))).toBe(true);
     expect(notes.some((n) => n.includes('"Priority" single-select (P0 P1 P2 P3)'))).toBe(true);
+    expect(ok).toBe(true); // every create survived the verify re-read
   });
 
   it("respects a host repo's existing Estimate/Priority scheme — never edits an existing field", () => {
     const gh = new FakeGh(); // defaults include Estimate + Priority
     const ctx = makeCtx(gh);
-    const notes = setup(ctx);
+    const { notes } = setup(ctx);
     expect(gh.mutations.filter((m) => m.startsWith("createField"))).toEqual([]);
     expect(notes.some((n) => n.includes("Estimate") || n.includes("Priority"))).toBe(false);
   });
@@ -868,9 +1092,67 @@ describe("setup", () => {
     const ctx = makeCtx(gh);
     gh.omitFields = ["Estimate"];
     gh.createdFields.push({ name: "Estimate", dataType: "NUMBER" }); // pre-existing, not ours
-    const notes = setup(ctx);
+    const { notes } = setup(ctx);
     expect(gh.mutations.filter((m) => m.startsWith("createField"))).toEqual([]);
     expect(notes.some((n) => n.includes("exists as NUMBER — left untouched"))).toBe(true);
+  });
+
+  it("an existing state field missing v2 options gets a MANUAL note — the API cannot edit options", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.omitFields = ["Workflow State"];
+    gh.createdFields.push({
+      name: "Workflow State", dataType: "SINGLE_SELECT",
+      options: ["Backlog", "In Progress"], // pre-existing partial set, not ours
+    });
+    const { notes } = setup(ctx);
+    expect(gh.mutations.filter((m) => m.startsWith("createField"))).toEqual([]);
+    expect(notes.some((n) => n.startsWith("MANUAL: add option(s)") && n.includes("In Review"))).toBe(true);
+  });
+
+  it("legacy v1 options present get the MANUAL (after migrate) note", () => {
+    const gh = new FakeGh(); // default Workflow State fixture includes LEGACY_STATES
+    const ctx = makeCtx(gh);
+    const { notes } = setup(ctx);
+    expect(notes.some((n) => n.startsWith("MANUAL (after migrate):") && n.includes("Ready for Plan"))).toBe(true);
+  });
+
+  it("verifies its own work: a create that did not stick is a VERIFY FAILED note, ok=false, exit 1", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.omitFields = ["Claim"];
+    gh.dropCreates = true; // the create acks but the refreshed schema never shows it
+
+    const streamed: string[] = [];
+    const report = setup(ctx, (n) => streamed.push(n));
+    expect(report.ok).toBe(false);
+    expect(report.notes.some((n) => n.includes('VERIFY FAILED: "Claim" is absent after refresh'))).toBe(true);
+    expect(streamed).toEqual(report.notes); // notes stream as produced — a mid-run throw loses nothing
+
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      expect(run(["setup"], ctx)).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("warns (advisory, never blocks) when the project is not linked to the configured repo", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.linkedRepos = ["stranger/board-owner"];
+    const { ok, notes } = setup(ctx);
+    expect(ok).toBe(true); // advisory only — recommend, never impose
+    const warning = notes.find((n) => n.startsWith("WARNING:"));
+    expect(warning).toContain("not linked to cdubiel08/ralph-hero");
+    expect(warning).toContain("stranger/board-owner");
+  });
+
+  it("stays silent about linkage when the configured repo IS linked", () => {
+    const gh = new FakeGh(); // default linkage includes cdubiel08/ralph-hero
+    const ctx = makeCtx(gh);
+    const { notes } = setup(ctx);
+    expect(notes.some((n) => n.startsWith("WARNING:"))).toBe(false);
   });
 });
 

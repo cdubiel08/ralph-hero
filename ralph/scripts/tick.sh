@@ -108,18 +108,35 @@ run_with_timeout() {
 
 RC=0
 (cd "$WT" && run_with_timeout $RUNNER "/ralph:work $NEXT") >> "$LOG" 2>&1 || RC=$?
+
+# Exit codes lie in both directions — the board is the truth. Any non-zero
+# exit means the session is gone, so decide the claim by board state, not by
+# which failure code the runner picked: if this machine still holds the claim
+# and the issue sits In Progress, release now rather than pinning it until
+# the TTL (default 120 min). A failed state query logs and leaves the claim
+# to TTL — never mask the runner's failure with a query hiccup.
 if [ "$RC" -ne 0 ]; then
   STATUS="exit=$RC"
   if [ "$RC" -eq 124 ]; then
     STATUS=timeout
-    "$BOARD" release "$NEXT" -m "tick timeout after ${TIMEOUT_MIN}m — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT" \
-      >> "$LOG" 2>&1 || true
+    NOTE="tick timeout after ${TIMEOUT_MIN}m — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT"
+  else
+    NOTE="tick runner exited RC=$RC — see $LOG on $(hostname -s); work may be partially committed on feature/GH-$NEXT"
+  fi
+  if AFTER_JSON=$("$BOARD" get "$NEXT" --json 2>>"$LOG"); then
+    HOLDER=$(printf '%s' "$AFTER_JSON" | jq -r '.claim.holder // empty' 2>/dev/null || true)
+    STATE=$(printf '%s' "$AFTER_JSON" | jq -r '.state // empty' 2>/dev/null || true)
+    if [ "$HOLDER" = "$RALPH_CLAIM_HOLDER" ] && [ "$STATE" = "In Progress" ]; then
+      "$BOARD" release "$NEXT" -m "$NOTE" >> "$LOG" 2>&1 || true
+    fi
+  else
+    echo "tick: board get $NEXT failed after RC=$RC — leaving claim to TTL" >> "$LOG"
   fi
 fi
 
-# Exit codes lie (a session that does nothing still exits 0) — the board is
-# the truth. A tick that left the issue unclaimed in Backlog was a no-op:
-# loud in ticks.log, and repeated no-ops mean the runner is misconfigured.
+# The other direction of the lie: a session that does nothing still exits 0.
+# A tick that left the issue unclaimed in Backlog was a no-op: loud in
+# ticks.log, and repeated no-ops mean the runner is misconfigured.
 if [ "$STATUS" = "ok" ]; then
   AFTER_STATE=$("$BOARD" get "$NEXT" --json 2>/dev/null | jq -r '.state // "unknown"')
   [ "$AFTER_STATE" = "Backlog" ] && STATUS="no-op (runner ran but board untouched — check RALPH_TICK_RUNNER)"

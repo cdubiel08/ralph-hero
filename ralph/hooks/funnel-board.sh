@@ -26,10 +26,21 @@ BLOCKED_PATTERNS=(
   'removeSubIssue'
   'addBlockedBy'
   'removeBlockedBy'
+  'deleteProjectV2Item'
+  'updateProjectV2('
 )
+# Deliberately NOT blocked: `gh issue close` / closeIssue — closing issues
+# directly is legitimate; the reconcile/event lane owns folding that in.
+
+# Escape valve: an actual board-CLI invocation (scripts/board <subcommand>,
+# incl. compound commands like `cd x && ralph/scripts/board move 1 done`) is
+# sanctioned even when its arguments mention a blocked token. Merely
+# *mentioning* scripts/board in a trailing comment does not qualify.
+BOARD_INVOKE='scripts/board["'\'']?[[:space:]]+[a-z-]'
+[[ "${CMD%%#*}" =~ $BOARD_INVOKE ]] && exit 0
 
 for p in "${BLOCKED_PATTERNS[@]}"; do
-  if [[ "$CMD" == *"$p"* && "$CMD" != *"scripts/board"* ]]; then
+  if [[ "$CMD" == *"$p"* ]]; then
     echo "Board mutations go through the CLI: $BOARD <cmd> (run '$BOARD help')." >&2
     exit 2
   fi
