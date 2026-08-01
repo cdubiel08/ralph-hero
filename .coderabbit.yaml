@@ -31,6 +31,13 @@ reviews:
     # "@coderabbitai review". Way of working this expects: open the PR as a
     # DRAFT while building (drafts aren't reviewed), mark it ready when
     # final → exactly one review, at the SHA that gets merged.
+    #
+    # CONSEQUENCE, by design: after you address review findings, pushing the
+    # fix does NOT re-review. request_changes_workflow below means an
+    # unresolved review sets reviewDecision=CHANGES_REQUESTED, which
+    # merge-pr.sh gate 1 blocks and no --force can clear — and a push does not
+    # reliably dismiss it. So the fix loop is: push the fix, then comment
+    # "@coderabbitai review" to get a fresh verdict at the new head.
     auto_incremental_review: false
   path_filters:
     - "!thoughts/**"
