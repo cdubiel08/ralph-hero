@@ -108,7 +108,8 @@ jobs:
           # Each file runs in its own subshell so a `set -e` exit in one test
           # cannot abort the suite. First non-zero rc propagates.
           # (ralph/hooks/scripts/__tests__ deleted in the v2 cutover, GH-1662 —
-          # the two surviving funnel hooks are covered by shellcheck-hooks.)
+          # funnel-merge.sh has a dedicated suite here (funnel-merge.test.sh);
+          # funnel-board.sh remains shellcheck-only.)
           find scripts/__tests__ \
             \( -name '*.test.sh' -o -name 'test-*.sh' \) \
             -type f -print0 \
