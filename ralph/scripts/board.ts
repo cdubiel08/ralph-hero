@@ -367,6 +367,10 @@ const ADVISORY_FIELDS: ReadonlyArray<{ name: string; options: readonly string[] 
   { name: PRIORITY_FIELD, options: ["P0", "P1", "P2", "P3"] },
 ];
 
+function advisoryFieldsMissing(cache: BoardCache): string[] {
+  return ADVISORY_FIELDS.filter((f) => !cache.fields[f.name]).map((f) => f.name);
+}
+
 function cachePath(ctx: Ctx): string {
   // repo is part of the key: the cache stores repositoryId, and two repos
   // sharing one project would otherwise create issues in the wrong repo.
@@ -1198,7 +1202,7 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
     );
     // Advisory fields warn even under --strict: sizing/ranking degrade
     // gracefully without them, so their absence is never an invariant breach.
-    const missingAdvisory = ADVISORY_FIELDS.filter((f) => !cache.fields[f.name]).map((f) => f.name);
+    const missingAdvisory = advisoryFieldsMissing(cache);
     add(
       "advisory-fields",
       missingAdvisory.length === 0 ? "ok" : "warn",
@@ -1312,7 +1316,7 @@ export type ReadinessLevel = 1 | 2 | 3;
 export interface ReadinessCheck {
   level: ReadinessLevel;
   name: string;
-  status: "ok" | "miss" | "info"; // info = machine-local/unverifiable, never a gap
+  status: "ok" | "miss" | "info"; // info = machine-local, unverifiable, or advisory — never a gap
   detail: string;
   recommend?: string;
 }
@@ -1356,9 +1360,12 @@ export function readiness(ctx: Ctx): ReadinessReport {
         : `${machineMissing.map((f) => `"${f}"`).join(", ")} missing`,
       machineMissing.length === 0 ? undefined : "board setup",
     );
-    const advisoryMissing = ADVISORY_FIELDS.filter((f) => !cache.fields[f.name]).map((f) => f.name);
+    // "info", not "miss": sizing/ranking degrade gracefully, so a board
+    // without these is still fully drivable — the recommendation stands,
+    // but it must never hold Level 1 hostage (doctor agrees: warn, no fail).
+    const advisoryMissing = advisoryFieldsMissing(cache);
     add(
-      1, "advisory-fields", advisoryMissing.length === 0 ? "ok" : "miss",
+      1, "advisory-fields", advisoryMissing.length === 0 ? "ok" : "info",
       advisoryMissing.length === 0
         ? `${ESTIMATE_FIELD} + ${PRIORITY_FIELD} present`
         : `${advisoryMissing.join(", ")} missing (sizing/ranking degrade gracefully without them)`,

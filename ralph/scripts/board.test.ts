@@ -922,6 +922,18 @@ describe("readiness", () => {
     expect(report.checks.find((c) => c.name === "loop")?.status).toBe("info");
   });
 
+  it("missing advisory fields never hold Level 1 hostage — info with a recommendation", () => {
+    const gh = new FakeGh();
+    gh.omitFields = ["Estimate", "Priority"];
+    const ctx = makeCtx(gh, "me@test", mkdtempSync(join(tmpdir(), "readiness-advisory-")));
+    withRest(gh, { prRule: false });
+    const report = readiness(ctx);
+    const check = report.checks.find((c) => c.name === "advisory-fields");
+    expect(check?.status).toBe("info"); // doctor agrees: warn, never fail
+    expect(check?.recommend).toBe("board setup");
+    expect(report.readyFor).toBe(1); // State + Claim are the only Level-1 field needs
+  });
+
   it("levels unlock cumulatively as the repo grows the conventions", () => {
     const gh = new FakeGh();
     const root = mkdtempSync(join(tmpdir(), "readiness-full-"));
