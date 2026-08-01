@@ -8,6 +8,12 @@
 # every -R/--repo bypass form, including GH-1684: gh's attached short-option
 # form `-Rowner/repo` (no space between -R and its value), which the case
 # pattern originally only matched with a leading space.
+#
+# Also covers GH-1683: the redirect message must only mention
+# scripts/attest-pr.sh when the host repo actually ships it — a repo with
+# scripts/merge-pr.sh but no scripts/attest-pr.sh must not be pointed at a
+# nonexistent prerequisite. Includes a subdirectory cwd to exercise the
+# `git rev-parse --show-toplevel` resolution path.
 
 set -euo pipefail
 
@@ -20,16 +26,24 @@ FAIL=0
 pass() { echo "  PASS: $1"; ((PASS++)) || true; }
 fail() { echo "  FAIL: $1"; ((FAIL++)) || true; }
 
-# gated_repo / plain_repo: two throwaway git repos, one that ships the merge
-# gate (scripts/merge-pr.sh) and one that doesn't — the hook's redirect only
-# fires for the former.
+# Three throwaway git repos:
+#   GATED_REPO    — ships scripts/merge-pr.sh only (no attest-pr.sh)
+#   ATTEST_REPO   — ships both merge-pr.sh and attest-pr.sh (ralph-hero's shape)
+#   PLAIN_REPO    — ships neither; the hook must stay out of its way entirely
+# Each gets a nested subdirectory so a non-root cwd can be exercised.
 GATED_REPO="$TMP_ROOT/gated"
+ATTEST_REPO="$TMP_ROOT/attested"
 PLAIN_REPO="$TMP_ROOT/plain"
-mkdir -p "$GATED_REPO/scripts" "$PLAIN_REPO"
+mkdir -p "$GATED_REPO/scripts" "$GATED_REPO/nested/sub" \
+  "$ATTEST_REPO/scripts" "$ATTEST_REPO/nested/sub" "$PLAIN_REPO"
 git init -q "$GATED_REPO"
+git init -q "$ATTEST_REPO"
 git init -q "$PLAIN_REPO"
 printf '#!/usr/bin/env bash\necho stub\n' >"$GATED_REPO/scripts/merge-pr.sh"
 chmod +x "$GATED_REPO/scripts/merge-pr.sh"
+printf '#!/usr/bin/env bash\necho stub\n' >"$ATTEST_REPO/scripts/merge-pr.sh"
+printf '#!/usr/bin/env bash\necho stub\n' >"$ATTEST_REPO/scripts/attest-pr.sh"
+chmod +x "$ATTEST_REPO/scripts/merge-pr.sh" "$ATTEST_REPO/scripts/attest-pr.sh"
 
 # run_hook <cwd> <command> -> sets LAST_OUT, LAST_ERR, LAST_RC
 run_hook() {
@@ -102,6 +116,54 @@ expect_rc "-R<host/owner/repo> (attached) bypasses" 0
 # should still redirect to the local gate.
 run_hook "$GATED_REPO" 'gh pr merge 123 --body "-Release notes, no repo flag here"'
 expect_rc "-R-prefixed prose without a slash still redirects" 2
+
+# ---------------------------------------------------------------------------
+# GH-1683: the attestation clause is conditional on attest-pr.sh existing.
+# ---------------------------------------------------------------------------
+
+# 10. Repo shipping BOTH scripts -> message names the gate AND the attest step.
+run_hook "$ATTEST_REPO" "gh pr merge 123"
+expect_rc "gated+attested repo redirects" 2
+if [[ "$LAST_ERR" == *"$ATTEST_REPO/scripts/merge-pr.sh"* ]] &&
+  [[ "$LAST_ERR" == *"attest first via bash"* ]] &&
+  [[ "$LAST_ERR" == *"$ATTEST_REPO/scripts/attest-pr.sh"* ]]; then
+  pass "repo with attest-pr.sh -> message includes the attest clause"
+else
+  fail "repo with attest-pr.sh -> expected attest clause, got: $LAST_ERR"
+fi
+
+# 11. Repo shipping merge-pr.sh but NOT attest-pr.sh -> no attest mention at
+# all. Pointing at a nonexistent prerequisite is the GH-1683 defect.
+run_hook "$GATED_REPO" "gh pr merge 123"
+expect_rc "gated-only repo redirects" 2
+if [[ "$LAST_ERR" == *"$GATED_REPO/scripts/merge-pr.sh"* ]] &&
+  [[ "$LAST_ERR" != *"attest-pr.sh"* ]] &&
+  [[ "$LAST_ERR" != *"attest first"* ]]; then
+  pass "repo without attest-pr.sh -> message omits the attest clause"
+else
+  fail "repo without attest-pr.sh -> expected no attest mention, got: $LAST_ERR"
+fi
+
+# 12. Subdirectory cwd: ROOT comes from `git rev-parse --show-toplevel`, so
+# the printed paths must be repo-root-relative, not cwd-relative — and the
+# attest-clause decision must key off the resolved root, not the subdir.
+run_hook "$ATTEST_REPO/nested/sub" "gh pr merge 123"
+expect_rc "subdirectory cwd (attested repo) redirects" 2
+if [[ "$LAST_ERR" == *"$ATTEST_REPO/scripts/merge-pr.sh"* ]] &&
+  [[ "$LAST_ERR" == *"$ATTEST_REPO/scripts/attest-pr.sh"* ]]; then
+  pass "subdirectory cwd (attested) -> paths resolve to repo root, attest clause kept"
+else
+  fail "subdirectory cwd (attested) -> expected root-relative paths + attest clause, got: $LAST_ERR"
+fi
+
+run_hook "$GATED_REPO/nested/sub" "gh pr merge 123"
+expect_rc "subdirectory cwd (gated-only repo) redirects" 2
+if [[ "$LAST_ERR" == *"$GATED_REPO/scripts/merge-pr.sh"* ]] &&
+  [[ "$LAST_ERR" != *"attest-pr.sh"* ]]; then
+  pass "subdirectory cwd (gated-only) -> paths resolve to repo root, attest clause omitted"
+else
+  fail "subdirectory cwd (gated-only) -> expected root-relative paths + no attest mention, got: $LAST_ERR"
+fi
 
 # ---------------------------------------------------------------------------
 echo

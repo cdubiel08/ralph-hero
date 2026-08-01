@@ -27,8 +27,13 @@ if [[ "$CMD" == *"gh pr merge"* && "$CMD" != *"scripts/merge-pr.sh"* ]]; then
   CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
   ROOT=$(git -C "${CWD:-$PWD}" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
   if [ -n "$ROOT" ] && [ -f "$ROOT/scripts/merge-pr.sh" ]; then
-    printf 'This repo ships a merge gate: bash %q PR_NUMBER (attest first via bash %q).\n' \
-      "$ROOT/scripts/merge-pr.sh" "$ROOT/scripts/attest-pr.sh" >&2
+    if [ -f "$ROOT/scripts/attest-pr.sh" ]; then
+      printf 'This repo ships a merge gate: bash %q PR_NUMBER (attest first via bash %q).\n' \
+        "$ROOT/scripts/merge-pr.sh" "$ROOT/scripts/attest-pr.sh" >&2
+    else
+      printf 'This repo ships a merge gate: bash %q PR_NUMBER.\n' \
+        "$ROOT/scripts/merge-pr.sh" >&2
+    fi
     exit 2
   fi
 fi
