@@ -13,6 +13,13 @@
 #     scripts/attest-pr.sh; validate as soon as one appears. NOTE: GitHub runs
 #     issue_comment workflows from the DEFAULT branch, so this half only works
 #     once the workflow is on main (bootstrap gap documented in the plan).
+#   pull_request_review (submitted/dismissed) — the external-review check below
+#     is part of this verdict, so a review LANDING must recompute it. Without
+#     this the status keeps a stale "awaiting external review" pending on
+#     evidence that has since become valid, and the ruleset blocks the merge
+#     until someone re-posts the attestation by hand — which an unattended
+#     runner has no way to know it should do (observed on PR #1689).
+#     `dismissed` matters too: a dismissed review stops counting.
 #
 # Validation logic lives in scripts/validate-attestation.sh (canonical, also
 # locally runnable); this workflow is a thin caller + status publisher.
@@ -27,6 +34,8 @@ on:
     types: [opened, synchronize, reopened]
   issue_comment:
     types: [created, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
 
 permissions:
   contents: read
@@ -52,6 +61,7 @@ jobs:
     # the attestation marker (expression context; body never reaches a shell).
     if: >-
       github.event_name == 'pull_request' ||
+      github.event_name == 'pull_request_review' ||
       (github.event.issue.pull_request != null &&
        contains(github.event.comment.body, 'ralph-attestation:v1'))
     runs-on: ubuntu-latest

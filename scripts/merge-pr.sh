@@ -344,21 +344,62 @@ echo "MERGE GATE PASS — PR #$PR_NUMBER @ ${head_sha:0:8} (attestation=$ATTESTA
 # ---------------------------------------------------------------------------
 if [[ -z "$WORKTREE_ID" ]]; then
   HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")
-  if [[ "$HEAD_BRANCH" == feature/GH-* ]]; then
-    WORKTREE_ID="${HEAD_BRANCH#feature/}"
-  fi
+  # Any branch, not just feature/GH-*: the worktree dir is the branch's last
+  # path segment, which covers feature/GH-1234 -> GH-1234 and claude/foo -> foo
+  # alike. Non-feature branches were silently never cleaned up before.
+  WORKTREE_ID="${HEAD_BRANCH##*/}"
 fi
 
+# Reject anything that could escape the worktree bases. WORKTREE_ID reaches
+# `rm -rf` below, so this is load-bearing, not hygiene.
+case "$WORKTREE_ID" in
+  "" | . | .. | *[/\\]* ) WORKTREE_ID="" ;;
+esac
+
 if [[ -n "$WORKTREE_ID" ]]; then
+  # Worktree dirs live under the MAIN checkout. $PROJECT_ROOT is
+  # `--show-toplevel`, which inside a worktree is THAT WORKTREE — so the old
+  # code looked for <job-worktree>/.claude/worktrees/<id> and found nothing.
+  # In the worktree-per-job flow (tick.sh) that is every run, so cleanup was
+  # dead, not merely limited to feature/ branches. --git-common-dir resolves
+  # to the main .git regardless of which worktree we are in.
+  # `-C "$PROJECT_ROOT"` is load-bearing: --git-common-dir returns a path
+  # relative to the CWD, so running from a subdirectory yields "../.git" and
+  # resolving that against $PROJECT_ROOT lands OUTSIDE the repository — which
+  # is where `rm -rf` below would then point (CodeRabbit finding, PR #1690).
+  git_common=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "")
+  case "$git_common" in
+    "") git_common="$PROJECT_ROOT/.git" ;;
+    /*) ;;
+    *)  git_common="$PROJECT_ROOT/$git_common" ;;
+  esac
+  MAIN_ROOT=$(cd "$(dirname "$git_common")" 2>/dev/null && pwd) || MAIN_ROOT="$PROJECT_ROOT"
+  # Test-only override, same pattern as RALPH_MERGE_POLICY_FILE.
+  WORKTREE_ROOT="${RALPH_WORKTREE_ROOT:-$MAIN_ROOT}"
+
   for base in "worktrees" ".claude/worktrees"; do
-    WORKTREE_PATH="$PROJECT_ROOT/$base/$WORKTREE_ID"
+    WORKTREE_PATH="$WORKTREE_ROOT/$base/$WORKTREE_ID"
     if [[ -d "$WORKTREE_PATH" ]]; then
+      # NEVER remove the tree we are running from. The fallback below is
+      # `rm -rf`, which would delete this script's own checkout mid-run. The
+      # old feature/GH-* narrowness hid this by accident; generalizing the
+      # match removes that accident, so the guard has to be explicit.
+      wt_real=$(cd "$WORKTREE_PATH" 2>/dev/null && pwd -P) || wt_real="$WORKTREE_PATH"
+      here_real=$(pwd -P)
+      root_real=$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P) || root_real="$PROJECT_ROOT"
+      if [[ "$root_real" == "$wt_real" || "$here_real" == "$wt_real" || "$here_real" == "$wt_real"/* ]]; then
+        echo "Skipping worktree cleanup: $WORKTREE_PATH is the current working tree"
+        continue
+      fi
       echo "Removing worktree: $WORKTREE_PATH"
-      cd "$PROJECT_ROOT"
-      git worktree remove "$WORKTREE_PATH" --force 2>/dev/null || {
+      # Best-effort, and deliberately non-fatal: this runs BEFORE the merge, so
+      # a housekeeping failure must never abort it (a bare `git worktree prune`
+      # in a non-repo cwd used to exit 128 under `set -e`). Uses `git -C`
+      # rather than `cd` so gh keeps its repo context for the merge below.
+      git -C "$WORKTREE_ROOT" worktree remove "$WORKTREE_PATH" --force 2>/dev/null || {
         echo "Warning: git worktree remove failed, forcing cleanup" >&2
-        rm -rf "$WORKTREE_PATH"
-        git worktree prune
+        rm -rf "$WORKTREE_PATH" || true
+        git -C "$WORKTREE_ROOT" worktree prune 2>/dev/null || true
       }
       echo "Worktree removed: $WORKTREE_ID"
     fi
