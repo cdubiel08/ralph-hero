@@ -1363,8 +1363,21 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           try {
             const issue = fetchIssue(ctx, i.number);
             if (!issue.itemId) continue;
+            // Staleness is re-verified on the fresh read, never trusted from
+            // the snapshot: a holder that refreshed its claim between the page
+            // walk and here is live, and clearing it would strand real WIP as
+            // claimless (the demotion below would be skipped too).
+            if (!issue.claim || !claimIsStale(issue.claim, ctx.now(), ctx.cfg.lockTtlMin)) {
+              add("fix", "ok", `#${i.number}: claim refreshed since the sweep — left alone`);
+              continue;
+            }
             clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
-            if (issue.state === "In Progress" && issue.claim && claimIsStale(issue.claim, ctx.now(), ctx.cfg.lockTtlMin)) {
+            if (issue.state === "In Progress") {
+              // The one sanctioned state write outside transition/reconcile/
+              // parent-check: releasing a stale claim must return the item to
+              // Backlog, and no lane models "the holder vanished" (reconcile
+              // follows issue open/closed reality, which has not changed).
+              // Pinned by test: "stale-claim demotion is a deliberate…".
               setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, "Backlog");
               syncStatus(ctx, cache, issue.itemId, "Backlog");
               addComment(

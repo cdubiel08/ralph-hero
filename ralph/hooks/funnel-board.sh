@@ -34,9 +34,11 @@ BLOCKED_PATTERNS=(
 
 # Escape valve: an actual board-CLI invocation (scripts/board <subcommand>,
 # incl. compound commands like `cd x && ralph/scripts/board move 1 done`) is
-# sanctioned even when its arguments mention a blocked token. Merely
-# *mentioning* scripts/board in a trailing comment does not qualify.
-BOARD_INVOKE='scripts/board["'\'']?[[:space:]]+[a-z-]'
+# sanctioned even when its arguments mention a blocked token. Anchored to a
+# command position — start of line or after a separator — so neither a
+# trailing comment nor a quoted argument ("... via scripts/board move") can
+# smuggle a raw mutation past the redirect.
+BOARD_INVOKE='(^|[;&|(])[[:space:]]*['\''"]?[A-Za-z0-9_./-]*scripts/board['\''"]?[[:space:]]+[a-z-]'
 [[ "${CMD%%#*}" =~ $BOARD_INVOKE ]] && exit 0
 
 for p in "${BLOCKED_PATTERNS[@]}"; do

@@ -117,6 +117,20 @@ expect_rc "comment-smuggled 'scripts/board cancel' still redirects" 2
 run_hook "gh api graphql -f query='mutation { addBlockedBy(input:{}) }' && echo scripts/board"
 expect_rc "bare scripts/board mention without subcommand still redirects" 2
 
+# --- Escape valve must be command-anchored (regression, PR #1691 review) ---
+
+# 16. Blocked mutation whose ARGUMENT mentions a board invocation -> redirected.
+run_hook 'gh project item-edit --id ITEM --field-id F -m "typically done via scripts/board move"'
+expect_rc "quoted-argument 'scripts/board move' does not exempt a raw mutation" 2
+
+# 17. Absolute, quoted board path at command start -> allowed.
+run_hook "'/abs/path/ralph/scripts/board' move 1 done"
+expect_rc "quoted absolute board path is a real invocation" 0
+
+# 18. Real invocation whose own -m text names a blocked token -> allowed.
+run_hook 'ralph/scripts/board comment 1 -m "do not use gh project item-edit"'
+expect_rc "board invocation may quote a blocked token in its message" 0
+
 # --- Degenerate payloads ---------------------------------------------------
 
 # 15. Payload without a command -> hook stays silent.

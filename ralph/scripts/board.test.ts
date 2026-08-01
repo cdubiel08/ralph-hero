@@ -265,6 +265,7 @@ class FakeGh {
   vanishClaim = false; // simulate a concurrent clear landing after our write
   stickyClaim = false; // simulate a claim clear silently not sticking
   dropCreates = false; // simulate a field create acking but not sticking
+  refreshClaimOnFetch = new Set<number>(); // holder renews its claim mid-sweep
   omitFields: string[] = []; // simulate a fresh board missing these fields
   createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
   linkedRepos = ["cdubiel08/ralph-hero"]; // projectV2 → repositories linkage
@@ -402,6 +403,11 @@ class FakeGh {
     if (query.includes("issue(number")) {
       const fi = this.issues.get(variables.number);
       if (!fi) return data({ repository: { issue: null } });
+      // The holder refreshed its claim between the page walk and this re-read.
+      if (fi.claim && this.refreshClaimOnFetch.has(fi.number)) {
+        this.refreshClaimOnFetch.delete(fi.number);
+        fi.claim = encodeClaim(fi.claim.slice(0, fi.claim.lastIndexOf("|")), NOW);
+      }
       return data({ repository: { issue: this.issuePayload(fi) } });
     }
     if (query.includes("items(first")) {
@@ -864,6 +870,41 @@ describe("doctor + migrate", () => {
     doctor(ctx, { fix: true });
     expect(gh.issues.get(1)!.state).toBe("Backlog");
     expect(gh.comments.some((c) => c.body.includes("stale claim"))).toBe(true);
+  });
+
+  it("--fix re-verifies staleness on the fresh read — a renewed claim is left alone", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("busy@host", new Date(NOW.getTime() - 999 * 60_000)),
+    });
+    // Stale in the page walk, renewed by the time doctor re-reads it.
+    gh.refreshClaimOnFetch.add(1);
+
+    const report = doctor(ctx, { fix: true });
+    expect(gh.issues.get(1)!.claim).not.toBeNull();
+    expect(gh.issues.get(1)!.state).toBe("In Progress");
+    expect(report.checks.some((c) => c.detail.includes("refreshed since the sweep"))).toBe(true);
+    expect(gh.comments.some((c) => c.body.includes("stale claim"))).toBe(false);
+  });
+
+  it("stale-claim demotion is a deliberate fourth state write — no lane models a vanished holder", () => {
+    // reconcile follows issue open/closed reality (unchanged here) and
+    // transition needs an actor, so releasing a stale claim writes the state
+    // field directly. Pinned so the three-lane rule stays an explicit choice.
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, {
+      number: 1, state: "In Progress",
+      claim: encodeClaim("dead@host", new Date(NOW.getTime() - 999 * 60_000)),
+    });
+
+    doctor(ctx, { fix: true });
+    const stateWrites = gh.mutations.filter((m) => m.startsWith("setState("));
+    expect(stateWrites).toHaveLength(1);
+    expect(gh.issues.get(1)!.state).toBe("Backlog");
+    expect(gh.issues.get(1)!.claim).toBeNull();
   });
 
   it("archived items are invisible to list/next/migrate — they cannot be written", () => {
