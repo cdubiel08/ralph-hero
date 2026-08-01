@@ -37,7 +37,7 @@ Backlog → In Progress → In Review → Done
 
 Guards by construction: scope gate (origin remote must match configured host/owner/repo before any mutation, incl. `doctor --fix`); cross-repo board items are partitioned by `ownRepo()` and never touched (bare-number resolution would hit the wrong repo's issue); archived items skipped everywhere; blocker-list truncation counts as blocked.
 
-`board doctor [--fix] [--strict]` is the invariant sweep; `board help` lists everything.
+`board doctor [--fix] [--strict]` is the invariant sweep; `board readiness` is the advisory agent-readiness report (3 levels: interactive / unattended / autonomous loop — recommendations, never gates); `board help` lists everything.
 
 ### Enforcement layers (honestly labeled)
 
@@ -51,7 +51,7 @@ Guards by construction: scope gate (origin remote must match configured host/own
 | Surface | Purpose |
 |---|---|
 | `/ralph:work` | The execution verb: claim → work at driver-judged depth (no prescribed phases) → PR → gates → close-out, under the 8-rule contract in its SKILL.md |
-| `/ralph:board` | Human surface: orientation, intake, answering Human Needed, doctor |
+| `/ralph:board` | Human surface: orientation, intake, answering Human Needed, doctor, readiness |
 | `ralph/agents/investigator.md` | Read-only fan-out worker — Read/Grep/Glob only (hard allowlist, no Bash) |
 | `.claude/workflows/{research-panel,plan-critique,tree-impl,adversarial-review}.md` | Optional ultracode fan-out equipment — granted, never prescribed |
 
@@ -66,7 +66,7 @@ Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical
 
 ## Merge Gate (unchanged from GH-1589)
 
-`main` is ruleset-protected — all changes land via PR; merge through `bash scripts/merge-pr.sh PR` (never bare `gh pr merge`; the funnel hook redirects). The script enforces: no `CHANGES_REQUESTED`, CI green, a head_sha-bound attestation (`scripts/attest-pr.sh` with real exit codes), and an external review per `.github/ralph-merge-policy.json`. `validate-attestation.yml` republishes the verdict as the required `ralph-attestation` status. Gates are RUN, not predicted.
+`main` is ruleset-protected — all changes land via PR; merge through `bash scripts/merge-pr.sh PR` (never bare `gh pr merge`; the funnel hook redirects — only in repos that ship the gate; host repos without `scripts/merge-pr.sh` keep their own merge flow). The script enforces: no `CHANGES_REQUESTED`, CI green, a head_sha-bound attestation (`scripts/attest-pr.sh` with real exit codes), and an external review per `.github/ralph-merge-policy.json`. `validate-attestation.yml` republishes the verdict as the required `ralph-attestation` status. Gates are RUN, not predicted.
 
 ## CI/CD
 

@@ -12,7 +12,8 @@ ralph/
 ├── agents/investigator.md  # read-only fan-out worker (hard tools: allowlist)
 ├── scripts/board(.ts)  # THE board mutation path — typed 6-state machine,
 │                       #   claims with TTL, scope gate, doctor; vitest-covered
-├── hooks/funnel-*.sh   # courtesy redirects to board.ts / merge-pr.sh —
+├── hooks/funnel-*.sh   # courtesy redirects to board.ts / merge-pr.sh (merge
+│                       #   redirect only when the host repo ships the gate) —
 │                       #   NOT enforcement; board.ts + state-guard.yml are
 └── .claude-plugin/     # manifest
 ```

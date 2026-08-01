@@ -1,6 +1,6 @@
 ---
-description: Human surface for the ralph v2 board — orientation ("what's going on", "catch me up", "what's next"), intake ("form this", "make a ticket"), answering blocked items ("walk the queue"), and health checks ("board doctor", "is the board healthy"). Read-mostly; hands real work to /ralph:work.
-argument-hint: "[status | next | answer | new \"<title>\" | doctor]"
+description: Human surface for the ralph v2 board — orientation ("what's going on", "catch me up", "what's next"), intake ("form this", "make a ticket"), answering blocked items ("walk the queue"), health checks ("board doctor", "is the board healthy"), and agent readiness ("is this repo ready for agents", "readiness report", "what should we adopt next"). Read-mostly; hands real work to /ralph:work.
+argument-hint: "[status | next | answer | new \"<title>\" | doctor | readiness]"
 context: inline
 model: sonnet
 allowed-tools:
@@ -19,5 +19,6 @@ The CLI is `${CLAUDE_PLUGIN_ROOT}/scripts/board` — that placeholder resolves t
 - **answer** — for each Human Needed item (`board list --state human`): show its Decision-needed comment, collect the user's answer (AskUserQuestion, one per item, recommendation first), post it as a comment, then `board move NNN <backlog|in-progress>` per the answer.
 - **new "<title>"** — crystallize the user's description into `board create --title … --body …` (body: outcome + acceptance in the user's words, no template ceremony). Offer `--parent`/`board dep` wiring when it obviously belongs to existing work.
 - **doctor** — `board doctor`, relay findings plainly; offer `--fix` for stale claims and anomalies (it posts comments for every correction).
+- **readiness** — `board readiness`, relay as recommendations, never demands: what the repo already supports, then the one or two gaps that matter for the autonomy the user actually wants (Level 1 interactive / 2 unattended / 3 loop). Offer to file chosen recommendations as backlog items (`board create`) or to help adopt one now; never auto-remediate, and never treat a gap as a blocker — a repo's own CI/CD ladder is its own business.
 
 Never mutate state beyond what the user asked for in this sitting; anything execution-shaped goes to `/ralph:work`.

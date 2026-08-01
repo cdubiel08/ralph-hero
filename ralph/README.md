@@ -11,11 +11,12 @@ This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/idea
 | Surface | Purpose |
 |---|---|
 | `/ralph:work` | The only execution verb: claim → work (no prescribed phase order) → PR → gates → close-out, under an 8-rule contract |
-| `/ralph:board` | Human surface: orientation ("what's going on"), intake ("make a ticket"), answering blocked items, health checks |
+| `/ralph:board` | Human surface: orientation ("what's going on"), intake ("make a ticket"), answering blocked items, doctor, readiness |
 | `scripts/board` | Typed board CLI — the sole sanctioned mutation path: 6-state machine, claims with TTL, scope gate, doctor |
 | `agents/investigator.md` | Read-only fan-out worker (Read/Grep/Glob hard allowlist) for parallel investigation |
-| `hooks/funnel-{board,merge}.sh` | Courtesy redirects: raw board mutations → the CLI; bare `gh pr merge` → the repo's merge gate. **Not** enforcement |
+| `hooks/funnel-{board,merge}.sh` | Courtesy redirects: raw board mutations → the CLI; bare `gh pr merge` → the merge gate, when the host repo ships one. **Not** enforcement |
 | `scripts/tick.sh` + `scripts/install-loop.sh` | The autonomous loop: scheduler-owned, one iteration per invocation, typed opt-in |
+| `skills/using-html` | Vendored utility (byte-identical upstream; do not edit) |
 
 ## The board
 
@@ -56,8 +57,9 @@ Then, in the host repo:
    ```
 
    or env vars in the tracked `.claude/settings.json` `env` block: `RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER` (plus `RALPH_GH_HOST` for GitHub Enterprise). `.ralph.json` takes precedence when both exist.
-2. **Bootstrap the fields**: `board setup` — idempotent; creates the Workflow State and Claim fields and prints exactly which steps (if any) must be done in the board UI.
+2. **Bootstrap the fields**: `board setup` — idempotent; creates the Workflow State, Claim, Estimate, and Priority fields (never edits existing fields) and prints exactly which steps (if any) must be done in the board UI.
 3. **Sanity check**: `board doctor`.
+4. **See what level of autonomy the repo supports**: `board readiness` — an advisory report at three levels (interactive / unattended / autonomous loop). Recommendations, never gates: ralph adapts to the host repo, and beyond the board itself its conventions are detect-if-present suggestions, never requirements.
 
 In an installed plugin the CLI lives at `${CLAUDE_PLUGIN_ROOT}/scripts/board` (in this repo: `ralph/scripts/board`). `board help` lists every subcommand.
 
@@ -65,7 +67,7 @@ In an installed plugin the CLI lives at `${CLAUDE_PLUGIN_ROOT}/scripts/board` (i
 
 - `/ralph:board` — catch up, triage, form new tickets, answer Human Needed items, run doctor. Read-mostly; the Projects V2 UI is the dashboard.
 - `/ralph:work NNN` — drive one issue end-to-end. Also accepts an outcome description (creates the issue first) or empty args (folds Human Needed replies, then takes `board next`).
-- The CLI directly: `board get NNN`, `board list --state human`, `board next`, `board tree NNN`, `board create --title …`, `board claim NNN`, `board move NNN in-review`, `board doctor --fix`.
+- The CLI directly: `board get NNN`, `board list --state human`, `board next`, `board tree NNN`, `board create --title …`, `board claim NNN`, `board move NNN in-review`, `board doctor --fix`, `board readiness`.
 
 ## The loop (optional autopilot)
 
@@ -87,9 +89,7 @@ ralph/scripts/install-loop.sh --disable
 3. **The funnel hooks** — ~35-line courtesy redirects. They fail open by nature and are never counted as enforcement; layers 1–2 are the guarantees.
 4. **`doctor.yml`** — a weekly `doctor --strict` CI cron, the watcher-of-the-watcher (this repo has observed silent Actions non-fire and an expired PAT).
 
-Merges in this repo go through `bash scripts/merge-pr.sh PR` (never bare `gh pr merge`): no `CHANGES_REQUESTED`, CI green, a head_sha-bound attestation, an external review per policy. Gates are run, not predicted.
-
-Beyond the board itself, ralph adapts to the host repo — its conventions are board-readiness recommendations (detect-if-present, degrade gracefully), never requirements.
+Merges in this repo go through `bash scripts/merge-pr.sh PR` (never bare `gh pr merge`): no `CHANGES_REQUESTED`, CI green, a head_sha-bound attestation, an external review per policy. Gates are run, not predicted. The funnel-merge hook redirects bare `gh pr merge` to that gate only when the host repo ships `scripts/merge-pr.sh` — a repo without one keeps its own merge flow untouched (recommending a gate is `board readiness`'s job, never a hook's).
 
 ## Environment reference
 
