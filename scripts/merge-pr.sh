@@ -199,7 +199,9 @@ esac
 # ---------------------------------------------------------------------------
 # Gate 3: CI checks green
 # ---------------------------------------------------------------------------
-checks_json=$(gh pr checks "$PR_NUMBER" --json name,bucket 2>/dev/null || true)
+# `description` is fetched here (not just name/bucket) so gate 5 can read the
+# external reviewer's own status line without a second API call.
+checks_json=$(gh pr checks "$PR_NUMBER" --json name,bucket,description 2>/dev/null || true)
 if [[ -z "$checks_json" ]] || ! jq -e . >/dev/null 2>&1 <<<"$checks_json"; then
   checks_json="[]"
 fi
@@ -293,11 +295,21 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
     else
       # Gate 1 already caught CHANGES_REQUESTED, so "no review at this head"
       # is never a negative verdict — it is "not yet". Retry-able.
-      rate_limited=$(gh pr view "$PR_NUMBER" --json comments \
-        --jq '[.comments[] | select(.body | contains("rate limited by coderabbit.ai"))] | length' \
-        2>/dev/null || echo "0")
-      if [[ "${rate_limited:-0}" -gt 0 ]]; then
-        pending "external-review" "$EXTERNAL_BOT is rate-limited and filed no review — retry after the window, or comment '@coderabbitai review'"
+      #
+      # Naming WHY costs nothing here: a rate-limited reviewer publishes a
+      # check whose STATE is success but whose DESCRIPTION says so ("Review
+      # rate limited"). Read the description, never the state. Deliberately
+      # NOT the bot's rate-limit PR comment — that comment persists after the
+      # review eventually lands, so it would mislabel every later wait; the
+      # check is bound to this head and cannot go stale. Matched on the
+      # description rather than a hardcoded check name so it stays
+      # bot-agnostic (the check is "CodeRabbit", the login "coderabbitai").
+      rl_checks=$(jq -r '
+        [.[] | select(((.description // "") | ascii_downcase) | contains("rate limit"))]
+        | map(.name) | join(", ")
+      ' <<<"$checks_json" 2>/dev/null || echo "")
+      if [[ -n "$rl_checks" ]]; then
+        pending "external-review" "$EXTERNAL_BOT is rate-limited and filed no review (per its own '$rl_checks' check) — retry after the window, or comment '@coderabbitai review'"
       fi
       pending "external-review" "no $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '@coderabbitai review' to trigger one"
     fi

@@ -127,8 +127,9 @@ STALE_REVIEWS=$(jq -nc '[{user: {login: "coderabbitai[bot]"}, state: "APPROVED",
   commit_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]')
 DISMISSED_REVIEWS=$(jq -nc --arg sha "$SHA" \
   '[{user: {login: "coderabbitai[bot]"}, state: "DISMISSED", commit_id: $sha}]')
-RATE_LIMIT_COMMENT='<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->
-> Review limit reached'
+# A rate-limited reviewer publishes bucket=pass with a truthful DESCRIPTION.
+RATE_LIMITED_CHECKS='[{"name":"test-hooks","bucket":"pass","description":""},
+  {"name":"CodeRabbit","bucket":"pass","description":"Review rate limited"}]'
 
 expect_out() { # expect_out <desc> <grep-pattern>
   if grep -qF "$2" <<<"$LAST_OUT"; then pass "$1"; else fail "$1 — missing '$2' in: $LAST_OUT"; fi
@@ -271,14 +272,21 @@ setup_dismissed_ext() {
 run_case "DISMISSED external review does not satisfy gate 5" 75 "$POLICY" setup_dismissed_ext
 expect_not_merged "dismissed external review"
 
-# 9d. Rate-limited CodeRabbit is named explicitly — the operator needs to know
-#     it is a quota wait, not a silent skip (its commit status reads success).
+# 9d. Rate-limited reviewer is named explicitly — the operator needs to know
+#     it is a quota wait, not a silent skip. Read from the check DESCRIPTION:
+#     the state says SUCCESS while no review was filed at all.
 setup_rate_limited() {
-  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "[]" "$RATE_LIMIT_COMMENT"
-  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "[]"
+  echo "$RATE_LIMITED_CHECKS" >"$1/pr_checks.json"
 }
 run_case "rate-limited external reviewer is PENDING" 75 "$POLICY" setup_rate_limited
 expect_out "rate limit named" "rate-limited"
+expect_out "rate limit cites the check" "CodeRabbit"
+expect_not_merged "rate-limited reviewer"
+
+# 9f. A passing reviewer check must NOT be read as a review — state lies.
+#     (The rate-limited check is bucket=pass, so gate 3 sees nothing wrong.)
+run_case "reviewer check passing is not evidence of a review" 75 "$POLICY" setup_rate_limited
 
 # 9e. --force still overrides a missing external review
 run_case "--force merges without external review" 0 "$POLICY" setup_no_ext --force "reviewer down"
