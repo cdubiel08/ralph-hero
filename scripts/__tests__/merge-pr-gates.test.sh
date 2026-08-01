@@ -288,6 +288,32 @@ expect_not_merged "rate-limited reviewer"
 #     (The rate-limited check is bucket=pass, so gate 3 sees nothing wrong.)
 run_case "reviewer check passing is not evidence of a review" 75 "$POLICY" setup_rate_limited
 
+# 9g. A policy-supplied bot name is DATA, not jq program text. It used to be
+#     interpolated into the filter, so `x" or true or "` neutralised the
+#     identity check and ANY review counted — including the author's own.
+#     That defeats the whole point of an *independent* reviewer gate.
+#     Verified exploitable against the pre-fix filter, which returned 1 for
+#     the fixture below; the bound form returns 0 (CodeRabbit, PR #1689).
+INJECT_POLICY="$TMP_ROOT/inject-policy.json"
+cat >"$INJECT_POLICY" <<'EOF'
+{
+  "version": 1,
+  "attestation": { "required": true },
+  "external_review": { "required": true, "bot": "x\" or true or \"" },
+  "exempt_authors": []
+}
+EOF
+setup_inject() {
+  # Only a SELF-review at the head — no bot review anywhere.
+  local self_review
+  self_review=$(jq -nc --arg sha "$SHA" \
+    '[{user: {login: "cdubiel08"}, state: "APPROVED", commit_id: $sha}]')
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$self_review"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "hostile policy bot name cannot make a self-review count as external" 75 "$INJECT_POLICY" setup_inject
+expect_not_merged "jq injection attempt"
+
 # 9e. --force still overrides a missing external review
 run_case "--force merges without external review" 0 "$POLICY" setup_no_ext --force "reviewer down"
 expect_merged "--force no external review"

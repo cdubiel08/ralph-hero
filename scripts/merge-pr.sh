@@ -280,15 +280,19 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
   #
   # Normalize the bot name in bash: `gh api --jq` has no --arg, so the jq
   # program is interpolated and a literal comparand keeps it readable.
-  bot_norm="${EXTERNAL_BOT%\[bot\]}"
-  bot_norm="${bot_norm#app/}"
-  # --paginate emits one result per page; sum rather than take the first.
-  ext_count=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate --jq "
-    [ .[]
-      | select(((.user.login // \"\") | sub(\"\\\\[bot\\\\]\$\"; \"\") | sub(\"^app/\"; \"\")) == \"$bot_norm\")
-      | select(.state != \"DISMISSED\")
-      | select(.commit_id == \"$head_sha\")
-    ] | length" 2>/dev/null | awk '{s+=$1} END{print s+0}')
+  # Values are BOUND via --arg, never interpolated into the filter text: the
+  # bot name comes from the policy file and would otherwise be jq injection
+  # (CodeRabbit finding, PR #1689). That rules out `gh api --jq`, which has no
+  # --arg — hence the pipe. `-s` slurps the paginated pages into an array of
+  # arrays; `add[]?` flattens them and tolerates zero pages.
+  ext_count=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null \
+    | jq -s --arg bot "$EXTERNAL_BOT" --arg sha "$head_sha" '
+        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+        [ add[]?
+          | select(((.user.login // "") | norm) == ($bot | norm))
+          | select(.state != "DISMISSED")
+          | select(.commit_id == $sha)
+        ] | length' 2>/dev/null || echo "0")
   if [[ "${ext_count:-0}" -eq 0 ]]; then
     if [[ "$FORCE" == "true" ]]; then
       soft_gate "external-review" "no current $EXTERNAL_BOT review at head ${head_sha:0:8}"
