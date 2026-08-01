@@ -466,6 +466,39 @@ else
 fi
 unset RALPH_WORKTREE_ROOT
 
+# 25. Run from a SUBDIRECTORY: --git-common-dir returns a cwd-relative path
+#     ("../.git" from <root>/scripts), so resolving it against $PROJECT_ROOT
+#     put MAIN_ROOT at the repo's PARENT — and that is where `rm -rf` pointed.
+#     Uses a real throwaway repo so the assertion holds anywhere, not only
+#     when the suite happens to run inside a git worktree.
+TREPO="$TMP_ROOT/trepo"
+mkdir -p "$TREPO/sub" "$TREPO/worktrees/some-task" "$TMP_ROOT/worktrees/some-task"
+git -C "$TREPO" init -q 2>/dev/null
+
+setup_subdir() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  jq '.headRefName = "claude/some-task"' "$1/pr_view.json" >"$1/pr_view.tmp" \
+    && mv "$1/pr_view.tmp" "$1/pr_view.json"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+dir="$TMP_ROOT/case-subdir"
+mkdir -p "$dir"
+GH_STUB_DIR="$dir" setup_subdir "$dir"
+set +e
+(cd "$TREPO/sub" && PATH="$STUB_BIN:$PATH" GH_STUB_DIR="$dir" GH_STUB_LOG="$dir/gh.log" \
+  RALPH_MERGE_POLICY_FILE="$POLICY" bash "$SCRIPT" 123 >/dev/null 2>&1)
+set -e
+if [[ -d "$TMP_ROOT/worktrees/some-task" ]]; then
+  pass "subdir cwd: path outside the repo is untouched"
+else
+  fail "subdir cwd: removed a directory OUTSIDE the repository"
+fi
+if [[ -d "$TREPO/worktrees/some-task" ]]; then
+  fail "subdir cwd: in-repo worktree not cleaned up"
+else
+  pass "subdir cwd: in-repo worktree cleaned up"
+fi
+
 # ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed"

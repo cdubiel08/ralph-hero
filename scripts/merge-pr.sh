@@ -363,7 +363,11 @@ if [[ -n "$WORKTREE_ID" ]]; then
   # In the worktree-per-job flow (tick.sh) that is every run, so cleanup was
   # dead, not merely limited to feature/ branches. --git-common-dir resolves
   # to the main .git regardless of which worktree we are in.
-  git_common=$(git rev-parse --git-common-dir 2>/dev/null || echo "")
+  # `-C "$PROJECT_ROOT"` is load-bearing: --git-common-dir returns a path
+  # relative to the CWD, so running from a subdirectory yields "../.git" and
+  # resolving that against $PROJECT_ROOT lands OUTSIDE the repository — which
+  # is where `rm -rf` below would then point (CodeRabbit finding, PR #1690).
+  git_common=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "")
   case "$git_common" in
     "") git_common="$PROJECT_ROOT/.git" ;;
     /*) ;;
