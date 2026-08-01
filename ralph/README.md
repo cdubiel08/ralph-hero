@@ -1,36 +1,45 @@
 # ralph
 
-Slim successor to `ralph-hero`. The naive hero, less ceremony.
+Board-driven autonomous development over a GitHub Projects V2 board.
 
 ## Status
 
-**Migration complete (GH-1438).** `ralph` is the sole Claude-Code-facing plugin in this repo — all 9 verbs shipped (`/ralph:catch-up`, `/ralph:form`, `/ralph:research`, `/ralph:plan`, `/ralph:impl`, `/ralph:review`, `/ralph:caretake`, `/ralph:hero`, `/ralph:setup`). The legacy `plugin/ralph-hero/` was deleted in GH-1438 (epic #1430, Phase 8).
+**ralph v2 (GH-1662).** Two skills, one read-only agent, one typed board CLI, two courtesy hooks, and a scheduler-owned loop. The driving model sequences its own research/plan/build/verify; enforcement is code, not prose. v1 (9 verb skills, hooks-enforced state, MCP-driven artifacts) was replaced in GH-1662.
+
+## Surfaces
+
+| Surface | Purpose |
+|---|---|
+| `/ralph:work` | The execution verb: claim → work at driver-judged depth → PR → gates → close-out |
+| `/ralph:board` | Human surface: orientation, intake, answering Human Needed, doctor |
+| `agents/investigator.md` | Read-only fan-out worker (Read/Grep/Glob only, hard allowlist) |
+| `scripts/board` (`board.ts`) | The sole board mutation path: typed 6-state machine, TTL claims, scope gate, doctor |
+| `hooks/funnel-{board,merge}.sh` | Courtesy redirects to the board CLI / merge gate — never counted as enforcement |
+| `scripts/tick.sh` + `scripts/install-loop.sh` | The scheduler-owned loop: one iteration per tick, worktree-per-job |
+| `skills/using-html` | Vendored utility (byte-identical upstream; do not edit) |
 
 ## Design
 
-See [`../thoughts/shared/research/2026-05-22-ralph-slim-plugin-restructure.md`](../thoughts/shared/research/2026-05-22-ralph-slim-plugin-restructure.md).
+Design record (normative): [`../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`](../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md).
 
-Headline shape:
-- 9 fat skills (down from 52)
-- Flat-sibling references (no `references/` subfolder by default)
-- Hooks own enforcement
-- MCP owns durable state
-- Local-dev via symlink, no marketplace round-trip
+## Configuration
 
-## Environment
+Board scope comes from `.claude/settings.json` env (`RALPH_GH_OWNER`, `RALPH_GH_REPO`, `RALPH_GH_PROJECT_NUMBER`, optional `RALPH_GH_HOST`) or a repo-root `.ralph.json`, which takes precedence. Auth is gh keychain (`gh auth login -s repo,project`).
 
-| Variable | Default | Effect |
-|---|---|---|
-| `RALPH_REQUIRES_RESEARCH` | `true` | Global off-switch for the plan-research gate (`plan-research-required.sh`). Set to anything other than `true` to disable the gate entirely — any plan Write is allowed. |
-| `RALPH_RESEARCH_REQUIRED_MIN_ESTIMATE` | `M` | Estimate at/above which a linked research doc is required before a plan can be written. Estimates strictly below it are waived (`M` waives XS/S; `S` waives only XS; `XS` waives nothing). Lower it to require research for smaller work, or raise it to relax. A per-plan `research_waived:` frontmatter line is an explicit human override regardless of estimate. |
+Machine-local knobs: `RALPH_LOCK_TTL_MIN`, `RALPH_CLAIM_HOLDER`, `RALPH_TICK_RUNNER`, `RALPH_TICK_TIMEOUT_MIN`, `RALPH_ALLOW_API_BILLING`; autopilot opt-in is `autopilot=true` in `~/.ralph/config`.
 
-## Local development
+## Verify
+
+From the repo root:
 
 ```bash
-ln -s /Users/dubiel/projects/ralph-hero/ralph ~/.claude/plugins/cache/ralph/HEAD
+npx vitest run ralph/scripts/board.test.ts && npx tsc --noEmit
+shellcheck -S error ralph/hooks/*.sh ralph/scripts/*.sh
 ```
 
-Edit `skills/<verb>/SKILL.md` → save → next invocation picks it up.
+## Install model
+
+Claude Code installs `ralph` from the marketplace clone as an immutable versioned copy; edits here reach a running session after merge → `release-ralph.yml` bumps + tags → plugin update. `board.ts` ships inside the plugin (no npm — the repo copy is the version).
 
 ## License
 
