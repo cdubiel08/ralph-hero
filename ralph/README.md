@@ -78,7 +78,7 @@ ralph/scripts/install-loop.sh --enable    # writes autopilot=true, installs the 
 ralph/scripts/install-loop.sh --disable
 ```
 
-- **Opt-in is typed and fail-closed**: tick.sh refuses to run unless `~/.ralph/config` contains `autopilot=true`.
+- **Opt-in is typed and fail-closed**: tick.sh refuses to run unless `$RALPH_HOME/config` (default `~/.ralph/config`) contains `autopilot=true`.
 - **Billing guard**: tick.sh refuses to spawn when `ANTHROPIC_API_KEY` is set (it would bill API credits instead of the subscription) unless `RALPH_ALLOW_API_BILLING=true`.
 - **Transport-agnostic**: `RALPH_TICK_RUNNER` is any command that accepts a prompt (default `claude -p --model sonnet --permission-mode acceptEdits`). An interactive `/ralph:work` session and a bridge-routine drive are equally valid — tick.sh is a convenience, not the architecture.
 
@@ -105,7 +105,7 @@ Merges in this repo go through `bash scripts/merge-pr.sh PR` (never bare `gh pr 
 | `RALPH_TICK_INTERVAL_MIN` | `15` | Scheduler cadence written by `install-loop.sh` |
 | `RALPH_ALLOW_API_BILLING` | unset | Set `true` to let tick.sh spawn with `ANTHROPIC_API_KEY` present |
 
-Autopilot itself is not an env var: it is `autopilot=true` in `~/.ralph/config`, written by `install-loop.sh --enable`.
+Autopilot itself is not an env var: it is `autopilot=true` in `$RALPH_HOME/config` (default `~/.ralph/config`), written by `install-loop.sh --enable`.
 
 ## Development
 
