@@ -22,6 +22,16 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+    # Incremental reviews consume the SAME per-developer rate limit as full
+    # ones, and an agent building a change pushes several times — PR #1681
+    # burned 5 reviews across 2 SHAs for one change, and #1688 had a push
+    # silently dropped mid-window. Only the FINAL head is decision-relevant:
+    # attestation is head_sha-bound and so is merge-pr.sh gate 5. So review
+    # on open/ready only; push-then-review is an explicit
+    # "@coderabbitai review". Way of working this expects: open the PR as a
+    # DRAFT while building (drafts aren't reviewed), mark it ready when
+    # final → exactly one review, at the SHA that gets merged.
+    auto_incremental_review: false
   path_filters:
     - "!thoughts/**"
     - "!.claude/**"
