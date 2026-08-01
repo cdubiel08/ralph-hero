@@ -420,6 +420,52 @@ setup_merge_actually_failed() {
 GH_STUB_MERGE_EXIT=1 run_case "genuine merge failure still fails" 1 "$POLICY" setup_merge_actually_failed
 expect_out "genuine failure names the state" "MERGE FAILED"
 
+# 22. Worktree cleanup is not limited to feature/GH-* branches, and resolves
+#     worktree dirs under the MAIN checkout rather than $PROJECT_ROOT (which
+#     inside a worktree is that worktree — so cleanup used to be a no-op in
+#     the worktree-per-job flow).
+setup_wt() { # setup_wt <dir> — caller sets $WT_ROOT and the branch
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
+  jq --arg b "$WT_BRANCH" '.headRefName = $b' "$1/pr_view.json" >"$1/pr_view.tmp" \
+    && mv "$1/pr_view.tmp" "$1/pr_view.json"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+
+WT_ROOT="$TMP_ROOT/wtroot"
+WT_BRANCH="claude/some-task"
+mkdir -p "$WT_ROOT/.claude/worktrees/some-task"
+export RALPH_WORKTREE_ROOT="$WT_ROOT"
+run_case "non-feature branch worktree is cleaned up" 0 "$POLICY" setup_wt
+if [[ -d "$WT_ROOT/.claude/worktrees/some-task" ]]; then
+  fail "non-feature worktree still present after merge"
+else
+  pass "non-feature worktree removed"
+fi
+
+# 23. The tree we are RUNNING FROM is never removed — the rm -rf fallback
+#     would delete the running script's own checkout.
+WT_BRANCH="claude/self"
+mkdir -p "$WT_ROOT/worktrees"
+ln -sfn "$REPO_ROOT" "$WT_ROOT/worktrees/self"
+run_case "current working tree is never removed" 0 "$POLICY" setup_wt
+expect_out "self-removal refused loudly" "is the current working tree"
+if [[ -d "$REPO_ROOT/scripts" ]]; then
+  pass "current checkout intact"
+else
+  fail "current checkout was damaged"
+fi
+rm -f "$WT_ROOT/worktrees/self"
+
+# 24. A branch whose last segment escapes the base is rejected outright.
+WT_BRANCH="evil/.."
+run_case "path-traversal worktree id rejected" 0 "$POLICY" setup_wt
+if grep -qF "Removing worktree" <<<"$LAST_OUT"; then
+  fail "traversal id reached removal"
+else
+  pass "traversal id rejected before removal"
+fi
+unset RALPH_WORKTREE_ROOT
+
 # ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed"
