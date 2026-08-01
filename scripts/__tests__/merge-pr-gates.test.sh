@@ -57,6 +57,12 @@ case "${1:-} ${2:-}" in
     exit "${GH_STUB_MERGE_EXIT:-0}"
     ;;
   "api user") if [[ -n "$jq_expr" ]]; then echo "testuser"; else echo '{"login":"testuser"}'; fi ;;
+  "api repos/"*)
+    # Gate 5 reads reviews via REST (needs .commit_id, which `gh pr view` omits).
+    reviews_file="$GH_STUB_DIR/pr_reviews.json"
+    [[ -f "$reviews_file" ]] || echo '[]' >"$reviews_file"
+    if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$reviews_file"; else cat "$reviews_file"; fi
+    ;;
   *)
     echo "stub: unhandled gh $*" >&2
     exit 64
@@ -90,12 +96,18 @@ good_attestation_body() { # good_attestation_body <head_sha> [tests_exit] [verdi
   printf '<!-- ralph-attestation:v1 -->\n## Merge Attestation\n\n```json\n%s\n```\n' "$payload"
 }
 
-# write_pr_view <dir> <reviewDecision> <mergeable> <author> <att_body|""> <reviews_json>
+# write_pr_view <dir> <reviewDecision> <mergeable> <author> <att_body|""> <reviews_json> [extra_comment]
+# reviews_json is REST-shaped ({user:{login},state,commit_id}) and is served to
+# gate 5 via the `gh api .../reviews` stub branch.
 write_pr_view() {
-  local dir="$1" decision="$2" mergeable="$3" author="$4" att="$5" reviews="$6"
+  local dir="$1" decision="$2" mergeable="$3" author="$4" att="$5" reviews="$6" extra="${7:-}"
+  echo "$reviews" >"$dir/pr_reviews.json"
   local comments='[]'
   if [[ -n "$att" ]]; then
     comments=$(jq -n --arg b "$att" '[{body: $b}]')
+  fi
+  if [[ -n "$extra" ]]; then
+    comments=$(jq -n --argjson c "$comments" --arg b "$extra" '$c + [{body: $b}]')
   fi
   jq -n \
     --arg decision "$decision" --arg mergeable "$mergeable" \
@@ -108,7 +120,16 @@ write_pr_view() {
 }
 
 GREEN_CHECKS='[{"name":"test-hooks","bucket":"pass"},{"name":"lint","bucket":"skipping"}]'
-CODERABBIT_REVIEWS='[{"author":{"login":"app/coderabbitai"}}]'
+# Gate 5 is head-bound: a review only counts at the CURRENT head sha.
+CODERABBIT_REVIEWS=$(jq -nc --arg sha "$SHA" \
+  '[{user: {login: "coderabbitai[bot]"}, state: "APPROVED", commit_id: $sha}]')
+STALE_REVIEWS=$(jq -nc '[{user: {login: "coderabbitai[bot]"}, state: "APPROVED",
+  commit_id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]')
+DISMISSED_REVIEWS=$(jq -nc --arg sha "$SHA" \
+  '[{user: {login: "coderabbitai[bot]"}, state: "DISMISSED", commit_id: $sha}]')
+# A rate-limited reviewer publishes bucket=pass with a truthful DESCRIPTION.
+RATE_LIMITED_CHECKS='[{"name":"test-hooks","bucket":"pass","description":""},
+  {"name":"CodeRabbit","bucket":"pass","description":"Review rate limited"}]'
 
 expect_out() { # expect_out <desc> <grep-pattern>
   if grep -qF "$2" <<<"$LAST_OUT"; then pass "$1"; else fail "$1 — missing '$2' in: $LAST_OUT"; fi
@@ -170,14 +191,19 @@ expect_not_merged "CHANGES_REQUESTED"
 run_case "CHANGES_REQUESTED blocks despite --force" 1 "$POLICY" setup_cr --force "emergency"
 expect_not_merged "CHANGES_REQUESTED + force"
 
-# 3. Pending check blocks
+# 3. Pending check is PENDING (75), not FAIL — still building is not red.
 setup_pending() {
   write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$CODERABBIT_REVIEWS"
   echo '[{"name":"build","bucket":"pending"}]' >"$1/pr_checks.json"
 }
-run_case "pending checks block" 1 "$POLICY" setup_pending
-expect_out "pending named" "build=pending"
+run_case "pending checks are retry-able, not failure" 75 "$POLICY" setup_pending
+expect_out "pending emits PENDING token" "MERGE GATE PENDING — checks"
+expect_out "pending names the check" "still running: build"
 expect_not_merged "pending checks"
+
+# 3b. --force merges through still-running checks (override stays possible)
+run_case "--force merges through pending checks" 0 "$POLICY" setup_pending --force "ship it"
+expect_merged "--force pending checks"
 
 # 4. Failing check blocks and is named
 setup_failing() {
@@ -218,13 +244,79 @@ setup_bad_tests() {
 run_case "failing test evidence blocks" 1 "$POLICY" setup_bad_tests
 expect_out "test evidence named" "passing test evidence"
 
-# 9. Missing external review blocks
+# 9. Missing external review is PENDING (75) — gate 1 already caught
+#    CHANGES_REQUESTED, so "no review" is "not yet", never a negative verdict.
 setup_no_ext() {
   write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "[]"
   echo "$GREEN_CHECKS" >"$1/pr_checks.json"
 }
-run_case "missing external review blocks" 1 "$POLICY" setup_no_ext
-expect_out "external gate named" "MERGE GATE FAIL — external-review"
+run_case "missing external review is retry-able, not failure" 75 "$POLICY" setup_no_ext
+expect_out "external gate emits PENDING" "MERGE GATE PENDING — external-review"
+expect_out "external gate names the trigger" "@coderabbitai review"
+expect_not_merged "missing external review"
+
+# 9b. A review of an EARLIER sha does not count (the stale-review hole that
+#     `auto_incremental_review: false` would otherwise open).
+setup_stale_ext() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$STALE_REVIEWS"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "external review at a stale sha does not satisfy gate 5" 75 "$POLICY" setup_stale_ext
+expect_not_merged "stale external review"
+
+# 9c. A DISMISSED review does not count (PR #1685 had exactly this shape).
+setup_dismissed_ext() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$DISMISSED_REVIEWS"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "DISMISSED external review does not satisfy gate 5" 75 "$POLICY" setup_dismissed_ext
+expect_not_merged "dismissed external review"
+
+# 9d. Rate-limited reviewer is named explicitly — the operator needs to know
+#     it is a quota wait, not a silent skip. Read from the check DESCRIPTION:
+#     the state says SUCCESS while no review was filed at all.
+setup_rate_limited() {
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "[]"
+  echo "$RATE_LIMITED_CHECKS" >"$1/pr_checks.json"
+}
+run_case "rate-limited external reviewer is PENDING" 75 "$POLICY" setup_rate_limited
+expect_out "rate limit named" "rate-limited"
+expect_out "rate limit cites the check" "CodeRabbit"
+expect_not_merged "rate-limited reviewer"
+
+# 9f. A passing reviewer check must NOT be read as a review — state lies.
+#     (The rate-limited check is bucket=pass, so gate 3 sees nothing wrong.)
+run_case "reviewer check passing is not evidence of a review" 75 "$POLICY" setup_rate_limited
+
+# 9g. A policy-supplied bot name is DATA, not jq program text. It used to be
+#     interpolated into the filter, so `x" or true or "` neutralised the
+#     identity check and ANY review counted — including the author's own.
+#     That defeats the whole point of an *independent* reviewer gate.
+#     Verified exploitable against the pre-fix filter, which returned 1 for
+#     the fixture below; the bound form returns 0 (CodeRabbit, PR #1689).
+INJECT_POLICY="$TMP_ROOT/inject-policy.json"
+cat >"$INJECT_POLICY" <<'EOF'
+{
+  "version": 1,
+  "attestation": { "required": true },
+  "external_review": { "required": true, "bot": "x\" or true or \"" },
+  "exempt_authors": []
+}
+EOF
+setup_inject() {
+  # Only a SELF-review at the head — no bot review anywhere.
+  local self_review
+  self_review=$(jq -nc --arg sha "$SHA" \
+    '[{user: {login: "cdubiel08"}, state: "APPROVED", commit_id: $sha}]')
+  write_pr_view "$1" "" "MERGEABLE" "cdubiel08" "$(good_attestation_body "$SHA")" "$self_review"
+  echo "$GREEN_CHECKS" >"$1/pr_checks.json"
+}
+run_case "hostile policy bot name cannot make a self-review count as external" 75 "$INJECT_POLICY" setup_inject
+expect_not_merged "jq injection attempt"
+
+# 9e. --force still overrides a missing external review
+run_case "--force merges without external review" 0 "$POLICY" setup_no_ext --force "reviewer down"
+expect_merged "--force no external review"
 
 # 10. Exempt author (dependabot) skips attestation + external gates
 setup_dependabot() {

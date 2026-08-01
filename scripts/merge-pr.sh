@@ -13,7 +13,8 @@
 #   1. reviewDecision != CHANGES_REQUESTED   — HARD block, not forceable.
 #      Dismiss or resolve the review on GitHub to clear it (audit-logged).
 #   2. mergeable == MERGEABLE (UNKNOWN retried once after 5s; CONFLICTING blocks)
-#   3. All CI checks green (bucket pass/skipping). Pending or failing blocks.
+#   3. All CI checks green. A `fail`/`cancel` bucket BLOCKS (verdict); a
+#      `pending` bucket is PENDING (exit 75) — still building is not red.
 #      The `ralph-attestation` status context is EXCLUDED here — this script
 #      validates the attestation comment directly (gate 4); the commit status
 #      is the server-side backstop published by validate-attestation.yml.
@@ -21,8 +22,11 @@
 #   4. Attestation comment (<!-- ralph-attestation:v1 -->) present, JSON-valid,
 #      head_sha == current PR head, non-empty tests[] all exit_code 0, review
 #      verdict present. Skipped for policy-exempt authors (bots).
-#   5. External review by the policy bot (default coderabbitai) exists.
-#      Skipped for policy-exempt authors.
+#   5. External review by the policy bot (default coderabbitai) exists AT THE
+#      CURRENT HEAD (review.commit_id == head_sha), excluding DISMISSED — the
+#      same head-binding the attestation gate uses. No review at this head is
+#      PENDING (exit 75), never FAIL: gate 1 already caught CHANGES_REQUESTED,
+#      so its absence is "not yet", not "no". Skipped for exempt authors.
 #
 # Policy: .github/ralph-merge-policy.json (override path for tests via
 # RALPH_MERGE_POLICY_FILE). NO policy file → gates 4-5 off (repo hasn't
@@ -33,10 +37,15 @@
 # skipped gates, head sha) BEFORE merging. Loud and durable, never silent.
 #
 # Output contract (loop-runners grep these):
-#   MERGE GATE PASS            — all gates satisfied (or force-skipped)
+#   MERGE GATE PASS            — all gates satisfied (or force-skipped)   [0]
 #   MERGE GATE WARN — ...      — non-blocking anomaly (e.g. zero checks)
-#   MERGE GATE FAIL — g: ...   — first failing gate, machine-parseable
+#   MERGE GATE PENDING — g: .. — evidence not in YET; retry later         [75]
+#   MERGE GATE FAIL — g: ...   — first failing gate, machine-parseable    [1]
 #   MERGE BLOCKED — ...        — legacy token, emitted alongside FAIL
+#
+# PENDING vs FAIL matters to unattended runners: exit 1 means stop and get a
+# human, exit 75 means come back later with the work still claimed. Do not
+# collapse them.
 #
 # Caveat: attestation lookup reads the PR comment list via `gh pr view
 # --json comments` (first ~100 comments). Attestations are posted at
@@ -95,10 +104,21 @@ POLICY_FILE="${RALPH_MERGE_POLICY_FILE:-$PROJECT_ROOT/.github/ralph-merge-policy
 SKIPPED_GATES=""
 SKIPPED_COUNT=0
 
+# Retry-able outcome. Distinct from FAIL: nothing is wrong, the evidence just
+# isn't in yet (CI still building, reviewer hasn't looked at this head). A
+# loop-runner must NOT treat 75 as a verdict — leave the work claimed and come
+# back. 75 is EX_TEMPFAIL from sysexits(3).
+PENDING_EXIT=75
+
 block() { # block <gate> <detail>  — hard stop (or force-skip when allowed)
   echo "MERGE GATE FAIL — $1: $2"
   echo "MERGE BLOCKED — $2"
   exit 1
+}
+
+pending() { # pending <gate> <detail> — retry-able, not a verdict
+  echo "MERGE GATE PENDING — $1: $2"
+  exit "$PENDING_EXIT"
 }
 
 soft_gate() { # soft_gate <gate> <detail> — blocks unless --force
@@ -179,7 +199,9 @@ esac
 # ---------------------------------------------------------------------------
 # Gate 3: CI checks green
 # ---------------------------------------------------------------------------
-checks_json=$(gh pr checks "$PR_NUMBER" --json name,bucket 2>/dev/null || true)
+# `description` is fetched here (not just name/bucket) so gate 5 can read the
+# external reviewer's own status line without a second API call.
+checks_json=$(gh pr checks "$PR_NUMBER" --json name,bucket,description 2>/dev/null || true)
 if [[ -z "$checks_json" ]] || ! jq -e . >/dev/null 2>&1 <<<"$checks_json"; then
   checks_json="[]"
 fi
@@ -187,13 +209,27 @@ checks_total=$(jq 'length' <<<"$checks_json")
 if [[ "$checks_total" -eq 0 ]]; then
   echo "MERGE GATE WARN — checks: no CI checks reported on PR #$PR_NUMBER (continuing)"
 else
-  not_green=$(jq -r '
+  # Red and still-building are different facts. Red is a verdict; building is
+  # a wait. Collapsing them made a loop-runner abandon PRs whose CI simply
+  # hadn't finished.
+  red=$(jq -r '
     [.[] | select(.name != "ralph-attestation")
-         | select(.bucket != "pass" and .bucket != "skipping")]
+         | select(.bucket == "fail" or .bucket == "cancel")]
     | map("\(.name)=\(.bucket)") | join(", ")
   ' <<<"$checks_json")
-  if [[ -n "$not_green" ]]; then
-    soft_gate "checks" "not green: $not_green"
+  waiting=$(jq -r '
+    [.[] | select(.name != "ralph-attestation")
+         | select(.bucket == "pending")]
+    | map(.name) | join(", ")
+  ' <<<"$checks_json")
+  if [[ -n "$red" ]]; then
+    soft_gate "checks" "not green: $red"
+  elif [[ -n "$waiting" ]]; then
+    if [[ "$FORCE" == "true" ]]; then
+      soft_gate "checks" "still running: $waiting"
+    else
+      pending "checks" "still running: $waiting"
+    fi
   fi
 fi
 
@@ -234,13 +270,53 @@ fi
 # Gate 5: external (independent-identity) review
 # ---------------------------------------------------------------------------
 if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
-  ext_count=$(gh pr view "$PR_NUMBER" --json reviews --jq "
-    [.reviews[] | select(
-      (.author.login | sub(\"^app/\"; \"\") | sub(\"\\\\[bot\\\\]\$\"; \"\"))
-      == (\"$EXTERNAL_BOT\" | sub(\"\\\\[bot\\\\]\$\"; \"\"))
-    )] | length" 2>/dev/null || echo "0")
+  # Head-bound, exactly like the attestation gate: a review of an earlier SHA
+  # is not a review of what we are about to merge. This is what makes
+  # `auto_incremental_review: false` safe — without it, review SHA A then push
+  # SHA B and the gate still passes on stale evidence. (dismiss_stale_reviews_
+  # on_push resets reviewDecision but leaves the review object, which is what
+  # this counts.) DISMISSED reviews are excluded — PR #1685's only review was
+  # DISMISSED and satisfied this gate under the old presence-only check.
+  #
+  # Normalize the bot name in bash: `gh api --jq` has no --arg, so the jq
+  # program is interpolated and a literal comparand keeps it readable.
+  # Values are BOUND via --arg, never interpolated into the filter text: the
+  # bot name comes from the policy file and would otherwise be jq injection
+  # (CodeRabbit finding, PR #1689). That rules out `gh api --jq`, which has no
+  # --arg — hence the pipe. `-s` slurps the paginated pages into an array of
+  # arrays; `add[]?` flattens them and tolerates zero pages.
+  ext_count=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null \
+    | jq -s --arg bot "$EXTERNAL_BOT" --arg sha "$head_sha" '
+        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+        [ add[]?
+          | select(((.user.login // "") | norm) == ($bot | norm))
+          | select(.state != "DISMISSED")
+          | select(.commit_id == $sha)
+        ] | length' 2>/dev/null || echo "0")
   if [[ "${ext_count:-0}" -eq 0 ]]; then
-    soft_gate "external-review" "no review by $EXTERNAL_BOT on PR #$PR_NUMBER"
+    if [[ "$FORCE" == "true" ]]; then
+      soft_gate "external-review" "no current $EXTERNAL_BOT review at head ${head_sha:0:8}"
+    else
+      # Gate 1 already caught CHANGES_REQUESTED, so "no review at this head"
+      # is never a negative verdict — it is "not yet". Retry-able.
+      #
+      # Naming WHY costs nothing here: a rate-limited reviewer publishes a
+      # check whose STATE is success but whose DESCRIPTION says so ("Review
+      # rate limited"). Read the description, never the state. Deliberately
+      # NOT the bot's rate-limit PR comment — that comment persists after the
+      # review eventually lands, so it would mislabel every later wait; the
+      # check is bound to this head and cannot go stale. Matched on the
+      # description rather than a hardcoded check name so it stays
+      # bot-agnostic (the check is "CodeRabbit", the login "coderabbitai").
+      rl_checks=$(jq -r '
+        [.[] | select(((.description // "") | ascii_downcase) | contains("rate limit"))]
+        | map(.name) | join(", ")
+      ' <<<"$checks_json" 2>/dev/null || echo "")
+      if [[ -n "$rl_checks" ]]; then
+        pending "external-review" "$EXTERNAL_BOT is rate-limited and filed no review (per its own '$rl_checks' check) — retry after the window, or comment '@coderabbitai review'"
+      fi
+      pending "external-review" "no $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '@coderabbitai review' to trigger one"
+    fi
   fi
 fi
 

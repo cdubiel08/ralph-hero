@@ -125,12 +125,24 @@ fi
 
 # --- external (independent-identity) review --------------------------------
 if [[ "$external_required" == "true" ]]; then
-  ext_count=$(jq -r --arg bot "$external_bot" '
-    def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
-    [.reviews[] | select((.author.login | norm) == ($bot | norm))] | length
-  ' <<<"$pr_json")
+  # Head-bound, matching scripts/merge-pr.sh gate 5: a review of an earlier sha
+  # is not a review of this head, and a DISMISSED review is not a review. The
+  # sha lives on .commit_id, which `gh pr view --json reviews` does not expose,
+  # so this reads the REST endpoint rather than reusing $pr_json. The
+  # server-side backstop must not be weaker than the client gate it re-validates.
+  # Identical filter to scripts/merge-pr.sh gate 5, including --arg binding
+  # (the bot name is policy-supplied; interpolating it into the filter text
+  # would be jq injection — CodeRabbit finding, PR #1689).
+  ext_count=$(gh api "repos/{owner}/{repo}/pulls/$PR_NUMBER/reviews" --paginate 2>/dev/null \
+    | jq -s --arg bot "$external_bot" --arg sha "$head_sha" '
+        def norm: sub("^app/"; "") | sub("\\[bot\\]$"; "");
+        [ add[]?
+          | select(((.user.login // "") | norm) == ($bot | norm))
+          | select(.state != "DISMISSED")
+          | select(.commit_id == $sha)
+        ] | length' 2>/dev/null || echo "0")
   if [[ "${ext_count:-0}" -eq 0 ]]; then
-    out pending "awaiting external review by $external_bot"
+    out pending "awaiting external review by $external_bot at ${head_sha:0:8}"
   fi
 fi
 

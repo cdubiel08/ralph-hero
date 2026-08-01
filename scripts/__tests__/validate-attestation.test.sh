@@ -32,6 +32,12 @@ case "${1:-} ${2:-}" in
   "pr view")
     if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$GH_STUB_DIR/pr_view.json"; else cat "$GH_STUB_DIR/pr_view.json"; fi
     ;;
+  "api repos/"*)
+    # External-review check reads REST reviews for .commit_id.
+    f="$GH_STUB_DIR/pr_reviews.json"
+    [[ -f "$f" ]] || echo '[]' >"$f"
+    if [[ -n "$jq_expr" ]]; then jq -r "$jq_expr" "$f"; else cat "$f"; fi
+    ;;
   "api --paginate")
     # pr-file-classes.sh paginated REST files fetch
     case "${3:-}" in
@@ -85,6 +91,10 @@ write_pr() {
   fi
   local comments='[]'
   if [[ -n "$att" ]]; then comments=$(jq -n --arg b "$att" '[{body: $b}]'); fi
+  # REST-shaped copy for the head-bound external-review check (needs commit_id).
+  jq -n --argjson r "$reviews" --arg sha "$SHA" \
+    '[$r[] | {user: {login: (.author.login // "")}, state: (.state // "APPROVED"),
+              commit_id: (.commit_id // $sha)}]' >"$dir/pr_reviews.json"
   jq -n --arg sha "$SHA" --arg author "$author" \
     --argjson comments "$comments" --argjson reviews "$reviews" --argjson files "$files" \
     '{headRefOid: $sha, author: {login: $author}, comments: $comments, reviews: $reviews, files: $files}' \
@@ -133,6 +143,20 @@ run_v "class under-coverage (mcp-ts undeclared)" failure "not covered" "$POLICY"
 
 s_noext() { write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" "[]"; }
 run_v "external review absent" pending "awaiting external review by coderabbitai" "$POLICY" s_noext
+
+# The backstop must be head-bound too, or `auto_incremental_review: false`
+# lets a review of an older sha publish a green ralph-attestation status.
+s_staleext() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" \
+    '[{"author":{"login":"app/coderabbitai"},"commit_id":"cccccccccccccccccccccccccccccccccccccccc"}]'
+}
+run_v "external review at a stale sha" pending "awaiting external review" "$POLICY" s_staleext
+
+s_dismissedext() {
+  write_pr "$1" "cdubiel08" "$(attestation_body "$SHA")" \
+    '[{"author":{"login":"app/coderabbitai"},"state":"DISMISSED"}]'
+}
+run_v "DISMISSED external review" pending "awaiting external review" "$POLICY" s_dismissedext
 
 s_exempt() { write_pr "$1" "app/dependabot" "" "[]"; }
 run_v "exempt bot author" success "exempt author" "$POLICY" s_exempt
