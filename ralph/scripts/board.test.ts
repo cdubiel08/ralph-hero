@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -30,10 +30,12 @@ import {
   parseTtlMin,
   type QueueItem,
   rankNext,
+  readiness,
   reconcile,
   RefusalError,
   run,
   scopeMatches,
+  setup,
   STATES,
   transition,
   UsageError,
@@ -250,6 +252,8 @@ class FakeGh {
   failNextComment = false;
   raceClaimTo: string | null = null; // simulate a concurrent writer winning the claim
   vanishClaim = false; // simulate a concurrent clear landing after our write
+  omitFields: string[] = []; // simulate a fresh board missing these fields
+  createdFields: Array<{ name: string; dataType: string; options?: string[] }> = [];
 
   expectedHost = "github.com"; // strict: a missing/wrong --hostname fails every test
 
@@ -318,30 +322,47 @@ class FakeGh {
     const { query, variables } = payload;
 
     if (query.includes("projectV2(number")) {
+      const defaults = [
+        {
+          id: "F_state", name: "Workflow State", dataType: "SINGLE_SELECT",
+          options: [...STATES, ...LEGACY_STATES].map((s) => ({ id: `OPT_${s}`, name: s })),
+        },
+        { id: "F_claim", name: "Claim", dataType: "TEXT" },
+        {
+          id: "F_status", name: "Status", dataType: "SINGLE_SELECT",
+          options: ["Todo", "In Progress", "Done"].map((s) => ({ id: `S_${s}`, name: s })),
+        },
+        {
+          id: "F_estimate", name: "Estimate", dataType: "SINGLE_SELECT",
+          options: ["XS", "S", "M", "L", "XL"].map((s) => ({ id: `E_${s}`, name: s })),
+        },
+        {
+          id: "F_priority", name: "Priority", dataType: "SINGLE_SELECT",
+          options: ["P0", "P1", "P2", "P3"].map((s) => ({ id: `P_${s}`, name: s })),
+        },
+      ];
+      const created = this.createdFields.map((f) => ({
+        id: `F_${f.name}`, name: f.name, dataType: f.dataType,
+        options: f.options?.map((o) => ({ id: `${f.name}_${o}`, name: o })),
+      }));
       return data({
         user: {
           projectV2: {
             id: PROJECT_ID,
-            fields: {
-              nodes: [
-                {
-                  id: "F_state", name: "Workflow State", dataType: "SINGLE_SELECT",
-                  options: [...STATES, ...LEGACY_STATES].map((s) => ({ id: `OPT_${s}`, name: s })),
-                },
-                { id: "F_claim", name: "Claim", dataType: "TEXT" },
-                {
-                  id: "F_status", name: "Status", dataType: "SINGLE_SELECT",
-                  options: ["Todo", "In Progress", "Done"].map((s) => ({ id: `S_${s}`, name: s })),
-                },
-                {
-                  id: "F_estimate", name: "Estimate", dataType: "SINGLE_SELECT",
-                  options: ["XS", "S", "M", "L", "XL"].map((s) => ({ id: `E_${s}`, name: s })),
-                },
-              ],
-            },
+            fields: { nodes: [...defaults.filter((f) => !this.omitFields.includes(f.name)), ...created] },
           },
         },
       });
+    }
+    if (query.includes("createProjectV2Field")) {
+      const dataType = query.includes("dataType: TEXT") ? "TEXT" : "SINGLE_SELECT";
+      this.createdFields.push({
+        name: variables.name,
+        dataType,
+        options: (variables.options as Array<{ name: string }> | undefined)?.map((o) => o.name),
+      });
+      this.mutations.push(`createField(${variables.name})`);
+      return data({ createProjectV2Field: { projectV2Field: { id: `F_${variables.name}` } } });
     }
     if (query.includes("repository(owner") && query.includes("{ id }") && !query.includes("issue(number")) {
       return data({ repository: { id: "R_test" } });
@@ -458,7 +479,7 @@ class FakeGh {
 const ok = (stdout: string): ExecResult => ({ code: 0, stdout, stderr: "" });
 const data = (d: unknown): ExecResult => ok(JSON.stringify({ data: d }));
 
-function makeCtx(gh: FakeGh, holder = "me@test"): Ctx {
+function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx {
   const cfg: Config = {
     owner: "cdubiel08",
     repo: "ralph-hero",
@@ -468,9 +489,10 @@ function makeCtx(gh: FakeGh, holder = "me@test"): Ctx {
     holder,
   };
   return {
-    exec: gh.exec,
+    // Delegate per-call so tests may overlay gh.exec after ctx construction.
+    exec: (argv, stdin) => gh.exec(argv, stdin),
     cfg,
-    repoRoot: "/repo",
+    repoRoot,
     cacheDir: mkdtempSync(join(tmpdir(), "board-test-")),
     now: () => NOW,
   };
@@ -813,5 +835,123 @@ describe("doctor + migrate", () => {
     expect(gh.issues.get(1)!.state).toBe("Backlog");
     expect(gh.issues.get(2)!.state).toBe("Human Needed");
     expect(gh.comments.filter((c) => c.body.includes("board migrate")).length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Setup — full field provisioning, host conventions respected
+// ---------------------------------------------------------------------------
+
+describe("setup", () => {
+  it("provisions ALL fields the CLI uses on a fresh board — state, claim, Estimate, Priority", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.omitFields = ["Workflow State", "Claim", "Estimate", "Priority"];
+    const notes = setup(ctx);
+    for (const f of ["Workflow State", "Claim", "Estimate", "Priority"]) {
+      expect(gh.mutations).toContain(`createField(${f})`);
+    }
+    expect(notes.some((n) => n.includes('"Estimate" single-select (XS S M L XL)'))).toBe(true);
+    expect(notes.some((n) => n.includes('"Priority" single-select (P0 P1 P2 P3)'))).toBe(true);
+  });
+
+  it("respects a host repo's existing Estimate/Priority scheme — never edits an existing field", () => {
+    const gh = new FakeGh(); // defaults include Estimate + Priority
+    const ctx = makeCtx(gh);
+    const notes = setup(ctx);
+    expect(gh.mutations.filter((m) => m.startsWith("createField"))).toEqual([]);
+    expect(notes.some((n) => n.includes("Estimate") || n.includes("Priority"))).toBe(false);
+  });
+
+  it("notes but never converts an Estimate of a different dataType (e.g. GitHub's number template)", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.omitFields = ["Estimate"];
+    gh.createdFields.push({ name: "Estimate", dataType: "NUMBER" }); // pre-existing, not ours
+    const notes = setup(ctx);
+    expect(gh.mutations.filter((m) => m.startsWith("createField"))).toEqual([]);
+    expect(notes.some((n) => n.includes("exists as NUMBER — left untouched"))).toBe(true);
+  });
+});
+
+describe("doctor advisory fields", () => {
+  it("missing Estimate/Priority warn — never a failure, even under --strict", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.omitFields = ["Estimate", "Priority"];
+    const report = doctor(ctx, { strict: true });
+    const check = report.checks.find((c) => c.name === "advisory-fields");
+    expect(check?.level).toBe("warn"); // strict escalates invariants, not advice
+    expect(check?.detail).toMatch(/Estimate, Priority missing/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Readiness — advisory report; recommendations, never gates
+// ---------------------------------------------------------------------------
+
+/** Overlay REST answers (repo metadata + branch rules) on the FakeGh exec. */
+function withRest(gh: FakeGh, opts: { prRule: boolean }) {
+  const base = gh.exec;
+  gh.exec = (argv, stdin) => {
+    const cmd = argv.join(" ");
+    if (cmd === "gh api --hostname github.com repos/cdubiel08/ralph-hero")
+      return { code: 0, stdout: JSON.stringify({ default_branch: "main" }), stderr: "" };
+    if (cmd.endsWith("rules/branches/main"))
+      return { code: 0, stdout: JSON.stringify(opts.prRule ? [{ type: "pull_request" }] : []), stderr: "" };
+    return base(argv, stdin);
+  };
+}
+
+describe("readiness", () => {
+  it("a bare repo reports gaps as recommendations and never throws", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh, "me@test", mkdtempSync(join(tmpdir(), "readiness-bare-")));
+    withRest(gh, { prRule: false });
+    const report = readiness(ctx);
+    expect(report.readyFor).toBe(1); // board + auth work day one
+    const names = (lvl: number, status: string) =>
+      report.checks.filter((c) => c.level === lvl && c.status === status).map((c) => c.name);
+    expect(names(2, "miss")).toEqual(["agent-docs", "tests", "ci", "pr-required"]);
+    expect(names(3, "miss")).toEqual(["merge-gate", "state-guard"]);
+    // every miss carries a recommendation — the report IS the guide
+    for (const c of report.checks.filter((c) => c.status === "miss")) {
+      expect(c.recommend, `${c.name} must recommend`).toBeTruthy();
+    }
+    // machine-local loop state is informational, never a gap
+    expect(report.checks.find((c) => c.name === "loop")?.status).toBe("info");
+  });
+
+  it("levels unlock cumulatively as the repo grows the conventions", () => {
+    const gh = new FakeGh();
+    const root = mkdtempSync(join(tmpdir(), "readiness-full-"));
+    writeFileSync(join(root, "AGENTS.md"), "# agents\n");
+    writeFileSync(join(root, "vitest.config.ts"), "export default {}\n");
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    writeFileSync(join(root, ".github", "workflows", "ci.yml"), "on: push\n");
+    const ctx = makeCtx(gh, "me@test", root);
+    withRest(gh, { prRule: true });
+    const level2 = readiness(ctx);
+    expect(level2.checks.find((c) => c.name === "pr-required")?.status).toBe("ok"); // verified, not info
+    expect(level2.readyFor).toBe(2);
+
+    // add the level-3 conventions
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    writeFileSync(join(root, "scripts", "merge-pr.sh"), "#!/bin/bash\n");
+    writeFileSync(join(root, ".github", "workflows", "state-guard.yml"), "on: issues\n");
+    expect(readiness(ctx).readyFor).toBe(3);
+  });
+
+  it("an unverifiable PR rule reads as info, not as a gap", () => {
+    const gh = new FakeGh(); // no REST overlay → repo API "unavailable"
+    const root = mkdtempSync(join(tmpdir(), "readiness-noapi-"));
+    writeFileSync(join(root, "CLAUDE.md"), "# repo\n");
+    writeFileSync(join(root, "vitest.config.ts"), "export default {}\n");
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    writeFileSync(join(root, ".github", "workflows", "ci.yml"), "on: push\n");
+    const ctx = makeCtx(gh, "me@test", root);
+    const report = readiness(ctx);
+    expect(report.checks.find((c) => c.name === "pr-required")?.status).toBe("info");
+    expect(report.readyFor).toBe(2);
   });
 });

@@ -33,7 +33,7 @@ Claim it: `board claim NNN`. A live foreign claim → pick other work.
 
 ## Boundaries
 
-**Granted** — everything the repo's normal dev loop implies: read/search/edit, tests and builds, branches and PRs, board mutations on the claimed issue via `board`, creating follow-up issues, thoughts/ artifacts, subagents (`Agent(model=…)`) and the saved Workflows in `.claude/workflows/` (research-panel, plan-critique, tree-impl, adversarial-review) — available at will, prescribed never.
+**Granted** — everything the repo's normal dev loop implies: read/search/edit, tests and builds, branches and PRs, board mutations on the claimed issue via `board`, creating follow-up issues, thoughts/ artifacts, subagents (`Agent(model=…)`) and any saved Workflows the host repo ships in `.claude/workflows/` — available at will, prescribed never.
 
 **Not granted** — surface instead of acting: destructive or irreversible operations, production mutations, new spend, scope beyond the claimed issue's outcome, any mutation in a different repo or project. Surfacing = `board move NNN human-needed --why "<the exact decision needed, your recommendation, what you deferred>"`.
 
@@ -45,7 +45,7 @@ sonnet is the default for everything; haiku for mechanical fan-out. Frontier (`f
 
 The board is the only memory the next session has. Write to it, not to me.
 
-(The enforceable rules here are enforced in code — claims, transitions, scope by `board.ts`; drift correction by `state-guard.yml`; the merge gates by `scripts/merge-pr.sh`. This section exists so you understand the system you're inside, and because rules 4-6 — findings, decisions, provenance — are yours alone: no code can write down what you learned.)
+(The enforceable rules here are enforced in code — claims, transitions, scope by `board.ts`; drift correction and merge gating by whatever the host repo ships (`state-guard.yml`, `scripts/merge-pr.sh` — `board readiness` reports what's present). This section exists so you understand the system you're inside, and because rules 4-6 — findings, decisions, provenance — are yours alone: no code can write down what you learned.)
 
 1. **Claim before work.** Nothing mutates before `board claim NNN` succeeds.
 2. **Board truthful at all times.** In Progress while working; Human Needed the moment you hit an ungranted decision; In Review when the PR is up. Done means merged.
@@ -53,7 +53,7 @@ The board is the only memory the next session has. Write to it, not to me.
 4. **Findings outlive the transcript.** A bug, constraint, or stale doc you noticed → `thoughts/shared/research/` note or a linked issue. Deferred work → `board create` + `board dep`, never a TODO comment.
 5. **Decisions are journaled.** Each judgment call that shaped the work — decision, rationale, rejected alternative — one `board comment` at the moment you make it. The close-out comment links every artifact produced.
 6. **Provenance.** Branch `feature/GH-NNN`; commits and the PR reference GH-NNN; one worktree per unit (`git worktree add .claude/worktrees/GH-NNN origin/main`), never a shared HEAD.
-7. **Gates are run, not predicted.** `scripts/attest-pr.sh` with real exit codes, then `bash scripts/merge-pr.sh PR`. Their verdicts are the decision — never simulate, summarize, or pre-judge them.
+7. **Gates are run, not predicted.** Merge through the host repo's own gate: if it ships `scripts/merge-pr.sh`, run `scripts/attest-pr.sh` with real exit codes, then `bash scripts/merge-pr.sh PR`; otherwise use the repo's normal merge flow (PR, green CI, whatever review its policy requires). Either way the gate's verdict is the decision — never simulate, summarize, or pre-judge it, and never demand conventions the repo hasn't adopted (`board readiness` recommends; the repo decides).
 8. **Scope is the claimed issue.** Work for another repo, project, or outcome — even obviously good work — is an escalation, not a detour.
 
 ## Close-out
