@@ -26,12 +26,35 @@ BLOCKED_PATTERNS=(
   'removeSubIssue'
   'addBlockedBy'
   'removeBlockedBy'
+  'deleteProjectV2Item'
+  'updateProjectV2('
 )
+# Deliberately NOT blocked: `gh issue close` / closeIssue — closing issues
+# directly is legitimate; the reconcile/event lane owns folding that in.
 
-for p in "${BLOCKED_PATTERNS[@]}"; do
-  if [[ "$CMD" == *"$p"* && "$CMD" != *"scripts/board"* ]]; then
-    echo "Board mutations go through the CLI: $BOARD <cmd> (run '$BOARD help')." >&2
-    exit 2
-  fi
-done
+# Escape valve, applied PER SEGMENT: a sanctioned board-CLI invocation exempts
+# only its own segment, so `board get 1; gh project item-edit ...` still gets
+# redirected on the second command. Anchoring to a segment start also keeps a
+# quoted argument ("... via scripts/board move") or a trailing comment from
+# smuggling a raw mutation past the rail.
+BOARD_INVOKE='^[[:space:]]*['\''"]?[A-Za-z0-9_./-]*scripts/board['\''"]?[[:space:]]+[a-z-]'
+
+# Split on shell separators (;, &&, ||, |, &, newline). A separator inside a
+# quoted argument splits too — that can only over-redirect, never under-, which
+# is the safe direction for a courtesy rail.
+SEGMENTS=${CMD%%#*}
+SEGMENTS=${SEGMENTS//;/$'\n'}
+SEGMENTS=${SEGMENTS//&/$'\n'}
+SEGMENTS=${SEGMENTS//|/$'\n'}
+
+while IFS= read -r seg; do
+  [ -n "${seg//[[:space:]]/}" ] || continue
+  [[ "$seg" =~ $BOARD_INVOKE ]] && continue
+  for p in "${BLOCKED_PATTERNS[@]}"; do
+    if [[ "$seg" == *"$p"* ]]; then
+      echo "Board mutations go through the CLI: $BOARD <cmd> (run '$BOARD help')." >&2
+      exit 2
+    fi
+  done
+done <<< "$SEGMENTS"
 exit 0
