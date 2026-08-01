@@ -3,5 +3,13 @@
     "RALPH_GH_OWNER": "cdubiel08",
     "RALPH_GH_REPO": "ralph-hero",
     "RALPH_GH_PROJECT_NUMBER": "3"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(bash scripts/attest-pr.sh:*)",
+      "Bash(./scripts/attest-pr.sh:*)",
+      "Bash(bash scripts/merge-pr.sh:*)",
+      "Bash(./scripts/merge-pr.sh:*)"
+    ]
   }
 }
