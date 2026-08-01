@@ -131,6 +131,18 @@ expect_rc "quoted absolute board path is a real invocation" 0
 run_hook 'ralph/scripts/board comment 1 -m "do not use gh project item-edit"'
 expect_rc "board invocation may quote a blocked token in its message" 0
 
+# 19. A sanctioned board command must not exempt a LATER raw mutation.
+run_hook 'ralph/scripts/board get 1; gh project item-edit --id X'
+expect_rc "board invocation does not exempt a chained raw mutation (;)" 2
+
+# 20. Same, joined with && rather than ;.
+run_hook 'ralph/scripts/board get 1 && gh project item-edit --id X'
+expect_rc "board invocation does not exempt a chained raw mutation (&&)" 2
+
+# 21. Unrelated command with no blocked token -> passes through.
+run_hook 'git status'
+expect_rc "ordinary commands pass through untouched" 0
+
 # --- Degenerate payloads ---------------------------------------------------
 
 # 15. Payload without a command -> hook stays silent.

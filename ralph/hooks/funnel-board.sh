@@ -32,19 +32,29 @@ BLOCKED_PATTERNS=(
 # Deliberately NOT blocked: `gh issue close` / closeIssue — closing issues
 # directly is legitimate; the reconcile/event lane owns folding that in.
 
-# Escape valve: an actual board-CLI invocation (scripts/board <subcommand>,
-# incl. compound commands like `cd x && ralph/scripts/board move 1 done`) is
-# sanctioned even when its arguments mention a blocked token. Anchored to a
-# command position — start of line or after a separator — so neither a
-# trailing comment nor a quoted argument ("... via scripts/board move") can
-# smuggle a raw mutation past the redirect.
-BOARD_INVOKE='(^|[;&|(])[[:space:]]*['\''"]?[A-Za-z0-9_./-]*scripts/board['\''"]?[[:space:]]+[a-z-]'
-[[ "${CMD%%#*}" =~ $BOARD_INVOKE ]] && exit 0
+# Escape valve, applied PER SEGMENT: a sanctioned board-CLI invocation exempts
+# only its own segment, so `board get 1; gh project item-edit ...` still gets
+# redirected on the second command. Anchoring to a segment start also keeps a
+# quoted argument ("... via scripts/board move") or a trailing comment from
+# smuggling a raw mutation past the rail.
+BOARD_INVOKE='^[[:space:]]*['\''"]?[A-Za-z0-9_./-]*scripts/board['\''"]?[[:space:]]+[a-z-]'
 
-for p in "${BLOCKED_PATTERNS[@]}"; do
-  if [[ "$CMD" == *"$p"* ]]; then
-    echo "Board mutations go through the CLI: $BOARD <cmd> (run '$BOARD help')." >&2
-    exit 2
-  fi
-done
+# Split on shell separators (;, &&, ||, |, &, newline). A separator inside a
+# quoted argument splits too — that can only over-redirect, never under-, which
+# is the safe direction for a courtesy rail.
+SEGMENTS=${CMD%%#*}
+SEGMENTS=${SEGMENTS//;/$'\n'}
+SEGMENTS=${SEGMENTS//&/$'\n'}
+SEGMENTS=${SEGMENTS//|/$'\n'}
+
+while IFS= read -r seg; do
+  [ -n "${seg//[[:space:]]/}" ] || continue
+  [[ "$seg" =~ $BOARD_INVOKE ]] && continue
+  for p in "${BLOCKED_PATTERNS[@]}"; do
+    if [[ "$seg" == *"$p"* ]]; then
+      echo "Board mutations go through the CLI: $BOARD <cmd> (run '$BOARD help')." >&2
+      exit 2
+    fi
+  done
+done <<< "$SEGMENTS"
 exit 0
