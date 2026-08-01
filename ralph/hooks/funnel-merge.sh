@@ -15,6 +15,15 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) |
 
 if [[ "$CMD" == *"gh pr merge"* && "$CMD" != *"scripts/merge-pr.sh"* ]]; then
   case " $CMD" in *" -R "* | *" --repo "* | *" --repo="*) exit 0 ;; esac
+  # gh also accepts -R with its value attached, no space (`-Rowner/repo`,
+  # gh's own short-flag shorthand — GH-1684). Require a slash in the token
+  # right after -R (the [HOST/]OWNER/REPO shape) so an unrelated `-R...`
+  # substring elsewhere in the command (e.g. inside a --body string) can't
+  # false-trip the bypass.
+  ATTACHED_R_RE=' -R[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'
+  if [[ " $CMD" =~ $ATTACHED_R_RE ]]; then
+    exit 0
+  fi
   CWD=$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
   ROOT=$(git -C "${CWD:-$PWD}" rev-parse --show-toplevel 2>/dev/null) || ROOT=""
   if [ -n "$ROOT" ] && [ -f "$ROOT/scripts/merge-pr.sh" ]; then
