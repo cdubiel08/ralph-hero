@@ -16,7 +16,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -355,6 +355,21 @@ interface BoardCache {
 const STATE_FIELD = "Workflow State";
 const CLAIM_FIELD = "Claim";
 const STATUS_FIELD = "Status";
+const ESTIMATE_FIELD = "Estimate";
+const PRIORITY_FIELD = "Priority";
+
+/** Advisory single-selects: sizing (`create --estimate`) and ranking (`next`)
+ *  degrade gracefully without them, so doctor warns (never fails) and setup
+ *  creates them when absent — but a host repo's existing scheme is respected:
+ *  setup never edits an existing field's options or type. */
+const ADVISORY_FIELDS: ReadonlyArray<{ name: string; options: readonly string[] }> = [
+  { name: ESTIMATE_FIELD, options: ["XS", "S", "M", "L", "XL"] },
+  { name: PRIORITY_FIELD, options: ["P0", "P1", "P2", "P3"] },
+];
+
+function advisoryFieldsMissing(cache: BoardCache): string[] {
+  return ADVISORY_FIELDS.filter((f) => !cache.fields[f.name]).map((f) => f.name);
+}
 
 function cachePath(ctx: Ctx): string {
   // repo is part of the key: the cache stores repositoryId, and two repos
@@ -564,8 +579,8 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       stateReason: issue.stateReason ?? null,
       state: fv[STATE_FIELD] ?? null,
       claim: parseClaim(fv[CLAIM_FIELD]),
-      estimate: fv["Estimate"] ?? null,
-      priority: fv["Priority"] ?? null,
+      estimate: fv[ESTIMATE_FIELD] ?? null,
+      priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
       parent: issue.parent ? { number: issue.parent.number, title: issue.parent.title } : null,
       children: (issue.subIssues?.nodes ?? []).map((c: any) => {
@@ -1027,7 +1042,7 @@ export function listItems(ctx: Ctx): QueueItem[] {
           repo: c.repository?.nameWithOwner ?? "",
           title: c.title,
           state: fv[STATE_FIELD] ?? "(none)",
-          priority: fv["Priority"] ?? null,
+          priority: fv[PRIORITY_FIELD] ?? null,
           hasParent: !!c.parent,
           openBlockers: (c.blockedBy?.nodes ?? [])
             .filter((b: any) => b.state === "OPEN")
@@ -1087,7 +1102,7 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
     syncStatus(ctx, cache, itemId, opts.state ?? "Backlog");
     if (opts.estimate) {
       try {
-        setSingleSelect(ctx, cache, itemId, "Estimate", opts.estimate);
+        setSingleSelect(ctx, cache, itemId, ESTIMATE_FIELD, opts.estimate);
       } catch (e) {
         process.stderr.write(`warn: estimate not set: ${(e as Error).message}\n`);
       }
@@ -1185,6 +1200,16 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       cache.fields[CLAIM_FIELD] ? "ok" : opts.strict ? "fail" : "warn",
       cache.fields[CLAIM_FIELD] ? "present" : `"${CLAIM_FIELD}" text field missing (board setup creates it)`,
     );
+    // Advisory fields warn even under --strict: sizing/ranking degrade
+    // gracefully without them, so their absence is never an invariant breach.
+    const missingAdvisory = advisoryFieldsMissing(cache);
+    add(
+      "advisory-fields",
+      missingAdvisory.length === 0 ? "ok" : "warn",
+      missingAdvisory.length === 0
+        ? `${ESTIMATE_FIELD} + ${PRIORITY_FIELD} present`
+        : `${missingAdvisory.join(", ")} missing — sizing/ranking degrade gracefully (board setup creates them)`,
+    );
 
     // item sweep: legacy states, claim anomalies, stale claims
     try {
@@ -1281,6 +1306,170 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
 }
 
 // ---------------------------------------------------------------------------
+// Readiness — advisory only. Recommendations, never gates: every check here
+// describes what a capability unlocks, and nothing in this CLI or the skills
+// blocks on a miss. (Inspired by Factory's Agent Readiness model: measure the
+// environment, recommend the next rung, let the repo decide.)
+// ---------------------------------------------------------------------------
+
+export type ReadinessLevel = 1 | 2 | 3;
+export interface ReadinessCheck {
+  level: ReadinessLevel;
+  name: string;
+  status: "ok" | "miss" | "info"; // info = machine-local, unverifiable, or advisory — never a gap
+  detail: string;
+  recommend?: string;
+}
+export interface ReadinessReport {
+  repo: string;
+  /** highest level whose checks (and all lower levels') have no "miss" */
+  readyFor: 0 | ReadinessLevel;
+  checks: ReadinessCheck[];
+}
+
+export const READINESS_LEVELS: Record<ReadinessLevel, string> = {
+  1: "drive interactively (/ralph:work by hand)",
+  2: "unattended sessions (one issue at a time)",
+  3: "autonomous loop (scheduler-owned ticks)",
+};
+
+export function readiness(ctx: Ctx): ReadinessReport {
+  const checks: ReadinessCheck[] = [];
+  const add = (
+    level: ReadinessLevel,
+    name: string,
+    status: ReadinessCheck["status"],
+    detail: string,
+    recommend?: string,
+  ) => checks.push({ level, name, status, detail, ...(recommend ? { recommend } : {}) });
+
+  // — Level 1: enough to drive the board by hand. board setup covers all of it. —
+  const auth = ctx.exec(["gh", "auth", "status"]);
+  add(
+    1, "gh-auth", auth.code === 0 ? "ok" : "miss",
+    auth.code === 0 ? "authenticated" : auth.stderr.trim() || "gh auth status failed",
+    auth.code === 0 ? undefined : "gh auth login -s repo,project",
+  );
+  try {
+    const cache = refreshCache(ctx);
+    const machineMissing = [STATE_FIELD, CLAIM_FIELD].filter((f) => !cache.fields[f]);
+    add(
+      1, "board-fields", machineMissing.length === 0 ? "ok" : "miss",
+      machineMissing.length === 0
+        ? `"${STATE_FIELD}" + "${CLAIM_FIELD}" present`
+        : `${machineMissing.map((f) => `"${f}"`).join(", ")} missing`,
+      machineMissing.length === 0 ? undefined : "board setup",
+    );
+    // "info", not "miss": sizing/ranking degrade gracefully, so a board
+    // without these is still fully drivable — the recommendation stands,
+    // but it must never hold Level 1 hostage (doctor agrees: warn, no fail).
+    const advisoryMissing = advisoryFieldsMissing(cache);
+    add(
+      1, "advisory-fields", advisoryMissing.length === 0 ? "ok" : "info",
+      advisoryMissing.length === 0
+        ? `${ESTIMATE_FIELD} + ${PRIORITY_FIELD} present`
+        : `${advisoryMissing.join(", ")} missing (sizing/ranking degrade gracefully without them)`,
+      advisoryMissing.length === 0 ? undefined : "board setup",
+    );
+  } catch (e) {
+    add(1, "board-fields", "miss", (e as Error).message, "check .ralph.json / project number, then board setup");
+  }
+
+  // — Level 2: what an unattended per-issue session leans on. —
+  const agentDocs = ["CLAUDE.md", "AGENTS.md"].filter((f) => existsSync(join(ctx.repoRoot, f)));
+  add(
+    2, "agent-docs", agentDocs.length > 0 ? "ok" : "miss",
+    agentDocs.length > 0 ? agentDocs.join(", ") : "no CLAUDE.md or AGENTS.md at the repo root",
+    agentDocs.length > 0
+      ? undefined
+      : "write the repo's working knowledge down (build/test commands, conventions, gotchas) — it is every session's starting context",
+  );
+
+  const testSignals = [
+    "vitest.config.ts", "vitest.config.js", "jest.config.js", "jest.config.ts",
+    "pytest.ini", "tox.ini", "playwright.config.ts", "tests", "test",
+  ];
+  let hasTests = testSignals.some((f) => existsSync(join(ctx.repoRoot, f)));
+  if (!hasTests && existsSync(join(ctx.repoRoot, "package.json"))) {
+    try {
+      const scripts = JSON.parse(readFileSync(join(ctx.repoRoot, "package.json"), "utf8")).scripts ?? {};
+      hasTests = Object.keys(scripts).some((s) => s === "test" || s.startsWith("test:"));
+    } catch { /* unreadable package.json is just no signal */ }
+  }
+  add(
+    2, "tests", hasTests ? "ok" : "miss",
+    hasTests ? "test signal found" : "no test signal found (heuristic: test config/dir/script)",
+    hasTests ? undefined : "a runnable test suite is the tightest feedback loop an agent has — wire one, however small",
+  );
+
+  const wfDir = join(ctx.repoRoot, ".github", "workflows");
+  const workflows = existsSync(wfDir)
+    ? readdirSync(wfDir).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
+    : [];
+  add(
+    2, "ci", workflows.length > 0 ? "ok" : "miss",
+    workflows.length > 0 ? `${workflows.length} workflow(s) in .github/workflows` : "no CI workflows found",
+    workflows.length > 0 ? undefined : "CI on PRs turns \"works locally\" into a verdict an agent can trust",
+  );
+
+  let prStatus: ReadinessCheck["status"] = "info";
+  let prDetail = "could not verify (repo API unavailable)";
+  const repoInfo = ctx.exec(["gh", "api", "--hostname", ctx.cfg.host, `repos/${ctx.cfg.owner}/${ctx.cfg.repo}`]);
+  if (repoInfo.code === 0) {
+    try {
+      const def = JSON.parse(repoInfo.stdout).default_branch as string;
+      const rules = ctx.exec([
+        "gh", "api", "--hostname", ctx.cfg.host,
+        `repos/${ctx.cfg.owner}/${ctx.cfg.repo}/rules/branches/${def}`,
+      ]);
+      if (rules.code === 0) {
+        const requiresPr = (JSON.parse(rules.stdout) as Array<{ type?: string }>).some(
+          (r) => r.type === "pull_request",
+        );
+        prStatus = requiresPr ? "ok" : "miss";
+        prDetail = requiresPr ? `"${def}" requires PRs (active ruleset)` : `no PR-required rule on "${def}"`;
+      }
+    } catch { /* keep "info" — an unverifiable check must not read as a gap */ }
+  }
+  add(
+    2, "pr-required", prStatus, prDetail,
+    prStatus === "ok" ? undefined : "protect the default branch (require a PR) so every agent change has a review surface",
+  );
+
+  // — Level 3: what the scheduler-owned loop leans on. —
+  const hasGate = existsSync(join(ctx.repoRoot, "scripts", "merge-pr.sh"));
+  add(
+    3, "merge-gate", hasGate ? "ok" : "miss",
+    hasGate ? "scripts/merge-pr.sh present" : "no scripted merge gate",
+    hasGate
+      ? undefined
+      : "before agents merge unattended, script the merge verdict (convention: scripts/merge-pr.sh running CI/review/attestation checks with real exit codes) or encode it as required status checks",
+  );
+  const hasStateGuard = existsSync(join(wfDir, "state-guard.yml"));
+  add(
+    3, "state-guard", hasStateGuard ? "ok" : "miss",
+    hasStateGuard ? ".github/workflows/state-guard.yml present" : "no board reconciler workflow",
+    hasStateGuard
+      ? undefined
+      : "a reconciler lane (issue-event corrections + a doctor --fix cron) keeps the board honest when no session is looking",
+  );
+  const hb = existsSync(join(homedir(), ".ralph", "heartbeat"));
+  add(
+    3, "loop", "info",
+    hb
+      ? "scheduler heartbeat present on this machine"
+      : "loop not installed on this machine (install-loop.sh --enable when wanted)",
+  );
+
+  let readyFor: ReadinessReport["readyFor"] = 0;
+  for (const lvl of [1, 2, 3] as const) {
+    if (checks.some((c) => c.level === lvl && c.status === "miss")) break;
+    readyFor = lvl;
+  }
+  return { repo: `${ctx.cfg.owner}/${ctx.cfg.repo}`, readyFor, checks };
+}
+
+// ---------------------------------------------------------------------------
 // Setup + migrate
 // ---------------------------------------------------------------------------
 
@@ -1332,6 +1521,32 @@ export function setup(ctx: Ctx): string[] {
       { projectId: cache.projectId, name: CLAIM_FIELD },
     );
     notes.push(`created "${CLAIM_FIELD}" text field`);
+  }
+
+  for (const { name, options } of ADVISORY_FIELDS) {
+    const existing = cache.fields[name];
+    if (!existing) {
+      ghGraphQL(
+        ctx,
+        `mutation($projectId: ID!, $name: String!, $options: [ProjectV2SingleSelectFieldOptionInput!]) {
+          createProjectV2Field(input: {
+            projectId: $projectId, name: $name, dataType: SINGLE_SELECT, singleSelectOptions: $options
+          }) { projectV2Field { ... on ProjectV2SingleSelectField { id } } }
+        }`,
+        {
+          projectId: cache.projectId,
+          name,
+          options: options.map((o) => ({ name: o, color: "GRAY", description: "" })),
+        },
+      );
+      notes.push(`created "${name}" single-select (${options.join(" ")})`);
+    } else if (existing.dataType !== "SINGLE_SELECT") {
+      notes.push(
+        `"${name}" exists as ${existing.dataType} — left untouched ` +
+          `(ralph's convention is single-select ${options.join("/")}; keeping your scheme is fine)`,
+      );
+    }
+    // exists as a single-select: the host repo's option set is respected as-is
   }
 
   refreshCache(ctx);
@@ -1436,7 +1651,10 @@ maintenance
                               reopened→Backlog); the state-guard event lane
   parent-check NNN            advance parent if all children closed
   doctor [--fix] [--strict]   invariant sweep; --fix clears/releases bad claims
-  setup                       create Workflow State / Claim fields (idempotent)
+  setup                       create Workflow State / Claim / Estimate / Priority
+                              fields (idempotent; never edits existing fields)
+  readiness [--json]          agent-readiness report — 3 levels (interactive,
+                              unattended, autonomous); recommendations, never gates
   migrate [--apply]           v1 11-state → v2 6-state collapse (dry-run by default)
 
 There is no --force flag. A stale claim (TTL 120 min; RALPH_LOCK_TTL_MIN
@@ -1672,6 +1890,31 @@ export function run(argv: string[], ctx: Ctx): number {
     case "setup": {
       for (const n of setup(ctx)) out(n);
       return 0;
+    }
+
+    case "readiness": {
+      const report = readiness(ctx);
+      if (flags.json) {
+        json(report);
+        return 0;
+      }
+      out(`agent readiness — ${report.repo}`);
+      for (const lvl of [1, 2, 3] as const) {
+        const cs = report.checks.filter((c) => c.level === lvl);
+        const gaps = cs.filter((c) => c.status === "miss").length;
+        out(`\nLevel ${lvl} · ${READINESS_LEVELS[lvl]} — ${gaps === 0 ? "ready" : `${gaps} gap${gaps === 1 ? "" : "s"}`}`);
+        for (const c of cs) {
+          out(`  ${c.status === "ok" ? "✓" : c.status === "miss" ? "·" : "i"} ${c.name}: ${c.detail}`);
+          if (c.recommend) out(`      → ${c.recommend}`);
+        }
+      }
+      out(
+        report.readyFor === 0
+          ? `\nnot ready yet — start with the Level 1 recommendations above`
+          : `\nready for: Level ${report.readyFor} — ${READINESS_LEVELS[report.readyFor]}`,
+      );
+      out("recommendations are advisory — adopt what fits this repo; nothing here blocks work");
+      return 0; // advisory by design: a gap is a recommendation, not a failure
     }
 
     case "migrate": {
