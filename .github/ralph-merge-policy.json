@@ -12,5 +12,13 @@
     "app/dependabot",
     "github-actions[bot]",
     "app/github-actions"
-  ]
+  ],
+  "apply": {
+    "enabled": true,
+    "label": "ralph:apply",
+    "infraPaths": [
+      ".github/**",
+      "ralph/scripts/install-loop.sh"
+    ]
+  }
 }
