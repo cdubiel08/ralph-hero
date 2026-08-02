@@ -50,7 +50,7 @@ CHECK_CMDS=()
 # A value-taking flag in final position leaves $# == 1, and a bare `shift 2`
 # would then return nonzero and kill the script under `set -e` with no output.
 # needs_value makes that path print usage instead.
-needs_value() { [[ $# -ge 2 ]] || { echo "ERROR: $1 requires a value" >&2; usage; }; }
+needs_value() { [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: $1 requires a non-empty value" >&2; usage; }; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

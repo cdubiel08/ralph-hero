@@ -174,11 +174,11 @@ echo "== review-hardened edges (CodeRabbit, PR #1700) =="
 
 dir=$(new_case '[]')
 run_ev "$dir" 1697 --kind settings --notes "x" --check
-expect "a trailing flag with no value prints usage, not a bare exit 1" 2 "requires a value"
+expect "a trailing flag with no value prints usage, not a bare exit 1" 2 "requires a non-empty value"
 
 dir=$(new_case '[]')
 run_ev "$dir" 1697 --kind
-expect "a trailing --kind likewise" 2 "requires a value"
+expect "a trailing --kind likewise" 2 "requires a non-empty value"
 
 dir=$(new_case '[]')
 run_ev "$dir" 1697 --bogus
@@ -191,8 +191,22 @@ fi
 # A long check output used to die on EPIPE: `head -20` closes the pipe, echo
 # takes SIGPIPE, and pipefail+errexit aborted AFTER the checks had run.
 dir=$(new_case '[]')
-run_ev "$dir" 1697 --kind settings --notes "long output" --check "seq 1 500" --dry-run
+# Bash-only generator: an absent `seq` would exit 127 and the dry run would
+# still emit evidence, so the assertion would pass without ever producing
+# output longer than the 20-line preview.
+run_ev "$dir" 1697 --kind settings --notes "long output" \
+  --check 'for i in $(printf "%s " {1..500}); do echo "line $i"; done' --dry-run
 expect "a check whose output exceeds the preview does not abort the script" 0 "ralph-apply-evidence:v1"
+payload=$(sed -n '/```json/,/```/p' <<<"$LAST_OUT" | sed '1d;$d')
+if jq -e '.checks[0].exit_code == 0' <<<"$payload" >/dev/null; then
+  pass "and the long-output check really ran (exit 0, not a 127 from a missing tool)"
+else
+  fail "long-output check did not run cleanly — payload: $payload"
+fi
+
+dir=$(new_case '[]')
+run_ev "$dir" 1697 --kind settings --notes "x" --check "" --dry-run
+expect "an EMPTY --check is rejected, not recorded as a passing no-op" 2 "requires a non-empty value"
 
 echo
 echo "apply-evidence.test.sh: $PASS passed, $FAIL failed"
