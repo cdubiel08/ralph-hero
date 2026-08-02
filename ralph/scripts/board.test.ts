@@ -10,6 +10,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   adopt,
+  APPLY_EVIDENCE_MARKER,
+  APPLY_LABEL_DEFAULT,
+  applyEvidenceFailure,
+  isApplyIssue,
+  loadApplyConfig,
+  parseApplyEvidence,
+  parseVerifyAfter,
+  validateApplyEvidence,
   claimIsStale,
   type Config,
   createIssue,
@@ -127,6 +135,8 @@ describe("rankNext", () => {
     blockersTruncated: false,
     claim: null,
     claimRaw: null,
+    labels: [],
+    closedBlockers: [],
     ...over,
   });
 
@@ -250,6 +260,9 @@ interface FakeIssue {
   children?: Array<{ number: number; issueState: "OPEN" | "CLOSED"; state?: string | null }>;
   childrenTruncated?: boolean;
   comments?: string[];
+  labels?: string[];
+  body?: string;
+  closedAt?: string | null;
   prs?: Array<{ number: number; merged: boolean }>;
 }
 
@@ -301,7 +314,7 @@ class FakeGh {
       url: `https://github.com/cdubiel08/ralph-hero/issues/${fi.number}`,
       state: fi.issueState ?? "OPEN",
       stateReason: fi.stateReason ?? null,
-      labels: { nodes: [] },
+      labels: { nodes: (fi.labels ?? []).map((name) => ({ name })) },
       parent: fi.parent ? { number: fi.parent, title: `Issue ${fi.parent}` } : null,
       subIssues: {
         pageInfo: { hasNextPage: fi.childrenTruncated ?? false },
@@ -398,7 +411,14 @@ class FakeGh {
     }
     if (query.includes("comments(last")) {
       const fi = this.issues.get(variables.number)!;
-      return data({ repository: { issue: { comments: { nodes: (fi.comments ?? []).map((b) => ({ body: b })) } } } });
+      return data({
+        repository: {
+          issue: {
+            body: fi.body ?? "",
+            comments: { nodes: (fi.comments ?? []).map((b) => ({ body: b })) },
+          },
+        },
+      });
     }
     if (query.includes("issue(number")) {
       const fi = this.issues.get(variables.number);
@@ -419,6 +439,9 @@ class FakeGh {
               isArchived: fi.archived ?? false,
               content: {
                 number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
+                stateReason: fi.stateReason ?? null,
+                closedAt: fi.closedAt ?? null,
+                labels: { nodes: (fi.labels ?? []).map((name) => ({ name })) },
                 repository: { nameWithOwner: fi.repo ?? "cdubiel08/ralph-hero" },
                 parent: fi.parent ? { number: fi.parent } : null,
                 blockedBy: {
@@ -528,6 +551,7 @@ function makeCtx(gh: FakeGh, holder = "me@test", repoRoot = "/repo"): Ctx {
     host: "github.com",
     lockTtlMin: 120,
     holder,
+    apply: { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] },
   };
   return {
     // Delegate per-call so tests may overlay gh.exec after ctx construction.
@@ -1288,5 +1312,338 @@ describe("readiness", () => {
     const report = readiness(ctx);
     expect(report.checks.find((c) => c.name === "pr-required")?.status).toBe("info");
     expect(report.readyFor).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Apply kind (GH-1693) — merge ≠ done for infra work.
+// ---------------------------------------------------------------------------
+
+describe("loadApplyConfig", () => {
+  const withPolicy = (contents: string | null): string => {
+    const root = mkdtempSync(join(tmpdir(), "apply-cfg-"));
+    if (contents !== null) {
+      mkdirSync(join(root, ".github"), { recursive: true });
+      writeFileSync(join(root, ".github", "ralph-merge-policy.json"), contents);
+    }
+    return root;
+  };
+
+  it("is OFF when the repo has not opted in — no policy file, no apply block, or enabled:false", () => {
+    expect(loadApplyConfig(withPolicy(null)).enabled).toBe(false);
+    expect(loadApplyConfig(withPolicy(`{"attestation":{"required":true}}`)).enabled).toBe(false);
+    expect(loadApplyConfig(withPolicy(`{"apply":{"enabled":false}}`)).enabled).toBe(false);
+  });
+
+  it("reads label + infraPaths, defaulting the label", () => {
+    const c = loadApplyConfig(
+      withPolicy(`{"apply":{"enabled":true,"infraPaths":[".github/**","terraform/**",7]}}`),
+    );
+    expect(c).toEqual({
+      enabled: true,
+      label: APPLY_LABEL_DEFAULT,
+      infraPaths: [".github/**", "terraform/**"], // non-strings dropped, not coerced
+    });
+    expect(loadApplyConfig(withPolicy(`{"apply":{"enabled":true,"label":"kind/apply"}}`)).label).toBe("kind/apply");
+  });
+
+  it("FAILS CLOSED on a malformed policy file — a truncated policy must not silently disable the gates", () => {
+    const c = loadApplyConfig(withPolicy(`{"apply":{"enabled":true`));
+    expect(c.enabled).toBe(true);
+    expect(c.label).toBe(APPLY_LABEL_DEFAULT);
+  });
+});
+
+describe("apply evidence — pure shape validation", () => {
+  const NOW_E = new Date("2026-08-02T12:00:00Z");
+  const comment = (payload: unknown) =>
+    `${APPLY_EVIDENCE_MARKER}\n\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n`;
+  const valid = {
+    kind: "settings",
+    applied_at: "2026-08-02T11:00:00Z",
+    actor: "dubiel",
+    notes: "ralph:apply label created and the policy block is live",
+    checks: [{ cmd: "gh label list", exit_code: 0 }],
+  };
+
+  it("accepts a shape-valid settings/observation payload", () => {
+    expect(validateApplyEvidence(parseApplyEvidence([comment(valid)]), NOW_E)).toBeNull();
+    expect(validateApplyEvidence({ ...valid, kind: "observation" }, NOW_E)).toBeNull();
+  });
+
+  it("takes the LAST marker comment, ignores unrelated comments, and treats a shapeless marker as a failure", () => {
+    const stale = comment({ ...valid, notes: "stale" });
+    const fresh = comment({ ...valid, notes: "fresh" });
+    expect((parseApplyEvidence(["chatter", stale, "more chatter", fresh]) as any).notes).toBe("fresh");
+    expect(parseApplyEvidence(["nothing here"])).toBeNull();
+    expect(parseApplyEvidence([`${APPLY_EVIDENCE_MARKER}\nI applied it, trust me`])).toBeNull();
+    expect(parseApplyEvidence([`${APPLY_EVIDENCE_MARKER}\n\`\`\`json\n{not json}\n\`\`\``])).toBeNull();
+  });
+
+  it("names the FIRST failing rule for every field it enforces", () => {
+    const fails = (over: Record<string, unknown>, want: RegExp) =>
+      expect(validateApplyEvidence({ ...valid, ...over }, NOW_E)).toMatch(want);
+    expect(validateApplyEvidence(null, NOW_E)).toMatch(/no <!-- ralph-apply-evidence:v1 -->/);
+    expect(validateApplyEvidence("just a string", NOW_E)).toMatch(/no <!-- ralph-apply-evidence:v1 -->/);
+    fails({ kind: "vibes" }, /"kind" must be one of run\|observation\|settings/);
+    fails({ applied_at: "yesterday" }, /"applied_at" must be an ISO-8601 timestamp/);
+    fails({ applied_at: "2026-08-03T00:00:00Z" }, /is in the future — the apply has not happened yet/);
+    fails({ actor: "  " }, /"actor" must be non-empty/);
+    fails({ notes: "" }, /"notes" must state, in words, what is now live/);
+    fails({ checks: [] }, /requires a non-empty "checks" array/);
+    fails({ checks: [{ cmd: "x", exit_code: 1 }] }, /every checks\[\] entry needs exit_code 0/);
+  });
+
+  it("tolerates a few minutes of clock skew rather than rejecting honest evidence", () => {
+    expect(validateApplyEvidence({ ...valid, applied_at: "2026-08-02T12:02:00Z" }, NOW_E)).toBeNull();
+  });
+
+  it("binds kind=run evidence to the merge SHA — a green run of the pre-merge code is not proof", () => {
+    const sha = "a1b2c3d4e5f6a7b8";
+    const runEv = {
+      kind: "run",
+      applied_at: "2026-08-02T11:00:00Z",
+      actor: "dubiel",
+      notes: "release-ralph fired on the ralph/** merge",
+      merge_sha: sha,
+      run: { workflow: "release-ralph.yml", id: 42, conclusion: "success", head_sha: sha },
+    };
+    expect(validateApplyEvidence(runEv, NOW_E)).toBeNull();
+    expect(validateApplyEvidence({ ...runEv, run: { ...runEv.run, head_sha: "0000000000000000" } }, NOW_E))
+      .toMatch(/!= merge_sha .* that run did not execute the merged code/);
+    expect(validateApplyEvidence({ ...runEv, merge_sha: "" }, NOW_E)).toMatch(/requires "merge_sha"/);
+    expect(validateApplyEvidence({ ...runEv, run: { ...runEv.run, conclusion: "failure" } }, NOW_E))
+      .toMatch(/run\.conclusion must be "success"/);
+    expect(validateApplyEvidence({ ...runEv, run: undefined }, NOW_E)).toMatch(/requires a "run" object/);
+    // checks[] does NOT substitute for the run binding on kind=run
+    expect(validateApplyEvidence({ ...runEv, run: undefined, checks: [{ exit_code: 0 }] }, NOW_E))
+      .toMatch(/requires a "run" object/);
+  });
+});
+
+describe("parseVerifyAfter", () => {
+  it("reads the body marker and ignores absent/garbled ones", () => {
+    expect(parseVerifyAfter("blah\n<!-- ralph-verify-after: 2026-08-08T00:00:00Z -->\nblah")?.toISOString())
+      .toBe("2026-08-08T00:00:00.000Z");
+    expect(parseVerifyAfter("no marker")).toBeNull();
+    expect(parseVerifyAfter("<!-- ralph-verify-after: soon -->")).toBeNull();
+    expect(parseVerifyAfter(null)).toBeNull();
+  });
+});
+
+describe("apply close gate + reconcile routing", () => {
+  const APPLY_ON = { enabled: true, label: APPLY_LABEL_DEFAULT, infraPaths: [".github/**"] };
+  const evidenceComment = (over: Record<string, unknown> = {}) =>
+    `${APPLY_EVIDENCE_MARKER}\n\n\`\`\`json\n${JSON.stringify({
+      kind: "settings",
+      applied_at: "2026-07-31T11:00:00Z",
+      actor: "dubiel",
+      notes: "it is live",
+      checks: [{ cmd: "gh label list", exit_code: 0 }],
+      ...over,
+    })}\n\`\`\`\n`;
+
+  let gh: FakeGh;
+  let ctx: Ctx;
+  beforeEach(() => {
+    gh = new FakeGh();
+    ctx = makeCtx(gh);
+    ctx.cfg.apply = { ...APPLY_ON };
+  });
+
+  it("isApplyIssue is label membership, and is inert while the kind is disabled", () => {
+    expect(isApplyIssue(ctx.cfg, ["ralph:apply"])).toBe(true);
+    expect(isApplyIssue(ctx.cfg, ["bug"])).toBe(false);
+    expect(isApplyIssue({ apply: { enabled: false, label: "ralph:apply", infraPaths: [] } }, ["ralph:apply"]))
+      .toBe(false);
+  });
+
+  it("refuses Done on an unevidenced apply unit — and --why does NOT bypass it", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", labels: ["ralph:apply"], comments: [] });
+    const issue = fetchIssue(ctx, 1);
+    expect(() => transition(ctx, issue, "Done")).toThrow(RefusalError);
+    expect(() => transition(ctx, issue, "Done")).toThrow(/deployed-and-verified evidence/);
+    // --why exists for "completed without a merged PR" — the NORMAL case for an
+    // apply unit — so honouring it here would be a one-flag bypass of the kind.
+    expect(() => transition(ctx, issue, "Done", { why: "I definitely applied it" })).toThrow(RefusalError);
+    // a MERGED PR is not an escape either: a merge is exactly what this refuses as proof
+    gh.issues.set(2, {
+      number: 2, state: "In Review", labels: ["ralph:apply"], comments: [], prs: [{ number: 9, merged: true }],
+    });
+    expect(() => transition(ctx, fetchIssue(ctx, 2), "Done")).toThrow(/deployed-and-verified evidence/);
+    expect(gh.mutations.filter((m) => m.startsWith("setState"))).toEqual([]);
+  });
+
+  it("allows Done once shape-valid evidence is posted, with no merged PR and no --why", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", labels: ["ralph:apply"], comments: [evidenceComment()] });
+    const after = transition(ctx, fetchIssue(ctx, 1), "Done");
+    expect(after.state).toBe("Done");
+    expect(gh.mutations).toContain("closeIssue(#1, COMPLETED)");
+  });
+
+  it("leaves ordinary ship issues exactly as they were — the gate binds to the label alone", () => {
+    gh.issues.set(1, { number: 1, state: "In Review", labels: ["enhancement"], comments: [] });
+    // still the pre-existing rule: no merged PR ⇒ --why required, and it works
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done")).toThrow(UsageError);
+    expect(transition(ctx, fetchIssue(ctx, 1), "Done", { why: "shipped by hand" }).state).toBe("Done");
+  });
+
+  it("is fully inert when the repo has not opted in", () => {
+    ctx.cfg.apply = { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] };
+    gh.issues.set(1, { number: 1, state: "In Review", labels: ["ralph:apply"], comments: [] });
+    expect(transition(ctx, fetchIssue(ctx, 1), "Done", { why: "no apply kind here" }).state).toBe("Done");
+  });
+
+  it("reconcile REOPENS a UI-closed unevidenced apply unit to Human Needed", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Progress", issueState: "CLOSED", stateReason: "COMPLETED",
+      labels: ["ralph:apply"], comments: [],
+    });
+    const msg = reconcile(ctx, 1);
+    expect(msg).toMatch(/reopened to Human Needed/);
+    expect(gh.mutations).toContain("reopenIssue");
+    expect(gh.mutations).toContain("setState(#1, Human Needed)");
+    // the reason is on the record, and it lands BEFORE the state write
+    expect(gh.comments.at(-1)!.body).toMatch(/A merge is not an apply/);
+    expect(gh.mutations.indexOf("addComment")).toBeLessThan(gh.mutations.indexOf("setState(#1, Human Needed)"));
+  });
+
+  it("reconcile accepts an EVIDENCED close as Done, and never second-guesses a NOT_PLANNED cancel", () => {
+    gh.issues.set(1, {
+      number: 1, state: "In Progress", issueState: "CLOSED", stateReason: "COMPLETED",
+      labels: ["ralph:apply"], comments: [evidenceComment()],
+    });
+    expect(reconcile(ctx, 1)).toMatch(/→ "Done"/);
+
+    gh.issues.set(2, {
+      number: 2, state: "In Progress", issueState: "CLOSED", stateReason: "NOT_PLANNED",
+      labels: ["ralph:apply"], comments: [],
+    });
+    expect(reconcile(ctx, 2)).toMatch(/→ "Canceled"/);
+    expect(gh.mutations).not.toContain("setState(#2, Human Needed)");
+  });
+});
+
+describe("doctor — apply sweep", () => {
+  const applyCtx = (gh: FakeGh) => {
+    const ctx = makeCtx(gh);
+    ctx.cfg.apply = { enabled: true, label: APPLY_LABEL_DEFAULT, infraPaths: [] };
+    return ctx;
+  };
+  const detail = (r: ReturnType<typeof doctor>, name: string) => r.checks.find((c) => c.name === name)!;
+
+  it("flags an apply unit whose blocking work has landed — but not one that was never gated on a merge", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", labels: ["ralph:apply"],
+      blockedBy: [{ number: 5, state: "CLOSED" }],
+    });
+    gh.issues.set(2, { number: 2, state: "Backlog", labels: ["ralph:apply"] }); // no dependency edge
+    gh.issues.set(3, {
+      number: 3, state: "Backlog", labels: ["ralph:apply"],
+      blockedBy: [{ number: 6, state: "OPEN" }], // ship work still open
+    });
+    const c = detail(doctor(applyCtx(gh)), "merged-unapplied");
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("#1←closed #5");
+    expect(c.detail).not.toContain("#2");
+    expect(c.detail).not.toContain("#3");
+  });
+
+  it("stays quiet until ralph-verify-after elapses, then says so", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", labels: ["ralph:apply"],
+      body: "<!-- ralph-verify-after: 2026-08-08T00:00:00Z -->", // NOW is 2026-07-31
+    });
+    expect(detail(doctor(applyCtx(gh)), "apply-verify-elapsed").level).toBe("ok");
+
+    gh.issues.set(2, {
+      number: 2, state: "Backlog", labels: ["ralph:apply"],
+      body: "<!-- ralph-verify-after: 2026-07-01T00:00:00Z -->",
+    });
+    const c = detail(doctor(applyCtx(gh)), "apply-verify-elapsed");
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("#2");
+    expect(c.detail).not.toContain("#1(");
+  });
+
+  it("apply-closed-unevidenced FAILS under --strict, excludes cancels, and --fix reopens", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+      labels: ["ralph:apply"], comments: [],
+    });
+    gh.issues.set(2, {
+      number: 2, state: "Canceled", issueState: "CLOSED", stateReason: "NOT_PLANNED",
+      labels: ["ralph:apply"], comments: [],
+    });
+    const warn = detail(doctor(applyCtx(gh)), "apply-closed-unevidenced");
+    expect(warn.level).toBe("warn");
+    expect(warn.detail).toContain("#1");
+    expect(warn.detail).not.toContain("#2");
+
+    const strict = doctor(applyCtx(gh), { strict: true });
+    expect(detail(strict, "apply-closed-unevidenced").level).toBe("fail");
+    expect(strict.ok).toBe(false);
+
+    const gh2 = new FakeGh();
+    gh2.issues.set(1, {
+      number: 1, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+      labels: ["ralph:apply"], comments: [],
+    });
+    doctor(applyCtx(gh2), { fix: true });
+    expect(gh2.mutations).toContain("setState(#1, Human Needed)");
+  });
+
+  it("an evidenced close is silent — no false positive on honest work", () => {
+    const gh = new FakeGh();
+    gh.issues.set(1, {
+      number: 1, state: "Done", issueState: "CLOSED", stateReason: "COMPLETED",
+      labels: ["ralph:apply"],
+      comments: [
+        `${APPLY_EVIDENCE_MARKER}\n\`\`\`json\n${JSON.stringify({
+          kind: "observation", applied_at: "2026-07-30T00:00:00Z", actor: "me",
+          notes: "cron fired", checks: [{ exit_code: 0 }],
+        })}\n\`\`\``,
+      ],
+    });
+    expect(detail(doctor(applyCtx(gh), { strict: true }), "apply-closed-unevidenced").level).toBe("ok");
+  });
+});
+
+describe("applyEvidenceFailure", () => {
+  it("is the one question the close gate and doctor both ask", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    gh.issues.set(1, { number: 1, state: "Backlog", comments: [] });
+    expect(applyEvidenceFailure(ctx, 1)).toMatch(/no <!-- ralph-apply-evidence:v1 -->/);
+  });
+});
+
+describe("create --label", () => {
+  it("applies labels via gh issue edit, and a label failure is loud but not fatal", () => {
+    const gh = new FakeGh();
+    const edits: string[][] = [];
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if (argv[0] === "gh" && argv[1] === "issue" && argv[2] === "edit") {
+        edits.push(argv);
+        return { code: 1, stdout: "", stderr: "label not found" }; // worst case
+      }
+      return inner(argv, stdin);
+    };
+    const ctx = makeCtx(gh);
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const issue = createIssue(ctx, { title: "apply: turn it on", labels: ["ralph:apply"] });
+    expect(issue.number).toBeGreaterThan(0); // the issue exists regardless
+    expect(edits[0]).toContain("--add-label");
+    expect(edits[0]).toContain("ralph:apply");
+    expect(warn.mock.calls.join("")).toMatch(/labels ralph:apply not applied/);
+    warn.mockRestore();
+  });
+
+  it("parses a comma-separated --label list", () => {
+    expect(parseArgs(["--title", "t", "--label", "ralph:apply,infra"]).flags.label).toBe("ralph:apply,infra");
   });
 });

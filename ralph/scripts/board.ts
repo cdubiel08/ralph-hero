@@ -160,6 +160,8 @@ export interface QueueItem {
   claim: Claim | null;
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited)
   openBlockerLabels: string[]; // display form of openBlockers: "#N" own-repo, "owner/repo#N" cross-repo
+  labels: string[]; // issue labels — apply-kind detection without a second round trip
+  closedBlockers: number[]; // CLOSED blockers: "the work this waited on has landed"
 }
 
 /** Numeric rank of a priority option ("P0" → 0, "P10" → 10). A lexicographic
@@ -201,6 +203,148 @@ export interface Config {
   host: string; // remote host the scope gate requires (GHE via .ralph.json)
   lockTtlMin: number;
   holder: string;
+  apply: ApplyConfig; // GH-1693: apply-kind opt-in, read from the merge policy
+}
+
+// ---------------------------------------------------------------------------
+// Apply kind (GH-1692 / GH-1693) — merge ≠ done for infra work.
+//
+// An issue labelled with `apply.label` is an APPLY unit: the deploy, the
+// terraform run, the settings edit, the next scheduled fire. It closes only on
+// deployed-and-verified evidence, never on a merge. Everything in this section
+// is INERT unless the repo opted in via the `apply` block of
+// .github/ralph-merge-policy.json — the same file the merge gate reads, so a
+// repo opts in exactly once.
+// ---------------------------------------------------------------------------
+
+export interface ApplyConfig {
+  enabled: boolean;
+  label: string;
+  /** Globs; the merge gate's infra-split rule uses these. board.ts only
+   *  carries them so the two readers cannot drift apart. */
+  infraPaths: string[];
+}
+
+export const APPLY_LABEL_DEFAULT = "ralph:apply";
+export const APPLY_EVIDENCE_MARKER = "<!-- ralph-apply-evidence:v1 -->";
+export const APPLY_EVIDENCE_KINDS = ["run", "observation", "settings"] as const;
+const VERIFY_AFTER_RE = /<!--\s*ralph-verify-after:\s*([^\s>]+)\s*-->/;
+/** Clock skew tolerance for `applied_at` — a runner minutes ahead of GitHub
+ *  must not have its honest evidence rejected as time-travelling. */
+const APPLIED_AT_SKEW_MS = 5 * 60_000;
+
+/** Reads the `apply` block from .github/ralph-merge-policy.json.
+ *  Fails CLOSED on a malformed policy file, exactly like merge-pr.sh: a
+ *  truncated policy must not silently disable the gates it configures. */
+export function loadApplyConfig(repoRoot: string): ApplyConfig {
+  const off: ApplyConfig = { enabled: false, label: APPLY_LABEL_DEFAULT, infraPaths: [] };
+  // RALPH_MERGE_POLICY_FILE is the same test-only override merge-pr.sh honours;
+  // keeping one name means the two readers cannot be pointed at different files.
+  const policyFile =
+    process.env.RALPH_MERGE_POLICY_FILE ?? join(repoRoot, ".github", "ralph-merge-policy.json");
+  if (!existsSync(policyFile)) return off;
+  let policy: any;
+  try {
+    policy = JSON.parse(readFileSync(policyFile, "utf8"));
+  } catch {
+    process.stderr.write(
+      `warn: ${policyFile} is not valid JSON — apply-kind gates stay ON with defaults (fail closed)\n`,
+    );
+    return { enabled: true, label: APPLY_LABEL_DEFAULT, infraPaths: [] };
+  }
+  const a = policy?.apply;
+  if (!a || a.enabled !== true) return off;
+  return {
+    enabled: true,
+    label: typeof a.label === "string" && a.label ? a.label : APPLY_LABEL_DEFAULT,
+    infraPaths: Array.isArray(a.infraPaths) ? a.infraPaths.filter((p: unknown) => typeof p === "string") : [],
+  };
+}
+
+export function isApplyIssue(cfg: { apply: ApplyConfig }, labels: readonly string[]): boolean {
+  return cfg.apply.enabled && labels.includes(cfg.apply.label);
+}
+
+/** `<!-- ralph-verify-after: 2026-08-08T00:00:00Z -->` in the issue body:
+ *  the instant before which this apply unit CANNOT be evidenced (a weekly
+ *  cron's next fire is up to 7 days out). Doctor stays quiet until then. */
+export function parseVerifyAfter(body: string | null | undefined): Date | null {
+  const m = VERIFY_AFTER_RE.exec(body ?? "");
+  if (!m) return null;
+  const d = new Date(m[1]);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Extracts the JSON payload of the LAST `ralph-apply-evidence:v1` comment.
+ *  Returns null when no marker comment carries a parseable fenced payload. */
+export function parseApplyEvidence(commentBodies: readonly string[]): unknown | null {
+  for (let i = commentBodies.length - 1; i >= 0; i--) {
+    const body = commentBodies[i];
+    const at = body.indexOf(APPLY_EVIDENCE_MARKER);
+    if (at < 0) continue;
+    const fence = /```json\s*\n([\s\S]*?)\n```/.exec(body.slice(at));
+    if (!fence) return null; // marker present but shapeless — a real failure, not "absent"
+    try {
+      return JSON.parse(fence[1]);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Returns null when the evidence is shape-valid, else the FIRST failing rule
+ *  in human words. Pure — the close gate and doctor share it verbatim.
+ *
+ *  What this does NOT check: whether `notes` is true, and whether an
+ *  observation/settings command's output meant what the operator says it
+ *  meant. Shape validity is the floor, not proof (plan §Risks). */
+export function validateApplyEvidence(raw: unknown, now: Date): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return `no ${APPLY_EVIDENCE_MARKER} comment with a parseable \`\`\`json payload`;
+  }
+  const e = raw as Record<string, any>;
+  const kind = e.kind;
+  if (!APPLY_EVIDENCE_KINDS.includes(kind)) {
+    return `evidence "kind" must be one of ${APPLY_EVIDENCE_KINDS.join("|")} (got ${JSON.stringify(kind)})`;
+  }
+  if (typeof e.applied_at !== "string" || Number.isNaN(new Date(e.applied_at).getTime())) {
+    return `evidence "applied_at" must be an ISO-8601 timestamp (got ${JSON.stringify(e.applied_at)})`;
+  }
+  if (new Date(e.applied_at).getTime() > now.getTime() + APPLIED_AT_SKEW_MS) {
+    return `evidence "applied_at" (${e.applied_at}) is in the future — the apply has not happened yet`;
+  }
+  if (typeof e.actor !== "string" || !e.actor.trim()) return `evidence "actor" must be non-empty`;
+  if (typeof e.notes !== "string" || !e.notes.trim()) {
+    return `evidence "notes" must state, in words, what is now live`;
+  }
+  if (kind === "run") {
+    const r = e.run;
+    if (!r || typeof r !== "object") return `kind=run evidence requires a "run" object`;
+    if (typeof r.workflow !== "string" || !r.workflow.trim()) return `run.workflow must be non-empty`;
+    if (r.id === undefined || r.id === null || String(r.id).trim() === "") return `run.id must be non-empty`;
+    if (r.conclusion !== "success") {
+      return `run.conclusion must be "success" (got ${JSON.stringify(r.conclusion)})`;
+    }
+    // The binding rule. A green run of the PRE-merge code is not proof the
+    // merged change is live — that is the exact failure this epic exists for.
+    const mergeSha = typeof e.merge_sha === "string" ? e.merge_sha.trim() : "";
+    if (!mergeSha) return `kind=run evidence requires "merge_sha" — the commit that had to be deployed`;
+    if (typeof r.head_sha !== "string" || !r.head_sha.trim()) return `run.head_sha must be non-empty`;
+    if (r.head_sha.trim() !== mergeSha) {
+      return `run.head_sha ${r.head_sha.trim().slice(0, 8)} != merge_sha ${mergeSha.slice(0, 8)} — that run did not execute the merged code`;
+    }
+    return null;
+  }
+  const checks = e.checks;
+  if (!Array.isArray(checks) || checks.length === 0) {
+    return `kind=${kind} evidence requires a non-empty "checks" array`;
+  }
+  const bad = checks.find((c: any) => !c || typeof c !== "object" || c.exit_code !== 0);
+  if (bad !== undefined) {
+    return `every checks[] entry needs exit_code 0 (offender: ${JSON.stringify(bad)})`;
+  }
+  return null;
 }
 
 /** Host + owner + repo must all match — a matching owner/repo on a mirror or
@@ -278,6 +422,7 @@ export function loadConfig(repoRoot: string): Config {
     holder:
       process.env.RALPH_CLAIM_HOLDER ??
       `${userInfo().username}@${hostname()}`,
+    apply: loadApplyConfig(repoRoot),
   };
 }
 
@@ -620,6 +765,34 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
   });
 }
 
+/** Body + comment bodies for ONE issue. Deliberately a separate query rather
+ *  than extra fields on `fetchIssue`: it is needed only when an apply issue is
+ *  closed or swept (a handful of issues), and bodies are the largest payload
+ *  on the board — the hot read path must not carry them. */
+export function fetchApplyMeta(ctx: Ctx, number: number): { body: string; comments: string[] } {
+  const data = ghGraphQL(
+    ctx,
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        issue(number: $number) { body comments(last: 50) { nodes { body } } }
+      }
+    }`,
+    { owner: ctx.cfg.owner, repo: ctx.cfg.repo, number },
+  );
+  const issue = data.repository?.issue;
+  return {
+    body: issue?.body ?? "",
+    comments: (issue?.comments?.nodes ?? []).map((c: any) => c?.body ?? ""),
+  };
+}
+
+/** The one question the close gate and doctor both ask: is this apply issue
+ *  evidenced? Returns null when it is, else the first failing rule. */
+export function applyEvidenceFailure(ctx: Ctx, number: number): string | null {
+  const { comments } = fetchApplyMeta(ctx, number);
+  return validateApplyEvidence(parseApplyEvidence(comments), ctx.now());
+}
+
 // ---------------------------------------------------------------------------
 // Mutation primitives
 // ---------------------------------------------------------------------------
@@ -788,11 +961,30 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // Done requires evidence: a merged linked PR, or an explicit --why on the
     // record. Intent lane only — reconcile() reflects reality unchecked.
     const doneWithoutMergedPr = to === "Done" && !issue.prs.some((p) => p.merged);
-    if (doneWithoutMergedPr && !opts.why) {
+    const applyKind = isApplyIssue(ctx.cfg, issue.labels);
+    if (doneWithoutMergedPr && !opts.why && !applyKind) {
       throw new UsageError(
         `moving #${issue.number} to Done requires a merged linked PR — none found. ` +
           `Pass --why "<how this was completed>" to complete without one.`,
       );
+    }
+    // Apply-kind close gate (GH-1693). PREVENTIVE, not advisory: an apply unit
+    // reaches Done only on shape-valid `ralph-apply-evidence:v1`.
+    //
+    // There is deliberately NO --why escape here. --why means "completed
+    // without a merged PR", which is the NORMAL case for an apply unit — so
+    // honouring it would hand every apply issue a one-flag bypass of the only
+    // gate that makes the kind mean anything. A merged PR is not an escape
+    // either: a merge is exactly the thing this kind refuses to accept as proof.
+    if (to === "Done" && applyKind) {
+      const failure = applyEvidenceFailure(ctx, issue.number);
+      if (failure) {
+        throw new RefusalError(
+          `#${issue.number} is an apply unit (label "${ctx.cfg.apply.label}") — Done requires deployed-and-verified evidence: ${failure}. ` +
+            `Post one with scripts/apply-evidence.sh, or move it to Human Needed if the apply cannot be done. ` +
+            `(--why does not bypass this.)`,
+        );
+      }
     }
 
     const itemId = requireItem(issue);
@@ -977,7 +1169,7 @@ export function adopt(ctx: Ctx, number: number): Issue {
 export function reconcile(ctx: Ctx, number: number): string {
   const cache = mutationCache(
     ctx,
-    [[STATE_FIELD, "Done"], [STATE_FIELD, "Canceled"], [STATE_FIELD, "Backlog"]],
+    [[STATE_FIELD, "Done"], [STATE_FIELD, "Canceled"], [STATE_FIELD, "Backlog"], [STATE_FIELD, "Human Needed"]],
     [CLAIM_FIELD],
   );
   {
@@ -988,6 +1180,37 @@ export function reconcile(ctx: Ctx, number: number): string {
     }
     if (issue.archived) {
       return `#${number}: project item archived — skipped (unarchive in the board UI to reconcile)`;
+    }
+
+    // Apply-kind correction lane (GH-1693). GitHub has no pre-close hook, so a
+    // human (or a stray closing keyword) CAN close an apply issue from the UI.
+    // This is the corrective half, honestly labelled: the close is undone
+    // within one reconcile pass — reopened and routed to Human Needed, never
+    // silently accepted as Done. NOT_PLANNED is left alone: cancelling an apply
+    // unit is a legitimate decision, not a false completion.
+    if (
+      issue.issueState === "CLOSED" &&
+      issue.stateReason !== "NOT_PLANNED" &&
+      isApplyIssue(ctx.cfg, issue.labels)
+    ) {
+      const failure = applyEvidenceFailure(ctx, number);
+      if (failure) {
+        if (issue.claim && cache.fields[CLAIM_FIELD]) clearField(ctx, cache, issue.itemId, CLAIM_FIELD);
+        // Comment BEFORE the writes: an interrupted run must leave the reason,
+        // not a bare state (same ordering rule as transition()).
+        addComment(
+          ctx,
+          issue.nodeId,
+          `\`board reconcile\`: #${number} is an apply unit (label \`${ctx.cfg.apply.label}\`) closed as completed, ` +
+            `but it carries no deployed-and-verified evidence: ${failure}\n\n` +
+            `Reopened and routed to **Human Needed**. A merge is not an apply — either post ` +
+            `\`ralph-apply-evidence:v1\` (scripts/apply-evidence.sh) and close it again, or cancel it as not-planned.`,
+        );
+        reopenIssue(ctx, issue.nodeId);
+        setSingleSelect(ctx, cache, issue.itemId, STATE_FIELD, "Human Needed");
+        syncStatus(ctx, cache, issue.itemId, "Human Needed");
+        return `#${number}: apply unit closed without evidence — reopened to Human Needed (${failure})`;
+      }
     }
 
     const target: State | null =
@@ -1053,6 +1276,9 @@ export interface ClosedItem {
   repo: string;
   state: string; // board Workflow State, "(none)" if unset
   archived: boolean;
+  labels: string[]; // apply-kind detection without a second round trip
+  stateReason: string | null; // COMPLETED vs NOT_PLANNED — only the former is a claim of success
+  closedAt: string | null; // ISO; how long an unevidenced close has been standing
 }
 
 /** One page walk, two views: open items for the queue, closed items for
@@ -1077,7 +1303,8 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
                   isArchived
                   content {
                     ... on Issue {
-                      number title state
+                      number title state stateReason closedAt
+                      labels(first: 20) { nodes { name } }
                       repository { nameWithOwner }
                       parent { number }
                       blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
@@ -1104,6 +1331,9 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
             repo: c.repository?.nameWithOwner ?? "",
             state: fv[STATE_FIELD] ?? "(none)",
             archived: n.isArchived ?? false,
+            labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
+            stateReason: c.stateReason ?? null,
+            closedAt: c.closedAt ?? null,
           });
           continue;
         }
@@ -1126,6 +1356,10 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
           blockersTruncated: c.blockedBy?.pageInfo?.hasNextPage ?? false,
           claim: parseClaim(fv[CLAIM_FIELD]),
           claimRaw: fv[CLAIM_FIELD] ?? null,
+          labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
+          closedBlockers: (c.blockedBy?.nodes ?? [])
+            .filter((b: any) => b.state !== "OPEN")
+            .map((b: any) => b.number),
         });
       }
       if (!page?.pageInfo?.hasNextPage) break;
@@ -1149,6 +1383,7 @@ export interface CreateOpts {
   parent?: number;
   estimate?: string;
   state?: State;
+  labels?: string[];
 }
 
 export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
@@ -1186,6 +1421,24 @@ export function createIssue(ctx: Ctx, opts: CreateOpts): Issue {
         setSingleSelect(ctx, cache, itemId, ESTIMATE_FIELD, opts.estimate);
       } catch (e) {
         process.stderr.write(`warn: estimate not set: ${(e as Error).message}\n`);
+      }
+    }
+    // Labels are applied via `gh issue edit` rather than GraphQL: it resolves
+    // names to IDs itself, and creating the label when absent is the repo
+    // owner's call, not the CLI's. A label failure is LOUD but non-fatal —
+    // the issue exists, and an apply twin missing its label is caught by the
+    // merge gate rather than being silently mislabelled here.
+    if (opts.labels?.length) {
+      const r = ctx.exec([
+        "gh", "issue", "edit", String(issue.number),
+        "--repo", `${ctx.cfg.owner}/${ctx.cfg.repo}`,
+        ...opts.labels.flatMap((l) => ["--add-label", l]),
+      ]);
+      if (r.code !== 0) {
+        process.stderr.write(
+          `warn: labels ${opts.labels.join(",")} not applied to #${issue.number}: ` +
+            `${r.stderr.trim() || r.stdout.trim()} (create the label first: gh label create)\n`,
+        );
       }
     }
     if (opts.parent) {
@@ -1342,6 +1595,89 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
       // Never auto-fixed: a hand-edited Claim field is a human's note to self —
       // surfacing it is enough.
       add("claim-garbled", garbled.length === 0 ? "ok" : "warn", garbled.length === 0 ? "none" : `unparseable Claim text (want "holder|iso8601"): ${garbled.map((i) => `#${i.number}`).join(" ")}`);
+
+      // Apply-kind sweep (GH-1693). Inert — three `ok` lines — on a repo that
+      // has not opted in, and on an opted-in board with no apply issues.
+      if (!ctx.cfg.apply.enabled) {
+        for (const n of ["merged-unapplied", "apply-verify-elapsed", "apply-closed-unevidenced"]) {
+          add(n, "ok", "apply kind not enabled (no `apply` block in .github/ralph-merge-policy.json)");
+        }
+      } else {
+        const applyLabel = ctx.cfg.apply.label;
+        const openApply = items.filter((i) => i.labels.includes(applyLabel));
+        // The ship work this apply unit waited on has landed and the apply has
+        // not happened. Requires blockers to have EXISTED: an apply unit with
+        // no dependency edge was never gated on a merge, so "merged" is not a
+        // claim anyone made about it.
+        const mergedUnapplied = openApply.filter(
+          (i) => i.openBlockers.length === 0 && i.closedBlockers.length > 0,
+        );
+        add(
+          "merged-unapplied",
+          mergedUnapplied.length === 0 ? "ok" : "warn",
+          mergedUnapplied.length === 0
+            ? "none"
+            : `apply units whose blocking work has landed but which have not been applied: ` +
+              mergedUnapplied.map((i) => `#${i.number}←closed ${i.closedBlockers.map((n) => `#${n}`).join(",")}`).join(" "),
+        );
+        // verify_after keeps a schedule-bound proof point (a weekly cron is up
+        // to 7 days out) alive without rotting into daily noise: quiet until
+        // the instant passes, then loud. Body reads are one query per apply
+        // unit — a handful of issues, not the board.
+        const elapsed: string[] = [];
+        let verifyReadFailed: string | null = null;
+        for (const i of openApply) {
+          try {
+            const at = parseVerifyAfter(fetchApplyMeta(ctx, i.number).body);
+            if (at && at.getTime() <= ctx.now().getTime()) {
+              elapsed.push(`#${i.number}(due ${at.toISOString()})`);
+            }
+          } catch (e) {
+            verifyReadFailed = (e as Error).message;
+          }
+        }
+        add(
+          "apply-verify-elapsed",
+          verifyReadFailed ? "warn" : elapsed.length === 0 ? "ok" : "warn",
+          verifyReadFailed
+            ? `could not read apply bodies: ${verifyReadFailed}`
+            : elapsed.length === 0
+              ? "none"
+              : `apply units past their ralph-verify-after instant and still open: ${elapsed.join(" ")}`,
+        );
+        // The one strict-fail: a CLOSED-as-completed apply unit with no valid
+        // evidence is the exact lie this epic exists to stop. NOT_PLANNED is
+        // excluded — cancelling an apply unit is a decision, not a claim.
+        const unevidenced: Array<{ number: number; failure: string }> = [];
+        for (const i of closedOwn) {
+          if (i.archived || !i.labels.includes(applyLabel)) continue;
+          if (i.stateReason === "NOT_PLANNED") continue;
+          try {
+            const failure = applyEvidenceFailure(ctx, i.number);
+            if (failure) unevidenced.push({ number: i.number, failure });
+          } catch (e) {
+            unevidenced.push({ number: i.number, failure: `evidence unreadable: ${(e as Error).message}` });
+          }
+        }
+        add(
+          "apply-closed-unevidenced",
+          unevidenced.length === 0 ? "ok" : opts.strict ? "fail" : "warn",
+          unevidenced.length === 0
+            ? "none"
+            : `apply units closed as completed without deployed-and-verified evidence — ` +
+              `\`board reconcile N\` reopens them to Human Needed: ` +
+              unevidenced.map((u) => `#${u.number} (${u.failure})`).join("; "),
+        );
+        if (opts.fix) {
+          for (const u of unevidenced) {
+            try {
+              add("fix", "ok", reconcile(ctx, u.number));
+            } catch (e) {
+              add("fix", "fail", `#${u.number}: ${(e as Error).message}`);
+            }
+          }
+        }
+      }
 
       // Fix loops are per-item fault-isolated: one unwritable item logs its
       // own fail line and the sweep keeps going.
@@ -1819,6 +2155,9 @@ reads
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
+                              [--label L[,L2]]  (--label ralph:apply files an
+                              apply unit: closes only on deployed-and-verified
+                              evidence, never on a merge)
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
   release NNN -m "why"        In Progress → Backlog; parking comment required
   move NNN <state> [--why W]  any legal transition; Human Needed requires --why
@@ -1975,6 +2314,10 @@ export function run(argv: string[], ctx: Ctx): number {
         parent: typeof flags.parent === "string" ? requireNumber(flags.parent, "--parent") : undefined,
         estimate: typeof flags.estimate === "string" ? flags.estimate : undefined,
         state: state ?? undefined,
+        labels:
+          typeof flags.label === "string"
+            ? flags.label.split(",").map((l) => l.trim()).filter(Boolean)
+            : undefined,
       });
       out(issueLine(issue));
       out(issue.url);
