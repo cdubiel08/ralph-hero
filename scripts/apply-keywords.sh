@@ -108,12 +108,25 @@ QUERY='query($owner: String!, $repo: String!, $pr: Int!) {
 
 graph_json=$(jq -nc --arg q "$QUERY" --arg owner "$OWNER" --arg repo "$REPO" --argjson pr "$PR_NUMBER" \
   '{query: $q, variables: {owner: $owner, repo: $repo, pr: $pr}}' \
-  | gh api graphql --input - 2>/dev/null) || {
-  echo "APPLY KEYWORDS FAIL — cannot read closing issues for PR #$PR_NUMBER (gh api graphql failed)"
+  | gh api graphql --input - 2>&1) || {
+  echo "APPLY KEYWORDS FAIL — cannot read closing issues for PR #$PR_NUMBER (gh api graphql failed): $(head -3 <<<"$graph_json")"
   exit 1
 }
 
-closing=$(jq -c '.data.repository.pullRequest.closingIssuesReferences.nodes // []' <<<"$graph_json")
+# GraphQL returns exit 0 with a top-level `errors` array for an unknown field
+# or an insufficient token scope, and `data` is then null. A bare
+# `.nodes // []` would turn that lookup failure into "closes no issues" — a
+# PASS produced by a broken query, which is the worst outcome available.
+if [[ "$(jq '(.errors // []) | length' <<<"$graph_json")" -ne 0 ]]; then
+  echo "APPLY KEYWORDS FAIL — GraphQL errors reading PR #$PR_NUMBER: $(jq -r '[.errors[].message] | join("; ")' <<<"$graph_json")"
+  exit 1
+fi
+if [[ "$(jq 'if (.data.repository.pullRequest.closingIssuesReferences.nodes | type) == "array" then 1 else 0 end' <<<"$graph_json")" -ne 1 ]]; then
+  echo "APPLY KEYWORDS FAIL — PR #$PR_NUMBER's closing-issue list is missing from the API response (not an empty list)"
+  exit 1
+fi
+
+closing=$(jq -c '.data.repository.pullRequest.closingIssuesReferences.nodes' <<<"$graph_json")
 if [[ "$(jq 'length' <<<"$closing")" -eq 0 ]]; then
   echo "APPLY KEYWORDS PASS — PR #$PR_NUMBER closes no issues"
   exit 0

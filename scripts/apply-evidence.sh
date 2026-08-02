@@ -31,8 +31,11 @@ set -euo pipefail
 
 MARKER='<!-- ralph-apply-evidence:v1 -->'
 
+# Prints the usage block only — lines 4..12, i.e. up to and including the
+# --dry-run line. The design rationale below it is for readers of the file,
+# not for someone who just mistyped a flag.
 usage() {
-  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -44,13 +47,18 @@ NOTES=""
 DRY_RUN=false
 CHECK_CMDS=()
 
+# A value-taking flag in final position leaves $# == 1, and a bare `shift 2`
+# would then return nonzero and kill the script under `set -e` with no output.
+# needs_value makes that path print usage instead.
+needs_value() { [[ $# -ge 2 ]] || { echo "ERROR: $1 requires a value" >&2; usage; }; }
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --kind)      KIND="${2:-}"; shift 2 ;;
-    --workflow)  WORKFLOW="${2:-}"; shift 2 ;;
-    --merge-sha) MERGE_SHA="${2:-}"; shift 2 ;;
-    --notes)     NOTES="${2:-}"; shift 2 ;;
-    --check)     CHECK_CMDS+=("${2:-}"); shift 2 ;;
+    --kind)      needs_value "$@"; KIND="$2"; shift 2 ;;
+    --workflow)  needs_value "$@"; WORKFLOW="$2"; shift 2 ;;
+    --merge-sha) needs_value "$@"; MERGE_SHA="$2"; shift 2 ;;
+    --notes)     needs_value "$@"; NOTES="$2"; shift 2 ;;
+    --check)     needs_value "$@"; CHECK_CMDS+=("$2"); shift 2 ;;
     --dry-run)   DRY_RUN=true; shift ;;
     -*)          usage ;;
     *)
@@ -81,9 +89,12 @@ for cmd in ${CHECK_CMDS[@]+"${CHECK_CMDS[@]}"}; do
   rc=$?
   set -e
   echo "--- check: $cmd (exit $rc)"
-  echo "$out" | head -20
+  # Here-strings, not `echo | head`: head closes the pipe after 20 lines, echo
+  # takes EPIPE, and `set -o pipefail` + `set -e` would abort the script AFTER
+  # the checks already ran — losing evidence that was honestly gathered.
+  head -20 <<<"$out"
   checks_json=$(jq -c --argjson c "$checks_json" --arg cmd "$cmd" --argjson rc "$rc" \
-    --arg out "$(echo "$out" | tail -5)" \
+    --arg out "$(tail -5 <<<"$out")" \
     '$c + [{cmd: $cmd, exit_code: $rc, output_tail: $out}]' <<<'null')
 done
 

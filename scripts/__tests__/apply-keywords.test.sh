@@ -42,6 +42,11 @@ case "$sub $verb" in
   "api graphql")
     cat >/dev/null   # drain the piped --input document
     if [[ -f "$GH_STUB_DIR/graphql_fails" ]]; then exit 1; fi
+    # A GraphQL error response is exit 0 with a top-level `errors` array —
+    # the shape that used to read as "closes no issues".
+    if [[ -f "$GH_STUB_DIR/graphql_override.json" ]]; then
+      cat "$GH_STUB_DIR/graphql_override.json"; exit 0
+    fi
     cat "$GH_STUB_DIR/graphql.json"
     ;;
   "api repos/"*)
@@ -200,6 +205,25 @@ dir=$(setup_case "$POLICY_ON" "$UNTWINNED" "$INFRA_FILES")
 touch "$dir/repo_view_fails"
 run_case "$dir"
 expect "an unresolvable repo fails" 1 "cannot resolve owner/repo"
+
+echo "== a broken query must not read as a clean PR =="
+
+dir=$(setup_case "$POLICY_ON" "$UNTWINNED" "$INFRA_FILES")
+cat >"$dir/graphql_override.json" <<'GQLERR'
+{"data": null, "errors": [{"message": "Field 'subIssues' doesn't exist on type 'Issue'"}]}
+GQLERR
+run_case "$dir"
+expect "exit-0 GraphQL errors fail closed, never PASS" 1 "GraphQL errors reading PR #123"
+
+dir=$(setup_case "$POLICY_ON" "$UNTWINNED" "$INFRA_FILES")
+echo '{"data":{"repository":{"pullRequest":null}}}' >"$dir/graphql_override.json"
+run_case "$dir"
+expect "a null pullRequest node is a lookup failure, not 'closes no issues'" 1 "missing from the API response"
+
+dir=$(setup_case "$POLICY_ON" "$UNTWINNED" "$INFRA_FILES")
+echo '{"data":{"repository":null}}' >"$dir/graphql_override.json"
+run_case "$dir"
+expect "a null repository node likewise fails closed" 1 "missing from the API response"
 
 echo
 echo "apply-keywords.test.sh: $PASS passed, $FAIL failed"

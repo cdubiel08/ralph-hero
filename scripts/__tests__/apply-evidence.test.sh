@@ -169,6 +169,31 @@ dir=$(new_case '[]')
 run_ev "$dir" 1697 --kind settings --notes "it is live" --check "true" --dry-run
 if [[ ! -f "$dir/posted.md" ]]; then pass "--dry-run posts nothing"; else fail "--dry-run posted anyway"; fi
 
+
+echo "== review-hardened edges (CodeRabbit, PR #1700) =="
+
+dir=$(new_case '[]')
+run_ev "$dir" 1697 --kind settings --notes "x" --check
+expect "a trailing flag with no value prints usage, not a bare exit 1" 2 "requires a value"
+
+dir=$(new_case '[]')
+run_ev "$dir" 1697 --kind
+expect "a trailing --kind likewise" 2 "requires a value"
+
+dir=$(new_case '[]')
+run_ev "$dir" 1697 --bogus
+if grep -qF -- "design rationale" <<<"$LAST_OUT"; then
+  fail "usage extract leaks the design rationale"
+else
+  pass "usage prints the usage block only, not the rationale below it"
+fi
+
+# A long check output used to die on EPIPE: `head -20` closes the pipe, echo
+# takes SIGPIPE, and pipefail+errexit aborted AFTER the checks had run.
+dir=$(new_case '[]')
+run_ev "$dir" 1697 --kind settings --notes "long output" --check "seq 1 500" --dry-run
+expect "a check whose output exceeds the preview does not abort the script" 0 "ralph-apply-evidence:v1"
+
 echo
 echo "apply-evidence.test.sh: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
