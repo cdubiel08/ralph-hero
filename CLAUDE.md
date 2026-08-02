@@ -41,11 +41,11 @@ Guards by construction: scope gate (origin remote must match configured host/own
 
 Opt-in, via an `apply` block in `.github/ralph-merge-policy.json` (`enabled`, `label`, `infraPaths`) — the same file the merge gate reads, so a repo opts in once and `board.ts` + `merge-pr.sh` cannot drift. **ralph-hero has not armed it yet** (that's #1696); every gate below is inert without it, and inert again on a board with no apply issues.
 
-An issue labelled `ralph:apply` is work whose completion is a *deploy*, not a merge — terraform, secrets, rulesets, a scheduled job's next fire. Four enforcement points:
+An issue carrying the configured apply label (`apply.label`, default `ralph:apply`) is work whose completion is a *deploy*, not a merge — terraform, secrets, rulesets, a scheduled job's next fire. Four enforcement points:
 
 | | |
 |---|---|
-| **Decomposition** | infra-touching units split into a ship issue + one or more apply units (`board create --label ralph:apply`); settings-only changes get *only* an apply unit |
+| **Decomposition** | infra-touching units split into a ship issue + one or more apply units (`board create --apply`, which resolves the configured `apply.label` rather than a literal); settings-only changes get *only* an apply unit |
 | **Merge gate 6** | `scripts/apply-keywords.sh` — no closing keyword may bind an apply unit, and an infra-touching PR may not close a ship issue with no apply twin. Re-published server-side as the `ralph-apply-keywords` status (recomputed on `edited`, since that's how a closing keyword arrives after CI went green) |
 | **Close gate** | `transition()` refuses Done without a shape-valid `ralph-apply-evidence:v1` comment (`scripts/apply-evidence.sh` posts one). No `--why` escape, no merged-PR escape. `kind=run` evidence must bind `run.head_sha == merge_sha` |
 | **Surfacing** | doctor's `merged-unapplied`, `apply-verify-elapsed` (honours `<!-- ralph-verify-after: ISO -->` in the body), `apply-closed-unevidenced` (strict-fail; `--fix` reopens to Human Needed) |

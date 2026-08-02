@@ -39,12 +39,11 @@ Claim it: `board claim NNN`. A live foreign claim → pick other work.
 
 ## Apply units — where a merge is not the outcome
 
-Only in repos that opted in (an `apply` block in `.github/ralph-merge-policy.json`; `board readiness` says whether yours has). There, a merged PR is not a deployed change, and one unit kind says so.
+Only in repos that opted in (`board readiness` says whether yours has). There, a merged PR is not a deployed change, and one unit kind says so. Three invariants; the code enforces all three, so these are what the refusals will be about.
 
-- **Split before you open the PR.** If your diff touches the repo's configured infra surface, or the change lives outside the tree at all (repo/org settings, a secret, a ruleset), the unit is two: the ship issue your PR closes, and an apply unit — `board create --label ralph:apply --title "apply: <what must become true in the real world>"` — linked with `board dep`. A settings-only change gets *only* an apply unit; no PR can ship it. The merge gate refuses an infra PR whose closing issue has no apply twin, so doing this after the fact costs you a round trip.
-- **Never let a closing keyword touch an apply unit.** Say `Refs #N`, not `Fixes #N`. Merging is not applying.
-- **Close it on evidence, not on belief.** `scripts/apply-evidence.sh N --kind run|observation|settings …` posts `ralph-apply-evidence:v1`; `board move N done` refuses without it, and `--why` does not bypass that. If the proof point is in the future (a weekly cron), put `<!-- ralph-verify-after: <ISO> -->` in the issue body and leave the unit open — that is the honest state, not a failure.
-- **An apply you cannot perform is an escalation**, not a deferral: `board move N human-needed --why "…"`.
+- **A change that ships and a change that goes live are different units.** A diff touching the repo's configured infra surface, or a change with no diff at all (settings, secrets, rulesets), needs an apply unit of its own — `board create --apply` files one under whatever label the repo configured — with the dependency edge recorded. The merge gate refuses an infra PR whose closing issue has no apply twin, so an untwinned unit costs a round trip at merge time.
+- **No closing keyword may bind an apply unit** — `Refs #N`, not `Fixes #N`. Merging is not applying.
+- **Done means deployed and verified.** `board move N done` refuses without a `ralph-apply-evidence:v1` comment (`scripts/apply-evidence.sh` composes one), and `--why` does not bypass it. A proof point that cannot exist yet — the next fire of a weekly cron — is `<!-- ralph-verify-after: <ISO> -->` in the body and an open unit: the honest state, not a failure. An apply you cannot perform is an escalation.
 
 ## Model tiers
 

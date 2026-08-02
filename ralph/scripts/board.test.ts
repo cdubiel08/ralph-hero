@@ -1769,3 +1769,33 @@ describe("readiness — apply kind", () => {
     expect(c.recommend).toBeUndefined();
   });
 });
+
+describe("create --apply", () => {
+  const mkCtx = (gh: FakeGh, label: string | null) => {
+    const ctx = makeCtx(gh);
+    if (label) ctx.cfg.apply = { enabled: true, label, infraPaths: [] };
+    return ctx;
+  };
+
+  it("resolves the CONFIGURED label, so a repo that renamed it cannot get an unrecognized apply unit", () => {
+    const gh = new FakeGh();
+    const edits: string[][] = [];
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      if (argv[1] === "issue" && argv[2] === "edit") { edits.push(argv); return { code: 0, stdout: "", stderr: "" }; }
+      return inner(argv, stdin);
+    };
+    const ctx = mkCtx(gh, "kind/apply");
+    const out = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    run(["create", "--title", "apply: it", "--apply", "--label", "infra"], ctx);
+    out.mockRestore();
+    expect(edits[0]).toContain("kind/apply");
+    expect(edits[0]).toContain("infra");
+  });
+
+  it("refuses --apply when the repo has not opted in — the label would be decoration", () => {
+    const ctx = makeCtx(new FakeGh()); // apply disabled
+    expect(() => run(["create", "--title", "apply: it", "--apply"], ctx)).toThrow(UsageError);
+    expect(() => run(["create", "--title", "apply: it", "--apply"], ctx)).toThrow(/apply` block/);
+  });
+});
