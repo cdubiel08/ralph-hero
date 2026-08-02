@@ -1,4 +1,11 @@
-# validate-attestation.yml (GH-1589)
+# validate-attestation.yml (GH-1589, extended by GH-1694)
+#
+# Two independent verdicts, two commit statuses:
+#   ralph-attestation    — the merge attestation (GH-1589)
+#   ralph-apply-keywords — closing-keyword hygiene for apply-kind work
+#                          (GH-1694): no closing keyword may bind an apply
+#                          unit, and an infra-touching PR may not close a ship
+#                          issue with no apply twin.
 #
 # Publishes the `ralph-attestation` commit status on PR head SHAs — the
 # server-side re-validation of the merge attestation that scripts/merge-pr.sh
@@ -31,7 +38,13 @@ name: validate-attestation
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # `edited` is here for the apply-keywords job only (see its `if`): editing
+    # a PR body is exactly how a closing keyword gets added AFTER CI went
+    # green, so a status computed once at `opened` would be stale where it
+    # matters most. The attestation job deliberately ignores `edited` — a body
+    # edit cannot change whether the head SHA is attested, and recomputing it
+    # would just add runs.
+    types: [opened, edited, synchronize, reopened]
   issue_comment:
     types: [created, edited]
   pull_request_review:
@@ -60,7 +73,7 @@ jobs:
     # issue_comment also fires on plain issues — gate to PR comments carrying
     # the attestation marker (expression context; body never reaches a shell).
     if: >-
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.action != 'edited') ||
       github.event_name == 'pull_request_review' ||
       (github.event.issue.pull_request != null &&
        contains(github.event.comment.body, 'ralph-attestation:v1'))
@@ -96,3 +109,36 @@ jobs:
             -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             >/dev/null
           echo "commit status published: ralph-attestation=$state"
+
+  apply-keywords:
+    # Only the pull_request lane: the verdict is a function of the PR's closing
+    # keywords and its diff, neither of which a comment or a review can change.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Check apply-keyword hygiene and publish commit status
+        run: |
+          set -uo pipefail
+          # The checker is the SAME script scripts/merge-pr.sh runs client-side
+          # — one implementation, two callers, so the server-side backstop
+          # cannot drift from the local gate.
+          out=$(bash scripts/apply-keywords.sh "$PR_NUMBER" 2>&1)
+          rc=$?
+          echo "$out"
+          if [[ "$rc" -eq 0 ]]; then state="success"; else state="failure"; fi
+          desc=$(head -1 <<<"$out")
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/$HEAD_SHA" \
+            -f state="$state" \
+            -f context="ralph-apply-keywords" \
+            -f description="${desc:0:130}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            >/dev/null
+          echo "commit status published: ralph-apply-keywords=$state"

@@ -27,6 +27,11 @@
 #      same head-binding the attestation gate uses. No review at this head is
 #      PENDING (exit 75), never FAIL: gate 1 already caught CHANGES_REQUESTED,
 #      so its absence is "not yet", not "no". Skipped for exempt authors.
+#   6. Apply-keyword hygiene (scripts/apply-keywords.sh, GH-1694): no closing
+#      keyword may bind an apply-kind issue, and an infra-touching PR may not
+#      close a ship issue that has no apply twin. Inert unless the repo opted
+#      in via the policy file's `apply` block, and skipped entirely in host
+#      repos that do not ship the checker.
 #
 # Policy: .github/ralph-merge-policy.json (override path for tests via
 # RALPH_MERGE_POLICY_FILE). NO policy file → gates 4-5 off (repo hasn't
@@ -317,6 +322,33 @@ if [[ "$EXTERNAL_REQUIRED" == "true" && "$EXEMPT" == "false" ]]; then
       fi
       pending "external-review" "no $EXTERNAL_BOT review at head ${head_sha:0:8} yet — comment '@coderabbitai review' to trigger one"
     fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Gate 6: apply-keyword hygiene + infra-split (GH-1694)
+# ---------------------------------------------------------------------------
+# A merged PR is not a deployed change. This refuses a PR whose closing
+# keywords bind an apply-kind issue, and an infra-touching PR that closes a
+# ship issue with no apply twin. Fully inert unless the repo opted in via the
+# `apply` block of the policy file — including in host repos that vendor
+# merge-pr.sh without the checker script at all.
+#
+# soft_gate, not a hard block: every other evidence gate here is forceable
+# with the loud `--force` override comment, and a special case would be
+# inconsistent. Gate 1 (CHANGES_REQUESTED) remains the only unforceable one.
+# Test-only override, same pattern as RALPH_MERGE_POLICY_FILE / RALPH_WORKTREE_ROOT.
+APPLY_KEYWORDS_SH="${RALPH_APPLY_KEYWORDS_SH:-$PROJECT_ROOT/scripts/apply-keywords.sh}"
+if [[ -x "$APPLY_KEYWORDS_SH" ]]; then
+  # Captured, not streamed: the first line is the verdict a runner greps for,
+  # and the remaining lines are the operator's remedy.
+  set +e
+  apply_out=$("$APPLY_KEYWORDS_SH" "$PR_NUMBER" 2>&1)
+  apply_rc=$?
+  set -e
+  echo "$apply_out"
+  if [[ "$apply_rc" -ne 0 ]]; then
+    soft_gate "apply-keywords" "$(head -1 <<<"$apply_out")"
   fi
 fi
 

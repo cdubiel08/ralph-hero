@@ -156,6 +156,7 @@ run_case() {
   out=$(cd "$REPO_ROOT" && PATH="$STUB_BIN:$PATH" \
     GH_STUB_DIR="$dir" GH_STUB_LOG="$dir/gh.log" \
     RALPH_MERGE_POLICY_FILE="${policy:-/nonexistent-policy.json}" \
+    RALPH_APPLY_KEYWORDS_SH="${APPLY_KEYWORDS_STUB:-/nonexistent-apply-keywords.sh}" \
     bash "$SCRIPT" 123 "$@" 2>&1)
   actual=$?
   set -e
@@ -500,6 +501,53 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Gate 6: apply-keyword hygiene (GH-1694)
+#
+# The checker itself is covered by apply-keywords.test.sh; what is pinned here
+# is the WIRING — that merge-pr.sh honours its verdict, that a missing checker
+# is not an error (host repos vendoring merge-pr.sh without it), and that
+# --force can override it loudly like every other evidence gate.
+# ---------------------------------------------------------------------------
+echo
+echo "=== gate 6: apply-keyword hygiene ==="
+
+APPLY_STUB_DIR="$TMP_ROOT/apply-stub"
+mkdir -p "$APPLY_STUB_DIR"
+cat >"$APPLY_STUB_DIR/pass.sh" <<'AK'
+#!/usr/bin/env bash
+echo "APPLY KEYWORDS PASS — PR #$1 closes no issues"
+exit 0
+AK
+cat >"$APPLY_STUB_DIR/fail.sh" <<'AK'
+#!/usr/bin/env bash
+echo "APPLY KEYWORDS FAIL — PR #$1 carries a closing keyword binding apply-kind issue(s) #1696."
+echo "  Merging is not applying."
+exit 1
+AK
+chmod +x "$APPLY_STUB_DIR"/*.sh
+
+APPLY_KEYWORDS_STUB="$APPLY_STUB_DIR/pass.sh"
+run_case "gate 6: a passing checker does not block a green PR" 0 "$POLICY" setup_green
+expect_merged "gate 6 pass"
+expect_out "gate 6 pass: the verdict is echoed" "APPLY KEYWORDS PASS"
+
+APPLY_KEYWORDS_STUB="$APPLY_STUB_DIR/fail.sh"
+run_case "gate 6: a failing checker BLOCKS an otherwise-green PR" 1 "$POLICY" setup_green
+expect_not_merged "gate 6 fail"
+expect_out "gate 6 fail: names the gate" "MERGE GATE FAIL — apply-keywords"
+expect_out "gate 6 fail: carries the checker's first line as the reason" "binding apply-kind issue(s) #1696"
+expect_out "gate 6 fail: the operator remedy is printed too" "Merging is not applying."
+
+run_case "gate 6: --force overrides it loudly, like every other evidence gate" 0 "$POLICY" setup_green \
+  --force "shipping the gate that would refuse this"
+expect_merged "gate 6 force"
+expect_out "gate 6 force: warns rather than silently skipping" "MERGE GATE WARN — apply-keywords skipped by --force"
+
+APPLY_KEYWORDS_STUB=""
+run_case "gate 6: absent checker is not an error (host repos without it)" 0 "$POLICY" setup_green
+expect_merged "gate 6 absent"
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
