@@ -37,6 +37,21 @@ Backlog → In Progress → In Review → Done
 
 Guards by construction: scope gate (origin remote must match configured host/owner/repo before any mutation, incl. `doctor --fix`); cross-repo board items are partitioned by `ownRepo()` and never touched (bare-number resolution would hit the wrong repo's issue); archived items skipped everywhere; blocker-list truncation counts as blocked.
 
+### Apply units — merge ≠ done (GH-1692)
+
+Opt-in, via an `apply` block in `.github/ralph-merge-policy.json` (`enabled`, `label`, `infraPaths`) — the same file the merge gate reads, so a repo opts in once and `board.ts` + `merge-pr.sh` cannot drift. **ralph-hero has not armed it yet** (that's #1696); every gate below is inert without it, and inert again on a board with no apply issues.
+
+An issue carrying the configured apply label (`apply.label`, default `ralph:apply`) is work whose completion is a *deploy*, not a merge — terraform, secrets, rulesets, a scheduled job's next fire. Four enforcement points:
+
+| | |
+|---|---|
+| **Decomposition** | infra-touching units split into a ship issue + one or more apply units (`board create --apply`, which resolves the configured `apply.label` rather than a literal); settings-only changes get *only* an apply unit |
+| **Merge gate 6** | `scripts/apply-keywords.sh` — no closing keyword may bind an apply unit, and an infra-touching PR may not close a ship issue with no apply twin. Re-published server-side as the `ralph-apply-keywords` status (recomputed on `edited`, since that's how a closing keyword arrives after CI went green) |
+| **Close gate** | `transition()` refuses Done without a shape-valid `ralph-apply-evidence:v1` comment (`scripts/apply-evidence.sh` posts one). No `--why` escape, no merged-PR escape. `kind=run` evidence must bind `run.head_sha == merge_sha` |
+| **Surfacing** | doctor's `merged-unapplied`, `apply-verify-elapsed` (honours `<!-- ralph-verify-after: ISO -->` in the body), `apply-closed-unevidenced` (strict-fail; `--fix` reopens to Human Needed) |
+
+Honestly labelled limits: GitHub has no pre-close hook, so a UI close is *corrected within one reconcile pass*, not prevented; a label added after a PR's status was computed doesn't recompute it (merge time is the backstop); and non-run evidence proves a command exited 0, not that the operator's claim is true. Plan: `thoughts/shared/plans/2026-08-01-infra-apply-isolation.md`.
+
 `board doctor [--fix] [--strict]` is the invariant sweep; `board readiness` is the advisory agent-readiness report (3 levels: interactive / unattended / autonomous loop — recommendations, never gates); `board help` lists everything.
 
 ### Enforcement layers (honestly labeled)
@@ -64,9 +79,9 @@ Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical
 - **Autopilot opt-in is typed and fail-closed**: `autopilot=true` in `~/.ralph/config`.
 - **Billing guard**: tick refuses to spawn when `ANTHROPIC_API_KEY` is set (would bill API credits, not the subscription) unless `RALPH_ALLOW_API_BILLING=true`. `RALPH_TICK_RUNNER` makes the transport pluggable — interactive `/ralph:work` and bridge-routine drives are equally valid.
 
-## Merge Gate (unchanged from GH-1589)
+## Merge Gate (GH-1589; gate 6 added in GH-1694)
 
-`main` is ruleset-protected — all changes land via PR; merge through `bash scripts/merge-pr.sh PR` (never bare `gh pr merge`; the funnel hook redirects — only in repos that ship the gate; host repos without `scripts/merge-pr.sh` keep their own merge flow). The script enforces: no `CHANGES_REQUESTED`, CI green, a head_sha-bound attestation (`scripts/attest-pr.sh` with real exit codes), and an external review per `.github/ralph-merge-policy.json`. `validate-attestation.yml` republishes the verdict as the required `ralph-attestation` status. Gates are RUN, not predicted.
+`main` is ruleset-protected — all changes land via PR; merge through `bash scripts/merge-pr.sh PR` (never bare `gh pr merge`; the funnel hook redirects — only in repos that ship the gate; host repos without `scripts/merge-pr.sh` keep their own merge flow). The script enforces: no `CHANGES_REQUESTED`, CI green, a head_sha-bound attestation (`scripts/attest-pr.sh` with real exit codes), an external review per `.github/ralph-merge-policy.json`, and apply-keyword hygiene (gate 6, see above — inert until the repo opts in). `validate-attestation.yml` republishes the verdict as the required `ralph-attestation` status. Gates are RUN, not predicted.
 
 ## CI/CD
 
@@ -75,7 +90,7 @@ Model tiers (stated once in work/SKILL.md): sonnet default, haiku for mechanical
 | `ci.yml` | push/PR | board-tests (vitest+tsc), knowledge, demo, hook/merge-gate script tests, shellcheck, actionlint+zizmor, mcp-pin check (knowledge) |
 | `state-guard.yml` | issue events + 15-min cron | The corrective wall (see above) |
 | `doctor.yml` | weekly + dispatch | Watchdog sweep |
-| `validate-attestation.yml` | PR + attestation comments | Republishes the merge-gate verdict |
+| `validate-attestation.yml` | PR + attestation comments | Republishes the merge-gate verdict, plus the `ralph-apply-keywords` verdict (apply-kind hygiene) |
 | `release-ralph.yml` | `ralph/**` on main | Plugin version bump + tag (no npm — the repo copy is the version) |
 | `release-knowledge.yml` | `plugin/ralph-knowledge/**` on main | Knowledge npm release + pin |
 

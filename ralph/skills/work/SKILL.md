@@ -37,6 +37,14 @@ Claim it: `board claim NNN`. A live foreign claim → pick other work.
 
 **Not granted** — surface instead of acting: destructive or irreversible operations, production mutations, new spend, scope beyond the claimed issue's outcome, any mutation in a different repo or project. Surfacing = `board move NNN human-needed --why "<the exact decision needed, your recommendation, what you deferred>"`.
 
+## Apply units — where a merge is not the outcome
+
+Only in repos that opted in (`board readiness` says whether yours has). There, a merged PR is not a deployed change, and one unit kind says so. Three invariants; the code enforces all three, so these are what the refusals will be about.
+
+- **A change that ships and a change that goes live are different units.** A diff touching the repo's configured infra surface, or a change with no diff at all (settings, secrets, rulesets), needs an apply unit of its own — `board create --apply` files one under whatever label the repo configured — with the dependency edge recorded. The merge gate refuses an infra PR whose closing issue has no apply twin, so an untwinned unit costs a round trip at merge time.
+- **No closing keyword may bind an apply unit** — `Refs #N`, not `Fixes #N`. Merging is not applying.
+- **Done means deployed and verified.** `board move N done` refuses without a `ralph-apply-evidence:v1` comment (`scripts/apply-evidence.sh` composes one), and `--why` does not bypass it. A proof point that cannot exist yet — the next fire of a weekly cron — is `<!-- ralph-verify-after: <ISO> -->` in the body and an open unit: the honest state, not a failure. An apply you cannot perform is an escalation.
+
 ## Model tiers
 
 sonnet is the default for everything; haiku for mechanical fan-out. Frontier (`fable`, else `opus`) only as in-session bookends on feature/epic units — plan authorship/critique and the final group review — via `Agent(model="fable")` or the plan-critique / adversarial-review workflows. XS/S singles never touch frontier. A blocked step gets one re-dispatch at `opus`; a second block → Human Needed. (`CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch for non-Fable accounts; it flattens every tier.)

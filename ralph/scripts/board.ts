@@ -1935,6 +1935,21 @@ export function readiness(ctx: Ctx): ReadinessReport {
       ? undefined
       : "a reconciler lane (issue-event corrections + a doctor --fix cron) keeps the board honest when no session is looking",
   );
+  // "info", never "miss": most repos ship nothing whose completion is a deploy,
+  // and telling those repos they have a gap would be exactly the process
+  // theater this kind was designed to avoid. Recommendation, not a rung.
+  add(
+    3, "apply-kind",
+    ctx.cfg.apply.enabled ? "ok" : "info",
+    ctx.cfg.apply.enabled
+      ? `apply units enabled (label "${ctx.cfg.apply.label}", ${ctx.cfg.apply.infraPaths.length} infra path(s))`
+      : "apply units not enabled — merges close issues, including for infrastructure work",
+    ctx.cfg.apply.enabled
+      ? undefined
+      : "if this repo has work whose completion is a DEPLOY rather than a merge (terraform, secrets, rulesets, " +
+        "scheduled jobs), add an `apply` block to .github/ralph-merge-policy.json — the board then refuses to " +
+        "call such work Done without deployed-and-verified evidence. Repos whose changes go live on merge need none of it",
+  );
   const hb = existsSync(join(homedir(), ".ralph", "heartbeat"));
   add(
     3, "loop", "info",
@@ -2178,9 +2193,10 @@ reads
 
 mutations
   create --title T [--body B] [--parent NNN] [--estimate XS..XL] [--state S]
-                              [--label L[,L2]]  (--label ralph:apply files an
-                              apply unit: closes only on deployed-and-verified
-                              evidence, never on a merge)
+                              [--label L[,L2]] [--apply]
+                              --apply files an APPLY unit under the configured
+                              label: it closes only on deployed-and-verified
+                              evidence, never on a merge
   claim NNN [--steal]         Backlog/Human Needed/In Review → In Progress; sets Claim
   release NNN -m "why"        In Progress → Backlog; parking comment required
   move NNN <state> [--why W]  any legal transition; Human Needed requires --why
@@ -2337,10 +2353,25 @@ export function run(argv: string[], ctx: Ctx): number {
         parent: typeof flags.parent === "string" ? requireNumber(flags.parent, "--parent") : undefined,
         estimate: typeof flags.estimate === "string" ? flags.estimate : undefined,
         state: state ?? undefined,
-        labels:
-          typeof flags.label === "string"
-            ? flags.label.split(",").map((l) => l.trim()).filter(Boolean)
-            : undefined,
+        // --apply resolves the CONFIGURED label rather than a literal, so a
+        // repo that renamed it (apply.label) cannot end up with apply units
+        // carrying a label none of its own gates recognise.
+        labels: (() => {
+          const explicit =
+            typeof flags.label === "string"
+              ? flags.label.split(",").map((l) => l.trim()).filter(Boolean)
+              : [];
+          if (flags.apply) {
+            if (!ctx.cfg.apply.enabled) {
+              throw new UsageError(
+                "--apply needs the apply kind enabled: add an `apply` block to .github/ralph-merge-policy.json " +
+                  "(see `board readiness`). Without it nothing enforces the evidence contract, so the label would be decoration.",
+              );
+            }
+            explicit.push(ctx.cfg.apply.label);
+          }
+          return explicit.length ? explicit : undefined;
+        })(),
       });
       out(issueLine(issue));
       out(issue.url);
