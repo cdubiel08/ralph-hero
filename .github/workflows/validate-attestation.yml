@@ -1,4 +1,14 @@
-# validate-attestation.yml (GH-1589)
+# validate-attestation.yml (GH-1589, extended by GH-1694)
+#
+# Two independent verdicts, two commit statuses:
+#   ralph-attestation    — the merge attestation (GH-1589)
+#   ralph-apply-keywords — closing-keyword hygiene for apply-kind work
+#                          (GH-1694): no closing keyword may bind an apply
+#                          unit, and an infra-touching PR may not close a ship
+#                          issue with no apply twin. Runs from the BASE commit
+#                          (it holds statuses: write and the checker lives in
+#                          the tree) and refuses to publish if the PR changed
+#                          under it mid-run.
 #
 # Publishes the `ralph-attestation` commit status on PR head SHAs — the
 # server-side re-validation of the merge attestation that scripts/merge-pr.sh
@@ -31,15 +41,21 @@ name: validate-attestation
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # `edited` is here for the apply-keywords job only (see its `if`): editing
+    # a PR body is exactly how a closing keyword gets added AFTER CI went
+    # green, so a status computed once at `opened` would be stale where it
+    # matters most. The attestation job deliberately ignores `edited` — a body
+    # edit cannot change whether the head SHA is attested, and recomputing it
+    # would just add runs.
+    types: [opened, edited, synchronize, reopened]
   issue_comment:
     types: [created, edited]
   pull_request_review:
     types: [submitted, dismissed]
 
-permissions:
-  contents: read
-  statuses: write
+# Least privilege is declared PER JOB (zizmor excessive-permissions): with two
+# jobs, a workflow-level grant hands each job the union of what both need.
+permissions: {}
 
 # cancel-in-progress must stay FALSE: the push-triggered run, the attestation
 # comment posted ~1s later, and every other PR comment (even runs whose job
@@ -60,11 +76,14 @@ jobs:
     # issue_comment also fires on plain issues — gate to PR comments carrying
     # the attestation marker (expression context; body never reaches a shell).
     if: >-
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.action != 'edited') ||
       github.event_name == 'pull_request_review' ||
       (github.event.issue.pull_request != null &&
        contains(github.event.comment.body, 'ralph-attestation:v1'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
@@ -96,3 +115,83 @@ jobs:
             -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             >/dev/null
           echo "commit status published: ralph-attestation=$state"
+
+  apply-keywords:
+    # Only the pull_request lane: the verdict is a function of the PR's closing
+    # keywords and its diff, neither of which a comment or a review can change.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      # The BASE commit, not the pull_request merge commit. This job holds
+      # `statuses: write`, and the checker + the policy that configures it both
+      # live in the tree — checking out the merge commit would let a PR rewrite
+      # its own gate and publish a green status for the result. Same trust
+      # boundary reasoning as pull_request_target hygiene.
+      #
+      # The cost is a bootstrap gap: a PR that CHANGES apply-keywords.sh is
+      # graded by the version already on the base branch. That is the correct
+      # direction (the old gate is the trusted one), and merge-pr.sh runs the
+      # PR's own copy client-side, so the new behaviour is still exercised
+      # before it lands.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Check apply-keyword hygiene and publish commit status
+        run: |
+          set -uo pipefail
+          # Capture the PR version BEFORE running the checker. A body edit
+          # during the run would otherwise let this publish a verdict computed
+          # against the previous closing keywords — on the SAME head SHA, so
+          # nothing downstream could tell it was stale.
+          before=$(gh pr view "$PR_NUMBER" --json headRefOid,updatedAt --jq '"\(.headRefOid)|\(.updatedAt)"')
+
+          # The checker is the SAME script scripts/merge-pr.sh runs client-side
+          # — one implementation, two callers, so the server-side backstop
+          # cannot drift from the local gate.
+          #
+          # Checking out the base commit means the checker is absent on the very
+          # PR that introduces it, and on any PR whose base predates it. That is
+          # not an error: the gate genuinely is not in effect on that base yet.
+          # Reported as success with a description that says exactly why, the
+          # same convention apply-keywords.sh itself uses for INERT.
+          if [[ ! -f scripts/apply-keywords.sh ]]; then
+            out="APPLY KEYWORDS INERT — checker not present on the base commit (not in effect for this base)"
+            rc=0
+          else
+            out=$(bash scripts/apply-keywords.sh "$PR_NUMBER" 2>&1)
+            rc=$?
+          fi
+          echo "$out"
+
+          after=$(gh pr view "$PR_NUMBER" --json headRefOid,updatedAt --jq '"\(.headRefOid)|\(.updatedAt)"')
+          if [[ "$before" != "$after" ]]; then
+            echo "PR changed during the check ($before -> $after) — publishing nothing."
+            echo "The event for that change queues its own run (cancel-in-progress is false)."
+            exit 0
+          fi
+
+          head_sha="${before%%|*}"
+          if [[ "$rc" -eq 0 ]]; then state="success"; else state="failure"; fi
+          desc=$(head -1 <<<"$out")
+          # `set -e` is deliberately NOT on in this step (rc is inspected
+          # above), so the publish has to be checked explicitly: without this,
+          # a failed gh api call would fall through to a green step that
+          # published no status at all.
+          if ! gh api "repos/${GITHUB_REPOSITORY}/statuses/$head_sha" \
+            -f state="$state" \
+            -f context="ralph-apply-keywords" \
+            -f description="${desc:0:130}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            >/dev/null; then
+            echo "::error::failed to publish the ralph-apply-keywords status on $head_sha"
+            exit 1
+          fi
+          echo "commit status published: ralph-apply-keywords=$state"
