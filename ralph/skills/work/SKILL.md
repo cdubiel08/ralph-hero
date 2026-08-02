@@ -37,6 +37,15 @@ Claim it: `board claim NNN`. A live foreign claim → pick other work.
 
 **Not granted** — surface instead of acting: destructive or irreversible operations, production mutations, new spend, scope beyond the claimed issue's outcome, any mutation in a different repo or project. Surfacing = `board move NNN human-needed --why "<the exact decision needed, your recommendation, what you deferred>"`.
 
+## Apply units — where a merge is not the outcome
+
+Only in repos that opted in (an `apply` block in `.github/ralph-merge-policy.json`; `board readiness` says whether yours has). There, a merged PR is not a deployed change, and one unit kind says so.
+
+- **Split before you open the PR.** If your diff touches the repo's configured infra surface, or the change lives outside the tree at all (repo/org settings, a secret, a ruleset), the unit is two: the ship issue your PR closes, and an apply unit — `board create --label ralph:apply --title "apply: <what must become true in the real world>"` — linked with `board dep`. A settings-only change gets *only* an apply unit; no PR can ship it. The merge gate refuses an infra PR whose closing issue has no apply twin, so doing this after the fact costs you a round trip.
+- **Never let a closing keyword touch an apply unit.** Say `Refs #N`, not `Fixes #N`. Merging is not applying.
+- **Close it on evidence, not on belief.** `scripts/apply-evidence.sh N --kind run|observation|settings …` posts `ralph-apply-evidence:v1`; `board move N done` refuses without it, and `--why` does not bypass that. If the proof point is in the future (a weekly cron), put `<!-- ralph-verify-after: <ISO> -->` in the issue body and leave the unit open — that is the honest state, not a failure.
+- **An apply you cannot perform is an escalation**, not a deferral: `board move N human-needed --why "…"`.
+
 ## Model tiers
 
 sonnet is the default for everything; haiku for mechanical fan-out. Frontier (`fable`, else `opus`) only as in-session bookends on feature/epic units — plan authorship/critique and the final group review — via `Agent(model="fable")` or the plan-critique / adversarial-review workflows. XS/S singles never touch frontier. A blocked step gets one re-dispatch at `opus`; a second block → Human Needed. (`CLAUDE_CODE_SUBAGENT_MODEL=opus` is the harness escape hatch for non-Fable accounts; it flattens every tier.)

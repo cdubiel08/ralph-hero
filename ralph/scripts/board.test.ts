@@ -1737,3 +1737,35 @@ describe("apply kind — fail-closed edges", () => {
     expect(c.detail).toContain("#2");
   });
 });
+
+describe("readiness — apply kind", () => {
+  const rootWithLevel3 = (): string => {
+    const root = mkdtempSync(join(tmpdir(), "readiness-apply-"));
+    writeFileSync(join(root, "CLAUDE.md"), "# repo\n");
+    writeFileSync(join(root, "vitest.config.ts"), "export default {}\n");
+    mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+    writeFileSync(join(root, ".github", "workflows", "ci.yml"), "on: push\n");
+    return root;
+  };
+
+  it("reads as INFO, never a gap — a repo whose changes go live on merge needs none of it", () => {
+    const ctx = makeCtx(new FakeGh(), "me@test", rootWithLevel3());
+    const report = readiness(ctx);
+    const c = report.checks.find((x) => x.name === "apply-kind")!;
+    expect(c.level).toBe(3);
+    expect(c.status).toBe("info");
+    expect(c.recommend).toMatch(/Repos whose changes go live on merge need none of it/);
+    // and it does not hold any level hostage
+    expect(report.readyFor).toBe(2);
+  });
+
+  it("reports ok, with the configured label and path count, once the repo opts in", () => {
+    const ctx = makeCtx(new FakeGh(), "me@test", rootWithLevel3());
+    ctx.cfg.apply = { enabled: true, label: "kind/apply", infraPaths: [".github/**", "terraform/**"] };
+    const c = readiness(ctx).checks.find((x) => x.name === "apply-kind")!;
+    expect(c.status).toBe("ok");
+    expect(c.detail).toContain('label "kind/apply"');
+    expect(c.detail).toContain("2 infra path(s)");
+    expect(c.recommend).toBeUndefined();
+  });
+});

@@ -1935,6 +1935,21 @@ export function readiness(ctx: Ctx): ReadinessReport {
       ? undefined
       : "a reconciler lane (issue-event corrections + a doctor --fix cron) keeps the board honest when no session is looking",
   );
+  // "info", never "miss": most repos ship nothing whose completion is a deploy,
+  // and telling those repos they have a gap would be exactly the process
+  // theater this kind was designed to avoid. Recommendation, not a rung.
+  add(
+    3, "apply-kind",
+    ctx.cfg.apply.enabled ? "ok" : "info",
+    ctx.cfg.apply.enabled
+      ? `apply units enabled (label "${ctx.cfg.apply.label}", ${ctx.cfg.apply.infraPaths.length} infra path(s))`
+      : "apply units not enabled — merges close issues, including for infrastructure work",
+    ctx.cfg.apply.enabled
+      ? undefined
+      : "if this repo has work whose completion is a DEPLOY rather than a merge (terraform, secrets, rulesets, " +
+        "scheduled jobs), add an `apply` block to .github/ralph-merge-policy.json — the board then refuses to " +
+        "call such work Done without deployed-and-verified evidence. Repos whose changes go live on merge need none of it",
+  );
   const hb = existsSync(join(homedir(), ".ralph", "heartbeat"));
   add(
     3, "loop", "info",
