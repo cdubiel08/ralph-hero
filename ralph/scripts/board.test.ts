@@ -4,7 +4,7 @@
  * Pure core + injected exec; no network.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -136,6 +136,7 @@ describe("rankNext", () => {
     claim: null,
     claimRaw: null,
     labels: [],
+    labelsTruncated: false,
     closedBlockers: [],
     ...over,
   });
@@ -259,8 +260,10 @@ interface FakeIssue {
   parent?: number;
   children?: Array<{ number: number; issueState: "OPEN" | "CLOSED"; state?: string | null }>;
   childrenTruncated?: boolean;
+  blockersTruncated?: boolean;
   comments?: string[];
   labels?: string[];
+  labelsTruncated?: boolean;
   body?: string;
   closedAt?: string | null;
   prs?: Array<{ number: number; merged: boolean }>;
@@ -314,7 +317,10 @@ class FakeGh {
       url: `https://github.com/cdubiel08/ralph-hero/issues/${fi.number}`,
       state: fi.issueState ?? "OPEN",
       stateReason: fi.stateReason ?? null,
-      labels: { nodes: (fi.labels ?? []).map((name) => ({ name })) },
+      labels: {
+        pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
+        nodes: (fi.labels ?? []).map((name) => ({ name })),
+      },
       parent: fi.parent ? { number: fi.parent, title: `Issue ${fi.parent}` } : null,
       subIssues: {
         pageInfo: { hasNextPage: fi.childrenTruncated ?? false },
@@ -441,11 +447,14 @@ class FakeGh {
                 number: fi.number, title: `Issue ${fi.number}`, state: fi.issueState ?? "OPEN",
                 stateReason: fi.stateReason ?? null,
                 closedAt: fi.closedAt ?? null,
-                labels: { nodes: (fi.labels ?? []).map((name) => ({ name })) },
+                labels: {
+                  pageInfo: { hasNextPage: fi.labelsTruncated ?? false },
+                  nodes: (fi.labels ?? []).map((name) => ({ name })),
+                },
                 repository: { nameWithOwner: fi.repo ?? "cdubiel08/ralph-hero" },
                 parent: fi.parent ? { number: fi.parent } : null,
                 blockedBy: {
-                  pageInfo: { hasNextPage: false },
+                  pageInfo: { hasNextPage: fi.blockersTruncated ?? false },
                   nodes: (fi.blockedBy ?? []).map((b) => ({
                     number: b.number,
                     state: b.state,
@@ -1320,6 +1329,18 @@ describe("readiness", () => {
 // ---------------------------------------------------------------------------
 
 describe("loadApplyConfig", () => {
+  // loadApplyConfig PREFERS RALPH_MERGE_POLICY_FILE over the repo-root path,
+  // and a developer shell or CI job may have it set — which would make every
+  // fixture below read the wrong file (CodeRabbit finding, PR #1699).
+  const savedPolicyEnv = process.env.RALPH_MERGE_POLICY_FILE;
+  beforeEach(() => {
+    delete process.env.RALPH_MERGE_POLICY_FILE;
+  });
+  afterEach(() => {
+    if (savedPolicyEnv === undefined) delete process.env.RALPH_MERGE_POLICY_FILE;
+    else process.env.RALPH_MERGE_POLICY_FILE = savedPolicyEnv;
+  });
+
   const withPolicy = (contents: string | null): string => {
     const root = mkdtempSync(join(tmpdir(), "apply-cfg-"));
     if (contents !== null) {
@@ -1645,5 +1666,74 @@ describe("create --label", () => {
 
   it("parses a comma-separated --label list", () => {
     expect(parseArgs(["--title", "t", "--label", "ralph:apply,infra"]).flags.label).toBe("ralph:apply,infra");
+  });
+});
+
+// --- review-hardened edges (CodeRabbit, PR #1699) ---------------------------
+
+describe("apply kind — fail-closed edges", () => {
+  const NOW_E = new Date("2026-08-02T12:00:00Z");
+  const APPLY_ON = { enabled: true, label: APPLY_LABEL_DEFAULT, infraPaths: [] };
+
+  it("an undefined checks[] entry is an offender, not a pass", () => {
+    const base = { kind: "settings", applied_at: "2026-08-02T11:00:00Z", actor: "me", notes: "live" };
+    expect(validateApplyEvidence({ ...base, checks: [undefined] }, NOW_E))
+      .toMatch(/every checks\[\] entry needs exit_code 0/);
+    expect(validateApplyEvidence({ ...base, checks: [null] }, NOW_E))
+      .toMatch(/every checks\[\] entry needs exit_code 0/);
+    expect(validateApplyEvidence({ ...base, checks: [{ exit_code: 0 }, undefined] }, NOW_E))
+      .toMatch(/every checks\[\] entry needs exit_code 0/);
+  });
+
+  it("a TRUNCATED label list counts as apply-kind — the one truncation whose open direction is a lie", () => {
+    const cfg = { apply: { ...APPLY_ON } };
+    expect(isApplyIssue(cfg, ["bug", "enhancement"], true)).toBe(true);
+    expect(isApplyIssue(cfg, ["bug", "enhancement"], false)).toBe(false);
+    // still inert when the repo has not opted in
+    expect(isApplyIssue({ apply: { ...APPLY_ON, enabled: false } }, [], true)).toBe(false);
+  });
+
+  it("the close gate refuses an issue whose label list was truncated", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.cfg.apply = { ...APPLY_ON };
+    gh.issues.set(1, { number: 1, state: "In Review", labels: ["bug"], labelsTruncated: true, comments: [] });
+    expect(() => transition(ctx, fetchIssue(ctx, 1), "Done", { why: "x" })).toThrow(RefusalError);
+  });
+
+  it("merged-unapplied ignores an item whose blocker list was truncated", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.cfg.apply = { ...APPLY_ON };
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", labels: ["ralph:apply"],
+      blockedBy: [{ number: 5, state: "CLOSED" }], blockersTruncated: true,
+    });
+    const c = doctor(ctx).checks.find((x) => x.name === "merged-unapplied")!;
+    expect(c.level).toBe("ok"); // cannot claim "all the work landed" from a partial list
+  });
+
+  it("one unreadable apply body does not hide the OTHER elapsed apply units", () => {
+    const gh = new FakeGh();
+    const ctx = makeCtx(gh);
+    ctx.cfg.apply = { ...APPLY_ON };
+    gh.issues.set(1, {
+      number: 1, state: "Backlog", labels: ["ralph:apply"],
+      body: "<!-- ralph-verify-after: 2026-07-01T00:00:00Z -->",
+    });
+    gh.issues.set(2, { number: 2, state: "Backlog", labels: ["ralph:apply"] });
+    const inner = gh.exec;
+    gh.exec = (argv, stdin) => {
+      // only the body/comments query for #2 fails
+      if (stdin?.includes("comments(last") && stdin.includes('"number":2')) {
+        return { code: 1, stdout: "", stderr: "boom" };
+      }
+      return inner(argv, stdin);
+    };
+    const c = doctor(ctx).checks.find((x) => x.name === "apply-verify-elapsed")!;
+    expect(c.level).toBe("warn");
+    expect(c.detail).toContain("#1(due");        // reported despite #2's failure
+    expect(c.detail).toContain("body unreadable");
+    expect(c.detail).toContain("#2");
   });
 });

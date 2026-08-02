@@ -161,6 +161,7 @@ export interface QueueItem {
   claimRaw: string | null; // raw Claim text — non-null with claim null = garbled (hand-edited)
   openBlockerLabels: string[]; // display form of openBlockers: "#N" own-repo, "owner/repo#N" cross-repo
   labels: string[]; // issue labels — apply-kind detection without a second round trip
+  labelsTruncated: boolean; // fail closed: a truncated label list counts as apply-kind
   closedBlockers: number[]; // CLOSED blockers: "the work this waited on has landed"
 }
 
@@ -261,8 +262,19 @@ export function loadApplyConfig(repoRoot: string): ApplyConfig {
   };
 }
 
-export function isApplyIssue(cfg: { apply: ApplyConfig }, labels: readonly string[]): boolean {
-  return cfg.apply.enabled && labels.includes(cfg.apply.label);
+/** Fails CLOSED on a truncated label list, matching the blocker/child
+ *  truncation rules elsewhere in this file. An issue whose apply label sits
+ *  past the fetch window would otherwise silently escape every apply control —
+ *  and unlike the other truncations, that failure direction is OPEN. Treating
+ *  it as apply-kind costs an unnecessary evidence comment on an absurdly
+ *  labelled issue; the alternative costs a false completion. */
+export function isApplyIssue(
+  cfg: { apply: ApplyConfig },
+  labels: readonly string[],
+  labelsTruncated = false,
+): boolean {
+  if (!cfg.apply.enabled) return false;
+  return labels.includes(cfg.apply.label) || labelsTruncated;
 }
 
 /** `<!-- ralph-verify-after: 2026-08-08T00:00:00Z -->` in the issue body:
@@ -340,9 +352,11 @@ export function validateApplyEvidence(raw: unknown, now: Date): string | null {
   if (!Array.isArray(checks) || checks.length === 0) {
     return `kind=${kind} evidence requires a non-empty "checks" array`;
   }
-  const bad = checks.find((c: any) => !c || typeof c !== "object" || c.exit_code !== 0);
-  if (bad !== undefined) {
-    return `every checks[] entry needs exit_code 0 (offender: ${JSON.stringify(bad)})`;
+  // findIndex, not find: `find` returns undefined for a matching UNDEFINED
+  // entry, and `bad !== undefined` would then read that as "no offender".
+  const badAt = checks.findIndex((c: any) => !c || typeof c !== "object" || c.exit_code !== 0);
+  if (badAt >= 0) {
+    return `every checks[] entry needs exit_code 0 (offender: ${JSON.stringify(checks[badAt])})`;
   }
   return null;
 }
@@ -663,6 +677,7 @@ export interface Issue {
   estimate: string | null;
   priority: string | null;
   labels: string[];
+  labelsTruncated: boolean; // >LABEL_PAGE labels — apply detection fails closed
   parent: { number: number; title: string } | null;
   children: Array<{ number: number; title: string; issueState: string; state: string | null }>;
   childrenTruncated: boolean; // >50 children — parentCheck fails closed on this
@@ -697,7 +712,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
         repository(owner: $owner, name: $repo) {
           issue(number: $number) {
             id title url number state stateReason
-            labels(first: 20) { nodes { name } }
+            labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
             parent { number title }
             subIssues(first: 50) {
               pageInfo { hasNextPage }
@@ -736,6 +751,7 @@ export function fetchIssue(ctx: Ctx, number: number): Issue {
       estimate: fv[ESTIMATE_FIELD] ?? null,
       priority: fv[PRIORITY_FIELD] ?? null,
       labels: (issue.labels?.nodes ?? []).map((l: any) => l.name),
+      labelsTruncated: issue.labels?.pageInfo?.hasNextPage ?? false,
       parent: issue.parent ? { number: issue.parent.number, title: issue.parent.title } : null,
       children: (issue.subIssues?.nodes ?? []).map((c: any) => {
         const cItem = (c.projectItems?.nodes ?? []).find(
@@ -961,7 +977,7 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
     // Done requires evidence: a merged linked PR, or an explicit --why on the
     // record. Intent lane only — reconcile() reflects reality unchecked.
     const doneWithoutMergedPr = to === "Done" && !issue.prs.some((p) => p.merged);
-    const applyKind = isApplyIssue(ctx.cfg, issue.labels);
+    const applyKind = isApplyIssue(ctx.cfg, issue.labels, issue.labelsTruncated);
     if (doneWithoutMergedPr && !opts.why && !applyKind) {
       throw new UsageError(
         `moving #${issue.number} to Done requires a merged linked PR — none found. ` +
@@ -1191,7 +1207,7 @@ export function reconcile(ctx: Ctx, number: number): string {
     if (
       issue.issueState === "CLOSED" &&
       issue.stateReason !== "NOT_PLANNED" &&
-      isApplyIssue(ctx.cfg, issue.labels)
+      isApplyIssue(ctx.cfg, issue.labels, issue.labelsTruncated)
     ) {
       const failure = applyEvidenceFailure(ctx, number);
       if (failure) {
@@ -1277,6 +1293,7 @@ export interface ClosedItem {
   state: string; // board Workflow State, "(none)" if unset
   archived: boolean;
   labels: string[]; // apply-kind detection without a second round trip
+  labelsTruncated: boolean; // fail closed: a truncated label list counts as apply-kind
   stateReason: string | null; // COMPLETED vs NOT_PLANNED — only the former is a claim of success
   closedAt: string | null; // ISO; how long an unevidenced close has been standing
 }
@@ -1304,7 +1321,7 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
                   content {
                     ... on Issue {
                       number title state stateReason closedAt
-                      labels(first: 20) { nodes { name } }
+                      labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
                       repository { nameWithOwner }
                       parent { number }
                       blockedBy(first: 50) { pageInfo { hasNextPage } nodes { number state repository { nameWithOwner } } }
@@ -1332,6 +1349,7 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
             state: fv[STATE_FIELD] ?? "(none)",
             archived: n.isArchived ?? false,
             labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
+            labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
             stateReason: c.stateReason ?? null,
             closedAt: c.closedAt ?? null,
           });
@@ -1357,6 +1375,7 @@ export function listItemsFull(ctx: Ctx): { open: QueueItem[]; closed: ClosedItem
           claim: parseClaim(fv[CLAIM_FIELD]),
           claimRaw: fv[CLAIM_FIELD] ?? null,
           labels: (c.labels?.nodes ?? []).map((l: any) => l.name),
+          labelsTruncated: c.labels?.pageInfo?.hasNextPage ?? false,
           closedBlockers: (c.blockedBy?.nodes ?? [])
             .filter((b: any) => b.state !== "OPEN")
             .map((b: any) => b.number),
@@ -1603,14 +1622,15 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
           add(n, "ok", "apply kind not enabled (no `apply` block in .github/ralph-merge-policy.json)");
         }
       } else {
-        const applyLabel = ctx.cfg.apply.label;
-        const openApply = items.filter((i) => i.labels.includes(applyLabel));
+        const openApply = items.filter((i) => isApplyIssue(ctx.cfg, i.labels, i.labelsTruncated));
         // The ship work this apply unit waited on has landed and the apply has
         // not happened. Requires blockers to have EXISTED: an apply unit with
         // no dependency edge was never gated on a merge, so "merged" is not a
         // claim anyone made about it.
+        // blockersTruncated fails CLOSED here too: with an unseen tail of
+        // blockers we cannot claim "the work this waited on has landed".
         const mergedUnapplied = openApply.filter(
-          (i) => i.openBlockers.length === 0 && i.closedBlockers.length > 0,
+          (i) => i.openBlockers.length === 0 && !i.blockersTruncated && i.closedBlockers.length > 0,
         );
         add(
           "merged-unapplied",
@@ -1624,8 +1644,11 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
         // to 7 days out) alive without rotting into daily noise: quiet until
         // the instant passes, then loud. Body reads are one query per apply
         // unit — a handful of issues, not the board.
+        // Per-item fault isolation: one unreadable body must not hide every
+        // OTHER elapsed apply unit — it is reported alongside them, not
+        // instead of them.
         const elapsed: string[] = [];
-        let verifyReadFailed: string | null = null;
+        const unreadable: string[] = [];
         for (const i of openApply) {
           try {
             const at = parseVerifyAfter(fetchApplyMeta(ctx, i.number).body);
@@ -1633,24 +1656,24 @@ export function doctor(ctx: Ctx, opts: { fix?: boolean; strict?: boolean } = {})
               elapsed.push(`#${i.number}(due ${at.toISOString()})`);
             }
           } catch (e) {
-            verifyReadFailed = (e as Error).message;
+            unreadable.push(`#${i.number}(${(e as Error).message})`);
           }
         }
+        const elapsedDetail = [
+          elapsed.length ? `past their ralph-verify-after instant and still open: ${elapsed.join(" ")}` : "",
+          unreadable.length ? `body unreadable (not evaluated): ${unreadable.join(" ")}` : "",
+        ].filter(Boolean).join("; ");
         add(
           "apply-verify-elapsed",
-          verifyReadFailed ? "warn" : elapsed.length === 0 ? "ok" : "warn",
-          verifyReadFailed
-            ? `could not read apply bodies: ${verifyReadFailed}`
-            : elapsed.length === 0
-              ? "none"
-              : `apply units past their ralph-verify-after instant and still open: ${elapsed.join(" ")}`,
+          elapsed.length === 0 && unreadable.length === 0 ? "ok" : "warn",
+          elapsedDetail || "none",
         );
         // The one strict-fail: a CLOSED-as-completed apply unit with no valid
         // evidence is the exact lie this epic exists to stop. NOT_PLANNED is
         // excluded — cancelling an apply unit is a decision, not a claim.
         const unevidenced: Array<{ number: number; failure: string }> = [];
         for (const i of closedOwn) {
-          if (i.archived || !i.labels.includes(applyLabel)) continue;
+          if (i.archived || !isApplyIssue(ctx.cfg, i.labels, i.labelsTruncated)) continue;
           if (i.stateReason === "NOT_PLANNED") continue;
           try {
             const failure = applyEvidenceFailure(ctx, i.number);
