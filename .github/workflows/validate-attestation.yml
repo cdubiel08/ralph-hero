@@ -156,8 +156,19 @@ jobs:
           # The checker is the SAME script scripts/merge-pr.sh runs client-side
           # — one implementation, two callers, so the server-side backstop
           # cannot drift from the local gate.
-          out=$(bash scripts/apply-keywords.sh "$PR_NUMBER" 2>&1)
-          rc=$?
+          #
+          # Checking out the base commit means the checker is absent on the very
+          # PR that introduces it, and on any PR whose base predates it. That is
+          # not an error: the gate genuinely is not in effect on that base yet.
+          # Reported as success with a description that says exactly why, the
+          # same convention apply-keywords.sh itself uses for INERT.
+          if [[ ! -f scripts/apply-keywords.sh ]]; then
+            out="APPLY KEYWORDS INERT — checker not present on the base commit (not in effect for this base)"
+            rc=0
+          else
+            out=$(bash scripts/apply-keywords.sh "$PR_NUMBER" 2>&1)
+            rc=$?
+          fi
           echo "$out"
 
           after=$(gh pr view "$PR_NUMBER" --json headRefOid,updatedAt --jq '"\(.headRefOid)|\(.updatedAt)"')
