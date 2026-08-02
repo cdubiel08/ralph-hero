@@ -71,8 +71,11 @@ APPLIED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # --- checks: run them, record the real exit code ----------------------------
 checks_json='[]'
-# bash 3.2 (macOS) treats an empty array as unbound under `set -u`.
+# bash 3.2 (macOS) treats an EMPTY array as unbound under `set -u`, and
+# ${#a[@]+...} is a bad substitution on bash 5 — so count explicitly.
+CHECK_COUNT=0
 for cmd in ${CHECK_CMDS[@]+"${CHECK_CMDS[@]}"}; do
+  CHECK_COUNT=$((CHECK_COUNT + 1))
   set +e
   out=$(bash -c "$cmd" 2>&1)
   rc=$?
@@ -116,7 +119,7 @@ if [[ "$KIND" == "run" ]]; then
     '$p + {merge_sha: $sha,
            run: {workflow: $r.workflowName, id: $r.databaseId,
                  conclusion: $r.conclusion, head_sha: $r.headSha}}' <<<'null')
-elif [[ "${#CHECK_CMDS[@]+${#CHECK_CMDS[@]}}" == "" || "${#CHECK_CMDS[@]}" -eq 0 ]]; then
+elif [[ "$CHECK_COUNT" -eq 0 ]]; then
   echo "ERROR: --kind $KIND requires at least one --check (a command whose exit code is the evidence)" >&2
   exit 2
 fi

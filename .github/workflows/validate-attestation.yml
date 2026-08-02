@@ -50,9 +50,9 @@ on:
   pull_request_review:
     types: [submitted, dismissed]
 
-permissions:
-  contents: read
-  statuses: write
+# Least privilege is declared PER JOB (zizmor excessive-permissions): with two
+# jobs, a workflow-level grant hands each job the union of what both need.
+permissions: {}
 
 # cancel-in-progress must stay FALSE: the push-triggered run, the attestation
 # comment posted ~1s later, and every other PR comment (even runs whose job
@@ -78,6 +78,9 @@ jobs:
       (github.event.issue.pull_request != null &&
        contains(github.event.comment.body, 'ralph-attestation:v1'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
@@ -115,6 +118,9 @@ jobs:
     # keywords and its diff, neither of which a comment or a review can change.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}

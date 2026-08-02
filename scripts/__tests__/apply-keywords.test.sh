@@ -59,7 +59,7 @@ chmod +x "$STUB_BIN/gh"
 # Empty strings mean "none". Siblings are modelled through parent.subIssues.
 closing_issue() {
   jq -nc --argjson n "$1" --arg l "$2" --arg sub "$3" --arg sib "$4" '
-    def lbls($s): {nodes: ($s | select(length > 0) | split(",") | map({name: .})) // []};
+    def lbls($s): {nodes: (if ($s | length) > 0 then ($s | split(",") | map({name: .})) else [] end)};
     {
       number: $n,
       labels: lbls($l),
