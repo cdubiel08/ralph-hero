@@ -4,7 +4,7 @@ Board-driven autonomous development over a GitHub Projects V2 board, packaged as
 
 One execution verb (`/ralph:work`), one human surface (`/ralph:board`), one typed board CLI (`scripts/board`), one read-only fan-out agent, two courtesy hooks, and a scheduler-owned loop. The driving model sequences its own research/plan/build/verify at whatever depth the unit demands; enforcement is code, not prose.
 
-This is ralph v2 (GH-1662). Design record (normative): [`../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`](../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md).
+This is ralph v2. Design record (normative): [`../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`](../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md).
 
 ## What's in the box
 
@@ -122,7 +122,7 @@ There is no npm publish — the repo copy is the version. Claude Code installs t
 
 ## History
 
-v1 (9 verb skills, 16 agents, 40 hooks, a 20.7k-line MCP server, an 11-state machine) was replaced wholesale in GH-1662. The npm package `ralph-hero-mcp-server` is deprecated. Rationale and evidence live in the design record linked above.
+v1 (9 verb skills, 16 agents, 40 hooks, a 20.7k-line MCP server, an 11-state machine) was replaced wholesale in v2. The npm package `ralph-hero-mcp-server` is deprecated. Rationale and evidence live in the design record linked above.
 
 ## License
 

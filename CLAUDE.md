@@ -8,7 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The repo also ships two independent plugins: `plugin/ralph-knowledge/` (semantic search over thoughts/, own MCP server + npm release) and `plugin/ralph-playwright/` (UI-testing skills), plus `plugin/ralph-demo/` (Remotion demo videos).
 
-## Build & Test
+## Style — code and docs
+
+- Use plain language. Never lean on a codename, issue number, or shorthand the reader hasn't been given — say what the thing is, in place.
+- Code is spartan and general: solve the stated task without speculative abstraction, matching the surrounding idiom. A comment states a constraint the code can't show — never provenance, narration, or justification of the change.
+- Docs and skill prose must stand alone for a reader with no repo history. Anything shipped (everything under `ralph/` and `plugin/`) never cites issue/PR numbers; provenance lives in commits, PRs, and `thoughts/` records. In this file, a bare `GH-NNN` is only acceptable next to a link or path that supplies the context.
+- Size written deliverables to the task: cover the substance, no filler sections, no redundant summaries.
+- Opus 5 models only — other models skip this line: keep responses and progress narration brief and high-level; trim caveats and don't announce routine steps; go deep only when asked.
 
 From the repo root:
 

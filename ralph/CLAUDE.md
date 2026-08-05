@@ -2,7 +2,7 @@
 
 ## What this is
 
-ralph v2 (GH-1662): two skills, one agent, one board CLI, two courtesy hooks. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
+ralph v2: two skills, one agent, one board CLI, two courtesy hooks. Design record (normative): `../thoughts/shared/ideas/2026-07-31-ralph-v2-minimal-harness.md`.
 
 ```text
 ralph/
@@ -18,12 +18,13 @@ ralph/
 └── .claude-plugin/     # manifest
 ```
 
-Phase 3 (GH-1662) adds `scripts/tick.sh` + `scripts/install-loop.sh` — the scheduler-owned autonomous loop. Not present yet.
+Phase 3 adds `scripts/tick.sh` + `scripts/install-loop.sh` — the scheduler-owned autonomous loop. Not present yet.
 
 ## Conventions
 
 - **Enforcement is code.** An invariant worth having goes in `board.ts` (with a test) or `state-guard.yml` — never in skill prose, never in a bash validator. Prose states intent once; if you're writing "make sure to X" in a SKILL.md, you're in the wrong file.
 - **Three write lanes on the state field**, all in board.ts: `transition` (agent intent, MACHINE-guarded), `reconcile` (issue reality wins), `parent-check` (rollup). Nothing else writes it. There is no `--force`; a stale claim TTL is the only override path.
+- **Shipped prose stands alone.** Skill files, agent files, and docs under `ralph/` are read by installs with no access to this repo's history: no issue/PR numbers, no references that require repo archaeology. Provenance goes in commits, PRs, and `thoughts/` records.
 - **No prescribed phases.** The work skill grants judgment; research/plan depth is sized to the unit by the driver. Don't add per-phase skills, verdict-token vocabularies, or step recipes.
 - **Every board.ts change ships with tests** (`npm run test:board` at repo root) and must keep the parity invariant: `get` reads exactly the fields `move`/`claim` write.
 
