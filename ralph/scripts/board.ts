@@ -144,6 +144,30 @@ export function claimIsStale(claim: Claim, now: Date, ttlMin: number): boolean {
   return claimAgeMin(claim, now) >= ttlMin;
 }
 
+/** Fraction of the TTL that must have elapsed before a refused claim names the
+ *  expiry clock time. Below it, the refusal stays as-is: losing a race to a
+ *  genuinely fresh claim is the healthy outcome of the no-CAS protocol, and
+ *  pointing at `--steal` there would manufacture the eviction pressure the TTL
+ *  exists to avoid. */
+export const CLAIM_HINT_TTL_FRACTION = 0.75;
+
+/** Late in the TTL (strictly past the fraction) but not yet stale — the only
+ *  window where naming the expiry is both new information and honest. */
+export function claimHintDue(claim: Claim, now: Date, ttlMin: number): boolean {
+  const age = claimAgeMin(claim, now);
+  return age > ttlMin * CLAIM_HINT_TTL_FRACTION && age < ttlMin;
+}
+
+export function claimExpiry(claim: Claim, ttlMin: number): Date {
+  return new Date(claim.since.getTime() + ttlMin * 60_000);
+}
+
+/** Local-time HH:MM. The expiry hint only fires inside the final quarter of the
+ *  TTL, so the time it names is always minutes away — a date would be noise. */
+export function formatLocalHm(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 // ---------------------------------------------------------------------------
 // Queue ranking
 // ---------------------------------------------------------------------------
@@ -1013,10 +1037,18 @@ export function transition(ctx: Ctx, issue: Issue, to: State, opts: MoveOpts = {
       if (claim && claim.holder !== ctx.cfg.holder) {
         const stale = claimIsStale(claim, ctx.now(), ctx.cfg.lockTtlMin);
         if (!stale) {
+          // Late in the TTL, append the expiry clock time — the one fact the
+          // refusal is missing. Never below the threshold (see claimHintDue).
+          const hint =
+            claimHintDue(claim, ctx.now(), ctx.cfg.lockTtlMin) ?
+              `\nThat claim expires ~${formatLocalHm(claimExpiry(claim, ctx.cfg.lockTtlMin))} — ` +
+              `\`board claim ${issue.number} --steal\` is honest after that.`
+            : "";
           throw new RefusalError(
             `#${issue.number} is claimed by ${claim.holder} ` +
               `(${claimAgeMin(claim, ctx.now()).toFixed(0)} min ago, TTL ${ctx.cfg.lockTtlMin} min). ` +
-              `Pick other work, or wait for TTL and use \`board claim ${issue.number} --steal\`.`,
+              `Pick other work, or wait for TTL and use \`board claim ${issue.number} --steal\`.` +
+              hint,
           );
         }
         if (!opts.steal) {
